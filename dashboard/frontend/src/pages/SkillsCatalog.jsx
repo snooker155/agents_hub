@@ -25,6 +25,10 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   Pin,
+  ShieldAlert,
+  Terminal,
+  Scale,
+  Library,
 } from 'lucide-react';
 import {
   getSkills,
@@ -39,6 +43,7 @@ import {
 import { exportSkillMarkdown, syncSkills, updateSkillFromOrigin } from '../api/skillVersions';
 import SkillHistoryModal from '../components/skills/SkillHistoryModal';
 import SkillImportModal from '../components/skills/SkillImportModal';
+import SkillSourcesModal from '../components/skills/SkillSourcesModal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -74,6 +79,7 @@ const SkillsCatalog = () => {
   const [installAgent, setInstallAgent] = useState('');
   const [historyFor, setHistoryFor] = useState(null); // skill whose versions are open
   const [importOpen, setImportOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const notify = (text) => {
@@ -240,9 +246,10 @@ const SkillsCatalog = () => {
       notify(t('skillsCatalog.sync.done', {
         added: count('added'), updated: count('updated'), missing: count('missing'),
         followed: count('followed'),
-      }) + (count('errors') ? ` ${t('skillsCatalog.sync.errors', {
-        count: count('errors'), dirs: data.errors.map((e) => `${e.dir}: ${e.error}`).join('; '),
-      })}` : ''));
+      }) + (count('flagged') ? ` ${t('skillsCatalog.sync.flagged', { count: count('flagged') })}` : '')
+        + (count('errors') ? ` ${t('skillsCatalog.sync.errors', {
+          count: count('errors'), dirs: data.errors.map((e) => `${e.dir}: ${e.error}`).join('; '),
+        })}` : ''));
       await fetchData();
     } catch (error) {
       alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
@@ -315,6 +322,20 @@ const SkillsCatalog = () => {
               {t('skillsCatalog.files')}: {skill.resources.join(', ')}
             </div>
           )}
+          {(skill.safety?.flags || []).length > 0 && (
+            <ul className="text-[11px] space-y-1.5 bg-red-50/60 border border-red-100 rounded p-2" aria-label={t('skillsCatalog.safety.flaggedTitle')}>
+              {skill.safety.flags.map((f, i) => (
+                <li key={i} className="text-gray-700">
+                  <span className={`font-semibold uppercase ${f.severity === 'high' ? 'text-red-700' : f.severity === 'medium' ? 'text-amber-700' : 'text-gray-500'}`}>
+                    {f.severity}
+                  </span>
+                  {' · '}<span className="font-mono">{f.code}</span>{' · '}{f.where}
+                  <div className="text-gray-600">{f.detail}</div>
+                  {f.excerpt && <div className="text-gray-400 font-mono truncate" title={f.excerpt}>{f.excerpt}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>
@@ -365,6 +386,13 @@ const SkillsCatalog = () => {
               className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-56"
             />
           </div>
+          <button
+            onClick={() => setSourcesOpen(true)}
+            title={t('skillsCatalog.sources.title')}
+            className="inline-flex items-center px-3 py-2 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Library className="w-3.5 h-3.5 mr-1.5" /> {t('skillsCatalog.sources.button')}
+          </button>
           <button
             onClick={syncFromRepos}
             disabled={syncing}
@@ -472,6 +500,30 @@ const SkillsCatalog = () => {
                       <AlertTriangle className="w-3 h-3" /> {t('skillsCatalog.missing')}
                     </span>
                   )}
+                  {(skill.safety?.severity === 'high' || skill.safety?.severity === 'medium') && (
+                    <span
+                      className={`inline-flex items-center gap-1 ${skill.safety.severity === 'high' ? 'text-red-600' : 'text-amber-600'}`}
+                      title={t('skillsCatalog.safety.flaggedTitle')}
+                    >
+                      <ShieldAlert className="w-3 h-3" /> {t('skillsCatalog.safety.flagged', { count: (skill.safety.flags || []).length })}
+                    </span>
+                  )}
+                  {(skill.safety?.scripts || []).length > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 text-amber-700"
+                      title={t('skillsCatalog.safety.scriptsTitle', { files: skill.safety.scripts.join(', ') })}
+                    >
+                      <Terminal className="w-3 h-3" /> {t('skillsCatalog.safety.scripts', { count: skill.safety.scripts.length })}
+                    </span>
+                  )}
+                  {(skill.license || skill.publishable === false) && (
+                    <span
+                      className={`inline-flex items-center gap-1 truncate max-w-[12rem] ${skill.publishable === false ? 'text-amber-700' : 'text-gray-400'}`}
+                      title={skill.publishable === false ? t('skillsCatalog.license.notOpenTitle') : `${t('skillsCatalog.license.title')}: ${skill.license}`}
+                    >
+                      <Scale className="w-3 h-3 shrink-0" /> {skill.publishable === false ? t('skillsCatalog.license.notOpen') : skill.license}
+                    </span>
+                  )}
                   {skill.pinned_version && (
                     <span className="inline-flex items-center gap-1 text-amber-700" title={t('skillsCatalog.pinnedTitle')}>
                       <Pin className="w-3 h-3" /> {t('skillsCatalog.pinnedTo', { version: skill.pinned_version })}
@@ -500,8 +552,10 @@ const SkillsCatalog = () => {
                   </button>
                   <button
                     onClick={() => togglePublish(skill)}
-                    disabled={busyId === skill.id}
-                    title={skill.shared ? t('skillsCatalog.withdrawTitle') : t('skillsCatalog.publishTitle')}
+                    disabled={busyId === skill.id || (!skill.shared && skill.publishable === false)}
+                    title={skill.shared ? t('skillsCatalog.withdrawTitle')
+                      : skill.publishable === false ? t('skillsCatalog.license.cannotPublish')
+                        : t('skillsCatalog.publishTitle')}
                     className={`inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold rounded border transition-colors disabled:opacity-50 ${
                       skill.shared
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
@@ -785,6 +839,14 @@ const SkillsCatalog = () => {
           targets={targets}
           onClose={() => setImportOpen(false)}
           onImported={() => fetchData()}
+        />
+      )}
+
+      {sourcesOpen && (
+        <SkillSourcesModal
+          workspace={workspace}
+          onClose={() => setSourcesOpen(false)}
+          onChanged={() => fetchData()}
         />
       )}
     </PageContainer>

@@ -35,6 +35,14 @@ class Procedure(BaseModel):
     resources: List[str] = Field(default_factory=list)
     # SKILL.md ``allowed-tools``: informational, shown on the Skills page.
     allowed_tools: List[str] = Field(default_factory=list)
+    # SKILL.md ``license`` as written. A license that is not open keeps the
+    # skill out of the global catalog (memory/skill_review.py, is_publishable).
+    license: str = ""
+    # The safety review (memory/skill_review.py, review_skill): severity,
+    # flags, scripts, license verdict, scanned_at. None for a skill nobody
+    # reviewed (hand-written, or synced by a build without the review).
+    # Not part of the versioned content: it is derived from it.
+    safety: Optional[dict] = None
     # {"dir", "project_id", "root", "sha256", "synced_at", "missing"} for a repo skill.
     repo: Optional[dict] = None
     # Current version number in memory/skill_versions.py (0 before the first save

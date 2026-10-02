@@ -192,6 +192,15 @@ class SkillImportMarkdown(BaseModel):
     agent_id: str = ""
 
 
+class SkillSourceAdd(BaseModel):
+    # Connect a public repository of skills to a workspace (memory/skill_sources.py):
+    # an https URL on github.com, gitlab.com or bitbucket.org, or owner/name.
+    workspace: str
+    url: str
+    branch: Optional[str] = None
+    name: Optional[str] = None
+
+
 class SkillSharingUpdate(BaseModel):
     # Publish to (or withdraw from) the global skills catalog.
     shared: bool = False

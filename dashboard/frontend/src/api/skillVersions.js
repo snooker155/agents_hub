@@ -35,3 +35,14 @@ export const importSkillMarkdown = (workspace, content, agentId = '') =>
 
 export const exportSkillMarkdown = (skillId) =>
   api.get(`/skills/${enc(skillId)}/export`, { responseType: 'text' });
+
+// Public repositories of skills (memory/skill_sources.py): the curated list,
+// each with { repo, publisher, license, kind, note, url, project_id, skills,
+// flagged, not_open, scripts }, plus repositories this workspace added by URL.
+export const listSkillSources = (workspace) =>
+  api.get('/skills/sources', { params: { workspace } });
+
+// Clone the repository as a project of the workspace and sync its skills:
+// { project, sync: { added, updated, flagged, ... }, already_present }.
+export const addSkillSource = (workspace, url, branch = '', name = '') =>
+  api.post('/skills/sources', { workspace, url, branch: branch || null, name: name || null });

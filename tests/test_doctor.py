@@ -359,3 +359,34 @@ def test_cors_warns_only_for_a_wildcard_in_multi_mode(monkeypatch, origins, mode
     assert detail["auth_mode"] == mode
     if expected == "warn":
         assert "stolen token" in summary
+
+
+def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch):
+    import memory.procedural as procedural
+    from memory.procedural import Procedure
+
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [])
+    import common.doctor as doc
+    status, summary, _detail = doc.check_skills(_snap())
+    assert status == "skip"
+
+    clean = Procedure(name="clean", description="when", body="do", workspace="w",
+                      safety={"severity": "none", "flags": [], "scripts": ["scripts/a.py"]})
+    flagged = Procedure(name="bad", description="when", body="do", workspace="w",
+                        agent_id="agent-1",
+                        safety={"severity": "high", "flags": [{"code": "injection.override"}],
+                                "scripts": []})
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [clean])
+    status, summary, detail = doc.check_skills(_snap())
+    assert status == "ok" and detail["with_scripts"] == 1
+
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, flagged])
+    status, summary, detail = doc.check_skills(_snap())
+    assert status == "warn" and "bad" in summary
+    assert detail["attached_high"][0]["agent_id"] == "agent-1"
+
+    closed = Procedure(name="closed", description="when", body="do", workspace="w",
+                       shared=True, license="Proprietary")
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, closed])
+    status, summary, _detail = doc.check_skills(_snap())
+    assert status == "warn" and "license" in summary

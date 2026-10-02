@@ -1,5 +1,5 @@
 """
-Skills from a project's repository: ``.claude/skills/<name>/SKILL.md``.
+Skills from a repository: any folder holding a ``SKILL.md``.
 
 The format is the one Claude Code and the Agent Skills spec use: a folder per
 skill holding ``SKILL.md`` (YAML frontmatter with ``name`` and
@@ -8,7 +8,16 @@ instructions refer to (scripts, templates, reference notes). A team that
 already keeps its skills next to its code gets them in the hub without
 retyping: :func:`sync_workspace` scans every skill root of a workspace (the
 workspace folder itself, each project's cloned repository and each project
-folder) and keeps one catalog entry per skill folder in step with it.
+folder) and keeps one catalog entry per skill folder in step with it. The
+walk (:func:`skill_dirs`) finds the layouts the ecosystem uses, from
+``.claude/skills/<name>`` to ``skills/<name>``, ``plugins/<name>`` and a
+single skill at the root of its repository, so a public collection connected
+as a project (memory/skill_sources.py) comes in the same way.
+
+Every skill found is reviewed (memory/skill_review.py): flags for injection
+phrasing and the other shapes malicious skills take, the files an agent could
+run, and the license verdict. The review is stored on the entry, shown on the
+Skills page, counted by the doctor and never blocks the import.
 
 What a sync does, per skill folder found:
 
@@ -36,7 +45,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +73,10 @@ class ParsedSkill:
     body: str
     allowed_tools: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
+    # Spec fields kept as text: ``license`` decides whether the skill may be
+    # published (memory/skill_review.py), ``compatibility`` is shown as is.
+    license: str = ""
+    compatibility: str = ""
 
 
 def _as_list(value: Any) -> List[str]:
@@ -109,6 +122,8 @@ def parse_skill_md(text: str, *, fallback_name: str = "") -> ParsedSkill:
         body=body,
         allowed_tools=_as_list(meta.get("allowed-tools") or meta.get("allowed_tools")),
         tags=_as_list(meta.get("tags") or metadata.get("tags")),
+        license=" ".join(str(meta.get("license") or metadata.get("license") or "").split())[:200],
+        compatibility=" ".join(str(meta.get("compatibility") or "").split())[:500],
     )
 
 
@@ -118,6 +133,8 @@ def render_skill_md(procedure: Any) -> str:
     import yaml
 
     meta: Dict[str, Any] = {"name": procedure.name, "description": procedure.description}
+    if getattr(procedure, "license", None):
+        meta["license"] = procedure.license
     if getattr(procedure, "allowed_tools", None):
         meta["allowed-tools"] = " ".join(procedure.allowed_tools)
     if getattr(procedure, "tags", None):
@@ -149,6 +166,8 @@ class FoundSkill:
     resources: List[str]
     sha256: str
     error: Optional[str] = None
+    # memory/skill_review.py: flags, scripts, license verdict.
+    safety: Optional[Dict[str, Any]] = None
 
 
 def _list_resources(skill_dir: Path) -> List[str]:
@@ -186,17 +205,75 @@ def _folder_hash(skill_md: bytes, resources: List[str], skill_dir: Path) -> str:
     return digest.hexdigest()
 
 
+#: Folders a walk never enters: nothing in them is a skill of the repository,
+#: and some of them are huge.
+_SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
+              "dist", "build", ".next", ".cache", "target", ".tox", ".mypy_cache",
+              ".pytest_cache", "site-packages"}
+#: ``.github/plugins/<bundle>/skills/<name>/SKILL.md`` is five levels down;
+#: one more for a nested collection.
+MAX_WALK_DEPTH = 6
+MAX_WALK_DIRS = 20000
+MAX_SKILLS_PER_ROOT = 500
+
+
+def skill_dirs(root: Path, *, exclude: Iterable[Path] = ()) -> List[Path]:
+    """Every folder under ``root`` that holds a SKILL.md, in the layouts the
+    Agent Skills ecosystem uses: ``.claude/skills/<name>``, ``skills/<name>``,
+    ``plugins/<name>``, ``.github/plugins/<bundle>/skills/<name>`` and a
+    single skill at the root of its own repository. A bounded walk rather
+    than a list of layouts, so the next vendor's layout works too. Symlinked
+    folders are skipped (a loop, or a way out of the repository) and a skill
+    folder is not searched for skills inside it. ``exclude`` prunes folders
+    scanned as roots of their own."""
+    import os
+
+    excluded = {p.resolve() for p in exclude}
+    out: List[Path] = []
+    seen_dirs = 0
+    root_md = root / SKILL_FILE
+    if root_md.is_file() and not root_md.is_symlink():
+        out.append(root)
+    stack: List[tuple] = [(root, 0)]
+    while stack and seen_dirs < MAX_WALK_DIRS and len(out) < MAX_SKILLS_PER_ROOT:
+        current, depth = stack.pop()
+        try:
+            entries = sorted(os.scandir(current), key=lambda e: e.name, reverse=True)
+        except OSError:
+            continue
+        for entry in entries:
+            seen_dirs += 1
+            try:
+                if not entry.is_dir(follow_symlinks=False) or entry.is_symlink():
+                    continue
+            except OSError:
+                continue
+            if entry.name in _SKIP_DIRS:
+                continue
+            path = Path(entry.path)
+            if excluded and path.resolve() in excluded:
+                continue
+            md = path / SKILL_FILE
+            if md.is_file() and not md.is_symlink():
+                out.append(path)
+                continue
+            if depth + 1 < MAX_WALK_DEPTH:
+                stack.append((path, depth + 1))
+    return sorted(out)
+
+
 def discover(root: Path, ws_folder: Path, *, label: str = "",
-             project_id: Optional[str] = None) -> List[FoundSkill]:
-    """Every ``.claude/skills/<name>/SKILL.md`` under ``root``."""
-    skills_root = root / SKILLS_DIR
-    if not skills_root.is_dir() or skills_root.is_symlink():
+             project_id: Optional[str] = None,
+             exclude: Iterable[Path] = ()) -> List[FoundSkill]:
+    """Every skill folder under ``root`` (:func:`skill_dirs`), parsed and
+    reviewed (memory/skill_review.py)."""
+    from memory.skill_review import review_skill
+
+    if not root.is_dir() or root.is_symlink():
         return []
     found: List[FoundSkill] = []
-    for skill_dir in sorted(p for p in skills_root.iterdir() if p.is_dir() and not p.is_symlink()):
+    for skill_dir in skill_dirs(root, exclude=exclude):
         skill_md = skill_dir / SKILL_FILE
-        if not skill_md.is_file() or skill_md.is_symlink():
-            continue
         try:
             rel_dir = skill_dir.resolve().relative_to(ws_folder.resolve()).as_posix()
         except ValueError:
@@ -214,6 +291,16 @@ def discover(root: Path, ws_folder: Path, *, label: str = "",
                                               fallback_name=skill_dir.name)
             except SkillFormatError as e:
                 entry.error = str(e)
+        if entry.parsed is not None:
+            try:
+                entry.safety = review_skill(
+                    description=entry.parsed.description, body=entry.parsed.body,
+                    resources=resources, skill_dir=skill_dir,
+                    declared_license=entry.parsed.license)
+            except Exception:  # noqa: BLE001 - a review that fails must not hide the skill
+                log.warning("skill review failed for %s", skill_dir, exc_info=True)
+                entry.safety = {"severity": "none", "flags": [], "scripts": [],
+                                "error": "review failed"}
         found.append(entry)
     return found
 
@@ -278,7 +365,8 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None) -> Dict[
     from workspace import get_workspace_folder
 
     report: Dict[str, Any] = {"workspace": workspace, "added": [], "updated": [],
-                              "unchanged": [], "missing": [], "followed": [], "errors": []}
+                              "unchanged": [], "missing": [], "followed": [], "errors": [],
+                              "flagged": []}
     ws_folder = get_workspace_folder(workspace)
     if ws_folder is None:
         report["errors"].append({"dir": "", "error": f"workspace {workspace!r} has no folder"})
@@ -287,10 +375,25 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None) -> Dict[
     if project_id:
         roots = [r for r in roots if r[2] == project_id]
 
+    # Project roots first, so a skill inside a project is attributed to it;
+    # the walk from the workspace folder then skips those roots.
+    project_roots = [r for r in roots if r[2] is not None]
+    ordered = project_roots + [r for r in roots if r[2] is None]
     found: Dict[str, FoundSkill] = {}
-    for root, label, pid in roots:
-        for entry in discover(root, ws_folder, label=label, project_id=pid):
+    for root, label, pid in ordered:
+        exclude = [r[0] for r in project_roots] if pid is None else []
+        for entry in discover(root, ws_folder, label=label, project_id=pid, exclude=exclude):
             found.setdefault(entry.rel_dir, entry)
+
+    def _note_flagged(procedure: Any, safety: Optional[Dict[str, Any]]) -> None:
+        sev = (safety or {}).get("severity", "none")
+        if sev in ("medium", "high") or (safety or {}).get("license_open") is False:
+            report["flagged"].append({
+                "id": str(procedure.id), "name": procedure.name,
+                "dir": (procedure.repo or {}).get("dir", ""), "severity": sev,
+                "scripts": len((safety or {}).get("scripts") or []),
+                "license_open": (safety or {}).get("license_open"),
+            })
 
     store = ProcedureStore(workspace)
     existing = [p for p in store.load() if p.source == "repo" and not p.agent_id]
@@ -311,14 +414,23 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None) -> Dict[
                 name=entry.parsed.name, description=entry.parsed.description,
                 steps=[], body=entry.parsed.body, tags=entry.parsed.tags,
                 allowed_tools=entry.parsed.allowed_tools, resources=entry.resources,
+                license=entry.parsed.license, safety=entry.safety,
                 source="repo", agent_id="", workspace=workspace, repo=repo_meta,
             )
             store.add(procedure, version_op=sv.OP_IMPORT, version_note=f"from {rel_dir}")
             report["added"].append({"id": str(procedure.id), "name": procedure.name, "dir": rel_dir})
+            _note_flagged(procedure, entry.safety)
             continue
         was_missing = bool((current.repo or {}).get("missing"))
         if (current.repo or {}).get("sha256") == entry.sha256 and not was_missing:
+            # An entry synced by a build without the review gets one now,
+            # without that counting as a change to the skill.
+            if current.safety is None and entry.safety is not None:
+                current.safety = entry.safety
+                current.license = entry.parsed.license
+                store.update(current)
             report["unchanged"].append({"id": str(current.id), "name": current.name, "dir": rel_dir})
+            _note_flagged(current, current.safety)
             continue
         previous_version = current.version
         current.name = entry.parsed.name
@@ -327,11 +439,14 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None) -> Dict[
         current.tags = entry.parsed.tags
         current.allowed_tools = entry.parsed.allowed_tools
         current.resources = entry.resources
+        current.license = entry.parsed.license
+        current.safety = entry.safety
         current.repo = repo_meta
         current.touch()
         store.update(current, version_op=sv.OP_SYNC, version_note=f"from {rel_dir}")
         report["updated"].append({"id": str(current.id), "name": current.name, "dir": rel_dir,
                                   "version": current.version})
+        _note_flagged(current, entry.safety)
         if current.version != previous_version:
             report["followed"].extend(_follow_origin(store, current, previous_version))
 
@@ -387,6 +502,8 @@ def apply_origin_content(copy: Any, origin: Any) -> None:
     copy.tags = list(origin.tags)
     copy.allowed_tools = list(origin.allowed_tools)
     copy.resources = list(origin.resources)
+    copy.license = getattr(origin, "license", "") or ""
+    copy.safety = dict(origin.safety) if getattr(origin, "safety", None) else None
     copy.repo = dict(origin.repo) if origin.repo else None
     copy.origin_version = origin.version
     copy.touch()
@@ -445,6 +562,6 @@ def read_resource(procedure: Any, rel_path: str) -> str:
 
 __all__ = [
     "FoundSkill", "ParsedSkill", "SkillFormatError", "apply_origin_content", "discover",
-    "parse_skill_md", "read_resource", "render_skill_md", "skill_dir_for", "skill_roots",
-    "sync_workspace",
+    "parse_skill_md", "read_resource", "render_skill_md", "skill_dir_for", "skill_dirs",
+    "skill_roots", "sync_workspace",
 ]
