@@ -37,6 +37,7 @@ export const ROUTE_TITLES = [
   { match: /^\/services$/, titleKey: 'layout.titles.services' },
   { match: /^\/services\/.+$/, titleKey: 'layout.titles.serviceDetail' },
   { match: /^\/environments$/, titleKey: 'layout.titles.environments' },
+  { match: /^\/watchers$/, titleKey: 'layout.titles.watchers' },
   { match: /^\/guardrails$/, titleKey: 'layout.titles.guardrails' },
   { match: /^\/containers$/, titleKey: 'layout.titles.containers' },
   { match: /^\/browser$/, titleKey: 'layout.titles.browser' },

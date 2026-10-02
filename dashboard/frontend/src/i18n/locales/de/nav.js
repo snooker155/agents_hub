@@ -54,6 +54,7 @@ export default {
   health: 'Status',
   cluster: 'Cluster',
   connections: 'Verbindungen',
+  watchers: 'Watcher',
   connectors: 'Konnektoren',
   mcp: 'MCP-Server',
 };

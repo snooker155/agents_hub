@@ -6,61 +6,9 @@ import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
-import {
-  Waypoints,
-  LayoutDashboard,
-  CheckSquare,
-  LogOut,
-  UserCog,
-  KeyRound,
-  Folder,
-  Database,
-  Factory,
-  Wrench,
-  Users,
-  Activity,
-  PlayCircle,
-  MessageCircle,
-  MessageSquare,
-  ScrollText,
-  Settings,
-  Sun,
-  Moon,
-  Monitor,
-  Network,
-  Radio,
-  Pause,
-  Cpu,
-  ChevronDown,
-  FolderGit2,
-  Box,
-  Boxes,
-  WifiOff,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Store,
-  CalendarClock,
-  BookOpen,
-  Brain,
-  DollarSign,
-  Images,
-  FlaskConical,
-  Gamepad2,
-  Repeat,
-  UsersRound,
-  GraduationCap,
-  Globe,
-  Share2,
-  Link2,
-  Plug,
-  Layers,
-  Container,
-  Rocket,
-  ShieldCheck,
-  BadgeCheck,
-  MessageSquareCode,
-} from 'lucide-react';
+import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
@@ -334,6 +282,9 @@ const Layout = ({ children }) => {
         // reports in, or this service reaches out to a system you use.
         { name: t('nav.connections'), path: '/connections', icon: Share2 },
         { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
+        // Observers of outside state (a mailbox, an HTTP resource) that wake a
+        // proactive agent when something changes. See docs/watchers.md.
+        { name: t('nav.watchers'), path: '/watchers', icon: Eye },
         // A third way in, and the one that is not an integration this product
         // wrote: an MCP server hands over tools nobody here has seen, which is
         // why attaching one asks for a capability declaration. See docs/mcp.md.
@@ -603,6 +554,8 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            {/* Active watchers (docs/watchers.md): what is being observed right now */}
+            <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}

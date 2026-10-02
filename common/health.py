@@ -85,6 +85,12 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
         log.debug("plan_scheduler liveness check failed", exc_info=True)
         services["plan_scheduler"] = None
     try:
+        from watchers.runner import runner as _watchers
+        services["watchers"] = _watchers.is_running()
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("watchers liveness check failed", exc_info=True)
+        services["watchers"] = None
+    try:
         from managers.run_watchdog import watchdog
         services["run_watchdog"] = watchdog.is_running()
     except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"

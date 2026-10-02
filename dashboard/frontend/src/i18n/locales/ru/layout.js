@@ -69,6 +69,7 @@ export default {
     services: 'Сервисы',
     serviceDetail: 'Сервис',
     cluster: 'Кластер',
+    watchers: 'Вотчеры',
     environments: 'Окружения',
     guardrails: 'Guardrails',
     containers: 'Контейнеры',
