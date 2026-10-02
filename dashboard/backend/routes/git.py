@@ -1,9 +1,11 @@
 """
-Git connector API (GitHub / GitLab).
+Git connector API (GitHub / GitLab / Bitbucket Cloud / Gitea).
 
 Endpoints:
-- GET  /api/git/config   — { github: {has_token}, gitlab: {has_token, base_url} }
-- PUT  /api/git/config   — set/clear a provider token, set GitLab base_url
+- GET  /api/git/config   — per-provider public config (has_token flags, plus
+                           base_url for gitlab/gitea, username for bitbucket)
+- PUT  /api/git/config   — set/clear a provider token, set gitlab/gitea
+                           base_url, set the bitbucket username
 - POST /api/git/test     — verify the configured token, returns the login
 - GET  /api/git/repos    — list repos accessible with the configured token
 """
@@ -33,7 +35,8 @@ class GitConfigUpdate(BaseModel):
     provider: str
     token: Optional[str] = None   # write-only; None = keep existing
     clear_token: bool = False
-    base_url: Optional[str] = None  # gitlab only
+    base_url: Optional[str] = None  # gitlab, gitea
+    username: Optional[str] = None  # bitbucket
 
 
 class GitTestRequest(BaseModel):
@@ -58,8 +61,10 @@ async def update_config(payload: GitConfigUpdate):
         git_store.set_token(provider, "")
     elif payload.token is not None and payload.token.strip():
         git_store.set_token(provider, payload.token)
-    if payload.base_url is not None and provider == "gitlab":
-        git_store.set_base_url("gitlab", payload.base_url)
+    if payload.base_url is not None and provider in ("gitlab", "gitea"):
+        git_store.set_base_url(provider, payload.base_url)
+    if payload.username is not None and provider == "bitbucket":
+        git_store.set_username("bitbucket", payload.username)
     return git_store.public_config()
 
 

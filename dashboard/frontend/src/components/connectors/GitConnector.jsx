@@ -24,12 +24,17 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
   const { t } = useI18n();
   const [tokenInput, setTokenInput] = useState('');
   const [baseUrl, setBaseUrl] = useState(config.base_url || '');
+  const [username, setUsername] = useState(config.username || '');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState('');
 
+  // GitLab and Gitea take a base URL (self hosted); Bitbucket Cloud takes a
+  // username next to its app password.
   const isGitlab = provider === 'gitlab';
+  const hasBaseUrl = provider === 'gitlab' || provider === 'gitea';
+  const hasUsername = provider === 'bitbucket';
 
   const handleSave = async ({ clear_token } = {}) => {
     setSaving(true);
@@ -39,7 +44,8 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
       const payload = { provider };
       if (clear_token) payload.clear_token = true;
       else if (tokenInput.trim()) payload.token = tokenInput.trim();
-      if (isGitlab && baseUrl.trim()) payload.base_url = baseUrl.trim();
+      if (hasBaseUrl && baseUrl.trim()) payload.base_url = baseUrl.trim();
+      if (hasUsername && username.trim()) payload.username = username.trim();
       const { data } = await updateGitConfig(payload);
       setTokenInput('');
       onSaved(data);
@@ -68,16 +74,28 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
       <p className="text-sm text-gray-600">{hint}</p>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
 
-      {isGitlab && (
+      {hasBaseUrl && (
         <div>
           <label className="text-sm font-medium text-gray-700 mb-1 block">{t('settings.baseUrl')}</label>
-          <p className="text-xs text-gray-500 mb-1">{t('settings.changeForSelfHostedGitlab')}</p>
+          <p className="text-xs text-gray-500 mb-1">{isGitlab ? t('settings.changeForSelfHostedGitlab') : t('connectors.git.giteaBaseUrl')}</p>
           <input
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://gitlab.com"
+            placeholder={isGitlab ? 'https://gitlab.com' : 'https://gitea.example.com'}
             className={inputCls}
+          />
+        </div>
+      )}
+      {hasUsername && (
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">{t('connectors.git.username')}</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className={inputCls}
+            autoComplete="off"
           />
         </div>
       )}
@@ -98,7 +116,7 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
           <button
             type="button"
             onClick={() => handleSave({})}
-            disabled={saving || (!tokenInput.trim() && !isGitlab)}
+            disabled={saving || (!tokenInput.trim() && !hasBaseUrl && !hasUsername)}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
           >
             {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -139,7 +157,10 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
 export default function GitConnector() {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState({ github: { has_token: false }, gitlab: { has_token: false, base_url: 'https://gitlab.com' } });
+  const [config, setConfig] = useState({
+    github: { has_token: false }, gitlab: { has_token: false, base_url: 'https://gitlab.com' },
+    bitbucket: { has_token: false, username: '' }, gitea: { has_token: false, base_url: '' },
+  });
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -179,6 +200,20 @@ export default function GitConnector() {
         label={t('settings.gitlab')}
         hint={t('settings.usedToBrowseYourProjects')}
         config={config.gitlab || {}}
+        onSaved={setConfig}
+      />
+      <GitProviderSection
+        provider="bitbucket"
+        label={t('connectors.git.bitbucket')}
+        hint={t('connectors.git.bitbucketHint')}
+        config={config.bitbucket || {}}
+        onSaved={setConfig}
+      />
+      <GitProviderSection
+        provider="gitea"
+        label={t('connectors.git.gitea')}
+        hint={t('connectors.git.giteaHint')}
+        config={config.gitea || {}}
         onSaved={setConfig}
       />
     </div>

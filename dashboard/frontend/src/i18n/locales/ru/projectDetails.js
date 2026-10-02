@@ -130,4 +130,20 @@ export default {
     extractSpec: 'Не удалось извлечь спецификацию из кода',
     loadTasks: 'Не удалось загрузить задачи',
   },
+  tracker: {
+    title: "Трекер задач",
+    hint: "Отражать проект Jira или команду Linear как задачи этого проекта. Учётные данные задаются на",
+    connectors: "странице Коннекторы.",
+    saved: "Трекер сохранён.",
+    synced: "Синхронизировано: {{imported}} импортировано, {{updated}} обновлено, всего {{total}}.",
+    providers: {
+      none: "Без трекера",
+      jira: "Jira",
+      linear: "Linear",
+    },
+    remotePlaceholder: {
+      jira: "Ключ проекта, например PROJ",
+      linear: "Ключ команды, например ENG",
+    },
+  },
 };

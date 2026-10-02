@@ -72,7 +72,7 @@ INBOUND_SECRET_KEY = "notify_inbound_secret"
 ENDPOINT_KINDS = ("webhook", "slack")
 RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval",
               "slo_start_latency", "slo_error_rate")
-CHANNELS = ("dashboard", "telegram", "slack", "webhook")
+CHANNELS = ("dashboard", "telegram", "slack", "webhook", "discord", "teams", "mail")
 
 _MASK = "••••"
 

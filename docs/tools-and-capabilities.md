@@ -288,6 +288,29 @@ behaviour. It is a dashboard route, not an agent tool, so it carries no
 approval gate of its own, but it honours the view's own workspace scoping,
 mounting read-only exactly the way `mount_workspace` does here.
 
+## Connector tools
+
+Tools that integrate with external services come from [connectors](connectors.md),
+[channels](channels.md), [trackers](trackers.md) and [integrations](integrations.md).
+Each grants one or more capabilities: reading typically grants `reads_private`
+and `ingests_untrusted`, writing grants `can_exfiltrate`.
+
+| Connector | Tools | Grants |
+|---|---|---|
+| Chat channels | `channel_send` | `can_exfiltrate` |
+| Git | `git_publish` | `can_exfiltrate` |
+| Issue trackers (Jira, Linear) | `tracker_list_issues`, `tracker_get_issue`, `tracker_sync` | `reads_private`, `ingests_untrusted` |
+| | `tracker_comment`, `tracker_transition`, `tracker_create_issue` | `can_exfiltrate` |
+| Google Workspace | `google_drive_search`, `google_drive_import`, `google_sheets_read`, `google_calendar_list` | `reads_private`, `ingests_untrusted` |
+| | `google_sheets_append`, `google_docs_create`, `google_calendar_create` | `can_exfiltrate` |
+| Microsoft Graph | `outlook_calendar_list` | `reads_private`, `ingests_untrusted` |
+| | `outlook_calendar_create` | `can_exfiltrate` |
+| Notion | `notion_search`, `notion_read_page`, `notion_import` | `reads_private`, `ingests_untrusted` |
+| | `notion_create_page`, `notion_append` | `can_exfiltrate` |
+| Confluence | `confluence_search`, `confluence_read_page`, `confluence_import` | `reads_private`, `ingests_untrusted` |
+| | `confluence_create_page` | `can_exfiltrate` |
+| Databases | `db_list_connections`, `db_schema`, `db_query` | `reads_private` |
+
 ## Group aliases
 
 A tool list may name a group (`filesystem`, `task_management`, `service_ops`,
@@ -307,4 +330,10 @@ you agree. A workspace can also *enforce* it, holding a destructive call until a
 person answers on the task page, and run its own code around every tool call.
 See [hooks](hooks.md).
 
-Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md).
+A [proactive agent](proactive.md)'s profile is checked the same way: a
+webhook, Telegram or file trigger counts as ingesting untrusted content, a
+delivery channel other than the inbox as sending data outside. `wake_agent`
+grants nothing: it nudges another agent's pulse and gets only an
+acknowledgement back.
+
+Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md), [proactive](proactive.md).

@@ -373,11 +373,11 @@ def _agent_management_specs() -> List[ToolSpec]:
 def _schedule_management_specs() -> List[ToolSpec]:
     from tools.schedule_management import (
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
     )
     tools = [
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
     ]
     return [spec_from_tool(t, category="schedule_management") for t in tools]
 
@@ -508,6 +508,15 @@ def _documentation_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="documentation") for t in DOCS_TOOLS]
 
 
+def _connector_specs() -> List[ToolSpec]:
+    # Tools that act through a connector (tools/connector_tools.py): a chat
+    # channel, an issue tracker, Google Workspace, Microsoft Graph, Notion,
+    # Confluence, a read-only database. One category, "connectors", because
+    # each is only as available as the connector it sits on.
+    from tools.connector_tools import connector_tools
+    return [spec_from_tool(t, category="connectors") for t in connector_tools()]
+
+
 def _geometry_specs() -> List[ToolSpec]:
     from tools.geometry import GEOMETRY_TOOLS, create_geometry_tools
     tools = [*GEOMETRY_TOOLS, *create_geometry_tools(None)]
@@ -545,6 +554,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _evals_specs,
     _documentation_specs,
     _geometry_specs,
+    _connector_specs,
 ]
 
 

@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Boxes, GitBranch, Link2, Send, Webhook } from 'lucide-react';
+import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
+import ChannelConnector from '../components/connectors/ChannelConnector';
+import DatabasesConnector from '../components/connectors/DatabasesConnector';
+import GoogleConnector from '../components/connectors/GoogleConnector';
+import KnowledgeConnector from '../components/connectors/KnowledgeConnector';
+import MicrosoftConnector from '../components/connectors/MicrosoftConnector';
+import TrackersConnector from '../components/connectors/TrackersConnector';
 import GitConnector from '../components/connectors/GitConnector';
 import TelegramConnector from '../components/connectors/TelegramConnector';
 import WebhooksConnector from '../components/connectors/WebhooksConnector';
@@ -21,9 +27,22 @@ import { useI18n } from '../i18n';
  * which is not where anyone looked for them.
  */
 
+// The chat channels after Telegram share one component and one API
+// (components/connectors/ChannelConnector.jsx, routes/channels.py).
+const channel = (id, icon) => ({ id, icon, Component: () => <ChannelConnector name={id} /> });
+
 const TABS = [
   { id: 'telegram', icon: Send, Component: TelegramConnector },
+  channel('slack', Hash),
+  channel('discord', MessageCircle),
+  channel('teams', Users),
+  channel('mail', Mail),
   { id: 'git', icon: GitBranch, Component: GitConnector },
+  { id: 'trackers', icon: Ticket, Component: TrackersConnector },
+  { id: 'google', icon: Calendar, Component: GoogleConnector },
+  { id: 'microsoft', icon: Calendar, Component: MicrosoftConnector },
+  { id: 'knowledge', icon: BookOpen, Component: KnowledgeConnector },
+  { id: 'databases', icon: Database, Component: DatabasesConnector },
   { id: 'blender', icon: Boxes, Component: BlenderConnector },
   { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
 ];

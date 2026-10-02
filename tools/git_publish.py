@@ -180,14 +180,14 @@ def run_git_publish(
         return _err(f"Repo directory not found for project {proj.name!r}. Clone it first.", code="not_found")
 
     provider_name = str(getattr(proj.repo.type, "value", proj.repo.type) or "")
-    has_provider = provider_name in ("github", "gitlab")
+    has_provider = provider_name in ("github", "gitlab", "bitbucket", "gitea")
 
-    # A GitHub/GitLab project opens a pull/merge request, so it needs the
-    # remote resolved to an owner/repo and a working provider client before
-    # anything touches the working tree. Anything else (a plain git remote,
-    # bitbucket, a repo attached with no provider at all) still gets to push:
-    # it just cannot ask a provider API to open a request afterwards, so the
-    # reduced path below only ever commits and pushes.
+    # A project on one of the four providers opens a pull/merge request, so
+    # it needs the remote resolved to an owner/repo and a working provider
+    # client before anything touches the working tree. Anything else (a
+    # plain git remote, a repo attached with no provider at all) still gets
+    # to push: it just cannot ask a provider API to open a request
+    # afterwards, so the reduced path below only ever commits and pushes.
     provider = None
     remote_id = None
     repo_default: Optional[str] = None
@@ -272,13 +272,15 @@ def run_git_publish(
     if open_pr:
         pr_body = body.strip() or _build_body(task_ctx)
         try:
-            if provider_name == "github":
-                pr = provider.create_pull_request(
+            if provider_name == "gitlab":
+                pr = provider.create_merge_request(
                     remote_id, title=title, body=pr_body, head=branch_name,
                     base=target_base, draft=draft,
                 )
             else:
-                pr = provider.create_merge_request(
+                # github, bitbucket, gitea all open through create_pull_request
+                # with the identical call shape.
+                pr = provider.create_pull_request(
                     remote_id, title=title, body=pr_body, head=branch_name,
                     base=target_base, draft=draft,
                 )

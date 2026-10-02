@@ -1382,6 +1382,31 @@ export const connectGitHub = () =>
 // calls the import dialog already makes for a repository.
 export const getAgentImportPresets = () => api.get('/agent-import/presets');
 
+// Chat channels (Slack, Discord, Teams, mail): one API for every registered
+// channel, routes/channels.py. Telegram keeps its own routes above.
+export const listChannels = () => api.get('/channels');
+export const getChannelConfig = (name) => api.get(`/channels/${name}/config`);
+export const updateChannelConfig = (name, data) => api.put(`/channels/${name}/config`, data);
+export const testChannel = (name) => api.post(`/channels/${name}/test`);
+export const getChannelStatus = (name) => api.get(`/channels/${name}/status`);
+export const getChannelBindings = (name) => api.get(`/channels/${name}/bindings`);
+export const createChannelBinding = (name, data) => api.post(`/channels/${name}/bindings`, data);
+export const deleteChannelBinding = (name, chatKey) =>
+  api.delete(`/channels/${name}/bindings/${encodeURIComponent(chatKey)}`);
+export const sendChannelMessage = (name, chatKey, text) =>
+  api.post(`/channels/${name}/send`, { chat_key: chatKey, text });
+
+// Credential connectors (Jira, Linear, Google, Microsoft, Notion,
+// Confluence): one API for every registered one, routes/connectors.py.
+export const listConnectors = () => api.get('/connectors');
+export const getConnectorConfig = (name) => api.get(`/connectors/${name}/config`);
+export const updateConnectorConfig = (name, data) => api.put(`/connectors/${name}/config`, data);
+export const testConnector = (name) => api.post(`/connectors/${name}/test`);
+// Google OAuth (routes/google.py): the start URL is opened in the browser,
+// the callback stores the refresh token, disconnect clears it.
+export const googleOAuthStartUrl = () => `${API_ORIGIN}/api/google/oauth/start`;
+export const disconnectGoogle = () => api.post('/google/oauth/disconnect');
+
 export default api;
 
 // Online evals and A/B experiments of an agent (routes/agents.py,

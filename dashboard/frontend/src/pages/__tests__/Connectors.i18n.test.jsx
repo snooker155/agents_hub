@@ -42,6 +42,29 @@ vi.mock('../../api', () => ({
   syncGitHubApp: () => ok({ installations: [] }),
   setWorkspaceGitHubInstallation: () => ok({}),
   getWorkspaces: () => ok([]),
+  getAgents: () => ok([]),
+  listFlows: () => ok([]),
+  // The generic chat channels and credential connectors.
+  listChannels: () => ok([{ name: 'slack', fields: [{ key: 'bot_token', secret: true, kind: 'password', required: true, options: [] }], has_loop: true }]),
+  getChannelConfig: () => ok({ config: { has_bot_token: false }, enabled: false, configured: false, allowed: [], running: false, has_loop: true }),
+  updateChannelConfig: () => ok({}),
+  testChannel: () => ok({ ok: true }),
+  getChannelStatus: () => ok({ running: false }),
+  getChannelBindings: () => ok([]),
+  createChannelBinding: () => ok({}),
+  deleteChannelBinding: () => ok({}),
+  listConnectors: () => ok([{ name: 'jira', fields: [{ key: 'base_url', secret: false, kind: 'text', required: true, options: [] }] }]),
+  getConnectorConfig: () => ok({ config: {}, configured: false }),
+  updateConnectorConfig: () => ok({}),
+  testConnector: () => ok({ ok: true }),
+  googleOAuthStartUrl: () => '/api/google/oauth/start',
+  disconnectGoogle: () => ok({}),
+}));
+vi.mock('../../api/databases', () => ({
+  listDbConnections: () => ok([]),
+  createDbConnection: () => ok({}),
+  deleteDbConnection: () => ok({}),
+  testDbConnection: () => ok({ ok: true }),
 }));
 
 const EVIDENCE = {
@@ -49,7 +72,9 @@ const EVIDENCE = {
   de: /\b(der|die|das|und|ein|eine|mit|für)\b/,
 };
 
-const TABS = ['Telegram', 'GitHub', 'Blender'];
+// [label, index in the tab strip]: Telegram, the four chat channels, git, the
+// trackers, Microsoft, Blender, webhooks.
+const TABS = [['Telegram', 0], ['Slack', 1], ['Discord', 2], ['Teams', 3], ['Mail', 4], ['GitHub', 5], ['Trackers', 6], ['Google', 7], ['Microsoft', 8], ['Knowledge', 9], ['Databases', 10], ['Blender', 11]];
 
 function show() {
   return render(
@@ -64,13 +89,13 @@ describe('Connectors', () => {
 
   for (const lang of ['en', 'ru', 'de']) {
     describe(lang, () => {
-      for (const [index, tab] of TABS.entries()) {
+      for (const [tab, index] of TABS) {
         it(`renders the ${tab} connector with no unresolved keys`, async () => {
           localStorage.setItem('agents_hub_language', lang);
           const { container, unmount } = show();
 
           const buttons = container.querySelectorAll('nav ~ div button, button');
-          // The tab strip is the first three buttons on the page.
+          // The tab strip is the first buttons on the page, in TABS order.
           buttons[index].click();
 
           await waitFor(() => expect(container.querySelector('section')).toBeTruthy());

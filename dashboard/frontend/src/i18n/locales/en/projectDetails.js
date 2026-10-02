@@ -130,4 +130,20 @@ export default {
     extractSpec: 'Failed to extract spec from code',
     loadTasks: 'Failed to load tasks',
   },
+  tracker: {
+    title: "Issue tracker",
+    hint: "Mirror a Jira project or a Linear team as tasks of this project. Credentials are set on",
+    connectors: "the Connectors page.",
+    saved: "Tracker saved.",
+    synced: "Synced: {{imported}} imported, {{updated}} updated, {{total}} issues.",
+    providers: {
+      none: "No tracker",
+      jira: "Jira",
+      linear: "Linear",
+    },
+    remotePlaceholder: {
+      jira: "Project key, e.g. PROJ",
+      linear: "Team key, e.g. ENG",
+    },
+  },
 };

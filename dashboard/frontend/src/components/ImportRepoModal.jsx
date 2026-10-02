@@ -5,6 +5,10 @@ import { getGitConfig, listGitRepos, importProjectFromRepo, connectProjectRepo }
 import { useI18n } from '../i18n';
 import PageLoader from './PageLoader';
 
+// The git providers the Connectors page can hold a token for (connectors/git/store.py).
+const PROVIDERS = ['github', 'gitlab', 'bitbucket', 'gitea'];
+const PROVIDER_LABELS = { github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket', gitea: 'Gitea' };
+
 const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none";
 
 /**
@@ -35,7 +39,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       try {
         const { data } = await getGitConfig();
         setGitConfig(data);
-        const first = ['github', 'gitlab'].find((p) => data[p]?.has_token);
+        const first = PROVIDERS.find((p) => data[p]?.has_token);
         if (first) setProvider(first);
       } catch (e) {
         setError(e.response?.data?.detail || e.message);
@@ -105,7 +109,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
     }
   };
 
-  const availableProviders = ['github', 'gitlab'].filter((p) => gitConfig?.[p]?.has_token);
+  const availableProviders = PROVIDERS.filter((p) => gitConfig?.[p]?.has_token);
   const canSubmit = selectedRepo && !submitting && (mode === 'connect' || workspace);
 
   return (
@@ -140,8 +144,8 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
                       provider === p ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    {p === 'github' ? <Github className="w-4 h-4" /> : <Gitlab className="w-4 h-4" />}
-                    {p === 'github' ? 'GitHub' : 'GitLab'}
+                    {p === 'github' ? <Github className="w-4 h-4" /> : p === 'gitlab' ? <Gitlab className="w-4 h-4" /> : <GitBranch className="w-4 h-4" />}
+                    {PROVIDER_LABELS[p]}
                   </button>
                 ))}
               </div>

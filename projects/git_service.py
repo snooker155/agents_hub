@@ -47,7 +47,7 @@ def repo_provider(project) -> Optional[str]:
     is one a provider is registered for."""
     repo_type = str(project.repo.type.value if hasattr(project.repo.type, "value")
                     else project.repo.type)
-    return repo_type if repo_type in ("github", "gitlab") else None
+    return repo_type if repo_type in ("github", "gitlab", "bitbucket", "gitea") else None
 
 
 def run_issue_sync(project) -> Dict[str, Any]:

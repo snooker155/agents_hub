@@ -7,12 +7,17 @@ key ``"state"`` (store name ``"git_connectors"``), shaped like the old
 
     {
         "github": {"token": "<secret, never returned to the UI>"},
-        "gitlab": {"token": "<secret>", "base_url": "https://gitlab.com"}
+        "gitlab": {"token": "<secret>", "base_url": "https://gitlab.com"},
+        "bitbucket": {"token": "<secret, an app password>", "username": "..."},
+        "gitea": {"token": "<secret>", "base_url": "https://git.example.com"}
     }
 
 Tokens are write-only from the API perspective — callers see only
-`has_token: bool`. The GitLab base URL is configurable for self-hosted
-instances.
+`has_token: bool`. The GitLab and Gitea base URLs are configurable for
+self-hosted instances. Bitbucket Cloud authenticates with basic auth
+(username plus app password, or an API token with an email as the
+username), so it carries a username alongside its token instead of a base
+URL.
 
 Every setter below is a read-modify-write inside ``store.transaction()``,
 atomic across every process and host, in place of the file lock this used to
@@ -30,7 +35,7 @@ from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
 
 
-PROVIDERS = ("github", "gitlab")
+PROVIDERS = ("github", "gitlab", "bitbucket", "gitea")
 
 DEFAULT_GITLAB_BASE_URL = "https://gitlab.com"
 
@@ -50,6 +55,8 @@ def _default_state() -> dict[str, Any]:
     return {
         "github": {"token": ""},
         "gitlab": {"token": "", "base_url": DEFAULT_GITLAB_BASE_URL},
+        "bitbucket": {"token": "", "username": ""},
+        "gitea": {"token": "", "base_url": ""},
     }
 
 
@@ -100,7 +107,10 @@ def get_config(provider: str) -> dict[str, Any]:
 
 #: The environment variable a run's own token arrives in (common/secrets.py
 #: hands workspace secrets to a run under their names).
-TOKEN_ENV = {"github": "GITHUB_TOKEN", "gitlab": "GITLAB_TOKEN"}
+TOKEN_ENV = {
+    "github": "GITHUB_TOKEN", "gitlab": "GITLAB_TOKEN",
+    "bitbucket": "BITBUCKET_TOKEN", "gitea": "GITEA_TOKEN",
+}
 
 
 def _run_token(provider: str) -> str:
@@ -143,6 +153,8 @@ def has_token(provider: str) -> bool:
 def get_base_url(provider: str) -> str:
     if provider == "gitlab":
         return str(get_config("gitlab").get("base_url") or DEFAULT_GITLAB_BASE_URL).rstrip("/")
+    if provider == "gitea":
+        return str(get_config("gitea").get("base_url") or "").rstrip("/")
     return "https://github.com"
 
 
@@ -157,13 +169,33 @@ def set_token(provider: str, token: str | None) -> None:
 
 
 def set_base_url(provider: str, base_url: str | None) -> None:
-    if provider != "gitlab":
-        raise ValueError("base_url is only configurable for gitlab")
+    if provider not in ("gitlab", "gitea"):
+        raise ValueError("base_url is only configurable for gitlab and gitea")
     _ensure_legacy_imported()
     with _store.transaction():
         data = _coerce(_store.get(_STATE_KEY))
-        data["gitlab"]["base_url"] = (base_url or DEFAULT_GITLAB_BASE_URL).strip().rstrip("/")
+        if provider == "gitlab":
+            data["gitlab"]["base_url"] = (base_url or DEFAULT_GITLAB_BASE_URL).strip().rstrip("/")
+        else:
+            data["gitea"]["base_url"] = (base_url or "").strip().rstrip("/")
         _store.put(_STATE_KEY, data)
+
+
+def set_username(provider: str, username: str | None) -> None:
+    """Set the Bitbucket basic-auth username (paired with its app password)."""
+    if provider != "bitbucket":
+        raise ValueError("username is only configurable for bitbucket")
+    _ensure_legacy_imported()
+    with _store.transaction():
+        data = _coerce(_store.get(_STATE_KEY))
+        data["bitbucket"]["username"] = (username or "").strip()
+        _store.put(_STATE_KEY, data)
+
+
+def get_username(provider: str) -> str:
+    if provider != "bitbucket":
+        return ""
+    return str(get_config("bitbucket").get("username") or "").strip()
 
 
 def public_config() -> dict[str, Any]:
@@ -174,5 +206,13 @@ def public_config() -> dict[str, Any]:
         "gitlab": {
             "has_token": bool(str(state["gitlab"].get("token") or "").strip()),
             "base_url": str(state["gitlab"].get("base_url") or DEFAULT_GITLAB_BASE_URL),
+        },
+        "bitbucket": {
+            "has_token": bool(str(state["bitbucket"].get("token") or "").strip()),
+            "username": str(state["bitbucket"].get("username") or ""),
+        },
+        "gitea": {
+            "has_token": bool(str(state["gitea"].get("token") or "").strip()),
+            "base_url": str(state["gitea"].get("base_url") or ""),
         },
     }

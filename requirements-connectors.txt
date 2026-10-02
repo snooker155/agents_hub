@@ -1,0 +1,12 @@
+# Drivers and SDKs the connectors use (docs/integrations.md): the MySQL and
+# ClickHouse clients for the read-only database connections, msal for the
+# Microsoft Graph and Teams app tokens, google-auth for a Google service
+# account's JWT grant. Each is imported lazily by its connector, so a host
+# install without this file still runs and the tool reports the missing
+# driver. Installed in the backend image unconditionally; on a host install
+# add it with `pip install -r requirements-connectors.txt` or
+# `pip install -e ".[connectors]"`.
+pymysql>=1.1,<2
+clickhouse-connect>=0.7,<1
+msal>=1.28,<2
+google-auth>=2.30,<3

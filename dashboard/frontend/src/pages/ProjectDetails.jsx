@@ -8,6 +8,7 @@ import {
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
 import DeployPanel from '../components/projects/DeployPanel';
+import TrackerCard from '../components/projects/TrackerCard';
 import ProjectGraph from '../components/flow/ProjectGraph';
 import PlannerChat from '../components/flow/PlannerChat';
 import TaskBoard from '../components/TaskBoard';
@@ -297,7 +298,7 @@ export default function ProjectDetails() {
     }
   };
 
-  const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
+  const isConnectedRepo = ['github', 'gitlab', 'bitbucket', 'gitea'].includes(project?.repo?.type) && project?.repo?.remote_id;
   // A repo attached with a remote but no GitHub/GitLab provider still has
   // somewhere to push; it just cannot open a pull/merge request, so the
   // publish modal offers a reduced, push-only path instead of hiding the
@@ -845,6 +846,8 @@ export default function ProjectDetails() {
               }`}>{gitMsg}</div>
             )}
           </div>
+
+          <TrackerCard projectId={project.id} />
 
           {gitLoading ? (
             <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />

@@ -45,9 +45,10 @@ The Connectors page offers both as a checkbox pair when adding an endpoint.
 
 A notification's channels decide which side channels fire: `create_notification`
 (the same call the inbox uses) accepts `channels` including `"telegram"`,
-`"slack"` and `"webhook"`, and fans out to every enabled endpoint of that kind.
-An [alert rule](#alert-rules)'s own `channels` field is what a fired rule
-passes through.
+`"slack"`, `"discord"`, `"teams"`, `"mail"` and `"webhook"`, and fans out to
+every enabled endpoint of that kind. An [alert rule](#alert-rules)'s own
+`channels` field is what a fired rule passes through. For Slack, the same field
+reaches both incoming webhook endpoints and the chats bound to the Slack bot.
 
 ### The event shape
 
@@ -187,6 +188,9 @@ The same scheme protects three inbound webhooks this hub accepts:
   otherwise.
 - **POST `/api/webhooks/tasks`** — see below. This one has no "open" fallback:
   a workspace with no inbound secret configured cannot be posted to at all.
+- **POST `/api/webhooks/agents/{id}/wake`** — wakes a [proactive
+  agent](proactive.md) with an event. Signed and fail-closed like the task
+  webhook; the agent must have a `webhook` trigger on its profile.
 
 All three verify the signature the same way outbound deliveries produce it,
 and reject a repeated `X-AgentsHub-Delivery` with `409` for 24 hours. A
@@ -243,4 +247,4 @@ action). The response is the created task, in the same shape
   once its window has passed; idempotency here is about a retry or a flaky
   network landing twice, not a permanent id registry.
 
-Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [instances](instances.md), [flows](flows.md), [audit](audit.md).
+Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [instances](instances.md), [flows](flows.md), [audit](audit.md), [proactive](proactive.md).

@@ -29,6 +29,9 @@ OLD_CATEGORIES = {
     "schedule_management", "service_ops", "system_ops", "task_management",
     "team_management",
     "visualization", "web", "world_management",
+    # tools/connector_tools.py (chat channels, trackers, Google, Microsoft,
+    # Notion, Confluence, databases)
+    "connectors",
 }
 
 # Size of the old, hand-written catalog (143 literal entries + 17 generated
@@ -83,7 +86,7 @@ def _tool_objects_by_id() -> dict:
     from tools.eval_ops import EVAL_TOOLS
     from tools.schedule_management import (
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
     )
     from tools.web import WEB_TOOLS
     from tools.browser import BROWSER_TOOLS
@@ -95,6 +98,7 @@ def _tool_objects_by_id() -> dict:
     )
     from memory.knowledge_extract import create_extraction_tools
     from tools.workspace_files import WORKSPACE_FILE_TOOLS
+    from tools.connector_tools import connector_tools
 
     tools = [
         calculator, run_shell, ask_user, think,
@@ -116,13 +120,14 @@ def _tool_objects_by_id() -> dict:
         *PROJECT_MANAGEMENT_TOOLS,
         *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
         *WEB_TOOLS, *BROWSER_TOOLS, run_code,
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,
         append_journal_tool,
         *create_extraction_tools("__test__"),
         *WORKSPACE_FILE_TOOLS,
+        *connector_tools(),
     ]
     return {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}
 
