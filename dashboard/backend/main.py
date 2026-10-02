@@ -46,6 +46,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
+from routes import channels as channels_router
+from routes import connectors as connectors_router
+from routes import slack as slack_router
+from routes import teams_channel as teams_channel_router
+from routes import trackers as trackers_router
+from routes import google as google_router
+from routes import databases as databases_router
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
@@ -111,8 +118,18 @@ async def lifespan(app: FastAPI):
     try:
         from common.singletons import supervisor as _supervisor, telegram_service
         _supervisor.add(telegram_service())
+        # Every registered chat channel (connectors/channels/registry.py) is a
+        # leased service of the same shape as the Telegram poller.
+        try:
+            from connectors.channels import registry as _channels
+            from connectors.channels.service import leased_service as _leased
+            for _spec in _channels.all_channels():
+                if _spec.has_loop:
+                    _supervisor.add(_leased(_spec.service))
+        except Exception as e:  # noqa: BLE001 - channels are optional
+            log.warning(f"⚠ Chat channels not registered: {e}")
         await _supervisor.start()
-        log.info("✓ Singleton supervisor started (telegram, online_evals)")
+        log.info("✓ Singleton supervisor started (telegram, channels, online_evals)")
     except Exception as e:
         log.warning(f"⚠ Could not start the singleton supervisor: {e}")
 
@@ -156,6 +173,15 @@ async def lifespan(app: FastAPI):
         log.info("✓ Plan scheduler started")
     except Exception as e:
         log.warning(f"⚠ Could not start plan scheduler: {e}")
+
+    # Start the watcher runner (polls mailboxes and HTTP resources, wakes the
+    # proactive agents listening; one replica through the "watchers" lease).
+    try:
+        from watchers.runner import runner as _watcher_runner
+        await _watcher_runner.start()
+        log.info("✓ Watcher runner started")
+    except Exception as e:
+        log.warning(f"⚠ Could not start the watcher runner: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
     # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
@@ -241,6 +267,11 @@ async def lifespan(app: FastAPI):
     try:
         from common.broker_bridge import stop_bridge
         await stop_bridge()
+    except Exception:
+        pass
+    try:
+        from watchers.runner import runner as _watcher_runner
+        await _watcher_runner.stop()
     except Exception:
         pass
     try:
@@ -664,10 +695,15 @@ from routes import (
     guardrails as guardrails_router,
     agent_loop_settings as agent_loop_settings_router,
     memory_versions as memory_versions_router,
+    agent_proactive as agent_proactive_router,
 )
 for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
-                     agent_loop_settings_router, memory_versions_router):
+                     agent_loop_settings_router, memory_versions_router, agent_proactive_router):
     app.include_router(_loop_router.router)
+
+# Watchers (watchers/, docs/watchers.md): observers that wake a proactive agent.
+from routes import watchers as watchers_router
+app.include_router(watchers_router.router)
 
 # Fourth-cycle stage 3: files a workspace keeps by id (chat, memory, tasks and
 # evals reuse them), and the chat widget an outside site embeds with one tag.
@@ -707,6 +743,13 @@ app.include_router(settings_router.router)
 
 # Telegram domain: bot config, bindings, and outbound message proxy
 app.include_router(telegram.router)
+app.include_router(channels_router.router)
+app.include_router(connectors_router.router)
+app.include_router(slack_router.router)
+app.include_router(teams_channel_router.router)
+app.include_router(trackers_router.router)
+app.include_router(google_router.router)
+app.include_router(databases_router.router)
 
 # Git connectors domain: GitHub/GitLab tokens, repo browsing
 app.include_router(git.router)

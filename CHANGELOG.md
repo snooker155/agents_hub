@@ -15,6 +15,93 @@ turns that section into the next release.
 
 ### Added
 
+- `ah setup` (also `ah onboard`), a guided install and configuration in the
+  terminal (`cli/onboard/`, docs/installation.md "Guided setup"): how the hub
+  runs (this checkout, Docker from the published images, Compose from the
+  checkout, or a hub elsewhere), the database (SQLite, Postgres started in
+  Docker or in the stack, or an existing one, with the SQLite state copied
+  across), who signs in (the first administrator and further accounts, a
+  generated token, single sign-on), providers checked against their model
+  lists with balanced, strongest and fastest presets for the default model,
+  and features. Nothing is written before a review; the chosen models land
+  in the Models catalog, accounts are created in the database or through the
+  API of a freshly started stack, and `ah` can be pointed at that stack with
+  a personal key. `--answers FILE` runs it unattended, `--dry-run` stops at
+  the review. `install.sh` runs it on a first install from a terminal
+  (`--setup`, `--no-setup`). The quickstart compose file gained an optional
+  `postgres` profile, and the backend in both compose files waits for the
+  bundled Postgres when that profile is on.
+
+- Skill sources and a safety review (`memory/skill_sources.py`,
+  `memory/skill_review.py`, docs/skills.md). **Sources** on the Skills page
+  lists public repositories of Agent Skills whose license was checked
+  (Anthropic, Sentry, Hugging Face, Microsoft, Trail of Bits, Expo,
+  Cloudflare, one community collection); **Connect** clones one as a project
+  of the workspace and syncs its skills, and any https repository on
+  github.com, gitlab.com or bitbucket.org can be connected by URL
+  (`GET/POST /api/skills/sources`). The skill sync now walks a repository
+  for every folder holding a SKILL.md (`.claude/skills`, `skills/`,
+  `plugins/`, `.github/plugins/*/skills/`, a skill at the repository root)
+  instead of one fixed path. Every skill synced from a repository or
+  imported as text is reviewed: flags for injection phrasing, data sent out,
+  installers piped to a shell, disabled permissions, base64 that gets
+  executed, credential paths, agent configuration writes, downloads and
+  unpinned dependencies; the files an agent could run, with opaque binaries
+  as a high flag; and the `license` field (or a LICENSE file) classified as
+  open or not. The card shows the flags, the scripts and the license, the
+  sync report lists `flagged`, a skill whose license is not open cannot be
+  published (409 on **Publish** and on the registry's submit), and the
+  doctor's new `skills` check warns while an attached skill carries a high
+  flag. Skills carry `license`, `publishable` and `safety` in the API.
+- Proactive agents (`proactive/`, docs/proactive.md): an agent record carries
+  a `proactive` profile (schedule as an interval or cron with a timezone,
+  quiet hours, a daily budget and a tick limit, a brief, delivery channels),
+  edited on the **Pulse** card of the agent page's Config tab or through
+  `GET/PUT /api/agents/{id}/proactive`. Switching it on creates one scheduled
+  job of the new kind `heartbeat`, owned by the profile. A tick checks the
+  quiet hours, the day's budget and tick count and whether the previous tick
+  is still running, then runs as an ordinary task of the agent with a
+  structured answer (`acted`, `quiet`, `blocked`, plus a summary and the next
+  check) that is written back onto the firing journal row with the tick's
+  cost. An acted tick is delivered to the inbox and the profile's channels, a
+  blocked one once per reason, a quiet one never. The agent's primary memory
+  pool gets a `heartbeat` core block rewritten after every tick, failed runs
+  feed the scheduler's auto pause, and acted ticks are audited. The Pulse card
+  shows the state, today's usage, pause, resume and wake now, and the tick
+  feed with quiet ticks folded into one row.
+- Watchers (`watchers/`, docs/watchers.md): observers of outside state that
+  wake a proactive agent when something changes, without running a model. Two
+  kinds, a mailbox over IMAP (new messages, with sender and subject filters,
+  the password in a workspace secret) and an HTTP resource (the body or one
+  JSON field, public hosts only). Each polls on its own interval from a leased
+  runner next to the plan scheduler, takes a baseline on its first look,
+  pauses itself after repeated failures, and hands its events to the agents
+  whose pulse lists it as a `watch` trigger. A **Watchers** page under Connect
+  with create, edit, pause, a dry-run test and a poll ahead of schedule
+  (`/api/watchers`), and an indicator in the header listing the active
+  watchers, their last check and the agents they wake.
+- Triggers besides the clock for a proactive agent (`proactive/events.py`,
+  docs/proactive.md "Triggers"): a signed `POST /api/webhooks/agents/{id}/wake`,
+  a workspace file added or rewritten, a task status change, an eval run with
+  failures, an unanswered Telegram message, and the new `wake_agent` tool for
+  other agents. Events join the heartbeat job's `pending_events` and pull its
+  next tick to within a batching window (`AGENTS_HUB_HEARTBEAT_EVENT_WINDOW_SECONDS`,
+  30 s), so several events become one tick that lists them all; the gates,
+  quiet hours and pauses apply as for a scheduled tick. The Pulse card edits
+  the triggers and shows the waiting events.
+- A proactive profile with an untrusted trigger (webhook, Telegram, file) is
+  checked by the capability guard like a tool list, and its ticks run with
+  the agent's outbound tools on `always_ask` through a per-run tool policy
+  (`--tool-policy`, folded into the spec for that build alone).
+- A **Pulse** card on the Dashboard (`GET /api/proactive/summary`), the
+  journal compaction of quiet ticks older than `AGENTS_HUB_HEARTBEAT_COMPACT_DAYS`
+  (7) into counted rows in the daily maintenance sweep, audit rows for every
+  profile change and acted tick, and a pulse on the demo's `demo_support`
+  with a seeded tick history.
+- A per-run answer schema: `agent_launcher.start_run` takes
+  `output_schema` in its params and the task runner's `--output-schema` folds
+  it into the agent's spec for that build alone.
+
 - View focus in the agent loop (`agents/loop_ext/view_focus.py`): a view
   agent sees the tools of the view kind it is on and not the other kinds',
   so a visualizer with fifty tools binds the slide tools while it builds a
@@ -44,8 +131,50 @@ turns that section into the next release.
   The Studio lost its menu item: it opens from this page. Memory stays its
   own page.
 
+- Chat channels (Slack, Discord, Microsoft Teams, mail) running agents on
+  inbound messages: each has config fields (write-only secrets), an Enabled
+  switch, an allowlist of chat keys, bindings from chats to a workspace plus
+  agent or flow, and a status card. Each runs as one singleton supervised job
+  under a database lease. A message runs through the chat pipeline with
+  `source` set to the channel name (untrusted by the capability guard).
+  Commands in the chat (`/agent`, `/workspace`, `/help`) are built in. Tools:
+  `channel_send` to post to one chat or every chat bound to a workspace, and
+  each channel wakes proactive agents on an unanswered message. Generic API:
+  `GET /api/channels`, `GET|PUT /api/channels/<name>/config`,
+  `POST .../test`, `GET .../status`, `GET|POST|DELETE /api/channels/<name>/bindings`,
+  `POST .../send`. See docs/channels.md.
+
+- Jira and Linear issue trackers linked to a project's repository (docs/trackers.md):
+  a sync imports issues as tasks. An issue closes a task only while it is todo or
+  ready; a reopened issue reopens a done task. Tools: `tracker_list_issues`,
+  `tracker_get_issue`, `tracker_sync` (reading), `tracker_comment`,
+  `tracker_transition`, `tracker_create_issue` (writing). Issue bodies are wrapped
+  as untrusted text. API: `GET|PUT /api/trackers/projects/{id}` and
+  `POST /api/trackers/projects/{id}/sync`.
+
+- Google Workspace (Drive, Docs, Sheets, Calendar) and Microsoft Graph
+  (Outlook Calendar) connectors (docs/integrations.md): authenticate via service
+  account or OAuth for Google, or Entra app registration for Microsoft. Tools for
+  search, import, read, append, create on documents, spreadsheets and calendars.
+  The same Microsoft app registration backs the Teams chat channel.
+
+- Notion and Confluence connectors (docs/integrations.md): search, read a
+  page as markdown, import it into the workspace's files, create a page or
+  append to one. Read-only database connections per workspace (postgres,
+  mysql, clickhouse, sqlite) with a single-statement guard and a read-only
+  session, `db_list_connections`, `db_schema` and `db_query`, and
+  `/api/databases/connections`. The drivers (PyMySQL, clickhouse-connect, msal,
+  google-auth) are a new `connectors` extra, `requirements-connectors.txt`,
+  installed by the backend image and CI.
+- Bitbucket Cloud (username plus app password) and Gitea (base URL plus token)
+  git providers on the Connectors page alongside GitHub and GitLab. Repos, issue
+  import and publish work for them like for GitHub.
+
 ### Changed
 
+- The agent page's Config tab holds the prompt files alone. The version
+  history, the guardrails card, the pulse and the experiment card moved to
+  tabs of their own: **Versions**, **Guardrails**, **Pulse**, **Experiments**.
 - The visualizer no longer holds the mesh, scene and `view_serve` tools; it
   hands 3D and web requests to the specialists (conversation handoff when the
   user talks to it, `run_agent_tool` or `delegate_task_tool` when another agent

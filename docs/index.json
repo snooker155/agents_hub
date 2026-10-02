@@ -23,7 +23,8 @@
         "tool-policy",
         "handoffs",
         "secrets",
-        "services"
+        "services",
+        "proactive"
       ],
       "headings": [
         "What an agent is made of",
@@ -95,6 +96,29 @@
       ]
     },
     {
+      "id": "channels",
+      "title": "Chat channels",
+      "surface": "Connectors",
+      "summary": "Slack, Discord, Microsoft Teams and mail are chat channels where agents run in response to inbound messages. Each has bindings from chats to a workspace plus one agent or flow, and a status card showing running state and last error.",
+      "related": [
+        "connectors",
+        "notifications",
+        "proactive",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What every channel has",
+        "What a message does",
+        "Outbound",
+        "Slack",
+        "Discord",
+        "Microsoft Teams",
+        "Mail",
+        "The API",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "connections",
       "title": "Connections",
       "surface": "Connections",
@@ -123,19 +147,26 @@
       "id": "connectors",
       "title": "Connectors",
       "surface": "Connectors",
-      "summary": "Services this hub reaches out to: a Telegram bot, a GitHub or GitLab account, a local Blender install. The other direction from connections.",
+      "summary": "Services this hub reaches out to: chat channels (Slack, Discord, Teams, mail), git providers (GitHub, GitLab, Bitbucket, Gitea), Telegram, issue trackers (Jira, Linear), integrations (Google Workspace, Microsoft Graph), and Blender. The other direction from connections.",
       "related": [
         "connections",
+        "channels",
         "telegram",
+        "trackers",
+        "integrations",
         "projects",
         "views",
         "settings",
         "mcp",
-        "notifications"
+        "notifications",
+        "watchers"
       ],
       "headings": [
+        "Chat channels",
+        "Git",
         "Telegram",
-        "GitHub and GitLab",
+        "Issue trackers",
+        "Integrations",
         "Blender",
         "Gotchas"
       ]
@@ -243,7 +274,8 @@
         "costs",
         "tools-and-capabilities",
         "experiments",
-        "notifications"
+        "notifications",
+        "proactive"
       ],
       "headings": [
         "The pieces",
@@ -518,7 +550,8 @@
       "related": [
         "skills",
         "tools-and-capabilities",
-        "workspaces"
+        "workspaces",
+        "proactive"
       ],
       "headings": [
         "The layers",
@@ -661,7 +694,8 @@
         "telegram",
         "notifications",
         "deployments",
-        "environments"
+        "environments",
+        "proactive"
       ],
       "headings": [
         "Job kinds",
@@ -671,6 +705,70 @@
         "Lease and idempotency",
         "The firing journal",
         "Auto pause",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "proactive",
+      "title": "Proactive agents",
+      "summary": "An agent with a pulse of its own: it wakes up on a schedule, checks its sources, acts within a budget, writes to you only when it has something to say, and remembers between ticks what it saw.",
+      "surface": "Agents",
+      "related": [
+        "scheduling",
+        "agents",
+        "memory",
+        "notifications",
+        "costs",
+        "environments",
+        "deployments",
+        "tasks",
+        "agent-loop",
+        "audit",
+        "tools-and-capabilities",
+        "tool-policy",
+        "telegram",
+        "files",
+        "evals",
+        "demo",
+        "watchers"
+      ],
+      "headings": [
+        "What a tick is",
+        "The profile",
+        "Schedule and quiet hours",
+        "Budgets and limits",
+        "The tick's answer",
+        "Triggers besides the clock",
+        "Security",
+        "Memory between ticks",
+        "Notifications",
+        "The Pulse tab",
+        "The journal over time",
+        "API",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "watchers",
+      "title": "Watchers",
+      "summary": "Observers of outside state (a mailbox over IMAP, an HTTP resource) that poll on their own interval and wake a proactive agent when something changes, without running a model.",
+      "surface": "Watchers",
+      "related": [
+        "proactive",
+        "connectors",
+        "secrets",
+        "notifications",
+        "tools-and-capabilities",
+        "service-health",
+        "audit",
+        "scheduling"
+      ],
+      "headings": [
+        "What a watcher is",
+        "Kinds",
+        "Waking an agent",
+        "Polling",
+        "API",
         "Gotchas"
       ]
     },
@@ -795,7 +893,7 @@
     {
       "id": "skills",
       "title": "Skills",
-      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from a project's .claude/skills folders, SKILL.md import and export.",
+      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from any SKILL.md folder of a project repository, public skill sources connected in one click, a safety review with flags, scripts and the license verdict on every imported skill, SKILL.md import and export.",
       "surface": "Skills Catalog",
       "related": [
         "agents",
@@ -846,7 +944,8 @@
         "sessions-and-runs",
         "notifications",
         "costs",
-        "outcomes"
+        "outcomes",
+        "proactive"
       ],
       "headings": [
         "Status",
@@ -857,6 +956,25 @@
         "Files",
         "Outcome",
         "Agent version",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "trackers",
+      "title": "Issue trackers",
+      "surface": "Connectors",
+      "summary": "Jira and Linear are linked to a project's repository. A sync is idempotent: issues from the tracker become tasks. Tools read issues, create them, comment and transition their status.",
+      "related": [
+        "connectors",
+        "projects",
+        "tasks",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "Jira",
+        "Linear",
+        "Linking a project",
+        "Tools",
         "Gotchas"
       ]
     },
@@ -887,7 +1005,8 @@
         "chat",
         "scheduling",
         "tools-and-capabilities",
-        "connectors"
+        "connectors",
+        "proactive"
       ],
       "headings": [
         "What the binding does",
@@ -907,7 +1026,8 @@
         "system-agents",
         "web-logs",
         "mcp",
-        "browser"
+        "browser",
+        "proactive"
       ],
       "headings": [
         "The capability model",
@@ -1017,7 +1137,8 @@
         "tasks",
         "instances",
         "flows",
-        "evals"
+        "evals",
+        "proactive"
       ],
       "headings": [
         "Outbound: webhooks and Slack",
@@ -1075,6 +1196,23 @@
         "How passwords and sessions are stored",
         "Picking a mode",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "integrations",
+      "title": "Integrations",
+      "surface": "Connectors",
+      "summary": "External services agents read from and write to: Google Workspace (Drive, Docs, Sheets, Calendar), Microsoft Graph (Outlook Calendar), and future connectors for Notion, Confluence and databases.",
+      "related": [
+        "connectors",
+        "tools-and-capabilities",
+        "files"
+      ],
+      "headings": [
+        "Google Workspace",
+        "Microsoft Graph",
+        "Notion and Confluence",
+        "Databases"
       ]
     },
     {
@@ -1245,7 +1383,8 @@
         "settings",
         "containers",
         "cli",
-        "github-app"
+        "github-app",
+        "watchers"
       ],
       "headings": [
         "Why this exists",
@@ -1274,7 +1413,8 @@
         "scim",
         "api-keys",
         "secrets",
-        "guardrails"
+        "guardrails",
+        "proactive"
       ],
       "headings": [
         "What is recorded",
@@ -1370,7 +1510,8 @@
         "agents",
         "tools-and-capabilities",
         "playground",
-        "views"
+        "views",
+        "proactive"
       ],
       "headings": [
         "What it holds",
@@ -1474,7 +1615,8 @@
         "hooks",
         "tasks",
         "workspaces",
-        "guardrails"
+        "guardrails",
+        "proactive"
       ],
       "headings": [
         "Setting a policy",
@@ -1645,12 +1787,14 @@
         "chat",
         "memory",
         "tasks",
-        "evals"
+        "evals",
+        "proactive"
       ],
       "headings": [
         "The object",
         "Limits",
         "Text for a model",
+        "Waking an agent",
         "Where it is used",
         "Citations",
         "API"
