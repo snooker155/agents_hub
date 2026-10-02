@@ -321,6 +321,14 @@ def update_task(
         if current and "status" in fields:
             new_status = fields["status"]  # normalized to TaskStatus above
             if new_status != current.status:
+                # Proactive agents listening for task changes (proactive/
+                # events.py). Best-effort, after the task itself is written.
+                try:
+                    from proactive.events import task_status_changed
+                    task_status_changed(updated, current.status, new_status)
+                except Exception:  # noqa: BLE001 - waking a pulse never fails the task update
+                    import logging as _logging
+                    _logging.getLogger(__name__).debug("task event dispatch failed for %s", task_id, exc_info=True)
                 if new_status == TaskStatus.blocked:
                     _cascade_block_descendants(task_id, updated.title, store=store)
                 elif current.status == TaskStatus.blocked:

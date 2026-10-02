@@ -244,6 +244,15 @@ def prepare_run(
         if str(_name or "").strip():
             cli_args.extend(["--extra-secret", str(_name).strip()])
 
+    # An answer schema for this run alone (a proactive tick, proactive/
+    # service.py): the child folds it into the agent's spec at build time.
+    _schema = params.get("output_schema")
+    if isinstance(_schema, dict) and _schema:
+        cli_args.extend(["--output-schema", json.dumps(_schema, ensure_ascii=False)])
+    _policy = params.get("tool_policy")
+    if isinstance(_policy, dict) and _policy:
+        cli_args.extend(["--tool-policy", json.dumps(_policy, ensure_ascii=False)])
+
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
     # back out of the task record on the other side.

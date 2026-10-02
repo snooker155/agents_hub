@@ -7,7 +7,7 @@ traffic instead of on a handful of hand-picked prompts.
 ## What an experiment is
 
 Every change to an agent's tools, model settings or markdown is snapshotted in
-its version history (Config tab, **Version History**). An experiment names two
+its version history (the **Versions** tab). An experiment names two
 or more of those stored versions, called arms, and the share of runs each
 gets:
 
@@ -31,7 +31,7 @@ the open experiment and starts a new one, so a report never mixes two
 layouts. `GET` returns the open experiment, or the last ended one, and
 `DELETE` ends it.
 
-On the agent's Config tab, the **Experiment** card below the version history
+On the agent's **Experiments** tab, the Experiment card
 does the same: pick version A, its share, version B, start, pause, stop.
 
 ## How routing works

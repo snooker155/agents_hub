@@ -31,6 +31,7 @@ export default {
   session: 'Сессия',
   logs: 'Логи',
   connected: 'Подключено',
+  pulseRemote: 'Импортированный агент выполняет свой цикл в другом месте, пульса здесь у него нет.',
   tabs: {
     behavior: 'Поведение',
     overview: 'Обзор',
@@ -45,6 +46,10 @@ export default {
     skills: 'Навыки',
     config: 'Конфигурация',
     docker: 'Docker',
+    versions: 'Версии',
+    pulse: 'Пульс',
+    guardrails: 'Guardrails',
+    experiments: 'Эксперименты',
   },
   deploy: 'Развернуть',
   run: 'Запустить',

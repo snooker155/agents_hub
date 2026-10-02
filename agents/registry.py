@@ -219,6 +219,13 @@ class AgentSpec:
     # "summary", "last_n:<N>" or "none" (normalize_handoff_history). A single
     # handoff may only narrow it.
     handoff_history: str = "full"
+    # ── Proactive profile (proactive/, docs/proactive.md) ───────────────────
+    # The agent's own pulse: a schedule, quiet hours, a daily budget and a
+    # brief saying what to check and when to act. Stored as a plain dict and
+    # normalized by ``proactive.profile.normalize_profile``; the registry only
+    # keeps it. Empty means no pulse. Not seed-owned: a system agent ships
+    # without one and the operator switches it on.
+    proactive: Dict[str, Any] = field(default_factory=dict)
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -399,6 +406,9 @@ class AgentSpec:
             d["handoffs"] = list(self.handoffs)
         if self.handoff_history and self.handoff_history != "full":
             d["handoff_history"] = self.handoff_history
+        # Proactive profile: only written when the agent has one.
+        if self.proactive:
+            d["proactive"] = dict(self.proactive)
         # Only write the external-agent descriptor when the record has one, so
         # built-in agents keep a clean JSON shape.
         if self.remote:
@@ -725,6 +735,9 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     own_id = str(ad.get("id") or "").strip()
     handoffs = [h for h in _id_list(ad.get("handoffs")) if h != own_id]
     handoff_history = normalize_handoff_history(ad.get("handoff_history"))
+    proactive = ad.get("proactive") or {}
+    if not isinstance(proactive, dict):
+        proactive = {}
 
     owner_user = ad.get("owner_user") or None
     # common.review.default_status: a legacy record with no stored value
@@ -794,6 +807,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         compaction=compaction,
         handoffs=handoffs,
         handoff_history=handoff_history,
+        proactive=proactive,
         remote=remote,
         owner_user=owner_user,
         review_status=review_status,

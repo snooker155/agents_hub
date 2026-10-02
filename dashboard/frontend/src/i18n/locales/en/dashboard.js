@@ -19,6 +19,8 @@ export default {
     instances: 'Instances',
     instancesLive: '{{count}} live',
     noneRunning: 'none running',
+    pulse: 'Pulse',
+    pulseSub: '{{acted}} acted · {{quiet}} quiet · {{skipped}} skipped (24h)',
   },
   features: {
     heading: 'Features',

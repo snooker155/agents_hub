@@ -77,6 +77,7 @@ from tools.schedule_management import (
     list_scheduled,
     cancel_scheduled,
     update_scheduled,
+    wake_agent,
 )
 
 
@@ -504,6 +505,7 @@ class AgentFactory:
             list_scheduled,
             cancel_scheduled,
             update_scheduled,
+            wake_agent,
         ]
 
         alias_groups: Dict[str, List[str]] = {
@@ -596,6 +598,10 @@ class AgentFactory:
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
         available.extend(WORKSPACE_FILE_TOOLS)
+        # Connector tools (tools/connector_tools.py): plain per-tool grants,
+        # like the web tools; each works only when its connector is set up.
+        from tools.connector_tools import connector_tools
+        available.extend(connector_tools())
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -731,6 +737,23 @@ class AgentFactory:
                      if _definition_version is not None else None)
         if _snapshot is not None:
             _spec = _snapshot[0]
+
+        # An answer schema for this build only (a proactive tick, proactive/
+        # service.py): the loop's structured-output extension reads the
+        # schema off the spec, so the override is folded into the spec here
+        # rather than into the definition config. Popped so it never reaches
+        # the agent constructor as a stray keyword.
+        _output_schema = override_params.pop("output_schema", None)
+        if _spec is not None and isinstance(_output_schema, dict) and _output_schema:
+            from dataclasses import replace as _dc_replace
+            _spec = _dc_replace(_spec, output_schema=dict(_output_schema))
+        # Likewise a tool policy for this build only (a proactive tick woken by
+        # untrusted input puts its outbound tools on "ask"): merged over the
+        # record's own policy, read by tools.permission_policy off the spec.
+        _tool_policy = override_params.pop("tool_policy", None)
+        if _spec is not None and isinstance(_tool_policy, dict) and _tool_policy:
+            from dataclasses import replace as _dc_replace
+            _spec = _dc_replace(_spec, tool_policy={**dict(_spec.tool_policy or {}), **_tool_policy})
 
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition

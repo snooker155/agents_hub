@@ -11,7 +11,7 @@ auto-injected plan-store tools (save_plan / get_plan / list_plans / ...).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.tools import tool
@@ -130,6 +130,11 @@ class NotifyUserInput(BaseModel):
     title: str = Field(..., min_length=1, description="Short notification title shown to the user")
     message: str = Field("", description="Notification body text")
     severity: str = Field("info", description="One of: info, success, warning, error")
+    channels: Optional[List[str]] = Field(
+        None,
+        description="Extra delivery channels besides the inbox: any of telegram, slack, discord, teams, mail, webhook. "
+                    "A chat channel reaches the chats bound in this workspace on the Connectors page.",
+    )
     telegram: bool = Field(
         False,
         description="Also deliver to the user's bound Telegram chat(s). Default false = inbox/bell only.",
@@ -263,7 +268,8 @@ schedule_task.description += "\n\n" + _TIME_HELP
 
 
 @tool("notify_user", args_schema=NotifyUserInput)
-def notify_user(title: str, message: str = "", severity: str = "info", telegram: bool = False) -> str:
+def notify_user(title: str, message: str = "", severity: str = "info", telegram: bool = False,
+                channels: Optional[List[str]] = None) -> str:
     """Send the user an immediate notification (inbox + dashboard bell), right now.
 
     Use this when something happens that the user should see even when they are
@@ -273,10 +279,14 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
     are already reported to the user automatically.
 
     Set telegram=true to also push the message to the user's bound Telegram
-    chat(s) for this workspace; otherwise it is inbox/bell only.
+    chat(s) for this workspace, or name other channels (slack, discord, teams,
+    mail, webhook) in ``channels``; otherwise it is inbox/bell only.
     """
     try:
-        channels = ["dashboard", "telegram"] if telegram else ["dashboard"]
+        extra = [str(c).strip().lower() for c in (channels or []) if str(c).strip()]
+        if telegram:
+            extra.append("telegram")
+        channels = ["dashboard", *dict.fromkeys(extra)]
         n = plan_service.create_notification(
             title=title,
             body=message,
@@ -292,6 +302,43 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
         })
     except Exception as e:
         return _json_err(f"Failed to send notification: {e}")
+
+
+class WakeAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="The proactive agent to wake")
+    message: str = Field(..., min_length=1,
+                         description="What happened and why it should look now, one or two sentences")
+
+
+@tool("wake_agent", args_schema=WakeAgentInput)
+def wake_agent(agent_id: str, message: str) -> str:
+    """Wake another agent's pulse now, with a message saying why.
+
+    Only for an agent whose proactive profile is on and lists an ``agent``
+    trigger that accepts you (docs/proactive.md, "Triggers"). The message
+    joins the events of its next tick; nothing comes back to you. Use it when
+    you noticed something another agent watches for, not to delegate work:
+    for that, use the delegation tools.
+    """
+    try:
+        from common.agent_context import current_agent_id
+        from proactive.events import agent_wake
+        caller = current_agent_id.get()
+        result = agent_wake(caller, agent_id, message)
+    except LookupError as e:
+        return _json_err(str(e), code="not_found")
+    except PermissionError as e:
+        return _json_err(str(e), code="forbidden")
+    except Exception as e:  # noqa: BLE001 - the tool reports, never raises into the loop
+        return _json_err(f"Failed to wake agent: {e}")
+    if not result.get("ok"):
+        return _json_err(f"The pulse of '{agent_id}' is not accepting wakes ({result.get('reason')}).",
+                         code="unavailable")
+    return _json_ok({
+        "message": f"Agent '{agent_id}' will tick within its batching window.",
+        "pending_events": result.get("pending"), "run_at": result.get("run_at"),
+        "paused": result.get("paused", False),
+    })
 
 
 @tool("list_scheduled", args_schema=ListScheduledInput)

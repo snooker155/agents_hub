@@ -14,6 +14,10 @@ showing what fired.
   runaway instances.
 - **loop**: starts a run of a loop. A firing is skipped, and recorded as an
   error, while a run of the same loop is already active.
+- **heartbeat**: one tick of a [proactive agent](proactive.md). Owned by the
+  agent's profile, never created by hand: the firing checks the agent's quiet
+  hours, daily budget and tick limit first, and the task's structured answer
+  is written back onto the journal row as its outcome.
 
 `agent_task`, `flow` and `loop` jobs may also carry an `environment_id` (see
 [environments](environments.md)) and a `budget_usd`, both copied onto every
@@ -116,4 +120,4 @@ without resuming first. Full detail: [deployments](deployments.md).
 - A bad cron expression or an unknown timezone is rejected at create or update
   time with a clear error, not silently accepted.
 
-Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md).
+Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md), [proactive](proactive.md).

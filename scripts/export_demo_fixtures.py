@@ -185,6 +185,11 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     for agent_id in DEMO_AGENT_IDS:
         _record(client, responses, "GET", f"/api/agents/{agent_id}")
         _record(client, responses, "GET", f"/api/agents/{agent_id}/definition", required=False)
+        # The Pulse tab (docs/proactive.md); only the
+        # support agent has a pulse on, the others answer with an off state.
+        _record(client, responses, "GET", f"/api/agents/{agent_id}/proactive", required=False)
+    _record(client, responses, "GET", "/api/proactive/summary", {"workspace": DEMO_WORKSPACE_NAME},
+            required=False)
 
     # The Marketplace page lists what the demo published: one agent and the
     # flow, both annotated for the demo workspace.

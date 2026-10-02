@@ -67,7 +67,7 @@ The registry keeps a history of an agent's past definitions. Right before a
 change replaces the stored record, or the dashboard's definition editor
 rewrites one of the three markdown files, the state about to be overwritten is
 snapshotted, unless it is already identical to the latest snapshot or the
-incoming write changes nothing. The Config tab's Version History section lists
+incoming write changes nothing. The agent page's **Versions** tab lists
 each snapshot with a summary of what changed since the one before it: tools
 added or removed, a model change, which markdown files were touched.
 
@@ -127,8 +127,10 @@ One page per agent, in tabs:
 
 - **Overview**: the description, the model in use, the memory card (own
   pool, personal memory or neither) and what is running.
-- **Instructions**: the three layered files, editable, with versions
-  ("Versions" above).
+- **Config**: the three layered prompt files, editable, and the assembled
+  system prompt the agent actually receives. Nothing else lives here.
+- **Versions**: the definition's version history ("Versions" above): what
+  changed, the diff against what is live, rollback.
 - **Tools**: each tool as a compact card that toggles on click, up to six to
   a row, with its permission policy picked inside the card and the default
   for the other tools in the header ([tool-policy](tool-policy.md)); the
@@ -153,6 +155,12 @@ One page per agent, in tabs:
 - **Docker**: the agent's image and environment
   ([containers](containers.md)); when Docker is missing or not answering the
   tab says so instead of calling every image "not built".
+- **Pulse**: the agent's own schedule, quiet hours, budget, brief and
+  triggers, and the feed of its ticks ([proactive](proactive.md)).
+- **Guardrails**: which guardrails already apply and the `selected` ones the
+  agent opts into ([guardrails](guardrails.md)).
+- **Experiments**: an A/B experiment between two stored versions
+  ([experiments](experiments.md)).
 
 **Run** on the page starts a resident [instance](instances.md); **Deploy**
 keeps the agent running as a [service](services.md) with replicas.
@@ -166,4 +174,4 @@ keeps the agent running as a [service](services.md) with replicas.
 - `run_agent_tool` is refused inside a tracked task. Use `delegate_task_tool`
   there (a subtask run, optionally on another model), or assign and start.
 
-Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md).
+Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md), [proactive](proactive.md).

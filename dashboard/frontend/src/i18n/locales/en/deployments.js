@@ -70,6 +70,7 @@ export default {
     agentTask: 'Agent task',
     flow: 'Flow',
     loop: 'Loop',
+    heartbeat: 'Pulse',
   },
   pausedReason: {
     manual: 'manual',

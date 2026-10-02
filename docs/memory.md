@@ -200,4 +200,4 @@ UI: Memory page, Pools tab, a "Pool history" button and a history icon next to e
 - Journal notes are left out of the ranking: they are an append-only log read by
   date, and their bulk would swamp every other layer.
 
-Related: [workspaces](workspaces.md), [skills](skills.md).
+Related: [workspaces](workspaces.md), [skills](skills.md), [proactive](proactive.md).

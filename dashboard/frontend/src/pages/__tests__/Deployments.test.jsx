@@ -111,10 +111,10 @@ describe('Deployments — empty state', () => {
     await waitFor(() => expect(screen.getByText(/nothing scheduled yet/i)).toBeInTheDocument());
   });
 
-  it('asks the jobs API for agent_task, flow and loop kinds only', async () => {
+  it('asks the jobs API for the deployment kinds only (agent_task, flow, loop, heartbeat)', async () => {
     show();
     await waitFor(() => expect(getPlanJobs).toHaveBeenCalled());
-    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_task', 'flow', 'loop']);
+    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_task', 'flow', 'loop', 'heartbeat']);
   });
 });
 

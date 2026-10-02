@@ -19,30 +19,7 @@ import {
   getTelegramConfig,
   listFlows,
 } from '../api';
-import {
-  CalendarClock,
-  Bell,
-  BellRing,
-  Plus,
-  RefreshCw,
-  Loader,
-  Trash2,
-  Pause,
-  Play,
-  X,
-  XCircle,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  Repeat,
-  Bot,
-  Pencil,
-  MailOpen,
-  Zap,
-  Send,
-  Workflow,
-  Rocket,
-} from 'lucide-react';
+import { Activity, AlertCircle, Bell, BellRing, Bot, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, Send, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -95,6 +72,15 @@ function KindBadge({ kind }) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
         <Workflow className="w-3 h-3" /> {t('plan.flow2')}
+      </span>
+    );
+  }
+  if (kind === 'heartbeat') {
+    // A proactive agent's pulse (docs/proactive.md), owned by the agent's
+    // profile: edited on the agent page, listed here like any other job.
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-700">
+        <Activity className="w-3 h-3" /> {t('plan.kinds.heartbeat')}
       </span>
     );
   }
@@ -672,7 +658,7 @@ export default function Plan() {
                       ) : <span className="text-gray-400">{t('plan.once')}</span>}
                     </div>
                     <div className="md:text-center text-sm text-gray-600 truncate">
-                      {job.kind === 'agent_task'
+                      {job.kind === 'agent_task' || job.kind === 'heartbeat'
                         ? (job.agent_id || <span className="text-gray-400 italic">{t('plan.orchestrator')}</span>)
                         : job.kind === 'flow'
                           ? (job.flow_id || '—')

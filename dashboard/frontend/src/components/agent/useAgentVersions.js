@@ -1,6 +1,5 @@
 /**
- * The definition's version history, shown beside the prompt editors on the
- * Config tab: what changed, the diff against what is live now, and rolling one
+ * The definition's version history, its own tab on the agent page: what changed, the diff against what is live now, and rolling one
  * back.
  *
  * `onRolledBack` is the page's own reload: a rollback rewrites the definition,
@@ -21,7 +20,7 @@ export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const [rollbackError, setRollbackError] = useState('');
 
-  // Load version history when the config tab opens
+  // Load version history when the Versions tab opens
   const fetchVersions = useCallback(() => {
     if (!id) return;
     setVersionsLoading(true);
@@ -36,7 +35,7 @@ export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
   // raises its loading flag as it starts, and a setState made synchronously
   // inside an effect costs an extra render pass for nothing.
   useEffect(() => {
-    if (activeTab !== 'config') return undefined;
+    if (activeTab !== 'versions') return undefined;
     let cancelled = false;
     queueMicrotask(() => { if (!cancelled) fetchVersions(); });
     return () => { cancelled = true; };

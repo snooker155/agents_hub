@@ -71,6 +71,7 @@ export default {
     agentTaskHint: 'Запустить работу агента позже',
     flow: 'Поток',
     flowHint: 'Запускать поток по расписанию',
+    heartbeat: 'Пульс',
   },
   errors: {
     titleRequired: 'Укажите заголовок',

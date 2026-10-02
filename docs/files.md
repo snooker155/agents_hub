@@ -112,6 +112,12 @@ archive, a spreadsheet) is named with its type and size, never inlined.
 the file that crosses it is cut with a marker and the files after it are
 named only.
 
+## Waking an agent
+
+A file added, uploaded or rewritten wakes every [proactive
+agent](proactive.md) of the workspace whose profile has a `file` trigger
+matching its path or name, with the file id, path and source as the event.
+
 ## Where it is used
 
 - **Chat.** The composer's attach menu has "From workspace files". An

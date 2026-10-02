@@ -237,4 +237,8 @@ A task can be pinned to a stored agent version via `agent_version`; `null` means
   a move the table does not grant to `agent` fails with `IllegalTransition`
   rather than silently changing the status to something else.
 
-Related: [projects](projects.md), [agents](agents.md), [outcomes](outcomes.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md).
+A status change also wakes every [proactive agent](proactive.md) of the
+workspace whose profile has a `task` trigger listing the new status (or any
+status), except for the agent's own tick tasks.
+
+Related: [projects](projects.md), [agents](agents.md), [outcomes](outcomes.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md), [proactive](proactive.md).

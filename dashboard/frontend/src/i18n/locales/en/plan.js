@@ -71,6 +71,7 @@ export default {
     agentTaskHint: 'Run agent work later',
     flow: 'Flow',
     flowHint: 'Trigger a flow on a schedule',
+    heartbeat: 'Pulse',
   },
   errors: {
     titleRequired: 'Title is required',

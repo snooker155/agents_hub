@@ -34,6 +34,8 @@ _TERMINAL_STATUSES = ("completed", "failed", "stopped", "error")
 # Not on common.config.Settings (this module is the only reader): a plain
 # env var kept it out of that shared file. 0 disables the prune.
 _DEFAULT_PLAN_FIRES_RETENTION_DAYS = 90
+#: After this many days a heartbeat's quiet ticks are folded into daily counts.
+_DEFAULT_HEARTBEAT_COMPACT_DAYS = 7
 
 
 def _now() -> datetime:
@@ -229,6 +231,20 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("fire journal pruning failed")
         summary["pruned_fires"] = 0
+    # A proactive agent's quiet ticks (proactive/service.py): rows older than
+    # AGENTS_HUB_HEARTBEAT_COMPACT_DAYS fold into one counted row per day and
+    # outcome, so a five-minute pulse does not keep 288 identical rows a day
+    # until the retention above removes them. 0 disables it.
+    try:
+        compact_days = int(
+            os.environ.get("AGENTS_HUB_HEARTBEAT_COMPACT_DAYS", str(_DEFAULT_HEARTBEAT_COMPACT_DAYS))
+            or _DEFAULT_HEARTBEAT_COMPACT_DAYS
+        )
+        from proactive.service import compact_journal
+        summary["compacted_ticks"] = compact_journal(compact_days)
+    except Exception:
+        log.exception("heartbeat journal compaction failed")
+        summary["compacted_ticks"] = 0
     # Guardrail findings (guardrails/runtime.py, AGENTS_HUB_GUARDRAIL_EVENTS_
     # RETENTION_DAYS) and tool policy decisions (tools/permission_policy.py,
     # AGENTS_HUB_TOOL_POLICY_RETENTION_DAYS): both are append-only logs

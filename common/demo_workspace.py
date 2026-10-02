@@ -92,8 +92,52 @@ def _seed_agents(seed: Dict[str, Any]) -> None:
             # A published agent is what the Marketplace page lists; the seed
             # publishes one so that page is not empty.
             shared=bool(a.get("shared", False)),
+            # The support agent ships with a pulse (docs/proactive.md); the
+            # job it owns is created by _seed_pulse once the agent exists.
+            proactive=dict(a.get("proactive") or {}),
         )
         add_agent(spec, user_edit=False)
+
+
+def _seed_pulse(seed: Dict[str, Any]) -> None:
+    """Create the heartbeat job of every seeded agent whose profile is on,
+    and the tick history the Pulse card shows, from ``seed["ticks"]``
+    (``hours_ago`` relative to now, so the feed never looks stale)."""
+    from dataclasses import replace
+    from datetime import datetime, timedelta, timezone
+
+    from agents.registry import add_agent, get_agent
+    from plans import service as plans
+    from plans.models import FireRecord
+    from proactive.profile import validate_profile
+    from proactive.service import sync_job
+
+    jobs: Dict[str, str] = {}
+    for a in seed.get("agents") or []:
+        spec = get_agent(str(a["id"]))
+        if spec is None or not (spec.proactive or {}).get("enabled"):
+            continue
+        profile = sync_job(spec, validate_profile(spec.proactive))
+        add_agent(replace(spec, proactive=profile), user_edit=False)
+        jobs[spec.id] = profile["job_id"]
+
+    now = datetime.now(timezone.utc)
+    for tick in seed.get("ticks") or []:
+        job_id = jobs.get(str(tick.get("agent_id") or ""))
+        if not job_id:
+            continue
+        at = now - timedelta(hours=float(tick.get("hours_ago") or 0))
+        outcome = str(tick.get("outcome") or "quiet")
+        started = outcome in ("acted", "quiet", "blocked", "error")
+        plans.fire_store.add(FireRecord(
+            job_id=job_id, workspace=DEMO_WORKSPACE_NAME, at=at, slot=at,
+            trigger=str(tick.get("trigger") or "schedule"), ok=outcome != "error",
+            # A started tick's task is long pruned in a demo; the row keeps a
+            # placeholder id so the feed counts it as a run of the day.
+            task_id=f"demo-tick-{abs(hash((job_id, at.isoformat()))) % 10**8}" if started else None,
+            outcome=outcome, summary=tick.get("summary"), next_check=tick.get("next_check"),
+            cost_usd=tick.get("cost_usd"),
+        ))
 
 
 def _seed_project(seed: Dict[str, Any]) -> None:
@@ -431,6 +475,7 @@ def ensure_demo_workspace() -> bool:
     seed = _load_json(_SEED_FILE)
     _seed_workspace_metadata()
     _seed_agents(seed)
+    _seed_pulse(seed)
     _seed_project(seed)
     _seed_flow(seed)
     _seed_team(seed)
@@ -462,9 +507,23 @@ def remove_demo_workspace() -> Dict[str, int]:
     counts: Dict[str, int] = {
         "agents": 0, "project": 0, "flow": 0, "team": 0, "scenario": 0,
         "views": 0, "tasks": 0, "chats": 0, "sessions": 0, "runs": 0,
-        "instances": 0, "services": 0, "files": 0,
+        "instances": 0, "services": 0, "files": 0, "jobs": 0, "ticks": 0,
         "workspace": 0,
     }
+
+    # The pulse jobs and their tick journal, matched by workspace like the
+    # tasks below; before the agents, so a tick cannot start meanwhile.
+    try:
+        from plans import service as plans
+        from plans.models import JobKind
+        for job in plans.list_jobs(workspace=DEMO_WORKSPACE_NAME):
+            if job.kind != JobKind.heartbeat:
+                continue
+            for row in plans.fire_store.list_for_job(job.id, limit=100000):
+                counts["ticks"] += plans.fire_store.delete(row.id)
+            counts["jobs"] += plans.delete_job(job.id)
+    except Exception:  # noqa: BLE001 - a plans store that cannot be read must not stop the removal
+        log.debug("demo workspace: pulse removal skipped", exc_info=True)
 
     from agents.prompt_assembly import delete_definition
     from agents.registry import remove_agent

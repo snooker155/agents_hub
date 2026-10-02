@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import InstanceList from '../components/InstanceList';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal } from 'lucide-react';
+import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
@@ -34,11 +34,13 @@ import StartInstanceModal from '../components/instances/StartInstanceModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
 import CommandsTab from '../components/agent/CommandsTab';
 import ConfigTab from '../components/agent/ConfigTab';
+import VersionsTab from '../components/agent/VersionsTab';
 import ModelTab from '../components/agent/ModelTab';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
 import HandoffsCard from '../components/agent/HandoffsCard';
 import LoopSettingsCard from '../components/agent/LoopSettingsCard';
+import ProactiveCard from '../components/agent/ProactiveCard';
 import AgentGuardrailsCard from '../components/agent/AgentGuardrailsCard';
 import LiveQualityCard from '../components/agent/LiveQualityCard';
 import ExperimentCard from '../components/agent/ExperimentCard';
@@ -871,12 +873,18 @@ const AgentDetails = () => {
           {[
             { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
             { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
+            { id: 'versions', label: t('agentDetails.tabs.versions'), icon: History },
             { id: 'model', label: t('agentDetails.tabs.model'), icon: BrainCircuit },
             { id: 'tools', label: t('agentDetails.tabs.tools'), icon: Wrench },
             { id: 'behavior', label: t('agentDetails.tabs.behavior'), icon: SlidersHorizontal },
             { id: 'memory', label: t('agentDetails.tabs.memory'), icon: Database },
             { id: 'skills', label: t('agentDetails.tabs.skills'), icon: BookOpen },
             { id: 'commands', label: t('agentDetails.tabs.commands'), icon: Terminal },
+            // The agent's own pulse, its guardrails and its A/B experiments
+            // (docs/proactive.md, docs/guardrails.md, docs/experiments.md).
+            { id: 'pulse', label: t('agentDetails.tabs.pulse'), icon: Activity },
+            { id: 'guardrails', label: t('agentDetails.tabs.guardrails'), icon: ShieldCheck },
+            { id: 'experiments', label: t('agentDetails.tabs.experiments'), icon: FlaskConical },
             { id: 'tasks', label: t('agentDetails.tabs.tasks'), icon: Clock },
             { id: 'runs', label: t('agentDetails.tabs.runs'), icon: FileText },
             { id: 'sessions', label: t('agentDetails.tabs.sessions'), icon: History },
@@ -936,13 +944,17 @@ const AgentDetails = () => {
       {activeTab === 'behavior' && <BehaviorTab />}
       {activeTab === 'tasks' && <TasksTab />}
       {activeTab === 'commands' && <CommandsTab />}
-      {activeTab === 'config' && (
-        <>
-          <ConfigTab />
-          <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />
-          <ExperimentCard agentId={id} />
-        </>
+      {activeTab === 'config' && <ConfigTab />}
+      {activeTab === 'versions' && <VersionsTab />}
+      {/* The agent's pulse: an imported agent runs elsewhere and is not
+          scheduled from here. */}
+      {activeTab === 'pulse' && (
+        agent?.type !== 'remote'
+          ? <ProactiveCard agentId={id} onSaved={fetchData} />
+          : <p className="text-sm text-gray-500 mt-6">{t('agentDetails.pulseRemote')}</p>
       )}
+      {activeTab === 'guardrails' && <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />}
+      {activeTab === 'experiments' && <ExperimentCard agentId={id} />}
       {activeTab === 'model' && (
         <>
           <ModelTab />

@@ -259,6 +259,20 @@ def _chat_title(message: dict[str, Any]) -> str:
     return name or chat.get("title") or str(chat.get("id") or "")
 
 
+async def _wake_for_unanswered(chat_id: int, workspace: Optional[str],
+                               messages: list[dict[str, Any]]) -> None:
+    """A message nobody is bound to answer still reaches the proactive agents
+    listening for Telegram (proactive/events.py). Best-effort."""
+    text = " ".join(
+        str(m.get("text") or m.get("caption") or "").strip() for m in messages
+    ).strip()
+    try:
+        from proactive.events import telegram_unanswered
+        await asyncio.to_thread(telegram_unanswered, chat_id, workspace, text)
+    except Exception:  # noqa: BLE001 - the help reply already went out
+        log.debug("telegram wake dispatch failed for chat %s", chat_id, exc_info=True)
+
+
 async def _send_text(api: TelegramAPI, chat_id: int, text: str) -> None:
     try:
         await api.send_message(chat_id, text)
@@ -1067,6 +1081,7 @@ class TelegramService:
                 api, chat_id,
                 "Pick a workspace first with /workspace <name>, then /agent <id> or /flow <id>. /help for details.",
             )
+            await _wake_for_unanswered(chat_id, None, messages)
             return
         if not binding.get("agent_id") and not binding.get("flow_id"):
             await _send_text(
@@ -1074,6 +1089,7 @@ class TelegramService:
                 f"Workspace `{binding['workspace']}` is set, but no agent or flow yet. "
                 "Use /agent <id> (/agents to list) or /flow <id> (/flows to list).",
             )
+            await _wake_for_unanswered(chat_id, str(binding.get("workspace") or "") or None, messages)
             return
 
         async with self._chat_lock(chat_id):

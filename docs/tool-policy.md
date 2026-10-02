@@ -53,4 +53,8 @@ Reasoning tools (`think`, `plan` and the other plan tools) and `ask_user` are ne
 
 Every classifier call is a model call made for the run: it is listed on the run's `loop.aux_calls` with its tokens, priced at the classifier's model on the [Costs](costs.md) page, and counted against the run's money cap, so a policy that asks on every call stops at the same cap as the agent.
 
-Related: [hooks](hooks.md), [tasks](tasks.md), [workspaces](workspaces.md).
+A [proactive agent](proactive.md) whose profile has an untrusted trigger
+(webhook, Telegram, file) runs every tick with its outbound tools on
+`always_ask`, for that run alone; the record's own policy is untouched.
+
+Related: [hooks](hooks.md), [tasks](tasks.md), [workspaces](workspaces.md), [proactive](proactive.md).

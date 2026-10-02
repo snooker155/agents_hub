@@ -7,7 +7,7 @@ The agent loop is what happens between a run's model calls: the tool trail is tu
 On the agent record, edited on the agent page:
 
 - `tool_policy`: a mode per tool (Tools tab, see [tool-policy](tool-policy.md)).
-- `guardrails`: the `selected` guardrails the agent opts into (Config tab, see [guardrails](guardrails.md)).
+- `guardrails`: the `selected` guardrails the agent opts into (the Guardrails tab, see [guardrails](guardrails.md)).
 - `fallback_models`, `output_schema`, `tool_search` and `compaction` (Model tab, the Loop settings card, or `GET/PUT /api/agents/{agent_id}/loop-settings`). `tool_search` and `compaction` are Automatic, On or Off.
 
 For the workspace, in the `settings.loop` block (Settings, Agent loop card), each key falling back to an environment variable and then a default:

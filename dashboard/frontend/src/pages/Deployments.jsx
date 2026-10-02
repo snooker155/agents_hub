@@ -21,29 +21,7 @@ import {
 } from '../api';
 import { getAgentVersions } from '../api/agentVersions';
 import { listWorkspaceFiles, uploadWorkspaceFileObject } from '../api/files';
-import {
-  Rocket,
-  Plus,
-  RefreshCw,
-  Loader,
-  Trash2,
-  Pause,
-  Play,
-  X,
-  XCircle,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  Repeat,
-  Bot,
-  Pencil,
-  Zap,
-  Workflow,
-  RotateCw,
-  History,
-  AlertTriangle,
-  Upload,
-} from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Upload, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { DeployStatusPill } from '../components/projects/DeployPanel';
@@ -127,6 +105,9 @@ function StatusBadge({ status, pausedReason, t }) {
 function KindIcon({ kind }) {
   if (kind === 'flow') return <Workflow className="w-3.5 h-3.5" />;
   if (kind === 'loop') return <RotateCw className="w-3.5 h-3.5" />;
+  // A proactive agent's pulse (docs/proactive.md): owned by the agent's
+  // profile, listed here because every tick is a deployment-shaped firing.
+  if (kind === 'heartbeat') return <Activity className="w-3.5 h-3.5" />;
   return <Bot className="w-3.5 h-3.5" />;
 }
 
@@ -746,7 +727,7 @@ export default function Deployments() {
 
   const fetchData = useCallback(async () => {
     try {
-      const { data } = await getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop']);
+      const { data } = await getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat']);
       setJobs(data || []);
     } catch (err) {
       console.error('Failed to load deployments', err);

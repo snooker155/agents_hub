@@ -41,6 +41,11 @@ like any other, and you can open it, poke at it, and delete it like one.
 - **Workspace files**: the project's four files, registered the way an
   agent's writes are, plus two uploads (`supplier-questions.md`, used by the
   support chat, and `august-report.md`).
+- **A pulse** on `demo_support` ([proactive](proactive.md)): weekdays at
+  09:00 Berlin time it reads `supplier-questions.md` and drafts answers, and
+  a re-upload of that file wakes it early. Five seeded ticks (quiet, acted,
+  blocked, one skipped for quiet hours) fill the Pulse card and the
+  Dashboard widget.
 
 Every seeded record is marked for cleanup: the agents, the project, the flow,
 the team and the scenario carry fixed `demo_`-prefixed ids; everything else

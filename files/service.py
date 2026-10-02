@@ -385,7 +385,9 @@ def create_file(workspace: str, name: str, data: bytes, *, mime_type: Optional[s
         shutil.rmtree(path.parent, ignore_errors=True)
         raise
     blobs.mirror(storage_key)
-    return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
+    record = get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
+    _emit_file_event(ws, record, "added")
+    return record
 
 
 def _storage_key(file_id: str) -> str:
@@ -543,6 +545,19 @@ def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
     return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, values))), "added"
 
 
+def _emit_file_event(ws: str, record: Optional[Dict[str, Any]], change: str) -> None:
+    """Tell the proactive agents listening for files (proactive/events.py).
+    Best-effort: the file is already stored, a pulse that cannot be woken
+    is logged and nothing else."""
+    if not record or change == "unchanged":
+        return
+    try:
+        from proactive.events import file_changed
+        file_changed(ws, record, change)
+    except Exception:  # noqa: BLE001 - waking a pulse is a side channel of the write
+        log.debug("file event dispatch failed for %s", record.get("file_id"), exc_info=True)
+
+
 def register_path(workspace: str, rel_path: str, *, source: str = "agent",
                   created_by: Optional[str] = None,
                   meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -559,7 +574,8 @@ def register_path(workspace: str, rel_path: str, *, source: str = "agent",
     """
     ws = _workspace_name(workspace)
     rel = workspace_rel_path(rel_path)
-    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
+    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
+    _emit_file_event(ws, record, status)
     return record
 
 
@@ -596,7 +612,8 @@ def write_folder_file(workspace: str, rel_path: str, data: bytes, *, source: str
         raise FileError(f"'{rel}' is not a regular file of workspace '{ws}'")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
+    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
+    _emit_file_event(ws, record, status)
     return record
 
 

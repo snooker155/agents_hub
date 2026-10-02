@@ -71,6 +71,7 @@ export default {
     agentTaskHint: 'Agentenarbeit später ausführen',
     flow: 'Flow',
     flowHint: 'Einen Flow nach Zeitplan auslösen',
+    heartbeat: 'Puls',
   },
   errors: {
     titleRequired: 'Titel ist erforderlich',

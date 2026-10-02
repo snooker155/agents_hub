@@ -30,6 +30,7 @@ export default {
   session: 'Sitzung',
   logs: 'Logs',
   connected: 'Verbunden',
+  pulseRemote: 'Ein importierter Agent führt seine Schleife anderswo aus; hier hat er keinen Puls.',
   tabs: {
     behavior: 'Verhalten',
     overview: 'Übersicht',
@@ -44,6 +45,10 @@ export default {
     skills: 'Skills',
     config: 'Konfiguration',
     docker: 'Docker',
+    versions: 'Versionen',
+    pulse: 'Puls',
+    guardrails: 'Guardrails',
+    experiments: 'Experimente',
   },
   deploy: 'Bereitstellen',
   run: 'Starten',

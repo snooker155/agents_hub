@@ -265,6 +265,13 @@ def main():
                     help="How this run may use the pools of --memory-pool: read builds it without the write tools")
     ap.add_argument("--extra-secret", action="append", default=[], metavar="NAME",
                     help="A secret name a deployment attached to this task, on top of the agent's own")
+    # A JSON Schema the final answer of this run alone must match (a proactive
+    # tick's outcome, proactive/service.py), on top of or instead of the
+    # agent's own output_schema.
+    ap.add_argument("--output-schema", metavar="JSON",
+                    help="JSON Schema the final answer of this run must match")
+    ap.add_argument("--tool-policy", metavar="JSON",
+                    help="Tool policy entries for this run alone, merged over the agent's own")
     args = ap.parse_args()
 
     # Docker task runs only (the launcher appends this flag to the inner command
@@ -387,6 +394,24 @@ def main():
         agent_overrides["memory_access"] = (args.memory_access or "write").strip().lower()
     if args.extra_secret:
         agent_overrides["extra_secrets"] = [n.strip() for n in args.extra_secret if str(n or "").strip()]
+    if args.output_schema:
+        import json as _json
+        try:
+            _schema = _json.loads(args.output_schema)
+        except ValueError:
+            _schema = None
+            log.warning("--output-schema is not valid JSON; the run keeps the agent's own schema")
+        if isinstance(_schema, dict) and _schema:
+            agent_overrides["output_schema"] = _schema
+    if args.tool_policy:
+        import json as _json
+        try:
+            _policy = _json.loads(args.tool_policy)
+        except ValueError:
+            _policy = None
+            log.warning("--tool-policy is not valid JSON; the run keeps the agent's own policy")
+        if isinstance(_policy, dict) and _policy:
+            agent_overrides["tool_policy"] = {str(k): str(v) for k, v in _policy.items()}
 
     # Session continuation: forward tokens/tool events to the SSE broker.
     _extra_callbacks = []

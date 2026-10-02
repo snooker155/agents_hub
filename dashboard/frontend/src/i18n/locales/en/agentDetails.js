@@ -30,6 +30,7 @@ export default {
   session: 'Session',
   logs: 'Logs',
   connected: 'Connected',
+  pulseRemote: 'An imported agent runs its own loop elsewhere; it has no pulse here.',
   tabs: {
     behavior: 'Behavior',
     overview: 'Overview',
@@ -44,6 +45,10 @@ export default {
     skills: 'Skills',
     config: 'Config',
     docker: 'Docker',
+    versions: 'Versions',
+    pulse: 'Pulse',
+    guardrails: 'Guardrails',
+    experiments: 'Experiments',
   },
   deploy: 'Deploy',
   run: 'Run',

@@ -4,29 +4,77 @@
       "id": "demo_writer",
       "name": "Demo Writer",
       "description": "Writes and edits the pages of the sample Demo site project. demo: true",
-      "tools": ["read_file", "list_files", "create_file", "write_file", "search_docs", "read_doc"],
+      "tools": [
+        "read_file",
+        "list_files",
+        "create_file",
+        "write_file",
+        "search_docs",
+        "read_doc"
+      ],
       "shared": true
     },
     {
       "id": "demo_analyst",
       "name": "Demo Analyst",
       "description": "Reads the sample shop's sales data and turns it into a table or a chart. demo: true",
-      "tools": ["calculator", "read_file", "list_files", "create_view", "view_get", "search_docs", "read_doc"]
+      "tools": [
+        "calculator",
+        "read_file",
+        "list_files",
+        "create_view",
+        "view_get",
+        "search_docs",
+        "read_doc"
+      ]
     },
     {
       "id": "demo_reviewer",
       "name": "Demo Reviewer",
       "description": "Reviews the Demo site content pipeline's output and leads the demo editorial team. demo: true",
-      "tools": ["get_task", "update_task", "read_file", "list_files", "search_docs", "read_doc"]
+      "tools": [
+        "get_task",
+        "update_task",
+        "read_file",
+        "list_files",
+        "search_docs",
+        "read_doc"
+      ]
     },
     {
       "id": "demo_support",
       "name": "Demo Support",
       "description": "Answers customer questions about the sample shop from what the project files say, and never promises what they do not. demo: true",
-      "tools": ["read_file", "list_files", "search_docs", "read_doc"]
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_docs",
+        "read_doc"
+      ],
+      "proactive": {
+        "enabled": true,
+        "cron": "0 9 * * 1-5",
+        "timezone": "Europe/Berlin",
+        "quiet_hours": {
+          "from": "20:00",
+          "to": "08:00"
+        },
+        "daily_budget_usd": 0.5,
+        "max_runs_per_day": 3,
+        "brief": "Open supplier-questions.md in the workspace files. For every question that has no answer yet, draft the reply the shop could send, in plain words, from what src/app.py and docs/notes.md say, and put the drafts in supplier-answers-draft.md beside it. Say clearly which questions the files do not answer. When there is nothing new since your last tick, stay quiet.",
+        "triggers": [
+          {
+            "kind": "file",
+            "pattern": "supplier-questions.md",
+            "source": "upload"
+          }
+        ],
+        "notify": [
+          "dashboard"
+        ]
+      }
     }
   ],
-
   "project": {
     "id": "demo_project_site",
     "name": "Demo site",
@@ -38,7 +86,6 @@
       "data/sales.csv": "date,category,product,units,revenue\n2026-08-01,Backpacks,Trailpack 32L,3,267.00\n2026-08-02,Bottles,Summit Bottle 1L,8,192.00\n2026-08-03,Maps,Ridge Map Pack,12,180.00\n2026-08-04,Backpacks,Trailpack 32L,2,178.00\n2026-08-05,Bottles,Summit Bottle 1L,5,120.00\n2026-08-06,Maps,Ridge Map Pack,6,90.00\n2026-08-07,Backpacks,Trailpack 32L,4,356.00\n2026-08-08,Bottles,Summit Bottle 1L,9,216.00\n2026-08-09,Maps,Ridge Map Pack,3,45.00\n2026-08-10,Backpacks,Trailpack 32L,1,89.00\n2026-08-11,Bottles,Summit Bottle 1L,7,168.00\n2026-08-12,Maps,Ridge Map Pack,10,150.00\n2026-08-13,Backpacks,Trailpack 32L,5,445.00\n2026-08-14,Bottles,Summit Bottle 1L,6,144.00\n2026-08-15,Maps,Ridge Map Pack,8,120.00\n2026-08-16,Backpacks,Trailpack 32L,2,178.00\n2026-08-17,Bottles,Summit Bottle 1L,11,264.00\n2026-08-18,Maps,Ridge Map Pack,4,60.00\n2026-08-19,Backpacks,Trailpack 32L,3,267.00\n2026-08-20,Bottles,Summit Bottle 1L,4,96.00\n"
     }
   },
-
   "flow": {
     "id": "demo_content_pipeline",
     "name": "Demo content pipeline",
@@ -47,29 +94,57 @@
       {
         "id": "demo_flow_writer",
         "agent_id": "demo_writer",
-        "data": {"agent_id": "demo_writer", "label": "Writer", "description": "Drafts the page copy. demo: true"},
-        "position": {"x": 0, "y": 0}
+        "data": {
+          "agent_id": "demo_writer",
+          "label": "Writer",
+          "description": "Drafts the page copy. demo: true"
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
       },
       {
         "id": "demo_flow_analyst",
         "agent_id": "demo_analyst",
-        "data": {"agent_id": "demo_analyst", "label": "Analyst", "description": "Adds the sales table or chart."},
-        "position": {"x": 260, "y": 0}
+        "data": {
+          "agent_id": "demo_analyst",
+          "label": "Analyst",
+          "description": "Adds the sales table or chart."
+        },
+        "position": {
+          "x": 260,
+          "y": 0
+        }
       },
       {
         "id": "demo_flow_reviewer",
         "agent_id": "demo_reviewer",
-        "data": {"agent_id": "demo_reviewer", "label": "Reviewer", "description": "Signs off before the task is done."},
-        "position": {"x": 520, "y": 0}
+        "data": {
+          "agent_id": "demo_reviewer",
+          "label": "Reviewer",
+          "description": "Signs off before the task is done."
+        },
+        "position": {
+          "x": 520,
+          "y": 0
+        }
       }
     ],
     "edges": [
-      {"id": "demo_flow_e1", "source": "demo_flow_writer", "target": "demo_flow_analyst"},
-      {"id": "demo_flow_e2", "source": "demo_flow_analyst", "target": "demo_flow_reviewer"}
+      {
+        "id": "demo_flow_e1",
+        "source": "demo_flow_writer",
+        "target": "demo_flow_analyst"
+      },
+      {
+        "id": "demo_flow_e2",
+        "source": "demo_flow_analyst",
+        "target": "demo_flow_reviewer"
+      }
     ],
     "entry_point": "demo_flow_writer"
   },
-
   "team": {
     "team_id": "demo_editorial_team",
     "name": "Demo editorial team",
@@ -78,12 +153,26 @@
     "charter": "You keep the Fernweh & Co. sample shop's content accurate, plain and consistent with data/sales.csv. Nothing counts as finished until the Reviewer says so.",
     "leader_agent_id": "demo_reviewer",
     "members": [
-      {"agent_id": "demo_writer", "name": "Writer", "role": "writer", "manifest": "Drafts and edits the shop's page copy."},
-      {"agent_id": "demo_analyst", "name": "Analyst", "role": "analyst", "manifest": "Reads data/sales.csv and produces a table or chart of it."},
-      {"agent_id": "demo_reviewer", "name": "Reviewer", "role": "reviewer", "manifest": "Assigns the round's work and signs off when it is ready."}
+      {
+        "agent_id": "demo_writer",
+        "name": "Writer",
+        "role": "writer",
+        "manifest": "Drafts and edits the shop's page copy."
+      },
+      {
+        "agent_id": "demo_analyst",
+        "name": "Analyst",
+        "role": "analyst",
+        "manifest": "Reads data/sales.csv and produces a table or chart of it."
+      },
+      {
+        "agent_id": "demo_reviewer",
+        "name": "Reviewer",
+        "role": "reviewer",
+        "manifest": "Assigns the round's work and signs off when it is ready."
+      }
     ]
   },
-
   "scenario": {
     "scenario_id": "demo_market",
     "name": "Demo market",
@@ -92,12 +181,21 @@
     "environment": "market",
     "mode": "personas",
     "roles": [
-      {"agent_id": "demo_writer", "name": "Alice", "role": "shopkeeper", "goal": "Keep the stall stocked and answer questions about the gear honestly."},
-      {"agent_id": "demo_analyst", "name": "Bob", "role": "shopper", "goal": "Decide which one item is worth buying today, and say why."}
+      {
+        "agent_id": "demo_writer",
+        "name": "Alice",
+        "role": "shopkeeper",
+        "goal": "Keep the stall stocked and answer questions about the gear honestly."
+      },
+      {
+        "agent_id": "demo_analyst",
+        "name": "Bob",
+        "role": "shopper",
+        "goal": "Decide which one item is worth buying today, and say why."
+      }
     ],
     "max_ticks": 6
   },
-
   "views": [
     {
       "id_hint": "demo_view_chart",
@@ -108,28 +206,80 @@
         "vega_lite": {
           "data": {
             "values": [
-              {"category": "Backpacks", "revenue": 1780.0},
-              {"category": "Bottles", "revenue": 1200.0},
-              {"category": "Maps", "revenue": 645.0}
+              {
+                "category": "Backpacks",
+                "revenue": 1780.0
+              },
+              {
+                "category": "Bottles",
+                "revenue": 1200.0
+              },
+              {
+                "category": "Maps",
+                "revenue": 645.0
+              }
             ]
           },
-          "mark": {"type": "bar", "cornerRadiusEnd": 4, "height": {"band": 0.7}},
+          "mark": {
+            "type": "bar",
+            "cornerRadiusEnd": 4,
+            "height": {
+              "band": 0.7
+            }
+          },
           "encoding": {
-            "y": {"field": "category", "type": "nominal", "sort": "-x", "title": null},
-            "x": {"field": "revenue", "type": "quantitative", "aggregate": "sum", "title": "Revenue, USD", "axis": {"grid": true, "tickCount": 5}},
-            "color": {"field": "category", "type": "nominal", "legend": null},
+            "y": {
+              "field": "category",
+              "type": "nominal",
+              "sort": "-x",
+              "title": null
+            },
+            "x": {
+              "field": "revenue",
+              "type": "quantitative",
+              "aggregate": "sum",
+              "title": "Revenue, USD",
+              "axis": {
+                "grid": true,
+                "tickCount": 5
+              }
+            },
+            "color": {
+              "field": "category",
+              "type": "nominal",
+              "legend": null
+            },
             "tooltip": [
-              {"field": "category", "type": "nominal", "title": "Category"},
-              {"field": "revenue", "type": "quantitative", "aggregate": "sum", "title": "Revenue, USD", "format": ",.0f"}
+              {
+                "field": "category",
+                "type": "nominal",
+                "title": "Category"
+              },
+              {
+                "field": "revenue",
+                "type": "quantitative",
+                "aggregate": "sum",
+                "title": "Revenue, USD",
+                "format": ",.0f"
+              }
             ]
           }
         }
       },
       "data": {
         "inline": [
-          {"category": "Backpacks", "revenue": 1780.0},
-          {"category": "Bottles", "revenue": 1200.0},
-          {"category": "Maps", "revenue": 645.0}
+          {
+            "category": "Backpacks",
+            "revenue": 1780.0
+          },
+          {
+            "category": "Bottles",
+            "revenue": 1200.0
+          },
+          {
+            "category": "Maps",
+            "revenue": 645.0
+          }
         ]
       }
     },
@@ -139,13 +289,49 @@
       "title": "August sales",
       "summary": "The sample shop's raw August sales rows.",
       "spec": {
-        "columns": ["date", "category", "product", "units", "revenue"],
+        "columns": [
+          "date",
+          "category",
+          "product",
+          "units",
+          "revenue"
+        ],
         "rows": [
-          ["2026-08-01", "Backpacks", "Trailpack 32L", 3, 267.0],
-          ["2026-08-02", "Bottles", "Summit Bottle 1L", 8, 192.0],
-          ["2026-08-03", "Maps", "Ridge Map Pack", 12, 180.0],
-          ["2026-08-04", "Backpacks", "Trailpack 32L", 2, 178.0],
-          ["2026-08-05", "Bottles", "Summit Bottle 1L", 5, 120.0]
+          [
+            "2026-08-01",
+            "Backpacks",
+            "Trailpack 32L",
+            3,
+            267.0
+          ],
+          [
+            "2026-08-02",
+            "Bottles",
+            "Summit Bottle 1L",
+            8,
+            192.0
+          ],
+          [
+            "2026-08-03",
+            "Maps",
+            "Ridge Map Pack",
+            12,
+            180.0
+          ],
+          [
+            "2026-08-04",
+            "Backpacks",
+            "Trailpack 32L",
+            2,
+            178.0
+          ],
+          [
+            "2026-08-05",
+            "Bottles",
+            "Summit Bottle 1L",
+            5,
+            120.0
+          ]
         ]
       }
     },
@@ -169,7 +355,6 @@
       }
     }
   ],
-
   "tasks": [
     {
       "title": "Write the catalog page copy",
@@ -206,7 +391,6 @@
       "result": "Confirmed: all twenty rows in data/sales.csv use exactly these three categories, matching src/app.py."
     }
   ],
-
   "chats": [
     {
       "id": "demo_chat_1",
@@ -321,7 +505,6 @@
       ]
     }
   ],
-
   "runs": [
     {
       "id": "demo_task_run_rename",
@@ -366,7 +549,6 @@
       ]
     }
   ],
-
   "instances": [
     {
       "id_hint": "demo_instance_writer",
@@ -395,7 +577,6 @@
       "last_activity": "stopped with the service"
     }
   ],
-
   "services": [
     {
       "id_hint": "demo_service_writer",
@@ -428,7 +609,6 @@
       ]
     }
   ],
-
   "files": [
     {
       "id_hint": "demo_file_supplier_questions",
@@ -441,6 +621,47 @@
       "name": "august-report.md",
       "mime_type": "text/markdown",
       "content": "# August content report\n\n## Content\n\nThe catalog, product and about pages were reviewed this month. The Trailpack\n32L was renamed from \"Rucksack 32\" everywhere, including the sample sales\ndata, so the name is consistent end to end.\n\n## Sales\n\nBackpacks were the top revenue category in August ($1,780), ahead of Bottles\n($1,200) and Maps ($645), even though Bottles sold in higher volume.\n\n| Category | Units | Revenue |\n|---|---|---|\n| Backpacks | 20 | $1,780 |\n| Bottles | 50 | $1,200 |\n| Maps | 43 | $645 |\n\n## Next\n\nAdd a one-line description per product on the catalog page, and a short note\non materials to explain the Trailpack's price.\n"
+    }
+  ],
+  "ticks": [
+    {
+      "agent_id": "demo_support",
+      "hours_ago": 2,
+      "outcome": "quiet",
+      "summary": "supplier-questions.md unchanged since yesterday; nothing to draft.",
+      "next_check": "Re-read supplier-questions.md; the spec sheet question is still open.",
+      "cost_usd": 0.0042
+    },
+    {
+      "agent_id": "demo_support",
+      "hours_ago": 26,
+      "outcome": "acted",
+      "summary": "Two new supplier questions (fabric weight, delivery window). Drafted both answers from src/app.py and docs/notes.md into supplier-answers-draft.md. The delivery window is not in the files: marked as a question to pass on.",
+      "next_check": "Check whether the delivery window got an answer in docs/notes.md.",
+      "cost_usd": 0.0188
+    },
+    {
+      "agent_id": "demo_support",
+      "hours_ago": 50,
+      "outcome": "quiet",
+      "summary": "No new questions.",
+      "next_check": "Nothing in particular.",
+      "cost_usd": 0.0039
+    },
+    {
+      "agent_id": "demo_support",
+      "hours_ago": 74,
+      "outcome": "quiet_hours",
+      "summary": "inside quiet hours until 08:00 Europe/Berlin",
+      "trigger": "schedule"
+    },
+    {
+      "agent_id": "demo_support",
+      "hours_ago": 98,
+      "outcome": "blocked",
+      "summary": "supplier-questions.md asks for the wholesale price list; the project files do not have it and I may not quote one. Someone needs to add it or tell me to skip the question.",
+      "next_check": "See whether the price list was added.",
+      "cost_usd": 0.0071
     }
   ]
 }
