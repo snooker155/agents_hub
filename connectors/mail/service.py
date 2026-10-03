@@ -54,9 +54,36 @@ def _reply_subject(original_subject: str, prefix: str) -> str:
     return f"{prefix} {subject}".strip()
 
 
+#: What a password sign in cannot start without.
+_PASSWORD_REQUIRED = ("imap_host", "imap_user", "imap_password", "smtp_host", "from_address")
+
+
+def _google_mode(config: dict[str, Any]) -> bool:
+    return str(config.get("auth_mode") or "").strip().lower() == "google"
+
+
+def _from_address(config: dict[str, Any]) -> str:
+    """The address replies go out from: the configured one, or with a
+    Google sign in the connected account's when none is set."""
+    configured = str(config.get("from_address") or "").strip()
+    if configured or not _google_mode(config):
+        return configured
+    from connectors.google import STORE as GOOGLE_STORE
+    return str(GOOGLE_STORE.get("account_email") or "").strip()
+
+
 class MailService(ChannelService):
     name = "mail"
-    required_fields = ("imap_host", "imap_user", "imap_password", "smtp_host", "from_address")
+
+    @property
+    def required_fields(self) -> tuple[str, ...]:  # type: ignore[override]
+        """With a Google sign in the hosts, user and address all default to
+        the connected Gmail account, so ``auth_mode`` alone makes it
+        configured; whether Google really grants Gmail shows up on connect,
+        as the status card's error."""
+        if _google_mode(self.store.get_config()):
+            return ("auth_mode",)
+        return _PASSWORD_REQUIRED
 
     # ── connection check ─────────────────────────────────────────────────────
 
@@ -64,7 +91,7 @@ class MailService(ChannelService):
         config = self.store.get_config()
         await asyncio.to_thread(self._check_imap, config)
         await asyncio.to_thread(self._check_smtp, config)
-        self._status["identity"] = str(config.get("from_address") or "").strip()
+        self._status["identity"] = _from_address(config)
 
     @staticmethod
     def _check_imap(config: dict[str, Any]) -> None:
@@ -124,7 +151,7 @@ class MailService(ChannelService):
             return None
 
         config = self.store.get_config()
-        self_address = str(config.get("from_address") or "").strip().lower()
+        self_address = _from_address(config).lower()
         if from_addr == self_address:
             return None
         if parsed["auto_reply"] or is_system_sender(from_addr):
@@ -177,7 +204,7 @@ class MailService(ChannelService):
     def _build_message(self, chat_key: str, text: str,
                         reply_to: Optional[dict[str, Any]]) -> EmailMessage:
         config = self.store.get_config()
-        from_address = str(config.get("from_address") or "").strip()
+        from_address = _from_address(config)
         prefix = str(config.get("subject_prefix") or "Re:")
         reply_to = reply_to or {}
 

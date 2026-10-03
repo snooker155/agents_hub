@@ -20,7 +20,37 @@ stores a refresh token and the account email.
 
 Either way, the Test button reports the account email from Drive.
 
-Scopes: `drive`, `documents`, `spreadsheets`, `calendar`.
+Scopes: `drive`, `documents`, `spreadsheets`, `calendar`, plus `openid` and
+`userinfo.email` for the account's address. After the consent screen the hub
+returns to the Google tab (`/connectors?tab=google`).
+
+### Gmail
+
+**Connect with Gmail** (`GET /api/google/oauth/start?gmail=1`) runs the same
+OAuth step and also asks for `https://mail.google.com/`, the one scope Google
+accepts for IMAP and SMTP over XOAUTH2. The granted scopes are stored next to
+the refresh token, and the tab says whether Gmail access is on. Reconnecting
+without the flag keeps a Gmail grant (`include_granted_scopes`).
+
+With it, the [IMAP watcher](watchers.md#kinds) (`use_google`) and the [mail
+channel](channels.md#mail) (`auth_mode: google`) sign in to the connected
+account's own mailbox without an app password; empty hosts mean Gmail's, an
+empty user or from address means the account's, and any other mailbox is
+refused. `GET /api/google/gmail/status` answers `{connected, gmail,
+account_email}` for those forms. A service account cannot read Gmail (that
+needs domain-wide delegation), so Gmail always uses the OAuth refresh token,
+even when a service account key is saved too.
+
+Gotchas:
+
+- `mail.google.com` is a restricted scope. While the OAuth app in Google
+  Cloud is in testing, only its listed test users can grant it, and Google
+  expires their refresh tokens after seven days, so the mail forms start
+  failing until someone reconnects. A published app needs Google's
+  verification for this scope.
+- The Google connection is one account for the whole hub. Only an
+  administrator can turn on `use_google` for a workspace's watcher, so a
+  workspace editor cannot point a watcher at the operator's inbox.
 
 ### Tools
 

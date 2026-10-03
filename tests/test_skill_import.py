@@ -7,6 +7,7 @@ Exercises memory/skill_import.py and the /sync route.
 import asyncio
 import json
 import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -398,48 +399,82 @@ def test_render_skill_md_keeps_the_license():
     assert parse_skill_md(render_skill_md(p)).license == "MIT"
 
 
-def test_skill_sources_are_cloned_as_projects_and_synced(workspace, monkeypatch):
+def _fake_collection(dest: Path) -> None:
+    _write_skill(Path(dest), folder="pdf")
+    (Path(dest) / "skills" / "docx").mkdir(parents=True)
+    (Path(dest) / "skills" / "docx" / "SKILL.md").write_text(
+        PROPRIETARY.replace("release-notes", "docx"), encoding="utf-8")
+
+
+def test_skill_sources_are_cloned_into_the_workspace_not_as_projects(workspace, monkeypatch):
     from connectors.git import git_ops
     from memory import skill_sources
     from models import SkillSourceAdd
+    from projects.storage import ProjectStore
 
     ws, folder = workspace
-    cloned = {}
+    cloned, pulled = {}, []
 
     def fake_clone(url, dest, *, branch=None, provider=None):
         cloned.update(url=url, branch=branch, provider=provider)
-        _write_skill(Path(dest), folder="pdf")
-        (Path(dest) / "skills" / "docx").mkdir(parents=True)
-        (Path(dest) / "skills" / "docx" / "SKILL.md").write_text(
-            PROPRIETARY.replace("release-notes", "docx"), encoding="utf-8")
+        _fake_collection(dest)
+        return "ok"
+
+    def fake_pull(repo_dir, *, provider=None):
+        pulled.append(Path(repo_dir))
+        shutil.rmtree(Path(repo_dir) / "skills" / "docx", ignore_errors=True)
         return "ok"
 
     monkeypatch.setattr(git_ops, "clone", fake_clone)
+    monkeypatch.setattr(git_ops, "pull", fake_pull)
 
     listed = run(skills_routes.list_skill_sources(workspace=ws))
     anthropic = next(s for s in listed if s["repo"] == "anthropics/skills")
-    assert anthropic["project_id"] is None and anthropic["license"] == "Apache-2.0"
+    assert anthropic["source_id"] is None and anthropic["license"] == "Apache-2.0"
 
+    projects_before = len([p for p in ProjectStore().list() if p.workspace == ws])
     result = run(skills_routes.add_skill_source(
         SkillSourceAdd(workspace=ws, url="anthropics/skills")))
     assert cloned == {"url": "https://github.com/anthropics/skills", "branch": None,
                       "provider": "github"}
     assert result["already_present"] is False
+    assert result["source"]["path"] == ".skills/sources/anthropics-skills"
+    assert len([p for p in ProjectStore().list() if p.workspace == ws]) == projects_before
     assert sorted(a["name"] for a in result["sync"]["added"]) == ["docx", "release-notes"]
     assert [f["name"] for f in result["sync"]["flagged"]] == ["docx"]
-    assert (folder / result["project"]["local_path"] / "SKILL.md").exists() is False
-    assert (folder / result["project"]["local_path"] / "skills" / "docx" / "SKILL.md").exists()
+    clone = folder / ".skills" / "sources" / "anthropics-skills"
+    assert (clone / "skills" / "docx" / "SKILL.md").exists()
+    entries = {e.name: e for e in _repo_entries(ws)}
+    assert entries["docx"].repo["source_id"] == "anthropics-skills"
+    assert entries["docx"].repo["project_id"] is None
+    assert entries["docx"].repo["root"] == "anthropics/skills"
+
+    # The workspace's own sync does not import the clone a second time.
+    report = sync_workspace(ws)
+    assert report["added"] == [] and len(_repo_entries(ws)) == 2
 
     listed = run(skills_routes.list_skill_sources(workspace=ws))
     anthropic = next(s for s in listed if s["repo"] == "anthropics/skills")
-    assert anthropic["project_id"] == result["project"]["id"]
+    assert anthropic["source_id"] == "anthropics-skills"
     assert anthropic["skills"] == 2 and anthropic["not_open"] == 1
 
-    # Connecting the same repository again syncs instead of cloning twice.
+    # Connecting the same repository again pulls instead of cloning twice.
     cloned.clear()
     again = run(skills_routes.add_skill_source(
         SkillSourceAdd(workspace=ws, url="https://github.com/anthropics/skills.git")))
-    assert again["already_present"] is True and cloned == {}
+    assert again["already_present"] is True and cloned == {} and pulled == [clone]
+    assert [m["name"] for m in again["sync"]["missing"]] == ["docx"]
+
+    updated = run(skills_routes.update_skill_source("anthropics-skills", workspace=ws))
+    assert len(pulled) == 2 and updated["sync"]["missing"] == []
+    assert [u["name"] for u in updated["sync"]["unchanged"]] == ["release-notes"]
+
+    removed = run(skills_routes.remove_skill_source("anthropics-skills", workspace=ws))
+    assert sorted(r["name"] for r in removed["removed"]) == ["docx", "release-notes"]
+    assert not clone.exists() and _repo_entries(ws) == []
+    with pytest.raises(HTTPException) as exc:
+        run(skills_routes.update_skill_source("anthropics-skills", workspace=ws))
+    assert exc.value.status_code == 404
 
     for bad in ("git@github.com:a/b.git", "https://evil.example/a/b", "https://github.com/only",
                 "http://github.com/a/b", "https://user:pw@github.com/a/b"):
@@ -448,3 +483,35 @@ def test_skill_sources_are_cloned_as_projects_and_synced(workspace, monkeypatch)
     with pytest.raises(HTTPException) as exc:
         run(skills_routes.add_skill_source(SkillSourceAdd(workspace=ws, url="ftp://x/y/z")))
     assert exc.value.status_code == 400
+
+
+def test_a_source_made_as_a_project_by_an_earlier_build_moves(workspace):
+    from memory import skill_sources
+    from projects.models import Project, RepoConfig
+    from projects.storage import ProjectStore
+
+    ws, folder = workspace
+    _fake_collection(folder / "skills_anthropics" / "repo")
+    project = Project(name="skills (anthropics)", workspace=ws, type="code", tags=["skills"],
+                      description="Agent Skills from anthropics/skills",
+                      repo=RepoConfig(type="github", url="https://github.com/anthropics/skills",
+                                      local_path="skills_anthropics/repo",
+                                      remote_id="anthropics/skills"))
+    ProjectStore().add(project)
+    sync_workspace(ws, project_id=project.id)
+    before = {e.name: e for e in _repo_entries(ws)}
+    assert before["docx"].repo["dir"] == "skills_anthropics/repo/skills/docx"
+
+    listed = skill_sources.list_sources(ws)
+    anthropic = next(s for s in listed if s["repo"] == "anthropics/skills")
+    assert anthropic["source_id"] == "anthropics-skills" and anthropic["skills"] == 2
+    assert ProjectStore().get(project.id) is None
+    assert not (folder / "skills_anthropics").exists()
+    after = {e.name: e for e in _repo_entries(ws)}
+    assert {n: str(e.id) for n, e in after.items()} == {n: str(e.id) for n, e in before.items()}
+    assert after["docx"].repo["dir"] == ".skills/sources/anthropics-skills/skills/docx"
+    assert after["docx"].repo["source_id"] == "anthropics-skills"
+    # The moved entries are in step with the folder: a sync changes nothing.
+    report = sync_workspace(ws)
+    assert report["added"] == [] and report["missing"] == [] and report["updated"] == []
+    assert skill_sources.migrate_project_sources(ws) == []

@@ -35,12 +35,19 @@ class ConfigField:
     options: list[str] = field(default_factory=list)
     #: Set on fields the service cannot start without.
     required: bool = False
+    #: ``{field: value}``: the form hides this field while another field
+    #: holds that value (the mail channel's passwords under a Google sign in).
+    hidden_when: dict[str, str] = field(default_factory=dict)
+    #: ``{field: value}``: a required field becomes optional while another
+    #: field holds that value (hosts a Google sign in fills by itself).
+    optional_when: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "key": self.key, "secret": self.secret, "kind": self.kind,
             "placeholder": self.placeholder, "options": list(self.options),
             "required": self.required,
+            "hidden_when": dict(self.hidden_when), "optional_when": dict(self.optional_when),
         }
 
 
@@ -56,6 +63,11 @@ class ChannelSpec:
     #: Whether the channel has a background loop (poll, websocket) at all.
     #: A channel that only receives inbound HTTP events has none.
     has_loop: bool = True
+    #: Ready-made field values the form offers as a pick list (the mail
+    #: channel's providers, ``connectors/mail/presets.py``): each one a dict
+    #: with ``id``, ``label``, ``help_url``, ``auth`` and the ``channel``
+    #: fields it fills. Empty for a channel with nothing to pre-fill.
+    presets: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +75,7 @@ class ChannelSpec:
             "fields": [f.to_dict() for f in self.fields],
             "inbound_url": self.inbound_url,
             "has_loop": self.has_loop,
+            "presets": list(self.presets),
         }
 
 

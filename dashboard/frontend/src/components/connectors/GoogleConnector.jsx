@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { LogOut, ExternalLink } from 'lucide-react';
+import { LogOut, ExternalLink, Mail } from 'lucide-react';
 import { googleOAuthStartUrl, disconnectGoogle } from '../../api';
 import { useI18n } from '../../i18n';
 import CredentialConnector from './CredentialConnector';
 
 // Google Workspace: a service account key, or an OAuth client plus a
 // "Connect Google" step that stores the refresh token (routes/google.py).
+// "Connect with Gmail" runs the same step with the Gmail scope added, so the
+// IMAP watcher and the mail channel can sign in to the mailbox without an
+// app password (connectors/mail/oauth.py).
 export default function GoogleConnector() {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
@@ -30,6 +33,14 @@ export default function GoogleConnector() {
               >
                 <ExternalLink className="w-3.5 h-3.5" /> {t('connectors.google.connect')}
               </a>
+              <a
+                href={extra.oauth_ready ? googleOAuthStartUrl({ gmail: true }) : undefined}
+                aria-disabled={!extra.oauth_ready}
+                data-testid="google-connect-gmail"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border ${extra.oauth_ready ? 'border-indigo-300 text-indigo-700 hover:bg-indigo-50' : 'border-gray-200 text-gray-400 pointer-events-none'}`}
+              >
+                <Mail className="w-3.5 h-3.5" /> {t('connectors.google.connectGmail')}
+              </a>
               {extra.mode === 'oauth' && (
                 <button
                   type="button"
@@ -41,6 +52,11 @@ export default function GoogleConnector() {
                 </button>
               )}
             </div>
+            {extra.mode !== 'none' && (
+              <p className="text-xs text-gray-500" data-testid="google-gmail-state">
+                {extra.gmail ? t('connectors.google.gmailOn') : t('connectors.google.gmailOff')}
+              </p>
+            )}
             {!extra.oauth_ready && <p className="text-xs text-gray-500">{t('connectors.google.oauthHint')}</p>}
           </div>
         );

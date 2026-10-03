@@ -1086,7 +1086,13 @@ export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, 
   await consumeSSE(response, onEvent);
 };
 export const getProjectFiles = (id) => api.get(`/projects/${id}/files`);
+// { path, size, content, kind: 'text' | 'pdf' | 'binary', mime_type, truncated }: read the
+// way workspace files are, a PDF's text extracted.
 export const getProjectFileContent = (id, path) => api.get(`/projects/${id}/file-content`, { params: { path } });
+// The bytes as a Blob (an image, a PDF or an HTML page to render), through the
+// authenticated client like api/files.js's getWorkspaceFileBlob.
+export const getProjectFileBlob = (id, path) =>
+  api.get(`/projects/${id}/file-raw`, { params: { path }, responseType: 'blob' });
 export const importProjectFromRepo = (data) => api.post('/projects/import-from-repo', data);
 export const connectProjectRepo = (id, data) => api.post(`/projects/${id}/connect-repo`, data);
 export const syncProjectIssues = (id) => api.post(`/projects/${id}/sync-issues`);
@@ -1403,9 +1409,11 @@ export const getConnectorConfig = (name) => api.get(`/connectors/${name}/config`
 export const updateConnectorConfig = (name, data) => api.put(`/connectors/${name}/config`, data);
 export const testConnector = (name) => api.post(`/connectors/${name}/test`);
 // Google OAuth (routes/google.py): the start URL is opened in the browser,
-// the callback stores the refresh token, disconnect clears it.
-export const googleOAuthStartUrl = () => `${API_ORIGIN}/api/google/oauth/start`;
+// the callback stores the refresh token, disconnect clears it. `gmail` also
+// asks for the Gmail scope, for IMAP and SMTP sign in (connectors/mail/oauth.py).
+export const googleOAuthStartUrl = ({ gmail = false } = {}) => `${API_ORIGIN}/api/google/oauth/start${gmail ? '?gmail=1' : ''}`;
 export const disconnectGoogle = () => api.post('/google/oauth/disconnect');
+export const getGmailStatus = () => api.get('/google/gmail/status');
 
 export default api;
 

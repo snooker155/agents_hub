@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from common import access, audit, identity
 from common.auth import WS_EDITOR
+from connectors.mail import presets as mail_presets
 from watchers import kinds, service
 from watchers.models import (
     DEFAULT_AUTO_PAUSE_AFTER,
@@ -59,6 +60,21 @@ def _require_write(request: Request, workspace: str) -> None:
     identity.require_role(_principal(request), workspace=workspace, role=WS_EDITOR)
 
 
+def _uses_google(config: Any) -> bool:
+    if not isinstance(config, dict):
+        return False
+    value = config.get("use_google")
+    return value is True or str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _require_google_admin(request: Request, config: Any) -> None:
+    """Signing in with the Google connector reads the operator's own Gmail,
+    one account for the whole hub, so only an administrator may point a
+    workspace's watcher at it. A workspace editor uses a password secret."""
+    if _uses_google(config):
+        identity.require_role(_principal(request), admin=True)
+
+
 def _raise(exc: service.WatcherError):
     raise HTTPException(status_code=getattr(exc, "status", 400), detail=str(exc))
 
@@ -83,9 +99,18 @@ def _audit(request: Request, action: str, watcher: Any, details: Optional[Dict[s
 
 @router.get("/kinds")
 async def list_kinds():
-    """The kinds and their config fields, for the form."""
+    """The kinds and their config fields, for the form.
+
+    The ``imap`` kind also carries the provider presets
+    (``connectors/mail/presets.py``): pick Gmail and the host, port and TLS
+    fields fill themselves. ``google`` says whether "Sign in with Google"
+    can work: connected, Gmail granted, and as whom.
+    """
+    from connectors.google.auth import gmail_status
     return {
-        "kinds": [{"kind": k, "fields": kinds.CONFIG_FIELDS[k]} for k in KINDS],
+        "google": gmail_status(),
+        "kinds": [{"kind": k, "fields": kinds.CONFIG_FIELDS[k],
+                   "presets": mail_presets.public() if k == "imap" else []} for k in KINDS],
         "interval": {"min": MIN_INTERVAL_SECONDS, "max": MAX_INTERVAL_SECONDS, "default": DEFAULT_INTERVAL_SECONDS},
     }
 
@@ -110,6 +135,7 @@ async def list_watchers(request: Request, workspace: Optional[str] = None):
 @router.post("", status_code=201)
 async def create_watcher(request: Request, payload: WatcherCreate):
     _require_write(request, payload.workspace)
+    _require_google_admin(request, payload.config)
     principal = _principal(request)
     try:
         watcher = service.create(payload.workspace, payload.model_dump(exclude={"workspace"}),
@@ -130,6 +156,7 @@ async def update_watcher(request: Request, watcher_id: str, payload: WatcherUpda
     current = _load(request, watcher_id)
     _require_write(request, current.workspace)
     patch = payload.model_dump(exclude_unset=True)
+    _require_google_admin(request, patch.get("config"))
     try:
         watcher = service.update(watcher_id, patch)
     except service.WatcherError as exc:

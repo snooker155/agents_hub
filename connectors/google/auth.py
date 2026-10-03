@@ -28,6 +28,22 @@ SCOPES = (
     "https://www.googleapis.com/auth/calendar",
 )
 
+#: Who the connected account is: the userinfo lookup after the consent
+#: screen needs it for the address, and so does IMAP's XOAUTH2, which names
+#: the mailbox by that address.
+IDENTITY_SCOPES = (
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+)
+
+#: Full IMAP and SMTP access to the connected Gmail mailbox, the only scope
+#: Google accepts for XOAUTH2. Asked for only when the operator clicks
+#: "Connect with Gmail" (``/api/google/oauth/start?gmail=1``): it is a
+#: restricted scope, so a person who only wants Drive never sees it on the
+#: consent screen. A service account cannot use it without domain-wide
+#: delegation, so Gmail always goes through the OAuth refresh token.
+GMAIL_SCOPE = "https://mail.google.com/"
+
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
@@ -75,12 +91,23 @@ def consume_state(state: str) -> bool:
 
 # ── the three-legged flow ────────────────────────────────────────────────────
 
-def build_auth_url(redirect_uri: str, state: str) -> str:
+def requested_scopes(*, gmail: bool = False) -> list[str]:
+    """What the consent screen asks for: the Workspace surfaces, who the
+    account is, and Gmail only when asked."""
+    scopes = [*SCOPES, *IDENTITY_SCOPES]
+    if gmail:
+        scopes.append(GMAIL_SCOPE)
+    return scopes
+
+
+def build_auth_url(redirect_uri: str, state: str, *, gmail: bool = False) -> str:
     """Google's consent screen URL for this operator's OAuth client.
 
     ``access_type=offline`` plus ``prompt=consent`` is what makes Google hand
     back a refresh token even for an account that has already approved this
-    client once before.
+    client once before. ``include_granted_scopes`` keeps what the account
+    granted earlier, so reconnecting without ``gmail`` after a Gmail grant
+    does not take the mailbox away.
     """
     from . import STORE
 
@@ -91,8 +118,9 @@ def build_auth_url(redirect_uri: str, state: str) -> str:
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": " ".join(SCOPES),
+        "scope": " ".join(requested_scopes(gmail=gmail)),
         "access_type": "offline",
+        "include_granted_scopes": "true",
         "prompt": "consent",
         "state": state,
     }
@@ -143,6 +171,11 @@ def fetch_userinfo(access_token: str) -> dict[str, Any]:
 
 _cached_token: Optional[str] = None
 _cached_expiry: float = 0.0
+#: The OAuth refresh token's own access token, for Gmail: when a service
+#: account is configured too, get_access_token() hands out the service
+#: account's token, which no mailbox accepts.
+_cached_oauth_token: Optional[str] = None
+_cached_oauth_expiry: float = 0.0
 
 
 def _refresh_oauth_token() -> tuple[str, float]:
@@ -223,12 +256,70 @@ def get_access_token() -> str:
 def reset_cache() -> None:
     """Drop the cached access token: after a disconnect/reconnect, and
     between tests."""
-    global _cached_token, _cached_expiry
+    global _cached_token, _cached_expiry, _cached_oauth_token, _cached_oauth_expiry
     _cached_token = None
     _cached_expiry = 0.0
+    _cached_oauth_token = None
+    _cached_oauth_expiry = 0.0
+
+
+# ── Gmail over IMAP and SMTP ─────────────────────────────────────────────────
+
+def granted_scopes() -> set[str]:
+    """The scopes the connected account granted, as the callback stored them."""
+    from . import STORE
+
+    return set(str(STORE.get("granted_scopes") or "").split())
+
+
+def has_gmail() -> bool:
+    """Whether the OAuth connection carries the Gmail scope."""
+    from . import STORE
+
+    return bool(str(STORE.get("refresh_token") or "").strip()) and GMAIL_SCOPE in granted_scopes()
+
+
+def gmail_status() -> dict[str, Any]:
+    """What the mail forms show: connected at all, Gmail granted, as whom."""
+    from . import STORE
+
+    return {
+        "connected": bool(str(STORE.get("refresh_token") or "").strip()),
+        "gmail": has_gmail(),
+        "account_email": str(STORE.get("account_email") or ""),
+    }
+
+
+def gmail_login() -> tuple[str, str]:
+    """``(address, access_token)`` for XOAUTH2 against Gmail's IMAP and SMTP.
+
+    Always the OAuth refresh token's token, never the service account's.
+    Raises :class:`GoogleError` with a UI-safe message when Google is not
+    connected, the Gmail scope was not granted, or the address is unknown.
+    """
+    global _cached_oauth_token, _cached_oauth_expiry
+    from . import STORE
+
+    if not str(STORE.get("refresh_token") or "").strip():
+        raise GoogleError("Google is not connected. Click Connect with Gmail on the Connectors page.")
+    if GMAIL_SCOPE not in granted_scopes():
+        raise GoogleError("The Google connection has no Gmail access. Click Connect with Gmail on the Connectors page.")
+    address = str(STORE.get("account_email") or "").strip()
+    if not address:
+        raise GoogleError("The connected Google account has no known address. Reconnect it on the Connectors page.")
+    if not (_cached_oauth_token and time.time() < _cached_oauth_expiry):
+        _cached_oauth_token, _cached_oauth_expiry = _refresh_oauth_token()
+    return address, _cached_oauth_token
+
+
+def xoauth2_string(address: str, token: str) -> str:
+    """The SASL XOAUTH2 initial response, before base64 (imaplib and
+    smtplib encode it themselves)."""
+    return f"user={address}\x01auth=Bearer {token}\x01\x01"
 
 
 __all__ = [
-    "GoogleError", "SCOPES", "new_state", "consume_state", "build_auth_url",
-    "exchange_code", "fetch_userinfo", "get_access_token", "reset_cache",
+    "GoogleError", "SCOPES", "IDENTITY_SCOPES", "GMAIL_SCOPE", "new_state", "consume_state",
+    "requested_scopes", "build_auth_url", "exchange_code", "fetch_userinfo", "get_access_token",
+    "reset_cache", "granted_scopes", "has_gmail", "gmail_status", "gmail_login", "xoauth2_string",
 ]

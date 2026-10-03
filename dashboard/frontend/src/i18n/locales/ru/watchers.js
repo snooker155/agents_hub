@@ -11,6 +11,7 @@ export default {
   pickWorkspace: 'Выберите рабочее пространство, чтобы добавить вотчер.',
   columns: { name: 'Вотчер', state: 'Состояние', lastCheck: 'Последняя проверка', lastChange: 'Последнее изменение', agents: 'Будит' },
   state: { active: 'Активен', paused: 'На паузе ({{reason}})', disabled: 'Выключен', error: 'Ошибка' },
+  viaGoogle: 'Google-аккаунт',
   every: 'каждые {{seconds}} с',
   fired: 'событий: {{count}}',
   nobody: 'пока никого',
@@ -32,6 +33,7 @@ export default {
     autoPause: 'Пауза после ошибок подряд',
     autoPauseHint: '0 означает опрашивать несмотря на ошибки.',
     enabled: 'Включён',
+    useGoogleHint: 'Без пароля приложения: аккаунт из коннектора Google читает свой Gmail. Пустые хост и имя пользователя означают Gmail и этот аккаунт. Включить может только администратор.',
     secretHint: 'Имя секрета рабочего пространства (Settings → Secrets), не само значение.',
     save: 'Сохранить',
     cancel: 'Отмена',
@@ -42,6 +44,7 @@ export default {
       httpHint: 'Страница или JSON-эндпоинт; следить за всем ответом или за одним полем JSON. Только публичные хосты.',
     },
     fields: {
+      use_google: 'Войти подключённым Google-аккаунтом',
       host: 'IMAP-хост', port: 'Порт', ssl: 'TLS', username: 'Имя пользователя', password_secret: 'Секрет с паролем',
       folder: 'Папка', from_filter: 'Только отправители, содержащие', subject_filter: 'Только темы, содержащие',
       url: 'URL', method: 'Метод', json_path: 'Путь JSON (необязательно)', headers_secret: 'Секрет с заголовками (необязательно)',

@@ -198,7 +198,6 @@ class SkillSourceAdd(BaseModel):
     workspace: str
     url: str
     branch: Optional[str] = None
-    name: Optional[str] = None
 
 
 class SkillSharingUpdate(BaseModel):

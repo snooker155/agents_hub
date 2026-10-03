@@ -10,6 +10,9 @@ import { useLiveRefetch } from '../components/stream';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import MailPresetPicker from '../components/connectors/MailPresetPicker';
+import { presetForAddress } from '../components/connectors/mailPresets';
+import GmailSignInNote from '../components/connectors/GmailSignInNote';
 
 const inputCls = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
 const smallBtn = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed';
@@ -29,7 +32,10 @@ function StateBadge({ w, t }) {
 }
 
 /** The create and edit form: a kind, its config fields (from /api/watchers/kinds), the interval. */
-function WatcherForm({ watcher, kinds, interval, workspace, onClose, onSaved, t }) {
+/** Whether a field's ``{other: value}`` condition (optional_when, hidden_when) holds. */
+const when = (cond, values) => Object.entries(cond || {}).some(([k, v]) => (values[k] ?? false) === v);
+
+function WatcherForm({ watcher, kinds, interval, google, workspace, onClose, onSaved, t }) {
   const [name, setName] = useState(watcher?.name || '');
   const [kind, setKind] = useState(watcher?.kind || kinds[0]?.kind || 'imap');
   const [config, setConfig] = useState(watcher?.config || {});
@@ -39,8 +45,24 @@ function WatcherForm({ watcher, kinds, interval, workspace, onClose, onSaved, t 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const fields = kinds.find((k) => k.kind === kind)?.fields || [];
-  const setField = (f, v) => setConfig((c) => ({ ...c, [f]: v }));
+  const spec = kinds.find((k) => k.kind === kind);
+  const fields = spec?.fields || [];
+  // The provider presets (connectors/mail/presets.py) ride along with the
+  // imap kind. The picked one is read back from the host field, so an
+  // existing Gmail watcher opens with "Gmail" selected and a hand-typed host
+  // shows as custom; a typed address with a known domain fills the host too.
+  const presets = spec?.presets || [];
+  const presetId = presets.find((p) => p.watcher?.host === config.host)?.id || '';
+  const useGoogle = !!config.use_google;
+  const applyPreset = (p) => { if (p) setConfig((c) => ({ ...c, ...p.watcher })); };
+  const setField = (f, v) => setConfig((c) => {
+    const next = { ...c, [f]: v };
+    if (f === 'username' && !c.host) {
+      const guess = presetForAddress(presets, v);
+      if (guess) Object.assign(next, guess.watcher);
+    }
+    return next;
+  });
 
   const save = async () => {
     setSaving(true);
@@ -76,10 +98,13 @@ function WatcherForm({ watcher, kinds, interval, workspace, onClose, onSaved, t 
           </select>
           <span className="text-xs text-gray-500">{t(`watchers.form.kinds.${kind}Hint`)}</span>
         </label>
+        <MailPresetPicker presets={presets} value={presetId} onPick={applyPreset} t={t} inputCls={inputCls}
+          googleActive={useGoogle}
+          onUseGoogle={fields.some((f) => f.name === 'use_google') ? () => setField('use_google', true) : undefined} />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {fields.map((f) => (
-            <label key={f.name} className={`block text-sm text-gray-700 ${f.name === 'url' || f.name === 'host' ? 'sm:col-span-2' : ''}`}>
-              <span className="font-medium">{t(`watchers.form.fields.${f.name}`)}{f.required && <span className="text-red-500"> *</span>}</span>
+          {fields.filter((f) => !when(f.hidden_when, config)).map((f) => (
+            <label key={f.name} className={`block text-sm text-gray-700 ${f.name === 'url' || f.name === 'host' || f.name === 'use_google' ? 'sm:col-span-2' : ''}`}>
+              <span className="font-medium">{t(`watchers.form.fields.${f.name}`)}{f.required && !when(f.optional_when, config) && <span className="text-red-500"> *</span>}</span>
               {f.type === 'bool' ? (
                 <input type="checkbox" checked={config[f.name] ?? f.default ?? false} onChange={(e) => setField(f.name, e.target.checked)}
                   className="ml-2 h-4 w-4 rounded border-gray-300 text-indigo-600" aria-label={t(`watchers.form.fields.${f.name}`)} />
@@ -89,6 +114,12 @@ function WatcherForm({ watcher, kinds, interval, workspace, onClose, onSaved, t 
                   aria-label={t(`watchers.form.fields.${f.name}`)} />
               )}
               {f.type === 'secret' && <span className="text-xs text-gray-500">{t('watchers.form.secretHint')}</span>}
+              {f.name === 'use_google' && (
+                <span className="block">
+                  <span className="block text-xs text-gray-500">{t('watchers.form.useGoogleHint')}</span>
+                  {useGoogle && <GmailSignInNote status={google} t={t} />}
+                </span>
+              )}
             </label>
           ))}
         </div>
@@ -135,6 +166,7 @@ export default function Watchers() {
   const [rows, setRows] = useState([]);
   const [kinds, setKinds] = useState([]);
   const [interval, setInterval_] = useState({ min: 15, max: 21600, default: 120 });
+  const [google, setGoogle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // null | 'new' | watcher
@@ -148,6 +180,7 @@ export default function Watchers() {
       setRows(Array.isArray(data) ? data : []);
       setKinds(meta?.kinds || []);
       if (meta?.interval) setInterval_(meta.interval);
+      setGoogle(meta?.google || null);
     } catch (e) {
       setError(e?.response?.data?.detail || t('watchers.loadFailed'));
     } finally {
@@ -232,7 +265,9 @@ export default function Watchers() {
                     <div className="text-xs text-gray-500">
                       <span className="uppercase tracking-wide">{w.kind}</span> · {t('watchers.every', { seconds: w.interval_seconds })} · {t('watchers.fired', { count: w.fired || 0 })}
                     </div>
-                    <div className="text-xs text-gray-400 truncate">{w.kind === 'imap' ? `${w.config?.username || ''}@${w.config?.host || ''}/${w.config?.folder || 'INBOX'}` : w.config?.url}</div>
+                    <div className="text-xs text-gray-400 truncate">{w.kind === 'imap'
+                      ? `${w.config?.use_google ? t('watchers.viaGoogle') : `${w.config?.username || ''}@${w.config?.host || ''}`}/${w.config?.folder || 'INBOX'}`
+                      : w.config?.url}</div>
                   </div>
                   <div className="md:col-span-2"><StateBadge w={w} t={t} />
                     {w.last_error && <div className="text-xs text-amber-700 mt-1 break-words">{w.last_error}</div>}
@@ -282,6 +317,7 @@ export default function Watchers() {
           watcher={editing === 'new' ? null : editing}
           kinds={kinds}
           interval={interval}
+          google={google}
           workspace={editing === 'new' ? workspace : editing.workspace}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}

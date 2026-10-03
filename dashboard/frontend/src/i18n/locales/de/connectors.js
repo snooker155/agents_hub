@@ -83,7 +83,7 @@ export default {
     allowlist: "Erlaubte Chats",
     saveAllowlist: "Liste speichern",
     chatKey: "Chat-Id",
-    bindHint: "Einen Chat mit einem Arbeitsbereich verbinden. Das kann nur ein Operator, der Chat selbst kann keinen Arbeitsbereich wählen. Die Verbindung setzt den Chat auch auf die erlaubte Liste.",
+    bindHint: "Einen Chat mit dem aktuellen Arbeitsbereich verbinden. Das kann nur ein Operator, der Chat selbst kann keinen Arbeitsbereich wählen. Die Verbindung setzt den Chat auch auf die erlaubte Liste.",
     bind: "Verbinden",
     pickLater: "Den Agenten später aus dem Chat wählen",
     bindingsHint: "Jeder verbundene Chat führt einen Agenten oder einen Flow in einem Arbeitsbereich aus. Im Chat ändert /agent <id> oder /flow <id> das Ziel, /reset beginnt ein neues Gespräch.",
@@ -130,6 +130,7 @@ export default {
       tenant_id: "Mandanten-Id",
     },
     mail: {
+      auth_mode: "Anmeldung",
       imap_host: "IMAP-Host",
       imap_port: "IMAP-Port",
       imap_user: "IMAP-Benutzer",
@@ -181,6 +182,7 @@ export default {
       tenant_id: "Nur für Bots mit einem Mandanten.",
     },
     mail: {
+      auth_mode: "password nutzt die Felder unten; google meldet sich mit dem auf dem Google-Tab verbundenen Konto an (Mit Gmail verbinden), leere Hosts, Benutzer und Absenderadresse bedeuten Gmail und dieses Konto.",
       from_address: "Die Adresse, von der Antworten gesendet werden; Nachrichten von ihr werden ignoriert.",
     },
     jira: {
@@ -231,6 +233,9 @@ export default {
     connectedAs: "Verbunden als {{email}} über OAuth.",
     serviceAccountMode: "Der Dienstkonto-Schlüssel wird verwendet.",
     notConnected: "Nicht verbunden: einen Dienstkonto-Schlüssel einfügen oder einen OAuth-Client speichern und verbinden.",
+    connectGmail: "Mit Gmail verbinden",
+    gmailOn: "Gmail-Zugriff erteilt: Mail-Watcher und der Mail-Kanal können sich mit diesem Konto anmelden.",
+    gmailOff: "Noch kein Gmail-Zugriff. Klicken Sie auf Mit Gmail verbinden, damit Mail-Watcher und der Mail-Kanal ohne App-Passwort auskommen.",
     oauthHint: "Zuerst OAuth-Client-Id und -Secret speichern, mit der in Google Cloud registrierten Redirect-URI <Ihr Hub>/api/google/oauth/callback.",
   },
   databases: {
@@ -245,5 +250,11 @@ export default {
     add: "Verbindung hinzufügen",
     dsnHint: "Einen Datenbankbenutzer mit Leserechten verwenden; der Hub öffnet die Sitzung zusätzlich nur lesend.",
     confirmRemove: "Die Verbindung {{name}} entfernen?",
+  },
+  // Labels of select options, by channel and field (ChannelConnector.jsx).
+  options: {
+    mail: {
+      auth_mode: { password: "Passwort", google: "Verbundenes Google-Konto" },
+    },
   },
 };

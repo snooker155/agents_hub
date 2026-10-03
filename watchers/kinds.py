@@ -11,14 +11,19 @@ with ten thousand old messages does not wake anybody ten thousand times.
 
 Every kind also declares ``CONFIG_FIELDS`` for :func:`validate_config` and
 the form on the Watchers page: name, type (``str``, ``int``, ``bool``,
-``secret``), whether it is required, and a default.
+``secret``), whether it is required, and a default. ``optional_when`` and
+``hidden_when`` (``{field: value}``) relax a required field, or hide it on
+the form, while an earlier field holds that value.
 
 ``imap``
     A mailbox over IMAP (the standard library's ``imaplib``). Config: host,
     port, ssl, username, ``password_secret`` (a workspace secret holding the
     password or app password), folder (INBOX), optional ``from_filter`` and
-    ``subject_filter`` substrings. State: the highest UID seen. One event per
-    new message: sender, subject, date and the first lines of the text body.
+    ``subject_filter`` substrings. With ``use_google`` on, the Google
+    connector's account signs in over XOAUTH2 (connectors/mail/oauth.py)
+    instead: no password secret, and an empty host or username means Gmail's
+    and the account's. State: the highest UID seen. One event per new
+    message: sender, subject, date and the first lines of the text body.
 ``http``
     An HTTP resource. Config: url, method (GET), optional ``json_path``
     (dotted, ``data.items.0.status``) to watch one field instead of the whole
@@ -71,11 +76,13 @@ class ProbeError(Exception):
 
 CONFIG_FIELDS: Dict[str, List[Dict[str, Any]]] = {
     "imap": [
-        {"name": "host", "type": "str", "required": True},
+        {"name": "use_google", "type": "bool", "required": False, "default": False},
+        {"name": "host", "type": "str", "required": True, "optional_when": {"use_google": True}},
         {"name": "port", "type": "int", "required": False, "default": 993},
         {"name": "ssl", "type": "bool", "required": False, "default": True},
-        {"name": "username", "type": "str", "required": True},
-        {"name": "password_secret", "type": "secret", "required": True},
+        {"name": "username", "type": "str", "required": True, "optional_when": {"use_google": True}},
+        {"name": "password_secret", "type": "secret", "required": True,
+         "optional_when": {"use_google": True}, "hidden_when": {"use_google": True}},
         {"name": "folder", "type": "str", "required": False, "default": "INBOX"},
         {"name": "from_filter", "type": "str", "required": False, "default": ""},
         {"name": "subject_filter", "type": "str", "required": False, "default": ""},
@@ -100,7 +107,8 @@ def validate_config(kind: str, config: Any) -> Dict[str, Any]:
         name, typ = spec["name"], spec["type"]
         raw = src.get(name, spec.get("default"))
         if raw is None or raw == "":
-            if spec["required"]:
+            relaxed = any(out.get(k) == v for k, v in (spec.get("optional_when") or {}).items())
+            if spec["required"] and not relaxed:
                 raise ValueError(f"{kind} watcher needs '{name}'")
             out[name] = spec.get("default", "")
             continue
@@ -122,6 +130,11 @@ def validate_config(kind: str, config: Any) -> Dict[str, Any]:
             raise ValueError("'method' must be GET or HEAD; a watcher only reads")
     if kind == "imap" and not (1 <= out["port"] <= 65535):
         raise ValueError("'port' must be between 1 and 65535")
+    if kind == "imap" and out.get("use_google"):
+        # A Google sign in needs no password, and reaches Gmail.
+        out["password_secret"] = ""
+        if not out["host"]:
+            out["host"], out["port"], out["ssl"] = "imap.gmail.com", 993, True
     return out
 
 
@@ -163,21 +176,47 @@ def _body_text(msg: Any) -> str:
     return html_fallback[:TEXT_LIMIT]
 
 
-def _imap_connect(cfg: Dict[str, Any], password: str) -> Any:
+@dataclass
+class GoogleToken:
+    """What ``_imap_connect`` gets instead of a password under ``use_google``."""
+    address: str
+    token: str
+
+
+def _imap_connect(cfg: Dict[str, Any], password: Any) -> Any:
     client_cls = imaplib.IMAP4_SSL if cfg.get("ssl", True) else imaplib.IMAP4
     try:
         client = client_cls(cfg["host"], int(cfg.get("port") or (993 if cfg.get("ssl", True) else 143)), timeout=20)
-        client.login(cfg["username"], password)
+        if isinstance(password, GoogleToken):
+            from connectors.mail.oauth import imap_authenticate
+            imap_authenticate(client, password.address, password.token)
+        else:
+            client.login(cfg["username"], password)
     except Exception as e:  # noqa: BLE001 - every connection failure is one probe error
         raise ProbeError(f"IMAP connection failed: {e}") from e
     return client
 
 
-def probe_imap(watcher: Any, secret: SecretResolver, *, connect: Optional[Callable[..., Any]] = None) -> Probe:
+def _google_credentials(cfg: Dict[str, Any], login: Optional[Callable[[], tuple]]) -> GoogleToken:
+    from connectors.mail import oauth
+    try:
+        address, token = oauth.google_login(login)
+        oauth.check_address(cfg.get("username") or "", address)
+    except oauth.MailOAuthError as e:
+        raise ProbeError(str(e)) from e
+    return GoogleToken(address=address, token=token)
+
+
+def probe_imap(watcher: Any, secret: SecretResolver, *, connect: Optional[Callable[..., Any]] = None,
+               google_login: Optional[Callable[[], tuple]] = None) -> Probe:
     cfg = dict(watcher.config or {})
-    password = secret(cfg.get("password_secret") or "")
-    if not password:
-        raise ProbeError(f"secret '{cfg.get('password_secret')}' is missing or empty")
+    if cfg.get("use_google"):
+        password: Any = _google_credentials(cfg, google_login)
+        cfg["username"] = password.address
+    else:
+        password = secret(cfg.get("password_secret") or "")
+        if not password:
+            raise ProbeError(f"secret '{cfg.get('password_secret')}' is missing or empty")
     client = (connect or _imap_connect)(cfg, password)
     try:
         status, _ = client.select(cfg.get("folder") or "INBOX", readonly=True)
@@ -329,5 +368,5 @@ def probe(watcher: Any, secret: SecretResolver) -> Probe:
 
 __all__ = [
     "CONFIG_FIELDS", "MAX_EVENTS_PER_PROBE", "Probe", "ProbeError", "PROBES",
-    "validate_config", "probe", "probe_imap", "probe_http",
+    "validate_config", "probe", "probe_imap", "probe_http", "GoogleToken",
 ]

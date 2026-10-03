@@ -16,13 +16,20 @@ vi.mock('../../i18n', () => ({
 
 import Watchers from '../Watchers';
 
+const GMAIL = { id: 'gmail', label: 'Gmail', domains: ['gmail.com'], auth: 'app_password', help_url: 'https://g/help',
+  watcher: { host: 'imap.gmail.com', port: 993, ssl: true }, channel: { imap_host: 'imap.gmail.com' } };
 const KINDS = { kinds: [
   { kind: 'imap', fields: [
-    { name: 'host', type: 'str', required: true }, { name: 'username', type: 'str', required: true },
-    { name: 'password_secret', type: 'secret', required: true }, { name: 'ssl', type: 'bool', required: false, default: true },
-  ] },
+    { name: 'use_google', type: 'bool', required: false, default: false },
+    { name: 'host', type: 'str', required: true, optional_when: { use_google: true } },
+    { name: 'port', type: 'int', required: false, default: 993 },
+    { name: 'username', type: 'str', required: true, optional_when: { use_google: true } },
+    { name: 'password_secret', type: 'secret', required: true, optional_when: { use_google: true }, hidden_when: { use_google: true } },
+    { name: 'ssl', type: 'bool', required: false, default: true },
+  ], presets: [GMAIL] },
   { kind: 'http', fields: [{ name: 'url', type: 'str', required: true }, { name: 'json_path', type: 'str', required: false, default: '' }] },
-], interval: { min: 15, max: 21600, default: 120 } };
+], interval: { min: 15, max: 21600, default: 120 },
+google: { connected: true, gmail: true, account_email: 'anna@gmail.com' } };
 
 const row = (overrides = {}) => ({
   id: 'w1', workspace: 'default', name: 'inbox', kind: 'imap', config: { host: 'imap.x', username: 'me', folder: 'INBOX' },
@@ -66,6 +73,43 @@ describe('Watchers page', () => {
       workspace: 'default', name: 'status', kind: 'http', interval_seconds: 60,
       config: { url: 'https://example.org/s.json', json_path: 'state' },
     });
+  });
+
+  it('fills the IMAP host from a provider preset or a typed address', async () => {
+    renderIt();
+    await waitFor(() => expect(screen.getByText('watchers.add')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('watchers.add'));
+    // Picking Gmail fills host, port and TLS and shows the app password rule.
+    fireEvent.change(screen.getByTestId('mail-preset'), { target: { value: 'gmail' } });
+    expect(screen.getByLabelText('watchers.form.fields.host')).toHaveValue('imap.gmail.com');
+    expect(screen.getByLabelText('watchers.form.fields.port')).toHaveValue(993);
+    expect(screen.getByTestId('mail-preset-hint')).toHaveTextContent('mailPresets.auth.app_password');
+    expect(screen.getByText('mailPresets.help').closest('a')).toHaveAttribute('href', 'https://g/help');
+    // A hand-typed host turns the pick list back to custom.
+    fireEvent.change(screen.getByLabelText('watchers.form.fields.host'), { target: { value: 'mail.corp.local' } });
+    expect(screen.getByTestId('mail-preset')).toHaveValue('');
+    // With no host yet, a known address domain picks the preset on its own.
+    fireEvent.change(screen.getByLabelText('watchers.form.fields.host'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('watchers.form.fields.username'), { target: { value: 'anna@gmail.com' } });
+    expect(screen.getByLabelText('watchers.form.fields.host')).toHaveValue('imap.gmail.com');
+    expect(screen.getByTestId('mail-preset')).toHaveValue('gmail');
+  });
+
+  it('signs in with the connected Google account instead of a password secret', async () => {
+    renderIt();
+    await waitFor(() => expect(screen.getByText('watchers.add')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('watchers.add'));
+    fireEvent.change(screen.getByLabelText('watchers.form.name'), { target: { value: 'gmail' } });
+    expect(screen.getByLabelText('watchers.form.fields.password_secret')).toBeInTheDocument();
+    // Gmail's preset offers the Google sign in; taking it hides the secret.
+    fireEvent.change(screen.getByTestId('mail-preset'), { target: { value: 'gmail' } });
+    fireEvent.click(screen.getByTestId('mail-preset-use-google'));
+    expect(screen.getByLabelText('watchers.form.fields.use_google')).toBeChecked();
+    expect(screen.queryByLabelText('watchers.form.fields.password_secret')).toBeNull();
+    expect(screen.getByTestId('gmail-note')).toHaveTextContent('mailPresets.google.ready {"email":"anna@gmail.com"}');
+    fireEvent.click(screen.getByText('watchers.form.save'));
+    await waitFor(() => expect(api.createWatcher).toHaveBeenCalledTimes(1));
+    expect(api.createWatcher.mock.calls[0][0].config).toMatchObject({ use_google: true, host: 'imap.gmail.com' });
   });
 
   it('pauses and tests a watcher', async () => {

@@ -352,16 +352,44 @@ async def list_skill_sources(workspace: str = Query(...)):
 
 @router.post("/sources")
 async def add_skill_source(data: SkillSourceAdd):
-    """Connect a repository of skills: clone it as a project of the workspace
-    and sync its skills. Returns the project, the sync report (with the
-    skills the review flagged) and whether it was already there."""
+    """Connect a repository of skills: clone it under the workspace's
+    ``.skills/sources`` and sync its skills. Returns the source, the sync
+    report (with the skills the review flagged) and whether it was already
+    there (then it is pulled and synced instead)."""
     import asyncio
 
     from memory.skill_sources import SourceError, add_source
 
     try:
         return await asyncio.to_thread(add_source, data.workspace.strip(), data.url,
-                                       branch=data.branch, name=data.name)
+                                       branch=data.branch)
+    except SourceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/sources/{source_id}/update")
+async def update_skill_source(source_id: str, workspace: str = Query(...)):
+    """Pull a connected source and sync its skills: the sync report."""
+    import asyncio
+
+    from memory.skill_sources import SourceError, update_source
+
+    try:
+        return await asyncio.to_thread(update_source, workspace, source_id)
+    except SourceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.delete("/sources/{source_id}")
+async def remove_skill_source(source_id: str, workspace: str = Query(...)):
+    """Disconnect a source: its clone and the catalog entries it brought are
+    deleted; copies attached to agents stay."""
+    import asyncio
+
+    from memory.skill_sources import SourceError, remove_source
+
+    try:
+        return await asyncio.to_thread(remove_source, workspace, source_id)
     except SourceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 

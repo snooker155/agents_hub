@@ -54,6 +54,9 @@ FIELDS = [
     # Written by the OAuth callback only; never a form input.
     ConfigField(key="refresh_token", secret=True, kind="hidden"),
     ConfigField(key="account_email", secret=False, kind="hidden"),
+    # The scopes the account granted, space separated, as Google's token
+    # response lists them; says whether Gmail (IMAP/SMTP XOAUTH2) is allowed.
+    ConfigField(key="granted_scopes", secret=False, kind="hidden"),
 ]
 
 
@@ -100,6 +103,8 @@ def _test() -> dict[str, Any]:
 
 
 def _extra() -> dict[str, Any]:
+    from .auth import has_gmail
+
     cfg = STORE.get_config()
     client_id = str(cfg.get("client_id") or "").strip()
     client_secret = str(cfg.get("client_secret") or "").strip()
@@ -107,6 +112,7 @@ def _extra() -> dict[str, Any]:
         "mode": mode(),
         "account_email": str(cfg.get("account_email") or ""),
         "oauth_ready": bool(client_id and client_secret),
+        "gmail": has_gmail(),
     }
 
 

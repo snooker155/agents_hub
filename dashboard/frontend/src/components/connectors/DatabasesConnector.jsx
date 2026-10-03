@@ -3,7 +3,7 @@ import { Database, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
 import {
   listDbConnections, createDbConnection, deleteDbConnection, testDbConnection,
 } from '../../api/databases';
-import { getWorkspaces } from '../../api';
+import { useWorkspace } from '../workspace';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import PageLoader from '../PageLoader';
@@ -16,35 +16,28 @@ const PLACEHOLDERS = {
   sqlite: '/path/to/file.db',
 };
 
-// Read-only database connections, per workspace (routes/databases.py). An
-// agent with db_query may only run a single SELECT against one of these,
-// row capped, on a read-only session.
+// Read-only database connections of the current workspace
+// (routes/databases.py). An agent with db_query may only run a single SELECT
+// against one of these, row capped, on a read-only session.
 export default function DatabasesConnector() {
   const { t } = useI18n();
+  const { selectedWorkspace: workspace } = useWorkspace();
   const [loading, setLoading] = useState(true);
-  const [workspaces, setWorkspaces] = useState([]);
-  const [workspace, setWorkspace] = useState('');
   const [connections, setConnections] = useState([]);
   const [form, setForm] = useState({ name: '', kind: 'postgres', dsn: '', allowed_schemas: '', row_limit: 200 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState({});
 
-  useEffect(() => {
-    getWorkspaces().then((r) => {
-      const list = (r.data || []).map((w) => (typeof w === 'string' ? w : w.name));
-      setWorkspaces(list);
-      setWorkspace((cur) => cur || list[0] || '');
-    }).catch(() => setWorkspaces([])).finally(() => setLoading(false));
-  }, []);
-
   const load = useCallback(async () => {
-    if (!workspace) return;
+    if (!workspace) { setConnections([]); setLoading(false); return; }
     try {
       const { data } = await listDbConnections(workspace);
       setConnections(data || []);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
+    } finally {
+      setLoading(false);
     }
   }, [workspace]);
   useEffect(() => { load(); }, [load]);
@@ -89,14 +82,7 @@ export default function DatabasesConnector() {
 
   return (
     <div className="space-y-5">
-      <SectionCard
-        title={t('connectors.databases.title')}
-        actions={(
-          <select className={inputCls + ' w-auto'} value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
-            {workspaces.map((w) => <option key={w} value={w}>{w}</option>)}
-          </select>
-        )}
-      >
+      <SectionCard title={t('connectors.databases.title')}>
         <p className="text-sm text-gray-600">{t('connectors.databases.intro')}</p>
         {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
         {connections.length === 0 ? (

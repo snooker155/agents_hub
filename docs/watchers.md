@@ -29,7 +29,23 @@ probe reads the value at poll time. The page shows names, never values.
 **`imap`**, a mailbox over IMAP (the standard library's `imaplib`, any
 server that takes a password or an app password): `host`, `port` (993),
 `ssl`, `username`, `password_secret`, `folder` (INBOX), and two optional
-substring filters, `from_filter` and `subject_filter`. One event per new
+substring filters, `from_filter` and `subject_filter`. The form opens with a
+**Mail provider** pick list (Gmail, Outlook.com and Microsoft 365, Yahoo,
+iCloud, Yandex, Mail.ru, Fastmail, Zoho, GMX, WEB.DE) that fills host, port
+and TLS, and a typed username with one of those domains fills them too. Under
+the list the form says how that provider takes the password: most want an
+*app password* made in the account's security settings (the link goes
+there), and Microsoft has retired password sign-in altogether, so its preset
+only helps a tenant that still allows it. For Gmail there is a better way:
+tick **Sign in with the connected Google account** (`use_google`) and the
+watcher reads the Google connector's own mailbox over XOAUTH2, with no
+password secret; host and username may stay empty. It needs Connect with
+Gmail on the Google tab ([integrations](integrations.md#gmail)), and only an
+administrator can turn it on, since that account is the whole hub's. The
+table lives in
+`connectors/mail/presets.py` and is shared with the [mail
+channel](connectors.md#chat-channels). Proton Mail is not listed: it needs
+the Proton Bridge, whose local STARTTLS port the watcher does not speak. One event per new
 message: sender, subject, date, message id and the first lines of the text
 body (an HTML-only message is stripped to text). A poll reports the newest
 ten at most and says how many older ones it skipped. The watcher reads with

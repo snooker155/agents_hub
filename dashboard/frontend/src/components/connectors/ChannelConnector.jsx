@@ -3,12 +3,16 @@ import { MessageSquare, Plus, RefreshCw, Save, Trash2, Wifi } from 'lucide-react
 import {
   listChannels, getChannelConfig, updateChannelConfig, testChannel,
   getChannelStatus, getChannelBindings, createChannelBinding, deleteChannelBinding,
-  getWorkspaces, getAgents, listFlows,
+  getAgents, listFlows, getGmailStatus,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import { useLiveRefetch } from '../stream';
+import { useWorkspace } from '../workspace';
 import PageLoader from '../PageLoader';
+import MailPresetPicker from './MailPresetPicker';
+import { presetForAddress } from './mailPresets';
+import GmailSignInNote from './GmailSignInNote';
 
 // One tab for every chat channel that is not Telegram: Slack, Discord,
 // Microsoft Teams, mail. The backend describes each channel's config fields
@@ -20,7 +24,10 @@ const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 
 const btnSecondary = 'flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50';
 const btnDanger = 'flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50';
 
-function FieldInput({ field, value, isSet, onChange, t, name }) {
+/** Whether a field's ``{other: value}`` condition (hidden_when, optional_when) holds. */
+const when = (cond, values) => Object.entries(cond || {}).some(([k, v]) => String(values?.[k] ?? '') === String(v));
+
+function FieldInput({ field, value, isSet, onChange, t, name, required }) {
   const label = t(`connectors.fields.${name}.${field.key}`, { defaultValue: field.key });
   const hint = t(`connectors.fieldHints.${name}.${field.key}`, { defaultValue: '' });
   const common = { className: inputCls, value: value ?? '', onChange: (e) => onChange(e.target.value) };
@@ -28,7 +35,7 @@ function FieldInput({ field, value, isSet, onChange, t, name }) {
   if (field.kind === 'select') {
     input = (
       <select {...common}>
-        {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        {field.options.map((o) => <option key={o} value={o}>{t(`connectors.options.${name}.${field.key}.${o}`, { defaultValue: o })}</option>)}
       </select>
     );
   } else if (field.kind === 'textarea') {
@@ -49,7 +56,7 @@ function FieldInput({ field, value, isSet, onChange, t, name }) {
     <div>
       <label className="text-sm font-medium text-gray-700 mb-1 block">
         {label}
-        {field.required && <span className="text-red-500"> *</span>}
+        {required && <span className="text-red-500"> *</span>}
         {field.secret && isSet && <span className="text-gray-400 font-normal"> ({t('settings.currentlySet')})</span>}
       </label>
       {hint && <p className="text-xs text-gray-500 mb-1">{hint}</p>}
@@ -65,10 +72,34 @@ function initialValues(fields, config) {
   return next;
 }
 
-export function ConfigForm({ name, fields: allFields, config, onSave, onClear, onTest, saving, testing, testResult, t }) {
+export function ConfigForm({ name, fields: allFields, presets = [], config, onSave, onClear, onTest, saving, testing, testResult, t }) {
   // A hidden field is written by the backend (an OAuth callback), never typed.
   const fields = allFields.filter((f) => f.kind !== 'hidden');
   const [values, setValues] = useState(() => initialValues(fields, config));
+  // The mail channel's provider presets (connectors/mail/presets.py): the
+  // picked one is read back from the IMAP host, and a typed address with a
+  // known domain fills the hosts when none is set yet.
+  const presetId = presets.find((p) => p.channel?.imap_host === values.imap_host)?.id || '';
+  const applyPreset = (p) => { if (p) setValues((vs) => ({ ...vs, ...p.channel })); };
+  // A Google sign in (the mail channel's auth_mode) shows whether the Google
+  // connector can reach Gmail, fetched once the mode is picked.
+  const hasGoogleMode = fields.some((f) => f.key === 'auth_mode' && (f.options || []).includes('google'));
+  const googleMode = hasGoogleMode && values.auth_mode === 'google';
+  const [gmail, setGmail] = useState(null);
+  useEffect(() => {
+    if (!googleMode) return undefined;
+    let live = true;
+    getGmailStatus().then((r) => { if (live) setGmail(r.data); }).catch(() => { if (live) setGmail(null); });
+    return () => { live = false; };
+  }, [googleMode]);
+  const setValue = (key, v) => setValues((vs) => {
+    const next = { ...vs, [key]: v };
+    if ((key === 'imap_user' || key === 'from_address') && !vs.imap_host) {
+      const guess = presetForAddress(presets, v);
+      if (guess) Object.assign(next, guess.channel);
+    }
+    return next;
+  });
   // A save returns fresh config; re-seed the form from it so a cleared
   // secret or a server side default shows up without a reload.
   const [seenConfig, setSeenConfig] = useState(config);
@@ -95,16 +126,21 @@ export function ConfigForm({ name, fields: allFields, config, onSave, onClear, o
 
   return (
     <div className="space-y-3">
+      <MailPresetPicker presets={presets} value={presetId} onPick={applyPreset} t={t} inputCls={inputCls}
+        googleActive={googleMode}
+        onUseGoogle={hasGoogleMode ? () => setValue('auth_mode', 'google') : undefined} />
+      {googleMode && <GmailSignInNote status={gmail} t={t} />}
       <div className="grid gap-3 md:grid-cols-2">
-        {fields.map((f) => (
+        {fields.filter((f) => !when(f.hidden_when, values)).map((f) => (
           <FieldInput
+            required={f.required && !when(f.optional_when, values)}
             key={f.key}
             field={f}
             name={name}
             t={t}
             value={values[f.key]}
             isSet={Boolean(config?.[`has_${f.key}`])}
-            onChange={(v) => setValues((vs) => ({ ...vs, [f.key]: v }))}
+            onChange={(v) => setValue(f.key, v)}
           />
         ))}
       </div>
@@ -136,25 +172,19 @@ export function ConfigForm({ name, fields: allFields, config, onSave, onClear, o
   );
 }
 
+// A new binding goes to the current workspace, like everything else made on
+// this page; the bindings table below still lists every workspace's chats.
 function BindingForm({ name, onCreated, t }) {
-  const [workspaces, setWorkspaces] = useState([]);
+  const { selectedWorkspace: workspace } = useWorkspace();
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
   const [chatKey, setChatKey] = useState('');
-  const [workspace, setWorkspace] = useState('');
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    getWorkspaces().then((r) => {
-      const list = (r.data || []).map((w) => (typeof w === 'string' ? w : w.name));
-      setWorkspaces(list);
-      if (!workspace && list[0]) setWorkspace(list[0]);
-    }).catch(() => setWorkspaces([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
+    setTarget('');
     if (!workspace) return;
     getAgents(workspace).then((r) => setAgents(r.data || [])).catch(() => setAgents([]));
     listFlows(workspace).then((r) => setFlows(r.data || [])).catch(() => setFlows([]));
@@ -182,16 +212,13 @@ function BindingForm({ name, onCreated, t }) {
     <div className="space-y-2 border-t border-gray-100 pt-3">
       <p className="text-xs text-gray-500">{t('connectors.channels.bindHint')}</p>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
-      <div className="grid gap-2 md:grid-cols-4">
+      <div className="grid gap-2 md:grid-cols-3">
         <input
           className={inputCls}
           value={chatKey}
           onChange={(e) => setChatKey(e.target.value)}
           placeholder={t(`connectors.chatKey.${name}`, { defaultValue: t('connectors.channels.chatKey') })}
         />
-        <select className={inputCls} value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
-          {workspaces.map((w) => <option key={w} value={w}>{w}</option>)}
-        </select>
         <select className={inputCls} value={target} onChange={(e) => setTarget(e.target.value)}>
           <option value="">{t('connectors.channels.pickLater')}</option>
           {agents.map((a) => <option key={a.id} value={`agent:${a.id}`}>{a.name || a.id}</option>)}
@@ -308,6 +335,7 @@ export default function ChannelConnector({ name }) {
         <ConfigForm
           name={name}
           fields={fields}
+          presets={spec?.presets || []}
           config={config?.config}
           onSave={(payload) => save({ config: payload })}
           onClear={(keys) => save({ clear: keys, enabled: false })}

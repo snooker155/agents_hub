@@ -83,7 +83,7 @@ export default {
     allowlist: "Allowed chats",
     saveAllowlist: "Save allowlist",
     chatKey: "Chat id",
-    bindHint: "Bind a chat to a workspace. Only an operator can do this; the chat itself cannot pick a workspace. Binding also allowlists the chat.",
+    bindHint: "Bind a chat to the current workspace. Only an operator can do this; the chat itself cannot pick a workspace. Binding also allowlists the chat.",
     bind: "Bind",
     pickLater: "Pick the agent later from the chat",
     bindingsHint: "Each bound chat runs one agent or flow in one workspace. In the chat, /agent <id> or /flow <id> changes the target, /reset starts a fresh conversation.",
@@ -130,6 +130,7 @@ export default {
       tenant_id: "Tenant id",
     },
     mail: {
+      auth_mode: "Sign in with",
       imap_host: "IMAP host",
       imap_port: "IMAP port",
       imap_user: "IMAP user",
@@ -181,6 +182,7 @@ export default {
       tenant_id: "Only for single tenant bots.",
     },
     mail: {
+      auth_mode: "password uses the fields below; google signs in with the account connected on the Google tab (Connect with Gmail), and empty hosts, user and from address mean Gmail's and that account's.",
       from_address: "The address replies are sent from; messages from it are ignored.",
     },
     jira: {
@@ -231,6 +233,9 @@ export default {
     connectedAs: "Connected as {{email}} through OAuth.",
     serviceAccountMode: "Using the service account key.",
     notConnected: "Not connected: paste a service account key, or save an OAuth client and connect.",
+    connectGmail: "Connect with Gmail",
+    gmailOn: "Gmail access granted: mail watchers and the mail channel can sign in with this account.",
+    gmailOff: "No Gmail access yet. Click Connect with Gmail to let mail watchers and the mail channel sign in without an app password.",
     oauthHint: "Save an OAuth client id and secret first, with the redirect URI <your hub>/api/google/oauth/callback registered in Google Cloud.",
   },
   databases: {
@@ -245,5 +250,11 @@ export default {
     add: "Add connection",
     dsnHint: "Use a database user with read-only rights; the hub also opens the session read-only.",
     confirmRemove: "Remove the connection {{name}}?",
+  },
+  // Labels of select options, by channel and field (ChannelConnector.jsx).
+  options: {
+    mail: {
+      auth_mode: { password: "Password", google: "Connected Google account" },
+    },
   },
 };

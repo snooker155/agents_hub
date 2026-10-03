@@ -18,6 +18,8 @@ import imaplib
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+from . import oauth
+
 
 @dataclass
 class ImapConfig:
@@ -27,11 +29,22 @@ class ImapConfig:
     password: str
     folder: str
     ssl: bool
+    #: Set when the channel signs in with the connected Google account
+    #: (``auth_mode: google``): the OAuth access token, used over XOAUTH2
+    #: instead of ``password``.
+    oauth_token: Optional[str] = None
 
 
-def config_from_dict(cfg: dict[str, Any]) -> ImapConfig:
+def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None) -> ImapConfig:
+    """The session settings from a channel config dict.
+
+    With ``auth_mode: google`` the user is the connected Google account,
+    the token comes from the Google connector, and an empty host means
+    Gmail's; a configured user that is not that account is refused
+    (:class:`oauth.MailOAuthError`).
+    """
     ssl = str(cfg.get("imap_ssl") if cfg.get("imap_ssl") is not None else "yes").strip().lower() != "no"
-    return ImapConfig(
+    out = ImapConfig(
         host=str(cfg.get("imap_host") or "").strip(),
         port=int(cfg.get("imap_port") or 993),
         user=str(cfg.get("imap_user") or "").strip(),
@@ -39,6 +52,15 @@ def config_from_dict(cfg: dict[str, Any]) -> ImapConfig:
         folder=str(cfg.get("imap_folder") or "INBOX").strip() or "INBOX",
         ssl=ssl,
     )
+    if str(cfg.get("auth_mode") or "").strip().lower() == "google":
+        address, token = oauth.google_login(google_login)
+        oauth.check_address(out.user, address)
+        out.user = address
+        out.oauth_token = token
+        out.password = ""
+        if not out.host:
+            out.host, out.port, out.ssl = oauth.GMAIL_IMAP[0], oauth.GMAIL_IMAP[1], True
+    return out
 
 
 def _default_connection(config: ImapConfig) -> Any:
@@ -59,7 +81,10 @@ class ImapClient:
 
     def connect(self) -> None:
         self._conn = self._factory(self.config)
-        self._conn.login(self.config.user, self.config.password)
+        if self.config.oauth_token:
+            oauth.imap_authenticate(self._conn, self.config.user, self.config.oauth_token)
+        else:
+            self._conn.login(self.config.user, self.config.password)
         self._conn.select(self.config.folder)
 
     def logout(self) -> None:

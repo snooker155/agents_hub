@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Connectors from '../Connectors';
 import { I18nProvider } from '../../i18n';
 import { StreamContext } from '../../components/stream';
+import { WorkspaceContext } from '../../components/workspace';
 
 // Telegram and Blender follow live `X.changed` events instead of polling
 // (see useLiveRefetch), which needs a stream context above them; this test
@@ -79,7 +80,10 @@ const TABS = [['Telegram', 0], ['Slack', 1], ['Discord', 2], ['Teams', 3], ['Mai
 function show() {
   return render(
     <StreamContext.Provider value={silentStream}>
-      <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>
+      {/* The channel binding form and the databases card read the selected workspace. */}
+      <WorkspaceContext.Provider value={{ selectedWorkspace: 'default', liveUpdates: false }}>
+        <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>
+      </WorkspaceContext.Provider>
     </StreamContext.Provider>,
   );
 }

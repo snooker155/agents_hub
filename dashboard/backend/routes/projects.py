@@ -225,48 +225,129 @@ def _project_root_path(project) -> Optional[Path]:
     return root if root.exists() else None
 
 
+def _skip_dir(name: str) -> bool:
+    """Folders the file list never enters: hidden ones, dependencies and
+    build output, the same ones the workspace's file index skips."""
+    from files.service import INDEX_SKIP_DIRS
+
+    return name.startswith(".") or name in INDEX_SKIP_DIRS
+
+
+_MAX_LISTED_FILES = 5000
+#: A PDF is read whole to extract its text; anything else is cut at the
+#: preview length (files.service.preview_path).
+_MAX_PDF_PREVIEW_BYTES = 20 * 1024 * 1024
+_PREVIEW_CHARS = 200_000
+# Types a browser would run as this origin: served as plain text, like the
+# workspace files are (routes/files.py).
+_ACTIVE_TYPES = frozenset({
+    "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml",
+    "text/javascript", "application/javascript", "application/x-javascript",
+    "application/ecmascript", "text/ecmascript",
+})
+
+
 @router.get("/{project_id}/files")
 async def list_project_files(project_id: str):
-    """List all files inside the project's subfolder (hides dot-files/folders)."""
+    """List the files inside the project's subfolder: hidden entries and
+    dependency or build folders (node_modules, venv, dist...) left out,
+    at most 5000. ``truncated`` says the list was cut."""
+    import os
+
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     root = _project_root_path(project)
     if root is None:
-        return {"files": []}
+        return {"files": [], "truncated": False}
     files = []
+    truncated = False
     try:
-        for p in root.rglob("*"):
-            if not p.is_file():
-                continue
-            rel = p.relative_to(root).as_posix()
-            if any(seg.startswith(".") for seg in rel.split("/")):
-                continue
-            files.append(rel)
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if not _skip_dir(d))
+            for name in sorted(filenames):
+                if name.startswith("."):
+                    continue
+                if len(files) >= _MAX_LISTED_FILES:
+                    truncated = True
+                    break
+                files.append((Path(dirpath) / name).relative_to(root).as_posix())
+            if truncated:
+                break
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": sorted(files)}
+    return {"files": sorted(files), "truncated": truncated}
 
 
-@router.get("/{project_id}/file-content")
-async def get_project_file_content(project_id: str, path: str):
-    """Return the content of a single file inside the project folder."""
+def _project_file(project_id: str, path: str) -> Path:
+    """The file at ``path`` inside the project folder, or an HTTP error."""
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     root = _project_root_path(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project folder not found")
-    target = (root / path).resolve()
-    if not str(target).startswith(str(root) + "/") and str(target) != str(root):
+    rel = (path or "").strip()
+    if not rel:
+        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    target = (root / rel).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Path outside project folder")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    return target
+
+
+@router.get("/{project_id}/file-content")
+async def get_project_file_content(project_id: str, path: str):
+    """A file of the project folder for preview, read the way workspace files
+    are (files.service.preview_path): ``kind`` is ``text``, ``pdf`` (its
+    text extracted) or ``binary`` (``content`` null); ``mime_type`` lets the
+    page render an image, a PDF or an HTML page from ``file-raw``."""
+    from files.service import preview_path
+
+    target = _project_file(project_id, path)
+    size = target.stat().st_size
+    if target.suffix.lower() == ".pdf" and size > _MAX_PDF_PREVIEW_BYTES:
+        raise HTTPException(status_code=413, detail=(
+            f"PDF is too large to extract its text ({size} bytes). "
+            f"Limit is {_MAX_PDF_PREVIEW_BYTES} bytes."))
     try:
-        content = target.read_text(encoding="utf-8", errors="replace")
+        preview = await asyncio.to_thread(preview_path, target, max_chars=_PREVIEW_CHARS)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"path": path, "content": content, "size": target.stat().st_size}
+    return {"path": path, "size": size, "content": preview["text"], "kind": preview["kind"],
+            "mime_type": preview["mime_type"], "truncated": preview["truncated"]}
+
+
+@router.get("/{project_id}/file-raw")
+async def get_project_file_raw(project_id: str, path: str):
+    """The bytes of a project file, for an image, a PDF or an HTML page shown
+    in the browser. Types that would run as this origin come back as plain
+    text with a sandbox policy; the page renders HTML from a blob in a
+    sandboxed frame instead."""
+    from urllib.parse import quote
+
+    from fastapi.responses import FileResponse
+    from files.service import guess_mime
+
+    target = _project_file(project_id, path)
+    mime = guess_mime(target.name)
+    if mime in _ACTIVE_TYPES:
+        mime = "text/plain; charset=utf-8"
+    ascii_name = target.name.encode("ascii", "replace").decode("ascii").replace('"', "_").replace("?", "_")
+    return FileResponse(
+        str(target),
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(target.name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            "Cache-Control": "private, max-age=0",
+        },
+    )
 
 
 # ─────────────────────────── SPEC FROM CODE ────────────────────────────

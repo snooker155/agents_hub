@@ -50,6 +50,7 @@ def _configure_service_account(json_text: str = '{"type": "service_account"}'):
 def _clear_config():
     STORE.set_config({}, clear=(
         "service_account_json", "client_id", "client_secret", "refresh_token", "account_email",
+        "granted_scopes",
     ))
 
 
@@ -153,7 +154,7 @@ def test_is_configured_is_false_for_an_oauth_client_with_no_refresh_token_yet():
 def test_extra_reports_mode_account_email_and_oauth_ready():
     _configure_oauth(refresh_token="rt-1", account_email="person@example.com")
     extra = CREDENTIALS.extra()
-    assert extra == {"mode": "oauth", "account_email": "person@example.com", "oauth_ready": True}
+    assert extra == {"mode": "oauth", "account_email": "person@example.com", "oauth_ready": True, "gmail": False}
 
 
 # ── the OAuth route: start ───────────────────────────────────────────────────
@@ -214,7 +215,7 @@ def test_oauth_callback_stores_the_refresh_token_and_account_email(monkeypatch):
                       follow_redirects=False)
 
     assert resp.status_code in (302, 307)
-    assert resp.headers["location"] == "/connectors"
+    assert resp.headers["location"] == "/connectors?tab=google"
     assert STORE.get("refresh_token") == "rt-xyz"
     assert STORE.get("account_email") == "person@example.com"
     assert calls == ["connector_google"]

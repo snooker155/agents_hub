@@ -75,6 +75,7 @@ export default {
   projectFiles: 'Project Files',
   loadingFiles: 'Loading files…',
   selectedFile: 'Selected file',
+  fileView: { rendered: 'Rendered', source: 'Source', text: 'Text', download: 'Download' },
   selectAFileToPreview: 'Select a file to preview its content.',
   noFilesFoundInThis: 'No files found in this project folder.',
   bytes: '{{count}} bytes',
@@ -122,6 +123,7 @@ export default {
   errors: {
     publish: 'Publishing the branch failed',
     loadFile: 'Failed to load file',
+    downloadFile: 'Could not download the file',
     loadFiles: 'Failed to load files',
     gitStatus: 'Could not fetch git status',
     clone: 'Clone failed',

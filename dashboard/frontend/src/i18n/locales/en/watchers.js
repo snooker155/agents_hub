@@ -11,6 +11,7 @@ export default {
   pickWorkspace: 'Pick a workspace to add a watcher.',
   columns: { name: 'Watcher', state: 'State', lastCheck: 'Last check', lastChange: 'Last change', agents: 'Wakes' },
   state: { active: 'Active', paused: 'Paused ({{reason}})', disabled: 'Off', error: 'Error' },
+  viaGoogle: 'Google account',
   every: 'every {{seconds}} s',
   fired: '{{count}} events',
   nobody: 'nobody yet',
@@ -32,6 +33,7 @@ export default {
     autoPause: 'Pause after failures in a row',
     autoPauseHint: '0 keeps polling through errors.',
     enabled: 'Enabled',
+    useGoogleHint: 'No app password: the Google connector\'s account reads its own Gmail. An empty host and username mean Gmail\'s and that account\'s. Only an administrator can turn this on.',
     secretHint: 'The name of a workspace secret (Settings → Secrets), never the value.',
     save: 'Save',
     cancel: 'Cancel',
@@ -42,6 +44,7 @@ export default {
       httpHint: 'A page or JSON endpoint; watch the whole body or one JSON field. Only public hosts.',
     },
     fields: {
+      use_google: 'Sign in with the connected Google account',
       host: 'IMAP host', port: 'Port', ssl: 'TLS', username: 'Username', password_secret: 'Password secret',
       folder: 'Folder', from_filter: 'Only senders containing', subject_filter: 'Only subjects containing',
       url: 'URL', method: 'Method', json_path: 'JSON path (optional)', headers_secret: 'Headers secret (optional)',

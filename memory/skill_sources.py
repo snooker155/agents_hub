@@ -1,12 +1,17 @@
 """
 Skill sources: public repositories of Agent Skills a workspace can connect.
 
-A source is an ordinary project with a cloned repository (projects/,
-``Project.repo``), nothing more: once it is cloned, the skill sync
-(memory/skill_import.py) walks it like any project repository, every skill it
-finds becomes a catalog entry with its review (memory/skill_review.py), and
-**Pull** on the project brings new versions in. What this module adds is the
-shortcut from a URL to that state, and a curated list of sources whose
+A source is a clone of the repository inside the workspace folder, under
+``.skills/sources/<id>``, with a small ``<id>.json`` next to it naming the
+URL and branch. It is not a project: a collection of skills is something the
+Skills page reads from, not work the team does, so it gets no tasks, files
+tab or board. The skill sync (memory/skill_import.py) walks each clone as a
+root of its own, every skill it finds becomes a catalog entry with its review
+(memory/skill_review.py) and ``repo.source_id`` naming the source, and
+**Update** on the Skills page pulls and syncs again. The folder is hidden, so
+the workspace's file index and the Artifacts page leave it out.
+
+What this module adds on top of the clone is a curated list of sources whose
 license was checked by hand, so the Skills page can offer them in one click.
 
 The list holds what was verified when it was written (October 2026): the
@@ -24,8 +29,11 @@ the same review.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -127,23 +135,84 @@ def _same_repo(url_a: Optional[str], url_b: str) -> bool:
         return False
 
 
-def _projects(workspace: str) -> List[Any]:
-    from projects.storage import ProjectStore
-    return [p for p in ProjectStore().list() if p.workspace == workspace]
+#: Where the clones live, relative to the workspace folder. Hidden, so the
+#: file index (files/service.py) and the agents' file listings skip it.
+SOURCES_DIR = Path(".skills") / "sources"
+_ID_UNSAFE = re.compile(r"[^a-z0-9_.-]+")
+
+
+def source_id_for(info: Dict[str, str]) -> str:
+    """A folder-safe id for a normalized URL: ``owner-name`` on github.com,
+    prefixed with the host type elsewhere so two hosts never collide."""
+    base = f"{info['owner']}-{info['name']}".lower()
+    if info.get("type") != "github":
+        base = f"{info['type']}-{base}"
+    return _ID_UNSAFE.sub("-", base).strip("-.") or "source"
+
+
+def sources_dir(workspace: str) -> Optional[Path]:
+    from workspace import get_workspace_folder
+
+    ws_folder = get_workspace_folder(workspace)
+    return None if ws_folder is None else ws_folder / SOURCES_DIR
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_meta(base: Path, meta: Dict[str, Any]) -> None:
+    base.mkdir(parents=True, exist_ok=True)
+    (base / f"{meta['id']}.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def connected_sources(workspace: str) -> List[Dict[str, Any]]:
+    """The sources a workspace has: one dict per ``<id>.json`` whose clone
+    is on disk, with ``path`` (absolute) added. Sorted by id."""
+    base = sources_dir(workspace)
+    if base is None or not base.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for meta_file in sorted(base.glob("*.json")):
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.warning("skill source: unreadable %s", meta_file)
+            continue
+        if not isinstance(meta, dict) or meta.get("id") != meta_file.stem:
+            continue
+        clone = base / meta_file.stem
+        if not clone.is_dir() or clone.is_symlink():
+            continue
+        out.append({**meta, "path": str(clone)})
+    return out
+
+
+def get_source(workspace: str, source_id: str) -> Dict[str, Any]:
+    match = next((s for s in connected_sources(workspace) if s["id"] == source_id), None)
+    if match is None:
+        raise SourceError(404, f"Skill source {source_id!r} is not connected to this workspace")
+    return match
+
+
+def source_label(meta: Dict[str, Any]) -> str:
+    return f"{meta.get('owner', '')}/{meta.get('name', '')}".strip("/") or meta.get("id", "")
 
 
 def _skill_counts(workspace: str) -> Dict[str, Dict[str, int]]:
-    """Per project id: how many catalog entries came from it, how many are
-    flagged medium or high, how many carry a license that is not open."""
+    """Per source id: how many catalog entries came from it, how many are
+    flagged medium or high, how many carry a license that is not open, how
+    many ship files an agent could run."""
     from memory.procedural import ProcedureStore
     out: Dict[str, Dict[str, int]] = {}
     for p in ProcedureStore(workspace).load():
         if p.source != "repo" or p.agent_id:
             continue
-        pid = (p.repo or {}).get("project_id")
-        if not pid:
+        repo = p.repo or {}
+        sid = repo.get("source_id")
+        if not sid or repo.get("missing"):
             continue
-        row = out.setdefault(pid, {"skills": 0, "flagged": 0, "not_open": 0, "scripts": 0})
+        row = out.setdefault(sid, {"skills": 0, "flagged": 0, "not_open": 0, "scripts": 0})
         row["skills"] += 1
         safety = p.safety or {}
         if safety.get("severity") in ("medium", "high"):
@@ -155,97 +224,203 @@ def _skill_counts(workspace: str) -> Dict[str, Dict[str, int]]:
     return out
 
 
+def _connection(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if meta is None:
+        return {"source_id": None}
+    return {"source_id": meta["id"], "branch": meta.get("branch"),
+            "added_at": meta.get("added_at"), "updated_at": meta.get("updated_at")}
+
+
 def list_sources(workspace: str) -> List[Dict[str, Any]]:
     """The curated list, each entry saying whether this workspace already has
-    it (``project_id``) and what the sync made of it, followed by the
-    workspace's other repository projects tagged ``skills`` (sources added by
-    URL), so the page shows every source in one list."""
-    projects = _projects(workspace)
+    it (``source_id``) and what the sync made of it, followed by the sources
+    added by URL, so the page shows every source in one list."""
+    migrate_project_sources(workspace)
+    connected = connected_sources(workspace)
     counts = _skill_counts(workspace)
     items: List[Dict[str, Any]] = []
-    listed_ids = set()
+    listed = set()
     for src in CURATED_SOURCES:
         url = f"https://github.com/{src['repo']}"
-        match = next((p for p in projects if _same_repo(p.repo.url, url)), None)
-        row = {**src, "url": url, "project_id": match.id if match else None,
-               "project_name": match.name if match else None,
-               **(counts.get(match.id, {}) if match else {})}
+        match = next((m for m in connected if _same_repo(m.get("url"), url)), None)
         if match:
-            listed_ids.add(match.id)
-        items.append(row)
-    for p in projects:
-        if p.id in listed_ids or not p.repo.url or "skills" not in (p.tags or []):
+            listed.add(match["id"])
+        items.append({**src, "url": url, **_connection(match),
+                      **(counts.get(match["id"], {}) if match else {})})
+    for meta in connected:
+        if meta["id"] in listed:
             continue
-        try:
-            info = normalize_url(p.repo.url)
-        except SourceError:
-            continue
-        items.append({"id": f"project-{p.id}", "repo": f"{info['owner']}/{info['name']}",
-                      "publisher": info["owner"], "license": "", "kind": "custom",
-                      "note": "", "url": info["url"], "project_id": p.id,
-                      "project_name": p.name, **counts.get(p.id, {})})
+        items.append({"id": f"source-{meta['id']}", "repo": source_label(meta),
+                      "publisher": meta.get("owner", ""), "license": "", "kind": "custom",
+                      "note": "", "url": meta.get("url", ""), **_connection(meta),
+                      **counts.get(meta["id"], {})})
     return items
 
 
-def add_source(workspace: str, url: str, *, branch: Optional[str] = None,
-               name: Optional[str] = None) -> Dict[str, Any]:
-    """Connect a repository of skills to ``workspace``: a project with the
-    repository cloned under its folder, then a sync of that project. Returns
-    ``{"project": {...}, "sync": <report>, "already_present": bool}``. A
-    repository the workspace already has is synced again, not cloned twice.
-    Blocking (a clone); callers run it in a thread."""
+def add_source(workspace: str, url: str, *, branch: Optional[str] = None) -> Dict[str, Any]:
+    """Connect a repository of skills to ``workspace``: clone it under
+    ``.skills/sources/<id>``, then sync it. Returns ``{"source": {...},
+    "sync": <report>, "already_present": bool}``. A repository the workspace
+    already has is updated (pulled and synced), not cloned twice. Blocking
+    (a clone); callers run it in a thread."""
     from connectors.git import git_ops
-    from memory.skill_import import sync_workspace
-    from projects.models import Project, RepoConfig
-    from projects.storage import ProjectStore
-    from workspace import get_workspace_folder
-    from workspace.storage import project_folder_name, resolve_project_root
 
     info = normalize_url(url)
-    ws_folder = get_workspace_folder(workspace)
-    if ws_folder is None:
+    base = sources_dir(workspace)
+    if base is None:
         raise SourceError(404, f"Workspace {workspace!r} not found")
+    migrate_project_sources(workspace)
 
-    existing = next((p for p in _projects(workspace) if _same_repo(p.repo.url, info["url"])), None)
+    existing = next((m for m in connected_sources(workspace) if _same_repo(m.get("url"), info["url"])), None)
     if existing is not None:
-        report = sync_workspace(workspace, project_id=existing.id)
-        return {"project": _project_row(existing), "sync": report, "already_present": True}
+        result = update_source(workspace, existing["id"])
+        return {**result, "already_present": True}
 
-    project_name = (name or "").strip() or f"{info['name']} ({info['owner']})"
-    folder = project_folder_name(project_name)
-    if any(project_folder_name(p.name) == folder for p in _projects(workspace)):
-        raise SourceError(409, f"A project named {project_name!r} already exists in this workspace")
-    local_path = f"{folder}/repo"
-    clone_dir: Path = ws_folder / local_path
+    sid = source_id_for(info)
+    clone_dir = base / sid
     if clone_dir.exists():
-        raise SourceError(409, f"Target directory already exists: {clone_dir}")
-
-    resolve_project_root(workspace, folder)
+        # A folder left behind by a clone that failed half way, or a json
+        # deleted by hand: nothing references it, so it is cleared.
+        shutil.rmtree(clone_dir, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    wanted = (branch or "").strip() or None
     try:
-        git_ops.clone(info["url"], clone_dir, branch=(branch or "").strip() or None,
-                      provider=info["type"])
+        git_ops.clone(info["url"], clone_dir, branch=wanted, provider=info["type"])
     except git_ops.GitOpsError as e:
+        shutil.rmtree(clone_dir, ignore_errors=True)
         raise SourceError(504 if "timed out" in str(e) else 502, f"Clone failed: {e}")
 
-    project = Project(
-        name=project_name,
-        description=f"Agent Skills from {info['owner']}/{info['name']}",
-        type="code",
-        workspace=workspace,
-        tags=["skills"],
-        repo=RepoConfig(type=info["type"], url=info["url"],
-                        branch=(branch or "").strip() or None, local_path=local_path,
-                        remote_id=f"{info['owner']}/{info['name']}"),
-    )
-    ProjectStore().add(project)
-    report = sync_workspace(workspace, project_id=project.id)
-    return {"project": _project_row(project), "sync": report, "already_present": False}
+    now = _now()
+    meta = {"id": sid, "url": info["url"], "type": info["type"], "owner": info["owner"],
+            "name": info["name"], "branch": wanted, "added_at": now, "updated_at": now}
+    _write_meta(base, meta)
+    report = _sync(workspace, sid)
+    return {"source": _source_row(meta), "sync": report, "already_present": False}
 
 
-def _project_row(project: Any) -> Dict[str, Any]:
-    return {"id": project.id, "name": project.name, "workspace": project.workspace,
-            "url": project.repo.url, "branch": project.repo.branch,
-            "local_path": project.repo.local_path}
+def update_source(workspace: str, source_id: str) -> Dict[str, Any]:
+    """Pull the clone of a connected source and sync its skills. Blocking."""
+    from connectors.git import git_ops
+
+    meta = get_source(workspace, source_id)
+    try:
+        git_ops.pull(Path(meta["path"]), provider=meta.get("type"))
+    except git_ops.GitOpsError as e:
+        raise SourceError(504 if "timed out" in str(e) else 502, f"Pull failed: {e}")
+    meta = {k: v for k, v in meta.items() if k != "path"}
+    meta["updated_at"] = _now()
+    _write_meta(Path(sources_dir(workspace)), meta)
+    return {"source": _source_row(meta), "sync": _sync(workspace, source_id)}
 
 
-__all__ = ["CURATED_SOURCES", "SourceError", "add_source", "list_sources", "normalize_url"]
+def remove_source(workspace: str, source_id: str) -> Dict[str, Any]:
+    """Disconnect a source: delete its clone and the catalog entries that came
+    from it. Copies already attached to agents keep their own text (they are
+    separate records), so no agent loses a skill it was given."""
+    from memory.procedural import ProcedureStore
+
+    meta = get_source(workspace, source_id)
+    base = Path(sources_dir(workspace))
+    shutil.rmtree(meta["path"], ignore_errors=True)
+    (base / f"{source_id}.json").unlink(missing_ok=True)
+    store = ProcedureStore(workspace)
+    removed: List[Dict[str, Any]] = []
+    for p in store.load():
+        if p.source != "repo" or p.agent_id or (p.repo or {}).get("source_id") != source_id:
+            continue
+        if store.delete(p.id):
+            removed.append({"id": str(p.id), "name": p.name})
+    return {"source_id": source_id, "removed": removed}
+
+
+def _sync(workspace: str, source_id: str) -> Dict[str, Any]:
+    from memory.skill_import import sync_workspace
+    return sync_workspace(workspace, source_id=source_id)
+
+
+def _source_row(meta: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": meta["id"], "repo": source_label(meta), "url": meta.get("url"),
+            "branch": meta.get("branch"), "path": (SOURCES_DIR / meta["id"]).as_posix(),
+            "added_at": meta.get("added_at"), "updated_at": meta.get("updated_at")}
+
+
+# ── sources made as projects by an earlier build ─────────────────────────────
+
+def migrate_project_sources(workspace: str) -> List[str]:
+    """Move the sources an earlier build made as projects (tagged ``skills``,
+    described "Agent Skills from owner/name", clone under ``<folder>/repo``)
+    to ``.skills/sources``: the clone is moved, the catalog entries and their
+    attached copies are pointed at the new folder (same ids, so agents keep
+    their skills and history), and the project is deleted. Idempotent;
+    returns the ids of the sources moved."""
+    from memory.procedural import ProcedureStore
+    from projects.storage import ProjectStore
+    from workspace import get_workspace_folder
+
+    ws_folder = get_workspace_folder(workspace)
+    if ws_folder is None:
+        return []
+    try:
+        store = ProjectStore()
+        candidates = [p for p in store.list() if p.workspace == workspace
+                      and "skills" in (p.tags or []) and p.repo and p.repo.url
+                      and (p.description or "").startswith("Agent Skills from ")]
+    except Exception:  # noqa: BLE001 - a broken project store must not hide the sources page
+        log.warning("skill sources: could not list projects of %s", workspace, exc_info=True)
+        return []
+    moved: List[str] = []
+    base = ws_folder / SOURCES_DIR
+    for project in candidates:
+        try:
+            info = normalize_url(project.repo.url)
+        except SourceError:
+            continue
+        old_rel = (project.repo.local_path or "").strip("/")
+        old_dir = ws_folder / old_rel if old_rel else None
+        if old_dir is None or not old_dir.is_dir():
+            continue
+        sid = source_id_for(info)
+        new_dir = base / sid
+        base.mkdir(parents=True, exist_ok=True)
+        if new_dir.exists():
+            shutil.rmtree(old_dir, ignore_errors=True)
+        else:
+            shutil.move(str(old_dir), str(new_dir))
+        new_rel = (SOURCES_DIR / sid).as_posix()
+        meta = {"id": sid, "url": info["url"], "type": info["type"], "owner": info["owner"],
+                "name": info["name"], "branch": project.repo.branch,
+                "added_at": project.created_at.isoformat() if getattr(project, "created_at", None) else _now(),
+                "updated_at": _now()}
+        _write_meta(base, meta)
+
+        procedures = ProcedureStore(workspace)
+        for proc in procedures.load():
+            repo = dict(proc.repo or {})
+            rel = str(repo.get("dir") or "")
+            if repo.get("project_id") != project.id and not (rel == old_rel or rel.startswith(old_rel + "/")):
+                continue
+            if rel == old_rel or rel.startswith(old_rel + "/"):
+                repo["dir"] = new_rel + rel[len(old_rel):]
+            repo["project_id"] = None
+            repo["source_id"] = sid
+            repo["root"] = source_label(meta)
+            proc.repo = repo
+            procedures.update(proc)
+
+        store.delete(project.id)
+        try:
+            from projects.graph_store import ProjectGraphStore
+            ProjectGraphStore().delete_project(project.id)
+        except Exception:  # noqa: BLE001 - saved diagram views are cosmetic
+            log.debug("skill sources: graph cleanup failed for %s", project.id, exc_info=True)
+        project_dir = old_dir.parent
+        if project_dir != ws_folder and project_dir.is_dir() and not any(project_dir.iterdir()):
+            project_dir.rmdir()
+        moved.append(sid)
+        log.info("skill sources: moved project %s to %s", project.id, new_rel)
+    return moved
+
+
+__all__ = ["CURATED_SOURCES", "SOURCES_DIR", "SourceError", "add_source", "connected_sources",
+           "get_source", "list_sources", "migrate_project_sources", "normalize_url",
+           "remove_source", "source_id_for", "source_label", "update_source"]

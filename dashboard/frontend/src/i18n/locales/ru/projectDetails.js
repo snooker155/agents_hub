@@ -75,6 +75,7 @@ export default {
   projectFiles: 'Файлы проекта',
   loadingFiles: 'Загрузка файлов…',
   selectedFile: 'Выбранный файл',
+  fileView: { rendered: 'Просмотр', source: 'Исходник', text: 'Текст', download: 'Скачать' },
   selectAFileToPreview: 'Выберите файл, чтобы посмотреть содержимое.',
   noFilesFoundInThis: 'В папке проекта файлов не найдено.',
   bytes: '{{count}} байт',
@@ -122,6 +123,7 @@ export default {
   errors: {
     publish: 'Не удалось опубликовать ветку',
     loadFile: 'Не удалось загрузить файл',
+    downloadFile: 'Не удалось скачать файл',
     loadFiles: 'Не удалось загрузить файлы',
     gitStatus: 'Не удалось получить статус git',
     clone: 'Клонирование не удалось',

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
@@ -49,7 +50,13 @@ const TABS = [
 
 export default function Connectors() {
   const { t } = useI18n();
-  const [active, setActive] = useState('telegram');
+  // ?tab=google opens a tab directly: the Google OAuth callback lands there,
+  // and the mail forms link to it for "Connect with Gmail".
+  const [params] = useSearchParams();
+  const [active, setActive] = useState(() => {
+    const wanted = params.get('tab');
+    return TABS.some((tab) => tab.id === wanted) ? wanted : 'telegram';
+  });
   const { Component } = TABS.find((tab) => tab.id === active) || TABS[0];
 
   return (

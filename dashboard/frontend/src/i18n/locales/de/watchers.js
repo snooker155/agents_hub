@@ -11,6 +11,7 @@ export default {
   pickWorkspace: 'Wählen Sie einen Arbeitsbereich, um einen Watcher anzulegen.',
   columns: { name: 'Watcher', state: 'Zustand', lastCheck: 'Letzte Prüfung', lastChange: 'Letzte Änderung', agents: 'Weckt' },
   state: { active: 'Aktiv', paused: 'Pausiert ({{reason}})', disabled: 'Aus', error: 'Fehler' },
+  viaGoogle: 'Google-Konto',
   every: 'alle {{seconds}} s',
   fired: '{{count}} Ereignisse',
   nobody: 'noch niemand',
@@ -32,6 +33,7 @@ export default {
     autoPause: 'Pause nach Fehlern in Folge',
     autoPauseHint: '0 fragt trotz Fehlern weiter ab.',
     enabled: 'Aktiviert',
+    useGoogleHint: 'Kein App-Passwort: das Konto des Google-Konnektors liest sein eigenes Gmail. Leerer Host und Benutzername bedeuten Gmail und dieses Konto. Nur ein Administrator kann das einschalten.',
     secretHint: 'Der Name eines Arbeitsbereichs-Secrets (Settings → Secrets), nie der Wert.',
     save: 'Speichern',
     cancel: 'Abbrechen',
@@ -42,6 +44,7 @@ export default {
       httpHint: 'Eine Seite oder ein JSON-Endpunkt; den ganzen Inhalt oder ein JSON-Feld beobachten. Nur öffentliche Hosts.',
     },
     fields: {
+      use_google: 'Mit dem verbundenen Google-Konto anmelden',
       host: 'IMAP-Host', port: 'Port', ssl: 'TLS', username: 'Benutzername', password_secret: 'Passwort-Secret',
       folder: 'Ordner', from_filter: 'Nur Absender mit', subject_filter: 'Nur Betreffs mit',
       url: 'URL', method: 'Methode', json_path: 'JSON-Pfad (optional)', headers_secret: 'Header-Secret (optional)',

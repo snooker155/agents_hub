@@ -789,6 +789,29 @@ def extract_text(file_id: str) -> Optional[str]:
     return data.decode("utf-8", errors="replace")
 
 
+def preview_path(path: Path, *, max_chars: int = 200_000) -> Dict[str, Any]:
+    """A preview of a file on disk that is not a registered record (a
+    project's folder): ``{kind, mime_type, text, truncated}`` read the way
+    :func:`extract_text` reads a record. ``kind`` is ``pdf`` (text extracted,
+    None without a PDF library), ``text`` or ``binary`` (``text`` None)."""
+    record = {"name": path.name, "mime_type": guess_mime(path.name)}
+    with open(path, "rb") as fh:
+        head = fh.read(8192)
+    if is_pdf(record):
+        kind, text = "pdf", _pdf_text(path)
+    elif is_text(record, head):
+        # A text file bigger than the preview is cut, not refused: four
+        # bytes per character is the worst case of UTF-8.
+        with open(path, "rb") as fh:
+            data = fh.read(max_chars * 4 + 1)
+        kind, text = "text", data.decode("utf-8", errors="replace")
+    else:
+        kind, text = "binary", None
+    truncated = text is not None and len(text) > max_chars
+    return {"kind": kind, "mime_type": record["mime_type"],
+            "text": text[:max_chars] if text is not None else None, "truncated": truncated}
+
+
 def _size_label(size: int) -> str:
     size = int(size or 0)
     if size < 1024:
@@ -917,7 +940,7 @@ def materialize(file_ids: List[str], dest_dir: Any) -> List[Path]:
 __all__ = [
     "FileError", "FileTooLarge", "WorkspaceQuotaExceeded",
     "create_file", "get_file", "get_files", "list_files", "read_bytes", "local_path",
-    "delete_file", "materialize", "locate_copy", "text_for_prompt", "extract_text", "describe",
+    "delete_file", "materialize", "locate_copy", "text_for_prompt", "extract_text", "preview_path", "describe",
     "find_duplicate", "workspace_usage", "limits", "max_file_bytes", "max_workspace_bytes",
     "record_use", "list_uses", "display_name", "disk_name", "guess_mime", "is_text", "is_pdf",
     "new_file_id", "FILE_ID_RE", "SOURCES",

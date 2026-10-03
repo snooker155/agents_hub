@@ -41,8 +41,8 @@ import {
   FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, RefreshCw, Search, Trash2, Upload, X,
 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import MarkdownRenderer from '../components/MarkdownRenderer';
-import CodeBlock from '../components/CodeBlock';
+import FileViewer from '../components/files/FileViewer';
+import { frameType, isImageFile, needsBytes, objectUrl } from '../lib/fileKind';
 import { codeLanguageFor } from '../lib/codeLanguage';
 import { useWorkspace } from '../components/workspace';
 import { useI18n, useFormatters } from '../i18n';
@@ -287,21 +287,9 @@ function FileTree({ files, views, viewsName, searching, openId, openViewId, open
   );
 }
 
-function isImage(rec) {
-  return /^image\/(png|jpe?g|gif|webp|bmp)$/.test(rec?.mime_type || '');
-}
-
-const ext = (rec) => String(rec?.name || '').toLowerCase().split('.').pop();
-const isMarkdown = (rec) => rec?.mime_type === 'text/markdown' || ['md', 'markdown'].includes(ext(rec));
-const isPdf = (rec) => rec?.mime_type === 'application/pdf' || ext(rec) === 'pdf';
-const isHtml = (rec) => rec?.mime_type === 'text/html' || ['html', 'htm'].includes(ext(rec));
-
-const codeLanguage = (rec) => (isMarkdown(rec) || isHtml(rec) ? '' : codeLanguageFor(rec?.name));
-
-const objectUrl = (blob, type) => {
-  if (typeof URL.createObjectURL !== 'function') return '';
-  return URL.createObjectURL(type && blob.type !== type ? new Blob([blob], { type }) : blob);
-};
+// A file record as components/files/FileViewer takes it.
+const viewed = (rec) => ({ name: rec?.name, mimeType: rec?.mime_type });
+const isImage = (rec) => isImageFile(viewed(rec));
 
 /** The file rendered the way a reader would see it, in a dialog over the page. */
 function FilePreviewModal({ fileId, onClose }) {
@@ -326,12 +314,12 @@ function FilePreviewModal({ fileId, onClose }) {
         const { data } = await getWorkspaceFileRecord(fileId);
         if (cancelled) return;
         setRec(data);
-        if (isImage(data) || isPdf(data) || isHtml(data)) {
+        if (needsBytes(viewed(data))) {
           const { data: blob } = await getWorkspaceFileBlob(fileId);
           if (cancelled) return;
           // HTML comes back as text/plain so it can never run as this origin;
           // here it renders inside a sandboxed frame from a blob of its own.
-          made = objectUrl(blob, isPdf(data) ? 'application/pdf' : isHtml(data) ? 'text/html' : '');
+          made = objectUrl(blob, frameType(viewed(data)));
           setUrl(made);
         } else {
           const { data: body } = await getWorkspaceFileText(fileId, 200000);
@@ -354,28 +342,11 @@ function FilePreviewModal({ fileId, onClose }) {
     body = <PageLoader size="sm" />;
   } else if (error) {
     body = <p className="text-sm text-red-600">{error}</p>;
-  } else if (isImage(rec) && url) {
-    body = <img src={url} alt={rec?.name || ''} className="max-w-full max-h-[75vh] mx-auto rounded" />;
-  } else if ((isPdf(rec) || isHtml(rec)) && url) {
-    // A browser's PDF viewer does not load inside a sandboxed frame; HTML is
-    // the one that must never run against this page, so only it is sandboxed.
-    body = <iframe src={url} title={rec?.name || ''} sandbox={isHtml(rec) ? '' : undefined}
-      className="w-full h-[75vh] rounded border border-gray-200 bg-white" />;
-  } else if (text && text.text != null && isMarkdown(rec)) {
-    body = <MarkdownRenderer content={text.text} className="text-sm text-gray-800" />;
-  } else if (text && text.text != null && codeLanguage(rec)) {
-    // Code the way the chat shows it: the language over the block, Copy on
-    // the right, the grammar's colours in the body.
-    body = <CodeBlock language={codeLanguage(rec)} code={text.text} bodyClassName="max-h-[75vh] overflow-auto" />;
-  } else if (text && text.text != null) {
-    body = (
-      <>
-        {text.kind === 'pdf' && <p className="text-[11px] text-gray-400 mb-1">{t('files.previewPdf')}</p>}
-        <pre className="whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700">{text.text}</pre>
-      </>
-    );
   } else {
-    body = <p className="text-sm text-gray-500">{t('files.previewBinary')}</p>;
+    body = (
+      <FileViewer name={rec?.name} mimeType={rec?.mime_type} url={url}
+        text={text?.text ?? null} kind={text?.kind} truncated={Boolean(text?.truncated)} />
+    );
   }
 
   return createPortal(
@@ -399,7 +370,6 @@ function FilePreviewModal({ fileId, onClose }) {
         </div>
         <div className="px-5 py-4 overflow-y-auto">
           {body}
-          {text?.truncated && <p className="text-[11px] text-gray-400 mt-2">{t('files.previewTruncated')}</p>}
         </div>
       </div>
     </div>,

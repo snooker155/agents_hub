@@ -15,6 +15,20 @@ turns that section into the next release.
 
 ### Added
 
+- Mail provider presets in the IMAP watcher form and the mail channel
+  (`connectors/mail/presets.py`): pick Gmail, Outlook.com or Microsoft 365,
+  Yahoo, iCloud, Yandex, Mail.ru, Fastmail, Zoho, GMX or WEB.DE and the IMAP
+  and SMTP hosts, ports and TLS fill themselves; a typed address with a known
+  domain fills them too. Under the list the form says whether the provider
+  wants an app password (with a link to where it is made), the account
+  password, or has retired password sign-in altogether.
+- Gmail through the connected Google account (`connectors/mail/oauth.py`,
+  docs/integrations.md "Gmail"): Connect with Gmail on the Google tab asks
+  for the Gmail scope, and the IMAP watcher (`use_google`, administrators
+  only) and the mail channel (`auth_mode: google`) then sign in over XOAUTH2
+  with no app password, Gmail's hosts and the account's address filled in.
+  The Google OAuth consent now also asks for `openid` and `userinfo.email`,
+  and the callback lands on the Google tab (`/connectors?tab=google`).
 - `ah setup` (also `ah onboard`), a guided install and configuration in the
   terminal (`cli/onboard/`, docs/installation.md "Guided setup"): how the hub
   runs (this checkout, Docker from the published images, Compose from the
@@ -36,10 +50,12 @@ turns that section into the next release.
   `memory/skill_review.py`, docs/skills.md). **Sources** on the Skills page
   lists public repositories of Agent Skills whose license was checked
   (Anthropic, Sentry, Hugging Face, Microsoft, Trail of Bits, Expo,
-  Cloudflare, one community collection); **Connect** clones one as a project
-  of the workspace and syncs its skills, and any https repository on
-  github.com, gitlab.com or bitbucket.org can be connected by URL
-  (`GET/POST /api/skills/sources`). The skill sync now walks a repository
+  Cloudflare, one community collection); **Connect** clones one into the
+  workspace's hidden `.skills/sources` folder (not a project) and syncs its
+  skills, **Update** pulls and syncs again, **Disconnect** removes it, and
+  any https repository on github.com, gitlab.com or bitbucket.org can be
+  connected by URL (`/api/skills/sources`). Sources an earlier build made as
+  projects are moved there on first use. The skill sync now walks a repository
   for every folder holding a SKILL.md (`.claude/skills`, `skills/`,
   `plugins/`, `.github/plugins/*/skills/`, a skill at the repository root)
   instead of one fixed path. Every skill synced from a repository or
@@ -172,6 +188,14 @@ turns that section into the next release.
 
 ### Changed
 
+- The Files tab of a project previews files the way the Artifacts page does
+  (`components/files/FileViewer.jsx`, shared by both): images, PDFs in the
+  browser's viewer or as extracted text, HTML in a sandboxed frame, Markdown
+  rendered, code highlighted, with a rendered/source switch and a download
+  button. `GET /api/projects/{id}/file-content` now returns `kind`,
+  `mime_type` and `truncated` (a long file is cut, not refused), the new
+  `GET /api/projects/{id}/file-raw` serves the bytes, and the file list skips
+  dependency and build folders such as `node_modules`.
 - The agent page's Config tab holds the prompt files alone. The version
   history, the guardrails card, the pulse and the experiment card moved to
   tabs of their own: **Versions**, **Guardrails**, **Pulse**, **Experiments**.

@@ -106,7 +106,27 @@ credentials token.
 Fields: `imap_host`, `imap_port` (993), `imap_user`, `imap_password`,
 `imap_folder` (INBOX), `imap_ssl`, `smtp_host`, `smtp_port` (587),
 `smtp_user`, `smtp_password`, `smtp_security` (`starttls`, `ssl` or `none`),
-`from_address`, `poll_seconds` (60), `subject_prefix` (`Re:`).
+`from_address`, `poll_seconds` (60), `subject_prefix` (`Re:`), and
+`auth_mode`: `password` (the default) signs in with the fields above,
+`google` with the account connected through Connect with Gmail on the Google
+tab ([integrations](integrations.md#gmail)) over XOAUTH2 on both IMAP and
+SMTP. Under `google` the form hides the passwords, an empty host means
+Gmail's, an empty user or `from_address` means the account's, and the
+channel counts as configured with `auth_mode` alone; a missing Gmail grant
+shows as the status card's error on connect.
+
+The form starts with a **Mail provider** pick list (Gmail, Outlook.com and
+Microsoft 365, Yahoo, iCloud, Yandex, Mail.ru, Fastmail, Zoho, GMX, WEB.DE)
+that fills the IMAP and SMTP hosts, ports and security at once; typing an
+address with one of those domains into `imap_user` or `from_address` fills
+them too, while a hand-typed host shows the list as custom. Under the list
+the form says how the provider takes the password: most want an app
+password from the account's security settings (the link goes there), GMX and
+WEB.DE take the account password once IMAP is switched on, and Microsoft has
+retired password sign-in for IMAP and SMTP, so its preset only serves a
+tenant that still allows it. The table is `connectors/mail/presets.py`, the
+same one the [IMAP watcher](watchers.md#kinds) uses, and `GET /api/channels`
+returns it as the mail channel's `presets`.
 
 The loop polls the folder on a UID cursor and marks what it read as seen.
 The chat key is the sender's address; an allowlist entry `@example.com`
@@ -119,7 +139,7 @@ IMAP and connects to SMTP.
 
 ## The API
 
-`GET /api/channels` lists the channels and their fields. Per channel:
+`GET /api/channels` lists the channels, their fields and any `presets`. Per channel:
 `GET|PUT /api/channels/<name>/config` (body `{config, clear, enabled, allowed}`),
 `POST .../test`, `GET .../status`, `GET|POST .../bindings`,
 `DELETE .../bindings/<chat_key>`, `POST .../send`. A channel with a loop runs

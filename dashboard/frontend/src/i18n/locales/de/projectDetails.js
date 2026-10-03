@@ -75,6 +75,7 @@ export default {
   projectFiles: 'Projektdateien',
   loadingFiles: 'Dateien werden geladen…',
   selectedFile: 'Ausgewählte Datei',
+  fileView: { rendered: 'Gerendert', source: 'Quelltext', text: 'Text', download: 'Herunterladen' },
   selectAFileToPreview: 'Wählen Sie eine Datei, um ihren Inhalt anzusehen.',
   noFilesFoundInThis: 'In diesem Projektordner wurden keine Dateien gefunden.',
   bytes: '{{count}} Bytes',
@@ -122,6 +123,7 @@ export default {
   errors: {
     publish: 'Branch konnte nicht veröffentlicht werden',
     loadFile: 'Datei konnte nicht geladen werden',
+    downloadFile: 'Datei konnte nicht heruntergeladen werden',
     loadFiles: 'Dateien konnten nicht geladen werden',
     gitStatus: 'Git-Status konnte nicht abgerufen werden',
     clone: 'Klonen fehlgeschlagen',

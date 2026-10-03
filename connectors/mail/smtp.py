@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any, Callable, Optional
 
+from . import oauth
+
 
 @dataclass
 class SmtpConfig:
@@ -26,10 +28,15 @@ class SmtpConfig:
     #: "starttls" (default), "ssl" or "none".
     security: str
     from_address: str
+    #: Set with ``auth_mode: google``: sign in over XOAUTH2 with this token.
+    oauth_token: Optional[str] = None
 
 
-def config_from_dict(cfg: dict[str, Any]) -> SmtpConfig:
-    return SmtpConfig(
+def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None) -> SmtpConfig:
+    """The session settings from a channel config dict; with ``auth_mode:
+    google`` the connected Google account signs in and an empty host means
+    Gmail's (see ``imap.config_from_dict``)."""
+    out = SmtpConfig(
         host=str(cfg.get("smtp_host") or "").strip(),
         port=int(cfg.get("smtp_port") or 587),
         user=str(cfg.get("smtp_user") or "").strip(),
@@ -37,6 +44,18 @@ def config_from_dict(cfg: dict[str, Any]) -> SmtpConfig:
         security=(str(cfg.get("smtp_security") or "starttls").strip().lower() or "starttls"),
         from_address=str(cfg.get("from_address") or "").strip(),
     )
+    if str(cfg.get("auth_mode") or "").strip().lower() == "google":
+        address, token = oauth.google_login(google_login)
+        oauth.check_address(out.user, address)
+        out.user = address
+        out.password = ""
+        out.oauth_token = token
+        # Gmail rewrites a From it does not know as an alias to the account,
+        # so an empty from_address is simply the account's.
+        out.from_address = out.from_address or address
+        if not out.host:
+            out.host, out.port, out.security = oauth.GMAIL_SMTP
+    return out
 
 
 def _default_connection(config: SmtpConfig) -> Any:
@@ -59,7 +78,9 @@ class SmtpClient:
         self._conn = self._factory(self.config)
         if self.config.security == "starttls":
             self._conn.starttls()
-        if self.config.user:
+        if self.config.oauth_token:
+            oauth.smtp_authenticate(self._conn, self.config.user, self.config.oauth_token)
+        elif self.config.user:
             self._conn.login(self.config.user, self.config.password)
 
     def send(self, message: EmailMessage) -> None:
