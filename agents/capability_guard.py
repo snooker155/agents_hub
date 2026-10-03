@@ -163,6 +163,30 @@ class CapabilityViolation(ValueError):
         super().__init__(f"Agent '{agent_id}' — {violation.message}")
 
 
+class InheritedCapabilityViolation(CapabilityViolation):
+    """A parent's save refused because a child that follows it (``extends``,
+    agents/inheritance.py) would form a blocked combination with the new
+    parent. ``agent_id`` is the CHILD; ``parent_id`` the agent being saved.
+    The routes answer 409 with ``error = "inherited_capability_violation"``."""
+
+    def __init__(self, agent_id: str, violation: Violation, *, parent_id: str):
+        super().__init__(agent_id, violation)
+        self.parent_id = parent_id
+        self.args = (
+            f"Saving '{parent_id}' is refused: the agent '{agent_id}' inherits from it and "
+            f"would then hold a blocked combination. {violation.message}",
+        )
+
+    def detail(self) -> dict:
+        return {
+            "error": "inherited_capability_violation",
+            "agent_id": self.agent_id,
+            "parent_id": self.parent_id,
+            "message": str(self),
+            **{k: v for k, v in self.violation.to_dict().items() if k not in ("agent_id", "message")},
+        }
+
+
 GUARD_MODES = ("block", "warn", "off")
 
 

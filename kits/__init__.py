@@ -137,7 +137,39 @@ def load_kit_bundle(kit: Kit) -> Bundle:
     """The kit's agents, memory pool and deployment files as an apply
     :class:`~declarative.Bundle` (docs/apply.md). Raises
     :class:`declarative.errors.ValidationError` when a file is malformed."""
-    return load_bundle([str(kit.path)])
+    bundle = load_bundle([str(kit.path)])
+    _ensure_parent_agents(bundle)
+    return bundle
+
+
+def _ensure_parent_agents(bundle: Bundle) -> None:
+    """Seed any system agent a kit agent ``extends:`` (declarative/kinds.py,
+    docs/agent-inheritance.md) that this hub has not needed yet, the same
+    on-demand way any other surface short of one system agent does
+    (``common.bootstrap.ensure_system_agent``) — so installing a kit never
+    depends on having opened something else first that happened to seed its
+    parent. Additive and never raising: a kit extending an id that is not a
+    shippable system agent is simply left as is, for the plan to report
+    against the hub the normal way."""
+    kit_ids = {r.key for r in bundle.by_kind("agent")}
+    parents = set()
+    for res in bundle.by_kind("agent"):
+        extends = res.spec.get("extends")
+        if isinstance(extends, str) and extends.strip():
+            parent = extends.split("@", 1)[0].strip()
+            if parent and parent not in kit_ids:
+                parents.add(parent)
+    if not parents:
+        return
+    try:
+        from common.bootstrap import ensure_system_agent
+    except Exception:  # noqa: BLE001 - a hub without this helper leaves it to the plan
+        return
+    for parent in parents:
+        try:
+            ensure_system_agent(parent)
+        except Exception:  # noqa: BLE001 - best effort; a real problem surfaces on the plan instead
+            log.debug("kits: could not seed parent agent %r on demand", parent, exc_info=True)
 
 
 def namespaced_bundle(bundle: Bundle, workspace: Optional[str]) -> Bundle:

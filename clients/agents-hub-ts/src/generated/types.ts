@@ -43,6 +43,8 @@ export type AgentCreateCustom = {
   "definition_id"?: string | null;
   "handoffs"?: string[];
   "handoff_history"?: string;
+  "extends"?: string | null;
+  "extends_version"?: number | null;
 };
 
 export type AgentDelegatesUpdate = {
@@ -70,6 +72,9 @@ export type AgentDetail = {
   "remote"?: Record<string, unknown> | null;
   "has_running_node"?: boolean;
   "is_default_chat_agent"?: boolean;
+  "extends"?: string | null;
+  "extends_version"?: number | null;
+  "children_count"?: number;
   "provider"?: string | null;
   "model"?: string | null;
   "base_url"?: string | null;
@@ -83,11 +88,17 @@ export type AgentDetail = {
   "handoffs"?: string[] | null;
   "handoff_history"?: string | null;
   "episodic_write_enabled"?: boolean | null;
+  "children"?: string[];
   [key: string]: unknown;
 };
 
 export type AgentEpisodicConfigUpdate = {
   "episodic_write_enabled"?: boolean | null;
+};
+
+export type AgentExtendsUpdate = {
+  "extends"?: string | null;
+  "extends_version"?: number | null;
 };
 
 export type AgentGuardrailsUpdate = {
@@ -129,6 +140,9 @@ export type AgentListItem = {
   "remote"?: Record<string, unknown> | null;
   "has_running_node"?: boolean;
   "is_default_chat_agent"?: boolean;
+  "extends"?: string | null;
+  "extends_version"?: number | null;
+  "children_count"?: number;
   [key: string]: unknown;
 };
 
@@ -2350,6 +2364,9 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/experiment/report": {
     get: { response: unknown };
   };
+  "/api/agents/{agent_id}/extends": {
+    put: { body: AgentExtendsUpdate; response: unknown };
+  };
   "/api/agents/{agent_id}/guardrails": {
     put: { body: AgentGuardrailsUpdate; response: unknown };
   };
@@ -2365,6 +2382,9 @@ export interface ApiPaths {
   };
   "/api/agents/{agent_id}/identity": {
     put: { body: AgentIdentityUpdate; response: unknown };
+  };
+  "/api/agents/{agent_id}/inheritance": {
+    get: { response: unknown };
   };
   "/api/agents/{agent_id}/logs": {
     get: { response: unknown };
@@ -2386,6 +2406,9 @@ export interface ApiPaths {
   };
   "/api/agents/{agent_id}/online-evals/summary": {
     get: { response: unknown };
+  };
+  "/api/agents/{agent_id}/overrides/{field_name}": {
+    delete: { response: unknown };
   };
   "/api/agents/{agent_id}/personal-memory": {
     get: { response: unknown };

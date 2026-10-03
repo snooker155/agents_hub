@@ -337,12 +337,12 @@ def skills_catalog(agent_id: str, workspace: str, system_prompt: str, names: Lis
     skills to list: the same lines memory.procedural.inject_skills_catalog
     writes, for the named skills only (by name or id)."""
     try:
-        from memory.procedural import ProcedureStore
+        from memory.procedural import ProcedureStore, _visible_procedures
         from memory.skill_versions import effective_content
         wanted = {str(n).strip().lower() for n in names}
-        procedures = [p for p in ProcedureStore(workspace).load()
-                      if p.agent_id == agent_id
-                      and (str(p.name).lower() in wanted or str(getattr(p, "id", "")).lower() in wanted)]
+        # Own skills and those inherited from the agent's parents (extends).
+        procedures = [p for p in _visible_procedures(ProcedureStore(workspace), agent_id)
+                      if (str(p.name).lower() in wanted or str(getattr(p, "id", "")).lower() in wanted)]
         if not procedures:
             return system_prompt
         lines = ["\n\n## Available Skills\n",

@@ -14,6 +14,10 @@ There is nothing in between.
 If you do edit one, it is marked as yours and stops receiving shipped updates.
 That is the escape hatch, and it is one-way.
 
+- A system agent can be a parent for another agent to `extend` (a kit's agent
+  specializing one of these, for instance), but it can never itself be a
+  child. See [agent-inheritance](agent-inheritance.md).
+
 ## The roster
 
 **Talking to you**

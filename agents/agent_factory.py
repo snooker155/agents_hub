@@ -274,7 +274,13 @@ class AgentFactory:
         if spec is None:
             raise FileNotFoundError(f"Agent '{agent_id}' not found in agents.json")
 
-        system_prompt = assemble_prompt(spec.def_id(), definitions_dir=self.definitions_dir)
+        if spec.extends:
+            # A child (agents/inheritance.py): its own text merged into its
+            # parent chain's effective prompt.
+            from agents.inheritance import effective_prompt
+            system_prompt = effective_prompt(spec, definitions_dir=self.definitions_dir)
+        else:
+            system_prompt = assemble_prompt(spec.def_id(), definitions_dir=self.definitions_dir)
 
         return {
             "id": spec.id,
@@ -694,6 +700,10 @@ class AgentFactory:
     def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
         """``load_definition``'s shape, from a stored version instead of the
         live registry record and markdown files (an experiment arm)."""
+        if isinstance(parts.get("effective"), dict):
+            # A child's version: its own text is in the top level keys, what
+            # it ran with (merged with its chain) under "effective".
+            parts = parts["effective"]
         instructions = str(parts.get("instructions") or "")
         prompt_parts = [instructions]
         capabilities = str(parts.get("capabilities") or "").strip()
@@ -858,9 +868,11 @@ class AgentFactory:
             try:
                 from memory.procedural import ProcedureStore as _SkillStore
                 from common.workspace_context import normalize_workspace_name as _norm_ws
+                from agents.inheritance import skill_owner_ids as _skill_owners
                 _skills_ws = _norm_ws(workspace)
+                _owners = set(_skill_owners(agent_id))
                 if _skills_ws and any(
-                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id == agent_id
+                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id in _owners
                 ):
                     _skill_tools.append("read_skill_file")
             except Exception:  # noqa: BLE001 - a store hiccup only drops the optional file tool

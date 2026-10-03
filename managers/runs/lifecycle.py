@@ -105,6 +105,31 @@ def _agent_version_for(
         return None
 
 
+def _agent_chain_for(agent_id: Optional[str], version: Optional[int]) -> Optional[list]:
+    """The inheritance chain a run of a child agent built from, root first:
+    ``[{id, version}]`` (agents/inheritance.py ``run_chain``), the one the
+    version row recorded when there is one. None for an agent that extends
+    nothing. Never raises."""
+    if not agent_id:
+        return None
+    try:
+        from agents import versions as agent_versions
+        if version is not None:
+            row = agent_versions.get_version_row(agent_id, int(version))
+            chain = ((row or {}).get("definition") or {}).get("chain")
+            if isinstance(chain, list) and chain:
+                return chain
+        from agents.registry import get_agent_raw
+        raw = get_agent_raw(agent_id)
+        if raw is None or not raw.extends:
+            return None
+        from agents.inheritance import run_chain
+        return run_chain(agent_id, version)
+    except Exception:  # noqa: BLE001 - best-effort, like agent_version: a run record never fails over it
+        log.debug("could not resolve the inheritance chain for '%s'", agent_id, exc_info=True)
+        return None
+
+
 def run_log_path(run_id: str) -> Path:
     """Canonical log file path for an agent run. Every run channel writes here
     so the UI can treat every run uniformly."""
@@ -183,6 +208,9 @@ def preopen_run(
             # turn or a service pinned it), as opposed to landing on it.
             if agent_version_pin is not None and av == int(agent_version_pin):
                 record["agent_version_pinned"] = True
+        chain = _agent_chain_for(agent_id, av)
+        if chain:
+            record["agent_chain"] = chain
     _upsert_run(record)
     if link_to_session and session_id:
         try:
@@ -253,11 +281,14 @@ def open_run(
             agent_id, requested_version=agent_version_pin,
             definition_hash=record.get("definition_hash"), route_experiment=True,
         )
-        if av is not None:
-            _update_run(run_id, {"agent_version": av,
+        chain = _agent_chain_for(agent_id, av)
+        if av is not None or chain:
+            _update_run(run_id, {**({"agent_version": av} if av is not None else {}),
                                  **({"agent_version_pinned": True}
-                                    if agent_version_pin is not None and av == int(agent_version_pin)
-                                    else {})})
+                                    if agent_version_pin is not None and av is not None
+                                    and av == int(agent_version_pin)
+                                    else {}),
+                                 **({"agent_chain": chain} if chain else {})})
     if link_to_session and session_id:
         try:
             from common.session_service import add_run_to_session as _link

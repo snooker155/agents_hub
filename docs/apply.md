@@ -75,13 +75,14 @@ the hub.
 | Field | Value | Written through |
 |---|---|---|
 | `name`, `domain`, `capacity`, `workspace` | set when the agent is created, see [what cannot change](#what-cannot-change-in-place) | `POST /api/agents/create` |
+| `extends`, `extends_version` | a parent agent id (`analyst` or, pinned, `analyst@12`), see [agent-inheritance](agent-inheritance.md) | `POST /api/agents/create`, `PUT .../extends` |
 | `description` | text | `PUT /api/agents/{id}/description` |
-| `tools` | list of tool ids | `POST .../tools` |
+| `tools` | list of tool ids; a child (`extends:` set) may also give `+id` / `-id` deltas | `POST .../tools` |
 | `capability_override` | `true` to accept a combination the capability guard refuses | `POST .../capability-override` |
 | `model` | mapping: `provider`, `model`, `base_url`, `temperature`, `max_tokens` (null clears the last two) | `POST .../model` |
 | `reasoning` | mapping: `think_enabled`, `think_mode`, `thinking_level`, `plan_enabled`, `plan_format` | `POST .../reasoning` |
 | `memory` | list of memory pools, primary first: an id, or `{pool: id, read_only: true}`; `[]` or `none` for no pool | `POST .../memory` |
-| `delegates`, `handoffs` | lists of agent ids | `POST .../delegates`, `POST .../handoffs` |
+| `delegates`, `handoffs` | lists of agent ids; a child may also give `+id` / `-id` deltas | `POST .../delegates`, `POST .../handoffs` |
 | `handoff_history` | `full`, `summary`, `none` or `last_n:<N>` | `POST .../handoffs` |
 | `skills` | list of `{name, description, steps, body, tags}` | `POST /api/skills`, `PATCH /api/skills/{id}` |
 | `skills_enabled`, `clarify_gate`, `allow_self_delegation`, `shared` | `true` or `false` | the matching per field route |
@@ -90,7 +91,7 @@ the hub.
 | `web_domains` | mapping: `allowed_domains`, `blocked_domains` | `PUT .../web-domains` |
 | `loop` | mapping: `fallback_models`, `advisor_model`, `output_schema`, `max_concurrent_delegates`, `tool_search`, `compaction` | `PUT .../loop-settings` |
 | `tool_policy` | mapping of tool id to mode ([tool policy](tool-policy.md)) | `PUT .../tool-policy` |
-| `guardrails`, `secrets` | lists of ids or names | `PUT .../guardrails`, `PUT .../secrets` |
+| `guardrails`, `secrets` | lists of ids or names; a child may also give `+id` / `-id` deltas | `PUT .../guardrails`, `PUT .../secrets` |
 | `proactive` | mapping, the agent's proactive profile ([proactive](proactive.md)) | `PUT .../proactive` |
 | `outcome` | mapping: `rubric`, `max_iterations`, `grader`, `threshold` ([outcomes](outcomes.md), "An agent's default outcome"); empty or absent clears it | `PUT .../default-outcome` |
 
@@ -106,6 +107,21 @@ manages only the keys the file names; the others keep whatever the hub has.
 itself, or one removed from the file, stays in the hub. A field the file does
 not mention at all is not managed: the hub keeps its value and the plan never
 reports it.
+
+### Inheritance
+
+`extends: analyst` (or, pinned, `extends: analyst@12`) makes this a child of
+`analyst`: `system_prompt` (the file's body) becomes optional, and every
+field the file does not declare follows the parent instead of the hub's
+default ([agent-inheritance](agent-inheritance.md)). A list field
+(`tools`, `delegates`, `handoffs`, `guardrails`, `secrets`) accepts `+id`
+entries to add, `-id` to remove, alongside or instead of a plain list that
+replaces the field outright; the two styles do not mix in one field. The
+plan compares a child against **its own** overrides and deltas, not the
+parent's values flattened in, so a file that only ever adds or removes a
+couple of items plans `unchanged` on every re-apply, parent changes included.
+`--export` on a child agent writes `extends` and only that agent's own
+fields and deltas.
 
 ## Environments
 

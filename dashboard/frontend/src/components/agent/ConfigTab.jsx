@@ -1,7 +1,7 @@
 import { ChatColumn, FILL_COLUMN } from '../ChatColumn';
 import EntityChat from '../EntityChat';
 import SystemAgentWarning from './SystemAgentWarning';
-import { BookOpen, FileCode, Loader, Save, Terminal, Zap } from 'lucide-react';
+import { BookOpen, FileCode, GitBranch, Loader, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
 
 /** The definition: the prompt files alone. Versions, guardrails, the pulse and
@@ -10,13 +10,28 @@ export default function ConfigTab() {
   const {
     agent, agentDefinition, defChat, defDraft, defError, defSaving,
     definitionChat, handleDefinitionDraftChange,
-    handleResetDefinitionField, handleSaveDefinitionField, t,
+    handleResetDefinitionField, handleSaveDefinitionField, setActiveTab, t,
   } = useAgentPage();
   return (
         <>
         <div className={defChat.gridClass}>
           <div className={`space-y-6 ${defChat.mainClass}`}>
           {agent.system && <SystemAgentWarning scope="config" />}
+          {agent.extends && (
+            <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-indigo-700 flex items-center gap-2">
+                <GitBranch className="w-3.5 h-3.5" />
+                {t('agentDetails.inheritanceConfigBanner', { parent: agent.extends })}
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab('inheritance')}
+                className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 whitespace-nowrap"
+              >
+                {t('agentDetails.inheritanceConfigBannerLink')}
+              </button>
+            </div>
+          )}
 
           {[
             { key: 'instructions', label: 'instructions.md', desc: t('agentDetails.definitions.instructions'), icon: Terminal, required: true },

@@ -83,13 +83,56 @@ def _trim(value: Any, default: Any) -> Any:
     return None if value == default else value
 
 
-def _agent_file(observed: Dict[str, Any], hub_id: str, key_of: Callable[[str, str], str]) -> Dict[str, Any]:
+#: A declarative composite field, mapped to the AgentSpec field name(s)
+#: GET .../inheritance's "fields" reports overridden against (docs/agent-inheritance.md).
+#: A field not listed here (description, domain, capacity, memory, skills,
+#: proactive, ...) is never inherited, so it is always this agent's own.
+_INHERITANCE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
+    "model": ("provider", "model", "base_url", "temperature", "max_tokens"),
+    "reasoning": ("reasoning",),
+    "loop": ("fallback_models", "advisor_model", "output_schema",
+             "max_concurrent_delegates", "tool_search", "compaction"),
+    "web_domains": ("allowed_domains", "blocked_domains"),
+    "response_format": ("response_format",),
+    "clarify_gate": ("clarify_gate",),
+    "allow_self_delegation": ("allow_self_delegation",),
+    "skills_enabled": ("skills_enabled",),
+    "episodic_write": ("episodic_write_enabled",),
+    "handoff_history": ("handoff_history",),
+    "outcome": ("default_outcome",),
+    "tool_policy": ("tool_policy",),
+}
+
+
+def _agent_file(ctx: Context, observed: Dict[str, Any], hub_id: str,
+                key_of: Callable[[str, str], str]) -> Dict[str, Any]:
     data: Dict[str, Any] = {"kind": "agent", "id": hub_id}
     if observed.get("name") and observed["name"] != hub_id:
         data["name"] = observed["name"]
+    extends = observed.get("extends")
+    inheritance = ctx.get(f"/api/agents/{hub_id}/inheritance") if extends else None
+    if extends:
+        data["extends"] = extends
+        if observed.get("extends_version") is not None:
+            data["extends_version"] = observed["extends_version"]
+    overridden_fields = {k for k, v in (inheritance or {}).get("fields", {}).items()
+                         if v.get("overridden")}
+    deltas = (inheritance or {}).get("list_deltas") or {}
     order = ["description"] + [f.name for f in AgentKind.fields if f.name != "description"]
     for name in order:
-        if name in ("name", "instructions", "capabilities", "usage") or name not in observed:
+        if name in ("name", "instructions", "capabilities", "usage", "extends", "extends_version"):
+            continue
+        if name in AgentKind.DELTA_LIST_FIELDS and inheritance is not None:
+            delta = deltas.get(name) or {}
+            add, remove = delta.get("add") or [], delta.get("remove") or []
+            if not add and not remove:
+                continue  # entirely inherited: nothing of the child's own to write
+            data[name] = [f"+{v}" for v in add] + [f"-{v}" for v in remove]
+            continue
+        spec_names = _INHERITANCE_FIELD_MAP.get(name)
+        if inheritance is not None and spec_names is not None and not (overridden_fields & set(spec_names)):
+            continue  # every part of this field is inherited, not this agent's own
+        if name not in observed:
             continue
         value = observed[name]
         if name == "memory":
@@ -208,7 +251,7 @@ def export(request: Callable[..., Any], refs: List[str], out_dir: Path, *,
         folder = out_dir / FOLDERS[kind]
         folder.mkdir(parents=True, exist_ok=True)
         if kind == "agent":
-            front = _agent_file(observed, hub_id, key_of)
+            front = _agent_file(ctx, observed, hub_id, key_of)
             path = folder / f"{key}.md"
             body = observed.get("instructions") or ""
             path.write_text(f"---\n{_dump_yaml(front)}---\n\n{body}\n", encoding="utf-8")

@@ -166,6 +166,13 @@ from then on. The targets (`handoffs`) and the history the receiver sees by
 default (`handoff_history`) are set on the agent's Tools tab. See
 [handoffs](handoffs.md).
 
+## Inheritance
+
+An agent can `extend` another instead of being entirely its own: it starts
+from the parent's prompt, tools, model and the rest, and declares only what
+is particular to it, live against whatever the parent currently is. A system
+agent can be a parent, never a child. See [agent-inheritance](agent-inheritance.md).
+
 ## The agent page
 
 One page per agent, in tabs:

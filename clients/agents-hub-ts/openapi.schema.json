@@ -142,6 +142,28 @@
             "title": "Domain",
             "type": "string"
           },
+          "extends": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends"
+          },
+          "extends_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends Version"
+          },
           "handoff_history": {
             "default": "full",
             "title": "Handoff History",
@@ -263,6 +285,19 @@
             "title": "Capacity",
             "type": "integer"
           },
+          "children": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "children_count": {
+            "default": 0,
+            "title": "Children Count",
+            "type": "integer"
+          },
           "clarify_gate": {
             "anyOf": [
               {
@@ -319,6 +354,28 @@
               }
             ],
             "title": "Episodic Write Enabled"
+          },
+          "extends": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends"
+          },
+          "extends_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends Version"
           },
           "handoff_history": {
             "anyOf": [
@@ -523,6 +580,35 @@
         "title": "AgentEpisodicConfigUpdate",
         "type": "object"
       },
+      "AgentExtendsUpdate": {
+        "description": "``PUT /api/agents/{id}/extends``: set, change or repin the parent;\n``extends: null`` detaches (the effective setup becomes the agent's own).",
+        "properties": {
+          "extends": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends"
+          },
+          "extends_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends Version"
+          }
+        },
+        "title": "AgentExtendsUpdate",
+        "type": "object"
+      },
       "AgentGuardrailsUpdate": {
         "properties": {
           "guardrails": {
@@ -670,6 +756,11 @@
             "title": "Capacity",
             "type": "integer"
           },
+          "children_count": {
+            "default": 0,
+            "title": "Children Count",
+            "type": "integer"
+          },
           "definition_id": {
             "anyOf": [
               {
@@ -690,6 +781,28 @@
             "default": "",
             "title": "Domain",
             "type": "string"
+          },
+          "extends": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends"
+          },
+          "extends_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extends Version"
           },
           "has_running_node": {
             "default": false,
@@ -14511,7 +14624,7 @@
     },
     "/api/agents/create": {
       "post": {
-        "description": "Create a new agent: register structured fields and write instructions.md.",
+        "description": "Create a new agent: register structured fields and write instructions.md.\n\nWith ``extends`` the new agent is a child (agents/inheritance.py): every\nfield not given is inherited from the parent, ``system_prompt`` is\noptional and holds only the child's own additions, and ``tools``, when\ngiven, is the child's full effective tool list.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -15607,6 +15720,56 @@
         ]
       }
     },
+    "/api/agents/{agent_id}/extends": {
+      "put": {
+        "description": "Set, change or repin the parent, or detach with ``extends: null``.\n\n* A standalone agent getting a parent keeps behaving as it does: every\n  field equal to the parent's becomes inherited, the rest overrides.\n* A child changing parent or pin keeps its own overrides and deltas,\n  now applied to the new parent (or version).\n* Detaching writes the effective setup and prompt as the agent's own.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentExtendsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Agent Extends",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/agents/{agent_id}/guardrails": {
       "put": {
         "description": "Set the guardrail ids this agent lists on top of the ones already\napplying to it (``applies_to: \"all\"`` ones, and its workspace's / the\nglobal ones), the same per-field pattern routes/agents.py uses for its\nown agent fields.",
@@ -15895,6 +16058,46 @@
           }
         },
         "summary": "Update Agent Identity",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/inheritance": {
+      "get": {
+        "description": "Where every inheritable field of the agent comes from (see module docstring).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Inheritance",
         "tags": [
           "agents"
         ]
@@ -16342,6 +16545,55 @@
           }
         },
         "summary": "Agent Online Evals Summary",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/overrides/{field_name}": {
+      "delete": {
+        "description": "Reset one field to inherited: a scalar or dict field drops the agent's\nown value, a list field its add and remove deltas.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "field_name",
+            "required": true,
+            "schema": {
+              "title": "Field Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Agent Override",
         "tags": [
           "agents"
         ]

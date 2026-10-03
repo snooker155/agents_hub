@@ -356,6 +356,47 @@ LOOP_KEYS = ("fallback_models", "advisor_model", "output_schema", "max_concurren
              "tool_search", "compaction")
 WEB_KEYS = ("allowed_domains", "blocked_domains")
 SKILL_KEYS = ("name", "description", "steps", "body", "tags")
+#: List fields a child agent (``extends:`` set) may give as ``+item`` / ``-item`` deltas instead
+#: of a plain list (docs/agent-inheritance.md). A plain list (no ``+``/``-`` prefix on any entry)
+#: still means "exactly this", same as a standalone agent; the two styles cannot mix in one field.
+DELTA_LIST_FIELDS: Tuple[str, ...] = ("tools", "delegates", "handoffs", "guardrails", "secrets")
+
+
+def _parse_extends(v: Any) -> Tuple[str, Optional[int]]:
+    """``"analyst"`` or ``"analyst@12"`` as ``(parent id, pinned version or None)``.
+    A malformed ``@`` suffix (no digits) is left in the id as written; validation catches it."""
+    text = _text(v)
+    if "@" not in text:
+        return text, None
+    base, _, ver = text.rpartition("@")
+    base, ver = base.strip(), ver.strip()
+    if base and ver.isdigit():
+        return base, int(ver)
+    return text, None
+
+
+def _split_delta_list(items: Any) -> Tuple[List[str], List[str], List[str], bool, bool]:
+    """A declared list field's entries as ``(plain, add, remove, any_delta, any_plain)``:
+    ``+name`` / ``-name`` entries are deltas, anything else is a plain (full-override) entry."""
+    plain: List[str] = []
+    add: List[str] = []
+    remove: List[str] = []
+    any_delta = any_plain = False
+    for raw in items or []:
+        text = _text(raw)
+        if not text:
+            continue
+        if text[0] in "+-" and len(text) > 1:
+            name = text[1:].strip()
+            bucket = add if text[0] == "+" else remove
+            if name and name not in bucket:
+                bucket.append(name)
+            any_delta = True
+        else:
+            if text not in plain:
+                plain.append(text)
+            any_plain = True
+    return plain, add, remove, any_delta, any_plain
 
 
 def _norm_model(v: Any) -> Dict[str, Any]:
@@ -469,6 +510,12 @@ class AgentKind(Kind):
         Field("capacity", want_int, int),
         Field("workspace", want_str, _workspace, create_only=True),
         Field("capability_override", want_bool, _bool),
+        # A parent agent (any agent, system ones included) this one extends
+        # (docs/agent-inheritance.md); "name@12" pins extends_version instead of
+        # following the parent's current state. Changing either on an existing
+        # agent goes through PUT .../extends, not a per-field route.
+        Field("extends", lambda v: None if v is None else want_str(v), _str_or_none, ref="agent"),
+        Field("extends_version", lambda v: None if v is None else want_int(v), _ident),
         Field("tools", want_list, _sorted_list),
         Field("model", want_mapping(MODEL_KEYS), _norm_model, partial=True),
         Field("reasoning", want_mapping(REASONING_KEYS), dict, partial=True),
@@ -498,8 +545,12 @@ class AgentKind(Kind):
     )
 
     #: Values a fresh agent has, left out of an exported file.
+    #: List fields that accept +item / -item deltas on a child; see DELTA_LIST_FIELDS.
+    DELTA_LIST_FIELDS: Tuple[str, ...] = DELTA_LIST_FIELDS
+
     DEFAULTS: Dict[str, Any] = {
         "domain": "general", "capacity": 1, "workspace": "default", "capability_override": False,
+        "extends": None, "extends_version": None,
         "model": {"provider": "inherit", "model": "", "base_url": "", "temperature": None, "max_tokens": None},
         "reasoning": {}, "memory": [], "delegates": [], "handoffs": [], "handoff_history": "full",
         "description": "", "capabilities": "", "usage": "", "skills": {}, "skills_enabled": False,
@@ -512,8 +563,28 @@ class AgentKind(Kind):
 
     def validate_more(self, res: Resource) -> List[Problem]:
         problems: List[Problem] = []
-        if not _text(res.spec.get("instructions")):
-            problems.append(res.problem("an agent needs instructions (the markdown body)"))
+        extends_raw = res.spec.get("extends")
+        is_child = bool(_text(extends_raw))
+        if not _text(res.spec.get("instructions")) and not is_child:
+            problems.append(res.problem(
+                "an agent needs instructions (the markdown body), unless it extends a parent", "extends"))
+        if isinstance(extends_raw, str):
+            _base, at_version = _parse_extends(extends_raw)
+            if at_version is not None and res.spec.get("extends_version") not in (None, at_version):
+                problems.append(res.problem(
+                    "extends names a version with @ and extends_version is also set to a "
+                    "different one", "extends_version"))
+        for name in self.DELTA_LIST_FIELDS:
+            value = res.spec.get(name)
+            if not isinstance(value, list):
+                continue
+            _plain, _add, _remove, any_delta, any_plain = _split_delta_list(value)
+            if any_delta and any_plain:
+                problems.append(res.problem(
+                    f"{name} mixes a plain list with +item/-item deltas; use one style", name))
+            elif any_delta and not is_child:
+                problems.append(res.problem(
+                    f"{name}: +item/-item deltas need extends: set on this agent", name))
         model = res.spec.get("model")
         if isinstance(model, dict) and model.get("model") and not model.get("provider"):
             problems.append(res.problem("model: name a provider with the model", "model"))
@@ -523,6 +594,63 @@ class AgentKind(Kind):
         if "/" in res.key or not res.key.strip():
             problems.append(res.problem(f"'{res.key}' is not a usable agent id", "id"))
         return problems
+
+    def declared(self, res: Resource) -> Dict[str, Any]:
+        spec = super().declared(res)
+        extends = spec.get("extends")
+        if isinstance(extends, str) and "@" in extends:
+            base, ver = _parse_extends(extends)
+            if ver is not None:
+                spec = dict(spec)
+                spec["extends"] = base
+                spec.setdefault("extends_version", ver)
+        return spec
+
+    def refs(self, res: Resource) -> List[Tuple[str, str, Any]]:
+        out = []
+        for name, ref_kind, value in super().refs(res):
+            if name == "extends" and isinstance(value, str) and "@" in value:
+                base, ver = _parse_extends(value)
+                value = base if ver is not None else value
+            elif (name in self.DELTA_LIST_FIELDS and isinstance(value, str)
+                  and value[:1] in "+-" and len(value) > 1):
+                # A delta entry on a reference field (delegates, handoffs): a
+                # "-name" removes something that need not exist (it may have
+                # dropped out of the hub already), so it is not checked; a
+                # "+name" is checked like a plain entry, the marker stripped.
+                if value[0] == "-":
+                    continue
+                value = value[1:].strip()
+            out.append((name, ref_kind, value))
+        return out
+
+    def desired(self, ctx: Context, res: Resource) -> Dict[str, Any]:
+        """As :meth:`Kind.desired`, except a child's (``extends:`` set) list field given as
+        ``+item`` / ``-item`` deltas resolves to the actual full list to write: the parent's
+        current effective value for that field, with the removals and additions applied. The
+        existing per-field routes (``/tools``, ``/delegates``, ...) take a full list and the hub
+        itself stores it as a delta against the parent (docs/agent-inheritance.md), so this is the
+        only place deltas need resolving; create() and write() need no changes of their own."""
+        out = super().desired(ctx, res)
+        spec = self.declared(res)
+        extends = _str_or_none(spec.get("extends"))
+        if extends:
+            parent: Optional[Dict[str, Any]] = None
+            for name in self.DELTA_LIST_FIELDS:
+                raw = spec.get(name)
+                if not isinstance(raw, list):
+                    continue
+                _plain, add, remove, any_delta, _any_plain = _split_delta_list(raw)
+                if not any_delta:
+                    continue
+                if parent is None:
+                    parent = ctx.get(f"/api/agents/{_q(extends)}") or {}
+                merged = [v for v in _sorted_list(parent.get(name)) if v not in remove]
+                for v in add:
+                    if v not in merged:
+                        merged.append(v)
+                out[name] = merged
+        return out
 
     # ---- reading ----
 
@@ -542,6 +670,8 @@ class AgentKind(Kind):
             "capacity": int(detail.get("capacity") or 1),
             "workspace": _workspace(owner),
             "capability_override": bool(detail.get("capability_override")),
+            "extends": _str_or_none(detail.get("extends")),
+            "extends_version": detail.get("extends_version"),
             "tools": _sorted_list(detail.get("tools")),
             "model": {
                 "provider": detail.get("provider") or "inherit",
@@ -636,14 +766,35 @@ class AgentKind(Kind):
             body["tools"] = desired["tools"]
         elif "tools" in desired:
             body["tools"] = []  # the override goes on first, then the tools
+        if desired.get("extends"):
+            body["extends"] = desired["extends"]
+            if desired.get("extends_version") is not None:
+                body["extends_version"] = desired["extends_version"]
         ctx.call("POST", "/api/agents/create", json=body)
         return res.key
+
+    def write_groups(self, names: List[str]) -> List[List[str]]:
+        # extends and extends_version both go through PUT .../extends in one
+        # call, so a change to either (or both) is grouped together.
+        rest = list(names)
+        paired = [n for n in ("extends", "extends_version") if n in rest]
+        groups = [paired] if paired else []
+        rest = [n for n in rest if n not in paired]
+        groups.extend([[n] for n in rest])
+        return groups
 
     def write(self, ctx: Context, hub_id: str, res: Resource, values: Dict[str, Any],
               observed: Dict[str, Any]) -> None:
         base = f"/api/agents/{_q(hub_id)}"
         home = observed.get("workspace") or "default"
+        if "extends" in values or "extends_version" in values:
+            ctx.call("PUT", f"{base}/extends", json={
+                "extends": values.get("extends", observed.get("extends")),
+                "extends_version": values.get("extends_version", observed.get("extends_version")),
+            })
         for name, value in values.items():
+            if name in ("extends", "extends_version"):
+                continue  # handled together above
             if name == "capability_override":
                 ctx.call("POST", f"{base}/capability-override", json={"capability_override": value})
             elif name == "tools":

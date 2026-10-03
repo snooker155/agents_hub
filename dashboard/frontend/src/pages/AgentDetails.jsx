@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import InstanceList from '../components/InstanceList';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical } from 'lucide-react';
+import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
@@ -46,6 +46,8 @@ import AgentGuardrailsCard from '../components/agent/AgentGuardrailsCard';
 import LiveQualityCard from '../components/agent/LiveQualityCard';
 import ExperimentCard from '../components/agent/ExperimentCard';
 import PageLoader from '../components/PageLoader';
+import InheritanceHeaderLine from '../components/agent/inheritance/InheritanceHeaderLine';
+import InheritanceTab from '../components/agent/inheritance/InheritanceTab';
 
 // The tabs, the container-logs overlay and the pieces they share live in
 // `components/agent/`; this file is what loads the agent and what the tabs
@@ -831,6 +833,8 @@ const AgentDetails = () => {
         )}
       />
 
+      <InheritanceHeaderLine agent={agent} onManage={() => setActiveTab('inheritance')} />
+
       <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-indigo-600 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* Copies: the replicas of the services the agent runs in, against their limit */}
@@ -900,6 +904,7 @@ const AgentDetails = () => {
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
             { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
+            { id: 'inheritance', label: t('agentDetails.tabs.inheritance'), icon: GitBranch },
             { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
             { id: 'versions', label: t('agentDetails.tabs.versions'), icon: History },
             { id: 'model', label: t('agentDetails.tabs.model'), icon: BrainCircuit },
@@ -956,6 +961,14 @@ const AgentDetails = () => {
           <OverviewTab />
           <LiveQualityCard agentId={id} />
         </>
+      )}
+      {activeTab === 'inheritance' && (
+        <InheritanceTab
+          agentId={id}
+          agent={agent}
+          onChanged={fetchData}
+          onEditOwnInstructions={() => setActiveTab('config')}
+        />
       )}
       {activeTab === 'instances' && <InstancesTab />}
       {activeTab === 'sessions' && <SessionsTab />}

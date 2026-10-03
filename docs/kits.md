@@ -106,6 +106,29 @@ Reinstalling a kit updates instead of duplicating, the same guarantee
 state directory, so a second install plans `unchanged` once nothing about
 the kit's files has changed, and `update` when they have.
 
+## Specializing a system agent
+
+A kit's agent can `extend` a system agent instead of being entirely its own:
+`finance_analyst` extends `analyst`, `finance_reviewer` extends `verifier`,
+`recruiting_sourcer` extends `sourcer`, `recruiting_screener` extends
+`screener` — each keeps the parent's generic working method and adds only
+the domain part ([agent-inheritance](agent-inheritance.md)). Installing such
+a kit seeds its agents' parents into the hub first if a fresh install has
+not needed them yet, the same on-demand way any other surface short of one
+system agent does, so the kit installs whether or not the parent has been
+opened before.
+
+Mind the capability guard when a kit's agent extends one: `capability_override`
+is never inherited, so a child that keeps an inherited delegate or tool it
+does not actually use can close the lethal-trifecta combination the parent
+was deliberately cleared for. `finance_reviewer`, for instance, removes the
+delegate `verifier` uses to check a fact on the open web
+(`delegates: [-web_searcher]`), because it checks everything against the
+team's own connected data instead. `support_triage` and `support_resolver`
+stay standalone: no system agent's tool set or working method actually fits
+triaging and resolving customer tickets (the system agent also named
+`support` is the dashboard's own Help panel, a different product entirely).
+
 ## Writing a kit
 
 A kit folder needs: `kit.yaml`, two to four agents in `agents/*.md` with

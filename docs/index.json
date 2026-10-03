@@ -24,7 +24,8 @@
         "handoffs",
         "secrets",
         "services",
-        "proactive"
+        "proactive",
+        "agent-inheritance"
       ],
       "headings": [
         "What an agent is made of",
@@ -34,8 +35,32 @@
         "Versions",
         "Versions and pinning",
         "Delegation",
+        "Inheritance",
         "The agent page",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "agent-inheritance",
+      "title": "Agent inheritance",
+      "summary": "An agent can extend another: start from its prompt, tools, model and the rest, and declare only what is different. A system agent can be a parent, never a child.",
+      "surface": "Agents",
+      "related": [
+        "agents",
+        "apply",
+        "kits",
+        "system-agents",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What is inherited and what is not",
+        "The prompt",
+        "List deltas",
+        "Reading the chain",
+        "Setting, changing and pinning the parent",
+        "Limits",
+        "The guard on a parent's change",
+        "ah apply"
       ]
     },
     {
@@ -106,11 +131,13 @@
         "environments",
         "deployments",
         "scheduling",
-        "memory"
+        "memory",
+        "agent-inheritance"
       ],
       "headings": [
         "A repository",
         "Agents",
+        "Inheritance",
         "Environments",
         "Memory pools",
         "Deployments",
@@ -539,7 +566,8 @@
         "agents",
         "connectors",
         "channels",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "agent-inheritance"
       ],
       "headings": [
         "The Kits tab",
@@ -548,6 +576,7 @@
         "Installing",
         "Two workspaces, one kit",
         "The lock",
+        "Specializing a system agent",
         "Writing a kit"
       ]
     },
@@ -996,7 +1025,8 @@
         "marketplace",
         "service-health",
         "tools-and-capabilities",
-        "workspaces"
+        "workspaces",
+        "agent-inheritance"
       ],
       "headings": [
         "What being a system agent means",

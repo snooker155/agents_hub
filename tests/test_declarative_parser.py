@@ -110,7 +110,8 @@ def test_agent_rules(tmp_path):
     with pytest.raises(ValidationError) as excinfo:
         load_bundle(tmp_path)
     problems = _problems(excinfo)
-    assert "empty.md:2: an agent needs instructions (the markdown body)" in problems
+    assert ("empty.md:2: an agent needs instructions (the markdown body), unless it extends "
+            "a parent") in problems
     assert "model.md:3: model: name a provider with the model" in problems
     assert "skills.md:3: skills entry 'A' needs steps or a body" in problems
 

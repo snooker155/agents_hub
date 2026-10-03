@@ -203,6 +203,21 @@ turns that section into the next release.
   sources on the web through the Web Search Agent and hands the shortlist to
   Screener; Screener scores CVs, postings, applications or proposals against
   criteria with evidence.
+- Agent inheritance (docs/agent-inheritance.md): an agent can `extends`
+  another, system agents included. The child takes the parent's prompt,
+  tools, model and settings and declares only what differs: its own prompt
+  text goes after the parent's, a `## Heading` the parent has replaces that
+  section (`{{parent}}` keeps the parent's text, `{{remove}}` drops it),
+  lists take additions and removals, other fields override. Changes to the
+  parent reach every child unless it pins a parent version; a parent change
+  that would give a child a blocked capability combination is refused, a
+  parent with children cannot be deleted, and detaching keeps today's
+  effective setup as the agent's own. The agent page has an Inheritance tab
+  showing where every field comes from with a reset to inherited, the create
+  dialog a "Based on" picker, `ah apply` reads `extends:` and `+tool` /
+  `-tool`, agent_creator can create children, and runs record the chain they
+  were built from. The finance and recruiting kits' agents now extend
+  Analyst, Verifier, Sourcer and Screener.
 - Help in the header (docs/help.md): a button on every page opens the
   Support agent, one conversation per person, that knows the docs and what
   this install has set up and what it lacks (providers, models, agents,

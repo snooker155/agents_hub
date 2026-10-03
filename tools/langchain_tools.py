@@ -1226,12 +1226,27 @@ class CreateAgentInput(BaseModel):
     name: str = Field(..., min_length=1, description="Human-readable display name")
     description: str = Field("", description="What the agent does")
     domain: str = Field("general", description="Domain: general, development, orchestration, testing, etc.")
-    system_prompt: str = Field(..., min_length=1, description="System instructions for the agent")
-    tools: List[str] = Field(
-        default_factory=lambda: ["read_file", "write_file", "list_files"],
-        description="List of tool IDs to equip the agent with",
+    system_prompt: str = Field(
+        "",
+        description="System instructions for the agent. Required unless `extends` is set; for a child "
+                    "they are only its own additions: a `## Heading` the parent has replaces that "
+                    "section, `{{parent}}` inside it keeps the parent's text, a body of `{{remove}}` drops it.",
+    )
+    tools: Optional[List[str]] = Field(
+        None,
+        description="Tool IDs to equip the agent with (default read_file, write_file, list_files). With "
+                    "`extends`, leave empty to inherit the parent's tools, or give '+tool' / '-tool' entries "
+                    "to add to or remove from them.",
     )
     capacity: int = Field(1, ge=1, description="Max concurrent sessions")
+    extends: Optional[str] = Field(
+        None,
+        description="Parent agent id to inherit from (system agents included): its prompt, tools, model and "
+                    "settings, with this agent's own changes on top (docs/agent-inheritance.md).",
+    )
+    extends_version: Optional[int] = Field(
+        None, description="Pin the parent to this stored version instead of following its changes.",
+    )
 
 
 @tool("create_agent_tool", args_schema=CreateAgentInput)
@@ -1243,6 +1258,8 @@ def create_agent_tool(
     system_prompt: str = "",
     tools: Optional[List[str]] = None,
     capacity: int = 1,
+    extends: Optional[str] = None,
+    extends_version: Optional[int] = None,
 ) -> str:
     """Create a new agent in the system registry.
 
@@ -1251,15 +1268,32 @@ def create_agent_tool(
     are persisted in the registry.
     """
     try:
-        if tools is None:
-            tools = ["read_file", "write_file", "list_files"]
+        extends = (extends or "").strip() or None
         if reg_get_agent(agent_id):
             return _json_err(f"Agent with id '{agent_id}' already exists", code="conflict")
-        if not system_prompt or not system_prompt.strip():
-            return _json_err("system_prompt is required", code="invalid")
+        parent_eff = None
+        if extends:
+            from agents import inheritance
+            parent_eff = inheritance.parent_effective(extends, extends_version)
+            if parent_eff is None:
+                return _json_err(f"Parent agent '{extends}' not found", code="not_found")
+            if tools:
+                # '+tool' / '-tool' entries are a delta on the parent's tools;
+                # a plain list is the child's whole tool set.
+                if all(str(t).startswith(("+", "-")) for t in tools):
+                    tools = inheritance.merge_list(parent_eff.tools or [], {
+                        "add": [str(t)[1:] for t in tools if str(t).startswith("+")],
+                        "remove": [str(t)[1:] for t in tools if str(t).startswith("-")],
+                    })
+            else:
+                tools = None
+        else:
+            if tools is None:
+                tools = ["read_file", "write_file", "list_files"]
+            if not system_prompt or not system_prompt.strip():
+                return _json_err("system_prompt is required", code="invalid")
 
         from agents import prompt_assembly
-        prompt_assembly.write_instructions(agent_id, system_prompt)
 
         # Resolve the active workspace so the new agent is owned by — and only
         # visible in — the workspace it was created from (unless later shared).
@@ -1273,19 +1307,38 @@ def create_agent_tool(
         except Exception:
             active_ws = None
 
-        spec = AgentSpec(
-            id=agent_id,
-            name=name,
-            description=description,
-            domain=domain,
-            type="langchain",
-            entrypoint="agents.agent_factory:build_agent_executor",
-            tools=tools,
-            capacity=capacity,
-            default_params={},
-            owner_workspace=active_ws,
-        )
-        reg_add_agent(spec)
+        if parent_eff is not None:
+            from agents import inheritance
+            own = {"tools": tools} if tools is not None else {}
+            spec = inheritance.new_child_spec(
+                parent_eff, extends_version=extends_version,
+                id=agent_id, name=name, description=description, domain=domain,
+                capacity=capacity, owner_workspace=active_ws, **own,
+            )
+            try:
+                inheritance.validate_extends(spec)
+            except ValueError as e:
+                return _json_err(str(e), code="invalid")
+        else:
+            spec = AgentSpec(
+                id=agent_id,
+                name=name,
+                description=description,
+                domain=domain,
+                type="langchain",
+                entrypoint="agents.agent_factory:build_agent_executor",
+                tools=tools,
+                capacity=capacity,
+                default_params={},
+                owner_workspace=active_ws,
+            )
+        prompt_assembly.write_instructions(agent_id, system_prompt or "")
+        try:
+            reg_add_agent(spec)
+        except Exception:
+            if parent_eff is not None:
+                prompt_assembly.delete_definition(agent_id)
+            raise
 
         # Auto-register the new agent in the owning workspace's allowed_agents
         # so it shows up immediately in the workspace UI. Falls back silently

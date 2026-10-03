@@ -115,6 +115,12 @@ def compute_fingerprint(
     ]
     for fname in ("instructions.md", "capabilities.md", "usage.md"):
         parts.append(f"{fname}={_stat_sig(defn / fname)}")
+    # A child's prompt also holds its unpinned ancestors' text
+    # (agents/inheritance.py), so their files key the cache too.
+    from agents.inheritance import prompt_folder_ids
+    for ancestor in prompt_folder_ids(agent_id):
+        for fname in ("instructions.md", "capabilities.md", "usage.md"):
+            parts.append(f"{ancestor}/{fname}={_stat_sig(Path(definitions_dir) / ancestor / fname)}")
     parts.append("agents=" + DocStore("agents").signature())
     parts.append("ws=" + DocStore("workspaces").signature())
     parts.append("proc=" + DocStore("procedures").signature())
