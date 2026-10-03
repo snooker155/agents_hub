@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getProject, updateProject, deleteProject, getProjectTasks,
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
-  getProjectFiles, getProjectFileContent, getProjectFileBlob,
+  getProjectFiles, getProjectFileContent, getProjectFileBlob, getProjectFileId,
   syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
@@ -90,7 +90,11 @@ export default function ProjectDetails() {
   const onDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('Overview');
+  // ?file=<file id> opens that file on the Files tab; the address names a
+  // file by its registry id, a path from an old link still opens.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedFile = searchParams.get('file') || '';
+  const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : 'Overview');
   const [taskToolbar, setTaskToolbar] = useState(null);
   const [plannerToolbar, setPlannerToolbar] = useState(null);
   const [showPlanner, setShowPlanner] = useState(false);
@@ -116,6 +120,8 @@ export default function ProjectDetails() {
   const [fileSourceView, setFileSourceView] = useState(false);
   const fileUrlRef = useRef('');
   const fileRequest = useRef(0);
+  // Project-relative path to registry id (GET /projects/{id}/files).
+  const fileIdsRef = useRef({});
   const [fileContentLoading, setFileContentLoading] = useState(false);
   const [fileContentError, setFileContentError] = useState('');
 
@@ -169,7 +175,23 @@ export default function ProjectDetails() {
   }, []);
   useEffect(() => () => { if (fileUrlRef.current) URL.revokeObjectURL?.(fileUrlRef.current); }, []);
 
-  const loadFileContent = useCallback(async (path) => {
+  // The registry id of a project file, asked for once when the list had none.
+  const fileIdOf = useCallback(async (path) => {
+    if (fileIdsRef.current[path]) return fileIdsRef.current[path];
+    try {
+      const { data } = await getProjectFileId(id, path);
+      if (!data?.file_id) return null;
+      fileIdsRef.current = { ...fileIdsRef.current, [path]: data.file_id };
+      return data.file_id;
+    } catch {
+      return null;
+    }
+  }, [id]);
+  const fileRef = (path) => (fileIdsRef.current[path] ? { fileId: fileIdsRef.current[path] } : path);
+
+  // Opens a file; ``link`` puts its id in the address, for a file the user
+  // picked or a link opened, not for the first one shown.
+  const loadFileContent = useCallback(async (path, { link = false } = {}) => {
     if (!path) return;
     // A click on another file while this one loads wins: older answers are dropped.
     const request = ++fileRequest.current;
@@ -180,8 +202,19 @@ export default function ProjectDetails() {
     setSelectedFileSize(0);
     setFileSourceView(false);
     replaceFileUrl('');
+    const fileId = await fileIdOf(path);
+    if (request !== fileRequest.current) return;
+    if (link) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (fileId) next.set('file', fileId);
+        else next.delete('file');
+        return next;
+      }, { replace: true });
+    }
+    const ref = fileId ? { fileId } : path;
     try {
-      const { data } = await getProjectFileContent(id, path);
+      const { data } = await getProjectFileContent(id, ref);
       if (request !== fileRequest.current) return;
       const viewed = { name: path, mimeType: data.mime_type };
       setSelectedFile({
@@ -190,7 +223,7 @@ export default function ProjectDetails() {
       });
       setSelectedFileSize(data.size || 0);
       if (needsBytes(viewed)) {
-        const { data: blob } = await getProjectFileBlob(id, path);
+        const { data: blob } = await getProjectFileBlob(id, ref);
         if (request !== fileRequest.current) return;
         replaceFileUrl(objectUrl(blob, frameType(viewed)));
       }
@@ -200,11 +233,11 @@ export default function ProjectDetails() {
     } finally {
       if (request === fileRequest.current) setFileContentLoading(false);
     }
-  }, [id, t, replaceFileUrl]);
+  }, [id, t, replaceFileUrl, fileIdOf, setSearchParams]);
 
   const downloadSelectedFile = async () => {
     try {
-      const { data } = await getProjectFileBlob(id, selectedFilePath);
+      const { data } = await getProjectFileBlob(id, fileRef(selectedFilePath));
       saveBlobAs(data, selectedFilePath.split('/').pop());
     } catch (e) {
       toast.error(t('projectDetails.errors.downloadFile'), errorDetail(e));
@@ -217,19 +250,26 @@ export default function ProjectDetails() {
     try {
       const resp = await getProjectFiles(id);
       const list = resp.data.files || [];
+      const ids = resp.data.ids || {};
+      fileIdsRef.current = ids;
       setFiles(list);
       if (list.length) {
+        const byId = Object.keys(ids).find((p) => ids[p] === linkedFile);
+        const linked = byId || (list.includes(linkedFile) ? linkedFile : '');
+        const first = linked || list[0];
         const top = new Set();
         list.forEach((p) => { if (p.includes('/')) top.add(p.split('/')[0]); });
+        first.split('/').slice(0, -1).forEach((_, i, parts) => top.add(parts.slice(0, i + 1).join('/')));
         setExpandedFolders(top);
-        loadFileContent(list[0]);
+        // A link with a path is rewritten to the file's id.
+        loadFileContent(first, { link: Boolean(linked) && !byId });
       }
     } catch (e) {
       setFilesError(e.response?.data?.detail || e.message || t('projectDetails.errors.loadFiles'));
     } finally {
       setFilesLoading(false);
     }
-  }, [id, loadFileContent, t]);
+  }, [id, loadFileContent, t, linkedFile]);
 
   useEffect(() => {
     if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
@@ -417,7 +457,7 @@ export default function ProjectDetails() {
       <button
         key={node.path}
         type="button"
-        onClick={() => loadFileContent(node.path)}
+        onClick={() => loadFileContent(node.path, { link: true })}
         className={`flex items-center gap-1 w-full text-left px-2 py-1 rounded text-sm truncate ${selectedFilePath === node.path ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
         style={{ paddingLeft: `${depth * 12 + 20}px` }}
       >

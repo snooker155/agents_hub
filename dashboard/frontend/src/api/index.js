@@ -626,12 +626,20 @@ export const getWorkspaces = () => api.get('/workspaces');
 export const createWorkspace = (name) => api.post('/workspaces', { name });
 export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(name)}`);
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);
-export const getWorkspaceFileContent = (name, path) =>
-  api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: { path } });
-export const getWorkspaceFileRawUrl = (name, path) =>
-  `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?path=${encodeURIComponent(path)}`;
-export const deleteWorkspaceFile = (name, path) =>
-  api.delete(`/workspaces/${encodeURIComponent(name)}/files`, { params: { path } });
+// A folder file is named by its registry id ({ fileId }); a bare path string
+// stays for a file the registry does not follow and for folders.
+const workspaceFileParams = (ref) => (
+  ref && typeof ref === 'object' && ref.fileId ? { file_id: ref.fileId } : { path: typeof ref === 'object' ? ref?.path : ref });
+export const getWorkspaceFileContent = (name, ref) =>
+  api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: workspaceFileParams(ref) });
+export const getWorkspaceFileRawUrl = (name, ref) => {
+  const [key, value] = Object.entries(workspaceFileParams(ref))[0];
+  return `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?${key}=${encodeURIComponent(value || '')}`;
+};
+export const getWorkspaceFileId = (name, path) =>
+  api.get(`/workspaces/${encodeURIComponent(name)}/file-id`, { params: { path } });
+export const deleteWorkspaceFile = (name, ref) =>
+  api.delete(`/workspaces/${encodeURIComponent(name)}/files`, { params: workspaceFileParams(ref) });
 export const uploadWorkspaceFile = (name, file, path = '') => {
   const form = new FormData();
   form.append('file', file);
@@ -706,9 +714,10 @@ export const uploadMemoryFile = (id, workspace, file) => {
   form.append('file', file);
   return api.post(`/shared-memory/${id}/files/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
 };
-export const indexMemoryFile = (id, filename, workspace) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`, null, { params: { workspace } });
-export const deindexMemoryFile = (id, filename) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`);
-export const deleteMemoryFile = (id, filename, workspace) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}`, { params: { workspace } });
+// fileRef: the file id from listMemoryFiles (file_id), or its name when it has none.
+export const indexMemoryFile = (id, fileRef, workspace) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}/index`, null, { params: { workspace } });
+export const deindexMemoryFile = (id, fileRef) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}/index`);
+export const deleteMemoryFile = (id, fileRef, workspace) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}`, { params: { workspace } });
 export const listMemoryEpisodes = (id, params) => api.get(`/shared-memory/${id}/episodes`, { params });
 export const getMemoryEpisodesStats = (id) => api.get(`/shared-memory/${id}/episodes/stats`);
 export const deleteMemoryEpisode = (id, episodeId) => api.delete(`/shared-memory/${id}/episodes/${episodeId}`);
@@ -1088,11 +1097,15 @@ export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, 
 export const getProjectFiles = (id) => api.get(`/projects/${id}/files`);
 // { path, size, content, kind: 'text' | 'pdf' | 'binary', mime_type, truncated }: read the
 // way workspace files are, a PDF's text extracted.
-export const getProjectFileContent = (id, path) => api.get(`/projects/${id}/file-content`, { params: { path } });
+// ``ref`` is { fileId } (the registry id the file list hands out) or a path
+// string for a file the registry does not follow.
+const projectFileParams = (ref) => (ref && typeof ref === 'object' ? { file_id: ref.fileId } : { path: ref });
+export const getProjectFileContent = (id, ref) => api.get(`/projects/${id}/file-content`, { params: projectFileParams(ref) });
 // The bytes as a Blob (an image, a PDF or an HTML page to render), through the
 // authenticated client like api/files.js's getWorkspaceFileBlob.
-export const getProjectFileBlob = (id, path) =>
-  api.get(`/projects/${id}/file-raw`, { params: { path }, responseType: 'blob' });
+export const getProjectFileBlob = (id, ref) =>
+  api.get(`/projects/${id}/file-raw`, { params: projectFileParams(ref), responseType: 'blob' });
+export const getProjectFileId = (id, path) => api.get(`/projects/${id}/file-id`, { params: { path } });
 export const importProjectFromRepo = (data) => api.post('/projects/import-from-repo', data);
 export const connectProjectRepo = (id, data) => api.post(`/projects/${id}/connect-repo`, data);
 export const syncProjectIssues = (id) => api.post(`/projects/${id}/sync-issues`);

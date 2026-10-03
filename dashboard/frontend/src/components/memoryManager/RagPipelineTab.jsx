@@ -135,30 +135,34 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     await handleUploadFiles([...e.dataTransfer.files]);
   };
 
-  const handleIndex = async (filename) => {
-    setIndexing(filename);
+  // A file is named by its id in the address (file_id from the listing);
+  // the name is the fallback for a file the registry has no id for.
+  const fileRef = (f) => f.file_id || f.filename;
+
+  const handleIndex = async (f) => {
+    setIndexing(f.filename);
     try {
-      await indexMemoryFile(poolId, filename, workspaceFilter);
+      await indexMemoryFile(poolId, fileRef(f), workspaceFilter);
       await loadFiles(poolId, workspaceFilter);
     } catch (e) {
       toast.error(t('memoryManager.errors.indexFile'), errorDetail(e));
     } finally { setIndexing(null); }
   };
 
-  const handleDeindex = async (filename) => {
-    setIndexing(filename);
+  const handleDeindex = async (f) => {
+    setIndexing(f.filename);
     try {
-      await deindexMemoryFile(poolId, filename);
+      await deindexMemoryFile(poolId, fileRef(f));
       await loadFiles(poolId, workspaceFilter);
     } catch (e) {
       toast.error(t('memoryManager.errors.deindexFile'), errorDetail(e));
     } finally { setIndexing(null); }
   };
 
-  const handleDelete = async (filename) => {
-    if (!window.confirm(`Delete "${filename}"?`)) return;
+  const handleDelete = async (f) => {
+    if (!window.confirm(`Delete "${f.filename}"?`)) return;
     try {
-      await deleteMemoryFile(poolId, filename, workspaceFilter);
+      await deleteMemoryFile(poolId, fileRef(f), workspaceFilter);
       await loadFiles(poolId, workspaceFilter);
     } catch (e) {
       toast.error(t('memoryManager.errors.deleteFile'), errorDetail(e));
@@ -167,7 +171,7 @@ function RagPipelineTab({ memories, workspaceFilter }) {
 
   const handleIndexAll = async () => {
     const pending = files.filter(f => f.status !== 'indexed');
-    for (const f of pending) await handleIndex(f.filename);
+    for (const f of pending) await handleIndex(f);
   };
 
   const indexedCount = files.filter(f => f.status === 'indexed').length;
@@ -314,17 +318,17 @@ function RagPipelineTab({ memories, workspaceFilter }) {
                           {isBusy ? (
                             <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
                           ) : isIndexed ? (
-                            <button onClick={() => handleDeindex(f.filename)}
+                            <button onClick={() => handleDeindex(f)}
                               className="flex items-center gap-1 text-xs border border-gray-200 text-gray-500 px-2 py-1 rounded-lg hover:bg-gray-50">
                               {t('memoryManager.deIndex')}
                             </button>
                           ) : (
-                            <button onClick={() => handleIndex(f.filename)}
+                            <button onClick={() => handleIndex(f)}
                               className="flex items-center gap-1 text-xs bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700">
                               <Zap className="w-3 h-3" /> {t('memoryManager.index')}
                             </button>
                           )}
-                          <button onClick={() => handleDelete(f.filename)} className="text-gray-300 hover:text-red-500 p-0.5 ml-1">
+                          <button onClick={() => handleDelete(f)} className="text-gray-300 hover:text-red-500 p-0.5 ml-1">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>

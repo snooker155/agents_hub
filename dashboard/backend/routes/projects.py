@@ -276,11 +276,19 @@ async def list_project_files(project_id: str):
                 break
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": sorted(files), "truncated": truncated}
+    from files import service as files_service
+    prefix = project_folder_name(project.name) + "/"
+    known = files_service.folder_ids(project.workspace)
+    listed = set(files)
+    ids = {rel[len(prefix):]: fid for rel, fid in known.items()
+           if rel.startswith(prefix) and rel[len(prefix):] in listed}
+    return {"files": sorted(files), "truncated": truncated, "ids": ids}
 
 
-def _project_file(project_id: str, path: str) -> Path:
-    """The file at ``path`` inside the project folder, or an HTTP error."""
+def _project_file(project_id: str, path: Optional[str], file_id: Optional[str] = None) -> Path:
+    """The file a route names inside the project folder, or an HTTP error:
+    by ``file_id`` (files/service.py, what a link carries), or by ``path``
+    for old links and files the registry does not follow."""
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -288,8 +296,16 @@ def _project_file(project_id: str, path: str) -> Path:
     if root is None:
         raise HTTPException(status_code=404, detail="Project folder not found")
     rel = (path or "").strip()
+    fid = (file_id or "").strip()
+    if fid:
+        from files import service as files_service
+        prefix = project_folder_name(project.name) + "/"
+        in_ws = files_service.folder_path_of(fid, project.workspace) or ""
+        if not in_ws.startswith(prefix):
+            raise HTTPException(status_code=404, detail="File not found")
+        rel = in_ws[len(prefix):]
     if not rel:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+        raise HTTPException(status_code=400, detail="Query parameter 'file_id' or 'path' is required")
     target = (root / rel).resolve()
     try:
         target.relative_to(root)
@@ -300,15 +316,32 @@ def _project_file(project_id: str, path: str) -> Path:
     return target
 
 
+@router.get("/{project_id}/file-id")
+async def get_project_file_id(project_id: str, path: str):
+    """The file id of a project file, registering the file when nothing wrote
+    it through the registry yet, so the page can put the id in its address."""
+    from files import service as files_service
+
+    target = _project_file(project_id, path)
+    project = _store.get(project_id)
+    rel = target.relative_to(_project_root_path(project)).as_posix()
+    try:
+        record = files_service.ensure_folder_record(
+            project.workspace, f"{project_folder_name(project.name)}/{rel}")
+    except files_service.FileError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"file_id": record["file_id"], "path": rel}
+
+
 @router.get("/{project_id}/file-content")
-async def get_project_file_content(project_id: str, path: str):
+async def get_project_file_content(project_id: str, path: Optional[str] = None, file_id: Optional[str] = None):
     """A file of the project folder for preview, read the way workspace files
     are (files.service.preview_path): ``kind`` is ``text``, ``pdf`` (its
     text extracted) or ``binary`` (``content`` null); ``mime_type`` lets the
     page render an image, a PDF or an HTML page from ``file-raw``."""
     from files.service import preview_path
 
-    target = _project_file(project_id, path)
+    target = _project_file(project_id, path, file_id)
     size = target.stat().st_size
     if target.suffix.lower() == ".pdf" and size > _MAX_PDF_PREVIEW_BYTES:
         raise HTTPException(status_code=413, detail=(
@@ -318,12 +351,13 @@ async def get_project_file_content(project_id: str, path: str):
         preview = await asyncio.to_thread(preview_path, target, max_chars=_PREVIEW_CHARS)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"path": path, "size": size, "content": preview["text"], "kind": preview["kind"],
+    root = _project_root_path(_store.get(project_id))
+    return {"path": target.relative_to(root).as_posix(), "size": size, "content": preview["text"], "kind": preview["kind"],
             "mime_type": preview["mime_type"], "truncated": preview["truncated"]}
 
 
 @router.get("/{project_id}/file-raw")
-async def get_project_file_raw(project_id: str, path: str):
+async def get_project_file_raw(project_id: str, path: Optional[str] = None, file_id: Optional[str] = None):
     """The bytes of a project file, for an image, a PDF or an HTML page shown
     in the browser. Types that would run as this origin come back as plain
     text with a sandbox policy; the page renders HTML from a blob in a
@@ -333,7 +367,7 @@ async def get_project_file_raw(project_id: str, path: str):
     from fastapi.responses import FileResponse
     from files.service import guess_mime
 
-    target = _project_file(project_id, path)
+    target = _project_file(project_id, path, file_id)
     mime = guess_mime(target.name)
     if mime in _ACTIVE_TYPES:
         mime = "text/plain; charset=utf-8"

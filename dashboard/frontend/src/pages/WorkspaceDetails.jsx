@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
+import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
@@ -100,15 +100,26 @@ const WorkspaceDetails = () => {
   const { t } = useI18n();
   const { name } = useParams();
   const navigate = useNavigate();
-  // Deep-link support: ?tab=<tab>&file=<workspace-relative path>. Chat replies
-  // link a file the agent wrote straight to it (see common/entity_links.py).
-  const [searchParams] = useSearchParams();
+  // Deep-link support: ?tab=<tab>&file=<file id>. Chat replies link a file the
+  // agent wrote straight to it (see common/entity_links.py); a link with a
+  // workspace-relative path, from before files had ids, still opens.
+  const [searchParams, setSearchParams] = useSearchParams();
   const linkedTab = searchParams.get('tab') || '';
   const linkedFile = searchParams.get('file') || '';
   const { liveUpdates } = useWorkspace();
   const [ws, setWs] = useState(null);
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
+  // Path to registry id of the folder files (GET /workspaces/{name}/files).
+  const [fileIds, setFileIds] = useState({});
+  const fileIdsRef = React.useRef({});
+  // The file the address names: by id, or by path for an old link.
+  const linkedPath = useMemo(() => {
+    if (!linkedFile) return '';
+    const byId = Object.keys(fileIds).find((p) => fileIds[p] === linkedFile);
+    if (byId && files.includes(byId)) return byId;
+    return files.includes(linkedFile) ? linkedFile : '';
+  }, [linkedFile, fileIds, files]);
   const [allAgents, setAllAgents] = useState([]);
   const [allFlows, setAllFlows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -169,6 +180,9 @@ const WorkspaceDetails = () => {
         setFolders((filesRes.value.data.directories || []).filter(
           (p) => !p.split('/').some((seg) => seg.startsWith('.'))
         ));
+        const ids = filesRes.value.data.ids || {};
+        fileIdsRef.current = ids;
+        setFileIds(ids);
       } else {
         console.warn(t('workspaceDetails.errors.files'), filesRes.reason);
         setFiles([]);
@@ -249,13 +263,41 @@ const WorkspaceDetails = () => {
     }
   };
 
-  const loadFileContent = useCallback(async (path) => {
+  // The registry id of a folder file, asked for once when the listing had
+  // none (a file written outside the tools); null when it cannot have one.
+  const fileIdOf = useCallback(async (path) => {
+    if (fileIdsRef.current[path]) return fileIdsRef.current[path];
+    try {
+      const resp = await getWorkspaceFileId(name, path);
+      const id = resp.data?.file_id;
+      if (!id) return null;
+      fileIdsRef.current = { ...fileIdsRef.current, [path]: id };
+      setFileIds(fileIdsRef.current);
+      return id;
+    } catch {
+      return null;
+    }
+  }, [name]);
+
+  // Opens a file; ``link`` puts its id in the address (?file=<id>), for a
+  // file the user picked or a link opened, not for the first one shown.
+  const loadFileContent = useCallback(async (path, { link = false } = {}) => {
     if (!path) return;
     setSelectedFilePath(path);
     setFileContentLoading(true);
     setFileContentError('');
+    const fileId = await fileIdOf(path);
+    if (link) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', 'files');
+        if (fileId) next.set('file', fileId);
+        else next.delete('file');
+        return next;
+      }, { replace: true });
+    }
     try {
-      const resp = await getWorkspaceFileContent(name, path);
+      const resp = await getWorkspaceFileContent(name, fileId ? { fileId } : path);
       setSelectedFileContent(resp.data?.content || '');
       setSelectedFileSize(Number(resp.data?.size || 0));
       setSelectedFileIsPdf(!!resp.data?.is_pdf);
@@ -270,7 +312,7 @@ const WorkspaceDetails = () => {
     } finally {
       setFileContentLoading(false);
     }
-  }, [name, t]);
+  }, [name, t, fileIdOf, setSearchParams]);
 
   const handleUploadFiles = async (fileList) => {
     const selected = Array.from(fileList || []);
@@ -283,7 +325,7 @@ const WorkspaceDetails = () => {
         lastPath = resp.data?.path || lastPath;
       }
       await fetchData();
-      if (lastPath) loadFileContent(lastPath);
+      if (lastPath) loadFileContent(lastPath, { link: true });
     } catch (e) {
       const detail = e?.response?.data?.detail || t('workspaceDetails.errors.upload');
       alert(detail);
@@ -301,7 +343,8 @@ const WorkspaceDetails = () => {
     setFileDeleting(true);
     setFileContentError('');
     try {
-      await deleteWorkspaceFile(name, path);
+      const fileId = type === 'dir' ? null : fileIdsRef.current[path];
+      await deleteWorkspaceFile(name, fileId ? { fileId } : path);
       if (type === 'dir') {
         const prefix = `${path}/`;
         setFiles(prev => prev.filter(p => p !== path && !p.startsWith(prefix)));
@@ -415,14 +458,15 @@ const WorkspaceDetails = () => {
     });
 
     if (!selectedFilePath || !files.includes(selectedFilePath)) {
-      const first = files.includes(linkedFile) ? linkedFile : files[0];
+      const first = linkedPath || files[0];
       if (first) {
         setExpandedFolders((prev) => {
           const next = new Set(prev);
           parentDirPaths(first).forEach((dir) => next.add(dir));
           return next;
         });
-        loadFileContent(first);
+        // A link with a path is rewritten to the file's id.
+        loadFileContent(first, { link: Boolean(linkedPath) && linkedPath === linkedFile });
       } else {
         setSelectedFilePath('');
         setSelectedFileContent('');
@@ -430,7 +474,20 @@ const WorkspaceDetails = () => {
         setSelectedFileIsPdf(false);
       }
     }
-  }, [files, folders, loadFileContent, selectedFilePath, linkedFile]);
+  }, [files, folders, loadFileContent, selectedFilePath, linkedPath, linkedFile]);
+
+  // Another file link opened while the page is up (a chat link, back and
+  // forward) switches the open file. The selection is read through a ref so
+  // a click, which selects before its id reaches the address, is not undone.
+  const selectedPathRef = React.useRef('');
+  selectedPathRef.current = selectedFilePath;
+  useEffect(() => {
+    const current = selectedPathRef.current;
+    if (linkedPath && current && linkedPath !== current) {
+      loadFileContent(linkedPath, { link: linkedPath === linkedFile });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the link changes, not the selection
+  }, [linkedPath]);
 
   const renderFileNodes = (nodes, depth = 0) => nodes.map((node) => {
     if (node.type === 'dir') {
@@ -485,7 +542,7 @@ const WorkspaceDetails = () => {
               parentDirPaths(node.path).forEach((dir) => next.add(dir));
               return next;
             });
-            loadFileContent(node.path);
+            loadFileContent(node.path, { link: true });
           }}
           className="flex items-center gap-1.5 min-w-0 flex-1 text-left"
           title={node.path}
@@ -909,7 +966,7 @@ const WorkspaceDetails = () => {
                   ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (
                     <iframe
                       title={selectedFilePath}
-                      src={getWorkspaceFileRawUrl(name, selectedFilePath)}
+                      src={getWorkspaceFileRawUrl(name, fileIds[selectedFilePath] ? { fileId: fileIds[selectedFilePath] } : selectedFilePath)}
                       className="w-full h-full border-0"
                     />
                   ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (

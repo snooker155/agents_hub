@@ -72,6 +72,15 @@ file updates the same record (size, hash, type), so an id a chat turn or a
 task already holds keeps pointing at the file; `delete_file` tombstones it.
 Deleting such a file on the Files page deletes it from the folder.
 
+An address names a folder file by its id too. The Files tab of a workspace
+(`/workspaces/<name>?tab=files&file=<id>`) and of a project
+(`/projects/<id>?file=<id>`) keep the open file that way, a chat link to a
+file an agent wrote carries the id, and the folder routes take `file_id`
+(below). The folder listings return `ids`, path to id for every registered
+file; a file nothing registered yet gets its id from the `file-id` route the
+first time it is opened. A link or a client that still sends a path, or a
+file name for a memory pool, keeps working.
+
 Hidden entries (a leading dot, where the hub keeps `.logs`, `.views`,
 `.patch_backups`) and version control, cache, virtual environment and build
 folders (`INDEX_SKIP_DIRS`) are never registered.
@@ -197,6 +206,12 @@ carry their citations too.
 | `GET /api/files/{id}/usage` | chats, memory pools, tasks and eval cases that reference it |
 | `DELETE /api/files/{id}` | delete (content removed, tombstone kept) |
 | `POST /api/shared-memory/{pool}/files/from-workspace` | add a file to a memory pool, `{"file_id"}` |
+| `GET /api/workspaces/{name}/files` | the folder's paths, with `ids` (path to file id) |
+| `GET /api/workspaces/{name}/file-id?path=` | the id of a folder file, registering it the first time |
+| `GET /api/workspaces/{name}/file-content?file_id=` and `file-raw?file_id=` | a folder file's preview and bytes (`path=` still accepted) |
+| `DELETE /api/workspaces/{name}/files?file_id=` | delete a folder file (`path=` for a folder) |
+| `GET /api/projects/{id}/file-id?path=`, `file-content?file_id=`, `file-raw?file_id=` | the same for a project's folder |
+| `POST /api/shared-memory/{pool}/files/{file_id}/index`, `DELETE …/{file_id}/index`, `DELETE …/{file_id}` | index, de-index or delete a knowledge file by id (a file name still accepted) |
 
 Reading needs the file's workspace to be visible to the caller; upload and
 delete need the `editor` role there. Upload and delete leave audit rows

@@ -52,7 +52,7 @@ def test_list_skips_hidden_and_dependency_folders(project):
     proj, _root = project
     listed = run(projects_routes.list_project_files(proj.id))
     assert listed == {"files": ["README.md", "index.html", "logo.png", "src/app.py"],
-                      "truncated": False}
+                      "truncated": False, "ids": {}}
 
 
 def test_content_says_the_kind(project):
@@ -100,3 +100,30 @@ def test_paths_outside_or_missing_are_refused(project, path, status):
             run(route(proj.id, path))
         assert exc.value.status_code == status
 
+
+def test_a_project_file_is_named_by_its_id(project):
+    """The address names a file by its registry id (files/service.py): the
+    page asks for one, the list then carries it, and the content and raw
+    routes take it; an id of a file outside the project names nothing."""
+    from files import service as files_service
+
+    proj, _root = project
+    got = run(projects_routes.get_project_file_id(proj.id, "src/app.py"))
+    fid = got["file_id"]
+    assert got["path"] == "src/app.py"
+    assert run(projects_routes.list_project_files(proj.id))["ids"] == {"src/app.py": fid}
+    body = run(projects_routes.get_project_file_content(proj.id, file_id=fid))
+    assert body["path"] == "src/app.py" and body["content"] == "print('hi')\n"
+    raw = run(projects_routes.get_project_file_raw(proj.id, file_id=fid))
+    assert Path(raw.path).name == "app.py"
+
+    # A folder file of the workspace, not of the project.
+    (_root.parent / "notes.md").write_text("n", encoding="utf-8")
+    other = files_service.register_path(proj.workspace, "notes.md")
+    for bad in (other["file_id"], "file_0000000000000000"):
+        with pytest.raises(HTTPException) as exc:
+            run(projects_routes.get_project_file_content(proj.id, file_id=bad))
+        assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        run(projects_routes.get_project_file_id(proj.id, ".env"))
+    assert exc.value.status_code == 400

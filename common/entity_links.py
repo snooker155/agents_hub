@@ -86,12 +86,20 @@ def _file_path(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     """Files live under a workspace, so a link needs the workspace name.
 
     Without one there is no page to point at, so the record is dropped: the
-    reply still shows the change in the file/diff panel.
+    reply still shows the change in the file/diff panel. The link names the
+    file by its registry id (files/service.py), not by its name; a path the
+    registry does not follow yet is linked by the path.
     """
     workspace = (meta.get("workspace") or "").strip()
     if not workspace:
         return None
-    return f"/workspaces/{quote(workspace)}?tab=files&file={quote(entity_id)}"
+    from files.service import FileError, file_at_path
+    try:
+        record = file_at_path(workspace, entity_id)
+    except FileError:
+        record = None
+    target = record["file_id"] if record else entity_id
+    return f"/workspaces/{quote(workspace)}?tab=files&file={quote(target)}"
 
 
 def _workspace_file_label(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:

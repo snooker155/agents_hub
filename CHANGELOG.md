@@ -205,8 +205,22 @@ turns that section into the next release.
   does). An install that already has the visualizer keeps its old tools (the
   seed merges, never revokes) and receives the handoff and delegate lists on
   its next start: `handoffs` is now a seed-owned field of system agents.
+- A file is named by its id in an address, not by its name or path. The Files
+  tab of a workspace and of a project keeps the open file as `?file=<id>`, a
+  chat link to a file an agent wrote carries the id, and the routes take
+  `file_id`: `GET /api/workspaces/{name}/file-content` and `file-raw`,
+  `DELETE /api/workspaces/{name}/files`, `GET /api/projects/{id}/file-content`
+  and `file-raw`, and `/api/shared-memory/{pool}/files/{file}` (index,
+  de-index, delete), which now take the id in the place of the file name. The
+  folder listings return `ids` (path to id) and the new `file-id` routes
+  register a file nothing wrote through the registry. A link or a client with
+  a path or a file name still works.
 
 ### Fixed
+
+- Deleting a file or a folder on a workspace's Files tab, or a knowledge file
+  of a memory pool, now tombstones its workspace file records, so a link to
+  it answers 404 instead of a record whose content is gone.
 
 - A chart view follows the theme: it is drawn on its card with no slab of its
   own (a spec that names a background is overridden), the dark vega theme

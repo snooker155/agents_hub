@@ -254,8 +254,28 @@ async def delete_workspace(name: str):
     return {"deleted": True, "detached": was_attached, "target_kept": target}
 
 
+def _target_rel_path(name: str, path: Optional[str], file_id: Optional[str]) -> str:
+    """The workspace-relative path a file route acts on. A link names the
+    file by ``file_id`` (files/service.py); ``path`` stays for old links and
+    for folders, which have no id."""
+    fid = (file_id or "").strip()
+    if fid:
+        from files import service as files_service
+        rel = files_service.folder_path_of(fid, name)
+        if rel is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return rel
+    rel_path = (path or "").strip()
+    if not rel_path:
+        raise HTTPException(status_code=400, detail="Query parameter 'file_id' or 'path' is required")
+    return rel_path
+
+
 @router.get("/{name}/files")
 async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
+    """The folder's files and directories as workspace-relative paths, and
+    ``ids``: path to file id for each file the registry knows, the id a link
+    to the file carries."""
     root = _require_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
@@ -276,15 +296,38 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
             directories = [p for p in directories if fnmatch.fnmatch(p, pattern)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": sorted(files), "directories": sorted(directories)}
+    from files import service as files_service
+    known = files_service.folder_ids(name)
+    ids = {rel: known[rel] for rel in files if rel in known}
+    return {"files": sorted(files), "directories": sorted(directories), "ids": ids}
+
+
+@router.get("/{name}/file-id")
+async def get_workspace_file_id(name: str, path: str):
+    """The file id of a folder file, registering the file when nothing wrote
+    it through the registry yet, so the page can put the id in its address."""
+    from files import service as files_service
+
+    root = _require_workspace_folder(name).resolve()
+    rel_path = (path or "").strip()
+    candidate = (root / rel_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    if not rel_path or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        record = files_service.ensure_folder_record(name, rel_path)
+    except files_service.FileError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"file_id": record["file_id"], "path": rel_path}
 
 
 @router.get("/{name}/file-content")
-async def get_workspace_file_content(name: str, path: str):
+async def get_workspace_file_content(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
     root = _require_workspace_folder(name).resolve()
-    rel_path = (path or "").strip()
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id)
 
     candidate = (root / rel_path).resolve()
     try:
@@ -352,12 +395,10 @@ def _extract_pdf_preview(candidate: Path) -> str:
 
 
 @router.get("/{name}/file-raw")
-async def get_workspace_file_raw(name: str, path: str):
+async def get_workspace_file_raw(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
     """Serve a workspace file's raw bytes (e.g. for in-browser PDF rendering)."""
     root = _require_workspace_folder(name).resolve()
-    rel_path = (path or "").strip()
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id)
 
     candidate = (root / rel_path).resolve()
     try:
@@ -378,13 +419,13 @@ async def get_workspace_file_raw(name: str, path: str):
 
 
 @router.delete("/{name}/files")
-async def delete_workspace_file(name: str, path: str):
-    """Delete one file or directory from a workspace."""
+async def delete_workspace_file(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
+    """Delete one file (by ``file_id``, or ``path`` from an old client) or a
+    directory (by ``path``) from a workspace. The registry records of what
+    was deleted are tombstoned, so an id link to it answers 404."""
     _ensure_writable_workspace(name)
     root = create_workspace_folder(name).resolve()
-    rel_path = (path or "").strip().strip("/")
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id).strip("/")
 
     candidate = (root / rel_path).resolve()
     try:
@@ -409,6 +450,14 @@ async def delete_workspace_file(name: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    from files import service as files_service
+    try:
+        if deleted_type == "directory":
+            files_service.unregister_tree(name, rel_path)
+        else:
+            files_service.unregister_path(name, rel_path)
+    except files_service.FileError:
+        pass  # a path the registry never follows has no record to tombstone
     return {"deleted": True, "path": rel_path, "type": deleted_type}
 
 
@@ -444,9 +493,18 @@ async def upload_workspace_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    rel = dest.relative_to(root).as_posix()
+    from files import service as files_service
+    file_id = None
+    try:
+        if files_service.is_indexable(rel):
+            file_id = files_service.register_path(name, rel, source="upload")["file_id"]
+    except files_service.FileError:
+        pass  # over a limit or under a skipped folder: the file is there, without an id
     return {
-        "path": dest.relative_to(root).as_posix(),
+        "path": rel,
         "size": len(content),
+        "file_id": file_id,
     }
 
 

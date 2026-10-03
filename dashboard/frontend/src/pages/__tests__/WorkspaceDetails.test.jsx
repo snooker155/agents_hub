@@ -46,6 +46,7 @@ vi.mock('../../api', () => ({
   updateWorkspaceInstructions: () => ok({}),
   uploadWorkspaceFile: () => ok({}),
   getWorkspaceFileRawUrl: () => '',
+  getWorkspaceFileId: () => ok({}),
   deleteWorkspaceFile: () => ok({}),
   removeFlowFromWorkspace: () => ok({}),
 }));

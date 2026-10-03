@@ -483,6 +483,54 @@ def file_at_path(workspace: str, rel_path: str) -> Optional[Dict[str, Any]]:
     return _row_to_record(row) if row else None
 
 
+def folder_path_of(file_id: str, workspace: str) -> Optional[str]:
+    """The workspace-relative path of the folder file ``file_id`` in
+    ``workspace``, or None when the id is unknown, deleted, of another
+    workspace, or a stored upload rather than a file of the folder."""
+    row = _fetch(file_id)
+    if row is None:
+        return None
+    ws = _workspace_name(workspace)
+    prefix = f"{WORKSPACES_DIR}/{ws}/"
+    key = str(row["storage_key"] or "")
+    if row["workspace"] != ws or not key.startswith(prefix):
+        return None
+    return key[len(prefix):] or None
+
+
+def folder_ids(workspace: str) -> Dict[str, str]:
+    """Workspace-relative path to file id for every live record of a file in
+    the workspace folder, so a listing of the folder can link each file by id."""
+    ws = _workspace_name(workspace)
+    prefix = f"{WORKSPACES_DIR}/{ws}/"
+    rows = db.get_conn().execute(
+        "SELECT file_id, storage_key FROM workspace_files WHERE workspace = ? AND deleted_at IS NULL "
+        "ORDER BY created_at",
+        (ws,),
+    ).fetchall()
+    ids: Dict[str, str] = {}
+    for row in rows:
+        key = str(row["storage_key"] or "")
+        if key.startswith(prefix):
+            ids.setdefault(key[len(prefix):], str(row["file_id"]))
+    return ids
+
+
+def ensure_folder_record(workspace: str, rel_path: str, *,
+                         created_by: Optional[str] = None) -> Dict[str, Any]:
+    """The record of the folder file at ``rel_path``, registered first when
+    nothing wrote it through the registry (a file a process outside the
+    tools put there). A hidden file or one under a skipped folder is never
+    registered (``is_indexable``). Raises like :func:`register_path`."""
+    found = file_at_path(workspace, rel_path)
+    if found is not None:
+        return found
+    rel = workspace_rel_path(rel_path)
+    if not is_indexable(rel):
+        raise FileError(f"'{rel}' is in a folder the registry does not follow")
+    return register_path(workspace, rel, source=_folder_source(rel), created_by=created_by)
+
+
 def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
                    meta: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
     """:func:`register_path` plus what happened: ``added``, ``updated`` or
@@ -631,6 +679,17 @@ def unregister_path(workspace: str, rel_path: str) -> bool:
                      (_now(), str(row["file_id"])))
     blobs.delete(key)
     return True
+
+
+def unregister_tree(workspace: str, rel_dir: str) -> int:
+    """Tombstone the records of every folder file under ``rel_dir``, a
+    folder deleted from the workspace. Returns how many there were."""
+    ws = _workspace_name(workspace)
+    prefix = workspace_rel_path(rel_dir) + "/"
+    gone = [rel for rel in folder_ids(ws) if rel.startswith(prefix)]
+    for rel in gone:
+        unregister_path(ws, rel)
+    return len(gone)
 
 
 def _folder_source(rel: str) -> str:
@@ -944,6 +1003,7 @@ __all__ = [
     "find_duplicate", "workspace_usage", "limits", "max_file_bytes", "max_workspace_bytes",
     "record_use", "list_uses", "display_name", "disk_name", "guess_mime", "is_text", "is_pdf",
     "new_file_id", "FILE_ID_RE", "SOURCES",
-    "register_path", "unregister_path", "index_workspace", "file_at_path", "is_indexable",
+    "register_path", "unregister_path", "unregister_tree", "index_workspace", "file_at_path",
+    "is_indexable", "folder_path_of", "folder_ids", "ensure_folder_record",
     "workspace_rel_path", "WORKSPACES_DIR", "INDEX_SKIP_DIRS", "FOLDER_SOURCES",
 ]
