@@ -61,6 +61,8 @@ export default {
   skillsTurnedOn: 'Skills were turned on for that agent.',
   needsStepOrBody: 'A skill needs steps or instructions.',
   instructions: 'instructions',
+  instructionsTitle: 'Instructions',
+  open: 'Open',
   instructionsLabel: 'Instructions (Markdown)',
   instructionsPlaceholder: 'Free-form guidance the agent reads when it uses this skill.',
   stepsOrInstructions: 'Fill in steps, instructions, or both.',
@@ -83,7 +85,7 @@ export default {
   },
   safety: {
     flagged: '{{count}} safety flags',
-    flaggedTitle: 'The review found patterns worth a look before an agent reads this skill: injection phrasing, data sent out, installers piped to a shell, disabled permissions. Expand the card to see them.',
+    flaggedTitle: 'The review found patterns worth a look before an agent reads this skill: injection phrasing, data sent out, installers piped to a shell, disabled permissions. Open the skill to see them.',
     scripts: '{{count}} scripts',
     scriptsTitle: 'Files an agent could run: {{files}}. Run them only in an environment without secrets or network access.',
   },

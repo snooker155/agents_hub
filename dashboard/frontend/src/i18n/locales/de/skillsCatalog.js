@@ -61,6 +61,8 @@ export default {
   skillsTurnedOn: 'Skills wurden für diesen Agenten aktiviert.',
   needsStepOrBody: 'Ein Skill braucht Schritte oder Anweisungen.',
   instructions: 'Anweisungen',
+  instructionsTitle: 'Anweisungen',
+  open: 'Öffnen',
   instructionsLabel: 'Anweisungen (Markdown)',
   instructionsPlaceholder: 'Freier Text, den der Agent liest, wenn er diesen Skill nutzt.',
   stepsOrInstructions: 'Schritte, Anweisungen oder beides ausfüllen.',
@@ -83,7 +85,7 @@ export default {
   },
   safety: {
     flagged: '{{count}} Sicherheitshinweise',
-    flaggedTitle: 'Die Prüfung hat Stellen gefunden, die vor dem Lesen durch einen Agenten einen Blick verdienen: Injection-Formulierungen, nach außen gesendete Daten, in eine Shell geleitete Installer, abgeschaltete Berechtigungen. Karte aufklappen, um sie zu sehen.',
+    flaggedTitle: 'Die Prüfung hat Stellen gefunden, die vor dem Lesen durch einen Agenten einen Blick verdienen: Injection-Formulierungen, nach außen gesendete Daten, in eine Shell geleitete Installer, abgeschaltete Berechtigungen. Skill öffnen, um sie zu sehen.',
     scripts: '{{count}} Skripte',
     scriptsTitle: 'Dateien, die ein Agent ausführen könnte: {{files}}. Nur in einer Umgebung ohne Geheimnisse und ohne Netz ausführen.',
   },

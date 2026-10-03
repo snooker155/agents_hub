@@ -15,7 +15,6 @@ import {
   Bot,
   Tag,
   X,
-  ChevronDown,
   ChevronRight,
   ListOrdered,
   History,
@@ -44,6 +43,7 @@ import { exportSkillMarkdown, syncSkills, updateSkillFromOrigin } from '../api/s
 import SkillHistoryModal from '../components/skills/SkillHistoryModal';
 import SkillImportModal from '../components/skills/SkillImportModal';
 import SkillSourcesModal from '../components/skills/SkillSourcesModal';
+import SkillDetailModal from '../components/skills/SkillDetailModal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -72,7 +72,7 @@ const SkillsCatalog = () => {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState(null);
-  const [expanded, setExpanded] = useState({});
+  const [viewing, setViewing] = useState(null); // skill opened in the detail modal
 
   const [editor, setEditor] = useState(null);   // { draft, id | null }
   const [installFor, setInstallFor] = useState(null); // skill being attached/installed
@@ -288,58 +288,25 @@ const SkillsCatalog = () => {
     }
   };
 
-  const toggleExpanded = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
-
   // ── Card ───────────────────────────────────────────────────────────────────
 
-  const StepList = ({ skill, steps }) => (
-    <div className="mb-3">
+  // The card only says what the skill holds; the text itself opens in a modal.
+  const ContentSummary = ({ skill }) => {
+    const steps = skill.steps || [];
+    const parts = [];
+    if (steps.length > 0) parts.push(t('skillsCatalog.stepCount', { count: steps.length }));
+    if (skill.body) parts.push(t('skillsCatalog.instructions'));
+    return (
       <button
-        onClick={() => toggleExpanded(skill.id)}
-        className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-indigo-600"
+        onClick={() => setViewing(skill)}
+        className="mb-3 self-start inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-indigo-600"
       >
-        {expanded[skill.id] ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         <ListOrdered className="w-3 h-3" />
-        {steps.length > 0
-          ? t('skillsCatalog.stepCount', { count: steps.length })
-          : t('skillsCatalog.instructions')}
-        {steps.length > 0 && skill.body ? ` + ${t('skillsCatalog.instructions')}` : ''}
+        {parts.join(' + ') || t('skillsCatalog.open')}
+        <ChevronRight className="w-3 h-3" />
       </button>
-      {expanded[skill.id] && (
-        <div className="mt-2 space-y-2">
-          {steps.length > 0 && (
-            <ol className="pl-4 list-decimal space-y-1 text-xs text-gray-600 bg-gray-50 rounded p-2 border border-gray-100">
-              {steps.map((step, i) => <li key={i}>{step}</li>)}
-            </ol>
-          )}
-          {skill.body && (
-            <pre className="text-xs text-gray-600 bg-gray-50 rounded p-2 border border-gray-100 whitespace-pre-wrap max-h-60 overflow-auto font-sans">
-              {skill.body}
-            </pre>
-          )}
-          {(skill.resources || []).length > 0 && (
-            <div className="text-[11px] text-gray-500">
-              {t('skillsCatalog.files')}: {skill.resources.join(', ')}
-            </div>
-          )}
-          {(skill.safety?.flags || []).length > 0 && (
-            <ul className="text-[11px] space-y-1.5 bg-red-50/60 border border-red-100 rounded p-2" aria-label={t('skillsCatalog.safety.flaggedTitle')}>
-              {skill.safety.flags.map((f, i) => (
-                <li key={i} className="text-gray-700">
-                  <span className={`font-semibold uppercase ${f.severity === 'high' ? 'text-red-700' : f.severity === 'medium' ? 'text-amber-700' : 'text-gray-500'}`}>
-                    {f.severity}
-                  </span>
-                  {' · '}<span className="font-mono">{f.code}</span>{' · '}{f.where}
-                  <div className="text-gray-600">{f.detail}</div>
-                  {f.excerpt && <div className="text-gray-400 font-mono truncate" title={f.excerpt}>{f.excerpt}</div>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
+    );
+  };
 
   const TagRow = ({ tags }) => (
     <div className="flex flex-wrap gap-1 mb-3 min-h-[22px]">
@@ -451,7 +418,13 @@ const SkillsCatalog = () => {
                       <GraduationCap className="w-4 h-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-gray-900 truncate" title={skill.name}>{skill.name}</div>
+                      <button
+                        onClick={() => setViewing(skill)}
+                        className="block max-w-full text-left text-sm font-semibold text-gray-900 truncate hover:text-indigo-600"
+                        title={skill.name}
+                      >
+                        {skill.name}
+                      </button>
                       <div className="text-[11px] text-gray-400">
                         {skill.source === 'agent' ? t('skillsCatalog.learnedByAgent')
                           : skill.source === 'repo' ? t('skillsCatalog.fromRepository')
@@ -473,7 +446,7 @@ const SkillsCatalog = () => {
                 </p>
 
                 <TagRow tags={skill.tags} />
-                <StepList skill={skill} steps={skill.steps || []} />
+                <ContentSummary skill={skill} />
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] mb-4">
                   {skill.agent_id ? (
@@ -619,7 +592,13 @@ const SkillsCatalog = () => {
                     <Globe2 className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900 truncate" title={skill.name}>{skill.name}</div>
+                    <button
+                      onClick={() => setViewing(skill)}
+                      className="block max-w-full text-left text-sm font-semibold text-gray-900 truncate hover:text-indigo-600"
+                      title={skill.name}
+                    >
+                      {skill.name}
+                    </button>
                     <div className="text-[11px] text-gray-400">
                       {t('skillsCatalog.stepCount', { count: skill.steps_count })}
                       {skill.use_count > 0 && ` · ${t('skillsCatalog.usedCount', { count: skill.use_count })}`}
@@ -633,7 +612,7 @@ const SkillsCatalog = () => {
               </p>
 
               <TagRow tags={skill.tags} />
-              <StepList skill={skill} steps={skill.steps || []} />
+              <ContentSummary skill={skill} />
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400 mb-4">
                 <span className="inline-flex items-center gap-1" title={t('skillsCatalog.publishedFromThisWorkspace')}>
@@ -825,6 +804,50 @@ const SkillsCatalog = () => {
           </div>
         </div>
       )}
+      {viewing && (
+        <SkillDetailModal
+          skill={viewing}
+          subtitle={[
+            viewing.owner_workspace
+              ? viewing.owner_workspace
+              : viewing.source === 'agent' ? t('skillsCatalog.learnedByAgent')
+                : viewing.source === 'repo' ? t('skillsCatalog.fromRepository')
+                  : t('skillsCatalog.writtenByUser'),
+            viewing.version ? `v${viewing.version}` : '',
+            viewing.agent_id ? (viewing.agent?.name || viewing.agent_id) : '',
+            viewing.license || '',
+          ].filter(Boolean).join(' · ')}
+          onClose={() => setViewing(null)}
+          actions={tab === 'global' ? (
+            !viewing.in_workspace && (
+              <button
+                onClick={() => { setViewing(null); openInstall(viewing); }}
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                <Download className="w-4 h-4 mr-1.5" /> {t('skillsCatalog.install')}
+              </button>
+            )
+          ) : (
+            <>
+              <button
+                onClick={() => { setViewing(null); setHistoryFor(viewing); }}
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50"
+              >
+                <History className="w-4 h-4 mr-1.5" /> {t('skillsCatalog.historyButton')}
+              </button>
+              <button
+                onClick={() => { setViewing(null); openEdit(viewing); }}
+                disabled={viewing.source === 'repo' && !viewing.agent_id}
+                title={viewing.source === 'repo' && !viewing.agent_id ? t('skillsCatalog.editInRepo') : undefined}
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <Pencil className="w-4 h-4 mr-1.5" /> {t('skillsCatalog.edit')}
+              </button>
+            </>
+          )}
+        />
+      )}
+
       {historyFor && (
         <SkillHistoryModal
           skill={historyFor}
