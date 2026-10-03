@@ -51,7 +51,7 @@ from .runs import (
     get_pool_id,
     auto_journal,
     agent_overrides,
-    turn_overrides,
+    request_overrides,
     validate_chat_request,
     load_flow_definition,
     create_chat_run,
@@ -84,7 +84,10 @@ def _settle_steering(run_id: str) -> list:
     losing them (common/steering.py)."""
     try:
         from common import steering
-        return [{"msg_id": m["msg_id"], "body": m["body"]} for m in steering.mark_expired(run_id)]
+        # A system message (an operator instruction for this run) expires
+        # with the run; it is never handed back as a chat turn.
+        return [{"msg_id": m["msg_id"], "body": m["body"]} for m in steering.mark_expired(run_id)
+                if m.get("mode") != steering.MODE_SYSTEM]
     except Exception:  # noqa: BLE001 - a steering lookup failing must not break closing the turn
         return []
 
@@ -187,7 +190,9 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
     message_started = time.perf_counter()
 
     async def _run_agent_async():
-        overrides = {**agent_overrides(request.agent_id), **turn_overrides()}
+        # The record's model cascade, then this turn's version pin (its own or
+        # its service's) and per-run overrides (chat/runs.py request_overrides).
+        overrides = {**agent_overrides(request.agent_id), **request_overrides(request)}
         # Build off the event loop — create_agent is synchronous and heavyweight
         # (see chat.flow_driver), so running it inline blocks every concurrent
         # request until the agent is ready.

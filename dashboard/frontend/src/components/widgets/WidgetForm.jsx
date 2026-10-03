@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Loader } from 'lucide-react';
-import { getAgents } from '../../api';
+import { getAgents, getAgentVersions } from '../../api';
 import { createWidget, updateWidget } from '../../api/widgets';
 import { useI18n } from '../../i18n';
 import { errorDetail } from '../toast';
@@ -23,6 +23,7 @@ function initialState(widget, options) {
   return {
     name: widget?.name || '',
     agentId: widget?.agent_id || '',
+    agentVersion: widget?.agent_version ?? '',
     origins: originsToText(widget?.allowed_origins),
     title: widget?.title || '',
     greeting: widget?.greeting || '',
@@ -43,6 +44,10 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
   const isEdit = !!widget;
   const [form, setForm] = useState(() => initialState(widget, opts));
   const [agents, setAgents] = useState([]);
+  // The stored versions of the chosen agent, for the version pin
+  // (agents/versions.py): a widget answers with the live definition, or
+  // with the version picked here.
+  const [versions, setVersions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -59,6 +64,15 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
     return () => { alive = false; };
   }, [workspace]);
 
+  useEffect(() => {
+    if (!form.agentId) { setVersions([]); return undefined; }
+    let alive = true;
+    getAgentVersions(form.agentId)
+      .then(({ data }) => { if (alive) setVersions(data?.versions || []); })
+      .catch(() => { if (alive) setVersions([]); });
+    return () => { alive = false; };
+  }, [form.agentId]);
+
   const set = (field) => (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setForm((f) => ({ ...f, [field]: value }));
@@ -72,6 +86,8 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
     const payload = {
       name: form.name.trim(),
       agent_id: form.agentId,
+      // A version of this agent; another agent's pin never carries over.
+      agent_version: form.agentVersion === '' ? null : Number(form.agentVersion),
       allowed_origins: originsFromText(form.origins),
       title: form.title.trim(),
       greeting: form.greeting.trim(),
@@ -114,12 +130,27 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
 
       <div>
         <label className={labelCls} htmlFor="widget-agent">{t('widgets.form.agent')}</label>
-        <select id="widget-agent" className={inputCls} value={form.agentId} onChange={set('agentId')}>
+        <select id="widget-agent" className={inputCls} value={form.agentId}
+          onChange={(e) => setForm((f) => ({ ...f, agentId: e.target.value, agentVersion: '' }))}>
           {!agentChoices.length && <option value="">{t('widgets.form.noAgents')}</option>}
           {agentChoices.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
         </select>
         <p className={hintCls}>{t('widgets.form.agentHint')}</p>
       </div>
+
+      {versions.length > 0 && (
+        <div>
+          <label className={labelCls} htmlFor="widget-agent-version">{t('agentVersionPin.jobFieldLabel')}</label>
+          <select id="widget-agent-version" className={inputCls} value={form.agentVersion}
+            onChange={set('agentVersion')}>
+            <option value="">{t('agentVersionPin.jobFieldLive')}</option>
+            {versions.slice().reverse().map((v) => (
+              <option key={v.version} value={v.version}>{t('agentVersionPin.versionOption', { version: v.version })}</option>
+            ))}
+          </select>
+          <p className={hintCls}>{t('agentVersionPin.widgetHint')}</p>
+        </div>
+      )}
 
       <div>
         <label className={labelCls} htmlFor="widget-origins">{t('widgets.form.origins')}</label>

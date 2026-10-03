@@ -554,21 +554,26 @@ class AgentFactory:
         # The assignment is resolved per workspace — each workspace has its own.
         _pool_id: Optional[str] = None
         _extra_pool_ids: List[str] = []
+        _ro_pool_ids: frozenset = frozenset()
         if agent_id:
             from agents.registry import get_agent as _reg_get_pool
-            from memory.binding import effective_memory_pools
+            from memory.binding import effective_memory_pools, effective_read_only_pools
             _spec_pool = _reg_get_pool(agent_id)
             _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override, personal_pool)
                           if _spec_pool else [])
             if _mem_pools:
                 _pool_id = _mem_pools[0]
                 _extra_pool_ids = _mem_pools[1:]
+            # A pinned pool_override (the Memory page looking at one pool) is
+            # not the agent's own binding, so it is never read only this way.
+            if _spec_pool is not None and not pool_override:
+                _ro_pool_ids = effective_read_only_pools(_spec_pool, workspace)
 
         if _pool_id:
             from memory.knowledge_extract import create_extraction_tools
             memory_tools = [
                 *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write,
-                                     personal_pool_id=personal_pool),
+                                     personal_pool_id=personal_pool, read_only_pool_ids=_ro_pool_ids),
                 *create_extraction_tools(_pool_id),
                 *skills_tools,
             ]
@@ -643,6 +648,19 @@ class AgentFactory:
             if pin is not None:
                 override_params = {**override_params, "definition_version": int(pin["version"])}
                 _record_experiment_assignment(pin)
+
+        # Per-run overrides (agents/run_overrides.py): the old separate
+        # ``tool_policy``/``output_schema`` keywords fold into the one object,
+        # normalised so the cache key below is the same for two requests that
+        # mean the same override, and different from the plain build's.
+        if any(k in override_params for k in ("run_overrides", "tool_policy", "output_schema")):
+            from agents import run_overrides as _ro
+            _params = dict(override_params)
+            _folded = _ro.fold_legacy(_params.pop("run_overrides", None),
+                                      tool_policy=_params.pop("tool_policy", None),
+                                      output_schema=_params.pop("output_schema", None),
+                                      check_tool_ids=False)
+            override_params = {**_params, **_ro.build_kwargs(_folded)}
 
         # Personal memory (memory/personal.py): the user's own pool, attached
         # next to the agent's own pools (or alone when it has none). Passed as
@@ -738,22 +756,25 @@ class AgentFactory:
         if _snapshot is not None:
             _spec = _snapshot[0]
 
-        # An answer schema for this build only (a proactive tick, proactive/
-        # service.py): the loop's structured-output extension reads the
-        # schema off the spec, so the override is folded into the spec here
-        # rather than into the definition config. Popped so it never reaches
+        # Per-run overrides (agents/run_overrides.py), one object: the model,
+        # the instructions, the tool list, skills, MCP servers, a tool policy
+        # merged over the record's (a proactive tick woken by untrusted input
+        # puts its outbound tools on "ask") and an answer schema (read by the
+        # loop's structured-output extension off the spec). The spec takes the
+        # policy, schema and skills switch here; the definition takes the
+        # instructions and tools below; the model joins the config. The old
+        # ``output_schema``/``tool_policy`` keywords are folded in, so a direct
+        # caller of this method keeps working. Popped so none of it reaches
         # the agent constructor as a stray keyword.
-        _output_schema = override_params.pop("output_schema", None)
-        if _spec is not None and isinstance(_output_schema, dict) and _output_schema:
-            from dataclasses import replace as _dc_replace
-            _spec = _dc_replace(_spec, output_schema=dict(_output_schema))
-        # Likewise a tool policy for this build only (a proactive tick woken by
-        # untrusted input puts its outbound tools on "ask"): merged over the
-        # record's own policy, read by tools.permission_policy off the spec.
-        _tool_policy = override_params.pop("tool_policy", None)
-        if _spec is not None and isinstance(_tool_policy, dict) and _tool_policy:
-            from dataclasses import replace as _dc_replace
-            _spec = _dc_replace(_spec, tool_policy={**dict(_spec.tool_policy or {}), **_tool_policy})
+        from agents import run_overrides as _ro
+        _run_overrides = _ro.fold_legacy(
+            override_params.pop("run_overrides", None),
+            tool_policy=override_params.pop("tool_policy", None),
+            output_schema=override_params.pop("output_schema", None),
+            check_tool_ids=False,
+        )
+        _spec = _ro.apply_to_spec(_spec, _run_overrides)
+        override_params.update(_ro.model_params(_run_overrides))
 
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
@@ -793,6 +814,14 @@ class AgentFactory:
 
         definition = (dict(_snapshot[1]) if _snapshot is not None
                       else self.load_definition(agent_id))
+        # The run's own instructions and tool list (run_overrides). A tool set
+        # the override changed is judged against the record's before anything
+        # is built: a combination the record does not already form is refused
+        # (CapabilityViolation), whatever the record's capability_override.
+        if _run_overrides:
+            definition = _ro.apply_to_definition(definition, _run_overrides)
+            if _ro.changes_tools(_run_overrides):
+                _ro.guard_tools(agent_id, list(definition.get("tools") or []), _spec)
 
         # Resolve model first — the provider drives auto defaults (e.g. episodic
         # write off for local providers). Injection below only changes tools and
@@ -847,8 +876,13 @@ class AgentFactory:
         # Inject skills catalog (name + description only) into system prompt
         if ws_name and _spec and _spec.skills_enabled:
             try:
-                from memory.procedural import inject_skills_catalog as _inject_catalog
-                config["system_prompt"] = _inject_catalog(agent_id, ws_name, config.get("system_prompt", ""))
+                if isinstance(_run_overrides.get("skills"), list):
+                    # A run that names its skills lists only those.
+                    config["system_prompt"] = _ro.skills_catalog(
+                        agent_id, ws_name, config.get("system_prompt", ""), _run_overrides["skills"])
+                else:
+                    from memory.procedural import inject_skills_catalog as _inject_catalog
+                    config["system_prompt"] = _inject_catalog(agent_id, ws_name, config.get("system_prompt", ""))
             except Exception:
                 pass
 
@@ -1020,6 +1054,13 @@ class AgentFactory:
         from mcp_client import append_mcp_tools
         tools = append_mcp_tools(tools, tool_list, workspace)
 
+        # A tool result past the workspace's spill size goes to a file under
+        # tool-outputs/ and the model sees its head, its tail and the path
+        # (agents/tool_spill.py). Innermost, so the hooks, the gate and the
+        # run's tool-call record all see the preview. Unchanged when off.
+        from agents.tool_spill import wrap_tools as _spill_wrap
+        tools = _spill_wrap(tools, workspace=workspace)
+
         # Human in the loop at the level of a single tool call: every action tool
         # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
         # and a call that needs approval parks the task instead of happening (see
@@ -1072,6 +1113,22 @@ class AgentFactory:
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
                     + HANDOFF_PROMPT
+                )
+
+        # Advisor (tools/advisor.py), only for an agent that names an advisor
+        # model. Appended after the guard like the handoff tool: it only asks
+        # a model a question the agent writes, acting on nothing outside the run.
+        if _spec is not None and getattr(_spec, "advisor_model", None):
+            from tools.advisor import advisor_prompt, create_advisor_tools
+            _advisor_tools = create_advisor_tools(_spec, workspace)
+            if _advisor_tools:
+                from agents.loop_ext.settings import workspace_loop_setting
+                tools = [*tools, *_advisor_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n"
+                    + advisor_prompt(_spec.advisor_model,
+                                     int(workspace_loop_setting(workspace, "advisor_max_calls") or 0))
                 )
 
         if _memory_access == "read":

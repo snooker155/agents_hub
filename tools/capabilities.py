@@ -337,6 +337,12 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # build). Nothing comes back to the caller, so unlike run_agent_tool it
     # opens no path for the caller to read through another agent.
     "handoff_to_agent",
+    # consult_advisor (tools/advisor.py): sends a question and context the
+    # agent writes to the advisor model the operator chose on the Models
+    # page, the same provider path the agent's own model calls take, and
+    # returns that model's answer. It reads nothing the agent does not
+    # already hold and reaches no destination the run does not already use.
+    "consult_advisor",
     # wake_agent (tools/schedule_management.py): nudges another agent's pulse
     # with a message and gets an acknowledgement back, never that agent's
     # output. The woken agent runs on its own tool set under its own guard,

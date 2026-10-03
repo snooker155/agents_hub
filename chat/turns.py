@@ -168,6 +168,9 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
         "conversation_id": message.get("conversation_id"),
         "budget_usd": payload.get("budget_usd"),
         "agent_version": payload.get("agent_version"),
+        # Whose version the pin is: an agent the turn hands the conversation
+        # to runs as it is (chat/runs.py turn_overrides).
+        "pin_agent_id": request.agent_id,
     }
 
     def _journal_budget(event: Dict[str, Any]) -> None:

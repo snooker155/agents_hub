@@ -161,10 +161,11 @@ class SessionPublishCallback(BaseCallbackHandler):
             "continuation": True,
         })
 
-    def on_tool_start(self, serialized, input_str, **_):
+    def on_tool_start(self, serialized, input_str, **kwargs):
         self._step += 1
         name = (serialized or {}).get("name", "tool") if isinstance(serialized, dict) else "tool"
         inp = str(input_str or "")
+        self._tool = (name, kwargs.get("inputs"))
         self._post({
             "type": "tool_start",
             "step": self._step,
@@ -173,11 +174,22 @@ class SessionPublishCallback(BaseCallbackHandler):
             "run_id": self.run_id,
         })
 
+    def _verdict(self) -> dict:
+        """What the tool gate made of the call that just ended
+        (tools/permission_policy.call_verdict)."""
+        tool = getattr(self, "_tool", None)
+        self._tool = None
+        if not tool:
+            return {}
+        from tools.permission_policy import call_verdict
+        return call_verdict(str(tool[0] or ""), self, tool[1])
+
     def on_tool_end(self, output, **_):
         self._post({
             "type": "tool_end",
             "output": str(output or "")[:240],
             "run_id": self.run_id,
+            **self._verdict(),
         })
 
     def on_tool_error(self, error, **_):
@@ -185,6 +197,7 @@ class SessionPublishCallback(BaseCallbackHandler):
             "type": "tool_error",
             "error": str(error),
             "run_id": self.run_id,
+            **self._verdict(),
         })
 
     def on_llm_error(self, error, **_):

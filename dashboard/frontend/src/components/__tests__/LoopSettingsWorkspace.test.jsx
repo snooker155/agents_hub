@@ -21,6 +21,9 @@ const DEFAULTS = {
   native: true,
   strict_tools: false,
   view_focus: true,
+  tool_output_spill_chars: 20000,
+  advisor_max_calls: 5,
+  advisor_max_answer_chars: 4000,
 };
 
 function payload(settings, overrides = {}) {

@@ -44,7 +44,7 @@ export function useChatSteering(page) {
 
   const conv = (conversations || []).find((c) => c.id === currentConvId);
   const runId = inFlightRunId(conv?.messages, { loading, targetMode });
-  const modes = availableModes({ loading, runId });
+  const modes = availableModes({ loading, runId, targetMode });
   const activeMode = effectiveMode(mode, modes);
   const queued = queue.filter((q) => q.convId === currentConvId);
 
@@ -81,17 +81,19 @@ export function useChatSteering(page) {
       }
       return true;
     }
+    const sent = chosen === 'system' ? 'system' : 'inject';
     try {
-      const { data } = await steerRun(runId, body, 'inject');
+      const { data } = await steerRun(runId, body, sent);
       const msgId = data?.message?.msg_id;
       setConversations((prev) => prev.map((c) => (
         c.id !== currentConvId ? c
-          : { ...c, messages: insertSteerBubble(c.messages, buildSteerBubble({ text: body, msgId })) }
+          : { ...c, messages: insertSteerBubble(c.messages, buildSteerBubble({ text: body, msgId, mode: sent })) }
       )));
     } catch (err) {
       // The turn ended between the key press and the post: the message is
-      // not lost, it waits for the next turn like a queued one.
-      if (err?.response?.status === 409) enqueue(body);
+      // not lost, it waits for the next turn like a queued one. An
+      // instruction has no next turn to wait for: it goes back in the box.
+      if (err?.response?.status === 409 && sent === 'inject') enqueue(body);
       else {
         setInput(body);
         const detail = err?.response?.data?.detail;

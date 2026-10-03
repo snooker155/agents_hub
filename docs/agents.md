@@ -91,6 +91,41 @@ The task page has a version picker (live or a stored version, via `PATCH /api/ta
 
 A subtask never inherits its parent's pin, because a subtask usually runs a different agent. Environment and budget are inherited instead.
 
+Every other way to start a run takes a pin too, and a pinned run never quietly builds the live definition:
+
+| Where | How to pin |
+|---|---|
+| Task launch | `params.agent_version` on `POST /api/tasks/{id}/assign` (this launch only), else the task's own pin |
+| Chat turn | `agent_version` in the chat request (`/api/chat/message`, `/api/chat/stream`) |
+| `/v1` agent model | `agent_version` in the completion body (`extra_body` in an OpenAI SDK) |
+| Service | the service's `agent_version`: chat turns, `/v1`, widget turns and plain messages to its replicas |
+| Widget | the widget's `agent_version` (the widget form has a picker) |
+| Resident worker | a task taken by an instance in `node` mode builds the task's pin |
+| CLI | `ah agent run AGENT TEXT --agent-version N`, `ah task assign TASK AGENT --agent-version N`, `ah task create TITLE --agent-version N` |
+
+An unknown version is refused (400, or 404 on `/v1`). The run record says `agent_version_pinned: true` when the run was asked for its version, and the run page shows it as pinned. A pin names a version of one agent: when the conversation is handed to another agent, the receiving agent runs as it is.
+
+## Editing an agent that changed meanwhile
+
+Agent edits are optimistic: `GET /api/agents/{id}`, `GET /api/agents/{id}/definition` and every successful write under `/api/agents/{id}` return the definition hash as `ETag` (and the stored version as `X-Agent-Version`). A write may send it back as `If-Match: "<hash>"`, or `expected_version` in the JSON body (a version number or the hash). When the agent changed since, the write is refused with 409 and nothing is written: `{"detail", "error": "version_conflict", "current_hash", "current_version"}`. A write without either goes through as before, and `If-Match: *` always matches. The agent page sends the token on every edit and, on a conflict, asks whether to reload or overwrite.
+
+## Per-run overrides
+
+One run can differ from its agent without the agent changing: an `overrides` object, accepted by a task launch (`params.overrides`), a chat request, `/v1` agent completions, `ah agent run --overrides JSON` (or `--overrides-file PATH`), `ah task assign --overrides` and `python -m runtime.agent_run --overrides`. Keys:
+
+| Key | Effect |
+|---|---|
+| `model`, `provider` | the run's model |
+| `system` | replaces the agent's own instructions; workspace instructions, memory and tool guidance are still added |
+| `system_append` | appended to the agent's instructions (after `system` when both are given) |
+| `tools` | a list that replaces the tool list, or `{"add": [...], "remove": [...]}` |
+| `skills` | `true` or `false` turns skills on or off; a list of skill names lists only those |
+| `mcp` | MCP server ids; the run gets `mcp:<id>` for each instead of the record's servers |
+| `tool_policy` | entries merged over the agent's tool policy |
+| `output_schema` | JSON Schema the final answer must match |
+
+An unknown key, an unknown tool id or an invalid schema is a 400. The run's tool set goes through the capability guard against the record's own: a combination the record does not already form is refused (409), whatever the record's `capability_override`. The older `--tool-policy` and `--output-schema` flags (and the `tool_policy` / `output_schema` launch params) still work and fold into the object. The run record keeps the object as `overrides` and the run page lists it. An overridden build has its own entry in the agent build cache.
+
 ## Delegation
 
 `run_agent_tool` hands a self-contained goal to another agent and returns its

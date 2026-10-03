@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { installAgentRevision } from './agentRevision';
 
 // Empty means same-origin: `/api/...` is served by whatever host the app was
 // loaded from. In dev that is the Vite server, which proxies /api to the
@@ -186,6 +187,10 @@ api.interceptors.response.use(
   },
 );
 
+// Agent edits carry the definition they were made against (If-Match), and a
+// conflict with somebody else's edit asks the user what to do (agentRevision.js).
+installAgentRevision(api);
+
 // Identity API (see docs/identity.md and dashboard/backend/routes/auth.py).
 // `getAuthMode` is public in every mode and is what the frontend renders from.
 export const getAuthMode = () => api.get('/auth/mode');
@@ -251,6 +256,9 @@ export const setWorkspaceSecret = (name, secret, data) =>
   api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, data);
 export const deleteWorkspaceSecret = (name, secret, params) =>
   api.delete(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, { params });
+// Where a secret may be sent (common/secrets.py "Secrets bound to hosts").
+export const setWorkspaceSecretHosts = (name, secret, data) =>
+  api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}/hosts`, data);
 // An agent's allowlist: the secret names a run of it may receive.
 export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
 export const updateAgentSecrets = (id, secrets, extra = {}) =>

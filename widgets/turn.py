@@ -199,6 +199,10 @@ class VisitorTurn:
             conversation_title=self.thread.get("title") or None,
             attachments=[ChatAttachment(**a) for a in self.attachments],
             source="widget",
+            # The widget's version pin, for its own agent only: an agent the
+            # thread was handed to answers as it is.
+            agent_version=(self.widget.get("agent_version")
+                           if self.agent_id == self.widget.get("agent_id") else None),
         )
 
     def start(self) -> Dict[str, Any]:

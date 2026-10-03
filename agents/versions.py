@@ -90,6 +90,8 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
         **{k: v for k, v in {
             "tool_policy": dict(getattr(spec, "tool_policy", None) or {}),
             "fallback_models": list(getattr(spec, "fallback_models", None) or []),
+            # The advisor model (tools/advisor.py); left out while unset.
+            "advisor_model": getattr(spec, "advisor_model", None) or None,
             "output_schema": getattr(spec, "output_schema", None),
             "guardrails": sorted(getattr(spec, "guardrails", None) or []),
             "tool_search": getattr(spec, "tool_search", None),

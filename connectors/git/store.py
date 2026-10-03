@@ -131,7 +131,9 @@ def _run_token(provider: str) -> str:
     try:
         from common import secrets as _secrets
         if _secrets.active_scope() is not None:
-            value = _secrets.get(name)
+            # A secret bound to hosts (common/secrets.py) is only handed out
+            # for the host it goes to: the provider's API.
+            value = _secrets.get(name, host=_api_host(provider))
             if value:
                 return value.strip()
     except Exception:
@@ -139,6 +141,19 @@ def _run_token(provider: str) -> str:
     if os.environ.get("AGENT_WORKSPACE"):
         return (os.environ.get(name) or "").strip()
     return ""
+
+
+def _api_host(provider: str) -> str:
+    """The host a run token for ``provider`` is sent to."""
+    if provider == "github":
+        return "api.github.com"
+    if provider == "bitbucket":
+        return "api.bitbucket.org"
+    try:
+        from urllib.parse import urlsplit
+        return (urlsplit(get_base_url(provider)).hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 def get_token(provider: str) -> str:

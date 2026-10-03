@@ -121,7 +121,7 @@ def test_list_never_carries_values(key):
     rows = secrets.list_secrets("ws")
     assert rows == [{"name": "X", "agent_id": "a1", "user_id": "", "hint": "ough",
                      "updated_at": rows[0]["updated_at"], "created_at": rows[0]["created_at"],
-                     "created_by": "u1"}]
+                     "created_by": "u1", "allowed_hosts": []}]
     assert "value-long-enough" not in repr(rows)
 
 

@@ -1,13 +1,17 @@
 /**
  * Talking to a turn that is still running (docs/steering.md).
  *
- * While an agent works, the composer stays open and a message can go three
+ * While an agent works, the composer stays open and a message can go four
  * ways: `inject` ("Steer") is posted to the run and read by the agent before
  * its next model step; `interrupt` stops the turn and sends the message as
- * the next one; `queue` waits and sends it when the turn ends. The last
- * choice is remembered: in the signed-in person's preferences (`steer_mode`
- * on /api/auth/preferences) when that endpoint exists, and in this browser's
- * localStorage always, the rule lib/modelView.js follows.
+ * the next one; `queue` waits and sends it when the turn ends; `system`
+ * ("Instruction") is an operator's addition to the run's system prompt for
+ * the rest of the run (only the run's owner or an admin; never for a team).
+ * The last choice is remembered: in the signed-in person's preferences
+ * (`steer_mode` on /api/auth/preferences) when that endpoint exists, and in
+ * this browser's localStorage always, the rule lib/modelView.js follows. An
+ * instruction is never remembered as the choice: it is picked on purpose
+ * each time.
  *
  * A steered message is a user bubble carrying `steer: {msg_id, mode, state,
  * after_step}`, placed just above the bubble the agent is still writing.
@@ -22,10 +26,12 @@ import { getMyPreferences, putMyPreferences } from '../../api/palette';
 import { genId } from './turnState';
 
 export const STEER_MODE_KEY = 'agents_hub_steer_mode';
-export const STEER_MODES = ['inject', 'interrupt', 'queue'];
+export const STEER_MODES = ['inject', 'interrupt', 'queue', 'system'];
 export const DEFAULT_STEER_MODE = 'inject';
+// The modes kept as the person's choice (see the note on `system` above).
+const REMEMBERED_MODES = ['inject', 'interrupt', 'queue'];
 
-const valid = (v) => (STEER_MODES.includes(v) ? v : null);
+const valid = (v) => (REMEMBERED_MODES.includes(v) ? v : null);
 
 export function readLocalSteerMode() {
   try {
@@ -85,11 +91,13 @@ export function inFlightRunId(messages, { loading, targetMode }) {
   return last.run_id || null;
 }
 
-/** The modes offered right now: all three with a run to talk to, else only
- * the queue while a turn is running, else none. */
-export function availableModes({ loading, runId }) {
+/** The modes offered right now: all of them with a run to talk to (a team
+ * has no system prompt of its own, so no instruction there), else only the
+ * queue while a turn is running, else none. */
+export function availableModes({ loading, runId, targetMode = null }) {
   if (!loading) return [];
-  return runId ? STEER_MODES : ['queue'];
+  if (!runId) return ['queue'];
+  return targetMode === 'team' ? STEER_MODES.filter((m) => m !== 'system') : STEER_MODES;
 }
 
 /** The mode a send uses: the chosen one when it is on offer, else the queue. */
@@ -164,16 +172,21 @@ export function takeQueuedSteers(messages, states = ['queued', 'pending']) {
   const texts = [];
   const rest = [];
   for (const m of messages || []) {
-    if (m.steer && states.includes(m.steer.state)) texts.push(String(m.content || ''));
+    if (m.steer && m.steer.mode === 'system') {
+      // An instruction was for the run that ended; it never becomes a turn.
+      rest.push(states.includes(m.steer.state) ? { ...m, steer: { ...m.steer, state: 'expired' } } : m);
+    } else if (m.steer && states.includes(m.steer.state)) texts.push(String(m.content || ''));
     else rest.push(m);
   }
   return { messages: rest, texts };
 }
 
 /** Whether a message belongs in the history sent with the next turn: a
- * steered message only once the model has read it. */
+ * steered message only once the model has read it, and never an
+ * instruction, which belonged to the system prompt of its own run. */
 export function inHistory(message) {
-  return !message.steer || message.steer.state === 'delivered';
+  if (!message.steer) return true;
+  return message.steer.state === 'delivered' && message.steer.mode !== 'system';
 }
 
 /**

@@ -33,6 +33,18 @@ export default {
       label: 'View focus',
       hint: 'Show a view agent the tools of the view kind it is on, and hide the other kinds\' tools.',
     },
+    toolOutputSpillChars: {
+      label: 'Tool output spill size',
+      hint: 'A tool result longer than this many characters is saved to a workspace file under tool-outputs/, and the model sees its start, its end and the file. 0 turns it off.',
+    },
+    advisorMaxCalls: {
+      label: 'Advisor calls per run',
+      hint: 'How many times one run may consult the agent\'s advisor model, from 0 to 50.',
+    },
+    advisorMaxAnswerChars: {
+      label: 'Advisor answer length',
+      hint: 'The longest advisor answer handed to the agent, in characters, from 200 to 50000.',
+    },
   },
   source: {
     workspace: 'this workspace',

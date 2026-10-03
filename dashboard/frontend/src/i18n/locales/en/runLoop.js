@@ -18,6 +18,9 @@ export default {
   compactionServer: 'Old tool results cleared by the provider (context editing), newest {{keep}} kept',
   injections: 'Steering messages',
   afterStep: 'after step {{step}}',
+  systemMessages: 'Instructions added during the run',
+  toolSpills: 'Tool outputs saved to files',
+  spillChars: '{{chars}} characters',
   loadedTools: 'Loaded tools',
   guardrails: 'Guardrail checks',
   structured: 'Structured output',
@@ -32,5 +35,6 @@ export default {
     guardrail: 'Guardrail judge',
     structured_repair: 'Schema repair',
     outcome_grader: 'Outcome grader',
+    advisor: 'Advisor',
   },
 };

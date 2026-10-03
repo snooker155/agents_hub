@@ -60,6 +60,8 @@ class WidgetCreate(BaseModel):
     accent: str = "navy"
     language: str = "auto"
     limits: Optional[Dict[str, Any]] = None
+    # A stored version of the agent the widget's visitors talk to; None = live.
+    agent_version: Optional[int] = None
 
 
 class WidgetUpdate(BaseModel):
@@ -73,6 +75,8 @@ class WidgetUpdate(BaseModel):
     accent: Optional[str] = None
     language: Optional[str] = None
     limits: Optional[Dict[str, Any]] = None
+    # Sent as null, clears the pin (the update applies only the fields sent).
+    agent_version: Optional[int] = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

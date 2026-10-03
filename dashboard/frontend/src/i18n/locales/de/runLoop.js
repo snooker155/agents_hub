@@ -18,6 +18,9 @@ export default {
   compactionServer: 'Alte Werkzeugergebnisse löscht der Anbieter (Context Editing), die neuesten {{keep}} bleiben',
   injections: 'Steuerungsnachrichten',
   afterStep: 'nach Schritt {{step}}',
+  systemMessages: 'Während des Laufs hinzugefügte Anweisungen',
+  toolSpills: 'In Dateien gespeicherte Werkzeugausgaben',
+  spillChars: '{{chars}} Zeichen',
   loadedTools: 'Geladene Werkzeuge',
   guardrails: 'Guardrail Prüfungen',
   structured: 'Strukturierte Ausgabe',
@@ -32,5 +35,6 @@ export default {
     guardrail: 'Guardrail-Prüfer',
     structured_repair: 'Schema-Reparatur',
     outcome_grader: 'Outcome-Bewerter',
+    advisor: 'Berater',
   },
 };

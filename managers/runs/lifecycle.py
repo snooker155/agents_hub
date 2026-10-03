@@ -179,6 +179,10 @@ def preopen_run(
         )
         if av is not None:
             record["agent_version"] = av
+            # The run was asked for this version (a task, a launch, a chat
+            # turn or a service pinned it), as opposed to landing on it.
+            if agent_version_pin is not None and av == int(agent_version_pin):
+                record["agent_version_pinned"] = True
     _upsert_run(record)
     if link_to_session and session_id:
         try:
@@ -250,7 +254,10 @@ def open_run(
             definition_hash=record.get("definition_hash"), route_experiment=True,
         )
         if av is not None:
-            _update_run(run_id, {"agent_version": av})
+            _update_run(run_id, {"agent_version": av,
+                                 **({"agent_version_pinned": True}
+                                    if agent_version_pin is not None and av == int(agent_version_pin)
+                                    else {})})
     if link_to_session and session_id:
         try:
             from common.session_service import add_run_to_session as _link

@@ -54,6 +54,9 @@ DEFAULTS = {
     "native": True,
     "strict_tools": False,
     "view_focus": True,
+    "tool_output_spill_chars": 20000,
+    "advisor_max_calls": 5,
+    "advisor_max_answer_chars": 4000,
 }
 
 ENV_NAMES = {
@@ -64,6 +67,9 @@ ENV_NAMES = {
     "native": "AGENTS_HUB_LOOP_NATIVE",
     "strict_tools": "AGENTS_HUB_LOOP_STRICT_TOOLS",
     "view_focus": "AGENTS_HUB_LOOP_VIEW_FOCUS",
+    "tool_output_spill_chars": "AGENTS_HUB_LOOP_TOOL_OUTPUT_SPILL_CHARS",
+    "advisor_max_calls": "AGENTS_HUB_LOOP_ADVISOR_MAX_CALLS",
+    "advisor_max_answer_chars": "AGENTS_HUB_LOOP_ADVISOR_MAX_ANSWER_CHARS",
 }
 
 

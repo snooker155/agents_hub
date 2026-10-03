@@ -596,6 +596,7 @@ def _extract_chat_message_runs(log_text: str) -> list:
                         tools[j]["output"] = me.group("output")
                         tools[j]["running"] = False
                         break
+        _attach_tool_verdicts(tools, body)
         thinking = []
         reasoning = []
         for ln in body.splitlines():
@@ -697,6 +698,40 @@ def _related_runs_for_session(run: dict) -> list:
     return rel
 
 
+_TOOL_CALL_VERDICT_RE = re.compile(
+    r"^\[tool_call\].*?\bstep=(?P<step>\d+)\b.*?\bpermission=(?P<perm>[a-z_]+)\s+reason_code=(?P<code>[a-z_]+)")
+
+
+def _attach_tool_verdicts(tools: list, log_text: str = "", stored_calls: Optional[list] = None) -> list:
+    """Give each tool call its ``evaluated_permission`` and ``reason_code``.
+
+    They come from the ``[tool_call]`` markers in the log (one per finished
+    call, keyed by step) and, for a run whose log lacks them, from the stored
+    process payload's ``tool_calls`` (by step, else by position). A call
+    neither source knows keeps no fields; the UI then shows no badge.
+    """
+    by_step: dict = {}
+    for line in (log_text or "").splitlines():
+        m = _TOOL_CALL_VERDICT_RE.match(line.strip())
+        if m:
+            by_step[int(m.group("step"))] = {"evaluated_permission": m.group("perm"),
+                                             "reason_code": m.group("code")}
+    stored = [c for c in (stored_calls or []) if isinstance(c, dict)]
+    stored_by_step = {c.get("step"): c for c in stored if c.get("step") is not None}
+    for i, tool in enumerate(tools or []):
+        if not isinstance(tool, dict) or tool.get("evaluated_permission"):
+            continue
+        verdict = by_step.get(tool.get("step")) if tool.get("step") is not None else None
+        if verdict is None:
+            src = stored_by_step.get(tool.get("step")) or (stored[i] if i < len(stored) else None)
+            if src and src.get("evaluated_permission") and src.get("tool") == tool.get("tool"):
+                verdict = {"evaluated_permission": src.get("evaluated_permission"),
+                           "reason_code": src.get("reason_code") or ""}
+        if verdict:
+            tool.update(verdict)
+    return tools
+
+
 def _extract_tools_from_progress(run: dict) -> list:
     ws = run.get("workspace")
     if not ws:
@@ -759,7 +794,7 @@ def _extract_tools_from_log(log_text: str) -> list:
                     steps[i]["output"] = m_stream_end.group("output").strip()
                     steps[i]["running"] = False
                     break
-    return steps
+    return _attach_tool_verdicts(steps, log_text)
 
 
 def _build_thinking_trace(run: dict, tools: list, log_text: str, messages: list) -> list:

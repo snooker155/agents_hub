@@ -12,7 +12,8 @@ export default function MemoryTab() {
   const {
     addExtraPool, agent, connectedPool, episodicEffective, episodicMode, episodicSaving,
     fetchData, handleEraseMemory, handleUpdateMemory, id, isUpdatingMemory, loadingPool,
-    markMemoryDraftDirty, memoryData, memoryPools, memoryType, removePool, selectedTools,
+    markMemoryDraftDirty, memoryData, memoryPools, memoryReadOnly, toggleReadOnly, memoryType,
+    removePool, selectedTools,
     selectedWorkspace, setConnectedPool, setEpisodicEffective, setEpisodicMode,
     setEpisodicSaving, setMemoryData, setMemoryType, setPrimaryPool, setSelectedTools,
     setPersonalMemory, setToolsSaving, sharedMemories, t, toast,
@@ -75,7 +76,18 @@ export default function MemoryTab() {
                         />
                       )}
                       {primary && (
-                        <p className="text-xs text-gray-400 mt-1 truncate">ID: {primary}</p>
+                        <>
+                          <p className="text-xs text-gray-400 mt-1 truncate">ID: {primary}</p>
+                          <label className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-600 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={memoryReadOnly.has(primary)}
+                              onChange={() => toggleReadOnly(primary)}
+                              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            {t('agentDetails.poolReadOnly')}
+                          </label>
+                        </>
                       )}
                     </div>
 
@@ -89,6 +101,15 @@ export default function MemoryTab() {
                               <span className="text-sm text-gray-700 truncate flex-1" title={pid}>
                                 {poolNameById[pid] || pid}
                               </span>
+                              <label className="flex items-center gap-1 text-xs text-gray-500 shrink-0 cursor-pointer" title={t('agentDetails.poolReadOnlyHint')}>
+                                <input
+                                  type="checkbox"
+                                  checked={memoryReadOnly.has(pid)}
+                                  onChange={() => toggleReadOnly(pid)}
+                                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                {t('agentDetails.readOnlyShort')}
+                              </label>
                               <button type="button" onClick={() => setPrimaryPool(pid)}
                                 className="text-xs text-indigo-600 hover:text-indigo-800 shrink-0">
                                 {t('agentDetails.makePrimary')}

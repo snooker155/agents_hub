@@ -339,6 +339,11 @@ class AgentInstructionsUpdate(BaseModel):
     instructions: Optional[str] = None
     capabilities: Optional[str] = None
     usage: Optional[str] = None
+    # Optimistic concurrency (agents/revision.py): the stored version number
+    # or the definition hash this edit was made against. A definition that
+    # moved since is a 409 (checked by AgentRevisionMiddleware before this
+    # route runs; the If-Match header does the same on every agent write).
+    expected_version: Optional[Union[int, str]] = None
 
 
 @router.put("/{agent_id}/definition")
@@ -706,18 +711,30 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
 
     memory_data = data.memory_data
     if data.memory_type == "shared":
-        # Accept a single pool id or a list (primary first); normalize to a
-        # deduped list, collapsed back to a plain string for a single pool so
-        # legacy single-pool records keep their shape.
+        # Accept a single pool id, a list (primary first), or an entry shaped
+        # {"id": pool_id, "read_only": true} marking that one binding read
+        # only (agents.registry.memory_pool_read_only_ids); normalize to a
+        # deduped list, collapsed back to a plain id for a single, writable
+        # pool so legacy single-pool records keep their shape.
         raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
         pools = []
+        seen_ids = set()
         for p in raw:
-            pid = str(p or "").strip()
-            if pid and pid not in pools:
+            if isinstance(p, dict):
+                pid = str(p.get("id") or "").strip()
+                if not pid or pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                pools.append({"id": pid, "read_only": True} if p.get("read_only") else pid)
+            else:
+                pid = str(p or "").strip()
+                if not pid or pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
                 pools.append(pid)
         if not pools:
             raise HTTPException(status_code=400, detail="At least one memory pool id is required for shared memory")
-        memory_data = pools[0] if len(pools) == 1 else pools
+        memory_data = pools[0] if len(pools) == 1 and not isinstance(pools[0], dict) else pools
 
     ws = (data.workspace or "default").strip() or "default"
     if ws == home_workspace(spec):

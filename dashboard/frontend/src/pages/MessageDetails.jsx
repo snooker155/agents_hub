@@ -7,6 +7,7 @@ import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
 import AgentVersion from '../components/run/AgentVersion';
+import RunOverrides from '../components/run/RunOverrides';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
@@ -477,6 +478,10 @@ export default function MessageDetails() {
       {/* What the agent loop did beyond its tool trail: the model that answered, compactions,
           steering messages, guardrail checks (components/run/RunLoopPanel). */}
       <RunLoopPanel run={message} onChanged={load} showVersion={false} />
+
+      {/* What this run was asked to build differently from its agent
+          (run.overrides: model, instructions, tools, skills, MCP, policy, schema). */}
+      <RunOverrides run={message} />
 
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">

@@ -1,0 +1,28 @@
+export default {
+  title: 'Memory consolidation',
+  hint: 'Folds this pool and a few of its recent sessions into a new pool: merged duplicates, outdated facts replaced, insights pulled out. The source pool is never changed.',
+  sessionsLabel: 'recent sessions',
+  runNow: 'Run now',
+  none: 'No consolidation has run yet.',
+  status: {
+    queued: 'Queued',
+    running: 'Running',
+    done: 'Done',
+    failed: 'Failed',
+    discarded: 'Discarded',
+  },
+  blocks: 'Blocks',
+  notes: 'Notes',
+  slots: 'Structured slots',
+  noChanges: 'The proposal did not change anything.',
+  pickAgent: 'Pick an agent to switch…',
+  switchBinding: 'Switch binding',
+  discard: 'Discard',
+  applied: 'The agent now points at the consolidated pool.',
+  errors: {
+    load: 'Could not load the consolidation history',
+    start: 'Could not start the consolidation',
+    apply: 'Could not switch the binding',
+    discard: 'Could not discard the result',
+  },
+};

@@ -44,6 +44,32 @@ class AssignError(Exception):
 _ALWAYS_ALLOWED = ("orchestrator", "decomposer")
 
 
+def validate_launch_params(agent_id: str, params: Optional[Dict[str, Any]]) -> None:
+    """Check ``params["agent_version"]`` and ``params["overrides"]`` (with the
+    older ``tool_policy``/``output_schema`` aliases) for a run of ``agent_id``.
+
+    Raises :class:`AssignError`: 400 for a version the agent does not have or
+    an invalid overrides object, 409 for a tool set the capability guard refuses.
+    """
+    params = params or {}
+    if params.get("agent_version") is not None:
+        try:
+            tasks_service.validate_agent_version(agent_id, int(params["agent_version"]))
+        except (TypeError, ValueError) as exc:
+            raise AssignError(str(exc), status=400) from exc
+    if any(params.get(k) not in (None, "", {}) for k in ("overrides", "tool_policy", "output_schema")):
+        from agents import run_overrides
+        from agents.capability_guard import CapabilityViolation
+        try:
+            run_overrides.validate_for_agent(
+                agent_id, params.get("overrides"),
+                tool_policy=params.get("tool_policy"), output_schema=params.get("output_schema"))
+        except CapabilityViolation as exc:
+            raise AssignError(str(exc), status=409) from exc
+        except run_overrides.OverrideError as exc:
+            raise AssignError(str(exc), status=400) from exc
+
+
 def assign_agent_to_task(
     task_id: UUID,
     agent_id: str,
@@ -99,6 +125,12 @@ def assign_agent_to_task(
                 "container": True,
                 "subtasks_promoted": promoted,
             }
+
+    # A one-off version pin and per-run overrides in the launch params
+    # (agents/agent_launcher.py reads both): checked here so a bad pin, an
+    # unknown override key or a tool set the capability guard refuses is a
+    # 400/409 to the caller, not a run that fails after it was started.
+    validate_launch_params(agent_id, params)
 
     ws_name = str(getattr(t, "workspace", "") or "default")
     execution_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")

@@ -60,7 +60,7 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     Returns the (possibly mutated) definition dict.
     """
     from agents.registry import get_agent as _reg_get
-    from memory.binding import effective_memory_pools
+    from memory.binding import effective_memory_pools, effective_read_only_pools
     spec = _reg_get(agent_id)
     if not spec:
         return definition
@@ -90,6 +90,13 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     # The personal pool next to the agent's own is the one extra pool that
     # takes writes, on request (remember/forget with personal=true).
     personal_extra = str(personal_pool) if personal_pool and str(personal_pool) in extra_pools else None
+    # A binding read only (agents.registry.memory_pool_read_only_ids) for an
+    # ordinary run, not the Memory page's pool_override pin (memory.binding
+    # .effective_read_only_pools' own docstring explains why that one is
+    # excluded). The write tools stay attached either way; this only changes
+    # what the prompt tells the agent to expect from them.
+    ro_ids = effective_read_only_pools(spec, workspace) if not pool_override else frozenset()
+    primary_read_only = pool_id in ro_ids
 
     # Extraction agents declare the extraction tools explicitly: they get the
     # dedicated two-step pipeline (extract_from_text → save_extraction). A PURE
@@ -131,14 +138,19 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     has_rag = is_rag_configured()
 
     _write_list = "`remember`, `record_episode`, `link`" if episodic_write else "`remember`, `link`"
+    _ro_note = (
+        f" This pool is attached read only in this run: {_write_list} will refuse on it"
+        + (", except the user's personal memory, which `remember` and `forget` still reach with "
+           "`personal=true`." if personal_extra else ".")
+    ) if primary_read_only else ""
     intro = (
-        "You have access to a shared memory pool. Use these tools in order:"
+        f"You have access to a shared memory pool.{_ro_note} Use these tools in order:"
         if not extra_pools else
         f"You have access to {len(pools)} shared memory pools. The first one is the PRIMARY pool — "
-        f"all writes ({_write_list}) go there. The other pools are read-only "
+        f"all writes ({_write_list}) go there." + _ro_note + " The other pools are read-only "
         "context that `recall`, `recall_episodes`, and `traverse` also search"
         + (", except the user's personal memory, which `remember` and `forget` reach with `personal=true`"
-           if personal_extra else "")
+           if personal_extra and not primary_read_only else "")
         + ". Use these tools in order:"
     )
     lines = [
@@ -192,7 +204,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                 _pname = _pmem.name if _pmem else pid
             except Exception:
                 _pname = pid
-            role = ("PRIMARY — writes go here" if is_primary
+            role = ("PRIMARY, attached read only: recall only, writes refuse" if is_primary and primary_read_only
+                    else "PRIMARY — writes go here" if is_primary
                     else "the user's personal memory — write with personal=true" if pid == personal_extra
                     else "read-only context")
             lines.append(f"\n### Pool: {_pname} ({role})")

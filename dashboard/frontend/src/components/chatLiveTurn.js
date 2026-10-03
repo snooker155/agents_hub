@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getChatLive } from '../api';
 import { useChannel, useStream } from './stream';
+import { policyVerdict } from './policyVerdict';
 
 /**
  * The turn a conversation is in the middle of, as seen by someone who did not
@@ -135,8 +136,8 @@ export function reduceLiveTurn(turn, event) {
       for (let i = tools.length - 1; i >= 0; i -= 1) {
         if (tools[i].step === event.step || tools[i].tool === event.tool) {
           tools[i] = type === 'tool_end'
-            ? { ...tools[i], output: event.output ?? '' }
-            : { ...tools[i], error: event.error || '' };
+            ? { ...tools[i], output: event.output ?? '', ...policyVerdict(event) }
+            : { ...tools[i], error: event.error || '', ...policyVerdict(event) };
           break;
         }
       }

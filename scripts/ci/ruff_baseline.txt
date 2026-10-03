@@ -292,7 +292,7 @@ tools/shell.py:S110 3
 tools/task_management.py:BLE001 14
 tools/task_management.py:S110 1
 tools/views.py:BLE001 4
-tools/web.py:BLE001 11
+tools/web.py:BLE001 10
 tools/web.py:S110 1
 tools/web_log.py:BLE001 8
 tools/web_log.py:S110 2

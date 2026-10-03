@@ -68,6 +68,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {caption && (
             <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
+              {msg.steer.mode === 'system' && <span className="font-semibold mr-1">{t('steering.systemTag')}</span>}
               {t(caption.key, caption.values)}
             </span>
           )}

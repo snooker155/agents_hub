@@ -76,7 +76,29 @@ def base_subprocess_env(
                                             extra_names=extra_secret_names))
         else:
             env.update(_secrets.env_for_flow(workspace_name, flow_id, user_id))
+        route_secrets(env, workspace=workspace_name)
     return env
+
+
+def route_secrets(env: Dict[str, str], *, execution_mode: Optional[str] = None,
+                  workspace: Optional[str] = None) -> Dict[str, str]:
+    """Send a run that holds host-bound secret placeholders through the egress
+    proxy, with the hub CA in its trust store (environments/secret_egress.py).
+
+    A no-op for a run without placeholders. Launchers call it once more after
+    layering an environment's own proxy URL on top, so the secret hosts land
+    on the token the run actually uses. A routing failure is logged, never
+    raised: the run then holds placeholders nobody swaps, which fails its
+    requests but leaks nothing.
+    """
+    try:
+        from environments.secret_egress import route_env
+        return route_env(env, execution_mode=execution_mode, workspace=workspace)
+    except Exception:  # noqa: BLE001 - see docstring
+        import logging
+        logging.getLogger(__name__).error("secret placeholders could not be routed through the "
+                                          "egress proxy", exc_info=True)
+        return env
 
 
 def add_run_env(

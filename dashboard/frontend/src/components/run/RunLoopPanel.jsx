@@ -1,7 +1,8 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   History, Bot, Layers, MessageSquareText, Wrench,
-  ShieldCheck, ShieldAlert, FileJson, KeySquare, Cpu,
+  ShieldCheck, ShieldAlert, FileJson, KeySquare, Cpu, ScrollText, FileOutput,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import AgentVersion from './AgentVersion';
@@ -91,6 +92,39 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
               <li key={i} className="text-sm text-gray-700">
                 <span className="text-xs text-gray-400 mr-2">{t('runLoop.afterStep', { step: inj.after_step })}</span>
                 {inj.text}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {/* Operator instructions added mid-run (steering mode `system`),
+          appended to the system prompt from the step they arrived at. */}
+      {hasLoop && loop.system_messages?.length > 0 && (
+        <Section icon={ScrollText} title={t('runLoop.systemMessages')}>
+          <ul className="space-y-1">
+            {loop.system_messages.map((inj, i) => (
+              <li key={i} className="text-sm text-gray-700">
+                <span className="text-xs text-gray-400 mr-2">{t('runLoop.afterStep', { step: inj.after_step })}</span>
+                {inj.text}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {/* Tool results too long for the context, saved to a workspace file
+          (agents/tool_spill.py); the model saw the head and the tail. */}
+      {hasLoop && loop.tool_spills?.length > 0 && (
+        <Section icon={FileOutput} title={t('runLoop.toolSpills')}>
+          <ul className="space-y-1">
+            {loop.tool_spills.map((sp, i) => (
+              <li key={i} className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-xs">{sp.tool}</span>
+                {sp.file_id
+                  ? <Link to={`/files?file=${encodeURIComponent(sp.file_id)}`} className="font-mono text-xs text-indigo-600 hover:underline">{sp.path}</Link>
+                  : <span className="font-mono text-xs text-gray-500">{sp.path}</span>}
+                <span className="text-xs text-gray-400">{t('runLoop.spillChars', { chars: sp.chars ?? 0 })}</span>
               </li>
             ))}
           </ul>

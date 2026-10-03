@@ -50,7 +50,8 @@ def test_get_defaults(client, agent):
     resp = client.get(f"/api/agents/{agent.id}/loop-settings")
     assert resp.status_code == 200
     assert resp.json() == {
-        "fallback_models": [], "output_schema": None, "tool_search": None, "compaction": None,
+        "fallback_models": [], "advisor_model": None, "output_schema": None, "tool_search": None,
+        "compaction": None,
     }
 
 

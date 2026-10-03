@@ -61,11 +61,47 @@ def agent_get(agent_id: str = typer.Argument(..., help="Agent ID.")):
     ))
 
 
+def read_overrides(overrides: Optional[str], overrides_file: Optional[str]) -> Optional[dict]:
+    """The per-run overrides object of ``--overrides`` / ``--overrides-file``
+    (agents/run_overrides.py), checked here so a typo fails before the call.
+    ``--overrides-file -`` reads standard input."""
+    import json
+    import sys
+    from pathlib import Path
+
+    from agents import run_overrides
+
+    if overrides and overrides_file:
+        raise typer.BadParameter("give --overrides or --overrides-file, not both")
+    raw: Optional[str] = overrides
+    if overrides_file:
+        try:
+            raw = sys.stdin.read() if overrides_file == "-" else Path(overrides_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise typer.BadParameter(f"cannot read {overrides_file}: {exc}") from exc
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        run_overrides.normalize(data)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    return data
+
+
 @agent_app.command("run")
 def agent_run(
     agent_id: str = typer.Argument(..., help="Agent ID."),
     instruction: str = typer.Argument(..., help="Instruction / prompt for the agent."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    agent_version: Optional[int] = typer.Option(
+        None, "--agent-version", min=1,
+        help="Run this stored version of the agent instead of the live definition."),
+    overrides: Optional[str] = typer.Option(
+        None, "--overrides",
+        help='Per-run overrides as JSON, e.g. \'{"model": "gpt-4o-mini", "tools": {"remove": ["run_shell"]}}\'.'),
+    overrides_file: Optional[str] = typer.Option(
+        None, "--overrides-file", help="Read the per-run overrides from this JSON file (- for stdin)."),
 ):
     """Run an agent with a one-shot instruction."""
     # No node is started: /api/chat/message builds the agent and runs it inside
@@ -79,6 +115,11 @@ def agent_run(
         # rather than web-chat runs in Sessions and Messages.
         "source": "cli",
     }
+    if agent_version is not None:
+        body["agent_version"] = agent_version
+    run_overrides = read_overrides(overrides, overrides_file)
+    if run_overrides:
+        body["overrides"] = run_overrides
     if workspace:
         body["workspace"] = workspace
     project = _active_project()

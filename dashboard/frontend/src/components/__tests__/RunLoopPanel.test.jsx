@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const versionsApi = vi.hoisted(() => ({
   getRunAgentVersion: vi.fn(),
@@ -124,5 +125,23 @@ describe('RunLoopPanel', () => {
                             valid: true, errors: [] } },
     }} />);
     expect(screen.getByText(/"attempts":2/)).toBeInTheDocument();
+  });
+  it('lists instructions added mid-run and links tool outputs saved to files', () => {
+    render(<MemoryRouter><RunLoopPanel run={{
+      run_id: 'r1',
+      loop: {
+        system_messages: [{ after_step: 2, text: 'never delete files', mode: 'system' }],
+        tool_spills: [
+          { tool: 'web_fetch', path: 'tool-outputs/r1/001-web_fetch.txt', file_id: 'file_0123456789abcdef', chars: 76000 },
+          { tool: 'run_shell', path: 'tool-outputs/r1/002-run_shell.txt', file_id: null, chars: 30000 },
+        ],
+      },
+    }} /></MemoryRouter>);
+    expect(screen.getByText('runLoop.systemMessages')).toBeInTheDocument();
+    expect(screen.getByText('never delete files')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'tool-outputs/r1/001-web_fetch.txt' });
+    expect(link).toHaveAttribute('href', '/files?file=file_0123456789abcdef');
+    // Not registered yet: the path, without a link.
+    expect(screen.getByText('tool-outputs/r1/002-run_shell.txt').tagName).toBe('SPAN');
   });
 });

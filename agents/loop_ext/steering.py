@@ -17,6 +17,17 @@ That keeps a valid sequence for every provider: the tool results still follow
 the assistant message that asked for them, and a user message after tool
 results is allowed by OpenAI and merged into the same user turn by Anthropic.
 
+A message in mode ``system`` (an operator's addition to the instructions, see
+common/steering.py) is claimed the same way but never enters the conversation.
+It is kept on ``LoopState.system_messages`` and appended to the prompt's
+leading system message on every later model call (:meth:`SteeringExtension.
+shape_prompt`). The append form is the one every provider in providers/
+accepts: Anthropic and Gemini take a single system instruction ahead of the
+conversation and refuse (or silently merge) a system message in the middle of
+it, while OpenAI and the local servers take either. A system message whose
+content is a block list (Anthropic's cached prefix) gets one more text block
+after the cached ones, so the cache prefix stays as it was.
+
 Where the claim goes depends on where the run executes. A run launched as its
 own process (``runtime/agent_run.py`` publishes ``AGENT_RUN_ID``) claims
 through ``common.state_transport``, over HTTP when its container cannot open
@@ -56,6 +67,15 @@ _STEER_FOOTER = (
 #: unreachable backend must not slow every later model call down.
 MAX_TRANSPORT_FAILURES = 3
 
+#: Heading of the section the system-mode messages are appended under.
+SYSTEM_HEADER = "## Operator instructions added during this run"
+
+_SYSTEM_INTRO = (
+    "The operator running you added the following while you worked. They carry "
+    "the same authority as the rest of these instructions and apply from now on; "
+    "where they conflict with something above, they win."
+)
+
 _OWNERS: Dict[str, "weakref.ref[LoopState]"] = {}
 _OWNERS_LOCK = threading.Lock()
 
@@ -68,6 +88,38 @@ def format_injection(text: str) -> str:
 def is_steering_text(text: Any) -> bool:
     """Whether ``text`` is an injected steering message (see :func:`format_injection`)."""
     return isinstance(text, str) and text.lstrip().startswith(STEER_HEADER)
+
+
+def format_system_addition(items: List[Dict[str, Any]]) -> str:
+    """The section appended to the system prompt for the run's system-mode
+    messages, oldest first."""
+    lines = [SYSTEM_HEADER, "", _SYSTEM_INTRO, ""]
+    for n, item in enumerate(items, 1):
+        lines.append(f"{n}. {str(item.get('text') or '').strip()}")
+    return "\n".join(lines).strip()
+
+
+def append_system_addition(messages: List[Any], items: List[Dict[str, Any]]) -> List[Any]:
+    """``messages`` with the system-mode section appended to the leading
+    system message (a new one in front when there is none). A block-list
+    content keeps its blocks, cache markers included, and gets one more."""
+    if not items:
+        return messages
+    from langchain_core.messages import SystemMessage
+    addition = format_system_addition(items)
+    out = list(messages)
+    for idx, msg in enumerate(out):
+        if not isinstance(msg, SystemMessage):
+            continue
+        content = msg.content
+        if isinstance(content, list):
+            new_content: Any = [*content, {"type": "text", "text": addition}]
+        else:
+            base = str(content or "")
+            new_content = f"{base}\n\n---\n\n{addition}" if base.strip() else addition
+        out[idx] = msg.model_copy(update={"content": new_content})
+        return out
+    return [SystemMessage(content=addition), *out]
 
 
 def injection_message(injection: Dict[str, Any]) -> Any:
@@ -153,8 +205,11 @@ def _emit_delivered(state: LoopState, items: List[Dict[str, Any]]) -> None:
         if emitter is None or stream_sink.current_depth() != 0:
             return
         for inj in items:
-            emitter({"type": "steer_delivered", "msg_id": inj.get("msg_id"),
-                     "after_step": inj.get("after_step"), "run_id": state.run_id})
+            event = {"type": "steer_delivered", "msg_id": inj.get("msg_id"),
+                     "after_step": inj.get("after_step"), "run_id": state.run_id}
+            if _is_system(inj):
+                event["mode"] = "system"
+            emitter(event)
     except Exception:  # noqa: BLE001 - the notice is cosmetic, the message is already in the context
         log.debug("steering: delivered notice failed for %s", state.run_id, exc_info=True)
 
@@ -167,6 +222,20 @@ def _as_injection(msg: Dict[str, Any], after_step: int) -> Dict[str, Any]:
         "mode": str(msg.get("mode") or "inject"),
         "at": str(msg.get("delivered_at") or "") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+
+
+def _is_system(item: Dict[str, Any]) -> bool:
+    return str(item.get("mode") or "") == "system"
+
+
+def _known_ids(state: LoopState) -> set:
+    return {i.get("msg_id") for i in [*state.injections, *state.system_messages]}
+
+
+def _record(state: LoopState, item: Dict[str, Any]) -> None:
+    """Keep a claimed message where its mode puts it: the conversation for
+    an inject, the system prompt for a system message."""
+    (state.system_messages if _is_system(item) else state.injections).append(item)
 
 
 class SteeringExtension(LoopExtension):
@@ -184,11 +253,11 @@ class SteeringExtension(LoopExtension):
             earlier = transport.delivered_steering(state.run_id) or []
         except Exception:  # noqa: BLE001 - nothing restored is the pre-steering behaviour
             earlier = []
-        known = {i.get("msg_id") for i in state.injections}
+        known = _known_ids(state)
         for msg in earlier:
             if msg.get("msg_id") in known:
                 continue
-            state.injections.append(_as_injection(msg, min(int(msg.get("delivered_step") or 0), step)))
+            _record(state, _as_injection(msg, min(int(msg.get("delivered_step") or 0), step)))
 
     def _claim(self, state: LoopState, step: int) -> None:
         failures = int(state.scratch.get("steering_failures") or 0)
@@ -207,13 +276,13 @@ class SteeringExtension(LoopExtension):
         state.scratch["steering_failures"] = 0
         if not claimed:
             return
-        known = {i.get("msg_id") for i in state.injections}
+        known = _known_ids(state)
         fresh = []
         for msg in claimed:
             if msg.get("msg_id") in known:
                 continue
             inj = _as_injection(msg, step)
-            state.injections.append(inj)
+            _record(state, inj)
             fresh.append(inj)
         if fresh:
             log.info("steering: %d message(s) delivered to run %s at step %d",
@@ -229,6 +298,9 @@ class SteeringExtension(LoopExtension):
             return scratchpad
         return place_injections(scratchpad, steps, state.injections)
 
+    def shape_prompt(self, state: LoopState, messages: List[Any]) -> List[Any]:
+        return append_system_addition(messages, state.system_messages)
+
 
 def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
     """Messages that arrived while the model wrote its final answer.
@@ -237,7 +309,10 @@ def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
     the last call would never be seen. ``StandardAgent`` asks here once the
     executor has answered; the messages are marked delivered at ``step`` and
     returned as injections (not yet on ``state.injections``: the caller runs
-    one more pass with them and records them itself).
+    one more pass with them and records them itself). A system-mode message
+    is recorded on ``state.system_messages`` here already, so the extra pass
+    reads it in its system prompt; it is returned too, marked by its mode, so
+    the caller still makes that pass.
     """
     if not state.run_id or not _owns(state):
         return []
@@ -246,8 +321,11 @@ def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
     except Exception:  # noqa: BLE001 - no follow-up pass is the old behaviour
         log.debug("steering: after-answer claim failed for %s", state.run_id, exc_info=True)
         return []
-    known = {i.get("msg_id") for i in state.injections}
+    known = _known_ids(state)
     fresh = [_as_injection(m, step) for m in (claimed or []) if m.get("msg_id") not in known]
+    for item in fresh:
+        if _is_system(item):
+            state.system_messages.append(item)
     if fresh:
         _emit_delivered(state, fresh)
     return fresh
@@ -267,7 +345,10 @@ __all__ = [
     "MAX_TRANSPORT_FAILURES",
     "claim_after_answer",
     "STEER_HEADER",
+    "SYSTEM_HEADER",
     "SteeringExtension",
+    "append_system_addition",
+    "format_system_addition",
     "extension_for",
     "format_injection",
     "injection_message",

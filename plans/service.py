@@ -205,6 +205,33 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
     return out
 
 
+def _validate_consolidate(kind: JobKind, workspace: Optional[str],
+                          consolidate_pool_id: Optional[str],
+                          consolidate_session_limit: Optional[int]) -> Dict[str, Any]:
+    """The memory_consolidate job's own resource: the pool it consolidates.
+
+    Unrelated to ``_validate_resources`` (an agent_task's deployment
+    resources): this job kind creates no Task and binds no agent, it just
+    points ``memory.consolidation.start`` at one pool.
+    """
+    from memory import consolidation as _mc
+    pool_id = str(consolidate_pool_id or "").strip() or None
+    limit = int(consolidate_session_limit or _mc.DEFAULT_SESSION_LIMIT)
+    limit = max(1, min(limit, _mc.MAX_SESSION_LIMIT))
+    if kind != JobKind.memory_consolidate:
+        if pool_id:
+            raise ValueError("consolidate_pool_id applies to memory_consolidate jobs only")
+        return {"consolidate_pool_id": None, "consolidate_session_limit": limit}
+    if not pool_id:
+        raise ValueError("memory_consolidate requires consolidate_pool_id")
+    from memory.store import MemoryStore
+    pool = MemoryStore().get(pool_id)
+    ws = (workspace or "").strip() or None
+    if pool is None or (pool.workspace and ws and pool.workspace != ws):
+        raise ValueError(f"memory pool '{pool_id}' does not exist in workspace '{ws or 'default'}'")
+    return {"consolidate_pool_id": pool_id, "consolidate_session_limit": limit}
+
+
 def create_job(
     *,
     kind: JobKind,
@@ -231,6 +258,8 @@ def create_job(
     secrets: Optional[List[str]] = None,
     memory_pool_ids: Optional[List[str]] = None,
     memory_access: Optional[str] = None,
+    consolidate_pool_id: Optional[str] = None,
+    consolidate_session_limit: Optional[int] = None,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
@@ -239,6 +268,7 @@ def create_job(
     resources = _validate_resources(kind, workspace, agent_id, project_id=project_id, file_ids=file_ids,
                                     secrets=secrets, memory_pool_ids=memory_pool_ids,
                                     memory_access=memory_access)
+    consolidate = _validate_consolidate(kind, workspace, consolidate_pool_id, consolidate_session_limit)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -260,6 +290,7 @@ def create_job(
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
         **resources,
+        **consolidate,
     )
     saved = plan_store.add(job)
     _notify_plan_changed()
@@ -311,6 +342,14 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
             merged = {k: fields.get(k, getattr(existing, k)) for k in _RESOURCE_FIELDS}
             agent_id = fields.get("agent_id", existing.agent_id)
             fields.update(_validate_resources(existing.kind, existing.workspace, agent_id, **merged))
+    if "consolidate_pool_id" in fields or "consolidate_session_limit" in fields:
+        existing = plan_store.get(job_id)
+        if existing is not None:
+            fields.update(_validate_consolidate(
+                existing.kind, existing.workspace,
+                fields.get("consolidate_pool_id", existing.consolidate_pool_id),
+                fields.get("consolidate_session_limit", existing.consolidate_session_limit),
+            ))
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -833,6 +872,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                     skip_summary = fired.get("summary")
                     if fired.get("resume_at") is not None:
                         resume_at = _ensure_aware(fired["resume_at"])
+            elif job.kind == JobKind.memory_consolidate:
+                result["consolidation_id"] = _fire_memory_consolidate(job, trigger=trigger)
             else:
                 result["task_id"] = _fire_agent_task(job)
         except Exception as e:
@@ -848,6 +889,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
     }
     if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop, JobKind.heartbeat) and result.get("task_id"):
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
+    if job.kind == JobKind.memory_consolidate and result.get("consolidation_id"):
+        fields["created_consolidation_ids"] = [*job.created_consolidation_ids, result["consolidation_id"]]
 
     # -------------------- consecutive errors + auto pause --------------------
     # A one-off job (recurrence == none) is already terminal below (failed on
@@ -1127,6 +1170,24 @@ def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
         channels=job.channels,
     )
     return {"loop_run_id": run.loop_run_id, "task_id": run.task_id}
+
+
+def _fire_memory_consolidate(job: ScheduledJob, *, trigger: str) -> str:
+    """Start a consolidation of the job's pool. Returns the consolidation id.
+
+    Unlike every other kind this creates no Task: ``memory.consolidation.start``
+    queues its own row and runs it in a background thread, which this call
+    only has to kick off and name on the job's journal (``created_consolidation_ids``).
+    """
+    if not job.consolidate_pool_id:
+        raise ValueError("memory_consolidate job has no consolidate_pool_id")
+    from memory import consolidation as _mc
+    row = _mc.start(
+        job.consolidate_pool_id, session_limit=job.consolidate_session_limit,
+        workspace=job.workspace, trigger=trigger,
+        actor_kind="schedule", actor_id=str(job.id),
+    )
+    return str(row["id"])
 
 
 def claim_due_jobs(

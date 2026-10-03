@@ -24,7 +24,7 @@ MESSAGE_PREFIX = "wms_"
 
 _WIDGET_COLUMNS = ("widget_id", "workspace", "name", "agent_id", "owner_id", "public_key",
                    "allowed_origins", "enabled", "title", "greeting", "placeholder", "accent",
-                   "language", "limits", "created_at", "updated_at")
+                   "language", "limits", "created_at", "updated_at", "agent_version")
 
 
 def now_iso() -> str:
@@ -63,7 +63,17 @@ def _widget(row) -> Dict[str, Any]:
         "limits": dict(db.loads(row["limits"], {}) or {}),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        # The agent version the widget pins (migration 0032), None = live.
+        "agent_version": _agent_version(row),
     }
+
+
+def _agent_version(row) -> Optional[int]:
+    try:
+        value = row["agent_version"]
+    except (KeyError, IndexError):  # a row read before migration 0032 ran
+        return None
+    return int(value) if value is not None else None
 
 
 def _widget_params(record: Dict[str, Any]) -> tuple:

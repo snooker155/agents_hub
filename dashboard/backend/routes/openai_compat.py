@@ -33,6 +33,10 @@ run shows on the Messages page. The workspace comes from the
 ``X-Agents-Hub-Workspace`` header, else the key's one workspace, else the
 agent's owner workspace, else ``default``; the caller needs the editor role
 there (``multi`` mode). Client ``tools`` are refused: an agent runs its own.
+Two hub extensions of the body pin and shape that one run: ``agent_version``
+(a stored version of the agent, docs/agent-versions.md) and ``overrides``
+(model, system, tools, skills, mcp, tool_policy, output_schema,
+agents/run_overrides.py); both are echoed under ``agents_hub``.
 """
 from __future__ import annotations
 
@@ -609,6 +613,40 @@ def _agent_served(spec: Any, run_id: Optional[str]) -> Dict[str, Any]:
             "model": run.get("model") or spec.id}
 
 
+def _agent_run_options(spec: Any, body: Dict[str, Any]) -> Tuple[Optional[int], Dict[str, Any]]:
+    """``(agent_version, overrides)`` of an agent completion, both hub
+    extensions of the OpenAI body (an SDK sends them through ``extra_body``).
+
+    ``agent_version`` builds the run from that stored version of the agent
+    (agents/versions.py) instead of the live definition; ``overrides`` is the
+    per-run overrides object (agents/run_overrides.py). An unknown version is
+    a 404, an invalid object a 400, a tool set the capability guard refuses
+    a 409, all in the OpenAI error shape.
+    """
+    version = body.get("agent_version")
+    if version is not None:
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise _BadRequest("agent_version must be an integer", param="agent_version")
+        from tasks.service import validate_agent_version
+        try:
+            validate_agent_version(spec.id, version)
+        except ValueError as exc:
+            raise _BadRequest(str(exc), param="agent_version", status=404,
+                              code="agent_version_not_found") from exc
+    overrides: Dict[str, Any] = {}
+    if body.get("overrides") is not None:
+        from agents import run_overrides
+        from agents.capability_guard import CapabilityViolation
+        try:
+            overrides = run_overrides.validate_for_agent(spec.id, body.get("overrides"))
+        except CapabilityViolation as exc:
+            raise _BadRequest(str(exc), param="overrides", status=409,
+                              code="capability_violation") from exc
+        except run_overrides.OverrideError as exc:
+            raise _BadRequest(str(exc), param="overrides", code="invalid_overrides") from exc
+    return version, overrides
+
+
 def _agent_timeout() -> float:
     """A chat turn's timeout, the same the web chat's blocking send uses."""
     chat = float(getattr(settings, "chat_request_timeout", 900) or 900)
@@ -632,12 +670,14 @@ async def _agent_completion(request: Request, body: Dict[str, Any], principal: A
         workspace = _agent_workspace(request, principal, spec)
         message, history = _agent_turn(body.get("messages"),
                                        _json_instruction(body.get("response_format")))
+        agent_version, overrides = _agent_run_options(spec, body)
     except _BadRequest as exc:
         return exc.response()
 
     chat_request = ChatRequest(
         agent_id=spec.id, message=message, workspace=workspace,
-        history=[ChatHistoryMessage(**h) for h in history], source="api")
+        history=[ChatHistoryMessage(**h) for h in history], source="api",
+        agent_version=agent_version, overrides=overrides or None)
     # The run this turn creates carries key_id when the caller presented a
     # personal key, so it counts toward that key's money quota and shows up
     # attributed to it in the accounting report (docs/costs.md "Attribution").
@@ -674,7 +714,9 @@ async def _agent_completion(request: Request, body: Dict[str, Any], principal: A
         account(first, _turn_usage(first, [], prompt_text, ""), "error", detail)
         return _error(status, detail, type_="invalid_request_error" if status < 500 else "api_error")
 
-    extra = {"agents_hub": {"agent_id": spec.id, "workspace": workspace}}
+    extra = {"agents_hub": {"agent_id": spec.id, "workspace": workspace,
+                            **({"agent_version": agent_version} if agent_version is not None else {}),
+                            **({"overrides": overrides} if overrides else {})}}
 
     if stream:
         return StreamingResponse(

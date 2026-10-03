@@ -1,9 +1,11 @@
 """
 Routes: agent_loop_settings (fourth-cycle stage 2, workspace block added later).
 
-``GET/PUT /api/agents/{agent_id}/loop-settings`` reads and writes the four
+``GET/PUT /api/agents/{agent_id}/loop-settings`` reads and writes the
 ``AgentSpec`` fields the Model tab's ``LoopSettingsCard`` edits together:
 ``fallback_models`` (catalog ids, validated against the enabled catalog),
+``advisor_model`` (one catalog id or null, the model ``consult_advisor``
+asks, tools/advisor.py),
 ``output_schema`` (a JSON object jsonschema itself accepts as a schema),
 and the two tri-state loop toggles ``tool_search``/``compaction`` (None/True/
 False). Saved the same way the other per-field routes in routes/agents.py
@@ -40,6 +42,7 @@ router = APIRouter(tags=["agent_loop_settings"])
 
 class LoopSettingsUpdate(BaseModel):
     fallback_models: Optional[List[str]] = None
+    advisor_model: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
     tool_search: Optional[bool] = None
     compaction: Optional[bool] = None
@@ -48,6 +51,7 @@ class LoopSettingsUpdate(BaseModel):
 def _settings_dict(spec: Any) -> Dict[str, Any]:
     return {
         "fallback_models": list(spec.fallback_models or []),
+        "advisor_model": getattr(spec, "advisor_model", None),
         "output_schema": spec.output_schema,
         "tool_search": spec.tool_search,
         "compaction": spec.compaction,
@@ -106,6 +110,9 @@ async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate, request:
     changes: Dict[str, Any] = {}
     if "fallback_models" in data.model_fields_set:
         changes["fallback_models"] = _validate_fallback_models(data.fallback_models or [])
+    if "advisor_model" in data.model_fields_set:
+        advisor = str(data.advisor_model or "").strip()
+        changes["advisor_model"] = _validate_fallback_models([advisor])[0] if advisor else None
     if "output_schema" in data.model_fields_set:
         changes["output_schema"] = _validate_output_schema(data.output_schema)
     if "tool_search" in data.model_fields_set:

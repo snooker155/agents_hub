@@ -18,6 +18,7 @@ import { AgentPageContext } from '../components/agent/context';
 import useDefinitionChatDescriptor from '../components/agent/useDefinitionChatDescriptor';
 import { PLANNING_TOOLS, defaultReasoningSettings } from '../components/agent/constants';
 import AgentModals from '../components/agent/AgentModals';
+import AgentConflictDialog from '../components/agent/AgentConflictDialog';
 import useAgentDocker from '../components/agent/useAgentDocker';
 import useAgentModel from '../components/agent/useAgentModel';
 import useAgentSkills from '../components/agent/useAgentSkills';
@@ -87,6 +88,10 @@ const AgentDetails = () => {
   const [memoryData, setMemoryData] = useState('');
   // Shared memory pools attached to the agent; index 0 is the primary (write) pool.
   const [memoryPools, setMemoryPools] = useState([]);
+  // Pool ids in memoryPools whose binding is read only (agents.registry
+  // memory_pool_read_only_ids): recall still works, remember/forget/
+  // record_episode/link/the block tools refuse on that one pool.
+  const [memoryReadOnly, setMemoryReadOnly] = useState(() => new Set());
   const memoryDraftDirty = useRef(false);
   const markMemoryDraftDirty = useCallback(() => { memoryDraftDirty.current = true; }, []);
   const [isUpdatingMemory, setIsUpdatingMemory] = useState(false);
@@ -248,10 +253,15 @@ const AgentDetails = () => {
         const md = agentResp.data.memory_data;
         setMemoryType(mt);
         if (mt === 'shared') {
-          setMemoryPools(Array.isArray(md) ? md.map(String) : (md ? [String(md)] : []));
+          const raw = Array.isArray(md) ? md : (md ? [md] : []);
+          const ids = raw.map(e => (e && typeof e === 'object') ? String(e.id || '') : String(e)).filter(Boolean);
+          const ro = new Set(raw.filter(e => e && typeof e === 'object' && e.read_only).map(e => String(e.id)));
+          setMemoryPools(ids);
+          setMemoryReadOnly(ro);
           setMemoryData('');
         } else {
           setMemoryPools([]);
+          setMemoryReadOnly(new Set());
           setMemoryData(typeof md === 'string' ? md : JSON.stringify(md || '', null, 2));
         }
       }
@@ -386,8 +396,11 @@ const AgentDetails = () => {
     try {
       let data;
       if (memoryType === 'shared') {
-        // Primary pool first; a single pool is sent as a plain id string.
-        data = memoryPools.length === 1 ? memoryPools[0] : memoryPools;
+        // Primary pool first; a pool marked read only is sent as
+        // {id, read_only: true} instead of a plain id (routes/agents.py
+        // update_agent_memory), everything else as a plain id string.
+        const entries = memoryPools.map(pid => (memoryReadOnly.has(pid) ? { id: pid, read_only: true } : pid));
+        data = (entries.length === 1 && typeof entries[0] !== 'object') ? entries[0] : entries;
       } else {
         data = memoryData;
         try {
@@ -421,6 +434,21 @@ const AgentDetails = () => {
   const removePool = (pid) => {
     memoryDraftDirty.current = true;
     setMemoryPools(prev => prev.filter(p => p !== pid));
+    setMemoryReadOnly(prev => {
+      if (!prev.has(pid)) return prev;
+      const next = new Set(prev);
+      next.delete(pid);
+      return next;
+    });
+  };
+
+  const toggleReadOnly = (pid) => {
+    memoryDraftDirty.current = true;
+    setMemoryReadOnly(prev => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
   };
 
   const handleEraseMemory = async () => {
@@ -754,7 +782,7 @@ const AgentDetails = () => {
     handleSaveWsCapacity, handleToggleDefaultChat, handleToggleShared, handleUpdateMemory,
     sessions, runs, id, isDefaultChat, isUpdatingMemory, liveUpdates, loadingPool, memoryData,
     personalMemory, setPersonalMemory,
-    memoryDraftDirty, memoryPools, memoryType, servicesAtLimit, ownServices, reasoningSettings,
+    memoryDraftDirty, memoryPools, memoryReadOnly, toggleReadOnly, memoryType, servicesAtLimit, ownServices, reasoningSettings,
     regularToolIds, removePool, responseFormat, responseFormatSaving, selectedTools,
     selectedWorkspace, selfDelegation, selfDelegationSaving, setActiveTab, setCategoryTools,
     setClarifyGate, setClarifyGateSaving, setConnectedPool, setDelegates, setDelegatesMessage,
@@ -965,6 +993,8 @@ const AgentDetails = () => {
       {activeTab === 'skills' && <SkillsTab />}
 
       <AgentModals />
+      {/* A save that meets somebody else's newer edit asks: reload or overwrite. */}
+      <AgentConflictDialog agentId={id} />
       <StartInstanceModal
         open={showStartInstance}
         onClose={() => setShowStartInstance(false)}

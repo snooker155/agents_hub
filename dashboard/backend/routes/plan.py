@@ -63,6 +63,10 @@ class JobCreate(BaseModel):
     secrets: Optional[List[str]] = None
     memory_pool_ids: Optional[List[str]] = None
     memory_access: Optional[str] = None
+    # memory_consolidate only: the pool to consolidate and how many recent
+    # sessions to fold in (plans.service._validate_consolidate).
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: Optional[int] = None
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -70,6 +74,8 @@ class JobCreate(BaseModel):
             raise ValueError("Provide run_at or delay_minutes")
         if self.kind == JobKind.flow and not self.flow_id:
             raise ValueError("flow jobs require flow_id")
+        if self.kind == JobKind.memory_consolidate and not self.consolidate_pool_id:
+            raise ValueError("memory_consolidate jobs require consolidate_pool_id")
         return self
 
     def resolved_run_at(self) -> datetime:
@@ -97,6 +103,8 @@ class JobUpdate(BaseModel):
     secrets: Optional[List[str]] = None
     memory_pool_ids: Optional[List[str]] = None
     memory_access: Optional[str] = None
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: Optional[int] = None
 
 
 # -------------------- jobs --------------------
@@ -147,6 +155,8 @@ async def create_job(payload: JobCreate):
             secrets=payload.secrets,
             memory_pool_ids=payload.memory_pool_ids,
             memory_access=payload.memory_access,
+            consolidate_pool_id=payload.consolidate_pool_id,
+            consolidate_session_limit=payload.consolidate_session_limit,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

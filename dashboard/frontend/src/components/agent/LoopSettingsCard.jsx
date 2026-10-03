@@ -14,7 +14,8 @@ const fromTriState = (value) => (value === '' ? null : value === 'on');
 /**
  * The agent's loop settings (agents/agent_loop.py, fourth-cycle stage 2):
  * fallback models tried in order on a refusal, a rate limit or a server
- * error (agents/loop_ext/fallback.py), the JSON Schema the final answer
+ * error (agents/loop_ext/fallback.py), the advisor model the agent may
+ * consult mid-run (tools/advisor.py), the JSON Schema the final answer
  * must match with a repair retry (agents/loop_ext/structured.py), and the
  * two tri-state loop toggles (tool search, compaction; None follows the
  * workspace/global default).
@@ -24,6 +25,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const [catalog, setCatalog] = useState([]);
   const [fallbackModels, setFallbackModels] = useState([]);
   const [addModel, setAddModel] = useState('');
+  const [advisorModel, setAdvisorModel] = useState('');
   const [schemaMode, setSchemaMode] = useState('free'); // 'free' | 'schema'
   const [schemaText, setSchemaText] = useState('');
   const [toolSearch, setToolSearch] = useState('');
@@ -40,6 +42,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
 
   const applyLoaded = useCallback((body) => {
     setFallbackModels(Array.isArray(body?.fallback_models) ? [...body.fallback_models] : []);
+    setAdvisorModel(body?.advisor_model || '');
     const schema = body?.output_schema;
     setSchemaMode(schema ? 'schema' : 'free');
     setSchemaText(schema ? JSON.stringify(schema, null, 2) : '');
@@ -121,6 +124,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
     try {
       const { data: body } = await updateAgentLoopSettings(agentId, {
         fallback_models: fallbackModels,
+        advisor_model: advisorModel || null,
         output_schema: schema,
         tool_search: fromTriState(toolSearch),
         compaction: fromTriState(compaction),
@@ -213,6 +217,27 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
             {catalog.length === 0 && (
               <p className="text-xs text-gray-400 mt-2">{t('agentLoop.fallback.noCatalog')}</p>
             )}
+          </div>
+
+          {/* Advisor model (tools/advisor.py): picked from the same catalog
+              list as the fallbacks, the Models page being where models live. */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-800 mb-1">{t('agentLoop.advisor.title')}</h4>
+            <p className="text-xs text-gray-500 mb-3">{t('agentLoop.advisor.intro')}</p>
+            <select
+              value={advisorModel}
+              onChange={(e) => { setAdvisorModel(e.target.value); markDirty(); }}
+              aria-label={t('agentLoop.advisor.title')}
+              className={`${selectCls} w-full`}
+              data-testid="advisor-model"
+            >
+              <option value="">{t('agentLoop.advisor.none')}</option>
+              {advisorModel && !catalog.some((m) => m.id === advisorModel) && (
+                <option value={advisorModel}>{t('agentLoop.advisor.notInCatalog', { model: advisorModel })}</option>
+              )}
+              {catalog.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+            </select>
+            <p className="text-xs text-gray-400 mt-2">{t('agentLoop.advisor.hint')}</p>
           </div>
 
           {/* Output schema */}

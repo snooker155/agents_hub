@@ -133,7 +133,13 @@ async def close_run_route(run_id: str, body: CloseRunBody):
     from managers.run_manager import close_run_from_result
 
     shim = _ResultShim(body.ok, body.agent_output, body.error, body.response_payload)
-    close_run_from_result(run_id, shim, **body.extra)
+    extra = dict(body.extra)
+    if isinstance(extra.get("loop"), dict) and extra["loop"].get("tool_spills"):
+        # Long tool outputs the container saved to files it could not
+        # register without a database (agents/tool_spill.py).
+        from agents.tool_spill import register_relayed_spills
+        extra["loop"] = register_relayed_spills(run_id, extra["loop"])
+    close_run_from_result(run_id, shim, **extra)
     return {"ok": True}
 
 

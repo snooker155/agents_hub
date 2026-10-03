@@ -244,6 +244,14 @@ class StandardAgent(AgentBase):
     #: wrote its final answer (agents/loop_ext/steering.claim_after_answer).
     MAX_STEERING_FOLLOWUPS = 2
 
+    #: The turn of a follow-up pass made only for operator instructions that
+    #: arrived during the answer (steering mode ``system``).
+    SYSTEM_FOLLOWUP_TEXT = (
+        "[The operator added to your instructions while you wrote that answer. "
+        "Check the answer against the added instructions and give the corrected "
+        "final answer, or the same one if it already complies.]"
+    )
+
     def _followup_input(self, state: Any, result: Any, instruction: str,
                         history: Any) -> Optional[tuple]:
         """The next executor input when messages arrived during the answer.
@@ -266,7 +274,12 @@ class StandardAgent(AgentBase):
         from langchain_core.messages import AIMessage, HumanMessage
         answer = result.get("output", "") if isinstance(result, dict) else str(result)
         prior = [*list(history or []), HumanMessage(content=instruction), AIMessage(content=answer or "")]
-        text = "\n\n".join(format_injection(str(i.get("text") or "")) for i in fresh)
+        spoken = [i for i in fresh if i.get("mode") != "system"]
+        # Only system-mode messages arrived: they are in the system prompt of
+        # the next pass already (claim_after_answer put them there), and the
+        # turn only has to ask the model to check its answer against them.
+        text = ("\n\n".join(format_injection(str(i.get("text") or "")) for i in spoken)
+                if spoken else self.SYSTEM_FOLLOWUP_TEXT)
         return self._executor_input(text, prior), fresh
 
     @staticmethod
@@ -275,7 +288,9 @@ class StandardAgent(AgentBase):
         trails, and the injections of both passes on the state."""
         for inj in fresh:
             inj["final"] = True  # arrived during an answer, delivered by a follow-up pass
-        state.injections = [*earlier, *fresh, *state.injections]
+        # A system-mode message lives on state.system_messages, not here.
+        spoken = [i for i in fresh if i.get("mode") != "system"]
+        state.injections = [*earlier, *spoken, *state.injections]
         if not isinstance(second, dict):
             return second
         merged = dict(second)

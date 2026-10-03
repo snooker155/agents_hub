@@ -133,6 +133,16 @@ def prepare_run(
         except (TypeError, ValueError):
             agent_version_pin = None
 
+    # Per-run overrides (agents/run_overrides.py): params["overrides"], with
+    # the older separate params tool_policy and output_schema folded in as
+    # aliases. Validated before anything is written, so a bad key or a tool
+    # set the capability guard refuses never becomes a run (ValueError /
+    # CapabilityViolation to the caller).
+    from agents import run_overrides as _run_overrides
+    run_overrides = _run_overrides.validate_for_agent(
+        agent_id, params.get("overrides"),
+        tool_policy=params.get("tool_policy"), output_schema=params.get("output_schema"))
+
     # Budget gate: refuse to launch when the workspace has hit its hard cost cap.
     # Opt-in (only enforced when a hard cap is configured) and fail-open on any
     # lookup/pricing error, so a pricing hiccup never wedges a workspace.
@@ -194,6 +204,8 @@ def prepare_run(
         instance_id=instance_id,
         workspace=ws_name,
         agent_version_pin=agent_version_pin,
+        # What this run was asked to build differently (the run page shows it).
+        **({"overrides": _run_overrides.record_view(run_overrides)} if run_overrides else {}),
     )
 
     # agent_run.py's CLI: positional `agent` and optional positional `action`,
@@ -244,14 +256,11 @@ def prepare_run(
         if str(_name or "").strip():
             cli_args.extend(["--extra-secret", str(_name).strip()])
 
-    # An answer schema for this run alone (a proactive tick, proactive/
-    # service.py): the child folds it into the agent's spec at build time.
-    _schema = params.get("output_schema")
-    if isinstance(_schema, dict) and _schema:
-        cli_args.extend(["--output-schema", json.dumps(_schema, ensure_ascii=False)])
-    _policy = params.get("tool_policy")
-    if isinstance(_policy, dict) and _policy:
-        cli_args.extend(["--tool-policy", json.dumps(_policy, ensure_ascii=False)])
+    # The run's overrides as one flag (an answer schema and a tool policy of
+    # a proactive tick included, proactive/service.py): the child folds them
+    # into the build (agents/run_overrides.py).
+    if run_overrides:
+        cli_args.extend(["--overrides", json.dumps(run_overrides, ensure_ascii=False, sort_keys=True)])
 
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
@@ -414,6 +423,10 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     if isinstance(launch_env, dict):
         for key, value in launch_env.items():
             env[str(key)] = str(value)
+    # Host-bound secrets ride the token the run actually uses, now that the
+    # environment may have replaced the proxy URL (environments/secret_egress.py).
+    from common.subprocess_env import route_secrets
+    route_secrets(env, execution_mode=execution_mode, workspace=ws_name)
 
     if execution_mode == "docker":
         _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id,

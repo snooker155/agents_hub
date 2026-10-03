@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Loader, Plus, Trash2 } from 'lucide-react';
 import {
-  deleteWorkspaceSecret, getUsers, getWorkspaceSecrets, setWorkspaceSecret,
+  deleteWorkspaceSecret, getUsers, getWorkspaceSecrets, setWorkspaceSecret, setWorkspaceSecretHosts,
 } from '../../api';
 import { MULTI, useAuth } from '../auth';
 import { useI18n } from '../../i18n';
@@ -12,7 +12,10 @@ const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-xs '
 // Mirrors common/secrets.NAME_RE: a secret becomes an environment variable.
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
-const EMPTY_DRAFT = { name: '', value: '', agent_id: '', user_id: '' };
+const EMPTY_DRAFT = { name: '', value: '', agent_id: '', user_id: '', hosts: '' };
+
+// "a.com, b.org" as the list the backend takes (it normalises the rest).
+const splitHosts = (text) => String(text || '').split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
 
 /**
  * The workspace's secrets: names, scopes and a hint, never a value.
@@ -37,6 +40,8 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
   const [error, setError] = useState('');
   const [noKey, setNoKey] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
+  // The row whose hosts are being edited: its key and the text in the box.
+  const [hostEdit, setHostEdit] = useState(null);
 
   const load = useCallback(async () => {
     if (!workspace) return;
@@ -81,6 +86,7 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
     const body = { value: draft.value };
     if (draft.agent_id) body.agent_id = draft.agent_id;
     if (draft.user_id) body.user_id = draft.user_id;
+    if (draft.hosts.trim()) body.allowed_hosts = splitHosts(draft.hosts);
     try {
       await setWorkspaceSecret(workspace, draft.name, body);
       setDraft(EMPTY_DRAFT);
@@ -110,6 +116,22 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
       await load();
     } catch (err) {
       setError(err?.response?.data?.detail || t('secrets.deleteFailed'));
+    }
+  };
+
+  const rowKey = (row) => `${row.name}|${row.agent_id}|${row.user_id}`;
+
+  const saveHosts = async (row) => {
+    const body = { allowed_hosts: splitHosts(hostEdit?.text) };
+    if (row.agent_id) body.agent_id = row.agent_id;
+    if (row.user_id) body.user_id = row.user_id;
+    try {
+      await setWorkspaceSecretHosts(workspace, row.name, body);
+      setHostEdit(null);
+      setError('');
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('secrets.saveFailed'));
     }
   };
 
@@ -143,6 +165,7 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
               <tr className="text-left text-xs text-gray-500 border-b border-gray-100">
                 <th className="py-1.5 pr-3 font-medium">{t('secrets.columns.name')}</th>
                 <th className="py-1.5 pr-3 font-medium">{t('secrets.columns.scope')}</th>
+                <th className="py-1.5 pr-3 font-medium" title={t('secrets.hostsHint')}>{t('secrets.hostsColumn')}</th>
                 <th className="py-1.5 pr-3 font-medium">{t('secrets.columns.hint')}</th>
                 <th className="py-1.5 pr-3 font-medium">{t('secrets.columns.updated')}</th>
                 <th className="py-1.5" />
@@ -150,9 +173,32 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.map((row) => (
-                <tr key={`${row.name}|${row.agent_id}|${row.user_id}`}>
+                <tr key={rowKey(row)}>
                   <td className="py-1.5 pr-3 font-mono text-xs text-gray-800">{row.name}</td>
                   <td className="py-1.5 pr-3 text-xs text-gray-600">{scopeLabel(row)}</td>
+                  <td className="py-1.5 pr-3 text-xs text-gray-600" data-testid="secret-hosts">
+                    {hostEdit?.key === rowKey(row) ? (
+                      <span className="flex items-center gap-1">
+                        <input value={hostEdit.text} aria-label={t('secrets.editHosts', { name: row.name })}
+                          placeholder={t('secrets.hostsField')}
+                          onChange={(e) => setHostEdit({ ...hostEdit, text: e.target.value })}
+                          className={`${inputCls} font-mono`} />
+                        <button type="button" onClick={() => saveHosts(row)}
+                          className="text-indigo-600 hover:text-indigo-800">{t('secrets.saveHosts')}</button>
+                        <button type="button" onClick={() => setHostEdit(null)}
+                          className="text-gray-400 hover:text-gray-600">{t('secrets.cancelHosts')}</button>
+                      </span>
+                    ) : (
+                      <button type="button" title={t('secrets.editHosts', { name: row.name })}
+                        aria-label={t('secrets.editHosts', { name: row.name })}
+                        onClick={() => setHostEdit({ key: rowKey(row), text: (row.allowed_hosts || []).join(', ') })}
+                        className="font-mono text-left hover:text-indigo-700">
+                        {(row.allowed_hosts || []).length
+                          ? row.allowed_hosts.join(', ')
+                          : <span className="italic text-gray-400">{t('secrets.anyHost')}</span>}
+                      </button>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-3 font-mono text-xs text-gray-500">
                     {row.hint && row.hint !== '****' ? `••••${row.hint}` : '••••'}
                   </td>
@@ -199,6 +245,10 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
             onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}
             className={inputCls} />
         ))}
+        <input value={draft.hosts} placeholder={t('secrets.hostsField')}
+          aria-label={t('secrets.hostsField')} title={t('secrets.hostsHint')}
+          onChange={(e) => setDraft({ ...draft, hosts: e.target.value })}
+          className={`${inputCls} font-mono`} />
         <button type="submit" disabled={!nameOk || !draft.value}
           className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50">
           <Plus className="w-3.5 h-3.5" /> {t('secrets.add')}

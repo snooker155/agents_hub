@@ -434,6 +434,14 @@ def _workspace_of(request) -> Optional[str]:
     )
 
 
+# Optimistic concurrency for agent edits (agents/revision.py): an If-Match or
+# expected_version that names an older definition is a 409 before the route
+# runs, and reads and writes of an agent carry its definition hash as ETag.
+# Registered before the guard so it sits inside it: only an authorised
+# request is ever checked or tagged.
+from agents.revision import AgentRevisionMiddleware
+app.add_middleware(AgentRevisionMiddleware)
+
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
 
 
@@ -695,11 +703,18 @@ from routes import (
     guardrails as guardrails_router,
     agent_loop_settings as agent_loop_settings_router,
     memory_versions as memory_versions_router,
+    memory_consolidation as memory_consolidation_router,
     agent_proactive as agent_proactive_router,
 )
 for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
-                     agent_loop_settings_router, memory_versions_router, agent_proactive_router):
+                     agent_loop_settings_router, memory_versions_router, memory_consolidation_router,
+                     agent_proactive_router):
     app.include_router(_loop_router.router)
+
+# An agent's own domain lists for web_search, fetch_url and the browser
+# (tools/web.py), on top of the workspace's and the global ones.
+from routes import agent_web_domains as agent_web_domains_router
+app.include_router(agent_web_domains_router.router)
 
 # Watchers (watchers/, docs/watchers.md): observers that wake a proactive agent.
 from routes import watchers as watchers_router

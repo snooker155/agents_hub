@@ -37,7 +37,7 @@ describe('useChatSteering', () => {
     steerRun.mockResolvedValue({ data: { message: { msg_id: 'm1' }, next: 'wait' } });
     const sendMessage = vi.fn();
     const { result } = renderHook(() => useHarness(sendMessage));
-    expect(result.current.steering.modes).toEqual(['inject', 'interrupt', 'queue']);
+    expect(result.current.steering.modes).toEqual(['inject', 'interrupt', 'queue', 'system']);
     expect(result.current.steering.activeMode).toBe('inject');
     act(() => result.current.setInput('use last year as the baseline'));
     await act(async () => { await result.current.steering.steer(); });
@@ -47,6 +47,20 @@ describe('useChatSteering', () => {
       .toEqual(['write the report', 'use last year as the baseline', 'agent']);
     expect(messages[1].steer).toMatchObject({ msg_id: 'm1', state: 'pending' });
     expect(result.current.input).toBe('');
+  });
+
+  it('sends an instruction as a system message and never queues it', async () => {
+    steerRun.mockResolvedValue({ data: { message: { msg_id: 's1' }, next: 'wait' } });
+    const sendMessage = vi.fn();
+    const { result } = renderHook(() => useHarness(sendMessage));
+    act(() => result.current.steering.setMode('system'));
+    await act(async () => { await result.current.steering.steer('answer in German from now on'); });
+    expect(steerRun).toHaveBeenCalledWith('run-1', 'answer in German from now on', 'system');
+    const bubble = result.current.conversations[0].messages.find((m) => m.steer);
+    expect(bubble.steer).toMatchObject({ msg_id: 's1', mode: 'system', state: 'pending' });
+    act(() => result.current.setLoading(false));
+    await waitFor(() => expect(result.current.steering.busy).toBe(false));
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('queues a message and sends it when the turn ends', async () => {

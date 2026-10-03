@@ -23,6 +23,9 @@ The key (not only the fingerprint) carries the build overrides, and that is
 where an A/B experiment arm lands: the factory adds ``definition_version`` to
 the overrides of a run routed to an arm (``evals/experiments.py``), so each
 stored version gets its own cache entry and two arms never share a build.
+A version pin (a task, a service, a chat turn) lands there the same way, and
+so does a run's ``run_overrides`` object (agents/run_overrides.py): a build
+with another model, instructions or tool set is its own entry.
 
 What it deliberately does NOT cover: live memory *contents*. The memory section
 injected into the prompt is only a set of hints ("these slots/notes exist") —
@@ -38,6 +41,7 @@ client, tools and prompt are shared.
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from collections import OrderedDict
@@ -72,8 +76,19 @@ def _key(agent_id: str, workspace: Optional[str], override_params: Dict[str, Any
 
 
 def _overrides_repr(override_params: Dict[str, Any]) -> str:
+    """The overrides as part of the key. A dict or list value (the per-run
+    ``run_overrides`` object, agents/run_overrides.py; a pool list) is written
+    as sorted JSON, so the same override always lands on the same entry and an
+    overridden build never on the plain one's."""
+    def _value(v: Any) -> str:
+        if isinstance(v, (dict, list, tuple)):
+            try:
+                return json.dumps(v, sort_keys=True, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                return repr(v)
+        return repr(v)
     try:
-        return repr(sorted((str(k), repr(v)) for k, v in (override_params or {}).items()))
+        return repr(sorted((str(k), _value(v)) for k, v in (override_params or {}).items()))
     except Exception:
         return repr(override_params)
 

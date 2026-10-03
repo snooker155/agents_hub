@@ -133,6 +133,30 @@ global ones for runs in that workspace: the workspace page, Settings tab,
 "Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
 workspace's metadata; an empty list there keeps the global one.
 
+## Domain lists per agent
+
+An agent can carry its own `allowed_domains` and `blocked_domains` (the Web
+domains card on its Behavior tab, or `PUT /api/agents/{id}/web-domains`). They
+merge with the workspace's lists and the global ones above:
+
+- the workspace's deny list (or the global one, when the workspace sets none)
+  plus the agent's `blocked_domains` always apply;
+- the workspace's allow list, when that policy is on, comes next;
+- the agent's `allowed_domains`, when set, narrows further: a host must be on
+  it as well. It cannot widen what the workspace allows;
+- a blocked host wins over an allowed one, and every entry covers its
+  subdomains.
+
+`fetch_url` refuses a host outside the merged lists with a tool result that
+names the list (`host 'x' is on this agent's blocked_domains`). `web_search`
+hands the lists to the search backend as its own filters (Tavily
+`include_domains` and `exclude_domains`, Exa `includeDomains` and
+`excludeDomains`, Brave `site:` and `-site:` in the query) and then filters the
+results by host whatever the backend did. The browser's session policy takes
+the agent's blocked hosts into its deny list and its allowed hosts into its
+allow list. `GET /api/agents/{id}/web-domains?workspace=` also answers the
+merged lists for that workspace.
+
 ## The browser tools
 
 `browser_open`, `browser_read`, `browser_act`, `browser_screenshot` and

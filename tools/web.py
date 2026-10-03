@@ -72,11 +72,11 @@ _BLOCKED_SCHEMES_MSG = "only http:// and https:// URLs may be fetched"
 
 # ── Domain policy ─────────────────────────────────────────────────────────────
 
-def _workspace_web_settings() -> Dict[str, Any]:
-    """Web settings for the active workspace, or {}."""
+def _workspace_web_settings(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """Web settings for ``workspace`` (the active one by default), or {}."""
     try:
         from common.workspace_context import resolve_active_workspace
-        ws = resolve_active_workspace()
+        ws = resolve_active_workspace(workspace)
         if not ws:
             return {}
         from workspace import get_workspace_metadata
@@ -120,8 +120,112 @@ def _environment_check(host: str) -> Tuple[bool, str]:
     return True, ""
 
 
+def _current_agent_spec() -> Any:
+    """The record of the agent whose run this is, or None outside a run.
+
+    Read from the run's context (common/agent_context.py, set by
+    agents/agent_invoke.py), then the loop's own state, then ``AGENT_ID``.
+    """
+    agent_id = ""
+    try:
+        from common.agent_context import current_agent_id
+        agent_id = str(current_agent_id.get() or "")
+    except Exception:  # noqa: BLE001 - no context: try the loop state
+        log.debug("web: no agent context", exc_info=True)
+    if not agent_id:
+        try:
+            from agents.agent_loop import current_state
+            state = current_state()
+            agent_id = str(getattr(state, "agent_id", "") or "") if state is not None else ""
+        except Exception:  # noqa: BLE001 - outside a loop run there is no state
+            agent_id = ""
+    agent_id = agent_id or os.environ.get("AGENT_ID", "").strip()
+    if not agent_id:
+        return None
+    try:
+        from agents.registry import get_agent
+        return get_agent(agent_id)
+    except Exception:  # noqa: BLE001 - an unreadable record means no agent lists
+        log.debug("web: agent %s unreadable for its domain lists", agent_id, exc_info=True)
+        return None
+
+
+def agent_domain_lists(spec: Any = None) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """``(allowed_domains, blocked_domains)`` of the running agent (or ``spec``)."""
+    spec = spec if spec is not None else _current_agent_spec()
+    if spec is None:
+        return (), ()
+    allowed = tuple(str(h).strip().lower() for h in (getattr(spec, "allowed_domains", None) or ()) if str(h).strip())
+    blocked = tuple(str(h).strip().lower() for h in (getattr(spec, "blocked_domains", None) or ()) if str(h).strip())
+    return allowed, blocked
+
+
+def effective_domain_lists(spec: Any = None, workspace: Optional[str] = None) -> Dict[str, Any]:
+    """The lists a call is judged by, merged from every level.
+
+    ``blocked``: the workspace's deny list (or the global one when the
+    workspace sets none) plus the agent's ``blocked_domains``; always
+    applies and wins over any allow. ``allowed``: the workspace or global
+    allow list when that policy is on, else None (anything not blocked);
+    ``agent_allowed``: the agent's ``allowed_domains``, which narrows
+    further when set. Hosts match themselves and their subdomains.
+    """
+    try:
+        from common.config import settings
+    except Exception:  # noqa: BLE001 - no settings: only the agent's own lists apply
+        settings = None
+    ws = _workspace_web_settings(workspace)
+    deny: Tuple[str, ...] = tuple(ws.get("web_deny_domains") or ())
+    allow: Tuple[str, ...] = tuple(ws.get("web_allow_domains") or ())
+    enabled = bool(ws.get("web_domain_policy_enabled"))
+    if settings is not None:
+        deny = deny or _live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)
+        allow = allow or _live_list("WEB_ALLOW_DOMAINS", settings.web_allow_domains)
+        enabled = enabled or _live_bool("WEB_DOMAIN_POLICY_ENABLED", settings.web_domain_policy_enabled)
+    agent_allowed, agent_blocked = agent_domain_lists(spec)
+    blocked = list(dict.fromkeys([str(d).lower() for d in deny] + list(agent_blocked)))
+    return {
+        "blocked": blocked,
+        "allowed": [str(d).lower() for d in allow] if enabled else None,
+        "agent_allowed": list(agent_allowed),
+    }
+
+
+def search_domain_filters(spec: Any = None) -> Tuple[List[str], List[str]]:
+    """``(include, exclude)`` for a search backend's own site filters.
+
+    ``include`` is the narrowest allow set the levels agree on (the agent's
+    list inside the workspace's, see :func:`intersect_domains`), empty when
+    nothing narrows; ``exclude`` is every blocked host. Results are filtered
+    by host afterwards anyway, for a backend without filters.
+    """
+    lists = effective_domain_lists(spec)
+    include: List[str] = []
+    if lists["agent_allowed"] and lists["allowed"] is not None:
+        include = intersect_domains(lists["agent_allowed"], lists["allowed"])
+    elif lists["agent_allowed"]:
+        include = list(lists["agent_allowed"])
+    elif lists["allowed"] is not None:
+        include = list(lists["allowed"])
+    include = [h for h in include if not any(_host_matches(h, b) for b in lists["blocked"])]
+    return include, list(lists["blocked"])
+
+
+def intersect_domains(a: Any, b: Any) -> List[str]:
+    """Hosts both lists allow: for each pair, the more specific of the two
+    when one covers the other (``docs.python.org`` from ``python.org``)."""
+    out: List[str] = []
+    for x in a or ():
+        for y in b or ():
+            x, y = str(x).lower(), str(y).lower()
+            pick = x if _host_matches(x, y) else (y if _host_matches(y, x) else "")
+            if pick and pick not in out:
+                out.append(pick)
+    return out
+
+
 def check_domain_policy(url: str) -> Tuple[bool, str]:
-    """Apply the environment's fence, the deny list, then the opt-in allow list.
+    """Apply the environment's fence, the deny lists, then the allow lists.
 
     The run's environment (``AGENTS_HUB_NETWORK`` / ``AGENTS_HUB_ALLOWED_HOSTS``,
     see :func:`environment_network_policy`) is checked first and cannot be
@@ -135,30 +239,28 @@ def check_domain_policy(url: str) -> Tuple[bool, str]:
     if not ok:
         return False, reason
 
-    try:
-        from common.config import settings
-    except Exception:
-        return True, ""
-    ws = _workspace_web_settings()
-
     # Global values are read live (the Settings page writes them to .env); a
-    # workspace's own list, when set, replaces the global one as before.
-    deny = tuple(ws.get("web_deny_domains") or ()) or _live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)
-    for pattern in deny:
+    # workspace's own list, when set, replaces the global one as before. The
+    # agent's own lists (AgentSpec.allowed_domains / blocked_domains) come on
+    # top: its blocked hosts join the deny list, its allowed hosts narrow.
+    lists = effective_domain_lists()
+    agent_blocked = set(agent_domain_lists()[1])
+    for pattern in lists["blocked"]:
         if _host_matches(host, str(pattern)):
-            return False, f"host {host!r} is on the deny list"
+            where = "this agent's blocked_domains" if pattern in agent_blocked else "the deny list"
+            return False, f"host {host!r} is on {where}"
 
-    enabled = _live_bool("WEB_DOMAIN_POLICY_ENABLED", settings.web_domain_policy_enabled) or bool(ws.get("web_domain_policy_enabled"))
-    if not enabled:
-        return True, ""
+    allow = lists["allowed"]
+    if allow is not None:
+        if not allow:
+            return False, "the domain allowlist is enabled but empty, no host may be fetched"
+        if not any(_host_matches(host, str(pattern)) for pattern in allow):
+            return False, f"host {host!r} is not on the domain allowlist"
 
-    allow = tuple(ws.get("web_allow_domains") or ()) or _live_list("WEB_ALLOW_DOMAINS", settings.web_allow_domains)
-    if not allow:
-        return False, "the domain allowlist is enabled but empty — no host may be fetched"
-    for pattern in allow:
-        if _host_matches(host, str(pattern)):
-            return True, ""
-    return False, f"host {host!r} is not on the domain allowlist"
+    agent_allowed = lists["agent_allowed"]
+    if agent_allowed and not any(_host_matches(host, str(p)) for p in agent_allowed):
+        return False, f"host {host!r} is not on this agent's allowed_domains"
+    return True, ""
 
 
 def validate_url(url: str) -> Tuple[bool, str]:
@@ -183,10 +285,8 @@ def validate_url(url: str) -> Tuple[bool, str]:
         internal = False
     if internal:
         host = (parsed.hostname or "").lower()
-        ws = _workspace_web_settings()
         try:
-            from common.config import settings
-            deny = tuple(ws.get("web_deny_domains") or ()) or _live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)
+            deny = tuple(effective_domain_lists()["blocked"])
         except Exception:  # noqa: BLE001 - settings unavailable: no deny list to apply
             deny = ()
         for pattern in deny:
@@ -448,8 +548,17 @@ def _fetch_limits() -> Tuple[int, float, int]:
     )
 
 
-def _search_brave(query: str, count: int, key: str, timeout: float) -> List[Dict[str, str]]:
+def _search_brave(query: str, count: int, key: str, timeout: float,
+                  include: Optional[List[str]] = None,
+                  exclude: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    # Brave's API has no domain parameters; its query language does. One
+    # allowed host becomes ``site:``, blocked hosts ``-site:``; more than one
+    # allowed host is left to the result filter in web_search.
     import httpx
+    if include and len(include) == 1:
+        query = f"{query} site:{include[0]}"
+    for host in (exclude or [])[:10]:
+        query = f"{query} -site:{host}"
     resp = httpx.get(
         "https://api.search.brave.com/res/v1/web/search",
         params={"q": query, "count": count},
@@ -465,13 +574,16 @@ def _search_brave(query: str, count: int, key: str, timeout: float) -> List[Dict
     ]
 
 
-def _search_tavily(query: str, count: int, key: str, timeout: float) -> List[Dict[str, str]]:
+def _search_tavily(query: str, count: int, key: str, timeout: float,
+                   include: Optional[List[str]] = None,
+                   exclude: Optional[List[str]] = None) -> List[Dict[str, str]]:
     import httpx
-    resp = httpx.post(
-        "https://api.tavily.com/search",
-        json={"api_key": key, "query": query, "max_results": count},
-        timeout=timeout,
-    )
+    body: Dict[str, Any] = {"api_key": key, "query": query, "max_results": count}
+    if include:
+        body["include_domains"] = list(include)
+    if exclude:
+        body["exclude_domains"] = list(exclude)
+    resp = httpx.post("https://api.tavily.com/search", json=body, timeout=timeout)
     resp.raise_for_status()
     return [
         {"title": r.get("title") or "", "url": r.get("url") or "",
@@ -480,14 +592,18 @@ def _search_tavily(query: str, count: int, key: str, timeout: float) -> List[Dic
     ]
 
 
-def _search_exa(query: str, count: int, key: str, timeout: float) -> List[Dict[str, str]]:
+def _search_exa(query: str, count: int, key: str, timeout: float,
+                include: Optional[List[str]] = None,
+                exclude: Optional[List[str]] = None) -> List[Dict[str, str]]:
     import httpx
-    resp = httpx.post(
-        "https://api.exa.ai/search",
-        json={"query": query, "numResults": count, "contents": {"text": {"maxCharacters": 500}}},
-        headers={"x-api-key": key},
-        timeout=timeout,
-    )
+    body: Dict[str, Any] = {"query": query, "numResults": count,
+                            "contents": {"text": {"maxCharacters": 500}}}
+    if include:
+        body["includeDomains"] = list(include)
+    if exclude:
+        body["excludeDomains"] = list(exclude)
+    resp = httpx.post("https://api.exa.ai/search", json=body, headers={"x-api-key": key},
+                      timeout=timeout)
     resp.raise_for_status()
     return [
         {"title": r.get("title") or "", "url": r.get("url") or "",
@@ -499,6 +615,22 @@ def _search_exa(query: str, count: int, key: str, timeout: float) -> List[Dict[s
 _PROVIDERS = {"brave": _search_brave, "tavily": _search_tavily, "exa": _search_exa}
 
 
+def _call_provider(provider: str, query: str, n: int, key: str, timeout: float,
+                   include: List[str], exclude: List[str]) -> List[Dict[str, str]]:
+    """Call one backend, with the domain filters when it takes them (a
+    replacement installed by a test or a plugin may not)."""
+    import inspect
+    fn = _PROVIDERS[provider]
+    if include or exclude:
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "include" in params and "exclude" in params:
+            return fn(query, n, key, timeout, include=include, exclude=exclude)
+    return fn(query, n, key, timeout)
+
+
 # ── Result cache ──────────────────────────────────────────────────────────────
 #
 # Search APIs cost money per call and agents re-ask the same question inside a
@@ -506,7 +638,7 @@ _PROVIDERS = {"brave": _search_brave, "tavily": _search_tavily, "exa": _search_e
 # (provider, query, count) is enough to stop that without any staleness worth
 # worrying about at run timescales.
 
-_SEARCH_CACHE: Dict[Tuple[str, str, int], List[Dict[str, str]]] = {}
+_SEARCH_CACHE: Dict[Tuple[Any, ...], List[Dict[str, str]]] = {}
 _SEARCH_CACHE_MAX = 128
 
 
@@ -551,13 +683,20 @@ def web_search(query: str, count: Optional[int] = None) -> str:
             f"web_search is not configured: WEB_SEARCH_API_KEY is empty for provider {provider!r}.")
 
     n = max(1, min(int(count or _search_max_results()), 20))
-    cache_key = (provider, query.lower(), n)
+    # The backend's own site filters, from the merged domain lists; the
+    # results are filtered by host below whatever the backend did with them.
+    try:
+        include, exclude = search_domain_filters()
+    except Exception:  # noqa: BLE001 - no filters: the result filter still applies
+        log.debug("web_search: domain filters unavailable", exc_info=True)
+        include, exclude = [], []
+    cache_key = (provider, query.lower(), n, tuple(include), tuple(exclude))
     if cache_key in _SEARCH_CACHE:
         results = _SEARCH_CACHE[cache_key]
         call.set(cache_hit=True)
     else:
         try:
-            results = _PROVIDERS[provider](query, n, key, _fetch_limits()[1])
+            results = _call_provider(provider, query, n, key, _fetch_limits()[1], include, exclude)
         except Exception as e:
             log.warning("web_search failed (provider=%s): %s", provider, e)
             return call.set(status="error", error=f"{type(e).__name__}: {e}").finish(
@@ -739,5 +878,6 @@ WEB_TOOLS = [web_search, fetch_url]
 __all__ = [
     "web_search", "fetch_url", "WEB_TOOLS",
     "wrap_untrusted", "validate_url", "check_domain_policy",
+    "effective_domain_lists", "search_domain_filters", "agent_domain_lists", "intersect_domains",
     "resolve_and_check", "html_to_text",
 ]

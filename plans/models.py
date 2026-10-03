@@ -22,6 +22,12 @@ class JobKind(str, Enum):
     # outcome written back onto the journal row. One such job per agent,
     # owned by the agent's proactive profile, never created by hand.
     heartbeat = "heartbeat"
+    # Consolidates a memory pool's content and its recent sessions into a new
+    # pool (memory/consolidation.py, "dreams"): merged duplicates, outdated
+    # facts replaced, insights pulled from the sessions. The source pool is
+    # never modified; firing only starts a background job and returns its id,
+    # there is no Task and no run record for it.
+    memory_consolidate = "memory_consolidate"
 
 
 class JobStatus(str, Enum):
@@ -127,6 +133,16 @@ class ScheduledJob(BaseModel):
     # tools; "write" lets it remember, forget and link like the agent's own
     # binding would.
     memory_access: str = "read"
+
+    # memory_consolidate only: the pool to consolidate and how many of its
+    # recent sessions to fold in (memory/consolidation.py). Kept apart from
+    # memory_pool_ids/memory_access above, which are an agent_task's
+    # deployment resources, a different concept this job kind has no use for.
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: int = 10
+    # Ids this job's firings have produced (memory_consolidations.id), newest
+    # last, the memory_consolidate analogue of created_task_ids.
+    created_consolidation_ids: List[str] = Field(default_factory=list)
 
     last_fired_at: Optional[datetime] = None
     last_error: Optional[str] = None

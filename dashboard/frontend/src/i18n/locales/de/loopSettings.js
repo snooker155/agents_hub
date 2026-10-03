@@ -34,6 +34,18 @@ export default {
       label: 'Fokus auf die Ansichtsart',
       hint: 'Einem Ansichts-Agenten die Werkzeuge der Ansichtsart zeigen, an der er arbeitet, und die der anderen Arten ausblenden.',
     },
+    toolOutputSpillChars: {
+      label: 'Auslagerungsgrenze für Werkzeugausgaben',
+      hint: 'Ein Werkzeugergebnis mit mehr Zeichen wird als Datei des Arbeitsbereichs unter tool-outputs/ gespeichert, und das Modell sieht Anfang, Ende und die Datei. 0 schaltet es ab.',
+    },
+    advisorMaxCalls: {
+      label: 'Beraterabfragen pro Lauf',
+      hint: 'Wie oft ein Lauf das Beratermodell des Agenten fragen darf, von 0 bis 50.',
+    },
+    advisorMaxAnswerChars: {
+      label: 'Länge der Beraterantwort',
+      hint: 'Die längste Beraterantwort, die der Agent erhält, in Zeichen, von 200 bis 50000.',
+    },
   },
   source: {
     workspace: 'dieser Workspace',

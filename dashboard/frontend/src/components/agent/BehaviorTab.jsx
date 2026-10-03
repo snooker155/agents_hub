@@ -1,6 +1,7 @@
 import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation } from '../../api';
 import SystemAgentWarning from './SystemAgentWarning';
 import AgentSecretsCard from './AgentSecretsCard';
+import AgentWebDomainsCard from './AgentWebDomainsCard';
 import { BrainCircuit, HelpCircle, Layers, MessageSquare, Repeat } from 'lucide-react';
 import { useAgentPage } from './context';
 
@@ -328,6 +329,9 @@ export default function BehaviorTab() {
 
           {/* The secret names a run of this agent may receive (docs/secrets.md). */}
           <AgentSecretsCard agentId={id} readOnly={Boolean(agent.system)} />
+
+          {/* The hosts web_search, fetch_url and the browser may reach (tools/web.py). */}
+          <AgentWebDomainsCard agentId={id} readOnly={Boolean(agent.system)} />
 
         </div>
   );

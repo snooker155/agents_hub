@@ -22,6 +22,16 @@ proxy adds the hosts of the configured model providers
 could not do anything at all. Anything else answers 403, an unknown or
 expired token 407.
 
+Secrets bound to hosts (environments/secret_egress.py). A token may carry
+``secret_hosts`` and the run's ``placeholders``: for a ``CONNECT`` to one of
+those hosts the proxy terminates TLS with a certificate from the hub CA,
+swaps each placeholder in the request target and headers for the real value,
+and opens its own verified TLS connection upstream. A placeholder on its way
+anywhere else, where the proxy can see it (plain HTTP, or a terminated host
+it is not bound to), is refused with 403 and logged. Every other ``CONNECT``
+stays an end to end tunnel. A token registered only for secrets is ``open``:
+it allows every host, since the run's network was never fenced.
+
 What it does not do. It governs clients that honour the proxy variables. A
 process that ignores them and opens sockets directly is not stopped by the
 proxy, whatever the network type (containers stay on the agents-hub bridge,
@@ -200,9 +210,14 @@ def _docstore():
 
 
 def register(hosts: Iterable[str], *, environment_id: Optional[str] = None,
-             owner: Optional[Dict[str, Any]] = None, ttl: Optional[int] = None) -> str:
+             owner: Optional[Dict[str, Any]] = None, ttl: Optional[int] = None,
+             open_network: bool = False, secret_hosts: Optional[Iterable[str]] = None,
+             placeholders: Optional[Iterable[str]] = None) -> str:
     """A new token that may reach ``hosts`` (plus :func:`infrastructure_hosts`).
 
+    ``open_network`` lets the token reach every host (a run whose network is
+    not fenced, routed here only for its bound secrets); ``secret_hosts`` and
+    ``placeholders`` are what environments/secret_egress.py substitutes for.
     Kept in this process and in the ``egress_tokens`` DocStore (best effort).
     Returns the token, to put in the proxy URL's userinfo.
     """
@@ -215,6 +230,12 @@ def register(hosts: Iterable[str], *, environment_id: Optional[str] = None,
         "owner": dict(owner or {}),
         "expires_at": time.time() + (ttl or token_ttl()),
     }
+    if open_network:
+        entry["open"] = True
+    if secret_hosts:
+        entry["secret_hosts"] = [str(h).lower() for h in secret_hosts if h]
+    if placeholders:
+        entry["placeholders"] = [str(p) for p in placeholders if p]
     with _TOKENS_LOCK:
         now = time.time()
         for key in [k for k, v in _TOKENS.items() if v.get("expires_at", 0) < now]:
@@ -261,6 +282,32 @@ def lookup(token: str) -> Optional[Dict[str, Any]]:
     if entry is None or float(entry.get("expires_at") or 0) < time.time():
         return None
     return entry
+
+
+def attach_secrets(token: str, hosts: Iterable[str], placeholders: Iterable[str]) -> bool:
+    """Add a run's bound secrets to an existing token (the environment's).
+
+    Returns False when the token is unknown or expired, so the caller
+    registers a token of its own instead.
+    """
+    entry = lookup(token)
+    if entry is None:
+        return False
+    entry = dict(entry)
+    for key, values in (("secret_hosts", hosts), ("placeholders", placeholders)):
+        merged = list(entry.get(key) or [])
+        for value in values or ():
+            value = str(value).lower() if key == "secret_hosts" else str(value)
+            if value and value not in merged:
+                merged.append(value)
+        entry[key] = merged
+    with _TOKENS_LOCK:
+        _TOKENS[token] = entry
+    try:
+        _docstore().put(token, entry)
+    except Exception:  # noqa: BLE001 - the in-process copy still serves a proxy in this process
+        log.debug("could not persist egress token secrets", exc_info=True)
+    return True
 
 
 def revoke(token: str) -> None:
@@ -318,13 +365,21 @@ class EgressProxy:
     module registry by default; tests pass their own)."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, *,
-                 lookup: Callable[[str], Optional[Dict[str, Any]]] = lookup) -> None:
+                 lookup: Callable[[str], Optional[Dict[str, Any]]] = lookup,
+                 upstream_context: Optional[Any] = None,
+                 ca_directory: Optional[Any] = None) -> None:
         self.host = host
         self.port = port
         self._lookup = lookup
+        # The TLS context for upstream connections of terminated hosts (the
+        # system's verified default when None) and where the hub CA lives
+        # (environments/secret_egress.ca_dir when None). Tests pass both.
+        self._upstream_context = upstream_context
+        self._ca_directory = ca_directory
         self._server: Optional[asyncio.AbstractServer] = None
         self._slots: Optional[asyncio.Semaphore] = None
-        self.stats = {"allowed": 0, "denied": 0, "unauthorized": 0, "errors": 0}
+        self.stats = {"allowed": 0, "denied": 0, "unauthorized": 0, "errors": 0,
+                      "substituted": 0, "secret_refused": 0}
 
     async def start(self) -> None:
         self._slots = asyncio.Semaphore(MAX_CONNECTIONS)
@@ -403,12 +458,31 @@ class EgressProxy:
             path_line = ("\r\n".join(lines) + "\r\n\r\n").encode("iso-8859-1")
 
         allowed = list(entry.get("hosts") or []) + list(entry.get("infra") or [])
-        if not host_allowed(host, allowed):
+        if not (entry.get("open") or host_allowed(host, allowed)):
             self.stats["denied"] += 1
             log.info("egress proxy refused %s (environment %s)", host, entry.get("environment_id"))
             writer.write(_response(403, "Forbidden",
                                    f"egress proxy: host {host!r} is not on this run's allowlist"))
             return
+
+        if method == "CONNECT" and host_allowed(host, entry.get("secret_hosts") or []):
+            await self._terminate(reader, writer, host, upstream_port, entry)
+            return
+        if method != "CONNECT":
+            from environments import secret_egress
+            if secret_egress.head_has_placeholder(target, header_list):
+                try:
+                    new_target, header_list, used = secret_egress.substitute_head(
+                        target, header_list, host, entry.get("placeholders") or [])
+                except secret_egress.Refused as exc:
+                    self._refuse_secret(writer, host, entry, exc)
+                    return
+                self.stats["substituted"] += len(used)
+                parts = urlsplit(new_target)
+                path = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
+                kept = [(k, v) for k, v in header_list if k.lower() not in _HOP_HEADERS]
+                lines = [f"{method} {path} {version}"] + [f"{k}: {v}" for k, v in kept] + ["Connection: close"]
+                path_line = ("\r\n".join(lines) + "\r\n\r\n").encode("iso-8859-1")
 
         try:
             up_reader, up_writer = await asyncio.wait_for(
@@ -424,6 +498,82 @@ class EgressProxy:
         else:
             up_writer.write(path_line)
             await up_writer.drain()
+        await asyncio.gather(_pipe(reader, up_writer), _pipe(up_reader, writer))
+
+
+    def _refuse_secret(self, writer: asyncio.StreamWriter, host: str, entry: Dict[str, Any],
+                       exc: Any) -> None:
+        """403 for a placeholder on its way to a host it is not bound to, with
+        a warning and an audit row: that is what exfiltration looks like."""
+        self.stats["secret_refused"] += 1
+        log.warning("egress proxy refused a secret placeholder to %s: %s (environment %s, owner %s)",
+                    host, exc.reason, entry.get("environment_id"), entry.get("owner"))
+        try:
+            from common import audit
+            audit.record("egress.secret_refused",
+                         actor={"actor_id": None, "actor_kind": "system", "actor_name": "egress proxy"},
+                         object_type="host", object_id=host, result="refused",
+                         details={"reason": exc.reason, "secrets": exc.names,
+                                  "environment_id": entry.get("environment_id"),
+                                  "owner": entry.get("owner")})
+        except Exception:  # noqa: BLE001 - the refusal stands without its audit row
+            log.debug("egress proxy: audit write failed", exc_info=True)
+        writer.write(_response(403, "Forbidden",
+                               f"egress proxy: refused, {exc.reason}"))
+
+    async def _terminate(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+                         host: str, upstream_port: int, entry: Dict[str, Any]) -> None:
+        """A ``CONNECT`` to a host a bound secret may go to: terminate TLS with a
+        hub-signed certificate, swap placeholders in the request head, and send
+        it on over the proxy's own verified TLS connection. One request per
+        connection (``Connection: close``), so every head passes through here."""
+        import ssl
+
+        from environments import secret_egress
+        try:
+            server_ctx = await asyncio.to_thread(secret_egress.leaf_context, host, self._ca_directory)
+        except Exception as exc:  # noqa: BLE001 - no certificate means no termination: refuse, never tunnel blind
+            log.warning("egress proxy: no certificate for %s: %s", host, exc)
+            writer.write(_response(502, "Bad Gateway", "egress proxy: cannot terminate TLS"))
+            return
+        writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        await writer.drain()
+        try:
+            await writer.start_tls(server_ctx)
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), IDLE_TIMEOUT)
+        except (OSError, ssl.SSLError, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
+                asyncio.TimeoutError) as exc:
+            log.debug("egress proxy: client TLS for %s failed: %s", host, exc)
+            return
+        if len(head) > MAX_HEAD_BYTES:
+            writer.write(_response(431, "Request Header Fields Too Large"))
+            return
+        try:
+            method, target, version, header_list = _parse_head(head[:-4])
+            target, header_list, used = secret_egress.substitute_head(
+                target, header_list, host, entry.get("placeholders") or [])
+        except ValueError:
+            writer.write(_response(400, "Bad Request", "malformed request line"))
+            return
+        except secret_egress.Refused as exc:
+            self._refuse_secret(writer, host, entry, exc)
+            return
+        self.stats["substituted"] += len(used)
+        kept = [(k, v) for k, v in header_list if k.lower() not in _HOP_HEADERS]
+        lines = [f"{method} {target} {version}"] + [f"{k}: {v}" for k, v in kept] + ["Connection: close"]
+        upstream_ctx = self._upstream_context
+        if upstream_ctx is None:
+            upstream_ctx = ssl.create_default_context()
+            upstream_ctx.set_alpn_protocols(["http/1.1"])
+        try:
+            up_reader, up_writer = await asyncio.wait_for(
+                asyncio.open_connection(host, upstream_port, ssl=upstream_ctx, server_hostname=host),
+                CONNECT_TIMEOUT)
+        except (OSError, ssl.SSLError, asyncio.TimeoutError) as exc:
+            writer.write(_response(502, "Bad Gateway", f"egress proxy: cannot reach {host}: {exc}"))
+            return
+        up_writer.write(("\r\n".join(lines) + "\r\n\r\n").encode("iso-8859-1"))
+        await up_writer.drain()
         await asyncio.gather(_pipe(reader, up_writer), _pipe(up_reader, writer))
 
 
@@ -513,6 +663,6 @@ def running() -> Optional[EgressProxy]:
 
 __all__ = [
     "EgressProxy", "enabled", "port", "bind_host", "public_host", "host_allowed",
-    "infrastructure_hosts", "register", "lookup", "revoke", "proxy_url",
+    "infrastructure_hosts", "register", "attach_secrets", "lookup", "revoke", "proxy_url",
     "start_background", "stop_background", "running",
 ]

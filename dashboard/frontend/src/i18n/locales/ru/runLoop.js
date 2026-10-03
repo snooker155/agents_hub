@@ -18,6 +18,9 @@ export default {
   compactionServer: 'Старые результаты инструментов очищает провайдер (context editing), последние {{keep}} сохраняются',
   injections: 'Управляющие сообщения',
   afterStep: 'после шага {{step}}',
+  systemMessages: 'Инструкции, добавленные во время запуска',
+  toolSpills: 'Результаты инструментов, сохранённые в файлы',
+  spillChars: '{{chars}} символов',
   loadedTools: 'Загруженные инструменты',
   guardrails: 'Проверки guardrail',
   structured: 'Структурированный ответ',
@@ -32,5 +35,6 @@ export default {
     guardrail: 'Судья guardrail',
     structured_repair: 'Исправление по схеме',
     outcome_grader: 'Грейдер outcome',
+    advisor: 'Советник',
   },
 };

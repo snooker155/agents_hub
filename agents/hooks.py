@@ -579,6 +579,12 @@ class ToolGuard:
                     and needs_approval(tool_id, self.spec)):
                 self._record(call, policy.RUN,
                              "always_allow overrides the approval list for this tool.", by="policy")
+            else:
+                # A plain allow: no row anywhere, only the call's own trail entry.
+                policy.note_call(call.tool, policy.PERMISSION_ALLOW,
+                                 policy.reason_code(by="policy", decision=policy.RUN,
+                                                    mode=mode, source=source),
+                                 fingerprint=call.fingerprint)
             return _Verdict()
 
         if mode == policy.AUTO:
@@ -599,7 +605,8 @@ class ToolGuard:
         # A person already said yes to this exact call (a parked auto call,
         # approved): that settles it, whatever the classifier would say now.
         if call.task_id and self._consume(call):
-            self._record(call, policy.RUN, "A person approved this exact call.", by="auto")
+            self._record(call, policy.RUN, "A person approved this exact call.", by="auto",
+                         approved=True)
             return _Verdict()
 
         cached = policy.cached_decision(call.fingerprint)
@@ -614,10 +621,7 @@ class ToolGuard:
             )
             policy.remember_decision(call.fingerprint, decision, reason)
 
-        entry = self._record(call, decision, reason, by="auto", cached=cached is not None)
-        if cached is None and decision in (policy.DENY, policy.ASK):
-            policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
-                                  task_id=call.task_id, workspace=self.workspace)
+        self._record(call, decision, reason, by="auto", cached=cached is not None)
         if decision == policy.RUN:
             return _Verdict()
         if decision == policy.DENY:
@@ -640,7 +644,8 @@ class ToolGuard:
         if check_approved and self._consume(call):
             # The operator already said yes to this exact call.
             if record:
-                self._record(call, policy.RUN, "A person approved this exact call.", by=by)
+                self._record(call, policy.RUN, "A person approved this exact call.", by=by,
+                             approved=True)
             return _Verdict()
 
         if record:
@@ -667,12 +672,23 @@ class ToolGuard:
             return False
 
     def _record(self, call: "_Call", decision: str, reason: str, *, by: str,
-                cached: bool = False) -> Any:
+                cached: bool = False, approved: bool = False) -> Any:
+        """Record one decided call: on the run and in the Tool policy store,
+        on the call's trail entry (``evaluated_permission`` and ``reason_code``),
+        and as an audit row unless it is a cached repeat. Every call that gets
+        here is a deny, an ask, an ``auto`` decision, a spent approval or an
+        always_allow that lifted the approval list; a plain allow never does."""
         from tools import permission_policy as policy
         entry = policy.Decision(tool=call.tool, mode=call.mode, decision=decision, reason=reason or "",
                                 by=by, fingerprint=call.fingerprint, source=call.source, cached=cached)
         policy.record(entry, agent_id=self.agent_id, run_id=call.run_id, task_id=call.task_id,
                       workspace=self.workspace, tool_input=call.input)
+        code = policy.reason_code(by=by, decision=decision, mode=call.mode, source=call.source,
+                                  reason=reason, approved=approved)
+        policy.note_call(call.tool, policy.permission_of(decision), code, fingerprint=call.fingerprint)
+        if not cached:
+            policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
+                                  task_id=call.task_id, workspace=self.workspace, code=code)
         return entry
 
     def after(self, tool_id: str, tool_input: Any, output: Any) -> Any:

@@ -13,6 +13,7 @@ import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } fro
 import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
 import { applyDelegationEvent } from '../processLive';
+import { policyVerdict } from '../../policyVerdict';
 
 // Which bubble a per-turn event belongs in: the single assistant bubble in
 // agent mode, or the bubble for the currently active node in flow mode.
@@ -80,7 +81,7 @@ function handleDelegationEvent(event, ctx) {
                 type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true,
               });
             } else if (event.type === 'tool_end') {
-              tl = resolveDelegationTool(tl, event.run_id, { output: event.output });
+              tl = resolveDelegationTool(tl, event.run_id, { output: event.output, ...policyVerdict(event) });
             } else if (event.type === 'tool_error') {
               tl = resolveDelegationTool(tl, event.run_id, { output: `ERROR: ${event.error}`, error: true });
             } else if (event.type === 'text' && (event.content || '').trim()) {
@@ -329,7 +330,7 @@ function handleAgentEvent(event, ctx) {
               const tl = [...m.timeline];
               for (let i = tl.length - 1; i >= 0; i -= 1) {
                 if (tl[i].type === 'tool' && tl[i].running) {
-                  tl[i] = { ...tl[i], output: event.output, running: false };
+                  tl[i] = { ...tl[i], output: event.output, running: false, ...policyVerdict(event) };
                   break;
                 }
               }
@@ -343,7 +344,7 @@ function handleAgentEvent(event, ctx) {
       const tools = [...(prev.tools || [])];
       for (let i = tools.length - 1; i >= 0; i -= 1) {
         if (tools[i].running) {
-          tools[i] = { ...tools[i], output: event.output, running: false };
+          tools[i] = { ...tools[i], output: event.output, running: false, ...policyVerdict(event) };
           break;
         }
       }
@@ -352,7 +353,7 @@ function handleAgentEvent(event, ctx) {
         const mrTools = [...(mr.tools || [])];
         for (let i = mrTools.length - 1; i >= 0; i -= 1) {
           if (mrTools[i].running) {
-            mrTools[i] = { ...mrTools[i], output: event.output, running: false };
+            mrTools[i] = { ...mrTools[i], output: event.output, running: false, ...policyVerdict(event) };
             break;
           }
         }

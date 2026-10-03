@@ -189,6 +189,51 @@ API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{i
 
 UI: Memory page, Pools tab, a "Pool history" button and a history icon next to each block, note and slot, with a diff against the previous version, Restore and Redact.
 
+## Read only pools
+
+A pool bound to an agent is normally a plain id. One binding can instead be
+`{"id": pool_id, "read_only": true}` to mark that one pool read only for an
+ordinary run: `recall`, `recall_episodes` and `traverse` still read it, but
+`remember`, `forget`, `record_episode`, `link`, `memory_block_replace` and
+`memory_block_append` refuse on it with a message that says so, instead of
+writing or being left off the agent entirely. The other pools a run binds,
+including the personal pool, are unaffected. This is a separate, finer
+switch from a deployment's `Task.memory_access` (`docs/deployments.md`,
+"Resources"), which drops the memory write tools for the whole run.
+
+Set it on the agent's Memory tab, a checkbox next to the primary pool and
+each additional one, or by posting the entry shape to
+`POST /api/agents/{id}/memory`.
+
+## Consolidation
+
+A consolidation folds a pool's own content and up to N of its recent
+sessions (runs or chat conversations of an agent bound to it) into a NEW
+pool: duplicate notes merged, outdated facts replaced by newer ones from the
+sessions, genuine insights pulled out as new notes. The source pool is never
+changed.
+
+The model call goes through the same provider layer `memory/knowledge_extract.py`
+and `memory/graph_extract.py` use, and its cost is recorded as auxiliary
+usage (`common/aux_usage.py`, purpose `memory_consolidate`). The job runs in
+a background thread with a status a client polls: `queued`, `running`,
+`done` or `failed` with a reason; a bad or unparseable model answer fails
+the job rather than writing anything.
+
+API: `POST /api/memory/{id}/consolidate {session_limit}`,
+`GET /api/memory/{id}/consolidations`, `GET /api/memory/consolidations/{job_id}`,
+`POST /api/memory/consolidations/{job_id}/apply {agent_id, workspace}` (switches
+that agent's binding from the source pool to the result), `POST
+.../discard` (drops the candidate pool). A scheduled job kind
+`memory_consolidate` (`consolidate_pool_id`, `consolidate_session_limit`)
+runs it on a schedule next to the plan's run-now, set up on the Plan page's
+job form (a pool picker and a session count next to the usual kind, title
+and schedule fields).
+
+UI: Memory page, Pools tab, the "Memory consolidation" panel on a selected
+pool: a session count, Run now, the job history, and for a finished job a
+diff by block, note and slot next to Switch binding and Discard.
+
 ## Gotchas
 
 - Memory reads count as `reads_private`, which means an agent with memory access

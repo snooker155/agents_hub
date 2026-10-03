@@ -223,6 +223,7 @@ class GatedTool(BaseTool):
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         if self.gate.requires_think_before(self.name):
+            _note_refusal(self.name)
             return _REFUSAL.format(tool=self.name)
         self.gate.note_action(self.name)
         # Strip the run manager LangChain injects; the inner tool manages its own.
@@ -231,10 +232,21 @@ class GatedTool(BaseTool):
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         if self.gate.requires_think_before(self.name):
+            _note_refusal(self.name)
             return _REFUSAL.format(tool=self.name)
         self.gate.note_action(self.name)
         kwargs.pop("run_manager", None)
         return await self.inner.arun(_merge_tool_input(args, kwargs))
+
+
+def _note_refusal(tool: str) -> None:
+    """Put the refusal on the run's per-call trail (tools/permission_policy.py),
+    so the call reads as denied with ``think_required`` rather than allowed."""
+    try:
+        from tools.permission_policy import PERMISSION_DENY, note_call
+        note_call(tool, PERMISSION_DENY, "think_required")
+    except ImportError:
+        pass
 
 
 def _merge_tool_input(args: tuple, kwargs: dict) -> Any:

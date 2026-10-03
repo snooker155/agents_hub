@@ -28,6 +28,19 @@ down, a row encrypted under an old key) must not crash a run, and it must
 never degrade into handing out *more* than the allowlist. ``env_for_run``
 therefore logs a warning and returns nothing on any error. Values are never
 logged, never returned by ``list``, and never written to the audit trail.
+
+Secrets bound to hosts. A secret may name ``allowed_hosts`` (a host matches an
+entry or is a subdomain of one, as in the egress allowlist). Such a secret
+never reaches a run process in plain text: the run gets a placeholder
+(``ahsec_...``), and the egress proxy (environments/egress.py, with
+environments/secret_egress.py) swaps the real value into a request only on its
+way to one of those hosts. That needs the proxy, so with
+``AGENTS_HUB_EGRESS_PROXY`` off the launch is refused
+(:class:`SecretEgressUnavailable`) unless the operator set
+``AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1``, which hands the value over in plain
+text as before. This is the one secrets failure that stops a launch: quietly
+handing the value out unbound would be the very leak the hosts were set to
+prevent, and quietly handing out nothing would hide the reason a run fails.
 """
 from __future__ import annotations
 
@@ -68,6 +81,48 @@ NO_KEY_MESSAGE = ("no secret key is configured: set AGENTS_HUB_SECRET_KEY, "
 
 class SecretsError(ValueError):
     """A secret could not be stored or read. The message is safe to show."""
+
+
+class SecretEgressUnavailable(SecretsError):
+    """A secret bound to hosts cannot be handed out: the egress proxy is off.
+
+    Raised from :func:`env_for_run` / :func:`env_for_flow` and never swallowed,
+    so the launch fails with this message instead of starting a run that holds
+    the value unbound."""
+
+
+#: Hand a host-bound secret over in plain text when the egress proxy is off.
+PLAINTEXT_FALLBACK_ENV = "AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK"
+
+
+def normalize_hosts(raw: Any) -> List[str]:
+    """``allowed_hosts`` as a clean list: lower case, no scheme, port or path,
+    no duplicates. Accepts a list or a comma or whitespace separated string."""
+    items = raw if isinstance(raw, (list, tuple, set)) else re.split(r"[\s,]+", str(raw or ""))
+    out: List[str] = []
+    for item in items:
+        host = str(item or "").strip().lower()
+        if "://" in host:
+            host = host.split("://", 1)[1]
+        host = host.split("/", 1)[0].split("@")[-1]
+        if host.count(":") == 1:
+            host = host.split(":", 1)[0]
+        host = host.strip("[]").strip(".")
+        if not host:
+            continue
+        if not re.match(r"^[a-z0-9*][a-z0-9.\-:*]*$", host):
+            raise SecretsError(f"invalid host '{item}' in allowed_hosts")
+        host = host.lstrip("*.")
+        if host and host not in out:
+            out.append(host)
+    return out
+
+
+def _hosts_of(row: Dict[str, Any]) -> List[str]:
+    try:
+        return normalize_hosts(row.get("allowed_hosts") or "")
+    except SecretsError:
+        return []
 
 
 class SecretKeyMissing(SecretsError):
@@ -154,7 +209,7 @@ def key_configured() -> bool:
 # ── rows ─────────────────────────────────────────────────────────────────────
 
 _COLUMNS = ("secret_id", "workspace", "name", "agent_id", "user_id", "ciphertext",
-            "key_version", "hint", "created_by", "created_at", "updated_at")
+            "key_version", "hint", "created_by", "created_at", "updated_at", "allowed_hosts")
 
 
 def _scope(agent_id: Optional[str], user_id: Optional[str]) -> Tuple[str, str]:
@@ -172,6 +227,7 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
         "user_id": row["user_id"] or "", "hint": row["hint"] or "",
         "updated_at": row["updated_at"], "created_at": row["created_at"],
         "created_by": row["created_by"] or "",
+        "allowed_hosts": _hosts_of(row),
     }
 
 
@@ -221,11 +277,17 @@ class SecretBackend:
         return _row_dict(row) if row else None
 
     def set(self, workspace: str, name: str, value: str, agent_id: Optional[str] = None,
-            user_id: Optional[str] = None, *, created_by: Optional[str] = None) -> Dict[str, Any]:
-        """Store or replace one value. Returns the public row."""
+            user_id: Optional[str] = None, *, created_by: Optional[str] = None,
+            allowed_hosts: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """Store or replace one value. Returns the public row.
+
+        ``allowed_hosts`` None keeps what a replaced row had (nothing for a
+        new one); a list, empty included, sets it.
+        """
         name = validate_name(name)
         if value is None or str(value) == "":
             raise SecretsError("a secret needs a value")
+        hosts = None if allowed_hosts is None else ",".join(normalize_hosts(list(allowed_hosts)))
         self._check_writable()
         agent_id, user_id = _scope(agent_id, user_id)
         value = str(value)
@@ -235,15 +297,30 @@ class SecretBackend:
             existing = self._row(workspace, name, agent_id, user_id)
             if existing:
                 conn.execute(
-                    "UPDATE secrets SET ciphertext = ?, key_version = ?, hint = ?, updated_at = ? "
-                    "WHERE secret_id = ?",
-                    (ciphertext, KEY_VERSION, make_hint(value), now, existing["secret_id"]))
+                    "UPDATE secrets SET ciphertext = ?, key_version = ?, hint = ?, updated_at = ?, "
+                    "allowed_hosts = ? WHERE secret_id = ?",
+                    (ciphertext, KEY_VERSION, make_hint(value), now,
+                     existing.get("allowed_hosts") or "" if hosts is None else hosts,
+                     existing["secret_id"]))
             else:
                 conn.execute(
                     f"INSERT INTO secrets ({', '.join(_COLUMNS)}) "
                     f"VALUES ({', '.join('?' * len(_COLUMNS))})",
                     (uuid.uuid4().hex, str(workspace), name, agent_id, user_id, ciphertext,
-                     KEY_VERSION, make_hint(value), created_by or "", now, now))
+                     KEY_VERSION, make_hint(value), created_by or "", now, now, hosts or ""))
+        return _public(self._row(workspace, name, agent_id, user_id) or {})
+
+    def set_hosts(self, workspace: str, name: str, allowed_hosts: Iterable[str],
+                  agent_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Change only the hosts of an existing secret (the value stays)."""
+        hosts = ",".join(normalize_hosts(list(allowed_hosts or [])))
+        agent_id, user_id = _scope(agent_id, user_id)
+        with db.transaction() as conn:
+            existing = self._row(workspace, name, agent_id, user_id)
+            if existing is None:
+                raise SecretsError(f"no secret '{name}' at this scope")
+            conn.execute("UPDATE secrets SET allowed_hosts = ?, updated_at = ? WHERE secret_id = ?",
+                         (hosts, _now(), existing["secret_id"]))
         return _public(self._row(workspace, name, agent_id, user_id) or {})
 
     def get(self, workspace: str, name: str, agent_id: Optional[str] = None,
@@ -270,7 +347,34 @@ class SecretBackend:
 
     def resolve_for_run(self, workspace: str, agent_id: Optional[str], user_id: Optional[str],
                         allowed_names: Iterable[str]) -> Dict[str, str]:
-        """{name: value} for one run, most specific scope first.
+        """{name: value} for one run, most specific scope first."""
+        return {name: value for name, (value, _hosts) in
+                self.resolve_bound(workspace, agent_id, user_id, allowed_names).items()}
+
+    def bound_hosts(self, workspace: str, agent_id: Optional[str], user_id: Optional[str],
+                    names: Iterable[str]) -> Dict[str, List[str]]:
+        """{name: allowed_hosts} of the row that wins for each name, for names
+        bound to hosts only. Metadata alone: no value is read."""
+        wanted = [n for n in dict.fromkeys(str(x).strip() for x in (names or [])) if n]
+        if not wanted or not workspace:
+            return {}
+        agent_id, user_id = _scope(agent_id, user_id)
+        placeholders = ", ".join("?" * len(wanted))
+        rows = db.get_conn().execute(
+            f"SELECT {', '.join(_COLUMNS)} FROM secrets WHERE workspace = ? "
+            f"AND name IN ({placeholders}) AND agent_id IN ('', ?) AND user_id IN ('', ?)",
+            (str(workspace), *wanted, agent_id, user_id)).fetchall()
+        best: Dict[str, Dict[str, Any]] = {}
+        for raw in rows:
+            row = _row_dict(raw)
+            current = best.get(row["name"])
+            if current is None or _rank(row) > _rank(current):
+                best[row["name"]] = row
+        return {name: _hosts_of(row) for name, row in best.items() if _hosts_of(row)}
+
+    def resolve_bound(self, workspace: str, agent_id: Optional[str], user_id: Optional[str],
+                      allowed_names: Iterable[str]) -> Dict[str, Tuple[str, List[str]]]:
+        """{name: (value, allowed_hosts)} for one run, most specific scope first.
 
         Only ``allowed_names`` are considered; an empty allowlist returns
         nothing. A row that cannot be read (wrong key, Vault unreachable)
@@ -290,12 +394,12 @@ class SecretBackend:
         for raw in rows:
             row = _row_dict(raw)
             by_name.setdefault(row["name"], []).append(row)
-        out: Dict[str, str] = {}
+        out: Dict[str, Tuple[str, List[str]]] = {}
         for name, candidates in by_name.items():
             for row in sorted(candidates, key=_rank, reverse=True):
                 value = self._unseal(row)
                 if value is not None:
-                    out[name] = value
+                    out[name] = (value, _hosts_of(row))
                     break
         return out
 
@@ -416,8 +520,10 @@ def backend() -> SecretBackend:
 # ── module-level API ─────────────────────────────────────────────────────────
 
 def set_secret(workspace: str, name: str, value: str, *, agent_id: Optional[str] = None,
-               user_id: Optional[str] = None, created_by: Optional[str] = None) -> Dict[str, Any]:
-    return backend().set(workspace, name, value, agent_id, user_id, created_by=created_by)
+               user_id: Optional[str] = None, created_by: Optional[str] = None,
+               allowed_hosts: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+    return backend().set(workspace, name, value, agent_id, user_id, created_by=created_by,
+                         allowed_hosts=allowed_hosts)
 
 
 def get_secret(workspace: str, name: str, *, agent_id: Optional[str] = None,
@@ -437,6 +543,88 @@ def list_secrets(workspace: str) -> List[Dict[str, Any]]:
 def resolve_for_run(workspace: str, agent_id: Optional[str], user_id: Optional[str],
                     allowed_names: Iterable[str]) -> Dict[str, str]:
     return backend().resolve_for_run(workspace, agent_id, user_id, allowed_names)
+
+
+def resolve_bound(workspace: str, agent_id: Optional[str], user_id: Optional[str],
+                  allowed_names: Iterable[str]) -> Dict[str, Tuple[str, List[str]]]:
+    return backend().resolve_bound(workspace, agent_id, user_id, allowed_names)
+
+
+def _resolve_with_hosts(workspace: str, agent_id: Optional[str], user_id: Optional[str],
+                        allowed: List[str]) -> Dict[str, Tuple[str, List[str]]]:
+    """``{name: (value, hosts)}`` for a run: the values through
+    :func:`resolve_for_run` (the one seam callers and tests replace), the
+    hosts from the winning rows' metadata."""
+    values = resolve_for_run(workspace, agent_id, user_id, allowed)
+    hosts = backend().bound_hosts(workspace, agent_id, user_id, list(values)) if values else {}
+    return {name: (value, hosts.get(name, [])) for name, value in values.items()}
+
+
+def set_secret_hosts(workspace: str, name: str, allowed_hosts: Iterable[str], *,
+                     agent_id: Optional[str] = None,
+                     user_id: Optional[str] = None) -> Dict[str, Any]:
+    return backend().set_hosts(workspace, name, allowed_hosts, agent_id, user_id)
+
+
+def _plaintext_fallback() -> bool:
+    try:
+        from common.config import live_setting
+        raw = live_setting(PLAINTEXT_FALLBACK_ENV, "")
+    except Exception:  # noqa: BLE001 - config unavailable: the process environment decides
+        import os
+        raw = os.environ.get(PLAINTEXT_FALLBACK_ENV, "")
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _hand_out(resolved: Dict[str, Tuple[str, List[str]]], *, run_label: str) -> Dict[str, str]:
+    """The environment entries for resolved secrets.
+
+    A secret without hosts goes in as its value. A secret with hosts goes in
+    as a placeholder sealed with the egress layer (environments/secret_egress.py),
+    and the placeholders are listed under ``AGENTS_HUB_SECRET_PLACEHOLDERS`` so
+    the launch routes the run through the proxy. With the proxy off: plain
+    text when the operator allowed it, else :class:`SecretEgressUnavailable`.
+    """
+    out: Dict[str, str] = {}
+    bound = {name: pair for name, pair in resolved.items() if pair[1]}
+    for name, (value, _hosts) in resolved.items():
+        if name not in bound:
+            out[name] = value
+    if not bound:
+        return out
+    from environments import egress, secret_egress
+    if not egress.enabled():
+        if _plaintext_fallback():
+            log.warning("secrets: %s handed to %s in plain text: the egress proxy is off and %s "
+                        "is set", ", ".join(sorted(bound)), run_label, PLAINTEXT_FALLBACK_ENV)
+            out.update({name: pair[0] for name, pair in bound.items()})
+            return out
+        raise SecretEgressUnavailable(
+            f"secret {', '.join(sorted(bound))} may only be sent to its allowed hosts, which "
+            "needs the egress proxy, and the proxy is off. Turn it on with "
+            f"AGENTS_HUB_EGRESS_PROXY=1, or set {PLAINTEXT_FALLBACK_ENV}=1 to hand such "
+            "secrets over in plain text.")
+    placeholders: List[str] = []
+    for name, (value, hosts) in bound.items():
+        placeholder = secret_egress.seal(name, value, hosts)
+        out[name] = placeholder
+        placeholders.append(placeholder)
+    out[secret_egress.PLACEHOLDERS_ENV] = ",".join(placeholders)
+    return out
+
+
+def _github_app_bound(resolved: Dict[str, Tuple[str, List[str]]], allowed: Iterable[str],
+                      workspace: str, agent_id: Optional[str],
+                      user_id: Optional[str]) -> Dict[str, Tuple[str, List[str]]]:
+    """:func:`_with_github_app` for the ``(value, hosts)`` shape: the app's
+    token carries no hosts of its own."""
+    plain = {name: pair[0] for name, pair in resolved.items()}
+    filled = _with_github_app(plain, allowed, workspace, agent_id, user_id)
+    out = dict(resolved)
+    for name, value in filled.items():
+        if name not in out:
+            out[name] = (value, [])
+    return out
 
 
 def allowed_for_agent(agent_id: str) -> List[str]:
@@ -499,8 +687,11 @@ def env_for_run(workspace: str, agent_id: Optional[str],
         allowed = _allowed_names(agent_id, extra_names)
         if not allowed:
             return {}
-        return _with_github_app(resolve_for_run(workspace, agent_id, user_id, allowed),
-                                allowed, workspace, agent_id, user_id)
+        resolved = _github_app_bound(_resolve_with_hosts(workspace, agent_id, user_id, allowed),
+                                     allowed, workspace, agent_id, user_id)
+        return _hand_out(resolved, run_label=f"agent {agent_id}")
+    except SecretEgressUnavailable:
+        raise
     except Exception as exc:  # noqa: BLE001 - never raises (see docstring): a secrets problem must not crash a launch
         log.warning("secrets: nothing handed to %s in %s: %s", agent_id, workspace,
                     type(exc).__name__)
@@ -531,8 +722,11 @@ def env_for_flow(workspace: str, flow_id: Optional[str],
             return {}
         # The app identity for a flow: one environment serves every node, so
         # no single agent's github_identity can speak for all of them.
-        return _with_github_app(resolve_for_run(workspace, "", user_id, names),
-                                names, workspace, None, user_id)
+        resolved = _github_app_bound(_resolve_with_hosts(workspace, "", user_id, names),
+                                     names, workspace, None, user_id)
+        return _hand_out(resolved, run_label=f"flow {flow_id}")
+    except SecretEgressUnavailable:
+        raise
     except Exception as exc:  # noqa: BLE001 - never raises (see docstring): a secrets problem must not crash a launch
         log.warning("secrets: nothing handed to flow %s in %s: %s", flow_id, workspace,
                     type(exc).__name__)
@@ -568,11 +762,14 @@ def active_scope() -> Optional[Tuple[str, str, str]]:
     return None if scope is None else (scope[0], scope[1], scope[2])
 
 
-def get(name: str) -> Optional[str]:
+def get(name: str, *, host: Optional[str] = None) -> Optional[str]:
     """One secret for the active in-process run, or None.
 
     None outside :func:`activate`, and None for a name the active agent does
     not declare, exactly as the environment of a subprocess run would lack it.
+    A secret bound to hosts is returned only when ``host`` is given and is one
+    of them: an in-process run has no proxy to swap a placeholder in, so the
+    caller that knows where the value goes has to say so.
     """
     scope = _ACTIVE.get()
     if scope is None:
@@ -582,8 +779,19 @@ def get(name: str) -> Optional[str]:
     try:
         if name not in _allowed_names(agent_id, extras):
             return None
-        return _with_github_app(resolve_for_run(workspace, agent_id, user_id, [name]),
-                                [name], workspace, agent_id, user_id).get(name)
+        resolved = _github_app_bound(_resolve_with_hosts(workspace, agent_id, user_id, [name]),
+                                     [name], workspace, agent_id, user_id)
+        pair = resolved.get(name)
+        if pair is None:
+            return None
+        value, hosts = pair
+        if hosts:
+            from environments.egress import host_allowed
+            if not host or not host_allowed(host, hosts):
+                log.info("secrets: %s withheld in process: host %r is not among its allowed hosts",
+                         name, host)
+                return None
+        return value
     except Exception as exc:  # noqa: BLE001 - an in-process secret read must not crash the caller
         log.warning("secrets: could not read %s: %s", name, type(exc).__name__)
         return None
@@ -591,6 +799,8 @@ def get(name: str) -> Optional[str]:
 
 __all__ = [
     "NAME_RE", "KEY_VERSION", "NO_KEY_MESSAGE", "SecretsError", "SecretKeyMissing",
+    "SecretEgressUnavailable", "PLAINTEXT_FALLBACK_ENV", "normalize_hosts", "resolve_bound",
+    "set_secret_hosts",
     "SecretBackend", "LocalBackend", "VaultBackend", "backend",
     "validate_name", "make_hint", "keygen", "key_configured",
     "set_secret", "get_secret", "delete_secret", "list_secrets", "resolve_for_run",

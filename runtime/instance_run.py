@@ -147,6 +147,26 @@ def _secrets_scope(instance: Dict[str, Any], agent_id: str, extra_names=()):
 _CHANNEL_BY_ORIGIN = {"external": "external", "http": "http"}
 
 
+def _service_pin(service_id: Optional[str], agent_id: str) -> Optional[int]:
+    """The agent version a service pins, when it names one that exists."""
+    if not service_id:
+        return None
+    try:
+        from services import store as service_store
+        raw = (service_store.get(str(service_id)) or {}).get("agent_version")
+        if raw is None:
+            return None
+        from agents import versions as agent_versions
+        if agent_versions.get_version_row(agent_id, int(raw)) is None:
+            _logger.warning("service %s pins version %s of %s, which is gone; answering with the live definition",
+                            service_id, raw, agent_id)
+            return None
+        return int(raw)
+    except Exception:  # noqa: BLE001 - an unreadable service answers with the live definition, logged
+        _logger.warning("could not read the version pin of service %s", service_id, exc_info=True)
+        return None
+
+
 def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                    message: Dict[str, Any]) -> Optional[str]:
     """Answer one claimed mailbox message in a run of its own. Returns the run id.
@@ -176,6 +196,10 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
     if not body:
         return None
     service_id = instance.get("service_id") or None
+    # The service's version pin (services/store.py ``agent_version``): a
+    # plain message to a pinned service is answered by that version, the
+    # same as a chat turn routed to it (chat/turns.py).
+    pin = _service_pin(service_id, agent_id)
 
     from agents.agent_factory import create_agent
     from agents.agent_invoke import invoke_agent
@@ -203,6 +227,7 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
             input=body, instance_id=instance_id, message_origin=origin,
             conversation_id=conversation_id, carrier_run=True, inbox_msg_id=msg_id,
             **({"service_id": service_id} if service_id else {}),
+            agent_version_pin=pin,
         )
         instance_inbox.attach_run(msg_id, run_id)
         instance_registry.mark_active(instance_id, run_id, body[:200])
@@ -210,7 +235,8 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                                      {"msg_id": msg_id, "conversation_id": public_cid})
         stop_cb = RunStopCallback(run_id)
         with _secrets_scope(instance, agent_id):
-            agent = create_agent(agent_id, workspace=workspace)
+            agent = create_agent(agent_id, workspace=workspace,
+                                 **({"definition_version": pin} if pin is not None else {}))
             with open(log_file, "w", encoding="utf-8", buffering=1) as lf:
                 lf.write(f"[{_now()}] Instance message run\n")
                 lf.write(f"[{_now()}] instance_id={instance_id} msg_id={msg_id} "
@@ -272,6 +298,46 @@ def _task_workspace_path(task, workspace: Optional[str]) -> Optional[str]:
         except Exception:  # noqa: BLE001 - the workspace root is used
             _logger.debug("could not resolve the task workspace", exc_info=True)
     return abs_ws
+
+
+def _task_build_pin(task: Any, run_id: str, agent_id: str) -> Dict[str, Any]:
+    """``create_agent`` keywords for a task run on a resident worker: the
+    version pin (the launch params' own, else the task's) and the per-run
+    overrides of the launch params (agents/run_overrides.py). The run record
+    gets the version and the overrides the same way a subprocess run does."""
+    from managers.run_manager import _update_run
+    params = dict(getattr(task, "assigned_agent_params", None) or {})
+    out: Dict[str, Any] = {}
+    record: Dict[str, Any] = {}
+    raw_pin = params.get("agent_version")
+    if raw_pin is None:
+        raw_pin = getattr(task, "agent_version", None)
+    if raw_pin is not None:
+        try:
+            pin = int(raw_pin)
+            from agents import versions as agent_versions
+            if agent_versions.get_version_row(agent_id, pin) is not None:
+                out["definition_version"] = pin
+                record["agent_version"] = pin
+            else:
+                _logger.warning("task %s pins version %s of %s, which is gone; building the live definition",
+                                getattr(task, "id", "?"), pin, agent_id)
+        except (TypeError, ValueError):
+            _logger.debug("task %s has an unreadable version pin", getattr(task, "id", "?"), exc_info=True)
+    if any(params.get(k) not in (None, "", {}) for k in ("overrides", "tool_policy", "output_schema")):
+        from agents import run_overrides
+        overrides = run_overrides.fold_legacy(params.get("overrides"),
+                                              tool_policy=params.get("tool_policy"),
+                                              output_schema=params.get("output_schema"))
+        if overrides:
+            out.update(run_overrides.build_kwargs(overrides))
+            record["overrides"] = run_overrides.record_view(overrides)
+    if record:
+        try:
+            _update_run(run_id, record)
+        except Exception:  # noqa: BLE001 - the record is bookkeeping; the run builds as pinned regardless
+            _logger.debug("could not stamp the pin on run %s", run_id, exc_info=True)
+    return out
 
 
 def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str],
@@ -356,6 +422,11 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
                 _build_kwargs["memory_access"] = str(getattr(task, "memory_access", None) or "write")
             if _task_secrets:
                 _build_kwargs["extra_secrets"] = _task_secrets
+            # The version the task (or its launch params) pins and the run's
+            # overrides, as a subprocess launch would build them
+            # (agents/agent_launcher.py): a pinned task must not quietly run
+            # the live definition because a resident worker took it.
+            _build_kwargs.update(_task_build_pin(task, run_id, agent_id))
             with _secrets_scope(instance, agent_id, _task_secrets):
                 agent = create_agent(agent_id, workspace=abs_ws, **_build_kwargs)
                 seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", prompt)

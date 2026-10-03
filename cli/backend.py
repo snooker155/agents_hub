@@ -128,6 +128,7 @@ class DirectBackend:
                 description=body.get("description") or "",
                 workspace=body.get("workspace_name"),
                 project_id=body.get("project_id"),
+                agent_version=body.get("agent_version"),
             )
         except Exception as e:
             raise _fail(e)

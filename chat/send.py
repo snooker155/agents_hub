@@ -37,6 +37,7 @@ from chat.runs import (
     get_pool_id,
     auto_journal,
     agent_overrides,
+    request_overrides,
     validate_chat_request,
     create_chat_run,
 )
@@ -184,7 +185,10 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         # but cannot reach into the worker thread by itself.
         from agents.agent_invoke import invoke_agent
         from agents.callbacks import RunStopCallback
-        overrides = agent_overrides(request.agent_id)
+        # The record's model cascade, then this turn's version pin and
+        # per-run overrides (chat/runs.py request_overrides), as the
+        # streaming pipeline builds it.
+        overrides = {**agent_overrides(request.agent_id), **request_overrides(request)}
         agent = create_agent(request.agent_id, workspace=workspace_abs, **overrides)
         # Persist the model/provider actually used for this run so the message
         # record reflects what ran, not the current default at view time.

@@ -43,7 +43,28 @@ A call the operator already approved runs without being classified again. Identi
 
 `GET /api/tool-policy/decisions?run_id=&agent_id=&workspace=&limit=` lists decisions across runs. Rows are kept `AGENTS_HUB_TOOL_POLICY_RETENTION_DAYS` days (default 30) and at most 1000 per workspace.
 
-Auto deny and ask outcomes are audited as `tool.policy`; agent policy edits as `agent.tool_policy`.
+Decisions are audited as `tool.policy` (see the trail below); agent policy edits as `agent.tool_policy`.
+
+## The per-call trail
+
+Every tool call of a run carries two fields, whether or not a policy is set: `evaluated_permission` (`allow`, `deny` or `ask`) and `reason_code`, a short stable code for why. They are on each entry of the run payload's `tool_calls`, on the live `tool_end` and `tool_error` events, and at the end of the run log's `[tool_call]` line, which is how the run page reads them back for older log formats too. The process graph shows the permission as a badge on the tool node; the call's detail names the reason. Flow and team runs carry them the same way, since they run their agents through the same loop.
+
+| reason_code | permission | meaning |
+|---|---|---|
+| `default_allow` | allow | nothing is set for this tool, it runs as it always did |
+| `never_gated` | allow | a reasoning tool or `ask_user` |
+| `policy_always_allow` | allow | an agent or workspace policy says `always_allow` |
+| `policy_always_ask` | ask | an agent or workspace policy says `always_ask` |
+| `approval_list` | ask | the workspace gate is on and the tool is on the approval list |
+| `auto_run`, `auto_deny`, `auto_ask` | allow, deny, ask | what the classifier answered |
+| `auto_unclear` | ask | the classifier timed out, failed or gave no usable answer |
+| `hook_deny`, `hook_ask` | deny, ask | a `PreToolUse` hook decided |
+| `human_approved` | allow | a person approved this exact call earlier |
+| `think_required` | deny | the think gate refused an action before a `think` |
+
+In chat an `ask` is the advisory refusal; in a task it parks the call. The capability guard works when an agent is built, not per call, so it never appears here: a tool it removed is not in the run at all.
+
+Every deny, every ask, every `auto` decision and every spent approval writes a `tool.policy` audit row with `reason_code` and `evaluated_permission` in its details. A plain allow writes none, and a cached repeat of an `auto` call is on the trail but not in the audit log.
 
 ## Never gated
 

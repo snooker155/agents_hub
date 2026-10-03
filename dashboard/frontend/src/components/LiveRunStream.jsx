@@ -7,6 +7,7 @@ import { getRunBrowserSession, setBrowserControl } from '../api/browser';
 import { listRunSteering, steerRun } from '../api/steering';
 import { BrowserToolbar, BrowserViewport, useBrowserSession } from './browser';
 import { steerCaption } from './chat/steering';
+import { policyVerdict } from './policyVerdict';
 
 /*
  * Live view of agent runs happening on one session channel.
@@ -128,7 +129,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return r;
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '' };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '', ...policyVerdict(ev) };
           return { ...r, tools };
         });
         break;
@@ -136,7 +137,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return { ...r, errors: [...r.errors, String(ev.error || '')] };
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || '') };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || ''), ...policyVerdict(ev) };
           return { ...r, tools };
         });
         break;
@@ -324,7 +325,8 @@ function useRunSteering(runId, done) {
   return { messages, refresh };
 }
 
-const RUN_STEER_MODES = ['inject', 'interrupt'];
+// `system` adds to the run's system prompt (only its owner or an admin).
+const RUN_STEER_MODES = ['inject', 'interrupt', 'system'];
 
 function RunSteer({ runId, done }) {
   const { t } = useI18n();
@@ -384,6 +386,7 @@ function RunSteer({ runId, done }) {
                 <div className="whitespace-pre-wrap break-words">{m.body}</div>
                 <div className="mt-0.5 flex flex-wrap gap-2 text-[10px] text-indigo-500">
                   {m.mode === 'interrupt' && <span className="font-semibold">{t('steering.interruptTag')}</span>}
+                  {m.mode === 'system' && <span className="font-semibold">{t('steering.systemTag')}</span>}
                   {caption && <span>{t(caption.key, caption.values)}</span>}
                   {m.author_name && <span>{t('steering.by', { name: m.author_name })}</span>}
                 </div>

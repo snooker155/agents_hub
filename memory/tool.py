@@ -674,7 +674,8 @@ append_journal_tool = StructuredTool.from_function(
 # ---------------------------------------------------------------------------
 
 def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, include_episodic_write: bool = True,
-                        personal_pool_id: Optional[str] = None) -> list:
+                        personal_pool_id: Optional[str] = None,
+                        read_only_pool_ids: Optional[frozenset] = None) -> list:
     """Return memory tools bound to pool_id for agents with shared memory.
 
     recall(query)            — cascading read: structured slots → notes → RAG
@@ -689,6 +690,15 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
     personal_pool_id is the user's personal pool (memory/personal.py). When
     it is one of the extra pools, remember and forget take ``personal=True``
     to write there instead of the primary pool.
+
+    read_only_pool_ids (agents.registry.memory_pool_read_only_ids, resolved by
+    memory.binding.effective_read_only_pools) marks individual bindings, pool_id
+    included, as read only for this run: recall and the other read tools still
+    search them, but every write a tool would otherwise send there (remember,
+    forget, record_episode, link, the two block-edit tools) refuses instead,
+    with a message that says so, rather than silently writing or being left
+    off the agent's tool list the way ``Task.memory_access == "read"`` (a
+    deployment's coarser, whole-run switch) removes them.
     """
     from pydantic import BaseModel, Field
 
@@ -700,9 +710,26 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
     multi = len(pool_ids) > 1
     _personal = str(personal_pool_id or "").strip()
     personal_extra = _personal if _personal and _personal in pool_ids[1:] else None
+    _ro_ids = frozenset(str(p).strip() for p in (read_only_pool_ids or ()) if str(p or "").strip())
 
     def _write_target(personal: bool) -> str:
         return personal_extra if personal and personal_extra else pool_id
+
+    def _refuse_write(target_pid: str) -> str:
+        return json.dumps({
+            "ok": False,
+            "error": f"Memory pool {_pool_name(target_pid)!r} is attached read only in this run; "
+                     "it can be read but not written to.",
+            "read_only": True,
+        })
+
+    # The pools a block edit may land in: the primary and, when set, the
+    # personal extra, minus whichever of those a binding marked read only.
+    # Every other extra pool was already read-only context before this
+    # parameter existed (see the class docstring); a block found there is
+    # refused below with its own message rather than silently edited, which
+    # is the bug this parameter's addition also closes.
+    _block_writable_ids = {pid for pid in (pool_id, personal_extra) if pid} - _ro_ids
 
     _personal_field_description = (
         "True to write to the user's personal memory instead of your own pool: facts about the "
@@ -805,6 +832,15 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                     "error": f"No memory block named {name!r}",
                     "available": _block_names(),
                 })
+            if pid in _ro_ids:
+                return _refuse_write(pid)
+            if pid not in _block_writable_ids:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Block {name!r} is in pool {_pool_name(pid)!r}, which is attached "
+                             "read-only context here; block edits only reach the primary pool"
+                             + (" or the personal pool" if personal_extra else "") + ".",
+                })
             if block.read_only:
                 return json.dumps({"ok": False, "error": f"Block {block.name!r} is read-only"})
             occurrences = (block.value or "").count(old)
@@ -862,6 +898,15 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                     "ok": False,
                     "error": f"No memory block named {name!r}",
                     "available": _block_names(),
+                })
+            if pid in _ro_ids:
+                return _refuse_write(pid)
+            if pid not in _block_writable_ids:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Block {name!r} is in pool {_pool_name(pid)!r}, which is attached "
+                             "read-only context here; block edits only reach the primary pool"
+                             + (" or the personal pool" if personal_extra else "") + ".",
                 })
             if block.read_only:
                 return json.dumps({"ok": False, "error": f"Block {block.name!r} is read-only"})
@@ -1129,6 +1174,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
         personal: bool = False,
     ) -> str:
         target = _write_target(personal)
+        if target in _ro_ids:
+            return _refuse_write(target)
         saved = []
         errors = []
         try:
@@ -1283,6 +1330,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
         personal: bool = False,
     ) -> str:
         target = _write_target(personal)
+        if target in _ro_ids:
+            return _refuse_write(target)
         deleted = []
         errors = []
         try:
@@ -1437,6 +1486,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
         details: Optional[dict] = None,
         pinned: bool = False,
     ) -> str:
+        if pool_id in _ro_ids:
+            return _refuse_write(pool_id)
         try:
             from memory.episodic import Episode, EpisodeStore
             valid_kinds = {"interaction", "task", "decision", "error", "observation"}
@@ -1579,6 +1630,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
         edge_properties: Optional[dict] = None,
         weight: Optional[float] = None,
     ) -> str:
+        if pool_id in _ro_ids:
+            return _refuse_write(pool_id)
         try:
             from memory.graph import GraphStore
 

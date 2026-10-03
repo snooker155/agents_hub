@@ -1343,12 +1343,13 @@ def secrets_list(
         console.print(f"[dim]No secrets in {ws}.[/dim]")
         return
     table = Table(box=box.SIMPLE, show_header=True, title=f"secrets in {ws}")
-    for col in ("name", "agent", "user", "hint", "updated"):
+    for col in ("name", "agent", "user", "hosts", "hint", "updated"):
         table.add_column(col)
     for r in rows:
         table.add_row(r["name"], r.get("agent_id") or "[dim]any[/dim]",
-                      r.get("user_id") or "[dim]any[/dim]", r.get("hint") or "",
-                      str(r.get("updated_at") or "")[:19])
+                      r.get("user_id") or "[dim]any[/dim]",
+                      ", ".join(r.get("allowed_hosts") or []) or "[dim]any[/dim]",
+                      r.get("hint") or "", str(r.get("updated_at") or "")[:19])
     console.print(table)
 
 
@@ -1360,6 +1361,11 @@ def secrets_set(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace name."),
     agent: Optional[str] = typer.Option(None, "--agent", help="Only for this agent."),
     user: Optional[str] = typer.Option(None, "--user", help="Only for runs this user launches."),
+    host: Optional[List[str]] = typer.Option(
+        None, "--host",
+        help="Only send it to this host (repeatable; subdomains match). The run then holds a "
+             "placeholder and the egress proxy puts the value in on the way out."),
+    any_host: bool = typer.Option(False, "--any-host", help="Clear the host restriction."),
 ):
     """Store or replace a secret."""
     ws = _secrets_workspace(workspace)
@@ -1367,14 +1373,18 @@ def secrets_set(
         value = sys.stdin.read().rstrip("\n")
     elif value is None:
         value = typer.prompt(f"Value for {name}", hide_input=True)
+    hosts: Optional[List[str]] = [] if any_host else (list(host) if host else None)
 
     def direct(s):
-        row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local")
+        row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local",
+                           allowed_hosts=hosts)
         _secrets_audit("secret.set", ws, name, agent, user)
         return row
 
-    _secrets_call(direct, "PUT", f"/api/workspaces/{ws}/secrets/{name}",
-                  json={"value": value, "agent_id": agent, "user_id": user})
+    body = {"value": value, "agent_id": agent, "user_id": user}
+    if hosts is not None:
+        body["allowed_hosts"] = hosts
+    _secrets_call(direct, "PUT", f"/api/workspaces/{ws}/secrets/{name}", json=body)
     console.print(f"[green]Set[/green] {name} in {ws}.")
 
 

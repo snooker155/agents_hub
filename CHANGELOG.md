@@ -13,6 +13,110 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Agent version pins on every launch path (docs/agents.md "Versions and
+  pinning"): chat turns, `/v1` agent completions (`agent_version` in the
+  body), widgets (a version picker, migration 0032), plain messages to a
+  pinned service, tasks taken by a resident worker in node mode, and the CLI
+  (`ah agent run --agent-version`, `ah task assign --agent-version`,
+  `ah task create --agent-version`). The run record says
+  `agent_version_pinned` and the run page shows the run as pinned.
+- Optimistic concurrency on agent edits (docs/agents.md "Editing an agent
+  that changed meanwhile"): reads and writes of an agent carry its
+  definition hash as `ETag`; a write with a stale `If-Match` or
+  `expected_version` is a 409 and writes nothing. The agent page asks to
+  reload or overwrite.
+- Per-run `overrides` (docs/agents.md "Per-run overrides"): `model`,
+  `provider`, `system`, `system_append`, `tools`, `skills`, `mcp`,
+  `tool_policy`, `output_schema` in one object, for task launches, chat
+  requests, `/v1` and the CLI (`--overrides`, `--overrides-file`). The
+  capability guard checks the overridden tool set, the build cache keys on
+  it, and the run page lists it. `--tool-policy` and `--output-schema` stay
+  as aliases.
+
+- Advisor model (`tools/advisor.py`, docs/agent-loop.md "Advisor"): an agent
+  can name an `advisor_model` from the Models page catalog (Loop settings card
+  on the Model tab, or `PUT /api/agents/{id}/loop-settings`) and then calls
+  `consult_advisor(question, context)` on a hard step. The advisor sees only
+  what the agent writes into the call. Each call is priced at the advisor's
+  own model in the run's cost and counted against the run's money cap; the
+  workspace loop settings `advisor_max_calls` (5) and
+  `advisor_max_answer_chars` (4000) bound it.
+- Steering mode `system` (docs/steering.md "System message"): the run's owner
+  or an admin can add to a running agent's instructions; the text is appended
+  to the system prompt for the rest of the run, for every provider, and kept
+  across a checkpoint resume. Agents and delegated runs cannot send one. The
+  chat composer and the run page offer it as Instruction.
+- Long tool results go to a workspace file (`agents/tool_spill.py`,
+  docs/agent-loop.md "Long tool results"): past the workspace loop setting
+  `tool_output_spill_chars` (20000) the full output is saved under
+  `tool-outputs/<run_id>/` as a registered file, and the model sees its start,
+  its end and the path. `read_file` takes `offset` and `limit` to read a part.
+  The run page links each saved output.
+- The tool gate's decision on every call (docs/tool-policy.md "The per-call
+  trail"): each tool call of a run, flow or team carries
+  `evaluated_permission` (allow, deny, ask) and a stable `reason_code`
+  (`default_allow`, `policy_always_allow`, `policy_always_ask`,
+  `approval_list`, `auto_run`, `auto_deny`, `auto_ask`, `auto_unclear`,
+  `hook_deny`, `hook_ask`, `human_approved`, `think_required`,
+  `never_gated`) in the run payload's `tool_calls`, on the live `tool_end`
+  event and in the run log. The process graph shows it as a badge on the
+  tool node and in the call's detail. Deny, ask and auto decisions and a
+  spent approval write a `tool.policy` audit row; a plain allow does not.
+- Secrets bound to hosts (docs/secrets.md "Secrets bound to hosts"): a
+  secret can name `allowed_hosts` (the Secrets card, `ah secrets set --host`,
+  `PUT /api/workspaces/{name}/secrets/{secret}/hosts`). A run then holds a
+  placeholder, and the egress proxy terminates TLS for those hosts with a
+  hub CA, swaps the real value into headers and the request target only on
+  the way to them, and refuses and audits (`egress.secret_refused`) a
+  placeholder headed anywhere else. With the proxy off such a launch is
+  refused unless `AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1`.
+- Per-agent `allowed_domains` and `blocked_domains` for `web_search`,
+  `fetch_url` and the browser (docs/tools-and-capabilities.md "Domain lists
+  per agent"): the Web domains card on the agent's Behavior tab, or
+  `PUT /api/agents/{id}/web-domains`. Blocked hosts join the workspace deny
+  list, allowed hosts narrow the agent within what the workspace allows, a
+  blocked host wins. `web_search` passes the merged lists to Tavily and Exa
+  as domain filters and to Brave as `site:` operators, and filters the
+  results by host as before.
+- Memory consolidation (`memory/consolidation.py`, the Memory page's pool
+  detail "Memory consolidation" panel): folds a pool and up to N of its
+  recent sessions into a NEW pool, merging duplicate notes, replacing
+  outdated facts and pulling out insights, while the source pool is never
+  touched. The model call goes through the provider layer the other memory
+  extractors use and its cost is recorded as auxiliary usage. Runs in a
+  background thread with a queued, running, done or failed status the panel
+  polls; the done result shows a diff against the source by block, note and
+  slot, and a person switches an agent's binding to it or discards it.
+  `POST /api/memory/{id}/consolidate`, `GET /api/memory/{id}/consolidations`,
+  `GET /api/memory/consolidations/{job_id}`,
+  `POST /api/memory/consolidations/{job_id}/apply`,
+  `POST /api/memory/consolidations/{job_id}/discard`. A scheduled job kind
+  `memory_consolidate` (`consolidate_pool_id`, `consolidate_session_limit`,
+  a pool picker and a session count on the Plan page's job form) runs it on
+  a schedule or with the plan's run-now. Session gathering checks every
+  workspace an agent's binding could reach, its home record and any
+  per-workspace override alike, not only the home one.
+- Read only at the binding level (`agents/registry.py`
+  `memory_pool_read_only_ids`, `memory/binding.py`
+  `effective_read_only_pools`): a pool an agent's own memory settings bind
+  (not only a deployment's whole-run `Task.memory_access`) can carry
+  `{"id", "read_only": true}` instead of a plain id. Recall and the rest of
+  an agent's pools keep working; `remember`, `forget`, `record_episode`,
+  `link` and the two core memory block tools refuse with a clear message on
+  that one pool instead. A block edit landing on an attached pool other than
+  the primary (already documented as read only) now refuses the same way
+  too, closing a gap where it silently went through. Settable from the
+  agent's Memory tab, a checkbox next to the primary pool and each
+  additional one.
+
+### Upgrade notes
+
+- Migration 0032 adds `widgets.agent_version` (the widget's version pin).
+- Migration 0033 adds the `memory_consolidations` table.
+- Migration 0034 adds `secrets.allowed_hosts` (the hosts a secret may be sent to).
+
 ## [0.9.0] - 2026-10-03
 
 ### Added

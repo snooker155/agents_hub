@@ -112,6 +112,11 @@ the hosts of the configured model providers and the hub's own services (so a
 `network: none` run can still reach its model). An unknown or expired token
 gets `407`; a host outside the list gets `403`.
 
+The proxy also carries [secrets bound to hosts](secrets.md#secrets-bound-to-hosts):
+a run holding such a placeholder is routed through it even when its network is
+`open` (with a token that allows every host), and an environment's own token
+gains the secret hosts. Only for those hosts does the proxy terminate TLS.
+
 ## Plain variables
 
 `env` is a flat map of `NAME: value` added to the run's process environment.

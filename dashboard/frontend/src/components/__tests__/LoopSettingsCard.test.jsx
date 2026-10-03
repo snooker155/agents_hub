@@ -63,8 +63,9 @@ describe('LoopSettingsCard', () => {
     fireEvent.change(picker, { target: { value: 'anthropic/claude-haiku' } });
     fireEvent.click(screen.getByRole('button', { name: 'agentLoop.fallback.add' }));
 
-    expect(screen.getByText('openai/gpt-4o-mini')).toBeInTheDocument();
-    expect(screen.getByText('anthropic/claude-haiku')).toBeInTheDocument();
+    // The list entries (the advisor picker offers the same ids as options).
+    expect(screen.getByText('openai/gpt-4o-mini', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('anthropic/claude-haiku', { selector: 'span' })).toBeInTheDocument();
 
     const save = screen.getByRole('button', { name: 'agentLoop.save' });
     expect(save).not.toBeDisabled();
@@ -72,10 +73,31 @@ describe('LoopSettingsCard', () => {
 
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', {
       fallback_models: ['openai/gpt-4o-mini', 'anthropic/claude-haiku'],
-      output_schema: null, tool_search: null, compaction: null,
+      advisor_model: null, output_schema: null, tool_search: null, compaction: null,
     }));
     expect(await screen.findByText('agentLoop.saved')).toBeInTheDocument();
     expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('picks an advisor model from the catalog and clears it again', async () => {
+    api.updateAgentLoopSettings.mockImplementation((_id, payload) => (
+      Promise.resolve({ data: settingsBody(payload) })
+    ));
+    render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
+    await screen.findByText('agentLoop.fallback.empty');
+    const picker = screen.getByLabelText('agentLoop.advisor.title');
+    expect(picker).toHaveValue('');
+    fireEvent.change(picker, { target: { value: 'anthropic/claude-haiku' } });
+    fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
+    await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', expect.objectContaining({
+      advisor_model: 'anthropic/claude-haiku',
+    })));
+    await waitFor(() => expect(screen.getByLabelText('agentLoop.advisor.title')).toHaveValue('anthropic/claude-haiku'));
+    fireEvent.change(screen.getByLabelText('agentLoop.advisor.title'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
+    await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenLastCalledWith('a1', expect.objectContaining({
+      advisor_model: null,
+    })));
   });
 
   it('reorders and removes a fallback model', async () => {
@@ -88,7 +110,7 @@ describe('LoopSettingsCard', () => {
       Promise.resolve({ data: settingsBody(payload) })
     ));
     render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
-    await screen.findByText('openai/gpt-4o-mini');
+    await screen.findByText('openai/gpt-4o-mini', { selector: 'span' });
 
     fireEvent.click(screen.getByLabelText('agentLoop.fallback.moveDown {"model":"openai/gpt-4o-mini"}'));
     fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));

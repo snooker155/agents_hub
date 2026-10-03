@@ -236,6 +236,8 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
 # back over HTTP and need it to authenticate.
 _HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
 _HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
+#: The hub's secret encryption key (common/config.py ``secret_key``).
+_SECRET_KEY_VARS = frozenset({"AGENTS_HUB_SECRET_KEY", "secret_key"})
 
 
 def container_env(env: Dict[str, str]) -> Dict[str, str]:
@@ -246,13 +248,39 @@ def container_env(env: Dict[str, str]) -> Dict[str, str]:
     instead of re-deriving the whole environment a run needs.
     """
     out: Dict[str, str] = {}
+    # A run holding host-bound secret placeholders must not also hold the key
+    # that decrypts the secrets table: the state dir (and the database in it)
+    # is mounted, so with the key the container could read the real values
+    # and the egress substitution would protect nothing.
+    holds_placeholders = bool(env.get("AGENTS_HUB_SECRET_PLACEHOLDERS"))
     for key, value in env.items():
         if key in _HOST_ONLY_EXACT:
             continue
         if any(key.startswith(p) for p in _HOST_ONLY_PREFIXES):
             continue
+        if holds_placeholders and key in _SECRET_KEY_VARS:
+            continue
+        if key in _STATE_PATH_VARS:
+            value = _state_path_in_container(value)
         out[key] = value
     return out
+
+
+#: Trust-store variables a run routed through the egress proxy gets
+#: (environments/secret_egress.py). They name files under the state dir,
+#: which a run container has mounted at CONTAINER_STATE_DIR.
+_STATE_PATH_VARS = frozenset({"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+                              "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS"})
+
+
+def _state_path_in_container(value: str) -> str:
+    """A host path under the state dir as the container sees it; anything
+    else unchanged."""
+    try:
+        rel = Path(value).resolve().relative_to(Path(AGENTS_HUB_ROOT).resolve())
+    except (ValueError, OSError):
+        return value
+    return str(PurePosixPath(CONTAINER_STATE_DIR) / PurePosixPath(*rel.parts))
 
 
 # ── Network management ────────────────────────────────────────────────────────

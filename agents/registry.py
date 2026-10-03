@@ -44,21 +44,53 @@ log = logging.getLogger(__name__)
 
 # -------------------- Data models --------------------
 
+def _pool_entry_id(entry: Any) -> str:
+    """A binding entry's pool id: entries are normally a plain id, or
+    ``{"id": pool_id, "read_only": true}`` to mark that one binding read
+    only (:func:`memory_pool_read_only_ids`) without changing its shape."""
+    if isinstance(entry, dict):
+        return str(entry.get("id") or "").strip()
+    return str(entry or "").strip()
+
+
 def normalize_memory_pools(memory_type: str, memory_data: Any) -> List[str]:
     """Normalize a memory assignment to a list of pool ids, primary first.
 
-    Accepts a single pool id (legacy) or a list of ids; strips and dedupes.
-    Returns [] unless memory_type is 'shared' with at least one pool.
+    Accepts a single pool id (legacy), a list of ids, or a list mixing ids
+    with ``{"id", "read_only"}`` entries; strips and dedupes. Returns [] unless
+    memory_type is 'shared' with at least one pool.
     """
     if memory_type != "shared" or not memory_data:
         return []
     raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
     pools: List[str] = []
     for p in raw:
-        pid = str(p).strip()
+        pid = _pool_entry_id(p)
         if pid and pid not in pools:
             pools.append(pid)
     return pools
+
+
+def memory_pool_read_only_ids(memory_type: str, memory_data: Any) -> frozenset:
+    """Pool ids in *memory_data* whose binding entry is ``{"id", "read_only": true}``.
+
+    A read-only binding keeps the memory tools attached (so recall and the
+    other pools of the same agent keep working) but makes every write that
+    targets this one pool refuse (memory/tool.py, agents/agent_factory.py),
+    which is finer-grained than dropping the write tools for the whole run
+    the way ``Task.memory_access`` (plans/models.py, a deployment's resources)
+    does for every pool a task binds.
+    """
+    if memory_type != "shared" or not memory_data:
+        return frozenset()
+    raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
+    out: set[str] = set()
+    for p in raw:
+        if isinstance(p, dict) and p.get("read_only"):
+            pid = _pool_entry_id(p)
+            if pid:
+                out.add(pid)
+    return frozenset(out)
 
 
 @dataclass(frozen=True)
@@ -187,6 +219,13 @@ class AgentSpec:
     # so pull requests come from the app's bot; "user" hands out the token of
     # the person who launched the run, when they connected their account.
     github_identity: str = "app"
+    # Domain lists for the web tools (tools/web.py ``web_search`` /
+    # ``fetch_url``, and the browser's navigation): ``allowed_domains``, when
+    # set, narrows this agent to those hosts and their subdomains on top of
+    # whatever the workspace allows; ``blocked_domains`` adds to the
+    # workspace's deny list. A blocked host wins over an allowed one.
+    allowed_domains: List[str] = field(default_factory=list)
+    blocked_domains: List[str] = field(default_factory=list)
     # ── Loop policies (agents/agent_loop.py, fourth-cycle stage 2) ──────────
     # Per-tool permission policy (tools/permission_policy.py): tool id, or
     # "*" for this agent's default, mapped to "always_allow", "always_ask" or
@@ -197,6 +236,11 @@ class AgentSpec:
     # limited or fails with a server error, as catalog ids "provider/model"
     # (agents/loop_ext/fallback.py). Empty means no fallback.
     fallback_models: List[str] = field(default_factory=list)
+    # A second model the agent may ask for advice mid-run (tools/advisor.py,
+    # ``consult_advisor``), as a catalog id "provider/model" from the Models
+    # page. It sees only the question and the context the agent writes into
+    # the call, never the run's trail. None means no advisor and no tool.
+    advisor_model: Optional[str] = None
     # JSON Schema the agent's final answer must match (agents/loop_ext/
     # structured.py): validated, repaired by a retry, the run fails when it
     # still does not match. None means free text.
@@ -385,6 +429,10 @@ class AgentSpec:
             d["secrets"] = list(self.secrets)
         if self.github_identity and self.github_identity != "app":
             d["github_identity"] = self.github_identity
+        if self.allowed_domains:
+            d["allowed_domains"] = list(self.allowed_domains)
+        if self.blocked_domains:
+            d["blocked_domains"] = list(self.blocked_domains)
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
@@ -393,6 +441,8 @@ class AgentSpec:
             d["tool_policy"] = dict(self.tool_policy)
         if self.fallback_models:
             d["fallback_models"] = list(self.fallback_models)
+        if self.advisor_model:
+            d["advisor_model"] = self.advisor_model
         if self.output_schema:
             d["output_schema"] = dict(self.output_schema)
         if self.guardrails:
@@ -713,6 +763,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     github_identity = str(ad.get("github_identity") or "app").strip().lower()
     if github_identity not in ("app", "user"):
         github_identity = "app"
+    # Host names, lower-cased; a stray scheme or path is dropped, not kept.
+    allowed_domains = [h for h in (x.lower().split("://")[-1].split("/")[0].lstrip(".")
+                                   for x in _id_list(ad.get("allowed_domains"))) if h]
+    blocked_domains = [h for h in (x.lower().split("://")[-1].split("/")[0].lstrip(".")
+                                   for x in _id_list(ad.get("blocked_domains"))) if h]
 
     raw_policy = ad.get("tool_policy") or {}
     tool_policy: Dict[str, str] = {}
@@ -722,6 +777,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if k and m in TOOL_POLICY_MODES:
                 tool_policy[k] = m
     fallback_models = _id_list(ad.get("fallback_models"))
+    advisor_model = str(ad.get("advisor_model") or "").strip() or None
     output_schema = ad.get("output_schema") or None
     if not isinstance(output_schema, dict):
         output_schema = None
@@ -799,8 +855,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         approval_exempt=approval_exempt,
         secrets=secrets,
         github_identity=github_identity,
+        allowed_domains=allowed_domains,
+        blocked_domains=blocked_domains,
         tool_policy=tool_policy,
         fallback_models=fallback_models,
+        advisor_model=advisor_model,
         output_schema=output_schema,
         guardrails=guardrails,
         tool_search=tool_search,

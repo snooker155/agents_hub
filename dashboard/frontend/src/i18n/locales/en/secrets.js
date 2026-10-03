@@ -28,5 +28,12 @@ export default {
   },
   add: 'Save secret',
   delete: 'Delete secret',
+  hostsColumn: 'Hosts',
+  anyHost: 'any host',
+  hostsField: 'Allowed hosts, e.g. api.github.com',
+  hostsHint: 'Comma separated. With hosts set, a run holds a placeholder and the egress proxy puts the real value into requests to these hosts only (subdomains match). Needs AGENTS_HUB_EGRESS_PROXY.',
+  editHosts: 'Edit hosts of {{name}}',
+  saveHosts: 'Save hosts',
+  cancelHosts: 'Cancel',
   nameHint: 'Upper case letters, digits and underscores, starting with a letter.',
 };

@@ -8,7 +8,7 @@ On the agent record, edited on the agent page:
 
 - `tool_policy`: a mode per tool (Tools tab, see [tool-policy](tool-policy.md)).
 - `guardrails`: the `selected` guardrails the agent opts into (the Guardrails tab, see [guardrails](guardrails.md)).
-- `fallback_models`, `output_schema`, `tool_search` and `compaction` (Model tab, the Loop settings card, or `GET/PUT /api/agents/{agent_id}/loop-settings`). `tool_search` and `compaction` are Automatic, On or Off.
+- `fallback_models`, `advisor_model`, `output_schema`, `tool_search` and `compaction` (Model tab, the Loop settings card, or `GET/PUT /api/agents/{agent_id}/loop-settings`). `tool_search` and `compaction` are Automatic, On or Off.
 
 For the workspace, in the `settings.loop` block (Settings, Agent loop card), each key falling back to an environment variable and then a default:
 
@@ -21,12 +21,23 @@ For the workspace, in the `settings.loop` block (Settings, Agent loop card), eac
 | `native` | `AGENTS_HUB_LOOP_NATIVE` | on |
 | `strict_tools` | `AGENTS_HUB_LOOP_STRICT_TOOLS` | off |
 | `view_focus` | `AGENTS_HUB_LOOP_VIEW_FOCUS` | on |
+| `tool_output_spill_chars` | `AGENTS_HUB_LOOP_TOOL_OUTPUT_SPILL_CHARS` | 20000 (0 is off) |
+| `advisor_max_calls` | `AGENTS_HUB_LOOP_ADVISOR_MAX_CALLS` | 5 |
+| `advisor_max_answer_chars` | `AGENTS_HUB_LOOP_ADVISOR_MAX_ANSWER_CHARS` | 4000 |
 
 Settings are read when the agent is built. A task run builds its agent fresh, so a change applies to the next run; a chat agent the backend keeps built picks it up when it is rebuilt (an edit to the agent record rebuilds it).
 
 ## Steering
 
-A message a person sends while the run works is placed before the model's next step, after the tool results the run had at that moment. One that arrives while a task run writes its final answer gets one more pass. See [steering](steering.md).
+A message a person sends while the run works is placed before the model's next step, after the tool results the run had at that moment. One that arrives while a task run writes its final answer gets one more pass. An operator can also send a system message: it is appended to the system prompt for the rest of the run instead of entering the conversation. See [steering](steering.md).
+
+## Long tool results
+
+For an agent that has `read_file`, a tool result longer than `tool_output_spill_chars` characters does not go into the context whole (an agent without it keeps its results inline, left to compaction). The full text is written to `tool-outputs/<run_id>/<n>-<tool>.txt` in the agent's working folder and registered as a workspace file, and the model sees the first and the last part, the path, the file id and a hint that `read_file` reads any part of it with `offset` and `limit` (characters). The file sits in the folder the filesystem tools are rooted at, so `read_file` reaches it in a local run and in a container; a container that relays its state over HTTP writes the file and the backend registers it when the run closes. `read_file` is never spilled itself: a read of a saved output that is still too long comes back clipped, with the offset to continue from. The run's tool-call record keeps the preview and a `spill` entry with the path and file id, and the run page links the file. Set the key to 0 to keep every result inline (compaction still trims them later).
+
+## Advisor
+
+An agent with an `advisor_model` (a catalog id, `provider/model`, chosen in the Loop settings card from the models enabled on the Models page) gets the `consult_advisor(question, context)` tool and a line in its system prompt saying when to use it: before an action it cannot undo, when a plan has several plausible options, when it is stuck. The advisor sees only the question and the context the agent writes into the call, never the run's history, files or tool results. Its answer is cut to `advisor_max_answer_chars`, and a run may call it `advisor_max_calls` times. Each call is listed among the run's tool calls and in `aux_calls` with purpose `advisor`, priced at the advisor's own model in the run's cost and counted against the run's money cap.
 
 ## Compaction
 
@@ -70,11 +81,13 @@ A run whose loop did more than call tools carries a `loop` block on its record, 
 - `answered_by`: the model that answered each call, with `fallback_used` when any call fell back.
 - `compactions`: each pass, with what it cleared and the size before and after.
 - `injections`: steering messages and the step each arrived at.
+- `system_messages`: operator instructions added mid-run (steering mode `system`) and the step each arrived at.
+- `tool_spills`: tool results saved to a file, with the tool, the path, the file id and the size.
 - `loaded_tools`: tools the model found through tool search.
 - `guardrails`: every guardrail check and its result.
 - `structured`: repair attempts and whether the answer matched the schema.
 - `tool_decisions`: tool policy decisions.
-- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)). The outcome grader is not among them: a grading is a run of its own (see [outcomes](outcomes.md)).
+- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs, advisor calls), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)). The outcome grader is not among them: a grading is a run of its own (see [outcomes](outcomes.md)).
 
 The run page shows it in the loop panel, next to the agent version the run ran and a rollback to it (see [agents](agents.md)).
 

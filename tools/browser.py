@@ -140,12 +140,22 @@ def session_policy() -> Dict[str, Any]:
     # load too, not only where browser_open may go: "none" allows nothing,
     # "limited" replaces the allow list with the environment's hosts (still
     # checked against the workspace lists hub-side by validate_url).
-    from tools.web import environment_network_policy
+    # The agent's own lists (AgentSpec.blocked_domains / allowed_domains,
+    # tools.web.agent_domain_lists): its blocked hosts join the deny list,
+    # its allowed hosts narrow the allow list (or become it, when none is on).
+    from tools.web import agent_domain_lists, environment_network_policy, intersect_domains
+    agent_allowed, agent_blocked = agent_domain_lists()
+    if agent_blocked:
+        deny = tuple(dict.fromkeys([*(str(d).lower() for d in deny), *agent_blocked]))
+    if agent_allowed:
+        allow = tuple(intersect_domains(agent_allowed, allow)) if enabled else agent_allowed
+        enabled = True
     net, env_hosts = environment_network_policy()
     if net == "none":
         allow, enabled = (), True
     elif net == "limited":
-        allow, enabled = env_hosts, True
+        allow = tuple(intersect_domains(allow, env_hosts)) if agent_allowed else env_hosts
+        enabled = True
     policy = {
         "deny_domains": [str(d) for d in deny],
         "allow_domains": [str(d) for d in allow],

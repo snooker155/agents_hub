@@ -193,6 +193,11 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
     if isinstance(extra, dict):
         for key, value in extra.items():
             env[str(key)] = str(value)
+        # An extra layer may carry an environment's own proxy URL: the run's
+        # host-bound secrets move onto that token (environments/secret_egress.py).
+        from common.subprocess_env import route_secrets
+        route_secrets(env, execution_mode=str(spec.get("execution_mode") or "") or None,
+                      workspace=ws_name)
     return env
 
 

@@ -1,0 +1,20 @@
+export default {
+  title: 'Überschreibungen des Laufs',
+  hint: 'Dieser Lauf wurde mit diesen Änderungen am Agenten gebaut, nur für diesen Lauf.',
+  keys: {
+    model: 'Modell',
+    provider: 'Anbieter',
+    system: 'Anweisungen (ersetzt)',
+    system_append: 'Anweisungen (ergänzt)',
+    tools: 'Werkzeuge',
+    skills: 'Skills',
+    mcp: 'MCP Server',
+    tool_policy: 'Werkzeugrichtlinie',
+    output_schema: 'Antwortschema',
+  },
+  toolsAdd: 'hinzugefügt: {{tools}}',
+  toolsRemove: 'entfernt: {{tools}}',
+  skillsOn: 'an',
+  skillsOff: 'aus',
+  none: 'keine',
+};

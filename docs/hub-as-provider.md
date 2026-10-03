@@ -149,6 +149,14 @@ own tools on the hub, so client `tools` (or `functions`), a `tool` message
 and an assistant message with `tool_calls` are a `400`. `temperature`,
 `max_tokens` and `stop` are ignored: the agent's own settings apply.
 
+Two hub fields in the body shape that one run (an OpenAI SDK sends them
+through `extra_body`): `agent_version` builds it from a stored version of the
+agent instead of the live definition (404 `agent_version_not_found` for one
+it does not have), and `overrides` is the per-run overrides object of
+docs/agents.md "Per-run overrides" (400 `invalid_overrides`, 409
+`capability_violation` for a tool set the guard refuses). Both are echoed in
+`agents_hub`.
+
 The answer carries an extra `agents_hub` object, `{"agent_id", "workspace",
 "run_id"}`, so a client can link to the run. Streaming sends the agent's
 tokens as content deltas, which include what it says between tool calls; a
