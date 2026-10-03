@@ -218,6 +218,11 @@ turns that section into the next release.
   `-tool`, agent_creator can create children, and runs record the chain they
   were built from. The finance and recruiting kits' agents now extend
   Analyst, Verifier, Sourcer and Screener.
+- An upgrade that grants a system agent new tools, delegates or handoffs
+  checks every child that extends it: a child that would end up with a
+  blocked capability combination declines exactly what the parent gained
+  (`-item` deltas) and keeps running as before, with a version history row
+  and an inbox warning saying so (docs/agent-inheritance.md).
 - Help in the header (docs/help.md): a button on every page opens the
   Support agent, one conversation per person, that knows the docs and what
   this install has set up and what it lacks (providers, models, agents,

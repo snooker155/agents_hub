@@ -358,8 +358,128 @@ def _sync_system_agents() -> list[str]:
         except Exception:
             log.exception("system agent sync: could not write the pre-sync backup to %s", backup)
 
+    held = _hold_back_inherited_grants(before, live_raw["agents"], changed)
     replace_all_raw(live_raw["agents"])
+    _record_held_back(held)
     return changed
+
+
+#: List fields a seed update can grow on a system parent and a child can
+#: decline with a ``-item`` delta (agents/inheritance.py LIST_FIELDS).
+_HOLD_BACK_FIELDS = ("tools", "delegates", "handoffs")
+
+
+def _hold_back_inherited_grants(before: list, after: list, changed: list) -> dict[str, dict]:
+    """Keep an upgrade from handing a child a blocked capability combination.
+
+    Every other save of a parent re-checks its children and is refused when
+    one of them would form a blocked combination (agents.registry.add_agent).
+    A seed update cannot be refused: it is the product changing. So a child
+    that the updated system parent would push over the line instead declines
+    what the parent gained in this update: each new item becomes a ``-item``
+    delta on the child, which therefore runs exactly as before. Children that
+    stay within the guard follow the parent as usual.
+
+    Mutates ``after`` (raw records) and returns ``{child_id: {field: [items]}}``
+    for :func:`_record_held_back`. Never raises: on any failure the sync goes
+    ahead and the build time guard still stops a child that would violate.
+    """
+    held: dict[str, dict] = {}
+    if not changed:
+        return held
+    try:
+        from agents import inheritance
+        from agents.capability_guard import CapabilityViolation, enforce_agent_tools
+        from agents.registry import _validate_agent_dict
+        from tools.capabilities import secret_grant_ids
+
+        def specs(records):
+            out = []
+            for rec in records:
+                try:
+                    out.append(_validate_agent_dict(rec))
+                except Exception:  # noqa: BLE001 - an invalid record is skipped here as everywhere else
+                    log.debug("hold back: skipping invalid record %r", rec.get("id"), exc_info=True)
+            return out
+
+        old_resolved = inheritance.resolve_all(specs(before))
+        by_id = {str(rec.get("id")): rec for rec in after if isinstance(rec, dict)}
+        children: list[str] = []
+        for parent_id in changed:
+            for cid in inheritance.unpinned_descendants(parent_id, specs(after)):
+                if cid not in children:
+                    children.append(cid)
+
+        for cid in children:  # nearest first, so a grandchild sees its parent's hold back
+            new_resolved = inheritance.resolve_all(specs(after))
+            new, old, rec = new_resolved.get(cid), old_resolved.get(cid), by_id.get(cid)
+            if new is None or old is None or rec is None:
+                continue
+            try:
+                enforce_agent_tools(
+                    cid, list(new.tools or []) + secret_grant_ids(new.secrets),
+                    previous_tools=list(old.tools or []) + secret_grant_ids(old.secrets),
+                    override=bool(rec.get("capability_override")),
+                    workspace=rec.get("owner_workspace"),
+                    delegates=list(new.delegates or []),
+                )
+                continue
+            except CapabilityViolation:
+                pass
+            deltas = dict(rec.get("list_deltas") or {})
+            gained: dict[str, list] = {}
+            for field_name in _HOLD_BACK_FIELDS:
+                was = list(getattr(old, field_name, None) or [])
+                new_items = [x for x in (getattr(new, field_name, None) or []) if x not in was]
+                if not new_items:
+                    continue
+                delta = dict(deltas.get(field_name) or {})
+                delta["remove"] = list(delta.get("remove") or []) + [
+                    x for x in new_items if x not in (delta.get("remove") or [])]
+                delta["add"] = [x for x in (delta.get("add") or []) if x not in new_items]
+                deltas[field_name] = delta
+                gained[field_name] = new_items
+            if gained:
+                rec["list_deltas"] = deltas
+                held[cid] = gained
+                log.warning(
+                    "system agent sync: %r keeps its previous setup and declines %s from its "
+                    "updated parent, which would have given it a blocked capability combination.",
+                    cid, gained,
+                )
+    except Exception:  # noqa: BLE001 - the sync must go ahead; the build time guard still applies
+        log.warning("system agent sync: could not check the children of updated system agents",
+                    exc_info=True)
+    return held
+
+
+def _record_held_back(held: dict[str, dict]) -> None:
+    """A version history row and an inbox notification for every child the
+    upgrade held back, so the decision is visible, not silent."""
+    for cid, gained in held.items():
+        items = ", ".join(x for values in gained.values() for x in values)
+        note = (f"Upgrade: kept the previous setup and declined {items} from the parent, "
+                "which would have formed a blocked capability combination.")
+        try:
+            from agents.versions import snapshot_if_changed
+            snapshot_if_changed(cid, actor="upgrade", note=note)
+        except Exception:  # noqa: BLE001 - history is best effort
+            log.debug("could not snapshot %r after holding it back", cid, exc_info=True)
+        try:
+            from agents.registry import get_agent_raw
+            from plans.service import create_notification
+            raw = get_agent_raw(cid)
+            create_notification(
+                title=f"Agent {cid} did not take its parent's new tools",
+                body=(f"After the update its parent gained {items}. Together with this agent's own "
+                      "setup that would form a blocked capability combination, so the agent keeps "
+                      "working as before without them. Review it on its Inheritance tab."),
+                severity="warning",
+                source={"kind": "agent", "id": cid},
+                workspace=getattr(raw, "owner_workspace", None),
+            )
+        except Exception:  # noqa: BLE001 - the inbox is best effort
+            log.debug("could not notify about holding back %r", cid, exc_info=True)
 
 
 def _grandfather_capability_violations() -> list[str]:

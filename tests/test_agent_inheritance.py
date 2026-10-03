@@ -384,3 +384,39 @@ def test_create_agent_tool_makes_a_child_with_tool_deltas(isolated):
     assert "system_prompt is required" in _json.dumps(plain)
     missing = _json.loads(create_agent_tool.invoke({"agent_id": "x", "name": "X", "extends": "nope"}))
     assert "not found" in _json.dumps(missing)
+
+
+def test_an_upgrade_never_hands_a_child_a_blocked_combination(isolated, tmp_path, monkeypatch):
+    """A seed update cannot be refused like a user's save: a child the
+    updated system parent would push over the line declines what the parent
+    gained (a '-item' delta), keeps running as before, and says so in its
+    history and the inbox. A child that stays within the guard follows."""
+    import json as _json
+
+    import common.bootstrap as bootstrap
+    from agents.versions import list_versions
+    from plans.service import list_notifications
+
+    seed = {"id": "basex", "name": "Base", "type": "langchain",
+            "entrypoint": "agents.agent_factory:build_agent_executor",
+            "system": True, "tools": ["read_file", "notify_user"]}
+    seed_file = tmp_path / "seed.json"
+    seed_file.write_text(_json.dumps({"agents": [seed]}))
+    monkeypatch.setattr(bootstrap, "BOOTSTRAP_AGENTS_FILE", seed_file)
+
+    for aid, own in (("basex", ""), ("risky", "## Web\nSearch."), ("calm", "")):
+        prompt_assembly.write_instructions(aid, own or "Base.")
+    add_agent(_spec("basex", system=True, tools=["read_file"]), user_edit=False)
+    add_agent(_spec("risky", extends="basex", tools=["read_file", "web_search"]), user_edit=False)
+    add_agent(_spec("calm", extends="basex", tools=["read_file"]), user_edit=False)
+
+    assert "basex" in bootstrap._sync_system_agents()
+
+    assert get_agent("basex").tools == ["read_file", "notify_user"]
+    assert get_agent("calm").tools == ["read_file", "notify_user"]
+    risky = get_agent("risky")
+    assert "notify_user" not in risky.tools and set(risky.tools) == {"read_file", "web_search"}
+    assert get_agent_raw("risky").list_deltas["tools"]["remove"] == ["notify_user"]
+    assert any("declined notify_user" in (v.get("note") or "") for v in list_versions("risky"))
+    titles = [n.title for n in list_notifications()]
+    assert any("risky" in t for t in titles) and not any("calm" in t for t in titles)

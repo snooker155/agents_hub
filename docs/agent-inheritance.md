@@ -180,6 +180,21 @@ on its own account and is refused until it either removes the inherited
 path (`-the_delegate`) or sets `capability_override` itself, reviewed on its
 own terms.
 
+### When an upgrade changes a system parent
+
+A new hub version can grant a system agent more tools, delegates or handoffs
+at startup. That change cannot be refused like a save, so it is applied
+differently: every unpinned child is checked against the updated parent, and
+a child that would end up with a blocked combination declines exactly what
+the parent gained in this upgrade. The new items become `-item` deltas on
+the child, which keeps running as it did before the upgrade. Its version
+history gets a row saying what it declined and why, the inbox gets a
+warning, and the Inheritance tab shows the declined items struck through.
+Children that stay within the guard take the new items as usual. To accept
+them anyway, remove the `-item` delta (Reset to inherited on the list) once
+the combination is resolved, for example by dropping the tool that closed
+it.
+
 ## `ah apply`
 
 A markdown agent file's frontmatter can declare `extends: analyst` or, pinned,
