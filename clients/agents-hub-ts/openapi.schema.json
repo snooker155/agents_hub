@@ -27223,6 +27223,74 @@
         ]
       }
     },
+    "/api/help-chat": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Clear Chat",
+        "tags": [
+          "help-chat"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Get Chat",
+        "tags": [
+          "help-chat"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Send Chat",
+        "tags": [
+          "help-chat"
+        ]
+      }
+    },
+    "/api/help-chat/stop": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Stop Chat",
+        "tags": [
+          "help-chat"
+        ]
+      }
+    },
     "/api/ingest/runs": {
       "post": {
         "description": "Start recording a run that is beginning somewhere else.",

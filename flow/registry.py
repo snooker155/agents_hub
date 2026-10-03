@@ -339,9 +339,17 @@ def list_entities() -> List[FlowEntitySpec]:
 def get_entity(entity_id: str) -> Optional[FlowEntitySpec]:
     if not entity_id:
         return None
-    for spec in _maybe_reload():
+    specs = _maybe_reload()
+    for spec in specs:
         if spec.id == entity_id:
             return spec
+    # A renamed agent's old id, from a flow saved before the rename.
+    from agents.registry import LEGACY_AGENT_IDS
+    new_id = LEGACY_AGENT_IDS.get(str(entity_id).strip())
+    if new_id:
+        for spec in specs:
+            if spec.id == new_id and spec.category == "agent":
+                return spec
     return None
 
 

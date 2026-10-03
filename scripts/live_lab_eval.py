@@ -37,7 +37,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--provider", default="openai")
     ap.add_argument("--model", default="gpt-4o-mini")
-    ap.add_argument("--agent", default="researcher_agent",
+    ap.add_argument("--agent", default="researcher",
                     help="the registered agent every lab role is cast with (its own model is overridden)")
     ap.add_argument("--workspace", default="lab-smoke")
     ap.add_argument("--ticks", type=int, default=6)

@@ -402,10 +402,10 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     form a blocked capability combination — reading private data alongside web
     access is the case this exists for. The seed wins and the extra is dropped.
 
-    Uses swe_agent rather than researcher_agent: researcher_agent's seed now
+    Uses swe_agent rather than researcher: researcher's seed now
     carries ``capability_override`` (its own tools read private data and it
     delegates to the web searcher, a reviewed, deliberate combination — see
-    agents/definitions/researcher_agent/capabilities.md), which would skip the
+    agents/definitions/researcher/capabilities.md), which would skip the
     very check this test is pinning down. swe_agent has no override and reads
     private data (read_file, list_files, search_text) the same way."""
     from common.bootstrap import _sync_system_agents
@@ -432,7 +432,7 @@ def test_the_web_agent_holds_no_private_data():
     from tools.capabilities import check_combination
 
     web = next(a for a in _seed_system_agents() if a["id"] == "web_searcher")
-    researcher = next(a for a in _seed_system_agents() if a["id"] == "researcher_agent")
+    researcher = next(a for a in _seed_system_agents() if a["id"] == "researcher")
 
     for ad in (web, researcher):
         violation = check_combination(ad["tools"])

@@ -58,8 +58,10 @@ function ThoughtStep({ text }) {
 
 // One item in an agent chat feed (user/assistant turns + thinking + tool/graph
 // steps + the entity changes a build chat makes). Shared by the architect chat
-// (ProjectGraph), the planner chat and every entity build chat.
-export function FeedItem({ e }) {
+// (ProjectGraph), the planner chat and every entity build chat. `renderText`,
+// when given, turns a reply's text into nodes (the Help panel makes its links
+// navigate inside the app); without it a reply is plain text.
+export function FeedItem({ e, renderText = null }) {
   const { t } = useI18n();
   if (e.k === 'user') {
     return (
@@ -75,7 +77,7 @@ export function FeedItem({ e }) {
     return (
       <div className="flex justify-start">
         <div className="max-w-[92%] rounded-lg rounded-bl-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm leading-relaxed px-3 py-2 whitespace-pre-wrap">
-          {trimBubbleText(e.text)}
+          {renderText ? renderText(trimBubbleText(e.text)) : trimBubbleText(e.text)}
           {e.live ? <span className="inline-block w-1.5 h-3 ml-0.5 -mb-0.5 bg-violet-400 animate-pulse" /> : null}
         </div>
       </div>

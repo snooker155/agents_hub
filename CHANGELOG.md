@@ -194,6 +194,32 @@ turns that section into the next release.
   capacity; `ah apply` uses it, so those fields update in place.
 - Comparison page on the site (`site/compare.md`): the hub against Anthropic
   Managed Agents, the OpenAI Agents API and AWS AgentCore, row by row.
+- Five new system agents (docs/system-agents.md): Verifier checks non code
+  work (figures, facts, reports) against sources and the task's rubric and
+  passes or returns it, the counterpart of Code Reviewer; Analyst answers from
+  connected databases and workspace files, shows the query behind every
+  figure and hands charts to Visualizer; Writer turns notes and research into
+  documents in the workspace; Sourcer finds openings, candidates, vendors or
+  sources on the web through the Web Search Agent and hands the shortlist to
+  Screener; Screener scores CVs, postings, applications or proposals against
+  criteria with evidence.
+- Help in the header (docs/help.md): a button on every page opens the
+  Support agent, one conversation per person, that knows the docs and what
+  this install has set up and what it lacks (providers, models, agents,
+  chats, tasks, channels, accounts, MCP servers, skills, watchers), answers
+  in the user's language and ends with next steps that open dashboard pages
+  or start the welcome tour. It changes nothing itself.
+
+### Changed
+
+- The Researcher Agent is now `researcher` (was `researcher_agent`). An
+  existing install renames it at startup, with a backup written first, in
+  the registry, workspaces, other agents' delegates and handoffs, flows,
+  teams, loops, scenarios, eval sets, widgets, services, scheduled jobs and
+  version history; runs, chats and logs keep the old id. The old id still
+  resolves everywhere (runs, delegation, `/v1` `agent:researcher_agent`,
+  `/api/agents/researcher_agent/...`). The `ah apply` example's agents are
+  now `team_researcher` and `team_writer`.
 
 ### Fixed
 

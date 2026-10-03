@@ -94,7 +94,7 @@ def test_sources_name_the_delegation_path(monkeypatch):
 # ── delegates allowlist restricts reachability ───────────────────────────────
 
 def test_explicit_delegates_list_excludes_the_dangerous_agent(monkeypatch):
-    """researcher_agent-shaped case: an allowlist that does NOT name the
+    """researcher-shaped case: an allowlist that does NOT name the
     dangerous agent means it is simply not reachable, so no trifecta forms."""
     from agents.registry import AgentSpec
 

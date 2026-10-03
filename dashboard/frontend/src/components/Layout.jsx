@@ -14,6 +14,7 @@ import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
 import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
+import HelpPanel from './help/HelpPanel';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -554,6 +555,8 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            {/* Help (docs/help.md): the Support agent, for a user who is lost */}
+            <HelpPanel />
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}

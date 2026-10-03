@@ -153,6 +153,29 @@ def agent_path(path: str) -> Optional[tuple]:
     return agent_id, (match.group(2) or "").strip("/")
 
 
+def _canonical_agent_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
+    """A renamed agent's old id in the path (``/api/agents/researcher_agent/
+    versions``, from a bookmark or an old script) becomes its current id, so
+    every per agent route, the version history included, answers for the
+    agent rather than for an id nothing is stored under any more."""
+    path = scope.get("path") or ""
+    target = agent_path(path)
+    if target is None:
+        return scope
+    from agents.registry import LEGACY_AGENT_IDS, resolve_agent_id
+
+    old_id = target[0]
+    if old_id not in LEGACY_AGENT_IDS:
+        return scope
+    new_id = resolve_agent_id(old_id)
+    if new_id == old_id:
+        return scope
+    prefix = "/api/agents/"
+    rest = path[len(prefix):].split("/", 1)
+    new_path = prefix + new_id + ("/" + rest[1] if len(rest) > 1 else "")
+    return {**scope, "path": new_path, "raw_path": new_path.encode("latin-1")}
+
+
 def _expected_from_body(body: bytes) -> Any:
     if not body or len(body) > MAX_BODY_BYTES:
         return None
@@ -175,6 +198,7 @@ class AgentRevisionMiddleware:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
+        scope = _canonical_agent_scope(scope)
         target = agent_path(scope.get("path") or "")
         method = str(scope.get("method") or "").upper()
         if target is None or (method not in WRITE_METHODS and method != "GET"):

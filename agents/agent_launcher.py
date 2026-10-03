@@ -105,10 +105,11 @@ def prepare_run(
     configuration in :func:`launch_prepared`.
     """
     from tasks import service as _ts
-    from agents.registry import get_agent
+    from agents.registry import get_agent, resolve_agent_id
     from workspace import as_param_dict, resolve_task_workspace
     from common.session_service import get_or_create_task_session
 
+    agent_id = resolve_agent_id(agent_id)  # a renamed agent's old id runs the agent
     if not get_agent(agent_id):
         raise ValueError(f"Unknown agent_id: {agent_id}")
 

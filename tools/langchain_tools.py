@@ -80,7 +80,9 @@ def _caller_delegates() -> Optional[set]:
     caller = reg_get_agent(caller_id)
     if not caller or not caller.delegates:
         return None
-    return set(caller.delegates)
+    # A list saved before an agent was renamed still names its old id.
+    from agents.registry import LEGACY_AGENT_IDS
+    return {LEGACY_AGENT_IDS.get(d, d) for d in caller.delegates}
 
 
 def _filter_delegatable(specs: List[Any]) -> List[Any]:
@@ -419,6 +421,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
+        agent_id = spec.id  # a renamed agent's old id (registry.LEGACY_AGENT_IDS)
         # The delegated child inherits the caller's current workspace: taskless
         # chat delegation should stay where the conversation is, with its files.
         # The active workspace therefore wins over the `workspace` argument (which

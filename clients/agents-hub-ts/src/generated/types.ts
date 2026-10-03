@@ -3054,6 +3054,14 @@ export interface ApiPaths {
   "/api/health/doctor": {
     get: { response: unknown };
   };
+  "/api/help-chat": {
+    get: { response: unknown };
+    post: { response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/help-chat/stop": {
+    post: { response: unknown };
+  };
   "/api/ingest/runs": {
     post: { body: OpenRunRequest; response: unknown };
   };

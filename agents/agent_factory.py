@@ -636,6 +636,11 @@ class AgentFactory:
         inputs (markdown, registry spec, workspace/model settings) change.
         """
         from agents import agent_cache
+        from agents.registry import resolve_agent_id
+
+        # A renamed agent's old id (a stored team, scenario or chat that still
+        # names it) builds the agent under its current id.
+        agent_id = resolve_agent_id(agent_id)
 
         # A/B experiment arm (evals/experiments.py): open_run pinned a stored
         # version for this agent's run. Building with ``definition_version``

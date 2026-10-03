@@ -110,7 +110,7 @@ agents_hub/
 │   │   │   ├── capabilities.md
 │   │   │   └── usage.md
 │   │   ├── orchestrator/
-│   │   ├── researcher_agent/
+│   │   ├── researcher/
 │   │   ├── code_reviewer/
 │   │   ├── visualizer/      # Ships with the visualization toolset bound
 │   │   ├── agent_creator/

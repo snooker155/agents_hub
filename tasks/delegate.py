@@ -52,7 +52,7 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     it), ``run`` (the run record as launched), ``requested`` (the provider and
     model asked for, if any) and ``agent`` (id and name of the delegate).
     """
-    from agents.registry import get_agent
+    from agents.registry import get_agent, resolve_agent_id
     from common.agent_context import current_agent_id
     from common.workspace_context import filter_agents_for_workspace
     from tasks.service import CreatedBy, TaskStatus, add_subtask, assign_agent, get_task, update_task
@@ -61,7 +61,7 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     from tools.langchain_tools import _delegation_blocked
     from tools.task_management import _task_to_dict, _uuid_from_str
 
-    agent_id = str(request.get("agent_id") or "").strip()
+    agent_id = resolve_agent_id(request.get("agent_id"))
     text = str(request.get("input") or "")
     if not agent_id or not text.strip():
         return _err("agent_id and input are required", "bad_request")

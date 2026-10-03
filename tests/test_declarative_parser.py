@@ -144,5 +144,5 @@ def test_the_example_repository_parses():
     root = Path(__file__).resolve().parents[1] / "examples" / "apply"
     bundle = load_bundle(root)
     assert sorted(bundle.addresses()) == [
-        "agent/researcher", "agent/writer", "deployment/weekday-digest", "deployment/weekly-report",
+        "agent/team_researcher", "agent/team_writer", "deployment/weekday-digest", "deployment/weekly-report",
         "environment/research-sandbox", "memory_pool/team-notes"]

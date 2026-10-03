@@ -9,7 +9,7 @@ a heavier object than a flow: an environment, a cast of roles overlaid on
 registered agents, and a dozen run limits. The LLM-facing shape keeps only what
 a designer reasons about::
 
-    roles: [{"agent_id": "researcher_agent", "name": "Mara", "role": "innkeeper",
+    roles: [{"agent_id": "researcher", "name": "Mara", "role": "innkeeper",
              "goal": "keep the tavern full", "private_knowledge": "the cellar is empty",
              "objective": "profit", "wake_every": 3, "starts": true,
              "npc": false}]

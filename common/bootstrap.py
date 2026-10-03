@@ -14,6 +14,9 @@ deliberate exception (the last bullet):
   `bootstrap/workspaces/default/` only when it does not exist.
 - system agents shipped in `bootstrap/agents.json` are added to an existing
   registry when missing, so installs predating a new system agent pick it up.
+- an agent that was renamed (`agents.registry.LEGACY_AGENT_IDS`) has its stored
+  references rewritten to the new id, once, with a backup written first
+  (common/legacy_agent_ids.py). The old id keeps resolving through the alias.
 - for system agents that already exist, the fields the seed owns (tools,
   description, tier) are synced from it on every start, so a newly granted tool
   reaches installs that were created before it. Records the operator has edited
@@ -409,12 +412,27 @@ def ensure_initial_state() -> dict[str, bool]:
         "agents_file": _seed_agents_file(),
         "default_workspace": _seed_default_workspace(),
     }
+    # Before missing system agents are added: a renamed agent's old record is
+    # renamed in place rather than shadowed by a fresh copy of the seed.
+    result["legacy_agent_ids_renamed"] = _rename_legacy_agent_ids()
     result["system_agents_added"] = bool(_ensure_system_agents())
     result["system_agents_synced"] = bool(_sync_system_agents())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
     result["system_workspace"] = _seed_system_workspace()
     result["demo_workspace"] = _seed_demo_workspace()
     return result
+
+
+def _rename_legacy_agent_ids() -> bool:
+    """Rewrite stored references to a renamed agent's old id
+    (common/legacy_agent_ids.py). Idempotent and never raising."""
+    try:
+        from common.legacy_agent_ids import migrate_legacy_agent_ids
+        done = migrate_legacy_agent_ids()
+    except Exception:  # noqa: BLE001 - startup must not raise; the registry alias keeps old ids working
+        log.debug("legacy agent id rename skipped", exc_info=True)
+        return False
+    return bool(done.get("documents") or done.get("rows"))
 
 
 def _seed_system_workspace() -> bool:

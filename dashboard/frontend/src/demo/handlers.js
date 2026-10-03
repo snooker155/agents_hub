@@ -16,6 +16,21 @@ const SSE_HEADERS = {
   Connection: 'keep-alive',
 };
 
+/** The Help panel's one demo answer: the shape of a real one, links included. */
+export const HELP_DEMO_TEXT = [
+  'This is the public demo, so the Support agent answers with this one fixed reply.',
+  'In a real install it reads what you have set up and suggests what to do next, for example:',
+  '1. Add a model provider on [Models](/models).',
+  '2. Talk to an agent in [Chat](/chat).',
+  '3. Browse ready made agents in the [Marketplace](/marketplace).',
+  'New here? [Take the tour](#tour).',
+].join('\n');
+
+const HELP_DEMO_FRAMES = [
+  { event: 'token', data: { token: HELP_DEMO_TEXT } },
+  { event: 'done', data: { ok: true, response: HELP_DEMO_TEXT } },
+];
+
 async function readBody(request) {
   try {
     return await request.clone().json();
@@ -40,6 +55,21 @@ export function createHandlers({ fixtures = {}, streams = {} } = {}) {
     http.all('*/api/*', async ({ request }) => {
       const url = new URL(request.url);
       const method = request.method.toUpperCase();
+
+      // Help (header button, docs/help.md): there is no model behind the demo,
+      // so a question gets one fixed answer that still shows what the panel
+      // does: next steps as links that open pages, and the tour.
+      if (/\/api\/help-chat$/.test(url.pathname)) {
+        if (method === 'GET') {
+          return HttpResponse.json({ messages: [], trace: [], chat_ref: null, agent_id: 'support' });
+        }
+        if (method === 'POST') {
+          return new HttpResponse(
+            replayStream(framesForRun({ 'demo-help': HELP_DEMO_FRAMES }, 'demo-help')),
+            { headers: SSE_HEADERS },
+          );
+        }
+      }
 
       if (isStreamRequest(method, url.pathname)) {
         const body = method === 'GET' ? null : await readBody(request);

@@ -62,7 +62,7 @@ class Role:
     """A per-simulation overlay on an existing agent.
 
     Motivation belongs to the *scenario*, not to the agent: the same
-    ``researcher_agent`` can be a market maker in one sim and a suspicious
+    ``researcher`` can be a market maker in one sim and a suspicious
     innkeeper in another, so none of this goes on ``AgentSpec``.
 
     Two layers of motivation, on purpose:

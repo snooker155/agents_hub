@@ -678,6 +678,25 @@
       ]
     },
     {
+      "id": "help",
+      "title": "Help",
+      "summary": "The Help button in the header: the Support agent, for when you are lost. It reads what is set up and what is missing and suggests the next steps with links to the right pages.",
+      "surface": "Everywhere",
+      "related": [
+        "page-chat",
+        "system-agents",
+        "chat",
+        "sessions-and-runs",
+        "overview"
+      ],
+      "headings": [
+        "What it is for",
+        "What the agent is given",
+        "How it differs from the page chat",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "playground",
       "title": "Playground: worlds and scenarios",
       "summary": "The playground drops agents into a simulated world and runs it tick by tick, so you can watch behaviour rather than read about it.",

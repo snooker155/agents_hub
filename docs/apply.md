@@ -11,7 +11,7 @@ second one. The shape follows Anthropic's `ant apply` for Managed Agents.
 ah apply hub/ --dry-run      # the plan only
 ah apply hub/                # plan, then apply
 ah apply hub/ --prune --yes  # also delete what the files no longer declare
-ah apply --export researcher writer --out hub/   # start from what the hub has
+ah apply --export team_researcher team_writer --out hub/   # start from what the hub has
 ```
 
 The command works the way every `ah` command does: in process by default, over
@@ -52,13 +52,13 @@ structured fields; the body is the agent's `instructions.md`.
 
 ```markdown
 ---
-id: researcher
-name: Researcher
+id: team_researcher
+name: Team researcher
 description: Finds sources on the web and writes short, cited summaries.
 domain: research
 tools: [web_search, fetch_url]
 memory: [team-notes]
-handoffs: [writer]
+handoffs: [team_writer]
 ---
 
 You are the team's researcher. For every question, search the web, read the
@@ -165,7 +165,7 @@ A deployment is a scheduled job ([scheduling](scheduling.md), [deployments](depl
 kind: deployment
 id: weekday-digest
 title: Weekday research digest   # defaults to the id
-agent: researcher                # declared id, or an agent already in the hub
+agent: team_researcher           # declared id, or an agent already in the hub
 message: Summarize yesterday's news about open source AI agents.
 cron: "0 9 * * 1-5"
 timezone: Europe/Berlin
@@ -261,8 +261,8 @@ Commit it with the files: it is what makes the second apply an update.
   "lock_version": 1,
   "workspace": "team",
   "resources": {
-    "agent/researcher": {
-      "kind": "agent", "key": "researcher", "id": "researcher",
+    "agent/team_researcher": {
+      "kind": "agent", "key": "team_researcher", "id": "team_researcher",
       "spec_hash": "7a1ea2505158a388d203",
       "fields": {"tools": {"d": "d623a92a174f92181d22", "o": "d623a92a174f92181d22"}},
       "observed_hash": "9d5a56c2046dec7b1394",
@@ -292,7 +292,7 @@ creating the resource a second time.
 ## Export
 
 ```bash
-ah apply --export researcher writer environment:<id> pool:<id> deployment:<id> --out hub/
+ah apply --export team_researcher team_writer environment:<id> pool:<id> deployment:<id> --out hub/
 ```
 
 writes the same format from records already in the hub: agents into

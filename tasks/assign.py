@@ -94,6 +94,7 @@ def assign_agent_to_task(
     spec = registry.get_agent(agent_id)
     if not spec:
         raise AssignError("Agent not found", status=404)
+    agent_id = spec.id  # a renamed agent's old id is recorded under the current one
 
     if t.workspace:
         metadata = get_workspace_metadata(t.workspace)

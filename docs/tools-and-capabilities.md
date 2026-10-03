@@ -31,7 +31,7 @@ against the single most dangerous tool.
 
 - **A web agent cannot also read your files or memory.** Split the work: one
   agent fetches, another reasons over the result. That is exactly why the Web
-  Search Agent and the Researcher Agent are separate.
+  Search Agent and the Researcher are separate.
 - **What a web tool actually read is recorded.** Every `web_search` and
   `fetch_url` call, with the text handed back and the flags raised against it,
   lands in the [web request log](web-logs.md).

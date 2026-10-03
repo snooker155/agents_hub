@@ -45,7 +45,7 @@ EVENT_NAME = "audit"
 SKIP_PREFIXES = (
     "/api/run-state", "/api/stream", "/api/ingest", "/api/sessions/",
     "/api/instances/", "/api/chat/message", "/api/page-chat", "/api/views/",
-    "/api/audit", "/api/widgets/public/",
+    "/api/help-chat", "/api/audit", "/api/widgets/public/",
 )
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

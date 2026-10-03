@@ -21,7 +21,7 @@ A single completed task with one agent run and one result. You see how to move a
 
 1. Open the **Workspace Manager** and create a workspace named `example-basic`.
 2. Go to **Tasks** and create a new task with a description: "Write a short README section describing this project".
-3. Assign the task to an agent. Start with `researcher_agent`, `swe_agent`, or `decomposer`.
+3. Assign the task to an agent. Start with `researcher`, `swe_agent`, or `decomposer`.
 4. Move the task to `ready` on the Kanban board (or start it directly from the task details).
 5. Wait for the run to finish. Watch the progress in **Sessions**.
 6. Open the completed task and inspect: the task status, the run log, the result output.

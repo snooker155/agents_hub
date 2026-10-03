@@ -251,7 +251,7 @@ def model_overrides(provider: Optional[str], model: Optional[str]) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("agent", help="Agent ID from definitions (e.g. swe_agent, researcher_agent)")
+    ap.add_argument("agent", help="Agent ID from definitions (e.g. swe_agent, researcher)")
     ap.add_argument("action", nargs="?", help="Optional action/instruction")
     ap.add_argument("--desc", help="Initial description for the task")
     ap.add_argument("--task-id", help="Optional task ID to associate with")
@@ -348,9 +348,11 @@ def main():
     # the agent — so we don't leave a half-started run that crashes in create_agent
     # (mirrors the get_agent guard in runtime/agent_launcher.start_run).
     from agents.registry import get_agent
-    if not get_agent(agent_id):
+    spec = get_agent(agent_id)
+    if not spec:
         log.error(f"Unknown agent_id: {agent_id}")
         sys.exit(1)
+    agent_id = getattr(spec, "id", None) or agent_id  # a renamed agent's old id runs under the current one
 
     # When invoked via CLI without a --run-id, generate one so the run is
     # always tracked regardless of how agent_run.py was invoked.

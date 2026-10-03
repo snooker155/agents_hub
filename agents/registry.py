@@ -974,13 +974,49 @@ def count_agents() -> int:
     return len(_maybe_reload())
 
 
+#: Agent ids that were renamed, old id to new id. A reference stored outside
+#: this repo (a run or chat record, a script, a ``/v1`` model id, a widget
+#: snippet on someone's site) can still carry the old id, so every lookup
+#: resolves it through :func:`resolve_agent_id`. Stored configuration is
+#: rewritten once at startup (``common/legacy_agent_ids.py``); this map is what
+#: keeps the rest working. Add a line here when a system agent is renamed.
+LEGACY_AGENT_IDS: Dict[str, str] = {
+    "researcher_agent": "researcher",
+}
+
+
+def resolve_agent_id(agent_id: Any) -> str:
+    """The current id for ``agent_id``: the renamed id for a legacy one, else
+    ``agent_id`` itself (stripped). A record that still carries the old id
+    (a registry the startup migration has not reached yet, or a run
+    container's snapshot taken before it) wins over the alias."""
+    aid = str(agent_id or "").strip()
+    new_id = LEGACY_AGENT_IDS.get(aid)
+    if not new_id:
+        return aid
+    try:
+        specs = _maybe_reload()
+    except Exception:  # noqa: BLE001 - an unreadable registry resolves to the current id
+        return new_id
+    if any(spec.id == aid for spec in specs) and not any(spec.id == new_id for spec in specs):
+        return aid
+    return new_id
+
+
 def get_agent(agent_id: str) -> Optional[AgentSpec]:
-    """Return a specific agent by id or None if not found."""
+    """Return a specific agent by id or None if not found. A legacy id
+    (:data:`LEGACY_AGENT_IDS`) returns the renamed agent."""
     if not agent_id:
         return None
-    for spec in _maybe_reload():
+    specs = _maybe_reload()
+    for spec in specs:
         if spec.id == agent_id:
             return spec
+    new_id = LEGACY_AGENT_IDS.get(str(agent_id).strip())
+    if new_id:
+        for spec in specs:
+            if spec.id == new_id:
+                return spec
     return None
 
 
@@ -1064,6 +1100,15 @@ def add_agent(
     snapshotting.
     """
     from agents.capability_guard import enforce_agent_tools
+
+    # A retired id resolves to the renamed agent everywhere, so a new record
+    # under it would be unreachable. A record that still carries it (an
+    # install the startup rename has not reached) may still be saved.
+    if spec.id in LEGACY_AGENT_IDS and not any(s.id == spec.id for s in _maybe_reload()):
+        raise ValueError(
+            f"'{spec.id}' is the old id of the agent '{LEGACY_AGENT_IDS[spec.id]}'. "
+            f"Edit '{LEGACY_AGENT_IDS[spec.id]}', or choose another id."
+        )
 
     _prev = get_agent(spec.id)
     from tools.capabilities import secret_grant_ids
