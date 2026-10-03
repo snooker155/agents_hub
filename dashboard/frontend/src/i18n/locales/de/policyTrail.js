@@ -19,7 +19,10 @@ export default {
     auto_unclear: 'Klassifikator konnte nicht entscheiden',
     hook_deny: 'ein Hook hat abgelehnt',
     hook_ask: 'ein Hook bat um eine Person',
+    guardrail_deny: 'eine Reihenfolge-Regel hat ihn abgelehnt',
+    guardrail_ask: 'eine Reihenfolge-Regel hat einen Menschen gefragt',
     human_approved: 'eine Person hat diesen Aufruf freigegeben',
+    human_denied: 'eine Person hat ihn abgelehnt, oder niemand hat rechtzeitig geantwortet',
     think_required: 'abgelehnt, bis der Agent zuerst nachdenkt',
   },
 };

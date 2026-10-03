@@ -21,6 +21,8 @@ import { LiveThoughts } from './reasoning';
 import LiveDelegation from './liveDelegation';
 import { currentActivity, foldDelegationTools } from './trail';
 import { steerCaption } from './steering';
+import ToolApprovals from './ToolApprovalCard';
+import { pendingApproval } from './toolApprovals';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
 import { Bot, User } from 'lucide-react';
@@ -97,6 +99,11 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
   const trail = isStreaming && hasTrail && !activity ? foldDelegationTools(msg.timeline) : [];
   const liveDelegation = trail[trail.length - 1]?.type === 'delegation' ? trail[trail.length - 1] : null;
   const showWorking = isStreaming && !text && !liveThought && !liveDelegation;
+  // A tool call of this turn waits for a person: say so instead of "running".
+  const waitingOn = isStreaming ? pendingApproval(msg) : null;
+  const workingLabel = waitingOn
+    ? t('toolApproval.waiting', { tool: waitingOn.tool })
+    : runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel');
   const done = !isStreaming;
   const views = done ? messageViews(msg) : [];
   const shownViewIds = new Set(views.map((v) => v.view_id));
@@ -122,7 +129,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
       >
         {liveDelegation ? <LiveDelegation key={liveDelegation.run_id} entry={liveDelegation} /> : null}
         {showWorking ? (
-          <WorkingDots label={runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel')} />
+          <WorkingDots label={workingLabel} />
         ) : text ? (
           <ChatCodeActionsContext.Provider value={codeActions}>
             <CitedText content={text} citations={msg.citations} anchor={msg.id} streaming={isStreaming} />
@@ -132,8 +139,10 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         {liveThought ? <LiveThoughts text={liveThought} /> : null}
         {/* A tool started while text was on show: a one-line notice under it. */}
         {runningTool && !showWorking ? (
-          <span className="mt-1 block"><WorkingDots label={t('chat.runningTool', { tool: runningTool })} /></span>
+          <span className="mt-1 block"><WorkingDots label={workingLabel} /></span>
         ) : null}
+        {/* A tool call waiting for a person: Approve / Deny in the same turn. */}
+        <ToolApprovals msg={msg} live={isStreaming} />
         {/* Files the agent created / edited / deleted during this turn. */}
         <MessageFiles files={msg.files} artifactsByPath={artifactsByPath} />
         {done && (

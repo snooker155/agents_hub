@@ -86,6 +86,23 @@ def test_fingerprint_unaffected_by_dict_key_order():
     assert h1 == h2  # tool order is sorted inside the fingerprint
 
 
+def test_fingerprint_changes_when_the_delegate_concurrency_limit_changes():
+    add_agent(AgentSpec(id="fp_agent5", name="fp_agent5", type="langchain",
+                        entrypoint="agents.definitions.demo:build", tools=["read_file"]))
+    before = av.definition_fingerprint("fp_agent5")["hash"]
+    add_agent(AgentSpec(id="fp_agent5", name="fp_agent5", type="langchain",
+                        entrypoint="agents.definitions.demo:build", tools=["read_file"],
+                        max_concurrent_delegates=12))
+    after = av.definition_fingerprint("fp_agent5")["hash"]
+    assert before != after
+    # Left out while at its default (6), like an unset loop policy, so an
+    # agent that never touches it keeps the hash it always had.
+    reverted = AgentSpec(id="fp_agent5", name="fp_agent5", type="langchain",
+                         entrypoint="agents.definitions.demo:build", tools=["read_file"])
+    add_agent(reverted)
+    assert av.definition_fingerprint("fp_agent5")["hash"] == before
+
+
 # ── Run recording ─────────────────────────────────────────────────────────────
 
 def test_open_run_records_definition_hash():

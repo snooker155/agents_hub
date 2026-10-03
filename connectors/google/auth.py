@@ -47,6 +47,7 @@ GMAIL_SCOPE = "https://mail.google.com/"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
 _REQUEST_TIMEOUT = 30.0
 #: How long an OAuth state nonce is good for: the consent-screen round trip
@@ -56,6 +57,11 @@ _STATE_TTL_SECONDS = 600
 
 class GoogleError(Exception):
     """Raised for configuration or token errors; the message is UI-safe."""
+
+
+class GoogleGrantRevoked(GoogleError):
+    """A refresh token Google no longer accepts (revoked, expired, or the
+    account removed the app): the grant is dead and asking again is the fix."""
 
 
 # ── OAuth state nonces ───────────────────────────────────────────────────────
@@ -127,23 +133,29 @@ def build_auth_url(redirect_uri: str, state: str, *, gmail: bool = False) -> str
     return f"{AUTH_URL}?{urlencode(params)}"
 
 
-def exchange_code(code: str, redirect_uri: str) -> dict[str, Any]:
+def exchange_code(code: str, redirect_uri: str, *,
+                  code_verifier: Optional[str] = None) -> dict[str, Any]:
     """POST the authorization code for tokens; the parsed JSON body
-    (``access_token``, ``refresh_token``, ``expires_in``, ...)."""
+    (``access_token``, ``refresh_token``, ``expires_in``, ...).
+    ``code_verifier`` is the PKCE verifier of a flow that sent a challenge
+    (the consent portal's does)."""
     from . import STORE
 
     client_id = STORE.get("client_id")
     client_secret = STORE.get("client_secret")
     if not client_id or not client_secret:
         raise GoogleError("No Google OAuth client configured on the Connectors page")
+    data = {
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    if code_verifier:
+        data["code_verifier"] = code_verifier
     try:
-        resp = httpx.post(TOKEN_URL, data={
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        }, timeout=_REQUEST_TIMEOUT)
+        resp = httpx.post(TOKEN_URL, data=data, timeout=_REQUEST_TIMEOUT)
     except httpx.HTTPError as exc:
         raise GoogleError(f"Google token exchange failed: {exc.__class__.__name__}") from exc
     if resp.status_code >= 400:
@@ -161,6 +173,88 @@ def fetch_userinfo(access_token: str) -> dict[str, Any]:
     if resp.status_code >= 400:
         raise GoogleError(f"Google userinfo request failed ({resp.status_code})")
     return resp.json()
+
+
+# ── an end user's own account (the consent portal) ──────────────────────────
+# connectors/consent/ asks a widget visitor or a channel user for their own
+# Google account through the operator's OAuth client. Same endpoints as the
+# operator's flow above, with the scopes the agent's settings name, PKCE, and
+# a refresh token that belongs to the end user and lives as their personal
+# secret, never in STORE.
+
+def build_consent_url(redirect_uri: str, state: str, scopes: list[str], *,
+                      code_challenge: Optional[str] = None,
+                      login_hint: Optional[str] = None) -> str:
+    """Google's consent screen for an end user, offline access so a refresh
+    token comes back, ``prompt=consent`` so it comes back every time."""
+    from . import STORE
+
+    client_id = STORE.get("client_id")
+    if not client_id:
+        raise GoogleError("No Google OAuth client id configured on the Connectors page")
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(scopes),
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    }
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
+    if login_hint:
+        params["login_hint"] = login_hint
+    return f"{AUTH_URL}?{urlencode(params)}"
+
+
+def consent_ready() -> bool:
+    """Whether the operator's OAuth client exists to ask end users with."""
+    from . import STORE
+
+    return bool(str(STORE.get("client_id") or "").strip()
+                and str(STORE.get("client_secret") or "").strip())
+
+
+def refresh_user_token(refresh_token: str) -> tuple[str, float]:
+    """``(access_token, expiry)`` for an end user's refresh token. Raises
+    :class:`GoogleGrantRevoked` when Google refuses the grant itself."""
+    from . import STORE
+
+    client_id = STORE.get("client_id")
+    client_secret = STORE.get("client_secret")
+    if not (client_id and client_secret):
+        raise GoogleError("No Google OAuth client configured on the Connectors page")
+    try:
+        resp = httpx.post(TOKEN_URL, data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=_REQUEST_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise GoogleError(f"Google token refresh failed: {exc.__class__.__name__}") from exc
+    if resp.status_code in (400, 401):
+        raise GoogleGrantRevoked("Google no longer accepts this account's access. Ask for access again.")
+    if resp.status_code >= 400:
+        raise GoogleError(f"Google token refresh failed ({resp.status_code})")
+    data = resp.json()
+    token = data.get("access_token")
+    if not token:
+        raise GoogleError("Google token refresh returned no access token")
+    return str(token), time.time() + float(data.get("expires_in") or 3600) - 60
+
+
+def revoke_token(token: str) -> bool:
+    """Ask Google to revoke a token (a refresh token revokes the whole
+    grant). True when Google confirmed; never raises."""
+    try:
+        resp = httpx.post(REVOKE_URL, data={"token": token}, timeout=_REQUEST_TIMEOUT,
+                          headers={"Content-Type": "application/x-www-form-urlencoded"})
+    except httpx.HTTPError:
+        return False
+    return resp.status_code < 400
 
 
 # ── access tokens ────────────────────────────────────────────────────────────
@@ -238,8 +332,20 @@ def _service_account_token() -> tuple[str, float]:
 def get_access_token() -> str:
     """A bearer token for whichever mode is configured, cached in memory
     until shortly before it expires. Raises :class:`GoogleError` with a
-    UI-safe message when unconfigured or the grant fails."""
+    UI-safe message when unconfigured or the grant fails.
+
+    In a widget or channel turn whose end user granted their own account
+    (connectors/consent/, docs/consent.md), the end user's token instead,
+    and never the hub's for an agent set to act only as the end user."""
     global _cached_token, _cached_expiry
+    from connectors.consent import access as _consent
+
+    try:
+        end_user_token = _consent.token_for_turn("google")
+    except _consent.ConsentError as exc:
+        raise GoogleError(str(exc)) from exc
+    if end_user_token:
+        return end_user_token
     if _cached_token and time.time() < _cached_expiry:
         return _cached_token
     from . import STORE
@@ -319,7 +425,8 @@ def xoauth2_string(address: str, token: str) -> str:
 
 
 __all__ = [
-    "GoogleError", "SCOPES", "IDENTITY_SCOPES", "GMAIL_SCOPE", "new_state", "consume_state",
+    "GoogleError", "GoogleGrantRevoked", "SCOPES", "IDENTITY_SCOPES", "GMAIL_SCOPE", "new_state",
+    "consume_state", "build_consent_url", "consent_ready", "refresh_user_token", "revoke_token",
     "requested_scopes", "build_auth_url", "exchange_code", "fetch_userinfo", "get_access_token",
     "reset_cache", "granted_scopes", "has_gmail", "gmail_status", "gmail_login", "xoauth2_string",
 ]

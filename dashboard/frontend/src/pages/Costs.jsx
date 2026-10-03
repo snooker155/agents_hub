@@ -262,6 +262,11 @@ export default function Costs() {
         <div className={card}>
           <div className="text-xs text-gray-500 uppercase tracking-wide">{t('costs.totalCost')}</div>
           <div className="text-3xl font-bold text-gray-800 mt-1">{fmtUsd(totals.cost)}</div>
+          {totals.container_cost > 0 && (
+            <div className="text-xs text-gray-400 mt-1" title={t('costs.containerHint')}>
+              {t('costs.ofWhichContainers', { amount: fmtUsd(totals.container_cost) })}
+            </div>
+          )}
         </div>
         <div className={card}>
           <div className="text-xs text-gray-500 uppercase tracking-wide">{t('costs.runs')}</div>

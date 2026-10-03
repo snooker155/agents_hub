@@ -17,6 +17,13 @@ This lives in ``common`` (not the dashboard route layer) so both the HTTP costs
 route and the runtime budget gate can compute spend without importing the FastAPI
 backend. It only *reads* the catalog; curation/discovery stays in
 ``dashboard/backend/routes/models.py``.
+
+A docker-mode run also spends container time, not just tokens: the hours its
+container lived, priced per the sandbox size its environment names
+(``environments/models.py`` ``SIZE_PRESETS``) or, for a custom profile, per
+vCPU-hour (:func:`container_cost_usd`, fifth-cycle stage 3). Those prices are
+settings, not catalog entries, resolved live from .env the way other
+container defaults are (``common.config.live_setting``).
 """
 from __future__ import annotations
 
@@ -169,6 +176,89 @@ def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
     return total
 
 
+#: USD per container-hour for each named sandbox size
+#: (environments/models.py SIZE_PRESETS), resolved live from .env/Settings
+#: the same way other container defaults are (common.config.live_setting),
+#: so a price change needs no restart. Defaults picked to agree with the
+#: per-cpu rate below (1/2/4 cpus -> 0.05/0.10/0.20).
+CONTAINER_HOUR_PRICE_ENV: Dict[str, str] = {
+    "small": "AGENTS_HUB_CONTAINER_HOUR_SMALL",
+    "medium": "AGENTS_HUB_CONTAINER_HOUR_MEDIUM",
+    "large": "AGENTS_HUB_CONTAINER_HOUR_LARGE",
+}
+CONTAINER_HOUR_PRICE_DEFAULT: Dict[str, float] = {"small": 0.05, "medium": 0.10, "large": 0.20}
+
+#: USD per vCPU-hour for a docker-mode run whose environment names no size
+#: (a custom profile, or the run profile's own defaults): the container is
+#: still priced, by its effective cpu limit.
+CONTAINER_HOUR_PRICE_PER_CPU_ENV = "AGENTS_HUB_CONTAINER_HOUR_PER_CPU"
+CONTAINER_HOUR_PRICE_PER_CPU_DEFAULT = 0.05
+
+
+def _live_price(env_key: str, default: float) -> float:
+    from common.config import live_setting
+    raw = live_setting(env_key, str(default))
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def container_hour_price(size: str) -> float:
+    """USD per hour for a named sandbox size; 0.0 for a name this version
+    does not know (fails open, like an unpriced model)."""
+    size = str(size or "").strip().lower()
+    if size not in CONTAINER_HOUR_PRICE_DEFAULT:
+        return 0.0
+    return _live_price(CONTAINER_HOUR_PRICE_ENV[size], CONTAINER_HOUR_PRICE_DEFAULT[size])
+
+
+def container_hour_price_per_cpu() -> float:
+    """USD per vCPU-hour for a container with no named size."""
+    return _live_price(CONTAINER_HOUR_PRICE_PER_CPU_ENV, CONTAINER_HOUR_PRICE_PER_CPU_DEFAULT)
+
+
+def _container_hours(run: Dict[str, Any]) -> float:
+    """Wall-clock hours a run's container lived: started_at to finished_at.
+    Zero for a run that is not docker-mode, still running, or missing either
+    timestamp (a run recorded before this was tracked, say)."""
+    if str(run.get("execution_mode") or "") != "docker":
+        return 0.0
+    started, finished = run.get("started_at"), run.get("finished_at")
+    if not started or not finished:
+        return 0.0
+    try:
+        from datetime import datetime
+        start = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(finished).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, (end - start).total_seconds()) / 3600.0
+
+
+def container_cost_usd(run: Dict[str, Any]) -> float:
+    """USD for the hours a docker-mode run's container lived
+    (``run.container_size``/``run.container_cpus``, agents/agent_launcher.py),
+    priced per its sandbox size or, for a custom profile, per vCPU-hour.
+    Zero for a run that never executed in a container, or carries neither
+    figure (recorded before this was tracked). Fails open like the rest of
+    this module: an unreadable record prices as zero, never raises.
+    """
+    try:
+        hours = _container_hours(run)
+        if hours <= 0:
+            return 0.0
+        size = str(run.get("container_size") or "").strip().lower()
+        if size:
+            return round(hours * container_hour_price(size), 6)
+        cpus = float(run.get("container_cpus") or 0.0)
+        if cpus <= 0:
+            return 0.0
+        return round(hours * cpus * container_hour_price_per_cpu(), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
     """Estimated USD cost of a single run from catalog pricing. Unknown
     (provider, model) pairs are treated as zero-cost (fail open, never wedge).
@@ -176,7 +266,8 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
     A run's tokens are priced at its own model, except the calls a fallback
     model answered: those are priced at the fallback's rate and taken out of
     the run's totals first. Model calls made on the run's behalf (loop
-    ``aux_calls``) are added at their own models."""
+    ``aux_calls``) are added at their own models, and so are the hours a
+    docker-mode run's container lived (:func:`container_cost_usd`)."""
     provider = (run.get("provider") or "").strip()
     model = (run.get("model") or "").strip()
     inbound, outbound = run_tokens(run)
@@ -195,7 +286,7 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
         inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
         cached = max(0, cached - c_cached)
     own = (_tokens_cost(prices, provider, model, inbound, outbound, cached) + extra) * _price_factor(run)
-    return own + _aux_cost(run, prices)
+    return own + _aux_cost(run, prices) + container_cost_usd(run)
 
 
 def _price_factor(run: Dict[str, Any]) -> float:

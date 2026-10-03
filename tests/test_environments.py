@@ -89,6 +89,35 @@ def test_model_refuses_bad_limits_and_hosts():
         Environment(name="x", network={"type": "limited", "allowed_hosts": ["user@host.com"]})
 
 
+def test_model_sandbox_size_defaults_and_choices():
+    assert Environment(name="x").size is None
+    for choice in ("small", "medium", "large"):
+        assert Environment(name="x", size=choice).size == choice
+    # Case-insensitive and "" normalizes to unset, like the other optional fields.
+    assert Environment(name="x", size="SMALL").size == "small"
+    assert Environment(name="x", size="").size is None
+    with pytest.raises(Exception):
+        Environment(name="x", size="huge")
+
+
+def test_docker_options_size_preset_and_overrides():
+    from environments.launch import docker_options
+
+    small = Environment(name="x", mode="docker", size="small")
+    assert docker_options(small) == {"cpus": "1", "memory": "1g", "pids_limit": 128, "size": "small"}
+
+    # An explicit limit wins over the matching preset value; the rest of the
+    # preset still fills in.
+    overridden = Environment(name="x", mode="docker", size="medium", limits={"cpus": "3"})
+    opts = docker_options(overridden)
+    assert opts["cpus"] == "3" and opts["memory"] == "4g" and opts["pids_limit"] == 256 and opts["size"] == "medium"
+
+    # No size: behaves exactly as before this field existed.
+    plain = Environment(name="x", mode="docker", limits={"memory": "512m"})
+    assert docker_options(plain) == {"memory": "512m"}
+    assert docker_options(Environment(name="x")) is None
+
+
 def test_packages_accept_plain_requirements():
     env = Environment(name="x", packages=["requests>=2.31,<3", "pandas[excel]==2.2.1", "numpy"])
     assert env.packages == ["requests>=2.31,<3", "pandas[excel]==2.2.1", "numpy"]
@@ -177,6 +206,16 @@ def test_sandbox_provider_is_editable_and_round_trips():
     updated = service.update_environment(env.id, {"sandbox_provider": "modal"})
     assert updated.sandbox_provider == "modal"
     assert service.to_dict(updated)["sandbox_provider"] == "modal"
+
+
+def test_size_is_editable_and_round_trips():
+    env = service.create_environment({"name": "x", "size": "small"})
+    assert env.size == "small"
+    updated = service.update_environment(env.id, {"size": "large"})
+    assert updated.size == "large"
+    assert service.to_dict(updated)["size"] == "large"
+    cleared = service.update_environment(env.id, {"size": None})
+    assert cleared.size is None
 
 
 def test_delete_refused_while_in_use(monkeypatch):

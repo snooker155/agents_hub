@@ -52,6 +52,11 @@ CREDENTIALS = CredentialSpec(
                     placeholder="App registration's client secret", required=True),
         ConfigField("default_user", kind="text",
                     placeholder="mailbox UPN or id used when a tool call names none"),
+        # The sign-in authority for end users granting their own account
+        # through the consent portal (docs/consent.md): common, organizations,
+        # consumers or a tenant id. Empty: the app's own tenant.
+        ConfigField("consent_tenant", kind="text",
+                    placeholder="end user sign-in: common, organizations or a tenant id (empty: tenant_id)"),
     ],
     test=_test,
     required=("tenant_id", "client_id", "client_secret"),

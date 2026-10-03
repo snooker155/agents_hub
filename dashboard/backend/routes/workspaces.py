@@ -653,7 +653,10 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
 # ``.hooks.json`` file in the folder). They are edited together here because an
 # operator thinks of them as one thing: what happens around a tool call.
 
-_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+# The tool events, their other names (agents/hooks.py EVENT_ALIASES) and the
+# run events. Each is stored under the name the operator wrote.
+_HOOK_EVENTS = ("PreToolUse", "PostToolUse", "before_tool_call", "after_tool_call",
+                "before_run", "after_run")
 _HOOK_TYPES = ("command", "http")
 
 
@@ -725,6 +728,9 @@ def _policy_payload(name: str) -> dict:
         "hooks": hooks if isinstance(hooks, dict) else {},
         "tool_policy": clean_policy(settings.get("tool_policy")),
         "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
+        # Only when set: absent means the default (common/tool_approvals.py).
+        **({"tool_approval_timeout": settings["tool_approval_timeout"]}
+           if settings.get("tool_approval_timeout") is not None else {}),
     }
 
 
@@ -809,12 +815,31 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         raise HTTPException(status_code=400, detail="policy must be a key-value object")
 
     updates: dict = {}
-    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model")
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout")
     if any(key in payload for key in settings_keys):
         from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
         if "require_tool_approval" in payload:
             settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "tool_approval_timeout" in payload:
+            # How long a call held in a dashboard chat turn waits for a person
+            # (common/tool_approvals.py); empty means the default.
+            raw_timeout = payload.get("tool_approval_timeout")
+            if raw_timeout in (None, ""):
+                settings.pop("tool_approval_timeout", None)
+            else:
+                from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
+                try:
+                    seconds = int(float(raw_timeout))
+                except (TypeError, ValueError):
+                    seconds = -1
+                if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(f"tool_approval_timeout must be a number of seconds from "
+                                f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
+                    )
+                settings["tool_approval_timeout"] = seconds
         if "tool_policy" in payload:
             # Per-tool modes: tool id (or "*" for every other tool) to a mode.
             # A bad entry is refused rather than dropped, so what the page saved

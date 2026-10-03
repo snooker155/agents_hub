@@ -105,6 +105,22 @@ class StateTransport:
         delivered``), for a run that picks up again under the same id."""
         return []
 
+    # -- a tool call waiting for a person in a chat turn (common/tool_approvals.py)
+
+    def open_tool_approval(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Record a call that waits (``common.tool_approvals.open_approval``
+        with ``record`` as its keywords). None when it could not be recorded,
+        which the guard reads as "refuse the call as before"."""
+        return None
+
+    def tool_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """The approval row as it stands, or None when unreachable."""
+        return None
+
+    def close_tool_approval(self, approval_id: str, status: str, note: str = "") -> Optional[Dict[str, Any]]:
+        """End a waiting call without a person's answer (timeout, stop)."""
+        return None
+
     # -- delegation (tools/delegation.py, tasks/delegate.py) -----------------
     # The delegating run decides what to hand over; where the subtask is
     # created and the delegate launched is this transport's business, so a run
@@ -197,6 +213,30 @@ class DirectStateTransport(StateTransport):
             return steering.delivered(run_id)
         except Exception:  # noqa: BLE001 - best-effort (see base docstring)
             log.debug("delivered_steering failed for %s", run_id, exc_info=True)
+            return None
+
+    def open_tool_approval(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        from common import tool_approvals
+        try:
+            return tool_approvals.open_approval(**record)
+        except Exception:  # noqa: BLE001 - best-effort: None keeps the advisory refusal
+            log.debug("open_tool_approval failed for %s", record.get("run_id"), exc_info=True)
+            return None
+
+    def tool_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        from common import tool_approvals
+        try:
+            return tool_approvals.get(approval_id)
+        except Exception:  # noqa: BLE001 - best-effort: the waiting loop tries again
+            log.debug("tool_approval read failed for %s", approval_id, exc_info=True)
+            return None
+
+    def close_tool_approval(self, approval_id: str, status: str, note: str = "") -> Optional[Dict[str, Any]]:
+        from common import tool_approvals
+        try:
+            return tool_approvals.close(approval_id, status, note=note)
+        except Exception:  # noqa: BLE001 - best-effort: the guard refuses the call either way
+            log.debug("close_tool_approval failed for %s", approval_id, exc_info=True)
             return None
 
     def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -361,6 +401,24 @@ class HttpStateTransport(StateTransport):
             return None
         messages = data.get("messages")
         return [m for m in messages if isinstance(m, dict)] if isinstance(messages, list) else []
+
+    # The approval routes live in dashboard/backend/routes/tool_approvals.py,
+    # under this same /api/run-state prefix.
+
+    def open_tool_approval(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = self._call("POST", f"/runs/{record.get('run_id')}/tool-approvals", dict(record))
+        approval = (data or {}).get("approval")
+        return approval if isinstance(approval, dict) else None
+
+    def tool_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        data = self._steering_call("GET", f"/tool-approvals/{approval_id}", {})
+        approval = (data or {}).get("approval")
+        return approval if isinstance(approval, dict) else None
+
+    def close_tool_approval(self, approval_id: str, status: str, note: str = "") -> Optional[Dict[str, Any]]:
+        data = self._call("POST", f"/tool-approvals/{approval_id}/close", {"status": status, "note": note})
+        approval = (data or {}).get("approval")
+        return approval if isinstance(approval, dict) else None
 
     def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # A launch is not best-effort the way a record update is: the tool

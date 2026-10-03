@@ -159,6 +159,7 @@ export default {
       client_id: "Client-Id",
       client_secret: "Client Secret",
       default_user: "Standardpostfach",
+      consent_tenant: "Anmeldung für Endnutzer",
     },
     google: {
       client_id: "OAuth-Client-Id",
@@ -190,6 +191,7 @@ export default {
     },
     microsoft: {
       default_user: "Der Benutzer, dessen Kalender die Werkzeuge lesen, wenn ein Aufruf keinen nennt, z. B. anna@contoso.com",
+      consent_tenant: "Für das Zustimmungsportal: wer sich anmelden darf, um das eigene Konto freizugeben. common, organizations, consumers oder eine Tenant-ID; leer heißt nur dieser Tenant.",
     },
     google: {
       service_account_json: "Die Schlüsseldatei einfügen. Dateien oder Kalender mit der E-Mail des Dienstkontos teilen. Leer lassen, um stattdessen OAuth zu nutzen.",

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -101,6 +102,10 @@ def test_unknown_key_is_refused():
     ({"system": ""}, "must not be empty"),
     ({"skills": "yes"}, "list of strings"),
     ({"model": 3}, "must be a string"),
+    ({"max_concurrent_delegates": 0}, "between 1 and 32"),
+    ({"max_concurrent_delegates": 33}, "between 1 and 32"),
+    ({"max_concurrent_delegates": 1.5}, "whole number"),
+    ({"max_concurrent_delegates": "6"}, "whole number"),
 ])
 def test_bad_values_are_refused(raw, match):
     with pytest.raises(ro.OverrideError, match=match):
@@ -141,6 +146,20 @@ def test_effective_tools_and_definition():
     assert definition["system_prompt"] == "Base"  # a copy, never the cached dict
     replaced = ro.apply_to_definition(definition, {"system": "New", "system_append": "More"})
     assert replaced["system_prompt"].startswith("New") and "Base" not in replaced["system_prompt"]
+
+
+def test_max_concurrent_delegates_normalizes_and_defaults():
+    assert ro.normalize({"max_concurrent_delegates": 3})["max_concurrent_delegates"] == 3
+    assert ro.normalize({}).get("max_concurrent_delegates") is None
+
+    # The agent's own field wins when there is no override; the override
+    # wins over it when both are present; 6 is the floor when neither is set.
+    spec = SimpleNamespace(max_concurrent_delegates=4)
+    assert ro.effective_max_concurrent_delegates(spec, {}) == 4
+    assert ro.effective_max_concurrent_delegates(spec, {"max_concurrent_delegates": 9}) == 9
+    assert ro.effective_max_concurrent_delegates(None, {}) == 6
+    # Out-of-range values (a stale record, say) are clamped rather than raised.
+    assert ro.effective_max_concurrent_delegates(SimpleNamespace(max_concurrent_delegates=99), {}) == 32
 
 
 def test_record_view_clips_long_prompts():
@@ -283,6 +302,50 @@ def test_prepare_run_passes_one_overrides_flag(agent, monkeypatch):
                        "tools": {"remove": ["list_files"]}}
     rec = rm.get_run_by_id(spec["run_id"])
     assert rec["overrides"]["model"] == "small"
+
+
+def test_prepare_run_resolves_the_delegate_concurrency_limit(monkeypatch):
+    """agents/agent_launcher.py: the agent's own field, or this run's own
+    override, lands on the launch spec and then the child's environment
+    (tools/delegation.MAX_CONCURRENT_ENV) the same way the delegation depth
+    does (fifth-cycle stage 3)."""
+    import agents.agent_launcher as launcher
+    from tasks import service as tasks_service
+    from tools.delegation import MAX_CONCURRENT_ENV
+
+    add_agent(AgentSpec(id="limited_agent", name="limited_agent", type="langchain",
+                        entrypoint="agents.standard_agent:StandardAgent",
+                        max_concurrent_delegates=3))
+    prompt_assembly.write_instructions("limited_agent", "Base")
+
+    t = tasks_service.create_task("t")
+    spec = launcher.prepare_run(str(t.id), "limited_agent", {})
+    assert spec["max_concurrent_delegates"] == 3
+
+    overridden = launcher.prepare_run(str(t.id), "limited_agent",
+                                      {"overrides": {"max_concurrent_delegates": 12}})
+    assert overridden["max_concurrent_delegates"] == 12
+
+    captured_env = {}
+    monkeypatch.setattr(launcher, "_build_env", lambda *a, **kw: {})
+
+    def fake_popen(args, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        class _Proc:
+            pid = 4242
+        return _Proc()
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+    launcher.launch_prepared(overridden)
+    assert captured_env[MAX_CONCURRENT_ENV] == "12"
+
+
+def test_agent_field_round_trips_through_to_dict():
+    plain = AgentSpec(id="a", name="a", type="langchain", entrypoint="x")
+    assert plain.max_concurrent_delegates == 6
+    assert "max_concurrent_delegates" not in plain.to_dict()
+
+    custom = AgentSpec(id="b", name="b", type="langchain", entrypoint="x", max_concurrent_delegates=10)
+    assert custom.to_dict()["max_concurrent_delegates"] == 10
 
 
 def test_prepare_run_refuses_bad_overrides(agent):

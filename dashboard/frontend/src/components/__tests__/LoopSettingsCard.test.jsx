@@ -24,7 +24,8 @@ vi.mock('../../i18n', () => ({
 import LoopSettingsCard from '../agent/LoopSettingsCard';
 
 const settingsBody = (overrides = {}) => ({
-  fallback_models: [], output_schema: null, tool_search: null, compaction: null, ...overrides,
+  fallback_models: [], output_schema: null, max_concurrent_delegates: 6,
+  tool_search: null, compaction: null, ...overrides,
 });
 
 const catalogBody = () => ({
@@ -73,7 +74,8 @@ describe('LoopSettingsCard', () => {
 
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', {
       fallback_models: ['openai/gpt-4o-mini', 'anthropic/claude-haiku'],
-      advisor_model: null, output_schema: null, tool_search: null, compaction: null,
+      advisor_model: null, output_schema: null, max_concurrent_delegates: 6,
+      tool_search: null, compaction: null,
     }));
     expect(await screen.findByText('agentLoop.saved')).toBeInTheDocument();
     expect(onSaved).toHaveBeenCalled();
@@ -163,6 +165,24 @@ describe('LoopSettingsCard', () => {
 
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', expect.objectContaining({
       tool_search: true, compaction: false,
+    })));
+  });
+
+  it('loads and saves the delegate concurrency limit', async () => {
+    api.getAgentLoopSettings.mockResolvedValue({ data: settingsBody({ max_concurrent_delegates: 3 }) });
+    api.updateAgentLoopSettings.mockImplementation((_id, payload) => (
+      Promise.resolve({ data: settingsBody(payload) })
+    ));
+    render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
+    await screen.findByText('agentLoop.fallback.empty');
+
+    const field = screen.getByLabelText('agentLoop.concurrency.label');
+    expect(field).toHaveValue(3);
+    fireEvent.change(field, { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
+
+    await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', expect.objectContaining({
+      max_concurrent_delegates: 10,
     })));
   });
 

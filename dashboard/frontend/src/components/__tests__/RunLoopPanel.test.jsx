@@ -144,4 +144,40 @@ describe('RunLoopPanel', () => {
     // Not registered yet: the path, without a link.
     expect(screen.getByText('tool-outputs/r1/002-run_shell.txt').tagName).toBe('SPAN');
   });
+
+  it('shows the container cost line for a sized sandbox', () => {
+    render(<RunLoopPanel run={{
+      run_id: 'r1',
+      execution_mode: 'docker',
+      container_size: 'medium',
+      started_at: '2026-10-03T10:00:00Z',
+      finished_at: '2026-10-03T10:30:00Z',
+    }} />);
+    expect(screen.getByText('runLoop.containerProfile')).toBeInTheDocument();
+    expect(screen.getByText(/containerSummarySized/)).toBeInTheDocument();
+    expect(screen.getByText(/"hours":"0.50"/)).toBeInTheDocument();
+  });
+
+  it('shows the container cpu profile when no size was named', () => {
+    render(<RunLoopPanel run={{
+      run_id: 'r1',
+      execution_mode: 'docker',
+      container_cpus: '2',
+      started_at: '2026-10-03T10:00:00Z',
+      finished_at: '2026-10-03T11:00:00Z',
+    }} />);
+    expect(screen.getByText(/containerSummaryCustom/)).toBeInTheDocument();
+    expect(screen.getByText(/"cpus":"2"/)).toBeInTheDocument();
+  });
+
+  it('shows nothing for the container when the run did not execute in docker', () => {
+    render(<RunLoopPanel run={{
+      run_id: 'r1',
+      execution_mode: 'local',
+      container_size: 'small',
+      started_at: '2026-10-03T10:00:00Z',
+      finished_at: '2026-10-03T10:30:00Z',
+    }} />);
+    expect(screen.queryByText('runLoop.containerProfile')).toBeNull();
+  });
 });

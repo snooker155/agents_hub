@@ -18,6 +18,12 @@ export default {
     notInCatalog: '{{model}} (auf der Seite Modelle nicht aktiviert)',
     hint: 'Die Modelle kommen von der Seite Modelle. Die Agentenschleifen-Einstellungen des Arbeitsbereichs begrenzen die Aufrufe pro Lauf und die Antwortlänge.',
   },
+  concurrency: {
+    title: 'Delegationsparallelität',
+    intro: 'Wie viele der von diesem Agenten delegierten Teilaufgaben (delegate_task_tool) gleichzeitig laufen dürfen. Ein Start über dem Limit wird mit einer klaren Meldung abgelehnt.',
+    label: 'Max. parallele Delegationen',
+    hint: 'Von 1 bis 32, Standard 6. Die Overrides eines einzelnen Laufs können für diesen Lauf ein engeres oder weiteres Limit setzen.',
+  },
   fallback: {
     title: 'Fallback-Modelle',
     intro: 'Werden in dieser Reihenfolge versucht, wenn das eigene Modell dieses Agenten ablehnt, ratenlimitiert ist oder mit einem Serverfehler fehlschlägt. Das Modell, das tatsächlich geantwortet hat, wird im Lauf vermerkt.',

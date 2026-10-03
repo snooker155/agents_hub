@@ -12,6 +12,7 @@ import { reduceGraphRun } from '../../graphRun';
 import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } from '../turnState';
 import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
+import { applyApprovalEvent } from '../toolApprovals';
 import { applyDelegationEvent } from '../processLive';
 import { policyVerdict } from '../../policyVerdict';
 
@@ -518,6 +519,13 @@ function handleAgentEvent(event, ctx) {
         };
       });
     }
+  } else if (event.type === 'tool_approval' || event.type === 'tool_approval_resolved') {
+    // A tool call of this turn waits for a person, or was answered: the
+    // bubble shows the card (ToolApprovalCard) until the turn moves on.
+    const tgt = targetMsgId(event, ctx);
+    setConversations((prev) =>
+      prev.map((c) => (c.id !== convId ? c : { ...c, messages: applyApprovalEvent(c.messages, tgt, event) })),
+    );
   } else if (event.type === 'steer_delivered') {
     // A message sent while this turn worked reached the model (see
     // components/chat/steering.js); its bubble now says at which step.

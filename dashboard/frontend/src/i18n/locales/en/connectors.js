@@ -159,6 +159,7 @@ export default {
       client_id: "Client id",
       client_secret: "Client secret",
       default_user: "Default mailbox",
+      consent_tenant: "End user sign-in authority",
     },
     google: {
       client_id: "OAuth client id",
@@ -190,6 +191,7 @@ export default {
     },
     microsoft: {
       default_user: "The user whose calendar the tools read when a call names none, e.g. anna@contoso.com",
+      consent_tenant: "For the consent portal: who may sign in to grant their own account. common, organizations, consumers or a tenant id; empty means this tenant only.",
     },
     google: {
       service_account_json: "Paste the key file. Share the files or calendars with the service account's email. Leave empty to use OAuth instead.",

@@ -16,9 +16,10 @@ const fromTriState = (value) => (value === '' ? null : value === 'on');
  * fallback models tried in order on a refusal, a rate limit or a server
  * error (agents/loop_ext/fallback.py), the advisor model the agent may
  * consult mid-run (tools/advisor.py), the JSON Schema the final answer
- * must match with a repair retry (agents/loop_ext/structured.py), and the
- * two tri-state loop toggles (tool search, compaction; None follows the
- * workspace/global default).
+ * must match with a repair retry (agents/loop_ext/structured.py), how many
+ * of this agent's delegated subtasks may run at once
+ * (tools/delegation.py delegate_task_tool), and the two tri-state loop
+ * toggles (tool search, compaction; None follows the workspace/global default).
  */
 export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const { t } = useI18n();
@@ -26,6 +27,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const [fallbackModels, setFallbackModels] = useState([]);
   const [addModel, setAddModel] = useState('');
   const [advisorModel, setAdvisorModel] = useState('');
+  const [maxConcurrentDelegates, setMaxConcurrentDelegates] = useState(6);
   const [schemaMode, setSchemaMode] = useState('free'); // 'free' | 'schema'
   const [schemaText, setSchemaText] = useState('');
   const [toolSearch, setToolSearch] = useState('');
@@ -43,6 +45,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const applyLoaded = useCallback((body) => {
     setFallbackModels(Array.isArray(body?.fallback_models) ? [...body.fallback_models] : []);
     setAdvisorModel(body?.advisor_model || '');
+    setMaxConcurrentDelegates(Number.isFinite(body?.max_concurrent_delegates) ? body.max_concurrent_delegates : 6);
     const schema = body?.output_schema;
     setSchemaMode(schema ? 'schema' : 'free');
     setSchemaText(schema ? JSON.stringify(schema, null, 2) : '');
@@ -125,6 +128,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
       const { data: body } = await updateAgentLoopSettings(agentId, {
         fallback_models: fallbackModels,
         advisor_model: advisorModel || null,
+        max_concurrent_delegates: maxConcurrentDelegates,
         output_schema: schema,
         tool_search: fromTriState(toolSearch),
         compaction: fromTriState(compaction),
@@ -238,6 +242,30 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
               {catalog.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
             </select>
             <p className="text-xs text-gray-400 mt-2">{t('agentLoop.advisor.hint')}</p>
+          </div>
+
+          {/* Delegate concurrency (tools/delegation.py delegate_task_tool):
+              how many of this agent's delegated subtasks may run at once. */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-800 mb-1">{t('agentLoop.concurrency.title')}</h4>
+            <p className="text-xs text-gray-500 mb-3">{t('agentLoop.concurrency.intro')}</p>
+            <label className="flex flex-col gap-1 text-sm text-gray-700 max-w-xs">
+              <span className="font-medium">{t('agentLoop.concurrency.label')}</span>
+              <input
+                type="number"
+                min={1}
+                max={32}
+                value={maxConcurrentDelegates}
+                onChange={(e) => {
+                  const next = parseInt(e.target.value, 10);
+                  setMaxConcurrentDelegates(Number.isFinite(next) ? next : 6);
+                  markDirty();
+                }}
+                aria-label={t('agentLoop.concurrency.label')}
+                className="border border-gray-200 rounded-lg px-2 py-1 text-sm w-24 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+              <span className="text-xs text-gray-500">{t('agentLoop.concurrency.hint')}</span>
+            </label>
           </div>
 
           {/* Output schema */}

@@ -75,6 +75,11 @@ class LoopState:
     #: shape as ``injections``. Appended to the system prompt on every model
     #: call after the one that took them (agents/loop_ext/steering.py).
     system_messages: List[Dict[str, Any]] = field(default_factory=list)
+    #: Steering mode ``switch_model``: a person moved the run to another
+    #: model. ``{"after_step", "msg_id", "from", "to", "at", "by", "error"}``;
+    #: every model call after ``after_step`` runs on ``to`` (the latest entry
+    #: without an ``error`` wins), see agents/loop_ext/steering.py.
+    model_switches: List[Dict[str, Any]] = field(default_factory=list)
     #: Tool results too long for the context, saved to a workspace file
     #: (agents/tool_spill.py): ``{"tool", "path", "file_id", "chars"}``.
     tool_spills: List[Dict[str, Any]] = field(default_factory=list)
@@ -114,6 +119,8 @@ class LoopState:
             out["injections"] = [dict(i) for i in self.injections]
         if self.system_messages:
             out["system_messages"] = [dict(i) for i in self.system_messages]
+        if self.model_switches:
+            out["model_switches"] = [dict(i) for i in self.model_switches]
         if self.tool_spills:
             out["tool_spills"] = [dict(i) for i in self.tool_spills]
         if self.loaded_tools:

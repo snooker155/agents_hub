@@ -2,7 +2,8 @@
 
 Two ways to put a human, or the operator's own code, in front of a single tool
 call: **hooks** run around every call, and the **approval gate** holds a call
-until a person says yes.
+until a person says yes. Hooks can also wrap a whole run (`before_run`,
+`after_run`).
 
 Both are off until you configure them. An installation that configures neither
 behaves exactly as it did before: the only approval check is the advisory one
@@ -10,7 +11,7 @@ some tools have always carried (see the end of this page).
 
 ## In the dashboard
 
-**Settings → Tool policy** is where you configure both. The approval gate toggle (`require_tool_approval`) switches the gate on for a workspace, and the hooks editor below it holds the JSON-formatted hook configuration. Edits reach the agent process immediately, so a change applies to the next run without a restart.
+**Settings → Tool policy** is where you configure both. The approval gate toggle (`require_tool_approval`) switches the gate on for a workspace; **Wait in chat, seconds** sets how long a call held in a chat turn waits for an answer (`tool_approval_timeout`, see "In chat" below); the hooks editor below them holds the JSON-formatted hook configuration. Edits reach the agent process immediately, so a change applies to the next run without a restart.
 
 ## Hooks
 
@@ -33,10 +34,24 @@ agent can write to.
 }
 ```
 
+The events:
+
+| Event | Also spelled | Runs |
+| --- | --- | --- |
+| `PreToolUse` | `before_tool_call` | before every matching tool call; may allow, deny or ask |
+| `PostToolUse` | `after_tool_call` | after every matching tool call; may rewrite the output (HTTP only) |
+| `before_run` | | before a run's first model call; may deny the run |
+| `after_run` | | after a run ends; may replace the final text (HTTP only) |
+
+Either spelling of a tool event works, and both may be used at once: the
+entries run as one list, the `PreToolUse` / `PostToolUse` ones first. The
+Settings editor accepts all six names and refuses anything else.
+
 - `matcher` is a regular expression matched against the whole tool id, so
   `run_shell|delete_file` means those two tools and not every tool whose name
   contains them. Leave it out (or use `*`) to match every tool. An invalid
-  pattern matches nothing, and is logged.
+  pattern matches nothing, and is logged. For `before_run` and `after_run`
+  the matcher is matched against the agent id instead.
 - `type` is `command` (default) or `http`.
 - `timeout` is in seconds, 10 by default.
 - `fail_closed` decides what happens when the hook itself breaks, see below.
@@ -67,6 +82,42 @@ body of a POST for an HTTP one:
 
 `task_id` is empty in chat, where there is no task. `PostToolUse` adds an
 `output` field holding what the tool returned.
+
+## Run hooks
+
+`before_run` and `after_run` see a whole run of an agent, in chat, in a task,
+in a delegated run and on a service replica alike. They take the same
+`command` and `http` hooks, the same `timeout` and `fail_closed`, and the same
+exit codes and answers as the tool events.
+
+`before_run` gets:
+
+```json
+{
+  "hook": "before_run",
+  "agent_id": "swe_agent",
+  "run_id": "3f0c…",
+  "task_id": "9b21…",
+  "workspace": "acme",
+  "input": "Deploy the release branch",
+  "model": "claude-sonnet-4-5",
+  "provider": "anthropic"
+}
+```
+
+A deny (exit code 2, or `{"decision": "deny"}`) stops the run before its first
+model call. The run fails with `A before_run hook stopped the run:` followed by
+the hook's reason, and the run record's `loop.hook_denied` names the hook. An
+`ask` is read as a deny: there is no call to hold, and a run cannot wait for a
+person before it starts.
+
+`after_run` gets the same ids plus `output` (the final text), `status`, `ok`,
+`error`, `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`,
+`cached_tokens`), `cost_usd` at catalog price, `model` and `provider`. The run
+is over, so nothing it answers changes the outcome: a deny is logged. An HTTP
+hook may return `{"output": "..."}` to replace the final text the caller gets,
+the same rule as `PostToolUse`; a command hook's stdout is a log line and never
+replaces anything.
 
 ### What a command hook's exit code means
 
@@ -159,10 +210,42 @@ continue another way or explain why it cannot.
 
 ### In chat
 
-There is no task to park and nobody to answer a parked call, so the gate refuses
-the call and tells the agent to say exactly what it wanted to run and wait. That
-is advisory: it stops the call, but the conversation, not the system, carries the
-decision.
+In the dashboard's Chat, a call that needs a person waits inside the same
+turn. The chat shows a card under the agent's bubble with the tool, its
+arguments, why it was held, a field for a note, **Approve** and **Deny**; the
+bubble says it is waiting for your approval, and the run's status reads
+"awaiting approval" in the Messages list (the run stays `running`, so **Stop**
+and steering work as usual).
+
+- **Approve** runs the call in the same turn. Nothing is added to the
+  conversation: no new user message, no new turn.
+- **Deny** hands the refusal back as the tool's output, with your note, and
+  tells the agent not to retry that call.
+- Nobody answering within the timeout refuses the call with a reason that says
+  so (`approval_timeout`), and the agent is told to ask in the conversation.
+  The timeout is 600 seconds, or `settings.tool_approval_timeout` in the
+  workspace, or `AGENTS_HUB_TOOL_APPROVAL_TIMEOUT`.
+- **Stop** ends the wait; the call does not run.
+
+Who may answer: the run's owner (the conversation's owner) or an admin; outside
+`multi` mode, the operator. An agent's own credential never can. Every answer
+is an audit row (`tool.approval`), and the call's policy trail and its
+`tool.policy` audit row carry `human_approved` or `human_denied`. A chat
+reopened while its turn waits shows the card again.
+
+The same happens for an agent the turn delegates to, and when the turn runs on
+a service replica: the replica records and reads the waiting call through the
+run state transport, the way it takes steering messages.
+
+Telegram, the widget, channels and `/v1` have nobody in front of a card, so
+there the gate refuses the call and tells the agent to say exactly what it
+wanted to run and wait. That is advisory: it stops the call, but the
+conversation, not the system, carries the decision.
+
+API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
+`GET /api/tool-approvals/{id}`, and `POST /api/tool-approvals/{id}` with
+`{"decision": "approve" | "deny", "note": "..."}` (409 once the call no longer
+waits).
 
 ## What stays advisory
 

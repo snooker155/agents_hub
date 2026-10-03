@@ -46,6 +46,16 @@ copied out of a log or a proxy is dead by the time anyone reads it. Across
 replicas the set is not shared, so a ticket could be presented once per
 replica within its TTL; at 60 seconds that is an accepted trade for keeping
 the check free of a database round trip.
+
+Terminal tickets
+----------------
+Minted by ``POST /api/terminal/{kind}/{id}/ticket`` (see
+``dashboard/backend/routes/terminal.py`` and docs/terminal.md): an auth
+ticket that also names the one container it may open a shell in (a run or a
+service replica) and, on a reconnect, the session it resumes. A shell is the
+widest thing the dashboard hands out, so an ordinary auth ticket does not
+open one, and a terminal ticket opens nothing else: :func:`verify_terminal`
+checks the target in the socket's path against the one signed in.
 """
 from __future__ import annotations
 
@@ -73,6 +83,11 @@ AUTH_TTL_SECONDS = 60
 
 _PREVIEW_KINDS = ("container", "project", "deployment")
 _AUTH_KIND = "auth"
+_TERMINAL_KIND = "terminal"
+
+#: A terminal ticket, like an auth ticket, only bridges the call that mints
+#: it and the socket that spends it.
+TERMINAL_TTL_SECONDS = 60
 
 _SECRET_FILE = AGENTS_HUB_ROOT / "preview_secret"
 _SECRET_BYTES = 32
@@ -315,5 +330,49 @@ def verify_auth(ticket: str) -> Optional[Dict[str, Any]]:
             "via": payload.get("via") or "", "scope": scope, "exp": payload["exp"]}
 
 
-__all__ = ["AUTH_TTL_SECONDS", "DEFAULT_TTL_SECONDS", "expires_at", "mint", "mint_auth",
-           "renew", "verify", "verify_auth"]
+# ── terminal tickets ─────────────────────────────────────────────────────────
+
+def mint_terminal(principal: Any, *, target_kind: str, target_id: str,
+                  session_id: Optional[str] = None,
+                  ttl_seconds: int = TERMINAL_TTL_SECONDS) -> str:
+    """A one-time ticket that opens (or, with ``session_id``, resumes) a
+    terminal on one target for ``principal``. Carries the same principal
+    fields as :func:`mint_auth`, so the socket resolves to who minted it."""
+    scope = getattr(principal, "scope", None)
+    return _sign({
+        "kind": _TERMINAL_KIND,
+        "target": f"{target_kind}:{target_id}",
+        "session": session_id or None,
+        "user": principal.id,
+        "pkind": getattr(principal, "kind", "user") or "user",
+        "via": getattr(principal, "via", "") or "",
+        "scope": list(scope) if scope is not None else None,
+        "nonce": secrets.token_urlsafe(12),
+        "exp": time.time() + max(1, int(ttl_seconds)),
+    })
+
+
+def verify_terminal(ticket: str, *, target_kind: str, target_id: str) -> Optional[Dict[str, Any]]:
+    """``{user, kind, via, scope, session, exp}`` for a valid, unused terminal
+    ticket minted for exactly this target, or ``None``. A ticket for another
+    target is refused without being spent; a matching one is spent here."""
+    payload = _decode(ticket)
+    if payload is None or payload.get("kind") != _TERMINAL_KIND:
+        return None
+    if payload.get("target") != f"{target_kind}:{target_id}":
+        return None
+    user, nonce = payload.get("user"), payload.get("nonce")
+    if not user or not nonce:
+        return None
+    if payload.get("pkind") == "user" and _user_gone(user):
+        return None
+    if not _consume(str(nonce), payload["exp"]):
+        return None
+    return {"user": user, "kind": payload.get("pkind") or "user",
+            "via": payload.get("via") or "", "scope": payload.get("scope"),
+            "session": payload.get("session") or None, "exp": payload["exp"]}
+
+
+__all__ = ["AUTH_TTL_SECONDS", "DEFAULT_TTL_SECONDS", "TERMINAL_TTL_SECONDS", "expires_at",
+           "mint", "mint_auth", "mint_terminal", "renew", "verify", "verify_auth",
+           "verify_terminal"]

@@ -110,12 +110,66 @@ turns that section into the next release.
   too, closing a gap where it silently went through. Settable from the
   agent's Memory tab, a checkbox next to the primary pool and each
   additional one.
+- Sequence guardrails (docs/guardrails.md "Sequence guardrails"): a new
+  guardrail kind on a run's tool calls, with rules `after`, `sum_max` and
+  `same_as` and the action `block` or `ask`, an editor and a calls Test box
+  on the Guardrails page, reason codes `guardrail_deny` and `guardrail_ask`.
+- Model switch mid-run (docs/steering.md "Model switch"): steering mode
+  `switch_model` moves a running run to another enabled catalog model from
+  its next model call, with the same tools and the whole trail; the calls
+  the new model answers are priced at its rates, and the run page shows the
+  switch. A Model picker in the run's steer box.
+- Terminal into a container (docs/terminal.md): a shell in a Docker run's
+  container from the run page, or in a service replica's container from its
+  row, over a WebSocket opened with a one-time ticket bound to that target.
+  The hub keeps the shell through a dropped socket for a grace period and
+  replays recent output on reconnect; resize, an idle timeout and a per-user
+  session limit; owner or admin only, `terminal.open`, `terminal.resume` and
+  `terminal.close` in the audit log. xterm.js in the dashboard; nginx and the
+  Vite dev proxy now forward WebSocket upgrades under `/api`.
+- Tool approval in the dashboard chat (docs/hooks.md "In chat"): a call the
+  gate, a hook, the tool policy or a guardrail holds now waits inside the same
+  chat turn, with a card under the bubble (Approve, Deny, a note) for the run's
+  owner or an admin. Approve runs the call in that turn, Deny hands the note
+  back as the tool's output, the wait ends on Stop or after 600 seconds
+  (`tool_approval_timeout`, `AGENTS_HUB_TOOL_APPROVAL_TIMEOUT`); the run reads
+  "awaiting approval" meanwhile. Audited as `tool.approval`, with
+  `human_approved` or `human_denied` on the policy trail. Telegram, the widget,
+  channels and `/v1` keep the advisory refusal.
+- Run hooks (docs/hooks.md "Run hooks"): `before_run` sees the agent, input and
+  model and may deny the run before its first model call; `after_run` sees the
+  final text, status, usage and cost and may replace the text. `before_tool_call`
+  and `after_tool_call` are accepted as names for `PreToolUse` and `PostToolUse`.
+- Delegate concurrency limit (docs/agents.md "Delegation"): `max_concurrent_delegates`
+  (1..32, default 6) on an agent or as a per-run `overrides` key; `delegate_task_tool`
+  refuses a launch past the number of the run's own delegated subtasks still
+  running, naming the count and the limit. The value travels to a container
+  run as an environment variable, like the delegation depth.
+- Sandbox size presets on an environment (docs/environments.md "Sandbox
+  size"): `small`/`medium`/`large` set `cpus`, `memory` and `pids_limit`
+  together; an explicit limit still overrides its matching preset value.
+  Picked from the Environments page.
+- Container hours in a run's cost (docs/costs.md "Container hours"): a
+  docker-mode run's container time, priced per hour against its sandbox size
+  or, with no size, per vCPU-hour, as its own line alongside the run's other
+  model calls.
+- Consent portal (docs/consent.md): a widget visitor or a chat channel user
+  grants an agent their own Google or Microsoft account through a public page
+  the agent links to (`request_account_access`), in English, Russian or
+  German. The refresh token is kept as their personal secret, the agent's
+  Google and Outlook tools act only as them in their own turns (an agent set
+  to "act as the end user" never falls back to the hub's account), and the
+  person (`revoke_account_access`) or the operator (Account access card on
+  the agent page) revokes it. Register `<hub>/consent/callback` with both
+  providers.
 
 ### Upgrade notes
 
 - Migration 0032 adds `widgets.agent_version` (the widget's version pin).
 - Migration 0033 adds the `memory_consolidations` table.
 - Migration 0034 adds `secrets.allowed_hosts` (the hosts a secret may be sent to).
+- Migration 0035 adds the `tool_approvals` table (tool calls waiting for a person in a chat turn).
+- Migration 0039 adds the `consent_requests` and `consent_settings` tables (the consent portal).
 
 ## [0.9.0] - 2026-10-03
 

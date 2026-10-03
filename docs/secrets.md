@@ -60,6 +60,13 @@ is whoever started it (the signed-in account in `multi` mode, `local`
 otherwise); a run started by a schedule or the system has no user, so only
 agent and workspace-wide values apply.
 
+Personal grants from end users are secrets too: `CONSENT_GOOGLE` and
+`CONSENT_MICROSOFT` at agent and user scope, where the user is a widget
+visitor or a channel chat (`widget:…`, `channel:…`) rather than a hub
+account. The consent portal writes and reads them; no run receives them in
+its environment, and they show in the list with that principal as the user
+(docs/consent.md).
+
 ## The agent's allowlist
 
 An agent receives a secret only if its record lists the name in `secrets`:
@@ -251,3 +258,4 @@ provider's API.
 - [containers](containers.md): how a docker run gets its environment
 - [cli](cli.md): the `ah` command
 - [github-app](github-app.md): GitHub tokens the hub issues itself
+- [consent](consent.md): end users' own Google and Microsoft grants, kept as personal secrets

@@ -159,6 +159,7 @@ export default {
       client_id: "Client id",
       client_secret: "Client secret",
       default_user: "Ящик по умолчанию",
+      consent_tenant: "Вход конечных пользователей",
     },
     google: {
       client_id: "OAuth client id",
@@ -190,6 +191,7 @@ export default {
     },
     microsoft: {
       default_user: "Пользователь, чей календарь читают инструменты, если вызов не указал другого, например anna@contoso.com",
+      consent_tenant: "Для портала согласий: кто может войти и выдать доступ к своему аккаунту. common, organizations, consumers или id тенанта; пусто значит только этот тенант.",
     },
     google: {
       service_account_json: "Вставьте файл ключа. Поделитесь файлами или календарями с email сервисного аккаунта. Оставьте пустым, чтобы использовать OAuth.",

@@ -36,6 +36,11 @@ Keys (anything else is refused, ``OverrideError``):
 ``output_schema``
     A JSON Schema the final answer of this run must match
     (agents/loop_ext/structured.py).
+``max_concurrent_delegates``
+    How many of this run's delegated subtasks (``delegate_task_tool``,
+    tools/delegation.py) may be running at once, 1..32, over the agent's own
+    default (6). Reaches a container run as an environment variable the same
+    way the delegation depth does.
 
 The object is normalised (:func:`normalize`) into one canonical shape, which
 is what travels to the build as ``run_overrides`` and what the agent build
@@ -56,7 +61,11 @@ log = logging.getLogger(__name__)
 
 #: Every key the object accepts.
 KEYS = ("model", "provider", "system", "system_append", "tools", "skills", "mcp",
-        "tool_policy", "output_schema")
+        "tool_policy", "output_schema", "max_concurrent_delegates")
+
+#: Range accepted for ``max_concurrent_delegates`` (agent field and override alike).
+MAX_CONCURRENT_DELEGATES_MIN = 1
+MAX_CONCURRENT_DELEGATES_MAX = 32
 
 #: Keys of a ``tools`` edit given as an object.
 TOOL_EDIT_KEYS = ("add", "remove")
@@ -138,6 +147,17 @@ def _tool_policy(value: Any) -> Dict[str, str]:
                                 f"{', '.join(TOOL_POLICY_MODES)}")
         out[k] = m
     return dict(sorted(out.items()))
+
+
+def _max_concurrent_delegates(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise OverrideError("overrides.max_concurrent_delegates must be a whole number")
+    number = int(value)
+    if number != value or not (MAX_CONCURRENT_DELEGATES_MIN <= number <= MAX_CONCURRENT_DELEGATES_MAX):
+        raise OverrideError(
+            f"overrides.max_concurrent_delegates must be a whole number between "
+            f"{MAX_CONCURRENT_DELEGATES_MIN} and {MAX_CONCURRENT_DELEGATES_MAX}")
+    return number
 
 
 def _output_schema(value: Any) -> Dict[str, Any]:
@@ -226,6 +246,8 @@ def normalize(raw: Any, *, check_tool_ids: bool = True) -> Dict[str, Any]:
             out["tool_policy"] = policy
     if data.get("output_schema") is not None:
         out["output_schema"] = _output_schema(data["output_schema"])
+    if data.get("max_concurrent_delegates") is not None:
+        out["max_concurrent_delegates"] = _max_concurrent_delegates(data["max_concurrent_delegates"])
     return dict(sorted(out.items()))
 
 
@@ -370,6 +392,21 @@ def validate_for_agent(agent_id: str, raw: Any, *, tool_policy: Any = None,
     return overrides
 
 
+def effective_max_concurrent_delegates(agent_spec: Any, overrides: Optional[Dict[str, Any]]) -> int:
+    """How many delegated subtasks one run of ``agent_spec`` may have running
+    at once: this run's own override when set, else the agent's own field,
+    else 6. What ``agent_launcher`` puts in the run's environment for
+    ``delegate_task_tool`` to enforce (agents/agent_launcher.py)."""
+    value = (overrides or {}).get("max_concurrent_delegates")
+    if value is None:
+        value = getattr(agent_spec, "max_concurrent_delegates", None) if agent_spec is not None else None
+    try:
+        number = int(value) if value is not None else 6
+    except (TypeError, ValueError):
+        number = 6
+    return min(MAX_CONCURRENT_DELEGATES_MAX, max(MAX_CONCURRENT_DELEGATES_MIN, number))
+
+
 def record_view(overrides: Dict[str, Any]) -> Dict[str, Any]:
     """What the run record keeps (``run.overrides``): the object itself, the
     system texts clipped so a long prompt does not bloat every run listing."""
@@ -391,4 +428,5 @@ __all__ = [
     "KEYS", "OverrideError", "normalize", "fold_legacy", "parse", "effective_tools",
     "apply_to_definition", "apply_to_spec", "model_params", "guard_tools",
     "validate_for_agent", "record_view", "build_kwargs", "changes_tools", "skills_catalog",
+    "effective_max_concurrent_delegates", "MAX_CONCURRENT_DELEGATES_MIN", "MAX_CONCURRENT_DELEGATES_MAX",
 ]

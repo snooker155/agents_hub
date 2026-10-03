@@ -1606,6 +1606,28 @@
       ]
     },
     {
+      "id": "terminal",
+      "title": "Terminal",
+      "summary": "A shell in a running container from the dashboard: a Docker run's container from the run page, a service replica's container from its row. Opened with a one-time ticket over a WebSocket; the hub keeps the shell through a dropped socket for a grace period and replays recent output on reconnect. Owner or admin only, audited on open and close.",
+      "surface": "Containers",
+      "related": [
+        "containers",
+        "services",
+        "sessions-and-runs",
+        "audit",
+        "identity",
+        "browser"
+      ],
+      "headings": [
+        "Opening one",
+        "Reconnecting",
+        "Who may open one",
+        "Settings",
+        "How it works",
+        "Limits"
+      ]
+    },
+    {
       "id": "tool-policy",
       "title": "Tool policy",
       "summary": "Three modes decide what an agent's tool call can do: always_allow runs it, always_ask holds it for approval, and auto sends it to a small model to classify.",
@@ -1734,6 +1756,26 @@
         "The live preview",
         "Routes",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "consent",
+      "title": "Consent portal",
+      "summary": "A widget visitor or chat channel user grants an agent their own Google or Microsoft account through a public consent page: a signed single use link, the provider's sign in with offline access, the refresh token kept as their personal secret, the agent's Google and Outlook tools acting only as them in their own turns, and revoke by the person or the operator.",
+      "surface": "Agents",
+      "related": [
+        "widget",
+        "channels",
+        "secrets",
+        "connectors",
+        "audit"
+      ],
+      "headings": [
+        "Setting it up",
+        "What the end user sees",
+        "How it works in a turn",
+        "Security notes",
+        "Routes"
       ]
     },
     {

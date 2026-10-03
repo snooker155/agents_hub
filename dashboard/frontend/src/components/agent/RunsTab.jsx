@@ -49,7 +49,7 @@ export default function RunsTab() {
                           </Link>
                           <span className="text-xs text-gray-400 font-mono">{String(run.run_id).slice(0, 8)}</span>
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap"><RunStatusBadge status={run.status} /></td>
+                        <td className="px-4 py-2 whitespace-nowrap"><RunStatusBadge status={run.status} awaiting={run.awaiting} /></td>
                         <td className="px-4 py-2 whitespace-nowrap text-sm">
                           {source ? (
                             <Link to={source.to} className="text-indigo-600 hover:text-indigo-900 hover:underline">

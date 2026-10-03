@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Activity, Box, ChevronDown, ChevronRight, Cpu, Globe, MessageSquare, RefreshCw,
-  Search, Server, Square,
+  Search, Server, Square, SquareTerminal,
 } from 'lucide-react';
 
 import { getInstances, stopInstance } from '../api';
@@ -64,7 +64,7 @@ function CarrierCell({ instance, t }) {
   return <span className="text-xs text-gray-400">{t('instances.carrier.local')}</span>;
 }
 
-function InstanceRow({ instance, showAgent, onStop, busy, t }) {
+function InstanceRow({ instance, showAgent, onStop, onTerminal, busy, t }) {
   const KindIcon = KIND_ICONS[instance.kind] || Activity;
   const navigate = useNavigate();
   const href = `/instances/${instance.instance_id}`;
@@ -139,6 +139,14 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
                 className="p-1.5 rounded hover:bg-indigo-50 text-indigo-600">
             <MessageSquare className="w-3.5 h-3.5" />
           </Link>
+          {/* A shell in the replica's container (components/terminal), where the page offers one. */}
+          {onTerminal && instance.carrier_mode === 'docker' && instance.container_name && instance.is_live && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onTerminal(instance); }}
+                    title={t('terminal.openReplicaHint')} aria-label={t('terminal.open')}
+                    className="p-1.5 rounded hover:bg-gray-100 text-gray-600">
+              <SquareTerminal className="w-3.5 h-3.5" />
+            </button>
+          )}
           {['active', 'starting'].includes(instance.state) && (
             <button type="button" onClick={(e) => { e.stopPropagation(); onStop(instance); }} disabled={busy}
                     title={t('instances.actions.stop')}
@@ -160,6 +168,7 @@ export default function InstanceList({
   showFilters = true,
   showAgentColumn = true,
   defaultLiveOnly = false,
+  onTerminal = null,
 }) {
   const { t } = useI18n();
   const [items, setItems] = useState([]);
@@ -368,7 +377,7 @@ export default function InstanceList({
                         <tbody>
                           {rows.map((instance) => (
                             <InstanceRow key={instance.instance_id} instance={instance}
-                                         showAgent={false} onStop={handleStop}
+                                         showAgent={false} onStop={handleStop} onTerminal={onTerminal}
                                          busy={!!busyIds[instance.instance_id]} t={t} />
                           ))}
                         </tbody>
@@ -386,7 +395,7 @@ export default function InstanceList({
               <tbody>
                 {items.map((instance) => (
                   <InstanceRow key={instance.instance_id} instance={instance}
-                               showAgent={showAgent} onStop={handleStop}
+                               showAgent={showAgent} onStop={handleStop} onTerminal={onTerminal}
                                busy={!!busyIds[instance.instance_id]} t={t} />
                 ))}
               </tbody>

@@ -17,6 +17,9 @@ respectively. Both share :func:`_run`:
   ``StandardAgent._guardrail_trip`` turns into a ``guardrail_tripped`` result;
   a warn never stops the run.
 
+Sequence guardrails (stage ``tool``) are not checked here: they look at a
+run's tool calls, one at a time, from guardrails/sequence.py.
+
 Never raises. A guardrail that cannot be loaded is no guardrail (logged, run
 goes on); a judge that errors is fail_closed's call, made in :func:`_check_one`
 and nowhere else.
@@ -213,6 +216,13 @@ def prune_events(retention_days: Optional[int] = None) -> int:
     ``common.audit.prune()`` and the scheduler's ``prune_old_fires``.
     """
     days = _events_retention_days() if retention_days is None else int(retention_days)
+    try:
+        # The sequence rules' per-run trails (guardrails/sequence.py) only
+        # matter while a run can still pick up again: the same window is ample.
+        from guardrails import sequence
+        sequence.prune(days)
+    except Exception:  # noqa: BLE001 - a trail that outlives its window is harmless
+        log.debug("guardrails: could not prune the sequence trails", exc_info=True)
     return store.prune_events(days)
 
 

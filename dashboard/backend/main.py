@@ -628,6 +628,11 @@ app.include_router(project_deployments_router.apps_router)
 from routes import browser as browser_router
 app.include_router(browser_router.router)
 
+# Terminal: a shell in a run's or a service replica's container, over a
+# ticketed WebSocket. See docs/terminal.md.
+from routes import terminal as terminal_router
+app.include_router(terminal_router.router)
+
 # Replay domain: re-run a recorded run and diff outputs (regression eval)
 app.include_router(replay.router)
 
@@ -711,6 +716,11 @@ for _loop_router in (tool_policy_router, outcomes_router, steering_router, guard
                      agent_proactive_router):
     app.include_router(_loop_router.router)
 
+# A tool call waiting for a person inside a chat turn: the chat's Approve and
+# Deny, and the waiting run's side under /api/run-state (docs/hooks.md).
+from routes import tool_approvals as tool_approvals_router
+app.include_router(tool_approvals_router.router)
+
 # An agent's own domain lists for web_search, fetch_url and the browser
 # (tools/web.py), on top of the workspace's and the global ones.
 from routes import agent_web_domains as agent_web_domains_router
@@ -764,6 +774,11 @@ app.include_router(slack_router.router)
 app.include_router(teams_channel_router.router)
 app.include_router(trackers_router.router)
 app.include_router(google_router.router)
+# Consent portal: a widget or channel end user grants their own Google or
+# Microsoft account; the public page lives outside /api. See docs/consent.md.
+from routes import consent as consent_router
+app.include_router(consent_router.router)
+app.include_router(consent_router.public_router)
 app.include_router(databases_router.router)
 
 # Git connectors domain: GitHub/GitLab tokens, repo browsing

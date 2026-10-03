@@ -323,11 +323,21 @@ class StandardAgent(AgentBase):
         )
 
     def run(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent.
+        """Execute the agent, with the workspace's ``before_run`` and
+        ``after_run`` hooks around it (agents/hooks.py RunHooks): a deny ends
+        the run before its first model call.
 
         ``history`` (keyword) carries the conversation before this turn as
         LangChain messages; see :meth:`_executor_input`.
         """
+        from agents.hooks import RunHooks
+        run_hooks = RunHooks.for_agent(self, kwargs)
+        denied = run_hooks.before(instruction)
+        if denied is not None:
+            return denied
+        return run_hooks.after(self._run(instruction, **kwargs))
+
+    def _run(self, instruction: str, **kwargs) -> AgentResult:
         from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
         state, token = self._begin_loop(kwargs)
@@ -397,10 +407,23 @@ class StandardAgent(AgentBase):
             reset_state(token)
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent asynchronously using ainvoke (no threads required).
+        """Execute the agent asynchronously using ainvoke, with the run hooks
+        around it as in :meth:`run` (off the event loop: a hook may be a
+        process or an HTTP call).
 
         Takes the same ``history`` keyword as :meth:`run`.
         """
+        import asyncio
+        from agents.hooks import RunHooks
+        run_hooks = await asyncio.to_thread(RunHooks.for_agent, self, kwargs)
+        if run_hooks.active:
+            denied = await asyncio.to_thread(run_hooks.before, instruction)
+            if denied is not None:
+                return denied
+        result = await self._arun(instruction, **kwargs)
+        return await asyncio.to_thread(run_hooks.after, result) if run_hooks.active else result
+
+    async def _arun(self, instruction: str, **kwargs) -> AgentResult:
         import asyncio
         from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)

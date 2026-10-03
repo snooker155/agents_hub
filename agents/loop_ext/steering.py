@@ -28,6 +28,20 @@ it, while OpenAI and the local servers take either. A system message whose
 content is a block list (Anthropic's cached prefix) gets one more text block
 after the cached ones, so the cache prefix stays as it was.
 
+A message in mode ``switch_model`` names a catalog model (``provider/model``).
+It is claimed the same way and kept on ``LoopState.model_switches``; from the
+next model call on, the run's model is that one (:meth:`SteeringExtension.
+wrap_model` binds the same tools and parameters onto it through the loop's
+``rebind``, exactly as a fallback model is bound), and the rest of the run
+goes on with its whole trail. The history is LangChain messages, which every
+provider integration converts to its own shape, so a run can move between
+providers; what one provider adds that another refuses (Anthropic's
+``cache_control`` markers on the system prompt) is taken out of the prompt
+for a model that does not take it. Each call the new model answers is
+recorded on ``LoopState.answered_by`` with its own tokens and catalog model,
+the entry agents/loop_ext/fallback.py writes for a fallback, so the run's
+cost prices those calls at the new model's rates (common/pricing.py).
+
 Where the claim goes depends on where the run executes. A run launched as its
 own process (``runtime/agent_run.py`` publishes ``AGENT_RUN_ID``) claims
 through ``common.state_transport``, over HTTP when its container cannot open
@@ -47,6 +61,8 @@ import threading
 import time
 import weakref
 from typing import Any, Dict, List, Optional
+
+from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.agent_loop import LoopExtension, LoopState
 
@@ -75,6 +91,13 @@ _SYSTEM_INTRO = (
     "the same authority as the rest of these instructions and apply from now on; "
     "where they conflict with something above, they win."
 )
+
+#: Steering mode that moves the run to another model.
+MODE_SWITCH_MODEL = "switch_model"
+#: ``state.scratch`` key of the model the run was switched to (built once).
+SWITCH_SCRATCH = "model_switch"
+#: Reason recorded on ``answered_by`` for a call the switched model answered.
+SWITCH_REASON = "switch_model"
 
 _OWNERS: Dict[str, "weakref.ref[LoopState]"] = {}
 _OWNERS_LOCK = threading.Lock()
@@ -207,41 +230,177 @@ def _emit_delivered(state: LoopState, items: List[Dict[str, Any]]) -> None:
         for inj in items:
             event = {"type": "steer_delivered", "msg_id": inj.get("msg_id"),
                      "after_step": inj.get("after_step"), "run_id": state.run_id}
-            if _is_system(inj):
-                event["mode"] = "system"
+            mode = str(inj.get("mode") or "inject")
+            if mode != "inject":
+                event["mode"] = mode
+            if mode == MODE_SWITCH_MODEL:
+                event["model"] = inj.get("to")
             emitter(event)
     except Exception:  # noqa: BLE001 - the notice is cosmetic, the message is already in the context
         log.debug("steering: delivered notice failed for %s", state.run_id, exc_info=True)
 
 
 def _as_injection(msg: Dict[str, Any], after_step: int) -> Dict[str, Any]:
-    return {
+    item = {
         "after_step": int(after_step),
         "text": str(msg.get("body") or ""),
         "msg_id": str(msg.get("msg_id") or ""),
         "mode": str(msg.get("mode") or "inject"),
         "at": str(msg.get("delivered_at") or "") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if item["mode"] == MODE_SWITCH_MODEL:
+        item["to"] = item["text"].strip()
+        item["by"] = str(msg.get("author_name") or "")
+    return item
 
 
 def _is_system(item: Dict[str, Any]) -> bool:
     return str(item.get("mode") or "") == "system"
 
 
+def _is_switch(item: Dict[str, Any]) -> bool:
+    return str(item.get("mode") or "") == MODE_SWITCH_MODEL
+
+
 def _known_ids(state: LoopState) -> set:
-    return {i.get("msg_id") for i in [*state.injections, *state.system_messages]}
+    return {i.get("msg_id") for i in [*state.injections, *state.system_messages,
+                                      *state.model_switches]}
 
 
 def _record(state: LoopState, item: Dict[str, Any]) -> None:
     """Keep a claimed message where its mode puts it: the conversation for
-    an inject, the system prompt for a system message."""
+    an inject, the system prompt for a system message, the run's model for a
+    switch."""
+    if _is_switch(item):
+        state.model_switches.append(item)
+        return
     (state.system_messages if _is_system(item) else state.injections).append(item)
 
 
+def _model_name(llm: Any) -> str:
+    for attr in ("model", "model_name"):
+        val = getattr(llm, attr, None)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+def strip_cache_markers(messages: List[Any]) -> List[Any]:
+    """``messages`` without Anthropic's ``cache_control`` block markers, for
+    a model whose provider does not take them (OpenAI passes unknown keys of
+    a content block through to its API, which refuses them)."""
+    out = []
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list) and any(isinstance(b, dict) and "cache_control" in b for b in content):
+            blocks = [{k: v for k, v in b.items() if k != "cache_control"} if isinstance(b, dict) else b
+                      for b in content]
+            msg = msg.model_copy(update={"content": blocks})
+        out.append(msg)
+    return out
+
+
+class _SwitchedCallback(BaseCallbackHandler):
+    """Attached to the switched model: records each call it answered on
+    ``state.answered_by``, with its own tokens and catalog model, in the
+    shape a fallback's answer has, which is what prices it at its own rate.
+
+    A refusal is left to the fallback chain when the agent has one (its
+    primary callback raises on it and the next model answers instead)."""
+
+    def __init__(self, state: LoopState, ref: Dict[str, str]) -> None:
+        super().__init__()
+        self.state = state
+        self.ref = dict(ref)
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        from agents.loop_ext.fallback import _call_tokens, _response_is_refusal, _response_model_name
+        if self.state.scratch.get("fallback_active") and _response_is_refusal(response):
+            return
+        entry = {
+            "provider": self.ref.get("provider") or "",
+            "model": _response_model_name(response) or self.ref.get("model") or "",
+            # ``fallback`` is the flag common/pricing.py prices a call by on
+            # its own model; ``switched`` tells the run page why.
+            "fallback": True,
+            "switched": True,
+            "reason": SWITCH_REASON,
+            **_call_tokens(response),
+            "price_model": self.ref.get("model") or "",
+        }
+        try:
+            self.state.answered_by.append(entry)
+        except Exception:  # noqa: BLE001 - a state we cannot annotate still returns the answer
+            log.debug("steering: could not record the switched model's answer", exc_info=True)
+
+
 class SteeringExtension(LoopExtension):
-    """Places the messages a person sent mid-run into the model's context."""
+    """Places the messages a person sent mid-run into the model's context,
+    and moves the run to another model when one asks for it."""
 
     name = "steering"
+
+    def __init__(self, agent: Any = None) -> None:
+        # A weak reference: the extension belongs to the built agent, which
+        # must not be kept alive by it. Only build settings are read from it.
+        self._agent = weakref.ref(agent) if agent is not None else None
+
+    def _agent_obj(self) -> Any:
+        return self._agent() if self._agent is not None else None
+
+    def _primary_ref(self) -> Dict[str, str]:
+        agent = self._agent_obj()
+        llm = getattr(agent, "_llm", None)
+        try:
+            provider = (agent.effective_provider(llm) or "").strip().lower() if agent is not None else ""
+        except Exception:  # noqa: BLE001 - an unreadable provider is reported as unknown
+            provider = str(getattr(agent, "provider", "") or "")
+        return {"provider": provider,
+                "model": _model_name(llm) or str(getattr(agent, "model", "") or "")}
+
+    def _build(self, provider: str, model: str) -> Any:
+        """The chat model a switch moves the run to, built with the agent's
+        own sampling settings (not its key or base URL, which belong to its
+        own provider), like a fallback model."""
+        from agents.agent_utils import build_chat_model
+        agent = self._agent_obj()
+        return build_chat_model(
+            provider=provider, model=model,
+            temperature=getattr(agent, "temperature", None),
+            max_tokens=getattr(agent, "max_tokens", None),
+            streaming=getattr(agent, "streaming", False),
+            thinking_level=getattr(agent, "thinking_level", None),
+        )
+
+    def _apply_switch(self, state: LoopState) -> None:
+        """Make the latest model switch the run's model, built once. A switch
+        that cannot be honoured (the model was disabled since, or it does not
+        build) keeps an ``error`` and the run stays on the model it had."""
+        usable = [s for s in state.model_switches if not s.get("error")]
+        if not usable:
+            return
+        latest = usable[-1]
+        current = state.scratch.get(SWITCH_SCRATCH)
+        if current and current.get("msg_id") == latest.get("msg_id"):
+            return
+        try:
+            from tools.delegation import resolve_model
+            provider, model = resolve_model(str(latest.get("to") or latest.get("text") or ""))
+            llm = self._build(provider, model)
+        except Exception as exc:  # noqa: BLE001 - a bad switch is reported on the run, never fails it
+            latest["error"] = str(exc)[:300]
+            log.warning("steering: run %s could not switch to %s: %s", state.run_id,
+                        latest.get("to"), exc)
+            self._apply_switch(state)
+            return
+        before = ({"provider": current["provider"], "model": current["model"]}
+                  if current else self._primary_ref())
+        latest["from"] = "/".join(p for p in (before.get("provider"), before.get("model")) if p)
+        latest["to"] = f"{provider}/{model}"
+        state.scratch[SWITCH_SCRATCH] = {"msg_id": latest.get("msg_id"), "provider": provider,
+                                         "model": model, "llm": llm}
+        log.info("steering: run %s switched to %s/%s at step %s", state.run_id, provider, model,
+                 latest.get("after_step"))
 
     def _restore(self, state: LoopState, transport: Any, step: int) -> None:
         """On a run's first model call, the messages it already took under the
@@ -294,12 +453,27 @@ class SteeringExtension(LoopExtension):
         steps = list(inputs.get("intermediate_steps") or [])
         if state.run_id and _owns(state):
             self._claim(state, len(steps))
+        if state.model_switches:
+            self._apply_switch(state)
         if not state.injections:
             return scratchpad
         return place_injections(scratchpad, steps, state.injections)
 
     def shape_prompt(self, state: LoopState, messages: List[Any]) -> List[Any]:
-        return append_system_addition(messages, state.system_messages)
+        messages = append_system_addition(messages, state.system_messages)
+        switch = state.scratch.get(SWITCH_SCRATCH)
+        if switch:
+            from providers.adapters import supports_prompt_cache_control
+            if not supports_prompt_cache_control(str(switch.get("provider") or "")):
+                messages = strip_cache_markers(messages)
+        return messages
+
+    def wrap_model(self, state: LoopState, bound: Any, rebind: Any) -> Any:
+        switch = state.scratch.get(SWITCH_SCRATCH)
+        if not switch:
+            return bound
+        ref = {"provider": switch["provider"], "model": switch["model"]}
+        return rebind(switch["llm"]).with_config(callbacks=[_SwitchedCallback(state, ref)])
 
 
 def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
@@ -326,9 +500,13 @@ def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
     for item in fresh:
         if _is_system(item):
             state.system_messages.append(item)
+        elif _is_switch(item):
+            # Recorded, not returned: a model switch alone is no reason for
+            # another pass. If one is made for other messages, it runs there.
+            state.model_switches.append(item)
     if fresh:
         _emit_delivered(state, fresh)
-    return fresh
+    return [item for item in fresh if not _is_switch(item)]
 
 
 def extension_for(agent: Any) -> Optional[LoopExtension]:
@@ -338,11 +516,13 @@ def extension_for(agent: Any) -> Optional[LoopExtension]:
         from agents.standard_agent import StandardAgent
     except ImportError:
         return None
-    return SteeringExtension() if isinstance(agent, StandardAgent) else None
+    return SteeringExtension(agent) if isinstance(agent, StandardAgent) else None
 
 
 __all__ = [
     "MAX_TRANSPORT_FAILURES",
+    "MODE_SWITCH_MODEL",
+    "SWITCH_SCRATCH",
     "claim_after_answer",
     "STEER_HEADER",
     "SYSTEM_HEADER",
@@ -354,4 +534,5 @@ __all__ = [
     "injection_message",
     "is_steering_text",
     "place_injections",
+    "strip_cache_markers",
 ]

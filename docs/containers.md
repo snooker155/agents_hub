@@ -232,4 +232,6 @@ refused combination survivable.
   not `execution_mode`; `managers/run_manager.py` and `managers/run_watchdog.py`
   key off it for that reason.
 
-Related: [instances](instances.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md).
+A shell inside a running run's container, or a service replica's, opens from the dashboard: see [terminal](terminal.md).
+
+Related: [instances](instances.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md), [terminal](terminal.md).

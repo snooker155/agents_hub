@@ -118,6 +118,9 @@ def compute_fingerprint(
     parts.append("agents=" + DocStore("agents").signature())
     parts.append("ws=" + DocStore("workspaces").signature())
     parts.append("proc=" + DocStore("procedures").signature())
+    # The consent portal's settings add or drop two tools (connectors/consent/tools.py).
+    from connectors.consent.store import settings_signature
+    parts.append("consent=" + settings_signature(agent_id))
     parts.append("env=" + _stat_sig(Path(PROJECT_ROOT) / ".env"))
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 

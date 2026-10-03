@@ -26,7 +26,7 @@ const GROUPS = [
   ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs', 'audit']],
   ['Models', ['models', 'local-models', 'hub-as-provider', 'model-structure']],
   ['Integrations', ['connections', 'connectors', 'mcp', 'marketplace', 'registry', 'github-app', 'notifications']],
-  ['Running the service', ['settings', 'containers', 'environments', 'sandboxes', 'service-health', 'runbook', 'slo', 'system-workspace']],
+  ['Running the service', ['settings', 'containers', 'terminal', 'environments', 'sandboxes', 'service-health', 'runbook', 'slo', 'system-workspace']],
   ['Deploying', ['deployment', 'scaling', 'workers', 'storage', 'backup']],
   ['Accounts and access', ['identity', 'sso', 'scim', 'api-keys']],
 ];

@@ -25,8 +25,13 @@ Where a call is *held* depends on the surface, and that split is the whole point
   tool and its arguments on it, and the operator answers from the task page. The
   approved call is recorded on the task as a fingerprint, so the resumed run may
   make that one call and no other.
-- In chat there is no task to park, so the gate refuses the call and tells the
-  agent to say what it wanted to run. That is advisory, exactly like service_ops.
+- In a dashboard chat turn the call waits in the turn itself: the chat shows it
+  with Approve and Deny, and the same turn runs it or reads the refusal
+  (common/tool_approvals.py). :func:`chat_answer_text` is what a refused,
+  timed out or stopped wait hands back.
+- Everywhere else in chat (Telegram, the widget, channels, ``/v1``) nobody is
+  in front of a card, so the gate refuses the call and tells the agent to say
+  what it wanted to run. That is advisory, exactly like service_ops.
 """
 from __future__ import annotations
 
@@ -296,6 +301,46 @@ def policy_denied_text(tool_id: str, tool_input: Any, reason: str = "") -> str:
     return json.dumps(body, ensure_ascii=False, indent=2, default=str)
 
 
+def chat_answer_text(tool_id: str, tool_input: Any, approval: Dict[str, Any],
+                     timeout_s: Optional[float] = None) -> str:
+    """The tool output of a call a person was asked about in chat and that
+    did not run: denied (with the person's note), timed out, or stopped.
+
+    Same JSON shape as :func:`policy_denied_text`, with a ``code`` per case,
+    so the agent reads every refusal the same way. A denial says not to try
+    the same call again; a timeout says nobody answered, which is not a no,
+    so the agent is told to ask in the conversation instead of retrying.
+    """
+    try:
+        pretty = json.dumps(tool_input, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - any argument value still has a str()
+        pretty = str(tool_input)
+    status = str(approval.get("status") or "")
+    note = str(approval.get("note") or "").strip()
+    who = str(approval.get("decided_by_name") or "").strip() or "The user"
+    if status == "denied":
+        code = "approval_denied"
+        error = f"{who} denied `{tool_id}`."
+        if note:
+            error += f" Their note: {note}"
+        error += (" Do not retry the same call. Take another way to the goal, or explain "
+                  "why this step cannot be done.")
+    elif status == "cancelled":
+        code = "approval_cancelled"
+        error = f"The run was stopped while `{tool_id}` waited for approval. It did not run."
+    else:
+        code = "approval_timeout"
+        waited = f" within {int(timeout_s)} seconds" if timeout_s else ""
+        error = (f"Nobody answered the approval request for `{tool_id}`{waited}, so it did not run. "
+                 "Do not call it again now. Tell the user what you wanted to run and why, "
+                 "and wait for their answer in the conversation.")
+    body: Dict[str, Any] = {"ok": False, "error": error, "code": code, "action": tool_id,
+                            "target": pretty}
+    if note:
+        body["note"] = note
+    return json.dumps(body, ensure_ascii=False, indent=2, default=str)
+
+
 __all__ = [
     "NEEDS_APPROVAL",
     "NEVER_GATED",
@@ -303,6 +348,7 @@ __all__ = [
     "approval_gate_enabled",
     "approval_required_text",
     "call_fingerprint",
+    "chat_answer_text",
     "gate_refusal_text",
     "needs_approval",
     "policy_denied_text",

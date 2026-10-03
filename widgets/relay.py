@@ -47,10 +47,15 @@ class TurnRelay:
 
     def __init__(self, request: Any, *, user_id: Optional[str] = None,
                  key_id: Optional[str] = None,
-                 on_event: Optional[EventHook] = None) -> None:
+                 on_event: Optional[EventHook] = None,
+                 end_user: Optional[str] = None) -> None:
         self.request = request
         self.user_id = user_id
         self.key_id = key_id
+        #: The end user the turn is for when it is not the acting user (a
+        #: widget visitor): bound with ``common.secrets.set_end_user`` so the
+        #: agent acts on their consent token (docs/consent.md).
+        self.end_user = end_user
         self.on_event = on_event
         #: The run answering right now: the first ``meta``'s run, then the
         #: next agent's after a handoff.
@@ -138,6 +143,8 @@ class TurnRelay:
 
         token = identity.set_current_user(self.user_id) if self.user_id else None
         key_token = api_keys.set_current_key_id(self.key_id) if self.key_id else None
+        from common import secrets as _secrets
+        end_user_token = _secrets.set_end_user(self.end_user) if self.end_user else None
         try:
             async for event in pipelines.run_chat_pipeline(self.request):
                 # One done per turn: anything after it is not this turn's.
@@ -164,6 +171,8 @@ class TurnRelay:
                 identity.reset_current_user(token)
             if key_token is not None:
                 api_keys.reset_current_key_id(key_token)
+            if end_user_token is not None:
+                _secrets.reset_end_user(end_user_token)
             await self._queue.put(_END)
 
 

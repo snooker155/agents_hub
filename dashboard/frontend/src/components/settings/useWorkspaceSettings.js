@@ -303,6 +303,7 @@ export function useWorkspaceSettings(workspace) {
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
     policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks,
+    savePolicy,
     streamingSaving, toggleStreaming,
     capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
     codeRunnerSaving, setCodeRunnerProvider, toggleCodeRunnerFallback,

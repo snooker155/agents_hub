@@ -540,6 +540,18 @@ def list_secrets(workspace: str) -> List[Dict[str, Any]]:
     return backend().list(workspace)
 
 
+def secret_updated_at(workspace: str, name: str, *, agent_id: Optional[str] = None,
+                      user_id: Optional[str] = None) -> Optional[str]:
+    """When the secret at exactly this scope last changed, or None when there
+    is none. Metadata only, no value is read: a cache keyed by it (the consent
+    portal's access tokens) notices a replaced or deleted grant cheaply."""
+    agent_id, user_id = _scope(agent_id, user_id)
+    row = db.get_conn().execute(
+        "SELECT updated_at FROM secrets WHERE workspace = ? AND name = ? AND agent_id = ? "
+        "AND user_id = ?", (str(workspace), str(name), agent_id, user_id)).fetchone()
+    return str(row["updated_at"]) if row else None
+
+
 def resolve_for_run(workspace: str, agent_id: Optional[str], user_id: Optional[str],
                     allowed_names: Iterable[str]) -> Dict[str, str]:
     return backend().resolve_for_run(workspace, agent_id, user_id, allowed_names)
@@ -762,6 +774,53 @@ def active_scope() -> Optional[Tuple[str, str, str]]:
     return None if scope is None else (scope[0], scope[1], scope[2])
 
 
+# ── the end user of a turn ───────────────────────────────────────────────────
+#
+# A widget visitor or a chat channel user has no hub account: the turn runs as
+# the widget's owner or the binding's operator, and ``user_id`` above is that
+# person. The end user is named separately, as a principal string the consent
+# portal (connectors/consent/, docs/consent.md) keys personal secrets by:
+# ``widget:<widget_id>:<visitor_id>`` or ``channel:<channel>:<chat_key>``.
+# Bound next to the secret scope, and like it a context variable, so a thread
+# started for the agent (asyncio.to_thread copies the context) sees it and no
+# other request in flight does.
+
+_END_USER: ContextVar[str] = ContextVar("agents_hub_end_user", default="")
+
+
+def widget_principal(widget_id: str, visitor_id: str) -> str:
+    return f"widget:{widget_id}:{visitor_id}"
+
+
+def channel_principal(channel: str, chat_key: Any) -> str:
+    return f"channel:{channel}:{chat_key}"
+
+
+def set_end_user(principal: Optional[str]):
+    """Bind the turn's end user; returns the token for :func:`reset_end_user`."""
+    return _END_USER.set(str(principal or "").strip())
+
+
+def reset_end_user(token) -> None:
+    _END_USER.reset(token)
+
+
+@contextmanager
+def end_user(principal: Optional[str]) -> Iterator[None]:
+    """Bind the turn's end user for the ``with`` block."""
+    token = set_end_user(principal)
+    try:
+        yield
+    finally:
+        _END_USER.reset(token)
+
+
+def current_end_user() -> str:
+    """The end user of the turn in this context, ``""`` when there is none
+    (a dashboard chat, a task, a schedule)."""
+    return _END_USER.get()
+
+
 def get(name: str, *, host: Optional[str] = None) -> Optional[str]:
     """One secret for the active in-process run, or None.
 
@@ -805,4 +864,6 @@ __all__ = [
     "validate_name", "make_hint", "keygen", "key_configured",
     "set_secret", "get_secret", "delete_secret", "list_secrets", "resolve_for_run",
     "allowed_for_agent", "env_for_run", "env_for_flow", "activate", "active_scope", "get",
+    "widget_principal", "channel_principal", "set_end_user", "reset_end_user", "end_user",
+    "current_end_user", "secret_updated_at",
 ]

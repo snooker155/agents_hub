@@ -888,6 +888,38 @@ def container_running(container_name: str) -> bool:
         return False
 
 
+def container_status(container_name: str) -> Optional[str]:
+    """The daemon's state for a container (``running``, ``exited``,
+    ``paused``...), or None when there is no such container (a run's
+    container is started with ``--rm``, so a finished run's is simply gone)."""
+    try:
+        result = _run(["docker", "inspect", "--format", "{{.State.Status}}", container_name],
+                      timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
+#: The shell a terminal opens: bash when the image has it, else sh. A login
+#: shell, so the image's profile (PATH, prompt) applies as it would over ssh.
+TERMINAL_SHELL = "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"
+
+
+def exec_shell_argv(container_name: str) -> List[str]:
+    """``docker exec -it`` into a container's shell, for common/terminal.py.
+
+    Run with a pseudo-terminal as its stdin and stdout: the CLI then puts
+    that terminal in raw mode, forwards every byte (Ctrl-C included) to the
+    container's own pty, and resizes it when it gets SIGWINCH. Nothing
+    else about the container changes: same user, same working directory,
+    same read-only root and dropped capabilities a hardened run has.
+    """
+    return ["docker", "exec", "-it", "-e", "TERM=xterm-256color",
+            container_name, "/bin/sh", "-c", TERMINAL_SHELL]
+
+
 def start_container(
     container_name: str,
     agent_id: str,

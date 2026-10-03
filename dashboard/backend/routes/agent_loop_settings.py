@@ -7,6 +7,8 @@ Routes: agent_loop_settings (fourth-cycle stage 2, workspace block added later).
 ``advisor_model`` (one catalog id or null, the model ``consult_advisor``
 asks, tools/advisor.py),
 ``output_schema`` (a JSON object jsonschema itself accepts as a schema),
+``max_concurrent_delegates`` (1..32, default 6: how many of this agent's
+delegated subtasks ``delegate_task_tool`` may run at once, fifth-cycle stage 3),
 and the two tri-state loop toggles ``tool_search``/``compaction`` (None/True/
 False). Saved the same way the other per-field routes in routes/agents.py
 save a spec (``dataclasses.replace`` + ``registry.add_agent``, which
@@ -44,6 +46,7 @@ class LoopSettingsUpdate(BaseModel):
     fallback_models: Optional[List[str]] = None
     advisor_model: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
+    max_concurrent_delegates: Optional[int] = None
     tool_search: Optional[bool] = None
     compaction: Optional[bool] = None
 
@@ -53,9 +56,20 @@ def _settings_dict(spec: Any) -> Dict[str, Any]:
         "fallback_models": list(spec.fallback_models or []),
         "advisor_model": getattr(spec, "advisor_model", None),
         "output_schema": spec.output_schema,
+        "max_concurrent_delegates": getattr(spec, "max_concurrent_delegates", 6),
         "tool_search": spec.tool_search,
         "compaction": spec.compaction,
     }
+
+
+def _validate_max_concurrent_delegates(value: Optional[int]) -> int:
+    try:
+        number = int(value) if value is not None else 6
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="max_concurrent_delegates must be a whole number")
+    if number < 1 or number > 32:
+        raise HTTPException(status_code=400, detail="max_concurrent_delegates must be between 1 and 32")
+    return number
 
 
 def _validate_fallback_models(ids: List[str]) -> List[str]:
@@ -115,6 +129,8 @@ async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate, request:
         changes["advisor_model"] = _validate_fallback_models([advisor])[0] if advisor else None
     if "output_schema" in data.model_fields_set:
         changes["output_schema"] = _validate_output_schema(data.output_schema)
+    if "max_concurrent_delegates" in data.model_fields_set:
+        changes["max_concurrent_delegates"] = _validate_max_concurrent_delegates(data.max_concurrent_delegates)
     if "tool_search" in data.model_fields_set:
         changes["tool_search"] = data.tool_search
     if "compaction" in data.model_fields_set:

@@ -729,6 +729,9 @@ async def _run_agent_for_telegram(
     # Telegram has no dashboard to click through to, so they are appended to the
     # reply text as absolute links (see AGENTS_HUB_PUBLIC_URL).
     final_entities: list[dict[str, Any]] = []
+    # The person in this chat is the turn's end user (docs/consent.md).
+    from common import secrets as _secrets
+    end_user_token = _secrets.set_end_user(_secrets.channel_principal("telegram", chat_id))
     try:
         pipeline = run_chat_flow_pipeline(request) if is_flow else run_chat_pipeline(request)
         async for event in pipeline:
@@ -760,6 +763,8 @@ async def _run_agent_for_telegram(
                 break
     except Exception as exc:
         final_error = str(exc)
+    finally:
+        _secrets.reset_end_user(end_user_token)
 
     telegram_store.touch_binding(chat_id)
 

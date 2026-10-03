@@ -7,6 +7,8 @@ export default {
   to: 'По',
   refresh: 'Обновить',
   totalCost: 'Всего расходов',
+  ofWhichContainers: 'из них контейнеры: {{amount}}',
+  containerHint: 'Часы контейнеров у запусков в docker, по цене размера песочницы (docs/costs.md).',
   totalTokens: 'Всего токенов',
   period: 'Период',
   monthly: 'Ежемесячно',

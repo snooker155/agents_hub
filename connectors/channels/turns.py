@@ -156,6 +156,10 @@ async def run_turn(
         except Exception:  # noqa: BLE001 - a typing indicator is cosmetic
             log.debug("channel %s typing indicator failed", store.name, exc_info=True)
 
+    # The person in this chat is the turn's end user: the agent acts on their
+    # own Google or Microsoft consent, never on another chat's (docs/consent.md).
+    from common import secrets as _secrets
+    end_user_token = _secrets.set_end_user(_secrets.channel_principal(store.name, chat_key))
     try:
         pipeline = run_chat_flow_pipeline(request) if is_flow else run_chat_pipeline(request)
         async for event in pipeline:
@@ -194,6 +198,8 @@ async def run_turn(
                 break
     except Exception as exc:  # noqa: BLE001 - reported to the chat as text
         result.error = str(exc)
+    finally:
+        _secrets.reset_end_user(end_user_token)
 
     store.touch_binding(chat_key)
     log.info("channel %s reply chat=%s ok=%s text_len=%d",

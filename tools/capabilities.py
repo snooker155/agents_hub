@@ -348,6 +348,12 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # output. The woken agent runs on its own tool set under its own guard,
     # and a profile that accepts wakes from agents decides whom it listens to.
     "wake_agent",
+    # The consent portal (connectors/consent/tools.py). request_account_access
+    # hands the person in the conversation a link to a page they open
+    # themselves; revoke_account_access drops that person's own grant. Neither
+    # reads data nor sends anything out; what the grant lets the Google and
+    # Microsoft tools do is classified on those tools.
+    "request_account_access", "revoke_account_access",
 
     # ── filesystem writes ────────────────────────────────────────────────────
     # write_file, create_file and apply_unified_diff all return only the

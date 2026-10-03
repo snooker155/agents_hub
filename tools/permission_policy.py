@@ -728,7 +728,10 @@ REASON_CODES = (
     "hook_deny",            # a PreToolUse hook denied the call
     "hook_ask",             # a PreToolUse hook asked for a person
     "human_approved",       # a person approved this exact call earlier
+    "human_denied",         # a person denied the call in the chat, or nobody answered
     "think_required",       # the think gate refused an action before a think
+    "guardrail_deny",       # a sequence guardrail refused the call
+    "guardrail_ask",        # a sequence guardrail asked for a person
 )
 
 #: How each failure of the classifier phrases its fallback ``ask``.
@@ -762,6 +765,8 @@ def reason_code(*, by: str, decision: str, mode: str = "", source: str = "",
         return "auto_unclear" if str(reason or "").startswith(_UNCLEAR_PREFIX) else "auto_ask"
     if by == "think":
         return "think_required"
+    if by == "guardrail":
+        return "guardrail_deny" if decision == DENY else "guardrail_ask"
     if mode == ALWAYS_ASK or decision == ASK:
         return "approval_list" if source == SOURCE_APPROVAL_LIST else "policy_always_ask"
     if source == SOURCE_NEVER_GATED:
@@ -802,6 +807,29 @@ def note_call(tool: str, permission: str, code: str, *, fingerprint: str = "") -
                 del trail[: len(trail) - TRAIL_LIMIT]
     except Exception:  # noqa: BLE001 - a lost trail entry reads back as the default
         log.debug("tool policy: could not note %s on the trail", tool, exc_info=True)
+
+
+def revise_call(tool: str, permission: str, code: str, *, fingerprint: str) -> None:
+    """Turn the unread ``ask`` the trail holds for one call into its answer.
+
+    A call answered while its turn waits (agents/hooks.py, chat approvals)
+    keeps one trail entry: the run's callbacks read the oldest unread entry
+    for a tool, so an answer noted after the ask would be read by the next
+    call of that tool instead. Notes a new entry when there is no ask to
+    revise. Never raises, like :func:`note_call`.
+    """
+    try:
+        trail = _trail()
+        with _trail_lock:
+            for entry in reversed(trail):
+                if (entry.get("fingerprint") == fingerprint and not entry["read_by"]
+                        and entry.get("evaluated_permission") == PERMISSION_ASK):
+                    entry.update(evaluated_permission=permission, reason_code=code)
+                    return
+    except Exception:  # noqa: BLE001 - see docstring
+        log.debug("tool policy: could not revise %s on the trail", tool, exc_info=True)
+        return
+    note_call(tool, permission, code, fingerprint=fingerprint)
 
 
 def call_verdict(tool: str, consumer: Any, inputs: Any = None) -> Dict[str, str]:
@@ -874,6 +902,7 @@ __all__ = [
     "prune",
     "reason_code",
     "record",
+    "revise_call",
     "remember_decision",
     "resolve_mode",
     "task_context",

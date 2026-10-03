@@ -39,9 +39,15 @@ straight from ``AGENTS_HUB_ENVIRONMENT_ID`` (already set below) through
 
 ``docker`` (read by runtime/docker_runner.py and
 managers/container_manager.py): ``memory``, ``cpus``, ``pids_limit``,
-``image``, ``packages``. There is no network key: every network type keeps
-the container on the agents-hub bridge and relies on the proxy and the hub
-tools' own checks.
+``image``, ``packages``, and ``size`` when the environment names one
+(``environments.models.SIZE_PRESETS``: the preset fills ``memory``/``cpus``/
+``pids_limit`` together, an explicit ``limits`` field overriding its matching
+preset value). ``size`` is not a docker option itself (``container_manager``
+ignores unknown keys): it travels here so ``agents.agent_launcher`` can
+stamp it on the run record for ``common.pricing`` to price the container's
+hours against (docs/costs.md "Container hours"). There is no network key:
+every network type keeps the container on the agents-hub bridge and relies
+on the proxy and the hub tools' own checks.
 
 ``execution_mode``: the environment's mode unless it is ``inherit``.
 """
@@ -79,18 +85,31 @@ def effective_mode(env: Environment, ws_name: Optional[str]) -> str:
 
 
 def docker_options(env: Environment) -> Optional[Dict[str, Any]]:
-    """The docker profile of ``env``: only the keys it sets, None when none."""
+    """The docker profile of ``env``: only the keys it sets, None when none.
+
+    ``memory``/``cpus``/``pids_limit`` come from an explicit ``limits`` field
+    first, else the matching value of the environment's ``size`` preset
+    (``environments.models.SIZE_PRESETS``), so naming a size without also
+    setting limits still shapes the container.
+    """
+    from .models import SIZE_PRESETS
+    preset = SIZE_PRESETS.get(env.size) if env.size else None
     opts: Dict[str, Any] = {}
-    if env.limits.memory:
-        opts["memory"] = env.limits.memory
-    if env.limits.cpus:
-        opts["cpus"] = env.limits.cpus
-    if env.limits.pids_limit:
-        opts["pids_limit"] = int(env.limits.pids_limit)
+    memory = env.limits.memory or (preset.get("memory") if preset else None)
+    cpus = env.limits.cpus or (preset.get("cpus") if preset else None)
+    pids = env.limits.pids_limit or (preset.get("pids_limit") if preset else None)
+    if memory:
+        opts["memory"] = memory
+    if cpus:
+        opts["cpus"] = cpus
+    if pids:
+        opts["pids_limit"] = int(pids)
     if env.image:
         opts["image"] = env.image
     if env.packages:
         opts["packages"] = list(env.packages)
+    if env.size:
+        opts["size"] = env.size
     return opts or None
 
 

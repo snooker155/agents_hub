@@ -84,10 +84,10 @@ def _settle_steering(run_id: str) -> list:
     losing them (common/steering.py)."""
     try:
         from common import steering
-        # A system message (an operator instruction for this run) expires
-        # with the run; it is never handed back as a chat turn.
+        # A system message or a model switch (an operator's, for this run)
+        # expires with the run; it is never handed back as a chat turn.
         return [{"msg_id": m["msg_id"], "body": m["body"]} for m in steering.mark_expired(run_id)
-                if m.get("mode") != steering.MODE_SYSTEM]
+                if m.get("mode") not in steering.OPERATOR_MODES]
     except Exception:  # noqa: BLE001 - a steering lookup failing must not break closing the turn
         return []
 

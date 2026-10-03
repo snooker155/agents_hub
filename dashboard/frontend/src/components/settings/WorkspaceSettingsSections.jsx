@@ -500,6 +500,27 @@ export function ToolPolicySection({ s }) {
         </div>
         <Toggle checked={!!s.policy.require_tool_approval} disabled={s.policySaving} onChange={s.toggleApproval} />
       </div>
+      {/* How long a call held in a chat turn waits for Approve or Deny. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label htmlFor="tool-approval-timeout" className="text-sm text-gray-700">{t('settings.toolApprovalTimeout')}</label>
+        <input
+          id="tool-approval-timeout"
+          key={s.policy.tool_approval_timeout ?? 'default'}
+          type="number"
+          min={10}
+          max={86400}
+          defaultValue={s.policy.tool_approval_timeout ?? ''}
+          placeholder="600"
+          disabled={s.policySaving}
+          onBlur={(e) => {
+            const value = e.target.value.trim();
+            if (value === String(s.policy.tool_approval_timeout ?? '')) return;
+            s.savePolicy({ tool_approval_timeout: value === '' ? null : Number(value) });
+          }}
+          className={inputCls.replace('w-full', 'w-28')}
+        />
+        <p className="w-full text-xs text-gray-500">{t('settings.toolApprovalTimeoutHint')}</p>
+      </div>
 
       {/* The workspace's per-tool permission policy and the model
           that decides "auto" calls (tools/permission_policy.py). */}

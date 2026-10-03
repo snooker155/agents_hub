@@ -44,7 +44,21 @@ _NOT_CONFIGURED = "Google connector is not configured on the Connectors page"
 
 
 def _unconfigured() -> Optional[str]:
-    """``json_err(...)`` when Google is not configured, else None."""
+    """``json_err(...)`` when Google is not configured, else None.
+
+    In a widget or channel turn the end user's own consent comes first
+    (connectors/consent/, docs/consent.md): their token is fetched here, so a
+    refusal ("ask for access first") or a dead grant is the tool's answer
+    before any call, and the hub's own connection is not needed for it."""
+    from connectors.consent import access as _consent
+    from connectors.google.auth import GoogleError
+    try:
+        if _consent.token_for_turn("google"):
+            return None
+    except _consent.ConsentError as exc:
+        return json_err(str(exc), code="consent_required")
+    except GoogleError as exc:
+        return json_err(str(exc), code="google_error")
     from connectors.google import is_configured
     if not is_configured():
         return json_err(_NOT_CONFIGURED, code="not_configured")

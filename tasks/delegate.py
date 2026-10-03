@@ -56,7 +56,8 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     from common.agent_context import current_agent_id
     from common.workspace_context import filter_agents_for_workspace
     from tasks.service import CreatedBy, TaskStatus, add_subtask, assign_agent, get_task, update_task
-    from tools.delegation import enabled_models, max_depth, resolve_model
+    from tools.delegation import (DEFAULT_MAX_CONCURRENT_DELEGATES, PARENT_RUN_ENV, enabled_models,
+                                  max_depth, resolve_model, running_delegate_count)
     from tools.langchain_tools import _delegation_blocked
     from tools.task_management import _task_to_dict, _uuid_from_str
 
@@ -94,6 +95,26 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
             f"This run is already {depth} delegation(s) deep; the limit is {max_depth()}. "
             "Do the work yourself or report what you could not do.",
             "too_deep", depth=depth, max_depth=max_depth())
+
+    # The delegating run's own concurrency limit (agents/registry.py
+    # max_concurrent_delegates, or this run's own overrides): how many of its
+    # delegated subtasks may be running at once. Counted against the parent
+    # run's live children (tools/delegation.running_delegate_count); a
+    # wait=false launch still counts until it finishes.
+    parent_run_id = str((request.get("env") or {}).get(PARENT_RUN_ENV) or "")
+    if parent_run_id:
+        try:
+            delegate_limit = int(request.get("max_concurrent_delegates") or DEFAULT_MAX_CONCURRENT_DELEGATES)
+        except (TypeError, ValueError):
+            delegate_limit = DEFAULT_MAX_CONCURRENT_DELEGATES
+        delegate_limit = max(1, min(32, delegate_limit))
+        running = running_delegate_count(parent_run_id)
+        if running >= delegate_limit:
+            return _err(
+                f"This run already has {running} delegated subtask(s) running; the limit is "
+                f"{delegate_limit}. Wait for one to finish, or raise max_concurrent_delegates "
+                "for this agent or run.",
+                "too_many_delegates", running=running, max_concurrent_delegates=delegate_limit)
 
     requested: Dict[str, str] = {}
     model = request.get("model")
@@ -134,6 +155,14 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     except BudgetExceededError as exc:
         update_task(child.id, status=TaskStatus.blocked, blocked_reason=str(exc))
         return _err(str(exc), "budget", task_id=str(child.id))
+    if parent_run_id:
+        # So a later delegation from the same parent run can count this one
+        # among its running children (running_delegate_count above).
+        try:
+            from managers.run_manager import update_run as _update_run_record
+            _update_run_record(run_id, {"parent_run_id": parent_run_id})
+        except Exception:  # noqa: BLE001 - the concurrency count degrades to "none running", never blocks the launch
+            log.debug("could not stamp parent_run_id on delegated run %s", run_id, exc_info=True)
     assign_agent(child.id, agent_id, params, run_id=run_id)
     update_task(child.id, status=TaskStatus.in_progress)
     if session_id:

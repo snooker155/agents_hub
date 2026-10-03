@@ -20,7 +20,10 @@ export default {
     auto_unclear: 'classifier could not decide',
     hook_deny: 'a hook denied it',
     hook_ask: 'a hook asked for a person',
+    guardrail_deny: 'a sequence guardrail refused it',
+    guardrail_ask: 'a sequence guardrail asked for a person',
     human_approved: 'a person approved this call',
+    human_denied: 'a person denied it, or nobody answered in time',
     think_required: 'refused until the agent thinks first',
   },
 };

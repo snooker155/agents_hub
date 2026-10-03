@@ -35,8 +35,16 @@ def _err(message: str) -> str:
 def _client() -> Tuple[Optional[Any], str]:
     """A configured ``GraphClient`` and the connector's default_user.
 
-    Returns ``(None, "")`` when the connector is not configured.
+    Returns ``(None, "")`` when the connector is not configured. In a widget
+    or channel turn whose end user granted their own account, or whose agent
+    acts only as the end user, a client acting as them on their own mailbox
+    (connectors/consent/, docs/consent.md); a refusal arrives as the first
+    call's ``GraphError``.
     """
+    from connectors.consent import access as _consent
+    delegated = _consent.graph_client_for_turn()
+    if delegated is not None:
+        return delegated, "me"
     from connectors.microsoft import CREDENTIALS
     if not CREDENTIALS.is_configured():
         return None, ""

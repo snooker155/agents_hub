@@ -35,6 +35,16 @@ def list_replicas(service_id: str, *, live: Optional[bool] = None,
     return [carrier.sync(i) or i for i in page["items"]]
 
 
+def get_replica(instance_id: str) -> Optional[Dict[str, Any]]:
+    """One replica by its instance id, synced with its carrier, or None when
+    the id names no instance or an instance that belongs to no service (the
+    terminal, common/terminal.py, opens only on replicas through here)."""
+    replica = istore.get(str(instance_id))
+    if replica is None or not replica.get("service_id"):
+        return None
+    return carrier.sync(replica) or replica
+
+
 def live_replicas(service: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [r for r in list_replicas(service["service_id"], live=True)
             if r.get("state") in istore.LIVE_STATES]

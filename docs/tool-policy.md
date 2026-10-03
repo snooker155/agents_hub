@@ -59,10 +59,12 @@ Every tool call of a run carries two fields, whether or not a policy is set: `ev
 | `auto_run`, `auto_deny`, `auto_ask` | allow, deny, ask | what the classifier answered |
 | `auto_unclear` | ask | the classifier timed out, failed or gave no usable answer |
 | `hook_deny`, `hook_ask` | deny, ask | a `PreToolUse` hook decided |
-| `human_approved` | allow | a person approved this exact call earlier |
+| `guardrail_deny`, `guardrail_ask` | deny, ask | a sequence guardrail stopped the call (see [guardrails](guardrails.md)) |
+| `human_approved` | allow | a person approved this exact call earlier, or in the chat turn it waited in |
+| `human_denied` | deny | a person denied the call in a chat turn, nobody answered in time, or the run was stopped while it waited |
 | `think_required` | deny | the think gate refused an action before a `think` |
 
-In chat an `ask` is the advisory refusal; in a task it parks the call. The capability guard works when an agent is built, not per call, so it never appears here: a tool it removed is not in the run at all.
+In a task an `ask` parks the call; in the dashboard chat it waits in the turn for a person ([hooks](hooks.md), "In chat"); elsewhere in chat it is the advisory refusal. The capability guard works when an agent is built, not per call, so it never appears here: a tool it removed is not in the run at all.
 
 Every deny, every ask, every `auto` decision and every spent approval writes a `tool.policy` audit row with `reason_code` and `evaluated_permission` in its details. A plain allow writes none, and a cached repeat of an `auto` call is on the trail but not in the audit log.
 

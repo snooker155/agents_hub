@@ -178,6 +178,12 @@ class AgentSpec:
     # workspace is delegatable. When non-empty, only these ids (intersected with
     # workspace availability) are visible and runnable as delegation targets.
     delegates: List[str] = field(default_factory=list)
+    # How many of this agent's delegated subtasks (delegate_task_tool,
+    # tools/delegation.py) may be running at once; a launch past the limit is
+    # refused with a clear message. 1..32, default 6. A run's own
+    # `overrides.max_concurrent_delegates` (agents/run_overrides.py) replaces
+    # this for that run alone.
+    max_concurrent_delegates: int = 6
     # Reasoning capability settings — keyed by tool id (e.g. "think", "plan")
     reasoning: Dict[str, Any] = field(default_factory=dict)
     # Structured response format this agent may emit (rendered as buttons / a
@@ -420,6 +426,8 @@ class AgentSpec:
         # Only write delegates when restricted, to keep unrestricted records clean.
         if self.delegates:
             d["delegates"] = list(self.delegates)
+        if self.max_concurrent_delegates != 6:
+            d["max_concurrent_delegates"] = self.max_concurrent_delegates
         # Only write the approval overrides when set, to keep default records clean.
         if self.approval_tools:
             d["approval_tools"] = list(self.approval_tools)
@@ -747,6 +755,12 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if did and did not in delegates:
                 delegates.append(did)
 
+    try:
+        max_concurrent_delegates = int(ad.get("max_concurrent_delegates") or 6)
+    except (TypeError, ValueError):
+        max_concurrent_delegates = 6
+    max_concurrent_delegates = min(32, max(1, max_concurrent_delegates))
+
     def _id_list(raw: Any) -> List[str]:
         """A clean, de-duplicated list of tool ids from whatever JSON holds."""
         out: List[str] = []
@@ -851,6 +865,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
         delegates=delegates,
+        max_concurrent_delegates=max_concurrent_delegates,
         approval_tools=approval_tools,
         approval_exempt=approval_exempt,
         secrets=secrets,

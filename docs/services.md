@@ -188,4 +188,5 @@ replicas.
 
 Related: [instances](instances.md), [chat](chat.md),
 [hub-as-provider](hub-as-provider.md), [environments](environments.md),
-[deployment](deployment.md).
+[deployment](deployment.md), [terminal](terminal.md): a shell in a replica's container
+from its row on the service page.

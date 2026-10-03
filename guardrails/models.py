@@ -7,6 +7,12 @@ is validated once, here, so a stored record is always safe to run: a bad
 regex, an empty instruction or an unknown PII detector never reaches a run,
 it is refused at create/update time instead.
 
+One kind is not about text at all: ``sequence`` (stage ``tool``) is a rule
+about the order and the totals of a run's tool calls, checked by
+guardrails/sequence.py before each call rather than on the run's input or
+output. Its action is ``block`` or ``ask`` (hold the call for a person); the
+text kinds keep ``block`` or ``warn``.
+
 ``config`` is the one field whose shape depends on another field (``kind``):
 :func:`validate_config` is the single place that knows what each kind needs,
 called from the model's own validator so ``Guardrail(...)`` can never hold a
@@ -21,9 +27,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-Stage = Literal["input", "output", "both"]
-Kind = Literal["regex", "keywords", "pii", "max_chars", "judge"]
-Action = Literal["block", "warn"]
+Stage = Literal["input", "output", "both", "tool"]
+Kind = Literal["regex", "keywords", "pii", "max_chars", "judge", "sequence"]
+Action = Literal["block", "warn", "ask"]
 AppliesTo = Literal["all", "selected"]
 
 #: Built-in PII detectors a ``pii`` guardrail may pick from (guardrails/checks.py).
@@ -33,6 +39,13 @@ _NAME_MAX = 120
 _DESCRIPTION_MAX = 2000
 _INSTRUCTION_MAX = 4000
 _REGEX_FLAGS = ("IGNORECASE", "MULTILINE", "DOTALL")
+
+#: The rule types a ``sequence`` guardrail may hold (guardrails/sequence.py).
+SEQUENCE_RULES = ("after", "sum_max", "same_as")
+#: Actions per family of kinds: a text check warns, a tool call can wait.
+SEQUENCE_ACTIONS = ("block", "ask")
+TEXT_ACTIONS = ("block", "warn")
+_PATTERN_MAX = 200
 
 
 def now_iso() -> str:
@@ -105,6 +118,9 @@ def validate_config(kind: str, config: Any) -> Dict[str, Any]:
             raise ValueError("'max_chars' must be a positive number")
         return {"max_chars": max_chars}
 
+    if kind == "sequence":
+        return _validate_sequence(config)
+
     if kind == "judge":
         instruction = str(config.get("instruction") or "").strip()
         if not instruction:
@@ -114,6 +130,77 @@ def validate_config(kind: str, config: Any) -> Dict[str, Any]:
         return {"instruction": instruction}
 
     raise ValueError(f"unknown guardrail kind '{kind}'")
+
+
+def _tool_pattern(value: Any, field: str) -> str:
+    """A tool name or a glob over tool names (``mcp__bank__*``)."""
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"a sequence rule needs '{field}'")
+    if len(text) > _PATTERN_MAX:
+        raise ValueError(f"'{field}' is longer than {_PATTERN_MAX} characters")
+    return text
+
+
+def _argument_path(value: Any, field: str) -> str:
+    """A dotted path into a call's arguments (``amount``, ``payee.account``)."""
+    text = str(value or "").strip().strip(".")
+    if not text:
+        raise ValueError(f"a sequence rule needs '{field}'")
+    if len(text) > _PATTERN_MAX or any(not part for part in text.split(".")):
+        raise ValueError(f"'{field}' is not a valid argument path")
+    return text
+
+
+def _validate_sequence(config: Dict[str, Any]) -> Dict[str, Any]:
+    """One rule about a run's tool calls (guardrails/sequence.py reads it):
+
+    * ``after``: ``tool`` runs only once ``after_tool`` has run in the run,
+      and with ``require_success`` only once it ran without an error;
+    * ``sum_max``: the ``argument`` values of every call of ``tools`` add up
+      to at most ``max``;
+    * ``same_as``: ``argument`` of ``tool`` equals ``source_argument`` of an
+      earlier call of ``source_tool``.
+    """
+    rule = str(config.get("rule") or "").strip().lower()
+    if rule not in SEQUENCE_RULES:
+        raise ValueError(f"a sequence guardrail needs 'rule', one of: {', '.join(SEQUENCE_RULES)}")
+    if rule == "after":
+        return {
+            "rule": rule,
+            "tool": _tool_pattern(config.get("tool"), "tool"),
+            "after_tool": _tool_pattern(config.get("after_tool"), "after_tool"),
+            "require_success": bool(config.get("require_success")),
+        }
+    if rule == "sum_max":
+        raw = config.get("tools") or config.get("tool") or []
+        if isinstance(raw, str):
+            raw = [t for t in re.split(r"[\n,]+", raw) if t.strip()]
+        tools: List[str] = []
+        for t in raw:
+            t = _tool_pattern(t, "tools")
+            if t not in tools:
+                tools.append(t)
+        if not tools:
+            raise ValueError("a sum_max rule needs at least one tool in 'tools'")
+        try:
+            limit = float(config.get("max"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("a sum_max rule needs a numeric 'max'") from exc
+        if limit != limit or limit < 0:  # NaN or negative
+            raise ValueError("'max' must be zero or more")
+        return {"rule": rule, "tools": tools,
+                "argument": _argument_path(config.get("argument"), "argument"),
+                "max": int(limit) if limit.is_integer() else limit}
+    argument = _argument_path(config.get("argument"), "argument")
+    return {
+        "rule": rule,
+        "tool": _tool_pattern(config.get("tool"), "tool"),
+        "argument": argument,
+        "source_tool": _tool_pattern(config.get("source_tool"), "source_tool"),
+        "source_argument": _argument_path(config.get("source_argument") or argument,
+                                          "source_argument"),
+    }
 
 
 class Guardrail(BaseModel):
@@ -182,6 +269,17 @@ class Guardrail(BaseModel):
         # record either still validates or is reported by the store as
         # absent, the same way environments/store.py treats one that does not.
         self.config = validate_config(self.kind, self.config)
+        # A sequence rule is about tool calls and only about them: its stage
+        # is always ``tool``, and ``tool`` is only ever a sequence rule's.
+        if self.kind == "sequence":
+            self.stage = "tool"
+            if self.action not in SEQUENCE_ACTIONS:
+                raise ValueError("a sequence guardrail's action is 'block' or 'ask'")
+        else:
+            if self.stage == "tool":
+                raise ValueError("only a sequence guardrail checks the 'tool' stage")
+            if self.action not in TEXT_ACTIONS:
+                raise ValueError(f"a {self.kind} guardrail's action is 'block' or 'warn'")
         return self
 
     @property
@@ -191,5 +289,6 @@ class Guardrail(BaseModel):
 
 __all__ = [
     "Guardrail", "Stage", "Kind", "Action", "AppliesTo", "PII_DETECTORS",
+    "SEQUENCE_RULES", "SEQUENCE_ACTIONS", "TEXT_ACTIONS",
     "validate_config", "now_iso",
 ]

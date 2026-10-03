@@ -1131,6 +1131,23 @@ class AgentFactory:
                                      int(workspace_loop_setting(workspace, "advisor_max_calls") or 0))
                 )
 
+        # Consent portal (connectors/consent/, docs/consent.md), only for an
+        # agent whose consent settings name a provider. Appended after the
+        # guard like the handoff tool: one hands the end user a link, the
+        # other drops their own grant, and neither reaches anything else.
+        if _spec is not None:
+            try:
+                from connectors.consent.tools import consent_tools_for
+                _consent_tools, _consent_prompt = consent_tools_for(_spec)
+            except Exception:  # noqa: BLE001 - no consent tables yet: build without the tools
+                log.debug("consent tools unavailable for %s", agent_id, exc_info=True)
+                _consent_tools, _consent_prompt = [], ""
+            if _consent_tools:
+                tools = [*tools, *_consent_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _consent_prompt
+                )
+
         if _memory_access == "read":
             from memory.binding import MEMORY_WRITE_TOOLS
             _before = len(tools)

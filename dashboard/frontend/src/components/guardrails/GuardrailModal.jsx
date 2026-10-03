@@ -1,15 +1,21 @@
 /**
  * Create/edit modal for a guardrail, with one config section per rule kind
- * (guardrails/models.py's validate_config knows the same shapes).
+ * (guardrails/models.py's validate_config knows the same shapes). A
+ * `sequence` guardrail checks a run's tool calls rather than its text: its
+ * stage is always `tool`, and it blocks or asks a person instead of warning.
  */
 import { useState } from 'react';
 import { X, Loader, ShieldCheck } from 'lucide-react';
 import { createGuardrail, updateGuardrail } from '../../api/guardrails';
 import { useI18n } from '../../i18n';
+import SequenceRuleFields from './SequenceRuleFields';
+import { defaultSequenceConfig } from './sequenceRules';
 
 const STAGES = ['input', 'output', 'both'];
-const KINDS = ['regex', 'keywords', 'pii', 'max_chars', 'judge'];
-const ACTIONS = ['block', 'warn'];
+const KINDS = ['regex', 'keywords', 'pii', 'max_chars', 'judge', 'sequence'];
+const TEXT_ACTIONS = ['block', 'warn'];
+const SEQUENCE_ACTIONS = ['block', 'ask'];
+const actionsFor = (kind) => (kind === 'sequence' ? SEQUENCE_ACTIONS : TEXT_ACTIONS);
 const APPLIES_TO = ['all', 'selected'];
 const PII_DETECTORS = ['email', 'phone', 'credit_card', 'iban', 'api_key'];
 const REGEX_FLAGS = ['IGNORECASE', 'MULTILINE', 'DOTALL'];
@@ -29,6 +35,7 @@ function defaultConfig(kind, existing) {
   if (kind === 'pii') return { detectors: [] };
   if (kind === 'max_chars') return { max_chars: 2000 };
   if (kind === 'judge') return { instruction: '' };
+  if (kind === 'sequence') return defaultSequenceConfig();
   return {};
 }
 
@@ -52,7 +59,9 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
   const changeKind = (next) => {
     setKind(next);
     setConfig(defaultConfig(next));
+    if (!actionsFor(next).includes(action)) setAction('block');
   };
+  const isSequence = kind === 'sequence';
 
   const toggleFlag = (flag) => {
     const flags = config.flags || [];
@@ -75,7 +84,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
       name: name.trim(),
       description: description.trim(),
       workspace: scope === 'workspace' ? (workspace || null) : null,
-      stage,
+      stage: isSequence ? 'tool' : stage,
       kind,
       config,
       action,
@@ -132,9 +141,15 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
           </div>
           <div className="flex-1">
             <label className={labelCls}>{t('guardrails.stage.label')}</label>
-            <select className={inputCls} value={stage} onChange={(e) => setStage(e.target.value)}>
-              {STAGES.map((s) => <option key={s} value={s}>{t(`guardrails.stage.${s}`)}</option>)}
-            </select>
+            {isSequence ? (
+              <select className={inputCls} value="tool" disabled>
+                <option value="tool">{t('guardrails.stage.tool')}</option>
+              </select>
+            ) : (
+              <select className={inputCls} value={stage} onChange={(e) => setStage(e.target.value)}>
+                {STAGES.map((s) => <option key={s} value={s}>{t(`guardrails.stage.${s}`)}</option>)}
+              </select>
+            )}
           </div>
         </div>
 
@@ -148,7 +163,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
           <div className="flex-1">
             <label className={labelCls}>{t('guardrails.action.label')}</label>
             <select className={inputCls} value={action} onChange={(e) => setAction(e.target.value)}>
-              {ACTIONS.map((a) => <option key={a} value={a}>{t(`guardrails.action.${a}`)}</option>)}
+              {actionsFor(kind).map((a) => <option key={a} value={a}>{t(`guardrails.action.${a}`)}</option>)}
             </select>
           </div>
         </div>
@@ -205,6 +220,10 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
             <input type="number" min="1" className={inputCls} value={config.max_chars || ''}
               onChange={(e) => setConfig({ ...config, max_chars: Number(e.target.value) || '' })} />
           </div>
+        )}
+
+        {isSequence && (
+          <SequenceRuleFields config={config} onChange={setConfig} inputCls={inputCls} labelCls={labelCls} />
         )}
 
         {kind === 'judge' && (

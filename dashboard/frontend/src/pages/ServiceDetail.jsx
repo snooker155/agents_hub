@@ -10,6 +10,7 @@ import {
 } from '../api';
 import InstanceList from '../components/InstanceList';
 import AccessTab from '../components/instances/AccessTab';
+import { LazyTerminalPanel } from '../components/terminal';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useLiveRefetch } from '../components/stream';
 import { useWorkspace } from '../components/workspace';
@@ -165,6 +166,7 @@ export default function ServiceDetail() {
   const [service, setService] = useState(null);
   const [events, setEvents] = useState([]);
   const [activeTab, setActiveTab] = useState('replicas');
+  const [terminalFor, setTerminalFor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -322,7 +324,12 @@ export default function ServiceDetail() {
 
       {activeTab === 'replicas' && (
         <InstanceList serviceId={serviceId} liveUpdates={liveUpdates} showFilters={false}
-                      showAgentColumn={false} />
+                      showAgentColumn={false} onTerminal={setTerminalFor} />
+      )}
+      {terminalFor && (
+        <LazyTerminalPanel kind="replica" id={terminalFor.instance_id}
+                           title={`${t('terminal.title')}: ${terminalFor.label || terminalFor.instance_id}`}
+                           onClose={() => setTerminalFor(null)} />
       )}
       {activeTab === 'settings' && <SettingsForm service={service} onSaved={setService} t={t} />}
       {activeTab === 'access' && (

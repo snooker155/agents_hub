@@ -50,8 +50,8 @@ def test_get_defaults(client, agent):
     resp = client.get(f"/api/agents/{agent.id}/loop-settings")
     assert resp.status_code == 200
     assert resp.json() == {
-        "fallback_models": [], "advisor_model": None, "output_schema": None, "tool_search": None,
-        "compaction": None,
+        "fallback_models": [], "advisor_model": None, "output_schema": None,
+        "max_concurrent_delegates": 6, "tool_search": None, "compaction": None,
     }
 
 
@@ -83,6 +83,26 @@ def test_put_output_schema_round_trips(client, agent):
     assert resp.status_code == 200, resp.text
     assert resp.json()["output_schema"] == schema
     assert get_agent(agent.id).output_schema == schema
+
+
+def test_put_max_concurrent_delegates_round_trips(client, agent):
+    resp = client.put(f"/api/agents/{agent.id}/loop-settings", json={"max_concurrent_delegates": 12})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["max_concurrent_delegates"] == 12
+    assert get_agent(agent.id).max_concurrent_delegates == 12
+
+
+@pytest.mark.parametrize("value", [0, 33])
+def test_put_rejects_an_out_of_range_concurrency_limit(client, agent, value):
+    resp = client.put(f"/api/agents/{agent.id}/loop-settings", json={"max_concurrent_delegates": value})
+    assert resp.status_code == 400
+
+
+def test_put_rejects_a_non_numeric_concurrency_limit(client, agent):
+    # Pydantic itself refuses a string that is not coercible to int (422),
+    # before the route's own 1..32 check (400) ever runs.
+    resp = client.put(f"/api/agents/{agent.id}/loop-settings", json={"max_concurrent_delegates": "six"})
+    assert resp.status_code == 422
 
 
 def test_put_rejects_invalid_json_schema(client, agent):

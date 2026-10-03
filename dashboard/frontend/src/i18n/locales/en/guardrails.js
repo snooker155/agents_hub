@@ -1,6 +1,6 @@
 export default {
   guardrails: 'Guardrails',
-  pageDescription: 'Checks on a run\'s input and output: a rule or a judge model, and a tripwire that stops the run when one trips.',
+  pageDescription: 'Checks on a run\'s input, its output and its tool calls: a rule or a judge model, and a tripwire that stops the run when one trips.',
   refresh: 'Refresh',
   showArchived: 'Show archived',
   noGuardrails: 'No guardrails yet. Runs go unchecked until one is created.',
@@ -28,6 +28,7 @@ export default {
     input: 'Input',
     output: 'Output',
     both: 'Input and output',
+    tool: 'Tool calls',
   },
   kind: {
     label: 'Kind',
@@ -36,11 +37,13 @@ export default {
     pii: 'Personal data (PII)',
     max_chars: 'Maximum length',
     judge: 'Judge model',
+    sequence: 'Tool call sequence',
   },
   action: {
     label: 'Action',
     block: 'Block: stops the run',
     warn: 'Warn: logs it, the run continues',
+    ask: 'Ask: a person decides on the call',
   },
   appliesTo: {
     label: 'Applies to',
@@ -72,6 +75,30 @@ export default {
     instructionPlaceholder: 'The text must not contain medical advice.',
     instructionHint: 'The judge answers only whether the text violates this instruction, and why.',
   },
+  sequence: {
+    rule: 'Rule',
+    rules: {
+      after: 'Only after another tool',
+      sum_max: 'Total of an argument at most',
+      same_as: 'Argument matches an earlier call',
+    },
+    hints: {
+      after: 'The tool runs only once the other one has run in this run.',
+      sum_max: 'The values of the argument across every call of these tools add up to at most the limit, per run.',
+      same_as: 'The argument must equal the one an earlier call of the source tool used, for example the same account.',
+    },
+    tool: 'Tool',
+    after_tool: 'Only after',
+    require_success: 'The earlier call must have succeeded',
+    tools: 'Tools',
+    toolsPlaceholder: 'One per line',
+    argument: 'Argument',
+    max: 'Limit per run',
+    source_tool: 'Earlier tool',
+    source_argument: 'Its argument',
+    sourceArgumentPlaceholder: 'same name when blank',
+    patternsHint: 'Tool names take * as a wildcard (mcp__bank__*). Arguments are dotted paths (payee.account).',
+  },
   model: 'Judge model',
   modelPlaceholder: 'provider/model, e.g. anthropic/claude-haiku-4-5 (blank: the workspace default)',
   testBox: {
@@ -84,6 +111,12 @@ export default {
     blocked: 'Would block: {{reason}}',
     warned: 'Would warn: {{reason}}',
     judgeError: 'The judge could not be reached: {{error}}',
+    callsLabel: 'Tool calls',
+    callsHint: 'A JSON list of calls in the order a run makes them: {"tool", "input", "ok"}. Nothing is recorded.',
+    callsInvalid: 'The calls must be a JSON list.',
+    callsPassed: 'Passed: no call would be stopped.',
+    callBlocked: 'Would block call {{n}} ({{tool}}): {{reason}}',
+    callAsked: 'Would ask a person about call {{n}} ({{tool}}): {{reason}}',
   },
   events: {
     title: 'Recent events',

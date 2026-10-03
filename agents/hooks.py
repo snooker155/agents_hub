@@ -10,6 +10,13 @@ moment: *may this tool call happen?*
   rewrite the text the agent gets back). They are configured per workspace, so
   an operator can enforce a house rule (no shell in this workspace, every patch
   goes past the linter) without touching an agent record or this repo.
+  ``before_tool_call`` and ``after_tool_call`` are accepted as the same two
+  events under the names other agent platforms use.
+* **Run hooks** wrap a whole run the same way: ``before_run`` sees the agent,
+  the input and the model before the first model call and can deny the run;
+  ``after_run`` sees the final text, status, usage and cost, and may replace
+  the text but not the outcome (:class:`RunHooks`, called by
+  agents/standard_agent.py).
 * **The approval gate** holds a call that needs a human yes (see
   tools/approval.py for which, and why the list is what it is).
 * **The tool policy** (tools/permission_policy.py) sets a mode per tool, per
@@ -35,7 +42,8 @@ hook set can be managed centrally without a file in the agent's working tree)::
     }
 
 A command hook is handed the call as JSON on stdin — ``{hook, agent_id, run_id,
-task_id, workspace, tool, input}``, plus ``output`` for ``PostToolUse`` — and
+task_id, workspace, tool, input}``, plus ``output`` for ``PostToolUse``; a run
+hook gets the run instead of a tool call (see :func:`run_before_run`) — and
 answers with its exit code: 0 allows, 2 denies (its stderr becomes the tool's
 output, so the agent reads why), and anything else is logged and allowed.
 Failing open is deliberate: a hook that cannot run is an infrastructure problem,
@@ -72,6 +80,16 @@ logger = logging.getLogger(__name__)
 
 PRE_TOOL_USE = "PreToolUse"
 POST_TOOL_USE = "PostToolUse"
+BEFORE_RUN = "before_run"
+AFTER_RUN = "after_run"
+
+#: Every event a hook can be configured for, in the order they are stored.
+EVENTS = (PRE_TOOL_USE, POST_TOOL_USE, BEFORE_RUN, AFTER_RUN)
+
+#: Other names for the tool events, the ones other agent platforms use. A
+#: config may use either spelling (or both); the entries run as one list,
+#: canonical name first.
+EVENT_ALIASES = {"before_tool_call": PRE_TOOL_USE, "after_tool_call": POST_TOOL_USE}
 
 HOOKS_FILENAME = ".hooks.json"
 
@@ -137,11 +155,22 @@ def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
 
     if not isinstance(raw, dict):
         return {}
+    return normalize_events(raw)
+
+
+def normalize_events(raw: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """The config keyed by canonical event names, aliases folded in.
+
+    An alias's entries run after the canonical name's, in their configured
+    order. Unknown keys and entries that are not objects are dropped (the
+    Settings route refuses them before they are stored)."""
     out: Dict[str, List[Dict[str, Any]]] = {}
-    for event in (PRE_TOOL_USE, POST_TOOL_USE):
-        entries = raw.get(event)
-        if isinstance(entries, list):
-            out[event] = [e for e in entries if isinstance(e, dict)]
+    for event in EVENTS:
+        names = [event, *[alias for alias, target in EVENT_ALIASES.items() if target == event]]
+        for name in names:
+            entries = raw.get(name)
+            if isinstance(entries, list):
+                out.setdefault(event, []).extend(e for e in entries if isinstance(e, dict))
     return out
 
 
@@ -372,6 +401,216 @@ def run_post_tool_use(
     return current
 
 
+# -------------------- the run events --------------------
+
+def _current_task_id() -> str:
+    """The task the current run belongs to, if any. Empty in chat."""
+    try:
+        from common.agent_context import current_task_id
+        tid = current_task_id.get()
+        if tid:
+            return str(tid)
+    except Exception:  # noqa: BLE001 - no agent context module: the env still names it
+        pass
+    return str(os.environ.get("AGENT_TASK_ID") or "")
+
+
+def _run_payload(event: str, *, agent_id: str, run_id: str, task_id: str,
+                 workspace: Optional[str], **fields: Any) -> Dict[str, Any]:
+    return {"hook": event, "agent_id": agent_id or "", "run_id": run_id or "",
+            "task_id": task_id or "", "workspace": workspace or "", **fields}
+
+
+def run_before_run(
+    *,
+    agent_id: str = "",
+    run_id: str = "",
+    task_id: str = "",
+    workspace: Optional[str] = None,
+    input_text: str = "",
+    model: str = "",
+    provider: str = "",
+    config: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> HookOutcome:
+    """Run every matching ``before_run`` hook. The first deny wins.
+
+    The payload is ``{hook, agent_id, run_id, task_id, workspace, input,
+    model, provider}``; the matcher is matched against the agent id. ``ask``
+    has no meaning here (there is no call to hold, and a run cannot wait for
+    a person before it exists), so it is read as a deny: a hook that wanted a
+    person to look did not want the run to go ahead unseen.
+    """
+    hooks = (config if config is not None else load_hooks(workspace)).get(BEFORE_RUN) or []
+    if not hooks:
+        return HookOutcome()
+    payload = _run_payload(BEFORE_RUN, agent_id=agent_id, run_id=run_id, task_id=task_id,
+                           workspace=workspace, input=input_text, model=model or "",
+                           provider=provider or "")
+    for hook in hooks:
+        if not matches(hook.get("matcher"), agent_id):
+            continue
+        kind = str(hook.get("type") or "command").strip().lower()
+        if kind == "http":
+            outcome, _body = _run_http_hook(hook, payload)
+        else:
+            outcome = _run_command_hook(hook, payload)
+        if outcome.asks_approval:
+            outcome = HookOutcome("deny", outcome.reason or f"Hook {outcome.hook} asked for a person "
+                                  "before this run, which a run cannot wait for.", outcome.hook)
+        if outcome.denied:
+            return outcome
+    return HookOutcome()
+
+
+def run_after_run(
+    output: str,
+    *,
+    agent_id: str = "",
+    run_id: str = "",
+    task_id: str = "",
+    workspace: Optional[str] = None,
+    status: str = "",
+    ok: bool = True,
+    error: str = "",
+    usage: Optional[Dict[str, Any]] = None,
+    cost_usd: Optional[float] = None,
+    model: str = "",
+    provider: str = "",
+    config: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> str:
+    """Run every matching ``after_run`` hook. Returns the final text to keep.
+
+    The run is over, so nothing here changes its outcome: a deny is logged.
+    An HTTP hook may return ``{"output": "..."}`` to replace the final text,
+    the same rule as ``PostToolUse`` and for the same reason a command hook
+    cannot (its stdout is a log line, not an answer).
+    """
+    hooks = (config if config is not None else load_hooks(workspace)).get(AFTER_RUN) or []
+    if not hooks:
+        return output
+    payload = _run_payload(AFTER_RUN, agent_id=agent_id, run_id=run_id, task_id=task_id,
+                           workspace=workspace, output=output, status=status or "",
+                           ok=bool(ok), error=error or "", usage=dict(usage or {}),
+                           cost_usd=cost_usd, model=model or "", provider=provider or "")
+    current = output
+    for hook in hooks:
+        if not matches(hook.get("matcher"), agent_id):
+            continue
+        kind = str(hook.get("type") or "command").strip().lower()
+        if kind == "http":
+            outcome, body = _run_http_hook(hook, payload)
+            rewritten = body.get("output") if isinstance(body, dict) else None
+            if isinstance(rewritten, str):
+                current = rewritten
+                payload["output"] = rewritten
+        else:
+            outcome = _run_command_hook(hook, payload)
+        if outcome.denied:
+            logger.info("hooks: after_run %s objected to run %s: %s", outcome.hook, run_id, outcome.reason)
+    return current
+
+
+class RunHooks:
+    """``before_run`` and ``after_run`` around one run of an agent.
+
+    Built per run (:meth:`for_agent`), with the config read once, so the two
+    halves see the same hook set even if an operator edits it mid-run. Never
+    raises: a hook that cannot run is handled by the hook's own
+    ``fail_closed``, and anything else going wrong here leaves the run as it
+    would be without hooks.
+    """
+
+    def __init__(self, agent: Any, kwargs: Dict[str, Any], config: Dict[str, List[Dict[str, Any]]]) -> None:
+        self.agent = agent
+        self.kwargs = kwargs
+        self.config = config
+
+    @classmethod
+    def for_agent(cls, agent: Any, kwargs: Dict[str, Any]) -> "RunHooks":
+        from tools.approval import workspace_name
+        workspace = kwargs.get("workspace") or getattr(agent, "workspace", None)
+        try:
+            config = load_hooks(workspace_name(workspace) or workspace)
+        except Exception:  # noqa: BLE001 - an unreadable config is no config, like load_hooks itself
+            config = {}
+        return cls(agent, kwargs, config)
+
+    @property
+    def active(self) -> bool:
+        return bool(self.config.get(BEFORE_RUN) or self.config.get(AFTER_RUN))
+
+    def _ids(self) -> Dict[str, Any]:
+        from tools.approval import workspace_name
+        workspace = self.kwargs.get("workspace") or getattr(self.agent, "workspace", None)
+        return {
+            "agent_id": str(getattr(self.agent, "agent_id", "") or ""),
+            "run_id": str(self.kwargs.get("run_id") or os.environ.get("AGENT_RUN_ID") or ""),
+            "task_id": _current_task_id(),
+            "workspace": workspace_name(workspace) or workspace,
+        }
+
+    def before(self, instruction: str) -> Optional[Any]:
+        """The result that ends the run when a hook denied it, else None."""
+        if not self.config.get(BEFORE_RUN):
+            return None
+        try:
+            outcome = run_before_run(
+                input_text=str(instruction or ""), model=str(getattr(self.agent, "model", "") or ""),
+                provider=str(getattr(self.agent, "provider", "") or ""), config=self.config,
+                **self._ids())
+        except Exception:  # noqa: BLE001 - see class docstring
+            logger.warning("hooks: before_run failed", exc_info=True)
+            return None
+        if not outcome.denied:
+            return None
+        from agents.agent_base import AgentResult
+        reason = outcome.reason or f"Denied by hook {outcome.hook}."
+        return AgentResult(ok=False, status="error", error=f"A before_run hook stopped the run: {reason}",
+                           loop={"hook_denied": {"event": BEFORE_RUN, "hook": outcome.hook,
+                                                 "reason": reason}})
+
+    def _usage(self) -> Dict[str, Any]:
+        """Tokens of the run, read off whichever stats callback it carried."""
+        for cb in self.kwargs.get("callbacks") or []:
+            if hasattr(cb, "prompt_tokens") and hasattr(cb, "completion_tokens"):
+                return {
+                    "prompt_tokens": int(getattr(cb, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(cb, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(cb, "total_tokens", 0) or 0),
+                    "cached_tokens": int(getattr(cb, "cached_prompt_tokens", 0) or 0),
+                }
+        return {}
+
+    def after(self, result: Any) -> Any:
+        """``result`` with the final text an ``after_run`` hook gave, if any."""
+        if not self.config.get(AFTER_RUN):
+            return result
+        try:
+            usage = self._usage()
+            provider = str(getattr(self.agent, "provider", "") or "")
+            model = str(getattr(self.agent, "model", "") or "")
+            cost = None
+            if usage:
+                from common.pricing import serving_cost_usd
+                cost = serving_cost_usd(provider, model, usage.get("prompt_tokens", 0),
+                                        usage.get("completion_tokens", 0))
+            output = str(getattr(result, "agent_output", "") or "")
+            new = run_after_run(
+                output, status=str(getattr(result, "status", "") or ""),
+                ok=bool(getattr(result, "ok", False)), error=str(getattr(result, "error", "") or ""),
+                usage=usage, cost_usd=cost, model=model, provider=provider, config=self.config,
+                **self._ids())
+        except Exception:  # noqa: BLE001 - see class docstring
+            logger.warning("hooks: after_run failed", exc_info=True)
+            return result
+        if new != output:
+            try:
+                result.agent_output = new
+            except Exception:  # noqa: BLE001 - a result that will not take the text keeps its own
+                logger.debug("hooks: after_run output not applied", exc_info=True)
+        return result
+
+
 # -------------------- the gate --------------------
 
 @dataclass
@@ -489,14 +728,7 @@ class ToolGuard:
 
     def _task_id(self) -> str:
         """The task this run belongs to, if any. Empty in chat."""
-        try:
-            from common.agent_context import current_task_id
-            tid = current_task_id.get()
-            if tid:
-                return str(tid)
-        except Exception:
-            pass
-        return str(os.environ.get("AGENT_TASK_ID") or "")
+        return _current_task_id()
 
     @staticmethod
     def _run_id() -> str:
@@ -572,6 +804,10 @@ class ToolGuard:
         if outcome.asks_approval:
             return self._hold(call, outcome.reason, by="hook", hook=outcome.hook)
 
+        sequence = self._sequence(call)
+        if sequence is not None:
+            return sequence
+
         if mode == policy.ALWAYS_ALLOW:
             # An operator's explicit always_allow lifts the tool off the approval
             # list. Worth a row: it is the call an auditor will ask about.
@@ -630,15 +866,20 @@ class ToolGuard:
 
     def _hold(self, call: "_Call", reason: str, *, by: str, hook: str = "",
               record: bool = True, check_approved: bool = True) -> "_Verdict":
-        """A call that needs a person: park it in a task, refuse it in chat."""
+        """A call that needs a person: park it in a task, wait for an answer in
+        a dashboard chat turn, refuse it in any other chat."""
         from tools import permission_policy as policy
         from tools.approval import gate_refusal_text
 
         if not call.task_id:
-            # Chat: there is nothing to park and nobody to answer a parked call,
-            # so the gate stays advisory, exactly like tools/service_ops.py.
             if record:
                 self._record(call, policy.ASK, reason, by=by)
+            held = self._hold_in_chat(call, reason, by=by, hook=hook)
+            if held is not None:
+                return held
+            # Nobody in front of a card (Telegram, the widget, a channel,
+            # /v1): there is nothing to park and nobody to answer a parked
+            # call, so the gate stays advisory, exactly like tools/service_ops.py.
             return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))
 
         if check_approved and self._consume(call):
@@ -662,6 +903,49 @@ class ToolGuard:
             "by": by,
         })
 
+    def _hold_in_chat(self, call: "_Call", reason: str, *, by: str, hook: str = "") -> Optional["_Verdict"]:
+        """Wait in a dashboard chat turn for a person to answer this call
+        (common/tool_approvals.py). None when the turn cannot hold it.
+
+        Blocks this thread: for an async run the deciding half already runs
+        in a worker thread (:meth:`abefore`), so the event loop, the stream
+        and the Stop button keep working while the person reads the card.
+        The answer goes on the policy trail and in the audit log like every
+        other decided call: ``human_approved`` for a yes, ``human_denied``
+        for a no, a timeout or a stop.
+        """
+        from tools import permission_policy as policy
+        from tools.approval import chat_answer_text
+        try:
+            from common import tool_approvals
+            ctx = tool_approvals.chat_context(call.run_id)
+            if ctx is None:
+                return None
+            timeout = tool_approvals.timeout_seconds(self.settings())
+            answer = tool_approvals.hold(
+                ctx, tool=call.tool, tool_input=call.input, reason=reason,
+                fingerprint=call.fingerprint, by=by, hook=hook, agent_id=self.agent_id,
+                workspace=self.workspace, timeout_s=timeout)
+        except Exception:  # noqa: BLE001 - a broken wait falls back to the advisory refusal, never to running
+            logger.warning("tool approvals: could not hold %s in chat", call.tool, exc_info=True)
+            return None
+        if answer is None:
+            return None
+        note = str(answer.get("note") or "").strip()
+        if answer.get("status") == tool_approvals.STATUS_APPROVED:
+            self._record(call, policy.RUN, "A person approved this call in the chat."
+                         + (f" Note: {note}" if note else ""), by=by, approved=True, trail=False)
+            _revise_trail(call, policy.PERMISSION_ALLOW, "human_approved")
+            return _Verdict()
+        why = {
+            tool_approvals.STATUS_DENIED: "A person denied this call in the chat.",
+            tool_approvals.STATUS_CANCELLED: "The run was stopped while the call waited for a person.",
+        }.get(str(answer.get("status")), f"Nobody answered within {int(timeout)} seconds.")
+        self._record(call, policy.DENY, why + (f" Note: {note}" if note else ""), by=by,
+                     code="human_denied", trail=False)
+        _revise_trail(call, policy.PERMISSION_DENY, "human_denied")
+        return _Verdict(refusal=chat_answer_text(call.tool, call.input, answer, timeout))
+
     @staticmethod
     def _consume(call: "_Call") -> bool:
         """Spend the operator's approval of this exact call, if there is one."""
@@ -672,7 +956,8 @@ class ToolGuard:
             return False
 
     def _record(self, call: "_Call", decision: str, reason: str, *, by: str,
-                cached: bool = False, approved: bool = False) -> Any:
+                cached: bool = False, approved: bool = False, code: str = "",
+                trail: bool = True) -> Any:
         """Record one decided call: on the run and in the Tool policy store,
         on the call's trail entry (``evaluated_permission`` and ``reason_code``),
         and as an audit row unless it is a cached repeat. Every call that gets
@@ -683,20 +968,52 @@ class ToolGuard:
                                 by=by, fingerprint=call.fingerprint, source=call.source, cached=cached)
         policy.record(entry, agent_id=self.agent_id, run_id=call.run_id, task_id=call.task_id,
                       workspace=self.workspace, tool_input=call.input)
-        code = policy.reason_code(by=by, decision=decision, mode=call.mode, source=call.source,
-                                  reason=reason, approved=approved)
-        policy.note_call(call.tool, policy.permission_of(decision), code, fingerprint=call.fingerprint)
+        code = code or policy.reason_code(by=by, decision=decision, mode=call.mode, source=call.source,
+                                          reason=reason, approved=approved)
+        if trail:
+            policy.note_call(call.tool, policy.permission_of(decision), code, fingerprint=call.fingerprint)
         if not cached:
             policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
                                   task_id=call.task_id, workspace=self.workspace, code=code)
         return entry
 
+    def _sequence(self, call: "_Call") -> Optional["_Verdict"]:
+        """The workspace's sequence guardrails on this call (guardrails/sequence.py):
+        a refusal, a hold for a person, or None when every rule lets it through."""
+        from guardrails import sequence
+        try:
+            decision = sequence.check_call(self, call.tool, call.input, run_id=call.run_id,
+                                           task_id=call.task_id)
+        except Exception:  # noqa: BLE001 - a broken rule store must not stop every tool call
+            logger.warning("sequence guardrails: check failed for %s", call.tool, exc_info=True)
+            return None
+        if not decision:
+            return None
+        from tools import permission_policy as policy
+        if decision.get("action") == "ask":
+            return self._hold(call, str(decision.get("reason") or ""), by="guardrail")
+        self._record(call, policy.DENY, str(decision.get("reason") or ""), by="guardrail")
+        return _Verdict(refusal=str(decision.get("reason") or ""))
+
     def after(self, tool_id: str, tool_input: Any, output: Any) -> Any:
+        try:
+            from guardrails import sequence
+            sequence.note_call(self, tool_id, tool_input, output, run_id=self._run_id(),
+                               task_id=self._task_id())
+        except Exception:  # noqa: BLE001 - bookkeeping for later checks, never the call's own result
+            logger.debug("sequence guardrails: note failed for %s", tool_id, exc_info=True)
         return run_post_tool_use(
             tool_id, tool_input, output,
             agent_id=self.agent_id, run_id=self._run_id(), task_id=self._task_id(),
             workspace=self.workspace, config=self.hooks(),
         )
+
+
+def _revise_trail(call: "_Call", permission: str, code: str) -> None:
+    """Turn the ``ask`` the trail holds for a call answered in chat into the
+    answer (tools.permission_policy.revise_call)."""
+    from tools import permission_policy as policy
+    policy.revise_call(call.tool, permission, code, fingerprint=call.fingerprint)
 
 
 def _merge_tool_input(args: tuple, kwargs: dict) -> Any:
@@ -773,7 +1090,10 @@ def guard_action_tools(
 
     guard = ToolGuard(agent_id=agent_id, spec=spec, workspace=workspace)
     if not guard.hooks() and not guard.gate_enabled() and not guard.has_policy():
-        return tools
+        # Sequence guardrails (guardrails/sequence.py) need the wrapper too.
+        from guardrails.sequence import has_rules
+        if not has_rules(guard.workspace, spec):
+            return tools
 
     wrapped = []
     for t in tools:
@@ -824,18 +1144,26 @@ def pending_approval_for(agent: Any) -> Optional[Dict[str, Any]]:
 
 
 __all__ = [
+    "AFTER_RUN",
+    "BEFORE_RUN",
     "DEFAULT_HOOK_TIMEOUT",
+    "EVENTS",
+    "EVENT_ALIASES",
     "GuardedTool",
     "clear_pending_approval",
     "HOOKS_FILENAME",
     "HookOutcome",
     "POST_TOOL_USE",
     "PRE_TOOL_USE",
+    "RunHooks",
     "ToolGuard",
     "guard_action_tools",
     "load_hooks",
     "matches",
+    "normalize_events",
     "pending_approval_for",
+    "run_after_run",
+    "run_before_run",
     "run_post_tool_use",
     "run_pre_tool_use",
 ]

@@ -123,6 +123,7 @@ One run can differ from its agent without the agent changing: an `overrides` obj
 | `mcp` | MCP server ids; the run gets `mcp:<id>` for each instead of the record's servers |
 | `tool_policy` | entries merged over the agent's tool policy |
 | `output_schema` | JSON Schema the final answer must match |
+| `max_concurrent_delegates` | 1..32, over the agent's own default (6); see "Delegation" below |
 
 An unknown key, an unknown tool id or an invalid schema is a 400. The run's tool set goes through the capability guard against the record's own: a combination the record does not already form is refused (409), whatever the record's `capability_override`. The older `--tool-policy` and `--output-schema` flags (and the `tool_policy` / `output_schema` launch params) still work and fold into the object. The run record keeps the object as `overrides` and the run page lists it. An overridden build has its own entry in the agent build cache.
 
@@ -149,6 +150,15 @@ same `delegates` allowlist and self-delegation rule apply. With `wait` false the
 call returns after the launch; `get_agent_status_tool` and `get_task_result` on
 the subtask id read the outcome later, and the subtask shows under its parent
 on the task page with the model the run used.
+
+A run may not have more than `max_concurrent_delegates` (default 6) delegated
+subtasks running at once: the agent's own field (Model tab's loop settings
+card), or an `overrides.max_concurrent_delegates` just for one run (1..32,
+above `max_concurrent_delegates` in the per-run overrides table). A launch
+past the limit is refused with a clear message naming how many are already
+running; a `wait=false` launch still counts against it until its child
+finishes. The value reaches a container run as an environment variable the
+same way the delegation depth does.
 
 A handoff is the other kind of hand-over: instead of asking another agent for a
 result, the agent gives the conversation to it, and that agent answers the user

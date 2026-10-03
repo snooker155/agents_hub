@@ -174,6 +174,52 @@ def test_refused_past_the_depth_limit(registry, parent, monkeypatch):
     assert data["max_depth"] == delegation.DEFAULT_MAX_DEPTH
 
 
+def test_refused_past_the_concurrency_limit(registry, parent, monkeypatch):
+    """max_concurrent_delegates (fifth-cycle stage 3): this run's own limit,
+    read off its environment (agents.agent_launcher stamps it there at
+    launch, see tests/test_run_overrides.py); here simulated directly, as
+    test_refused_past_the_depth_limit does for the depth env var."""
+    monkeypatch.setenv("AGENT_RUN_ID", "parent-run")
+    monkeypatch.setenv(delegation.MAX_CONCURRENT_ENV, "1")
+    FakeLauncher(monkeypatch, outcome="running")
+    first = _call(agent_id="worker", input="first", wait=False)
+    assert first["ok"] is True
+
+    second = _call(agent_id="worker", input="second", wait=False)
+    assert second["ok"] is False and second["code"] == "too_many_delegates"
+    assert second["running"] == 1 and second["max_concurrent_delegates"] == 1
+
+
+def test_concurrency_limit_frees_up_once_a_child_finishes(registry, parent, monkeypatch):
+    from managers.run_manager import get_run_by_id, update_run
+
+    monkeypatch.setenv("AGENT_RUN_ID", "parent-run")
+    monkeypatch.setenv(delegation.MAX_CONCURRENT_ENV, "1")
+    FakeLauncher(monkeypatch, outcome="running")
+    first = _call(agent_id="worker", input="first", wait=False)
+    assert first["ok"] is True
+    # The run this one was delegated from is on the record, so a later
+    # delegation from the same run can count it among its live children.
+    assert get_run_by_id(first["run_id"])["parent_run_id"] == "parent-run"
+
+    update_run(first["run_id"], {"status": "completed"})
+    FakeLauncher(monkeypatch, outcome="completed")
+    second = _call(agent_id="worker", input="second", wait=False)
+    assert second["ok"] is True
+
+
+def test_default_concurrency_limit_is_six_without_the_env_var(monkeypatch):
+    monkeypatch.delenv(delegation.MAX_CONCURRENT_ENV, raising=False)
+    assert delegation.current_max_concurrent_delegates() == 6
+    monkeypatch.setenv(delegation.MAX_CONCURRENT_ENV, "40")  # clamped to the 1..32 range
+    assert delegation.current_max_concurrent_delegates() == 32
+
+
+def test_running_delegate_count_ignores_runs_outside_the_parent(registry, parent, monkeypatch):
+    assert delegation.running_delegate_count("") == 0
+    assert delegation.running_delegate_count("no-such-run") == 0
+
+
 def test_refused_for_a_model_outside_the_catalog(registry, parent, monkeypatch):
     launcher = FakeLauncher(monkeypatch)
     data = _call(agent_id="worker", input="do it", model="openai/gpt-4o")
