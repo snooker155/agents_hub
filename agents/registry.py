@@ -298,6 +298,16 @@ class AgentSpec:
     review_note: Optional[str] = None
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[str] = None
+    # ── Default outcome (fifth cycle, stage 4 "kits") ───────────────────────
+    # What "done" looks like for this agent, in the absence of a task of its
+    # own outcome (tasks/outcome.py): same shape as ``Task.outcome``, a
+    # mapping {"rubric": markdown, "max_iterations": int, "grader":
+    # {"provider", "model"} | None, "threshold": float | None}. None means no
+    # default: a task assigned to this agent is graded only when the task
+    # names its own outcome. A task picks this up when it is first assigned
+    # to the agent and has no outcome of its own yet (tasks/service.py,
+    # ``assign_executor``).
+    default_outcome: Optional[Dict[str, Any]] = None
 
     def is_remote(self) -> bool:
         """Whether this record is an externally hosted (HTTP) agent.
@@ -483,6 +493,8 @@ class AgentSpec:
             d["reviewed_by"] = self.reviewed_by
         if self.reviewed_at:
             d["reviewed_at"] = self.reviewed_at
+        if self.default_outcome:
+            d["default_outcome"] = dict(self.default_outcome)
         return d
 
     def load_callable(self) -> Callable[..., Any]:
@@ -819,6 +831,19 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     reviewed_by = ad.get("reviewed_by") or None
     reviewed_at = ad.get("reviewed_at") or None
 
+    raw_default_outcome = ad.get("default_outcome")
+    default_outcome: Optional[Dict[str, Any]] = None
+    if isinstance(raw_default_outcome, dict) and raw_default_outcome:
+        try:
+            from tasks.outcome import normalize_outcome
+            default_outcome = normalize_outcome(raw_default_outcome)
+        except Exception:  # noqa: BLE001 - a stored record is never refused on load over its
+            # default outcome; an unreadable one is dropped instead of blocking every other
+            # agent in the registry.
+            log.warning("agent '%s': could not read default_outcome, dropping it",
+                        ad.get("id"), exc_info=True)
+            default_outcome = None
+
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
@@ -888,6 +913,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         review_note=review_note,
         reviewed_by=reviewed_by,
         reviewed_at=reviewed_at,
+        default_outcome=default_outcome,
     )
 
 

@@ -268,6 +268,41 @@ async def list_fires(workspace: Optional[str] = None, only_errors: bool = False,
     return [fire_to_dict(f) for f in items]
 
 
+# -------------------- cron preview --------------------
+
+@router.get("/cron/preview")
+async def cron_preview(
+    cron: str = "",
+    timezone: Optional[str] = None,
+    count: int = 5,
+    start: Optional[datetime] = None,
+    recurrence: Recurrence = Recurrence.cron,
+):
+    """Live preview for a schedule field: the next ``count`` fire times,
+    computed with the exact same logic the scheduler itself uses to fire a job
+    (``plans.service.upcoming_runs``, which wraps ``_next_run``), so this can
+    never predict a time the scheduler would not actually fire at. ``cron``
+    is read for ``recurrence=cron``; hourly, daily and weekly step from
+    ``start``, the job's first run.
+
+    Always 200, even for a bad expression: the caller is typing into a form
+    and wants feedback as it goes, not an exception on every keystroke.
+    """
+    count = max(1, min(count, 20))
+    if recurrence == Recurrence.cron and not cron.strip():
+        return {"valid": False, "error": "Cron expression required.", "upcoming_runs_at": [], "description": None}
+    try:
+        runs = plan_service.upcoming_runs(cron, timezone, count, start=start, recurrence=recurrence)
+    except ValueError as e:
+        return {"valid": False, "error": str(e), "upcoming_runs_at": [], "description": None}
+    return {
+        "valid": True,
+        "error": None,
+        "upcoming_runs_at": runs,
+        "description": plan_service.describe_cron(cron) if recurrence == Recurrence.cron else None,
+    }
+
+
 # -------------------- notifications --------------------
 
 @router.get("/notifications")

@@ -1,0 +1,6 @@
+kind: memory_pool
+id: finance-notes
+name: Finance notes
+description: Where the connected data lives, which table or sheet holds which metric, and anything Reviewer has flagged, shared by Analyst and Reviewer.
+blocks:
+  persona: "You keep the finance team's shared notes: which table or sheet holds which metric, filters that change what a number means, and anything flagged in review. Be terse, precise about units and time periods, and specific."

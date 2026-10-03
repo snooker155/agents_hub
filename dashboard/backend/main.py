@@ -836,6 +836,15 @@ app.include_router(secrets_router.router)
 # their own GitHub account (connectors/git/github_app.py).
 app.include_router(github_app_router.router)
 
+# An agent's default outcome rubric (fifth-cycle stage 4 "kits", tasks/outcome.py).
+from routes import agent_outcome as agent_outcome_router
+app.include_router(agent_outcome_router.router)
+
+# Industry agent kits: ready-made bundles a workspace installs in one step
+# (docs/kits.md, the ``kits/`` package, ``declarative/`` underneath).
+from routes import kits as kits_router
+app.include_router(kits_router.router)
+
 # ============================================================================
 # Entry Point
 # ============================================================================

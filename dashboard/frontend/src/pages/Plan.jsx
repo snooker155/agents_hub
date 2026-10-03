@@ -26,6 +26,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
+import CronHint from '../components/CronHint';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -348,6 +349,10 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
               />
             </div>
           </div>
+        )}
+
+        {recurrence !== 'none' && (
+          <CronHint recurrence={recurrence} cron={cron} timezone={tz} start={runAt} />
         )}
 
         {kind === 'agent_task' && (

@@ -136,6 +136,7 @@ export default defineConfig({
       { text: 'Documentation', link: '/guide/overview', activeMatch: '/guide/' },
       { text: 'Install', link: '/guide/installation' },
       { text: 'Recipes', link: '/recipes/', activeMatch: '/recipes/' },
+      { text: 'Compare', link: '/compare' },
       { text: 'Changelog', link: '/guide/changelog' },
       // A separate app (the dashboard over recorded data), not a VitePress
       // page: `target` stops the VitePress router from trying to render it.

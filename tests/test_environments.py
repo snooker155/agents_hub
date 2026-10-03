@@ -717,6 +717,17 @@ def test_routes_crud(client):
     assert client.get(f"/api/environments/{env['id']}").status_code == 404
 
 
+def test_routes_carry_size(client):
+    """The form sends ``size``; the route models used to drop it silently."""
+    r = client.post("/api/environments", json={"name": "Sized", "mode": "docker", "size": "small"})
+    assert r.status_code == 200, r.text
+    env_id = r.json()["id"]
+    assert r.json()["size"] == "small"
+    r = client.patch(f"/api/environments/{env_id}", json={"size": "large"})
+    assert r.status_code == 200 and r.json()["size"] == "large"
+    assert client.post("/api/environments", json={"name": "Bad", "size": "huge"}).status_code == 400
+
+
 def test_sandbox_providers_route(client, monkeypatch):
     from sandbox import docker as docker_mod
     monkeypatch.setattr(docker_mod, "docker_available", lambda: True)

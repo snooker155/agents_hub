@@ -585,6 +585,96 @@ def _upcoming_runs_at(job: ScheduledJob, count: int = 3) -> List[str]:
         return []
 
 
+def upcoming_runs(
+    cron: Optional[str] = None, tz: Optional[str] = None, count: int = 5,
+    start: Optional[datetime] = None, recurrence: Recurrence = Recurrence.cron,
+) -> List[str]:
+    """Pure preview of a schedule's next ``count`` fire times, as ISO strings,
+    with no job created. Backs the ``/api/plan/cron/preview`` route and the
+    frontend's CronHint.
+
+    Wraps the schedule in a throwaway, never-persisted ``ScheduledJob`` and
+    steps it through the real ``_next_run``, the same function the scheduler
+    calls when a job fires, so a hint shown while typing can never disagree
+    with what the scheduler later does. For ``cron`` the first time is the
+    next occurrence after ``start`` (default now). For hourly, daily and
+    weekly, ``start`` is the job's first ``run_at``: it is the first time when
+    still ahead, otherwise the schedule rolls forward past now exactly as a
+    firing job would.
+
+    Raises ``ValueError`` (message safe to show the caller) for an invalid
+    cron expression or timezone name, validated the same way ``create_job``
+    validates them, or for a schedule that has nothing to preview.
+    """
+    recurrence = Recurrence(recurrence)
+    if recurrence == Recurrence.none:
+        raise ValueError("A one-off job has no recurring fire times.")
+    tz_name = _validate_timezone(tz)
+    now = _now()
+    count = max(0, count)
+    if recurrence == Recurrence.cron:
+        cron_expr = _validate_cron(cron)
+        base = _ensure_aware(start) if start is not None else now
+        probe = ScheduledJob(
+            kind=JobKind.notification, title="_cron_preview", run_at=base,
+            recurrence=Recurrence.cron, cron=cron_expr, timezone=tz_name, catch_up=True,
+        )
+        current = base
+        out: List[str] = []
+        for _ in range(count):
+            current = _next_run(probe, current)
+            probe = probe.model_copy(update={"run_at": current})
+            out.append(current.isoformat())
+        return out
+
+    if start is None:
+        raise ValueError("A start time is required to preview this schedule.")
+    first = _ensure_aware(start)
+    probe = ScheduledJob(
+        kind=JobKind.notification, title="_cron_preview", run_at=first,
+        recurrence=recurrence, timezone=tz_name, catch_up=False,
+    )
+    if first <= now:
+        first = _next_run(probe, now)
+    current = first
+    out = [current.isoformat()] if count else []
+    probe = probe.model_copy(update={"catch_up": True})
+    for _ in range(count - 1):
+        probe = probe.model_copy(update={"run_at": current})
+        current = _next_run(probe, current)
+        out.append(current.isoformat())
+    return out
+
+
+_WEEKDAY_NAMES = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
+
+def describe_cron(cron: str) -> Optional[str]:
+    """A short, best effort English description of the cron shapes
+    ``proactive.profile.schedule_cron`` produces (``*/N * * * *``,
+    ``0 */H * * *``, ``0 0 * * *``) plus the handful of patterns users type
+    by hand (a fixed daily or weekly time). ``None`` for anything else; the
+    cron preview still returns the fire times, just no prose.
+    """
+    parts = cron.split()
+    if len(parts) != 5:
+        return None
+    minute, hour, dom, month, dow = parts
+    if dom != "*" or month != "*":
+        return None
+    if minute.startswith("*/") and minute[2:].isdigit() and hour == "*" and dow == "*":
+        return f"every {minute[2:]} minutes"
+    if hour.startswith("*/") and hour[2:].isdigit() and minute == "0" and dow == "*":
+        return f"every {hour[2:]} hours"
+    if minute.isdigit() and hour.isdigit():
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+        if dow == "*":
+            return f"daily at {time_str}"
+        if dow.isdigit():
+            return f"weekly on {_WEEKDAY_NAMES[int(dow) % 7]} at {time_str}"
+    return None
+
+
 def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
     data = job.model_dump()
     data["id"] = str(data["id"])

@@ -39,7 +39,8 @@ a = Analysis(
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    # Imported inside `ah apply` only; named so the analysis never misses them.
+    hiddenimports=["declarative", "yaml"],
     hookspath=[],
     excludes=SERVICE_EXCLUDES,
     noarchive=False,

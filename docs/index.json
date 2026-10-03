@@ -96,6 +96,35 @@
       ]
     },
     {
+      "id": "apply",
+      "title": "Declarative files: ah apply",
+      "summary": "Agents, environments, deployments and memory pools declared in files in a repository; `ah apply` prints a plan (create, update, unchanged, drift, delete) and makes the hub match, recording hub ids in an `ah.lock` so the next apply updates instead of duplicating. Drift detection, `--prune`, `--export` from existing records.",
+      "surface": "Terminal",
+      "related": [
+        "cli",
+        "agents",
+        "environments",
+        "deployments",
+        "scheduling",
+        "memory"
+      ],
+      "headings": [
+        "A repository",
+        "Agents",
+        "Environments",
+        "Memory pools",
+        "Deployments",
+        "References",
+        "The plan",
+        "What cannot change in place",
+        "The lock file",
+        "Export",
+        "Options",
+        "From code",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "channels",
       "title": "Chat channels",
       "surface": "Connectors",
@@ -488,13 +517,38 @@
         "flows",
         "imported-agents",
         "system-agents",
-        "registry"
+        "registry",
+        "kits"
       ],
       "headings": [
         "Publishing an agent, a flow or a skill",
         "Cloning one into your workspace",
         "When to reach for a published agent",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "kits",
+      "title": "Industry agent kits",
+      "surface": "Marketplace",
+      "summary": "A ready set of agents for one line of work, with the connectors it needs and an outcome rubric for each agent, installed into a workspace in one step. Support, finance operations and recruiting ship with the hub.",
+      "related": [
+        "apply",
+        "outcomes",
+        "marketplace",
+        "agents",
+        "connectors",
+        "channels",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "The Kits tab",
+        "Manifest",
+        "Agent default outcome",
+        "Installing",
+        "Two workspaces, one kit",
+        "The lock",
+        "Writing a kit"
       ]
     },
     {
@@ -1657,7 +1711,10 @@
       "related": [
         "tasks",
         "loops",
-        "evals"
+        "evals",
+        "agents",
+        "kits",
+        "apply"
       ],
       "headings": [
         "The rubric format",
@@ -1669,7 +1726,8 @@
         "Blocking",
         "API and audit",
         "In loops",
-        "Cost"
+        "Cost",
+        "An agent's default outcome"
       ]
     },
     {
@@ -1840,6 +1898,30 @@
         "Where it is used",
         "Citations",
         "API"
+      ]
+    },
+    {
+      "id": "sdk",
+      "title": "TypeScript SDK",
+      "summary": "A typed client for an Agents Hub from outside it: clients/agents-hub-ts, generated types from the hub's own OpenAPI schema plus a hand-written layer for agents, tasks, chat (with streaming) and the /v1 OpenAI compatible endpoints.",
+      "surface": "Integrations",
+      "related": [
+        "api-keys",
+        "hub-as-provider",
+        "widget",
+        "chat",
+        "cli"
+      ],
+      "headings": [
+        "What is generated, what is hand-written",
+        "agents and tasks",
+        "chat",
+        "v1",
+        "Errors",
+        "Streaming, underneath",
+        "The widget",
+        "Testing",
+        "Gotchas"
       ]
     },
     {

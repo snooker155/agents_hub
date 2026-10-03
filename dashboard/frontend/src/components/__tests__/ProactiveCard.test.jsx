@@ -11,6 +11,10 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../../api/proactive', async (importOriginal) => ({ ...(await importOriginal()), ...api }));
 vi.mock('../../api/watchers', () => ({ getWatchers: vi.fn(() => Promise.resolve({ data: [] })) }));
+// CronHint, under the schedule field, debounces a call to this; never
+// resolving keeps every existing assertion unchanged, since none of them
+// look at the hint.
+vi.mock('../../api', () => ({ previewCron: vi.fn(() => new Promise(() => {})) }));
 vi.mock('../workspace', () => ({ useWorkspace: () => ({ selectedWorkspace: 'default' }) }));
 vi.mock('../../i18n', () => ({
   useI18n: () => ({ t: (k, vars) => (vars ? `${k} ${JSON.stringify(vars)}` : k) }),

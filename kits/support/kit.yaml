@@ -1,0 +1,24 @@
+id: support
+name: Customer support
+description: >
+  Triages inbound support messages, resolves what it can from the team's own
+  knowledge, and escalates the rest with a clear handoff and a tracked
+  ticket. Add it to a workspace connected to a mailbox or a chat channel.
+industry: Customer support
+icon: headset
+version: 1.0.0
+connectors:
+  required: [mail]
+  optional: [slack, jira, linear]
+rubrics: >
+  Triage is graded on classifying every message correctly, never leaving one
+  unacknowledged, and escalating only what genuinely needs a person. Resolver
+  is graded on answering from the team's own knowledge before anything else,
+  writing a reply a customer could actually act on, and filing a real ticket
+  when it hands off instead of a one-line note.
+next_steps: >
+  Connect a mailbox on the Connectors page (Slack and a tracker are
+  optional, for escalations). Add a few answers to the Support knowledge
+  pool from past tickets so Resolver has something to work from. The weekly
+  backlog digest on Triage's Pulse tab starts paused; turn it on once mail
+  is connected.

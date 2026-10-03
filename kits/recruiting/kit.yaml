@@ -1,0 +1,24 @@
+id: recruiting
+name: Recruiting
+description: >
+  Finds and screens candidates for an open role, keeps a consistent record
+  of each one against the role's own criteria, and schedules interviews for
+  whoever clears the bar.
+industry: Recruiting
+icon: badge
+version: 1.0.0
+connectors:
+  required: [mail]
+  optional: [google, slack]
+rubrics: >
+  Sourcer is graded on finding candidates who actually match the role's
+  stated requirements and writing outreach specific to each person, not a
+  form letter. Screener is graded on judging every candidate against the
+  same written criteria, keeping a clear written reason for each decision,
+  and only scheduling an interview once a candidate has actually cleared
+  the bar.
+next_steps: >
+  Write the role's requirements and interview criteria into the Recruiting
+  notes memory pool before running Sourcer; both agents work from it.
+  Connect mail (and Google, for calendar invites) on the Connectors page.
+  The weekly pipeline digest on Screener's Pulse tab starts paused.

@@ -162,6 +162,43 @@ turns that section into the next release.
   person (`revoke_account_access`) or the operator (Account access card on
   the agent page) revokes it. Register `<hub>/consent/callback` with both
   providers.
+- `ah apply` (docs/apply.md): agents, environments, scheduled deployments
+  and memory pools declared in files in a repository (an agent is a markdown
+  file with frontmatter, the rest YAML) and made real in the hub, in process
+  or over `AGENTS_HUB_URL`. A lock file (`ah.lock`) records what each file
+  became, so the next apply updates instead of creating again; the plan shows
+  create, update, unchanged, drift and blocked rows, `--prune` deletes only
+  what the lock owns, `--force` overwrites drift, `--export` writes files
+  from what the hub already has. Example bundle in `examples/apply/`.
+- TypeScript SDK `@agents-hub/sdk` (`clients/agents-hub-ts`, docs/sdk.md):
+  types generated from the hub's OpenAPI schema by `scripts/gen_ts_sdk.py`,
+  a typed `request()` for every route, and `agents`, `tasks`, `chat` (with
+  streaming) and the `/v1` OpenAI compatible surface on top. No runtime
+  dependencies; a widget page and a Node example. A test fails when the
+  committed types fall behind the routes.
+- Industry kits (docs/kits.md): ready agent sets for customer support,
+  finance operations and recruiting, each with real prompts, the connectors
+  it needs, a memory pool, a paused scheduled job and an outcome rubric per
+  agent. Installed from the Kits tab on the Marketplace page, `ah kit install`
+  or `POST /api/kits/{id}/install`, as the caller and through the same engine
+  as `ah apply`; a second workspace gets its own copies.
+- An agent's default outcome (docs/outcomes.md): a rubric on the agent
+  (Behavior tab, `GET/PUT /api/agents/{id}/default-outcome`, `outcome:` in an
+  apply file) that a task assigned to it inherits when the task has none.
+- Next fire times under every schedule field (docs/scheduling.md): the
+  Deployments and Plan job forms and the heartbeat card show the next runs,
+  or the parse error, while you type, from `GET /api/plan/cron/preview`,
+  which runs the scheduler's own next run logic for cron, hourly, daily and
+  weekly schedules.
+- `PUT /api/agents/{id}/identity` renames an agent or changes its domain or
+  capacity; `ah apply` uses it, so those fields update in place.
+- Comparison page on the site (`site/compare.md`): the hub against Anthropic
+  Managed Agents, the OpenAI Agents API and AWS AgentCore, row by row.
+
+### Fixed
+
+- An environment's sandbox `size` picked on the Environments page was
+  dropped by the create and update routes and never saved.
 
 ### Upgrade notes
 

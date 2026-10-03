@@ -1167,6 +1167,17 @@ export const runPlanJobNow = (id) => api.post(`/plan/jobs/${id}/run-now`);
 // cross-job view respectively).
 export const getJobFires = (id, params) => api.get(`/plan/jobs/${id}/fires`, { params });
 export const getFires = (params) => api.get('/plan/fires', { params });
+// Live preview of a cron field: the next few fire times, computed with the
+// scheduler's own next-run logic (see plans/service.py upcoming_runs), so the
+// hint shown while typing never disagrees with what the job will actually do.
+export const previewCron = (cron, timezone, count = 3, start, recurrence = 'cron') =>
+  api.get('/plan/cron/preview', { params: {
+    cron,
+    recurrence,
+    ...(timezone ? { timezone } : {}),
+    count,
+    ...(start ? { start } : {}),
+  } });
 
 // Notifications API — user inbox fed by the plan scheduler
 export const getNotifications = (params) => api.get('/plan/notifications', { params });

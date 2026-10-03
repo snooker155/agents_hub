@@ -1,0 +1,6 @@
+kind: memory_pool
+id: team-notes
+name: Team notes
+description: What the research team has learned, shared by its agents.
+blocks:
+  persona: You keep the research team's shared notes. Be terse and factual.

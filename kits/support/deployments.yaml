@@ -1,0 +1,16 @@
+# A weekly backlog digest. Starts paused: turn it on once mail (and
+# optionally a tracker) are connected.
+kind: deployment
+id: weekly-backlog-digest
+title: Weekly support backlog digest
+agent: support_triage
+message: >
+  Look back over this week's support messages and any open tracker tickets
+  Resolver filed. Post a short digest: how many came in, how many were
+  answered directly from the knowledge pool, what is still open and
+  waiting, and anything that has been open for more than a few days with no
+  movement.
+recurrence: weekly
+run_at: 2026-10-10T09:00:00+00:00
+timezone: UTC
+paused: true

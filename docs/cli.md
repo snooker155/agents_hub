@@ -212,6 +212,23 @@ for a list of objects. This is what the generated commands themselves are
 built on, so anything they can reach, this can reach too, with no CLI code
 written for it at all.
 
+### `ah apply`: entities from files in a repository
+
+Agents, environments, scheduled deployments and memory pools can live as
+files next to your code and be made real in the hub with one command:
+
+```bash
+ah apply hub/ --workspace team --dry-run   # print the plan only
+ah apply hub/ --workspace team             # create or update, write ah.lock
+ah apply hub/ --prune --yes                # also delete what the lock owns but no file declares
+ah apply --export researcher --out hub/    # start from what the hub already has
+```
+
+A lock file (`ah.lock`) records which hub record each declared resource
+became, so the next apply updates instead of creating again. It works the
+same in process and over `AGENTS_HUB_URL`. The file format, drift and prune
+rules are in [apply](apply.md).
+
 ## Running both servers
 
 ```bash

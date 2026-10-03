@@ -1435,6 +1435,8 @@ from cli.commands.api import api_command  # noqa: E402
 from cli.commands.costs import costs_app  # noqa: E402
 from cli.commands.files import files_app  # noqa: E402
 from cli.commands.support import support_bundle  # noqa: E402
+from cli.commands.apply import apply_command  # noqa: E402
+from cli.commands.kit import kit_app  # noqa: E402
 from cli.onboard import setup_command  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
@@ -1456,6 +1458,8 @@ app.command("setup")(setup_command)
 # OpenClaw's name for the same first-run flow, for hands that type it.
 app.command("onboard", hidden=True)(setup_command)
 app.command("api")(api_command)
+app.command("apply")(apply_command)
+app.add_typer(kit_app, name="kit")
 
 # Every name `ah` already answers to without touching the OpenAPI schema: the
 # groups above, the ones defined earlier in this file, and the bare commands.
@@ -1465,7 +1469,7 @@ _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
     "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "files", "costs",
     "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
-    "setup", "onboard", "support-bundle", "version", "doctor",
+    "setup", "onboard", "support-bundle", "version", "doctor", "apply", "kit",
 }
 
 

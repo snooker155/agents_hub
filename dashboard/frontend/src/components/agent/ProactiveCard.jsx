@@ -7,6 +7,7 @@ import {
 import { useI18n } from '../../i18n';
 import { getWatchers } from '../../api/watchers';
 import { useWorkspace } from '../workspace';
+import CronHint from '../CronHint';
 
 const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
 const smallBtn = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed';
@@ -25,6 +26,22 @@ const fmt = (iso) => {
 };
 
 const numOrNull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+
+// The cron expression an interval amounts to, mirroring
+// proactive/profile.py schedule_cron exactly (same cases, same divisor
+// checks), so CronHint previews the schedule the backend will actually
+// build from interval_minutes rather than a hand-rolled approximation of it.
+// INTERVAL_MINUTES only offers values that divide an hour or a day, so the
+// null branches are defensive, not expected to trigger from this form.
+const intervalToCron = (minutes) => {
+  const m = Number(minutes);
+  if (!m || m <= 0) return null;
+  if (m < 60) return 60 % m === 0 ? `*/${m} * * * *` : null;
+  if (m % 60) return null;
+  const hours = m / 60;
+  if (hours >= 24) return hours === 24 ? '0 0 * * *' : null;
+  return 24 % hours === 0 ? `0 */${hours} * * *` : null;
+};
 
 // A trigger as the form edits it: its kind and the one filter the kind
 // understands, as text (a list filter is comma separated).
@@ -279,6 +296,11 @@ export default function ProactiveCard({ agentId, onSaved }) {
                 <input value={form.cron} onChange={(e) => set('cron', e.target.value)} placeholder="*/30 8-20 * * 1-5"
                   aria-label={t('proactive.schedule.cron')} className={`${inputCls} font-mono`} />
               )}
+              <CronHint
+                recurrence="cron"
+                cron={form.mode === 'cron' ? form.cron : intervalToCron(form.interval_minutes)}
+                timezone={form.timezone}
+              />
             </div>
             <label className="flex flex-col gap-1 text-sm text-gray-700">
               <span className="font-medium">{t('proactive.timezone')}</span>

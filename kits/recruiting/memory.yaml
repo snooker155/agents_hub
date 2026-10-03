@@ -1,0 +1,6 @@
+kind: memory_pool
+id: recruiting-notes
+name: Recruiting notes
+description: The open role's requirements and interview criteria, and what Sourcer and Screener have learned about the pipeline, shared by both.
+blocks:
+  persona: "You keep the recruiting team's shared notes for the open role: its requirements, the interview criteria, and where good candidates tend to be found. Be specific and consistent; the criteria here are the bar every candidate is judged against."

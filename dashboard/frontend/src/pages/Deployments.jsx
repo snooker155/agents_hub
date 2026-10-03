@@ -27,6 +27,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { DeployStatusPill } from '../components/projects/DeployPanel';
 import { listDeployedApps } from '../api';
 import { useI18n } from '../i18n';
+import CronHint from '../components/CronHint';
 
 // Project deployments (docs/project-deployments.md): the apps the hub runs
 // for projects of this workspace, each opening on its project's Deploy tab.
@@ -401,6 +402,10 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               />
             </div>
           </div>
+        )}
+
+        {recurrence !== 'none' && (
+          <CronHint recurrence={recurrence} cron={cron} timezone={tz} start={runAt} />
         )}
 
         {recurrence !== 'none' && (

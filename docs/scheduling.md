@@ -119,5 +119,11 @@ without resuming first. Full detail: [deployments](deployments.md).
 - Notification delivery counts as an outbound channel for capability purposes.
 - A bad cron expression or an unknown timezone is rejected at create or update
   time with a clear error, not silently accepted.
+- While you type a schedule, the Deployments and Plan job forms and the
+  proactive heartbeat card show the next few fire times under the field.
+  They come from `GET /api/plan/cron/preview` (`cron`, `timezone`, `count`,
+  and for hourly, daily or weekly `recurrence` with `start`), which runs the
+  scheduler's own next run logic, so the hint and the job never disagree. A
+  saved recurring job carries the same list as `upcoming_runs_at`.
 
 Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md), [proactive](proactive.md).

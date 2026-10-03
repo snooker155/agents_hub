@@ -1,0 +1,19 @@
+# Two scheduled jobs in one file: documents are separated by ---.
+kind: deployment
+id: weekday-digest
+title: Weekday research digest
+agent: researcher
+message: Summarize the most important news about open source AI agents from the last day.
+cron: "0 9 * * 1-5"
+timezone: Europe/Berlin
+environment: research-sandbox
+budget_usd: 1.5
+---
+kind: deployment
+id: weekly-report
+title: Weekly report
+agent: writer
+message: Write this week's report from the team notes and save it as reports/weekly.md.
+recurrence: weekly
+run_at: 2026-10-09T15:00:00+02:00
+paused: true

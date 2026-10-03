@@ -12,7 +12,7 @@ import dataclasses
 from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agents import registry
 from managers import run_manager
@@ -599,6 +599,39 @@ async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
     new_spec = dataclasses.replace(spec, description=data.description.strip())
     registry.add_agent(new_spec)
     return {"description": new_spec.description}
+
+
+class AgentIdentityUpdate(BaseModel):
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    capacity: Optional[int] = Field(None, ge=1)
+
+
+@router.put("/{agent_id}/identity")
+async def update_agent_identity(agent_id: str, data: AgentIdentityUpdate):
+    """Rename an agent, or change its domain or capacity.
+
+    The id stays: it is what runs, tasks, locks and links address, so this
+    changes only the label and the two plain settings set at creation.
+    ``registry.add_agent`` snapshots the previous state into the version
+    history, as for every other structured edit.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    changes: Dict[str, Any] = {}
+    if data.name is not None:
+        if not data.name.strip():
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        changes["name"] = data.name.strip()
+    if data.domain is not None:
+        changes["domain"] = data.domain.strip() or "general"
+    if data.capacity is not None:
+        changes["capacity"] = data.capacity
+    if changes:
+        registry.add_agent(dataclasses.replace(spec, **changes))
+        spec = registry.get_agent(agent_id) or spec
+    return {"name": spec.name, "domain": spec.domain, "capacity": spec.capacity}
 
 
 @router.get("/{agent_id}/workspace-capacities")

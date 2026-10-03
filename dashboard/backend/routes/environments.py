@@ -50,6 +50,9 @@ class EnvironmentCreate(BaseModel):
     packages: List[str] = []
     network: Optional[NetworkIn] = None
     limits: Optional[LimitsIn] = None
+    # Named sandbox preset (environments/models.py SIZE_PRESETS); validated by
+    # the Environment model, so an unknown name is a 400 from the service.
+    size: Optional[str] = None
     env: Dict[str, str] = {}
     is_default: bool = False
     sandbox_provider: str = "inherit"
@@ -64,6 +67,7 @@ class EnvironmentUpdate(BaseModel):
     packages: Optional[List[str]] = None
     network: Optional[NetworkIn] = None
     limits: Optional[LimitsIn] = None
+    size: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     is_default: Optional[bool] = None
     sandbox_provider: Optional[str] = None

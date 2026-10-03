@@ -1,0 +1,15 @@
+# A weekly metrics report. Starts paused: turn it on once a database (or
+# spreadsheet) is connected.
+kind: deployment
+id: weekly-metrics-report
+title: Weekly finance metrics report
+agent: finance_analyst
+message: >
+  Build this week's metrics report from the connected database: the figures
+  the team tracks every week, each with the query behind it, and a note on
+  anything that moved sharply or looks like it needs a second look. Hand it
+  to Reviewer before anything is posted.
+recurrence: weekly
+run_at: 2026-10-10T08:00:00+00:00
+timezone: UTC
+paused: true
