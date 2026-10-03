@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-03
+
 ### Added
 
 - Mail provider presets in the IMAP watcher form and the mail channel

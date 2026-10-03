@@ -26,7 +26,7 @@
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
-<p align="center">Current release: <b><!-- version -->0.8.0<!-- /version --></b> (<a href="./CHANGELOG.md">what changed</a>)</p>
+<p align="center">Current release: <b><!-- version -->0.9.0<!-- /version --></b> (<a href="./CHANGELOG.md">what changed</a>)</p>
 
 ---
 
