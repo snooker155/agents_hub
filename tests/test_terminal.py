@@ -288,11 +288,16 @@ def test_a_second_socket_takes_the_session_over(procs, client):
 
 
 def test_closing_from_the_panel_ends_the_session_at_once(procs, client):
+    from starlette.websockets import WebSocketDisconnect
     rid = _container_run()
     with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={_ticket(client, rid)}") as ws:
         session_id = ws.receive_json()["session_id"]
         ws.send_json({"type": "close"})
-    assert _wait(lambda: term.manager().get(session_id) is None)
+        # Wait for the server's close frame: leaving the block cancels the
+        # handler, which could otherwise land before it reads the message.
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+    assert term.manager().get(session_id) is None
     assert procs[0].closed
     assert _audit("terminal.close")[0]["details"]["reason"] == "closed by the user"
     response = client.post(f"/api/terminal/run/{rid}/ticket", json={"session_id": session_id})
