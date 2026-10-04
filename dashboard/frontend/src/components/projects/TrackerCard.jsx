@@ -11,7 +11,7 @@ const PROVIDERS = ['none', 'jira', 'linear'];
 // The project to tracker link: which Jira project or Linear team this project
 // mirrors, and the button that imports its issues as tasks. Sits on the
 // project's Repository tab next to the git issue sync, which it generalises.
-export default function TrackerCard({ projectId }) {
+export default function TrackerCard({ projectId, workspace }) {
   const { t } = useI18n();
   const [tracker, setTracker] = useState({ provider: 'none', remote_id: '' });
   const [choices, setChoices] = useState([]);
@@ -32,11 +32,11 @@ export default function TrackerCard({ projectId }) {
   useEffect(() => {
     if (tracker.provider === 'none') { setChoices([]); return; }
     let alive = true;
-    listTrackerProjects(tracker.provider)
+    listTrackerProjects(tracker.provider, workspace)
       .then((r) => { if (alive) setChoices(r.data || []); })
       .catch(() => { if (alive) setChoices([]); });
     return () => { alive = false; };
-  }, [tracker.provider]);
+  }, [tracker.provider, workspace]);
 
   const save = async () => {
     setSaving(true);

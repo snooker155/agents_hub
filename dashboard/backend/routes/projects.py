@@ -1488,7 +1488,7 @@ async def import_from_repo(payload: ProjectImportFromRepo):
 
     try:
         repo_info = await asyncio.to_thread(
-            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+            git_service.resolve_repo_info, payload.provider, payload.remote_id, payload.workspace)
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -1507,7 +1507,7 @@ async def import_from_repo(payload: ProjectImportFromRepo):
     try:
         await asyncio.to_thread(
             git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
-            branch=branch, provider_name=payload.provider,
+            branch=branch, provider_name=payload.provider, workspace=payload.workspace,
         )
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
@@ -1551,7 +1551,7 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
 
     try:
         repo_info = await asyncio.to_thread(
-            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+            git_service.resolve_repo_info, payload.provider, payload.remote_id, project.workspace)
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -1573,7 +1573,7 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
         try:
             await asyncio.to_thread(
                 git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
-                branch=branch, provider_name=payload.provider,
+                branch=branch, provider_name=payload.provider, workspace=project.workspace,
             )
             cloned = True
         except ServiceError as e:

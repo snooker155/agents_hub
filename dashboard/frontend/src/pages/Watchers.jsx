@@ -163,6 +163,11 @@ export default function Watchers() {
   const { t } = useI18n();
   const { workspaceFilter, selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || workspaceFilter || '';
+  // The kinds' own fields (whether Google is ready for a watch) read like
+  // any other connector: this workspace's own if it defines one, else the
+  // default's (connectors/channels/store.py) — the current workspace, not
+  // the "show every workspace" list filter above.
+  const currentWorkspace = selectedWorkspace || 'default';
   const [rows, setRows] = useState([]);
   const [kinds, setKinds] = useState([]);
   const [interval, setInterval_] = useState({ min: 15, max: 21600, default: 120 });
@@ -176,7 +181,9 @@ export default function Watchers() {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ data }, { data: meta }] = await Promise.all([getWatchers(workspaceFilter), getWatcherKinds()]);
+      const [{ data }, { data: meta }] = await Promise.all([
+        getWatchers(workspaceFilter), getWatcherKinds(currentWorkspace),
+      ]);
       setRows(Array.isArray(data) ? data : []);
       setKinds(meta?.kinds || []);
       if (meta?.interval) setInterval_(meta.interval);
@@ -186,7 +193,7 @@ export default function Watchers() {
     } finally {
       setLoading(false);
     }
-  }, [workspaceFilter, t]);
+  }, [workspaceFilter, currentWorkspace, t]);
 
   useEffect(() => { load(); }, [load]);
   useLiveRefetch(load, { type: 'watchers.changed' });

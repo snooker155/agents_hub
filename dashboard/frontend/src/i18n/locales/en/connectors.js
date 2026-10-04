@@ -1,6 +1,18 @@
 export default {
   title: 'Connectors',
   description: 'Services this hub reaches out to. The other direction from Connections, where something of yours runs elsewhere and reports in.',
+  workspaceBanner: {
+    title: 'Configuring connectors for workspace {{workspace}}.',
+    rule: "Connectors defined in the default workspace work everywhere; connectors defined here work only here.",
+  },
+  source: {
+    here: 'Defined in this workspace',
+    default: 'From the default workspace',
+    defineForWorkspace: 'Define for this workspace',
+    removeUseDefault: "Remove, use the default's",
+    confirmRemove: "Remove this workspace's own definition? It will use the default's instead.",
+    alsoDefinedIn: 'Also defined in: {{list}}',
+  },
   tabs: {
     telegram: 'Telegram',
     git: 'GitHub & GitLab',
@@ -239,8 +251,10 @@ export default {
     gmailOn: "Gmail access granted: mail watchers and the mail channel can sign in with this account.",
     gmailOff: "No Gmail access yet. Click Connect with Gmail to let mail watchers and the mail channel sign in without an app password.",
     oauthHint: "Save an OAuth client id and secret first, with the redirect URI <your hub>/api/google/oauth/callback registered in Google Cloud.",
+    defineFirst: "Define the Google app for this workspace first.",
   },
   databases: {
+    fromDefault: 'From the default workspace',
     title: "Database connections",
     intro: "Read-only connections agents may query with db_query: one SELECT per call, on a read-only session, row capped. The connection string is stored but never shown again.",
     none: "No connections in this workspace.",

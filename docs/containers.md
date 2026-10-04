@@ -20,7 +20,7 @@ where a resident instance is something an operator is actively watching:
 | | Instance container | Run container |
 |---|---|---|
 | Mounts | state dir, tasks dir, workspace (all read-write) | same, plus the registry snapshot (`run_snapshots/<run_id>/`: `agents.json`, `custom_providers.json`, `models.json`) mounted `:ro` inside the state dir and named in `AGENTS_HUB_SNAPSHOT_DIR` (and, with `AGENT_RUN_STATE_TRANSPORT=http`, the whole state dir `:ro` with `run_logs/` re-mounted `:rw`, see below) |
-| Env | provider-key allowlist (`OPENAI_*`, `ANTHROPIC_*`, …) | full env minus a host-only denylist (`container_env`) — a run needs its session id, workspace name and relay token too |
+| Env | provider-key allowlist (`OPENAI_*`, `ANTHROPIC_*`, …) | full env minus a host-only denylist (`container_env`) — a run needs its session id, workspace name and run token too (the hub-wide tokens are never in it) |
 | Root filesystem | writable | `--read-only`, with `--tmpfs /tmp` for scratch space and `$HOME` |
 | Resources | none | `--memory` (`AGENT_DOCKER_MEMORY`, default `2g`), `--cpus` (`AGENT_DOCKER_CPUS`, default `2`), `--pids-limit 512` |
 | Capabilities | default | `--cap-drop ALL`, `--security-opt no-new-privileges` |

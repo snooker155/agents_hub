@@ -255,6 +255,8 @@ export default {
   hooks: 'Hooks',
   hooksHint: 'Ein Befehl oder HTTP-Aufruf rund um jeden passenden Werkzeugaufruf oder Lauf, als JSON mit Ereignisschlüsseln: PreToolUse und PostToolUse (auch before_tool_call und after_tool_call), before_run und after_run. Die vollständige Referenz steht in',
   hooksDocsLink: 'Werkzeuge in der Doku',
+  hooksFileIgnored: 'Eine .hooks.json im Ordner dieses Arbeitsbereichs wird nicht ausgeführt: Agenten schreiben in diesen Ordner, ein Hook von dort könnte also auf Geheiß eines Agenten einen Befehl auf dem Hub starten. Lesen Sie sie und importieren Sie sie, wenn Sie sie behalten möchten.',
+  importHooksFile: 'Datei als Hooks dieses Arbeitsbereichs importieren',
   hooksInvalidJson: 'Das ist kein gültiges JSON.',
   hooksMustBeObject: 'Hooks müssen ein JSON-Objekt mit Ereignisschlüsseln sein.',
   saveHooks: 'Hooks speichern',

@@ -117,7 +117,10 @@ def read_workspace_file(file_id: str, offset: int = 0, max_chars: int = DEFAULT_
         return json_err("No workspace is active for this run.", code="no_workspace")
     from files import service
     record = service.get_file(str(file_id or "").strip())
-    if record is None or record["workspace"] != workspace:
+    # A file of another workspace is answered like a missing one; the
+    # service's own agents read any (common/workspace_scope.py).
+    from common.workspace_scope import check_record
+    if record is None or check_record(record["workspace"], what="file", workspace=workspace):
         return json_err(f"No file '{file_id}' in workspace '{workspace}'.", code="not_found")
     try:
         text = service.extract_text(record["file_id"])

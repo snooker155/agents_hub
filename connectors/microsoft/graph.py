@@ -4,8 +4,10 @@ A small client for Microsoft Graph: token acquisition plus GET/POST.
 Used by ``tools/microsoft_graph.py`` (the Outlook calendar tools) and this
 package's own ``test`` callback (``connectors/microsoft/__init__.py``).
 Token acquisition goes through ``msal``'s ``ConfidentialClientApplication``
-when it is importable, with the app object cached per (tenant, client_id) so
-repeat calls do not re-authenticate; a plain ``httpx`` client-credentials
+when it is importable, with the app object cached per (tenant, client_id,
+client secret digest) so repeat calls do not re-authenticate and two
+workspaces that registered the same app with different secrets never share
+one; a plain ``httpx`` client-credentials
 POST is the fallback, so the connector still works in an environment without
 msal installed. ``acquire_token`` is a free module function rather than a
 method, and ``GraphClient._request`` is the one place that leaves the
@@ -14,6 +16,7 @@ network (see tests/test_microsoft_graph.py).
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Callable, Optional
 
@@ -26,7 +29,7 @@ _SCOPES = ["https://graph.microsoft.com/.default"]
 _TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 _AUTHORIZE_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
 
-_app_cache: dict[tuple[str, str], Any] = {}
+_app_cache: dict[tuple[str, str, str], Any] = {}
 
 
 class GraphError(Exception):
@@ -58,7 +61,7 @@ def _status_message(status_code: int, body: Any) -> str:
 def _acquire_token_msal(tenant_id: str, client_id: str, client_secret: str) -> str:
     import msal
 
-    key = (tenant_id, client_id)
+    key = (tenant_id, client_id, hashlib.sha256(client_secret.encode("utf-8")).hexdigest())
     app = _app_cache.get(key)
     if app is None:
         app = msal.ConfidentialClientApplication(
@@ -142,11 +145,15 @@ class GraphClient:
 # connector picks the authority (``common``, ``organizations``, ``consumers``
 # or a tenant id); empty means the app's own tenant, so only its users can
 # sign in, which is the safe default for a single-tenant registration.
+#
+# The app registration is the one of the workspace the end user's turn runs
+# in (its own Microsoft connector, else the default's): every function below
+# takes that ``workspace``, the running code's when None.
 
-def _app_config() -> dict[str, str]:
-    from . import CREDENTIALS
+def _app_config(workspace: Optional[str] = None) -> dict[str, str]:
+    from . import store_for
 
-    store = CREDENTIALS.store
+    store = store_for(workspace)
     return {
         "tenant_id": str(store.get("tenant_id") or "").strip(),
         "client_id": str(store.get("client_id") or "").strip(),
@@ -159,17 +166,18 @@ def _authority(cfg: dict[str, str]) -> str:
     return cfg["consent_tenant"] or cfg["tenant_id"] or "common"
 
 
-def consent_ready() -> bool:
+def consent_ready(workspace: Optional[str] = None) -> bool:
     """Whether an app registration exists to ask end users with."""
-    cfg = _app_config()
+    cfg = _app_config(workspace)
     return bool(cfg["client_id"] and cfg["client_secret"])
 
 
 def build_consent_url(redirect_uri: str, state: str, scopes: list[str], *,
-                      code_challenge: Optional[str] = None) -> str:
+                      code_challenge: Optional[str] = None,
+                      workspace: Optional[str] = None) -> str:
     from urllib.parse import urlencode
 
-    cfg = _app_config()
+    cfg = _app_config(workspace)
     if not cfg["client_id"]:
         raise GraphError("No Microsoft app registration configured on the Connectors page")
     params = {
@@ -187,8 +195,8 @@ def build_consent_url(redirect_uri: str, state: str, scopes: list[str], *,
     return f"{_AUTHORIZE_URL.format(tenant=_authority(cfg))}?{urlencode(params)}"
 
 
-def _token_request(data: dict[str, str]) -> dict[str, Any]:
-    cfg = _app_config()
+def _token_request(data: dict[str, str], workspace: Optional[str] = None) -> dict[str, Any]:
+    cfg = _app_config(workspace)
     if not (cfg["client_id"] and cfg["client_secret"]):
         raise GraphError("No Microsoft app registration configured on the Connectors page")
     body = {"client_id": cfg["client_id"], "client_secret": cfg["client_secret"], **data}
@@ -207,21 +215,23 @@ def _token_request(data: dict[str, str]) -> dict[str, Any]:
 
 
 def exchange_delegated_code(code: str, redirect_uri: str, scopes: list[str], *,
-                            code_verifier: Optional[str] = None) -> dict[str, Any]:
+                            code_verifier: Optional[str] = None,
+                            workspace: Optional[str] = None) -> dict[str, Any]:
     """The authorization code for tokens (``access_token``, ``refresh_token``,
     ``expires_in``, ``scope``)."""
     data = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "scope": " ".join(scopes)}
     if code_verifier:
         data["code_verifier"] = code_verifier
-    return _token_request(data)
+    return _token_request(data, workspace)
 
 
-def refresh_delegated(refresh_token: str, scopes: list[str]) -> dict[str, Any]:
+def refresh_delegated(refresh_token: str, scopes: list[str], *,
+                      workspace: Optional[str] = None) -> dict[str, Any]:
     """A fresh access token for an end user. The platform may rotate the
     refresh token: the caller stores ``refresh_token`` when one comes back."""
     return _token_request({"grant_type": "refresh_token", "refresh_token": refresh_token,
-                           "scope": " ".join(scopes)})
+                           "scope": " ".join(scopes)}, workspace)
 
 
 def fetch_me(access_token: str) -> dict[str, Any]:

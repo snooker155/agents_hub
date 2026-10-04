@@ -968,7 +968,7 @@ export default function ProjectDetails() {
             )}
           </div>
 
-          <TrackerCard projectId={project.id} />
+          <TrackerCard projectId={project.id} workspace={project.workspace} />
 
           {gitLoading ? (
             <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />

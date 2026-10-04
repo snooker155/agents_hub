@@ -29,6 +29,7 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from common.workspace_scope import check_record
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
 
@@ -117,6 +118,21 @@ def _simplify(flow: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ── workspace scope ───────────────────────────────────────────────────────────
+
+def _hidden(flow: Optional[Dict[str, Any]], *, write: bool = False) -> bool:
+    """Whether ``flow`` is out of this run's reach: a flow of another
+    workspace is answered like a missing one (``check_record``). A flow with
+    no workspace is shared by every workspace for reading (``list_flows_tool``
+    lists it everywhere) and is the default workspace's to change."""
+    if flow is None:
+        return False
+    flow_ws = flow.get("workspace")
+    if not flow_ws and not write:
+        return False
+    return check_record(flow_ws, what="flow") is not None
+
+
 # ── validation ────────────────────────────────────────────────────────────────
 
 def _validate_combined(flow: Dict[str, Any], workspace: Optional[str]) -> tuple[List[str], List[str]]:
@@ -147,11 +163,22 @@ def _validate_combined(flow: Dict[str, Any], workspace: Optional[str]) -> tuple[
             getattr(s, "id", None)
             for s in filter_agents_for_workspace(reg_list_agents(), ws)
         }
-        all_ids = {getattr(s, "id", None) for s in reg_list_agents()}
+        all_specs = reg_list_agents()
+        all_ids = {getattr(s, "id", None) for s in all_specs}
+        # Another workspace's own agent (owner_workspace elsewhere, not
+        # shared) does not exist from here: a flow that ran it would run that
+        # workspace's agent in this one.
+        foreign = {
+            getattr(s, "id", None) for s in all_specs
+            if getattr(s, "owner_workspace", None) and not getattr(s, "shared", False)
+            and check_record(s.owner_workspace, what="agent", workspace=ws)
+        }
         for n in flow.get("nodes", []):
             data = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
             aid = data.get("agent_id") or n.get("agent_id")
-            if aid and aid in all_ids and aid not in allowed_ids:
+            if aid and aid in foreign:
+                errors.append(f"agent '{aid}' is not registered")
+            elif aid and aid in all_ids and aid not in allowed_ids:
                 warnings.append(
                     f"agent '{aid}' is not enabled in workspace '{ws}' "
                     "(add it to the workspace's allowed agents before running)"
@@ -293,6 +320,14 @@ def _create_flow(
     return _json_ok(payload)
 
 
+def _raw_flow(flow_id: str):
+    """The stored record of a flow, parsed or not: a broken flow still names
+    its workspace, which decides whether this run may even learn it exists."""
+    from flow import store as flow_store
+    raw = getattr(flow_store, "_FLOWS", {}).get(flow_id)
+    return raw if isinstance(raw, dict) else None
+
+
 def _get_flow(flow_id: str) -> str:
     """Get a flow's full definition: name, description, nodes, and edges."""
     from flow import store as flow_store
@@ -300,8 +335,10 @@ def _get_flow(flow_id: str) -> str:
     try:
         flow = flow_store.get_flow(flow_id)
     except flow_store.FlowParseError as e:
+        if _hidden(_raw_flow(flow_id)):
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
         return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-    if flow is None:
+    if flow is None or _hidden(flow):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
     record_entity("flow", flow_id, "viewed", flow.get("name") or "")
     return _json_ok({"flow": _simplify(flow), "entry_point": flow.get("entry_point")})
@@ -327,8 +364,10 @@ def _modify_flow(
     try:
         flow = flow_store.get_flow(flow_id)
     except flow_store.FlowParseError as e:
+        if _hidden(_raw_flow(flow_id), write=True):
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
         return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-    if flow is None:
+    if flow is None or _hidden(flow, write=True):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
     changed: List[str] = []
@@ -380,6 +419,10 @@ def _delete_flow(flow_id: str) -> str:
         flow = flow_store.get_flow(flow_id)
     except flow_store.FlowParseError:
         flow = None  # broken flows can still be deleted
+    # A broken flow still names its workspace in the stored record.
+    raw = flow if flow is not None else _raw_flow(flow_id)
+    if _hidden(raw, write=True):
+        return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
     if flow is not None and flow.get("running"):
         return _json_err(
             f"Flow '{flow_id}' has a running instance; stop it before deleting.",
@@ -411,7 +454,7 @@ def _validate_flow(
             flow = flow_store.get_flow(flow_id)
         except flow_store.FlowParseError as e:
             return _json_ok({"valid": False, "errors": [str(e)], "warnings": []})
-        if flow is None:
+        if flow is None or _hidden(flow):
             return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
         ws = normalize_workspace_name(flow.get("workspace")) or ws
     elif nodes is not None:

@@ -29,14 +29,27 @@ here) agree on what "configured" means.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from connectors.channels.registry import ConfigField
-from connectors.channels.store import ChannelStore
+from connectors.channels.store import ChannelStore, in_workspace
 from connectors.credentials import CredentialSpec
 
-#: One document, three secrets: see the module docstring for the two modes.
+#: One document per workspace that defines the connector, three secrets each:
+#: see the module docstring for the two modes. Follows the running code's
+#: workspace (connectors/channels/store.py); :func:`store_for` binds one.
 STORE = ChannelStore("google", secret_fields=("service_account_json", "client_secret", "refresh_token"))
+
+
+def store_for(workspace: Optional[str] = None) -> ChannelStore:
+    """The Google connector in effect for ``workspace``, bound to that one
+    document: the workspace's own when it defines one, else the default
+    workspace's. ``None`` means the running code's workspace (a run's
+    context var). Binding once keeps every field of one call (client id,
+    secret, refresh token) from the same document."""
+    if workspace is None:
+        return STORE.for_workspace(STORE.effective_workspace())
+    return STORE.for_workspace(in_workspace(workspace, STORE.effective_workspace))
 
 FIELDS = [
     ConfigField(
@@ -60,10 +73,10 @@ FIELDS = [
 ]
 
 
-def mode() -> str:
+def mode(workspace: Optional[str] = None) -> str:
     """"service_account", "oauth" or "none" — a service account wins when both
     happen to be configured, since it needs no person to stay connected."""
-    cfg = STORE.get_config()
+    cfg = store_for(workspace).get_config()
     if str(cfg.get("service_account_json") or "").strip():
         return "service_account"
     if str(cfg.get("refresh_token") or "").strip():
@@ -71,7 +84,7 @@ def mode() -> str:
     return "none"
 
 
-def is_configured() -> bool:
+def is_configured(workspace: Optional[str] = None) -> bool:
     """Either a service account or a connected OAuth client is present.
 
     The module-level function ``tools/google_workspace.py`` calls directly,
@@ -80,7 +93,7 @@ def is_configured() -> bool:
     docstring for why the default all-of-``secret_fields`` check is wrong
     here).
     """
-    return mode() != "none"
+    return mode(workspace) != "none"
 
 
 def _test() -> dict[str, Any]:
@@ -105,7 +118,8 @@ def _test() -> dict[str, Any]:
 def _extra() -> dict[str, Any]:
     from .auth import has_gmail
 
-    cfg = STORE.get_config()
+    store = store_for()
+    cfg = store.get_config()
     client_id = str(cfg.get("client_id") or "").strip()
     client_secret = str(cfg.get("client_secret") or "").strip()
     return {
@@ -129,4 +143,4 @@ CREDENTIALS = CredentialSpec(
 # instance's is_configured is replaced with the OR version above.
 CREDENTIALS.is_configured = is_configured
 
-__all__ = ["CREDENTIALS", "STORE", "FIELDS", "mode", "is_configured"]
+__all__ = ["CREDENTIALS", "STORE", "FIELDS", "mode", "is_configured", "store_for"]

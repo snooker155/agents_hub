@@ -18,7 +18,8 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field, model_validator
 
 from common.entity_sink import record_entity
-from common.workspace_context import resolve_active_workspace
+from common.workspace_context import filter_agents_for_workspace, resolve_active_workspace
+from common.workspace_scope import check_record, current_agent, is_service_wide
 from plans.models import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
 from plans.service import job_to_dict
@@ -32,6 +33,29 @@ def _record_job(job, action: str) -> None:
     if job is None:
         return
     record_entity("job", str(job.id), action, (job.title or "").strip())
+
+
+def _job_hidden(job) -> bool:
+    """Whether ``job`` belongs to another workspace than this run's: answered
+    like a missing job (``common.workspace_scope.check_record``). A job with
+    no workspace is the default one's; the service's own agents reach every
+    job, and a call with no workspace (the CLI) is left as it was."""
+    return check_record((getattr(job, "workspace", None) or "").strip() or None,
+                        what="job", workspace=resolve_active_workspace()) is not None
+
+
+def _agent_unavailable(agent_id: str) -> bool:
+    """Whether ``agent_id`` is unknown, or not available in this run's
+    workspace (the notion the workspace's agent list uses). A job that would
+    run such an agent here is refused like an unknown agent."""
+    from agents.registry import get_agent as reg_get_agent
+    spec = reg_get_agent(agent_id)
+    if spec is None:
+        return True
+    ws = resolve_active_workspace()
+    if not ws or is_service_wide(current_agent()):
+        return False
+    return not filter_agents_for_workspace([spec], ws)
 
 
 def _now() -> datetime:
@@ -236,10 +260,8 @@ def schedule_task(
     user's bound Telegram chat(s). Returns JSON with the created job.
     """
     try:
-        if agent_id:
-            from agents.registry import get_agent as reg_get_agent
-            if not reg_get_agent(agent_id):
-                return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        if agent_id and _agent_unavailable(agent_id):
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
         when = _resolve_run_at(run_at, delay_minutes)
         job = plan_service.create_job(
             kind=JobKind.agent_task,
@@ -310,6 +332,22 @@ class WakeAgentInput(BaseModel):
                          description="What happened and why it should look now, one or two sentences")
 
 
+def _pulse_elsewhere(agent_id: str) -> bool:
+    """Whether ``agent_id``'s pulse ticks in another workspace than this
+    run's (proactive/service.py ``_job_workspace``): waking it would be a
+    side effect there, so it is answered like an unknown agent."""
+    from agents.registry import get_agent as reg_get_agent
+    spec = reg_get_agent(agent_id)
+    if spec is None:
+        return False
+    try:
+        from proactive.service import _job_workspace, profile_of
+        pulse_ws = _job_workspace(spec, profile_of(spec))
+    except Exception:  # noqa: BLE001 - no profile: agent_wake reports it
+        return False
+    return check_record(pulse_ws, what="agent", workspace=resolve_active_workspace()) is not None
+
+
 @tool("wake_agent", args_schema=WakeAgentInput)
 def wake_agent(agent_id: str, message: str) -> str:
     """Wake another agent's pulse now, with a message saying why.
@@ -323,6 +361,8 @@ def wake_agent(agent_id: str, message: str) -> str:
     try:
         from common.agent_context import current_agent_id
         from proactive.events import agent_wake
+        if _pulse_elsewhere(agent_id):
+            raise LookupError(f"Agent '{agent_id}' not found")
         caller = current_agent_id.get()
         result = agent_wake(caller, agent_id, message)
     except LookupError as e:
@@ -372,9 +412,8 @@ def cancel_scheduled(id: str) -> str:
         job = plan_service.get_job(jid)
         if not job:
             return _json_err("Job not found", code="not_found", extra={"id": id})
-        ws = resolve_active_workspace()
-        if ws and (job.workspace or "").strip() not in ("", ws):
-            return _json_err(f"Job '{id}' is outside the active workspace '{ws}'", code="forbidden")
+        if _job_hidden(job):
+            return _json_err("Job not found", code="not_found", extra={"id": id})
         if job.status not in (JobStatus.scheduled, JobStatus.paused):
             return _json_err(f"Cannot cancel a job in status '{job.status.value}'", code="invalid_state")
         updated = plan_service.cancel_job(jid)
@@ -406,9 +445,8 @@ def update_scheduled(
         job = plan_service.get_job(jid)
         if not job:
             return _json_err("Job not found", code="not_found", extra={"id": id})
-        ws = resolve_active_workspace()
-        if ws and (job.workspace or "").strip() not in ("", ws):
-            return _json_err(f"Job '{id}' is outside the active workspace '{ws}'", code="forbidden")
+        if _job_hidden(job):
+            return _json_err("Job not found", code="not_found", extra={"id": id})
         if job.status not in (JobStatus.scheduled, JobStatus.paused):
             return _json_err(f"Cannot edit a job in status '{job.status.value}'", code="invalid_state")
 
@@ -427,8 +465,7 @@ def update_scheduled(
             fields["timezone"] = timezone
         if agent_id is not None:
             if agent_id.strip():
-                from agents.registry import get_agent as reg_get_agent
-                if not reg_get_agent(agent_id.strip()):
+                if _agent_unavailable(agent_id.strip()):
                     return _json_err(f"Agent '{agent_id}' not found", code="not_found")
                 fields["agent_id"] = agent_id.strip()
             else:

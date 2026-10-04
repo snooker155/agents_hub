@@ -230,7 +230,11 @@ def test_the_help_block_is_gated_on_the_tool(live_registry):
     from agents.registry import add_agent
 
     spec = get_agent("main-agent")
-    stripped = [t for t in spec.tools if t not in ("search_docs", "read_doc")]
+    # The workspace tools are main-agent's alone (common/workspace_scope.py),
+    # so the probe, another agent, cannot be saved with them.
+    from common.workspace_scope import WORKSPACE_ADMIN_TOOLS
+    stripped = [t for t in spec.tools
+                if t not in ("search_docs", "read_doc") and t not in WORKSPACE_ADMIN_TOOLS]
     add_agent(dataclasses.replace(spec, id="docsless_probe", tools=stripped,
                                   definition_id="main-agent", system=False))
     try:

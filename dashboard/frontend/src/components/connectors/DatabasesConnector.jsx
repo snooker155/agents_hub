@@ -18,7 +18,9 @@ const PLACEHOLDERS = {
 
 // Read-only database connections of the current workspace
 // (routes/databases.py). An agent with db_query may only run a single SELECT
-// against one of these, row capped, on a read-only session.
+// against one of these, row capped, on a read-only session. In a workspace
+// other than the default, the default workspace's connections are listed too:
+// its runs may use them, but they are changed from the default workspace.
 export default function DatabasesConnector() {
   const { t } = useI18n();
   const { selectedWorkspace: workspace } = useWorkspace();
@@ -32,7 +34,7 @@ export default function DatabasesConnector() {
   const load = useCallback(async () => {
     if (!workspace) { setConnections([]); setLoading(false); return; }
     try {
-      const { data } = await listDbConnections(workspace);
+      const { data } = await listDbConnections(workspace, { includeDefault: workspace !== 'default' });
       setConnections(data || []);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
@@ -101,9 +103,18 @@ export default function DatabasesConnector() {
               </tr>
             </thead>
             <tbody>
-              {connections.map((c) => (
-                <tr key={c.id} className="border-t border-gray-100">
-                  <td className="py-2 pr-3 text-gray-800">{c.name}</td>
+              {connections.map((c) => {
+                const inherited = workspace !== 'default' && (c.workspace || 'default') === 'default';
+                return (
+                <tr key={c.id} className="border-t border-gray-100" data-testid={`db-row-${c.id}`}>
+                  <td className="py-2 pr-3 text-gray-800">
+                    {c.name}
+                    {inherited && (
+                      <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600" data-testid={`db-inherited-${c.id}`}>
+                        {t('connectors.databases.fromDefault')}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 pr-3 text-gray-700">{c.kind}</td>
                   <td className="py-2 pr-3 font-mono text-xs text-gray-600">{c.dsn_hint}</td>
                   <td className="py-2 pr-3 text-gray-700">{c.row_limit}</td>
@@ -111,9 +122,11 @@ export default function DatabasesConnector() {
                     <button type="button" onClick={() => test(c)} className="inline-flex items-center gap-1 text-xs text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-md px-2 py-1 mr-2">
                       {results[c.id]?.pending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wifi className="w-3 h-3" />} {t('settings.testConnection')}
                     </button>
-                    <button type="button" onClick={() => remove(c)} className="inline-flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 border border-red-200 rounded-md px-2 py-1">
-                      <Trash2 className="w-3 h-3" /> {t('settings.remove')}
-                    </button>
+                    {!inherited && (
+                      <button type="button" onClick={() => remove(c)} className="inline-flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 border border-red-200 rounded-md px-2 py-1">
+                        <Trash2 className="w-3 h-3" /> {t('settings.remove')}
+                      </button>
+                    )}
                     {results[c.id] && !results[c.id].pending && (
                       <div className={`text-xs mt-1 ${results[c.id].ok ? 'text-green-700' : 'text-red-600'}`}>
                         {results[c.id].ok ? `ok, ${results[c.id].elapsed_ms} ms` : results[c.id].error}
@@ -121,7 +134,8 @@ export default function DatabasesConnector() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

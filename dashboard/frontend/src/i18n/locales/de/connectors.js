@@ -1,6 +1,18 @@
 export default {
   title: 'Konnektoren',
   description: 'Dienste, die dieser Hub selbst anspricht. Die Gegenrichtung zu Verbindungen, wo etwas von Ihnen anderswo läuft und hierher meldet.',
+  workspaceBanner: {
+    title: 'Konnektoren werden für den Arbeitsbereich {{workspace}} konfiguriert.',
+    rule: 'Im Standardarbeitsbereich festgelegte Konnektoren funktionieren überall, hier festgelegte Konnektoren funktionieren nur hier.',
+  },
+  source: {
+    here: 'In diesem Arbeitsbereich festgelegt',
+    default: 'Aus dem Standardarbeitsbereich',
+    defineForWorkspace: 'Für diesen Arbeitsbereich festlegen',
+    removeUseDefault: 'Entfernen, den Standard verwenden',
+    confirmRemove: 'Die eigene Festlegung dieses Arbeitsbereichs entfernen? Danach gilt wieder die des Standardarbeitsbereichs.',
+    alsoDefinedIn: 'Auch festgelegt in: {{list}}',
+  },
   tabs: {
     telegram: 'Telegram',
     git: 'GitHub und GitLab',
@@ -239,8 +251,10 @@ export default {
     gmailOn: "Gmail-Zugriff erteilt: Mail-Watcher und der Mail-Kanal können sich mit diesem Konto anmelden.",
     gmailOff: "Noch kein Gmail-Zugriff. Klicken Sie auf Mit Gmail verbinden, damit Mail-Watcher und der Mail-Kanal ohne App-Passwort auskommen.",
     oauthHint: "Zuerst OAuth-Client-Id und -Secret speichern, mit der in Google Cloud registrierten Redirect-URI <Ihr Hub>/api/google/oauth/callback.",
+    defineFirst: "Legen Sie zuerst die Google-App für diesen Arbeitsbereich fest.",
   },
   databases: {
+    fromDefault: 'Aus dem Standardarbeitsbereich',
     title: "Datenbankverbindungen",
     intro: "Nur lesende Verbindungen, die Agenten mit db_query abfragen dürfen: ein SELECT pro Aufruf, in einer nur lesenden Sitzung, mit Zeilenlimit. Die Verbindungszeichenfolge wird gespeichert und nie wieder angezeigt.",
     none: "Keine Verbindungen in diesem Arbeitsbereich.",

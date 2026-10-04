@@ -1308,30 +1308,6 @@
         "title": "AnswerRequest",
         "type": "object"
       },
-      "ApplyBody": {
-        "properties": {
-          "agent_id": {
-            "title": "Agent Id",
-            "type": "string"
-          },
-          "workspace": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Workspace"
-          }
-        },
-        "required": [
-          "agent_id"
-        ],
-        "title": "ApplyBody",
-        "type": "object"
-      },
       "ApplyOpsRequest": {
         "properties": {
           "ops": {
@@ -5977,6 +5953,37 @@
           }
         },
         "title": "InterruptRequest",
+        "type": "object"
+      },
+      "IsolationPut": {
+        "properties": {
+          "allow_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Domains"
+          },
+          "isolated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isolated"
+          }
+        },
+        "title": "IsolationPut",
         "type": "object"
       },
       "JobCreate": {
@@ -12220,6 +12227,20 @@
             ],
             "title": "Bot Username"
           },
+          "defined_in": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defined In"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -12231,6 +12252,16 @@
           "running": {
             "title": "Running",
             "type": "boolean"
+          },
+          "source": {
+            "default": "here",
+            "title": "Source",
+            "type": "string"
+          },
+          "workspace": {
+            "default": "default",
+            "title": "Workspace",
+            "type": "string"
           }
         },
         "required": [
@@ -12334,6 +12365,16 @@
           "running": {
             "title": "Running",
             "type": "boolean"
+          },
+          "source": {
+            "default": "here",
+            "title": "Source",
+            "type": "string"
+          },
+          "workspace": {
+            "default": "default",
+            "title": "Workspace",
+            "type": "string"
           }
         },
         "required": [
@@ -13736,13 +13777,19 @@
             "title": "Title"
           },
           "workspace": {
-            "title": "Workspace",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
           }
         },
         "required": [
-          "chat_key",
-          "workspace"
+          "chat_key"
         ],
         "title": "BindingCreate",
         "type": "object"
@@ -13763,6 +13810,26 @@
           "text"
         ],
         "title": "SendRequest",
+        "type": "object"
+      },
+      "routes__connection_proposals__ApplyBody": {
+        "properties": {
+          "secrets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Secrets",
+            "type": "object"
+          },
+          "values": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "title": "ApplyBody",
         "type": "object"
       },
       "routes__loops__RunIn": {
@@ -13802,6 +13869,30 @@
           }
         },
         "title": "RunIn",
+        "type": "object"
+      },
+      "routes__memory_consolidation__ApplyBody": {
+        "properties": {
+          "agent_id": {
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "title": "ApplyBody",
         "type": "object"
       },
       "routes__teams__RunIn": {
@@ -13889,13 +13980,19 @@
             "title": "Title"
           },
           "workspace": {
-            "title": "Workspace",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
           }
         },
         "required": [
-          "chat_id",
-          "workspace"
+          "chat_id"
         ],
         "title": "BindingCreate",
         "type": "object"
@@ -20611,6 +20708,24 @@
     },
     "/api/channels/slack/events": {
       "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -20619,6 +20734,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Slack Events",
@@ -20629,6 +20754,24 @@
     },
     "/api/channels/slack/interactions": {
       "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -20637,6 +20780,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Slack Interactions",
@@ -20647,6 +20800,24 @@
     },
     "/api/channels/teams/messages": {
       "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -20655,6 +20826,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Teams Messages",
@@ -20673,6 +20854,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -20710,6 +20907,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -20769,6 +20982,22 @@
               "title": "Chat Key",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -20798,6 +21027,60 @@
       }
     },
     "/api/channels/{name}/config": {
+      "delete": {
+        "description": "The workspace stops defining its own bot: its loop stops, its\ndocument (config, allowlist, bindings) is removed, and the workspace\nuses the default workspace's bot again.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Config",
+        "tags": [
+          "channels"
+        ]
+      },
       "get": {
         "parameters": [
           {
@@ -20807,6 +21090,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -20844,6 +21143,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -20894,6 +21209,22 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "requestBody": {
@@ -20943,6 +21274,22 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -20981,6 +21328,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -21544,6 +21907,117 @@
         ]
       }
     },
+    "/api/connection-proposals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Proposals",
+        "tags": [
+          "connection-proposals"
+        ]
+      }
+    },
+    "/api/connection-proposals/{approval_id}/apply": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/routes__connection_proposals__ApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Proposal",
+        "tags": [
+          "connection-proposals"
+        ]
+      }
+    },
     "/api/connections": {
       "get": {
         "description": "Every connection, with how much each has reported lately.",
@@ -22018,6 +22492,60 @@
       }
     },
     "/api/connectors/{name}/config": {
+      "delete": {
+        "description": "The workspace stops defining the connector and inherits the default's.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Config",
+        "tags": [
+          "connectors"
+        ]
+      },
       "get": {
         "parameters": [
           {
@@ -22027,6 +22555,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -22064,6 +22608,22 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -22114,6 +22674,22 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -22153,6 +22729,22 @@
               "title": "Agent Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -22189,6 +22781,22 @@
             "schema": {
               "title": "Agent Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -22230,6 +22838,24 @@
     },
     "/api/consent/catalog": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -22238,6 +22864,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Consent Catalog",
@@ -23031,6 +23667,7 @@
     },
     "/api/databases/connections": {
       "get": {
+        "description": "The workspace's connections; with ``include_default`` also the default\nworkspace's, which its runs may use too (each record names its\n``workspace``, so a page can tell them apart).",
         "parameters": [
           {
             "in": "query",
@@ -23039,6 +23676,16 @@
             "schema": {
               "title": "Workspace",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_default",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Default",
+              "type": "boolean"
             }
           }
         ],
@@ -26659,7 +27306,35 @@
       }
     },
     "/api/git/config": {
-      "get": {
+      "delete": {
+        "description": "The workspace stops defining ``provider`` and uses the default's.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -26668,6 +27343,60 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Config",
+        "tags": [
+          "git"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Config",
@@ -26676,6 +27405,24 @@
         ]
       },
       "put": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -26783,6 +27530,22 @@
               ],
               "title": "Search"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -26813,6 +27576,24 @@
     },
     "/api/git/test": {
       "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -26851,6 +27632,25 @@
     },
     "/api/google/gmail/status": {
       "get": {
+        "description": "The Google connector in effect in ``?workspace=`` (its own or the\ndefault's): connected, Gmail granted, as whom.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -26859,6 +27659,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Gmail Status Route",
@@ -26919,6 +27729,24 @@
     },
     "/api/google/oauth/disconnect": {
       "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -26927,6 +27755,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Oauth Disconnect",
@@ -26946,6 +27784,22 @@
               "default": false,
               "title": "Gmail",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -30868,7 +31722,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApplyBody"
+                "$ref": "#/components/schemas/routes__memory_consolidation__ApplyBody"
               }
             }
           },
@@ -39564,7 +40418,7 @@
     },
     "/api/run-state/tasks/{task_id}/delegate": {
       "post": {
-        "description": "Mirrors ``tasks.delegate.launch_delegation``: every check the tool\nmakes (agent, workspace, allowlist, depth, model), the subtask, the\nlaunch. The answer is the function's own ``{\"ok\": ...}`` dict, refusals\nincluded, so the tool renders it the same either way.",
+        "description": "Mirrors ``tasks.delegate.launch_delegation``: every check the tool\nmakes (agent, workspace, allowlist, depth, model), the subtask, the\nlaunch. The answer is the function's own ``{\"ok\": ...}`` dict, refusals\nincluded, so the tool renders it the same either way. A run token's\nworkspace and calling agent are its own, whatever the body says.",
         "parameters": [
           {
             "in": "path",
@@ -47142,6 +47996,24 @@
     },
     "/api/telegram/bindings": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -47156,6 +48028,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Bindings",
@@ -47165,6 +48047,24 @@
       },
       "post": {
         "description": "Bind a chat to a workspace (and optionally an agent or flow).\n\nThe operator-only counterpart to the removed inbound `/workspace` binding:\na chat gets access to a workspace by an operator calling this route, not by\nasking the bot for it.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -47214,6 +48114,22 @@
               "title": "Chat Id",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -47243,7 +48159,26 @@
       }
     },
     "/api/telegram/config": {
-      "get": {
+      "delete": {
+        "description": "The workspace stops defining its own bot: its poller stops, its\ndocument (token, allowlist, bindings) is removed, and the workspace uses\nthe default workspace's bot again.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -47254,6 +48189,62 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Config",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Config",
@@ -47262,6 +48253,24 @@
         ]
       },
       "put": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -47303,6 +48312,24 @@
     "/api/telegram/send": {
       "post": {
         "description": "Send a text message back to a Telegram chat as the bot (debug surface).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -47341,6 +48368,24 @@
     },
     "/api/telegram/status": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -47351,6 +48396,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Status",
@@ -47362,6 +48417,24 @@
     "/api/telegram/test": {
       "post": {
         "description": "Verify the saved token by calling getMe. Does not change running state.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -47370,6 +48443,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Test Token",
@@ -47912,6 +48995,22 @@
             "schema": {
               "title": "Provider",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -49681,7 +50780,25 @@
     },
     "/api/watchers/kinds": {
       "get": {
-        "description": "The kinds and their config fields, for the form.\n\nThe ``imap`` kind also carries the provider presets\n(``connectors/mail/presets.py``): pick Gmail and the host, port and TLS\nfields fill themselves. ``google`` says whether \"Sign in with Google\"\ncan work: connected, Gmail granted, and as whom.",
+        "description": "The kinds and their config fields, for the form.\n\nThe ``imap`` kind also carries the provider presets\n(``connectors/mail/presets.py``): pick Gmail and the host, port and TLS\nfields fill themselves. ``google`` says whether \"Sign in with Google\"\ncan work: connected, Gmail granted, and as whom, for the Google connector\nin effect in ``?workspace=`` (its own or the default's).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -49690,6 +50807,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Kinds",
@@ -52173,6 +53300,48 @@
       }
     },
     "/api/workspaces/{name}/github-installation": {
+      "get": {
+        "description": "The installation a run in this workspace uses: its own binding, else\nthe default workspace's (``source``: \"here\", \"default\" or \"none\").",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Workspace Installation Api Workspaces  Name  Github Installation Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Installation",
+        "tags": [
+          "github-app"
+        ]
+      },
       "put": {
         "parameters": [
           {
@@ -52312,6 +53481,92 @@
         "summary": "Set Workspace Instructions Route",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/isolation": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Isolation",
+        "tags": [
+          "isolation"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IsolationPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Isolation",
+        "tags": [
+          "isolation"
         ]
       }
     },
@@ -52811,6 +54066,46 @@
           }
         },
         "summary": "Update Workspace Policy",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/policy/import-hooks-file": {
+      "post": {
+        "description": "Store the workspace folder's ``.hooks.json`` as the workspace's hooks.\n\nThe file itself is never run (agents write into the folder,\nagents/hooks.py ``load_hooks``); importing it is the owner reading it and\nchoosing to keep it. Validated like a PUT, and replaces the stored hooks.\nThe file is left where it is.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Workspace Hooks File",
         "tags": [
           "workspaces"
         ]

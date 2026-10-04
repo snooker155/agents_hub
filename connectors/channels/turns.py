@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from common.session_broker import notify_change
 
-from .store import ChannelStore
+from .store import DEFAULT_WORKSPACE, ChannelStore
 
 log = logging.getLogger("channels.turns")
 
@@ -116,6 +116,12 @@ async def run_turn(
 
     attachments = attachments or []
     workspace = binding.get("workspace")
+    # A workspace's own bot runs every turn in its workspace (store.py: a
+    # store bound to a workspace other than the default is that bot's).
+    own = str(getattr(store, "workspace", None) or "").strip()
+    if own and own != DEFAULT_WORKSPACE:
+        workspace = own
+        binding = dict(binding, workspace=own)
     result = TurnResult(is_flow=bool(binding.get("flow_id")))
     if attachments and not workspace:
         result.error = "Attachments need a workspace on this binding. Set a workspace, then resend."

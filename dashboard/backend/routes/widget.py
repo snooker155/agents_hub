@@ -332,6 +332,11 @@ async def create_widget(request: Request, payload: WidgetCreate):
     principal = _principal(request)
     workspace = (payload.workspace or "default").strip() or "default"
     identity.require_role(principal, workspace=workspace, role=WS_EDITOR)
+    from common import isolation
+    try:
+        isolation.ensure_not_isolated(workspace, "a public chat widget")
+    except isolation.IsolationError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     owner_id = getattr(principal, "id", None) or identity.current_user_id()
     try:
         widget = service.create_widget(payload.model_dump(), owner_id=owner_id)

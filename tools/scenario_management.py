@@ -32,8 +32,41 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from common.workspace_scope import check_record, current_agent, current_workspace, is_service_wide
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+
+def _foreign_agent(spec: Any, ws: Optional[str]) -> bool:
+    """Whether ``spec`` is another workspace's own agent (``owner_workspace``
+    set to another workspace and not shared): to this workspace it does not
+    exist. The service's own agents see every agent; no workspace (the CLI)
+    keeps every agent."""
+    owner = getattr(spec, "owner_workspace", None)
+    if not ws or not owner or getattr(spec, "shared", False):
+        return False
+    return check_record(owner, what="agent", workspace=ws) is not None
+
+
+def _hidden(record, *, write: bool = False) -> bool:
+    """Whether a scenario (or the team or world one names) is out of this
+    run's reach, answered like a missing one (``check_record``). A record
+    with no workspace is shared by every workspace for reading (the store's
+    listings show it everywhere) and is the default workspace's to change."""
+    if record is None:
+        return False
+    ws = getattr(record, "workspace", None)
+    if not ws and not write:
+        return False
+    return check_record(ws, what="record") is not None
+
+
+def _catalog_workspace() -> Optional[str]:
+    """The workspace whose authored worlds the environment catalogue shows:
+    this run's, or every one for the service's own agents and the CLI."""
+    if is_service_wide(current_agent()):
+        return None
+    return current_workspace()
 
 
 def _coerce_json(v: Any) -> Any:
@@ -125,7 +158,11 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
     if not str(payload.get("name") or "").strip():
         errors.append("name is required")
 
-    envs = {e["env_id"]: e for e in list_environments()}
+    # Only the worlds this workspace can see: a world of another workspace
+    # reads as an unknown environment here.
+    ws = normalize_workspace_name(workspace)
+    envs = {e["env_id"]: e for e in list_environments(
+        None if is_service_wide(current_agent()) else ws)}
     env_id = str(payload.get("environment") or "")
     env = envs.get(env_id)
     if not env:
@@ -147,7 +184,8 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
             team = get_team(team_id)
         except Exception:  # noqa: BLE001 - an unreadable teams table reads as no team
             team = None
-        if team is None:
+        if team is None or (not is_service_wide(current_agent()) and ws and team.workspace
+                            and check_record(team.workspace, what="team", workspace=ws)):
             errors.append(f"team '{team_id}' does not exist")
         elif not roles and not team.members:
             errors.append(f"team '{team_id}' has no members to play the scenario")
@@ -155,9 +193,8 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
         errors.append("a scenario needs at least one role, or a team_id whose members play it")
 
     from agents.registry import list_agents as reg_list_agents
-    all_specs = reg_list_agents()
+    all_specs = [s for s in reg_list_agents() if not _foreign_agent(s, ws)]
     all_ids = {getattr(s, "id", None) for s in all_specs}
-    ws = normalize_workspace_name(workspace)
     allowed_ids = (
         {getattr(s, "id", None) for s in filter_agents_for_workspace(all_specs, ws)}
         if ws else all_ids
@@ -507,7 +544,7 @@ def _list_environments() -> str:
     decides what the agents can actually do.
     """
     from playground.environments import list_environments
-    return _json_ok({"environments": list_environments()})
+    return _json_ok({"environments": list_environments(_catalog_workspace())})
 
 
 def _list_scenarios(workspace: Optional[str] = None) -> str:
@@ -602,7 +639,7 @@ def _get_scenario(scenario_id: str) -> str:
     from playground import store
 
     scenario = store.get_scenario(scenario_id)
-    if not scenario:
+    if not scenario or _hidden(scenario):
         return _json_err("Scenario not found", code="not_found",
                          extra={"scenario_id": scenario_id})
     record_entity("scenario", scenario_id, "viewed", scenario.name)
@@ -636,7 +673,7 @@ def _modify_scenario(
     from playground.models import Scenario
 
     existing = store.get_scenario(scenario_id)
-    if not existing:
+    if not existing or _hidden(existing, write=True):
         return _json_err("Scenario not found", code="not_found",
                          extra={"scenario_id": scenario_id})
 
@@ -706,7 +743,7 @@ def _delete_scenario(scenario_id: str) -> str:
     from playground import store
 
     scenario = store.get_scenario(scenario_id)
-    if not scenario:
+    if not scenario or _hidden(scenario, write=True):
         return _json_err("Scenario not found", code="not_found",
                          extra={"scenario_id": scenario_id})
     live = [r for r in store.list_sim_runs(scenario_id, limit=5)
@@ -755,7 +792,7 @@ def _validate_scenario(
     if scenario_id:
         from playground import store
         scenario = store.get_scenario(scenario_id)
-        if not scenario:
+        if not scenario or _hidden(scenario):
             return _json_err("Scenario not found", code="not_found",
                              extra={"scenario_id": scenario_id})
         payload = scenario.to_dict()

@@ -15,10 +15,15 @@ some tools have always carried (see the end of this page).
 
 ## Hooks
 
-Hooks are configured per workspace, in `<workspace>/.hooks.json` or under a
-`hooks` key in the workspace metadata. The metadata wins when both exist, so a
-centrally managed hook set is not overridden by a file inside a workspace an
-agent can write to.
+Hooks are configured per workspace, under a `hooks` key in the workspace
+metadata, which only the workspace's owner sets (Settings, tool policy, or
+`PUT /api/workspaces/{name}/policy`). A `<workspace>/.hooks.json` file is never
+run: agents write into the workspace folder, and a hook from there would run a
+command on the hub's host or post a call anywhere on an agent's say so. When
+such a file is there, the tool policy block says so (`ignored_hooks_file`) and
+the owner may import it with `POST /api/workspaces/{name}/policy/import-hooks-file`,
+which validates it like a PUT. An [isolated workspace](isolation.md) never runs
+an `http` hook either.
 
 ```json
 {
@@ -165,7 +170,7 @@ gets. A hook that needs a credential should read it from a file it owns.
 
 Hooks are run by the agent process, so they execute with that process's
 permissions. Treat the hook configuration as code: anyone who can write
-`.hooks.json` in a workspace can run commands as the agent.
+an imported hook set can run commands as the agent.
 
 ## The approval gate
 

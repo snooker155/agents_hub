@@ -13,6 +13,12 @@ lease to lapse, or an operator taking the role elsewhere).
 
 With one replica the effect is that the service starts a moment after
 startup rather than during it, which the health page shows the same way.
+
+Services can come and go while the backend runs: a workspace that defines
+its own chat bot gets a service of its own (role ``channel_slack@team-a``,
+``telegram@team-a``). A discoverer (:meth:`SingletonSupervisor.add_discoverer`)
+runs at the start of every tick and adds or removes those, so a bot defined
+on another replica is picked up here too.
 """
 from __future__ import annotations
 
@@ -46,9 +52,38 @@ class SingletonSupervisor:
         self.check_seconds = check_seconds
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
+        self.discoverers: List[Callable[[], Awaitable[None]]] = []
 
     def add(self, service: LeasedService) -> None:
         self.services.append(service)
+
+    def has(self, role: str) -> bool:
+        return any(s.role == role for s in self.services)
+
+    async def remove(self, role: str) -> bool:
+        """Stop the service holding ``role`` here, give the lease up and
+        forget it. False when no service has that role."""
+        from common import leases
+        found = [s for s in self.services if s.role == role]
+        if not found:
+            return False
+        self.services = [s for s in self.services if s.role != role]
+        for svc in found:
+            try:
+                if svc.is_running():
+                    await svc.stop()
+            except Exception:  # noqa: BLE001 - removing must not fail on a stuck service
+                log.debug("stopping %s failed", role, exc_info=True)
+        try:
+            await asyncio.to_thread(leases.release, role)
+        except Exception:  # noqa: BLE001 - the lease lapses on its own
+            log.debug("releasing lease %s failed", role, exc_info=True)
+        return True
+
+    def add_discoverer(self, fn: Callable[[], Awaitable[None]]) -> None:
+        """Call ``fn`` at the start of every tick to add or remove services."""
+        if fn not in self.discoverers:
+            self.discoverers.append(fn)
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
@@ -87,7 +122,12 @@ class SingletonSupervisor:
         from common import leases
 
         ttl = max(self.check_seconds * 4, leases.DEFAULT_TTL_SECONDS)
-        for svc in self.services:
+        for discover in list(self.discoverers):
+            try:
+                await discover()
+            except Exception:  # noqa: BLE001 - a discoverer must not break the tick
+                log.debug("supervisor discoverer failed", exc_info=True)
+        for svc in list(self.services):
             try:
                 wanted = bool(svc.wanted())
             except Exception:  # noqa: BLE001 - a caller-supplied check must not break the supervisor tick
@@ -162,17 +202,18 @@ def online_evals_service() -> LeasedService:
 supervisor = SingletonSupervisor([online_evals_service()])
 
 
-def telegram_service() -> LeasedService:
-    """The Telegram poller as a leased service."""
-    from connectors.telegram.telegram_runner import service as tg
-    from connectors.telegram import telegram_store
+def telegram_service(tg: Any = None) -> LeasedService:
+    """A Telegram poller as a leased service: the default workspace's bot
+    (role ``telegram``), or a workspace's own (``telegram@<workspace>``)."""
+    if tg is None:
+        from connectors.telegram.telegram_runner import service as tg
 
     return LeasedService(
-        role="telegram",
+        role=tg.lease_role,
         start=tg.start,
         stop=tg.stop,
         is_running=tg.is_running,
-        wanted=lambda: bool(telegram_store.is_enabled() and telegram_store.has_token()),
+        wanted=tg.wanted,
     )
 
 

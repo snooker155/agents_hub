@@ -10,11 +10,18 @@ Each Telegram chat is bound to an agent via `/agent <id>`; subsequent messages
 are turned into ChatRequest objects and run through dashboard.backend.routes.chat
 .run_chat_pipeline — the same code path the web Chat page uses — so sessions,
 tool history, logs, and journaling all work uniformly.
+
+A service serves one workspace's bot (``telegram_store.for_workspace``): the
+module's ``service`` is the default workspace's, which serves every
+workspace. A workspace that defines its own bot gets its own service
+(``connectors/telegram/bots.py``), and that bot serves only its workspace:
+every chat of it runs there, and no command can point it elsewhere.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -280,8 +287,20 @@ async def _send_text(api: TelegramAPI, chat_id: int, text: str) -> None:
         log.warning("telegram send_message failed for chat=%s: %s", chat_id, exc)
 
 
-async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) -> bool:
-    """Return True if the message was handled as a slash command."""
+def _own_workspace(store: Any) -> Optional[str]:
+    """The one workspace a store's bot serves: None for the default's."""
+    ws = str(getattr(store, "workspace", None) or "").strip()
+    return ws if ws and ws != telegram_store.DEFAULT_WORKSPACE else None
+
+
+async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str,
+                          store: Any = None) -> bool:
+    """Return True if the message was handled as a slash command.
+
+    ``store`` is the bot's (the module's, following the run, when omitted).
+    A workspace's own bot keeps every chat in its workspace."""
+    store = store or telegram_store
+    own = _own_workspace(store)
     chat = message.get("chat") or {}
     chat_id = int(chat.get("id") or 0)
     if not chat_id:
@@ -290,7 +309,9 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
     cmd, _, args = text.partition(" ")
     cmd = cmd.split("@", 1)[0].lower()  # strip "@botname" suffix Telegram appends in groups
     args = args.strip()
-    binding = telegram_store.get_binding(chat_id) or {}
+    binding = store.get_binding(chat_id) or {}
+    if own:
+        binding = dict(binding, workspace=own)
 
     if cmd == "/start":
         if binding.get("workspace") and (binding.get("agent_id") or binding.get("flow_id")):
@@ -303,6 +324,13 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
                 api, chat_id,
                 f"Ready. Workspace: `{binding['workspace']}`, {target}. "
                 "Send a message, or /help for commands.",
+            )
+            return True
+        if own:
+            await _send_text(
+                api, chat_id,
+                f"Welcome! This bot serves workspace `{own}`. Pick an agent with /agent <id> "
+                "(/agents to list) or a flow with /flow <id> (/flows to list).",
             )
             return True
         await _send_text(
@@ -319,6 +347,9 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
         return True
 
     if cmd == "/workspaces":
+        if own:
+            await _send_text(api, chat_id, f"This bot serves workspace `{own}` only.")
+            return True
         workspaces = _workspace_names()
         if not workspaces:
             await _send_text(api, chat_id, "No workspaces found.")
@@ -333,6 +364,13 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
         # themselves access to a workspace. This command is read-only: it shows
         # the current binding and, if there is none or the caller asks to
         # change it, points them at the operator instead of touching state.
+        if own:
+            if not args or args == own:
+                await _send_text(api, chat_id, f"Current workspace: {own}. This bot serves this workspace only.")
+            else:
+                await _send_text(api, chat_id,
+                                 f"This bot serves workspace `{own}` only; it cannot switch to `{args}`.")
+            return True
         if not args:
             current = binding.get("workspace") or "(not set)"
             await _send_text(api, chat_id, f"Current workspace: {current}. Ask the operator to change it.")
@@ -382,7 +420,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
                 f"Allowed: {preview}",
             )
             return True
-        telegram_store.upsert_binding(
+        store.upsert_binding(
             chat_id=chat_id,
             agent_id=args,
             workspace=workspace,
@@ -451,7 +489,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
                 f"No flow `{args}` available in workspace `{workspace}`.\nAvailable: {preview}",
             )
             return True
-        telegram_store.upsert_binding(
+        store.upsert_binding(
             chat_id=chat_id,
             agent_id="",
             flow_id=match["id"],
@@ -469,7 +507,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
 
     if cmd == "/reset":
         new_conv = str(uuid.uuid4())
-        updated = telegram_store.reset_conversation(chat_id, new_conv)
+        updated = store.reset_conversation(chat_id, new_conv)
         if updated:
             await _send_text(api, chat_id, "Conversation reset. Next message starts a fresh thread.")
         else:
@@ -674,14 +712,21 @@ def _format_handoff(event: dict[str, Any]) -> str:
 
 async def _run_agent_for_telegram(
     api: TelegramAPI, chat_id: int, binding: dict[str, Any],
-    text: str, attachments: list[dict[str, Any]],
+    text: str, attachments: list[dict[str, Any]], store: Any = None,
 ) -> None:
-    """Build a ChatRequest, drive the chat pipeline (agent or flow), send the reply."""
+    """Build a ChatRequest, drive the chat pipeline (agent or flow), send the reply.
+
+    ``store`` is the bot's; a workspace's own bot runs the turn in its
+    workspace whatever the binding says."""
     # Lazy import to avoid module-load circular dependency between agents/ and routes/.
     from chat import run_chat_pipeline, run_chat_flow_pipeline
     from chat.models import ChatRequest, ChatAttachment
     from chat.runs import build_conversation_history
 
+    store = store or telegram_store
+    own = _own_workspace(store)
+    if own:
+        binding = dict(binding, workspace=own)
     workspace = binding.get("workspace")
     if attachments and not workspace:
         await _send_text(
@@ -693,7 +738,7 @@ async def _run_agent_for_telegram(
     is_flow = bool(binding.get("flow_id"))
     conv_id = binding.get("conversation_id") or str(uuid.uuid4())
     if not binding.get("conversation_id"):
-        telegram_store.upsert_binding(
+        store.upsert_binding(
             chat_id=chat_id,
             agent_id="" if is_flow else binding.get("agent_id", ""),
             flow_id=binding.get("flow_id") if is_flow else None,
@@ -747,7 +792,7 @@ async def _run_agent_for_telegram(
             if event.get("type") == "done":
                 if event.get("handoff") and event.get("agent_id") and not is_flow:
                     # The chat stays with the agent that answered.
-                    telegram_store.upsert_binding(
+                    store.upsert_binding(
                         chat_id=chat_id, agent_id=str(event["agent_id"]),
                         workspace=workspace, conversation_id=conv_id,
                     )
@@ -766,7 +811,7 @@ async def _run_agent_for_telegram(
     finally:
         _secrets.reset_end_user(end_user_token)
 
-    telegram_store.touch_binding(chat_id)
+    store.touch_binding(chat_id)
 
     log.info(
         "telegram reply chat=%s ok=%s response_obj=%s text_len=%d",
@@ -857,7 +902,11 @@ class _MediaGroupBuffer:
 
 
 class TelegramService:
-    def __init__(self):
+    def __init__(self, store: Optional[telegram_store.TelegramStore] = None):
+        # Bound to one workspace's bot: the default's unless given another.
+        self.store = store or telegram_store.for_workspace(telegram_store.DEFAULT_WORKSPACE)
+        #: The workspace whose bot this is; ``default`` serves every workspace.
+        self.workspace: str = self.store.workspace or telegram_store.DEFAULT_WORKSPACE
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event: Optional[asyncio.Event] = None
@@ -877,6 +926,23 @@ class TelegramService:
     def status(self) -> dict[str, Any]:
         return dict(self._status)
 
+    @property
+    def own_workspace(self) -> Optional[str]:
+        """The one workspace a workspace's own bot serves; None for the default's."""
+        return _own_workspace(self.store)
+
+    @property
+    def lease_role(self) -> str:
+        """``telegram`` for the default's bot, ``telegram@<workspace>`` for a workspace's own."""
+        return "telegram" if self.own_workspace is None else f"telegram@{self.workspace}"
+
+    def wanted(self) -> bool:
+        """Whether the poller should run: enabled and a token saved."""
+        try:
+            return bool(self.store.is_enabled() and self.store.has_token())
+        except Exception:  # noqa: BLE001 - a store failure reads as "not wanted"
+            return False
+
     def is_running(self) -> bool:
         return bool(self._task and not self._task.done())
 
@@ -895,7 +961,7 @@ class TelegramService:
         workspace). Disallowed chats are silently dropped, logged once per
         chat id rather than once per message.
         """
-        if telegram_store.is_chat_allowed(chat_id):
+        if self.store.is_chat_allowed(chat_id):
             return True
         if chat_id not in self._logged_disallowed_chats:
             self._logged_disallowed_chats.add(chat_id)
@@ -905,11 +971,11 @@ class TelegramService:
     async def start(self) -> None:
         if self.is_running():
             return
-        token = telegram_store.get_token()
+        token = self.store.get_token()
         if not token:
             self._status["last_error"] = "no token configured"
             return
-        if not telegram_store.is_enabled():
+        if not self.store.is_enabled():
             self._status["last_error"] = "telegram integration disabled"
             return
 
@@ -931,7 +997,14 @@ class TelegramService:
             "Telegram poller started: bot=@%s build=%s capabilities=[%s]",
             self._status.get("bot_username") or "?", _CONNECTOR_BUILD, _CONNECTOR_FEATURES,
         )
-        self._task = asyncio.create_task(self._poll_loop(token), name="telegram-poll")
+        # The poller runs in a context of its own: a workspace's bot as that
+        # workspace, the default's as none, never as the request that started it.
+        from common.workspace_context import _workspace_ctx
+        ctx = contextvars.copy_context()
+        ctx.run(_workspace_ctx.set, self.own_workspace)
+        suffix = "" if self.own_workspace is None else f"@{self.workspace}"
+        self._task = asyncio.create_task(self._poll_loop(token), name=f"telegram-poll{suffix}",
+                                         context=ctx)
 
     async def stop(self) -> None:
         if self._stop_event:
@@ -959,7 +1032,7 @@ class TelegramService:
         backoff = 1.0
         while not self._stop_event.is_set():
             try:
-                offset = telegram_store.get_update_offset()
+                offset = self.store.get_update_offset()
                 async with httpx.AsyncClient(timeout=35.0) as client:
                     resp = await client.post(
                         f"{api._base}/getUpdates",
@@ -972,7 +1045,7 @@ class TelegramService:
                 updates = body.get("result") or []
                 if updates:
                     max_id = max(int(u["update_id"]) for u in updates)
-                    telegram_store.set_update_offset(max_id + 1)
+                    self.store.set_update_offset(max_id + 1)
                     for upd in updates:
                         # Dispatch each update on its own task so the poll loop never blocks
                         # on an in-flight agent run; per-chat locking serialises same-chat work.
@@ -1050,7 +1123,9 @@ class TelegramService:
         if not chat_id or not data:
             return
 
-        binding = telegram_store.get_binding(chat_id)
+        binding = self.store.get_binding(chat_id)
+        if binding is not None and self.own_workspace:
+            binding = dict(binding, workspace=self.own_workspace)
         if not binding or not binding.get("workspace") or not (
             binding.get("agent_id") or binding.get("flow_id")
         ):
@@ -1069,18 +1144,20 @@ class TelegramService:
         await _send_text(api, chat_id, f"➡️ {label or data}")
 
         async with self._chat_lock(chat_id):
-            await _run_agent_for_telegram(api, chat_id, binding, data, [])
+            await _run_agent_for_telegram(api, chat_id, binding, data, [], store=self.store)
 
     async def _handle_messages(self, api: TelegramAPI, chat_id: int, messages: list[dict[str, Any]]) -> None:
         # Slash commands only make sense for single-message updates.
         if len(messages) == 1:
             text = (messages[0].get("text") or "").strip()
             if text.startswith("/"):
-                handled = await _handle_command(api, messages[0], text)
+                handled = await _handle_command(api, messages[0], text, store=self.store)
                 if handled:
                     return
 
-        binding = telegram_store.get_binding(chat_id)
+        binding = self.store.get_binding(chat_id)
+        if self.own_workspace:
+            binding = dict(binding or {}, workspace=self.own_workspace)
         if not binding or not binding.get("workspace"):
             await _send_text(
                 api, chat_id,
@@ -1111,7 +1188,7 @@ class TelegramService:
             if not text and not attachments:
                 return
 
-            await _run_agent_for_telegram(api, chat_id, binding, text, attachments)
+            await _run_agent_for_telegram(api, chat_id, binding, text, attachments, store=self.store)
 
 
 # Module-level singleton — imported by main.py + routes/telegram.py.

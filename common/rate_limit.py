@@ -156,8 +156,8 @@ def principal_key(principal: Any) -> Optional[str]:
     """What a principal's request count is kept under: the key id for a
     personal key, else the principal id (a person, the shared token, the
     local operator). None for no principal and for the hub's own service
-    credential, which is never limited."""
-    if principal is None or getattr(principal, "kind", "") == "service":
+    credential and run tokens, which are never limited."""
+    if principal is None or getattr(principal, "kind", "") in ("service", "run"):
         return None
     key_id = _key_id(principal)
     if key_id:
@@ -207,7 +207,7 @@ def check_tokens_per_day(principal: Any) -> Tuple[bool, int]:
     ``retry_after`` the seconds until the next midnight. A personal key is
     counted on its own usage; anyone else on their user id.
     """
-    if principal is None or getattr(principal, "kind", "") == "service":
+    if principal is None or getattr(principal, "kind", "") in ("service", "run"):
         return True, 0
     cap = _limit_for(principal, "tokens_per_day", "rate_limit_tokens_per_day")
     if cap <= 0:

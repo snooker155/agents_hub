@@ -487,8 +487,15 @@ class GiteaProvider(GitProvider):
         return {"url": data.get("html_url"), "number": data.get("number")}
 
 
-def get_provider(provider: str) -> GitProvider:
-    """Build a provider client from the stored configuration."""
+def get_provider(provider: str, workspace: Optional[str] = None) -> GitProvider:
+    """Build a provider client from the stored configuration in effect in
+    ``workspace``: its own entry for the provider when it defines one, else
+    the default workspace's (connectors/git/store.py). ``None`` means the
+    running code's workspace; a route or a job acting for a project names
+    the project's."""
+    if workspace is not None:
+        from connectors.channels.store import in_workspace
+        return in_workspace(workspace, get_provider, provider)
     if provider == "github":
         return GitHubProvider(store.get_token("github"))
     if provider == "gitlab":

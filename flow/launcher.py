@@ -397,6 +397,6 @@ def _build_env(ws_name: str, session_id: str, log_file: str, *,
     # own model via create_agent's cascade (agent definition → workspace override →
     # workspace settings → global), matching the single-agent path (agent_run.py).
     from common.subprocess_env import base_subprocess_env, add_run_env
-    env = base_subprocess_env(ws_name, flow_id=flow_id, user_id=user_id)
+    env = base_subprocess_env(ws_name, flow_id=flow_id, user_id=user_id, session_id=session_id or None)
     add_run_env(env, session_id=session_id, log_file=log_file)
     return env

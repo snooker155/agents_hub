@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from connectors.channels.store import in_workspace
 from projects.models import Project
 from tasks import service as tasks_service
 from tasks.models import CreatedBy, TaskStatus
@@ -41,6 +42,10 @@ def sync_tracker_issues(project: Project) -> dict[str, int]:
 
     Returns {"imported": n, "updated": n, "total": n}.
     Raises TrackerError / ValueError on configuration problems.
+
+    Uses the tracker connector of the project's workspace (its own Jira or
+    Linear when it defines one, else the default workspace's), whoever calls:
+    a tool in a run, the Projects page's route, a scheduled sync.
     """
     tracker = project.tracker
     provider_name = str(tracker.provider or "none")
@@ -52,7 +57,8 @@ def sync_tracker_issues(project: Project) -> dict[str, int]:
             "Project tracker has no remote_id — pick a Jira project or Linear team first"
         )
 
-    provider = get_provider(provider_name)
+    workspace = getattr(project, "workspace", None) or None
+    provider = in_workspace(workspace, get_provider, provider_name)
     issues = provider.list_issues(remote_id, state="all", limit=500)
 
     existing: dict[tuple, Any] = {}

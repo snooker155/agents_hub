@@ -514,7 +514,20 @@ def _connector_specs() -> List[ToolSpec]:
     # Confluence, a read-only database. One category, "connectors", because
     # each is only as available as the connector it sits on.
     from tools.connector_tools import connector_tools
-    return [spec_from_tool(t, category="connectors") for t in connector_tools()]
+    from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
+    own = {t.name for t in WORKSPACE_MANAGEMENT_TOOLS}
+    return [spec_from_tool(t, category="connectors") for t in connector_tools()
+            if getattr(t, "name", "") not in own]
+
+
+def _workspace_management_specs() -> List[ToolSpec]:
+    # The main agent's workspace tools (tools/workspace_management.py). They
+    # reach the factory through tools/connector_tools.py, but they manage
+    # workspaces, not a connector: catalogued next to the agent management
+    # tools. Only main-agent in the default workspace keeps them at build
+    # time (common/workspace_scope.py).
+    from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
+    return [spec_from_tool(t, category="agent_management") for t in WORKSPACE_MANAGEMENT_TOOLS]
 
 
 def _geometry_specs() -> List[ToolSpec]:
@@ -536,6 +549,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _calculator_specs,
     _agent_coordination_specs,
     _agent_management_specs,
+    _workspace_management_specs,
     _schedule_management_specs,
     _flow_management_specs,
     _world_management_specs,

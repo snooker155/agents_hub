@@ -1302,6 +1302,21 @@ def _save_record(
         # about to have. See agents.capability_guard.check_agent_tools.
         delegates=list(effective.delegates or []),
     )
+    # One workspace per run (common/workspace_scope.py): tools that see the
+    # whole service belong to the service's own agents, workspace management
+    # to the main agent.
+    from common import workspace_scope
+    workspace_scope.check_agent_tools(stored.id, list(effective.tools or []))
+    # An agent an isolated workspace owns holds only the tools that stay
+    # inside its perimeter, and is never an imported (remote) agent
+    # (common/isolation.py). Never softened by mode or override.
+    from common import isolation
+    _owner = getattr(stored, "owner_workspace", None)
+    isolation.check_agent_tools(_owner, list(effective.tools or []))
+    if _owner and effective.is_remote() and isolation.is_isolated(_owner):
+        raise isolation.IsolationError(
+            f"Workspace '{_owner}' is isolated: an imported agent runs outside the hub and "
+            "cannot belong to it.", status=400)
 
     # A parent's change reaches every child that follows it: each one is
     # checked with its new effective tool set and the save is refused, naming

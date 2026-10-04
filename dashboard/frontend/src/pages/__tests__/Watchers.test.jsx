@@ -57,6 +57,11 @@ describe('Watchers page', () => {
     expect(screen.getByText('watchers.state.active')).toBeInTheDocument();
   });
 
+  it("carries the selected workspace when reading a kind's fields (Google readiness)", async () => {
+    renderIt();
+    await waitFor(() => expect(api.getWatcherKinds).toHaveBeenCalledWith('default'));
+  });
+
   it('creates a watcher from the form with the kind\'s fields', async () => {
     renderIt();
     await waitFor(() => expect(screen.getByText('watchers.add')).toBeInTheDocument());

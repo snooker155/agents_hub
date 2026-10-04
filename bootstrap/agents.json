@@ -683,7 +683,17 @@
         "get_loop_run_tool",
         "stop_loop_run_tool",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "connection_options",
+        "propose_connection",
+        "connection_proposal_status",
+        "list_workspaces",
+        "get_workspace",
+        "create_workspace",
+        "update_workspace",
+        "delete_workspace",
+        "add_workspace_agent",
+        "remove_workspace_agent"
       ],
       "commands": [],
       "capacity": 1,

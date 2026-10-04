@@ -231,6 +231,14 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("fire journal pruning failed")
         summary["pruned_fires"] = 0
+    # Run tokens (common/run_tokens.py) a week past their expiry: they already
+    # authenticate nothing, the rows only grow the table.
+    try:
+        from common import run_tokens
+        summary["pruned_run_tokens"] = run_tokens.prune(7)
+    except Exception:
+        log.exception("run token pruning failed")
+        summary["pruned_run_tokens"] = 0
     # A proactive agent's quiet ticks (proactive/service.py): rows older than
     # AGENTS_HUB_HEARTBEAT_COMPACT_DAYS fold into one counted row per day and
     # outcome, so a five-minute pulse does not keep 288 identical rows a day

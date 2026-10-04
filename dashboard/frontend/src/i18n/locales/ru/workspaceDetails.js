@@ -21,6 +21,7 @@ export default {
       toolPolicy: 'Политика инструментов',
       webPolicy: 'Доступ в интернет',
       personalMemory: 'Личная память',
+      isolation: 'Изоляция',
       tasks: 'Назначение задач',
       secrets: 'Секреты',
       palette: 'Палитра',

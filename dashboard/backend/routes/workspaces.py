@@ -649,8 +649,8 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
 #
 # Both live in the workspace metadata and are read live by the agent process:
 # ``tools.approval.approval_gate_enabled`` reads ``settings.require_tool_approval``
-# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (which wins over a
-# ``.hooks.json`` file in the folder). They are edited together here because an
+# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (a ``.hooks.json``
+# file in the folder is never run; the owner may import one). They are edited together here because an
 # operator thinks of them as one thing: what happens around a tool call.
 
 # The tool events, their other names (agents/hooks.py EVENT_ALIASES) and the
@@ -723,9 +723,13 @@ def _policy_payload(name: str) -> dict:
     metadata = get_workspace_metadata(name)
     settings = metadata.get("settings") or {}
     hooks = metadata.get("hooks")
+    from agents.hooks import ignored_hooks_file
     return {
         "require_tool_approval": bool(settings.get("require_tool_approval")),
         "hooks": hooks if isinstance(hooks, dict) else {},
+        # A .hooks.json in the folder is never run (agents write there); the
+        # owner sees it here and may import it.
+        "ignored_hooks_file": ignored_hooks_file(name) is not None,
         "tool_policy": clean_policy(settings.get("tool_policy")),
         "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
         # Only when set: absent means the default (common/tool_approvals.py).
@@ -797,6 +801,28 @@ async def update_workspace_web_policy(request: Request, name: str, payload: dict
 @router.get("/{name}/policy")
 async def get_workspace_policy(name: str):
     """The workspace's tool policy: the approval gate and the hook config."""
+    return _policy_payload(name)
+
+
+@router.post("/{name}/policy/import-hooks-file")
+async def import_workspace_hooks_file(request: Request, name: str):
+    """Store the workspace folder's ``.hooks.json`` as the workspace's hooks.
+
+    The file itself is never run (agents write into the folder,
+    agents/hooks.py ``load_hooks``); importing it is the owner reading it and
+    choosing to keep it. Validated like a PUT, and replaces the stored hooks.
+    The file is left where it is.
+    """
+    _ensure_writable_workspace(name)
+    from agents.hooks import ignored_hooks_file
+    raw = ignored_hooks_file(name)
+    if raw is None:
+        raise HTTPException(status_code=404, detail="this workspace has no readable .hooks.json")
+    hooks = _validate_hooks(raw)
+    update_workspace_metadata(name, {"hooks": hooks})
+    audit.record("workspace.hooks_import", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"events": sorted(hooks)})
     return _policy_payload(name)
 
 
@@ -899,6 +925,14 @@ async def update_workspace_personal_memory(request: Request, name: str, data: Wo
     it off; the agents' own switches are kept for when it is turned back on."""
     from memory import personal
     _ensure_writable_workspace(name)
+    if data.enabled:
+        # The personal pool is shared with the person's other workspaces:
+        # writing to it from an isolated one would carry data out.
+        from common import isolation
+        try:
+            isolation.ensure_not_isolated(name, "the personal memory pool, shared with other workspaces,")
+        except isolation.IsolationError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     result = personal.set_workspace_enabled(name, data.enabled)
     audit.record("workspace.personal_memory", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,

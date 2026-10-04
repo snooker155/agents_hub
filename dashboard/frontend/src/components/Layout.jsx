@@ -10,6 +10,7 @@ import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Fol
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
+import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
 import { routeTitleKey } from './routeTitles';
@@ -469,6 +470,7 @@ const Layout = ({ children }) => {
                 </option>
               ))}
             </select>
+            <IsolationBadge workspace={selectedWorkspace} />
             <div className="h-5 w-px bg-gray-200" />
             {/* Global model picker */}
             <div className="relative" ref={modelPickerRef}>

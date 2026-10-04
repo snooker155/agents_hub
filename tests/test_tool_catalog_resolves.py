@@ -44,6 +44,13 @@ POOL_BOUND = {
 # Empty, and worth keeping that way.
 KNOWN_UNRESOLVABLE: dict[str, str] = {}
 
+# Handed out only outside a workspace (agents/agent_factory.py, the
+# memory tools that take a pool id).
+OUTSIDE_A_WORKSPACE = frozenset({
+    "read_memory", "write_memory", "search_memory", "read_structured_memory",
+    "write_structured_memory", "append_journal",
+})
+
 
 def _catalog_ids() -> list[str]:
     return [
@@ -58,7 +65,11 @@ def test_every_catalogued_tool_can_be_granted(tool_id, tmp_path, request):
     if tool_id in KNOWN_UNRESOLVABLE:
         request.node.add_marker(pytest.mark.xfail(reason=KNOWN_UNRESOLVABLE[tool_id], strict=True))
 
-    resolved = get_factory()._create_tools([tool_id], workspace=str(tmp_path))
+    # The pool-id memory tools reach only pools bound in the run's workspace
+    # (common/workspace_scope.py), so a workspace run with none bound is not
+    # handed them; they resolve outside a workspace.
+    workspace = None if tool_id in OUTSIDE_A_WORKSPACE else str(tmp_path)
+    resolved = get_factory()._create_tools([tool_id], workspace=workspace)
     names = {getattr(t, "name", getattr(t, "__name__", "")) for t in resolved}
 
     assert tool_id in names, (

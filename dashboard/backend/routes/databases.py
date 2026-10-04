@@ -71,8 +71,12 @@ def _check_kind_and_dsn(kind: str, dsn: Optional[str]) -> None:
 
 
 @router.get("/connections")
-async def list_connections(workspace: str = Query(...)):
-    return [store.public(c) for c in store.list_connections(workspace)]
+async def list_connections(workspace: str = Query(...), include_default: bool = False):
+    """The workspace's connections; with ``include_default`` also the default
+    workspace's, which its runs may use too (each record names its
+    ``workspace``, so a page can tell them apart)."""
+    records = store.usable_connections(workspace) if include_default else store.list_connections(workspace)
+    return [store.public(c) for c in records]
 
 
 @router.post("/connections", status_code=201)

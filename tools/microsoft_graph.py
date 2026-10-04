@@ -45,11 +45,13 @@ def _client() -> Tuple[Optional[Any], str]:
     delegated = _consent.graph_client_for_turn()
     if delegated is not None:
         return delegated, "me"
-    from connectors.microsoft import CREDENTIALS
+    from connectors.microsoft import CREDENTIALS, store_for
     if not CREDENTIALS.is_configured():
         return None, ""
     from connectors.microsoft.graph import GraphClient
-    store = CREDENTIALS.store
+    # The run's workspace's app registration (its own, else the default's),
+    # every field from that one document.
+    store = store_for()
     client = GraphClient(store.get("tenant_id"), store.get("client_id"), store.get("client_secret"))
     return client, str(store.get("default_user") or "")
 

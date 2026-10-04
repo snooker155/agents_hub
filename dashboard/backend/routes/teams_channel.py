@@ -14,11 +14,18 @@ has not finished setting up. A verified activity is handed to
 ``TeamsService.handle_activity`` on a background task and the route answers
 200 immediately: Bot Framework expects the ack well under its timeout, long
 before an agent run could finish.
+
+A workspace's own bot (docs/connectors.md "Connectors per workspace") has
+its own messaging endpoint, ``/api/channels/teams/messages?workspace=<name>``
+(the URL the Connectors page shows for it): the activity is verified with
+that workspace's app id and handled by that workspace's bot, which serves
+that workspace only. Without ``?workspace=`` it is the default's bot.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -34,18 +41,36 @@ def _spec():
     return SPEC
 
 
-async def _handle_activity_safely(activity: dict) -> None:
+def _service(workspace: Optional[str]):
+    """The bot an inbound activity is for: the default's, or the bot a
+    workspace defines for itself. 404 for a workspace with no bot of its own."""
+    from connectors.channels import registry
+    from connectors.channels.store import DEFAULT_WORKSPACE
+    from common.workspace_context import normalize_workspace_name
+
+    ws = normalize_workspace_name(workspace or "") or DEFAULT_WORKSPACE
+    if ws == DEFAULT_WORKSPACE:
+        return _spec().service
+    svc = registry.service_for("teams", ws) if _spec().store.defines(ws) else None
+    if svc is None:
+        raise HTTPException(status_code=404, detail="No Teams bot for this workspace")
+    return svc
+
+
+async def _handle_activity_safely(activity: dict, service=None) -> None:
+    svc = service or _spec().service
     try:
-        await _spec().service.handle_activity(activity)
+        with svc.scope():
+            await svc.handle_activity(activity)
     except Exception:  # noqa: BLE001 - logged, the ack already went out
         log.warning("teams webhook activity handling failed", exc_info=True)
 
 
 @router.post("/messages")
-async def teams_messages(request: Request):
-    spec = _spec()
-    app_id = spec.store.get("app_id")
-    app_password = spec.store.get("app_password")
+async def teams_messages(request: Request, workspace: Optional[str] = None):
+    svc = _service(workspace)
+    app_id = svc.store.get("app_id")
+    app_password = svc.store.get("app_password")
     if not app_password:
         raise HTTPException(status_code=503, detail="Teams channel is not configured")
 
@@ -64,7 +89,7 @@ async def teams_messages(request: Request):
     except auth.TeamsAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    asyncio.create_task(_handle_activity_safely(data))
+    asyncio.create_task(_handle_activity_safely(data, svc))
     return {}
 
 

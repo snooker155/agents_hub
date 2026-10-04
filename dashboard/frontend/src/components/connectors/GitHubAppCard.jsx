@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Github, Loader, RefreshCw, Unlink } from 'lucide-react';
 import {
-  getGitHubApp, getWorkspaces, setWorkspaceGitHubInstallation, syncGitHubApp,
+  getGitHubApp, getWorkspaceGithubInstallation, getWorkspaces, setWorkspaceGitHubInstallation, syncGitHubApp,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
+import { useWorkspace } from '../workspace';
+import { ConnectorSourceBadge } from './ConnectorSource';
 
 const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white '
   + 'px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50';
@@ -23,9 +25,12 @@ const btnGhost = 'flex items-center gap-1.5 border border-gray-300 hover:bg-gray
  */
 export default function GitHubAppCard() {
   const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
   const [app, setApp] = useState(null);
   const [hidden, setHidden] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
+  const [effective, setEffective] = useState(null);
   const [error, setError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [busyId, setBusyId] = useState(null);
@@ -41,12 +46,20 @@ export default function GitHubAppCard() {
     }
   }, [t]);
 
+  const loadEffective = useCallback(() => {
+    getWorkspaceGithubInstallation(workspace)
+      .then(({ data }) => setEffective(data))
+      .catch(() => setEffective(null));
+  }, [workspace]);
+
   useEffect(() => {
     load();
     getWorkspaces()
       .then(({ data }) => setWorkspaces((Array.isArray(data) ? data : []).map((w) => w.name).filter(Boolean)))
       .catch(() => setWorkspaces([]));
   }, [load]);
+
+  useEffect(() => { loadEffective(); }, [loadEffective]);
 
   const sync = async () => {
     setSyncing(true);
@@ -61,12 +74,13 @@ export default function GitHubAppCard() {
     }
   };
 
-  const bind = async (installation, workspace) => {
+  const bind = async (installation, targetWorkspace) => {
     setBusyId(installation.installation_id);
     try {
-      if (workspace) await setWorkspaceGitHubInstallation(workspace, installation.installation_id);
+      if (targetWorkspace) await setWorkspaceGitHubInstallation(targetWorkspace, installation.installation_id);
       else if (installation.workspace) await setWorkspaceGitHubInstallation(installation.workspace, null);
       await load();
+      await loadEffective();
     } catch (err) {
       setError(err?.response?.data?.detail || t('githubApp.bindFailed'));
     } finally {
@@ -96,6 +110,12 @@ export default function GitHubAppCard() {
       ) : null}
     >
       <p className="text-sm text-gray-600">{t('githubApp.description')}</p>
+      {effective?.effective && (
+        <p className="text-xs text-gray-500 flex items-center gap-2" data-testid="github-app-effective">
+          {t('githubApp.inUseFor', { workspace, account: effective.effective.account_login || effective.effective.installation_id })}
+          <ConnectorSourceBadge source={effective.source} />
+        </p>
+      )}
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
       )}

@@ -168,3 +168,19 @@ def filter_agents_for_workspace(specs: Iterable[T], workspace: Optional[str]) ->
             continue
         out.append(spec)
     return out
+
+
+def own_context(fn):
+    """Run ``fn`` in a copy of the caller's context, so the workspace (and
+    project) it publishes on the context vars for its tools does not stay set
+    for the caller afterwards. A loop or team run started in process (a tool,
+    a test) would otherwise leave every later call in that thread "in" its
+    workspace (common/workspace_scope.py scopes by it)."""
+    import contextvars
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return contextvars.copy_context().run(fn, *args, **kwargs)
+    return wrapper
+

@@ -153,8 +153,14 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
     timeout = max(1, min(int(timeout or 60), limit))
 
     environment = _current_environment()
+    # An isolated workspace (common/isolation.py): the docker sandbox with no
+    # network, whatever the environment or the settings name. A cloud
+    # provider or the local fallback would run the snippet outside the
+    # perimeter, so neither is ever chosen here.
+    from common import isolation
+    isolated = isolation.current_isolated()
     try:
-        provider_name = registry.resolve(environment, s)
+        provider_name = "docker" if isolated else registry.resolve(environment, s)
         provider = registry.get_provider(provider_name)
     except Exception as exc:  # noqa: BLE001 - an unknown provider name is a configuration error, reported not raised
         return SandboxResult(exit_code=-1, provider="none", error=f"cannot resolve a sandbox provider: {exc}")
@@ -168,12 +174,13 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
     ok, reason = provider.is_available()
     if not ok:
         hint = (" An operator can set CODE_RUNNER_FALLBACK=local to run snippets as plain "
-               "subprocesses instead (no isolation)." if provider_name == "docker" else "")
+               "subprocesses instead (no isolation)." if provider_name == "docker" and not isolated
+                else "")
         return SandboxResult(exit_code=-1, provider="none", error=(
             f"the {provider_name} sandbox provider is not available ({reason}), so run_code cannot "
             f"start its sandbox.{hint}"))
 
-    network = _network_policy()
+    network = SandboxNetwork(type="none") if isolated else _network_policy()
     # A snippet gets either the workspace or the network, never both: with a
     # limited network it can reach the environment's hosts, so it must not
     # also read the workspace's files, or it would be the whole trifecta in

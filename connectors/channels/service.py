@@ -12,6 +12,14 @@ The service is registered on ``common.singletons.supervisor`` through
 :func:`leased_service`, so with several backend replicas exactly one runs
 the loop, the same way the Telegram poller is held.
 
+A service serves one workspace's bot (docs/connectors.md "Connectors per
+workspace"): its store is bound to that workspace's document. The default
+workspace's bot (the channel's own ``SPEC.service``) serves every workspace,
+its chats may be bound anywhere. A bot a workspace defines for itself is a
+separate instance (``registry.service_for``) with its own loop, config,
+allowlist, cursor and bindings, and it serves that workspace only: every
+chat of it runs there, whatever its binding says.
+
 Inbound email, Slack, Discord and Teams channels differ only in the
 transport, which is why the whole dispatch (allowlist, commands, unbound
 chats, the run itself, the reply) lives here once.
@@ -19,11 +27,13 @@ chats, the run itself, the reply) lives here once.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import logging
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from .commands import handle_command, unbound_reply
-from .store import ChannelStore
+from .store import DEFAULT_WORKSPACE, ChannelStore
 from .turns import TurnResult, run_turn, wake_unanswered_async
 
 log = logging.getLogger("channels.service")
@@ -41,7 +51,14 @@ class ChannelService:
     required_fields: tuple[str, ...] = ()
 
     def __init__(self, store: ChannelStore) -> None:
+        # A store that follows the running code (the module's) is pinned to
+        # the default workspace's document: the loop must never drift to
+        # another workspace's bot because of the context it was started in.
+        if getattr(store, "workspace", None) is None and hasattr(store, "for_workspace"):
+            store = store.for_workspace(DEFAULT_WORKSPACE)
         self.store = store
+        #: The workspace whose bot this is; ``default`` serves every workspace.
+        self.workspace: str = str(getattr(store, "workspace", None) or DEFAULT_WORKSPACE)
         self._task: Optional[asyncio.Task] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._status: dict[str, Any] = {
@@ -75,6 +92,39 @@ class ChannelService:
     def _touch(self) -> None:
         self._status["last_poll"] = _utc_iso()
 
+    # ── workspace ────────────────────────────────────────────────────────────
+
+    @property
+    def own_workspace(self) -> Optional[str]:
+        """The one workspace a workspace's own bot serves; None for the
+        default's bot, which serves every workspace."""
+        return None if self.workspace == DEFAULT_WORKSPACE else self.workspace
+
+    @contextlib.contextmanager
+    def scope(self) -> Iterator[None]:
+        """Run code as this bot's workspace, so a connector the transport
+        leans on (the Google account a mail bot signs in with) is that
+        workspace's own, or the default's when it defines none."""
+        from common.workspace_context import _workspace_ctx
+        token = _workspace_ctx.set(self.workspace)
+        try:
+            yield
+        finally:
+            _workspace_ctx.reset(token)
+
+    def scoped_binding(self, binding: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """A chat's binding as this bot may use it: a workspace's own bot
+        runs every chat in its workspace, whatever the stored binding says."""
+        ws = self.own_workspace
+        if ws is None:
+            return binding
+        out = dict(binding or {})
+        if out.get("workspace") and out["workspace"] != ws:
+            log.warning("%s bot of workspace %s ignores binding of chat %s to %s",
+                        self.name, ws, out.get("chat_key"), out["workspace"])
+        out["workspace"] = ws
+        return out
+
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -88,14 +138,24 @@ class ChannelService:
             return
         self._stop_event = asyncio.Event()
         try:
-            await self._connect()
+            with self.scope():
+                await self._connect()
             self._status["last_error"] = None
         except Exception as exc:  # noqa: BLE001 - reported on the status card
             self._set_error(f"connect failed: {exc}")
             return
         self._status["running"] = True
-        log.info("%s channel started: %s", self.name, self._status.get("identity") or "")
-        self._task = asyncio.create_task(self._guarded_run(), name=f"channel-{self.name}")
+        log.info("%s channel started for %s: %s", self.name, self.workspace,
+                 self._status.get("identity") or "")
+        # The loop runs in a context of its own: a workspace's bot as that
+        # workspace, the default's as none, never as whatever request or tick
+        # happened to start it.
+        from common.workspace_context import _workspace_ctx
+        ctx = contextvars.copy_context()
+        ctx.run(_workspace_ctx.set, self.own_workspace)
+        suffix = "" if self.own_workspace is None else f"@{self.workspace}"
+        self._task = asyncio.create_task(self._guarded_run(), name=f"channel-{self.name}{suffix}",
+                                         context=ctx)
 
     async def stop(self) -> None:
         if self._stop_event:
@@ -156,7 +216,8 @@ class ChannelService:
     async def test(self) -> dict[str, Any]:
         """Verify the saved credentials without changing the running state."""
         try:
-            await self._connect()
+            with self.scope():
+                await self._connect()
             return {"ok": True, "identity": self._status.get("identity")}
         except Exception as exc:  # noqa: BLE001 - reported to the UI
             return {"ok": False, "error": str(exc)[:300]}
@@ -205,12 +266,12 @@ class ChannelService:
         if not self.chat_allowed(chat_key):
             return None
 
-        reply = handle_command(self.store, chat_key, text, title=title)
+        reply = handle_command(self.store, chat_key, text, title=title, workspace=self.own_workspace)
         if reply is not None:
             await self._safe_send(chat_key, reply, **send_kwargs)
             return None
 
-        binding = self.store.get_binding(chat_key)
+        binding = self.scoped_binding(self.store.get_binding(chat_key))
         if not binding or not binding.get("workspace") or not (
             binding.get("agent_id") or binding.get("flow_id")
         ):
@@ -248,12 +309,19 @@ class ChannelService:
             self._set_error(exc)
 
 
+def lease_role(name: str, workspace: Optional[str] = None) -> str:
+    """The singleton lease of a channel's bot: ``channel_slack`` for the
+    default workspace's, ``channel_slack@team-a`` for a workspace's own."""
+    ws = str(workspace or DEFAULT_WORKSPACE)
+    return f"channel_{name}" if ws == DEFAULT_WORKSPACE else f"channel_{name}@{ws}"
+
+
 def leased_service(service: ChannelService):
     """Wrap a channel service for ``common.singletons.supervisor``."""
     from common.singletons import LeasedService
 
     return LeasedService(
-        role=f"channel_{service.name}",
+        role=lease_role(service.name, service.workspace),
         start=service.start,
         stop=service.stop,
         is_running=service.is_running,
@@ -261,4 +329,4 @@ def leased_service(service: ChannelService):
     )
 
 
-__all__ = ["ChannelService", "leased_service"]
+__all__ = ["ChannelService", "leased_service", "lease_role"]

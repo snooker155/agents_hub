@@ -138,6 +138,18 @@ def update(watcher_id: str, patch: Dict[str, Any]) -> Watcher:
     return updated or current
 
 
+def stamp_google_source(watcher_id: str) -> Optional[Watcher]:
+    """Record, for an imap watcher that signs in with Google, whose Google
+    connector it was just approved to use (its workspace's own, or the
+    default's): a later poll refuses a different one (watchers/kinds.py).
+    The route calls it after its role check on create and update."""
+    current = store.get(watcher_id)
+    if current is None or current.kind != "imap" or not (current.config or {}).get("use_google"):
+        return current
+    state = {**(current.state or {}), kinds.GOOGLE_FROM: kinds.google_source(current.workspace)}
+    return store.update(watcher_id, state=state) or current
+
+
 def delete(watcher_id: str) -> bool:
     ok = store.delete(watcher_id)
     if ok:

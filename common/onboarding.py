@@ -106,15 +106,18 @@ def _tasks(workspace: Optional[str]) -> int:
     return int(total)
 
 
-def _channels() -> Dict[str, List[str]]:
+def _channels(workspace: Optional[str] = None) -> Dict[str, List[str]]:
+    """The chat channels in effect in ``workspace``: its own bot, else the
+    default workspace's (connectors/channels/store.py)."""
     from connectors.channels import registry as channels
+    from connectors.channels.store import in_workspace
 
     configured, enabled = [], []
     for spec in channels.all_channels():
         try:
-            if spec.store.is_configured(*spec.service.required_fields):
+            if in_workspace(workspace, spec.store.is_configured, *spec.service.required_fields):
                 configured.append(spec.name)
-            if spec.store.is_enabled():
+            if in_workspace(workspace, spec.store.is_enabled):
                 enabled.append(spec.name)
         except Exception:  # noqa: BLE001 - one broken channel store must not hide the rest
             log.debug("channel %s unreadable", spec.name, exc_info=True)
@@ -176,7 +179,7 @@ def hub_snapshot(workspace: Optional[str] = None, *, tour_done: Optional[bool] =
         "workspaces": _safe(_workspaces),
         "chats": _safe(lambda: _chats(workspace)),
         "tasks": _safe(lambda: _tasks(workspace)),
-        "channels": _safe(_channels),
+        "channels": _safe(lambda: _channels(workspace)),
         "connections": _safe(lambda: _connections(workspace)),
         "databases": _safe(lambda: _databases(workspace)),
         "watchers": _safe(lambda: _watchers(workspace)),

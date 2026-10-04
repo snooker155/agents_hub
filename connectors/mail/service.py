@@ -15,6 +15,11 @@ Sending is the other half: :meth:`send_text` builds a ``text/plain``
 ``reply_to`` is given (message id, subject, references), sets ``In-Reply-To``
 and ``References`` so mail clients thread the reply under the original
 message instead of starting a new conversation.
+
+With a Google sign in (``auth_mode: google``) a workspace's own mail bot
+signs in with the Google connector in effect in its workspace (that
+workspace's own, else the default's), and the default workspace's bot with
+the default's (docs/connectors.md "Connectors per workspace").
 """
 from __future__ import annotations
 
@@ -62,14 +67,15 @@ def _google_mode(config: dict[str, Any]) -> bool:
     return str(config.get("auth_mode") or "").strip().lower() == "google"
 
 
-def _from_address(config: dict[str, Any]) -> str:
+def _from_address(config: dict[str, Any], workspace: Optional[str] = None) -> str:
     """The address replies go out from: the configured one, or with a
-    Google sign in the connected account's when none is set."""
+    Google sign in the account of the Google connector in effect in
+    ``workspace`` (the running code's when None) when none is set."""
     configured = str(config.get("from_address") or "").strip()
     if configured or not _google_mode(config):
         return configured
-    from connectors.google import STORE as GOOGLE_STORE
-    return str(GOOGLE_STORE.get("account_email") or "").strip()
+    from connectors.google import store_for
+    return str(store_for(workspace).get("account_email") or "").strip()
 
 
 class MailService(ChannelService):
@@ -91,17 +97,26 @@ class MailService(ChannelService):
         config = self.store.get_config()
         await asyncio.to_thread(self._check_imap, config)
         await asyncio.to_thread(self._check_smtp, config)
-        self._status["identity"] = _from_address(config)
+        self._status["identity"] = _from_address(config, self.workspace)
 
-    @staticmethod
-    def _check_imap(config: dict[str, Any]) -> None:
-        client = open_imap(config)
+    # A workspace's own bot names its workspace, so a Google sign in uses
+    # that workspace's Google connector; the default's bot runs under its
+    # scope (ChannelService.scope), which is the default workspace's.
+    def _open_imap(self, config: dict[str, Any]):
+        own = self.own_workspace
+        return open_imap(config, workspace=own) if own else open_imap(config)
+
+    def _open_smtp(self, config: dict[str, Any]):
+        own = self.own_workspace
+        return open_smtp(config, workspace=own) if own else open_smtp(config)
+
+    def _check_imap(self, config: dict[str, Any]) -> None:
+        client = self._open_imap(config)
         client.connect()
         client.logout()
 
-    @staticmethod
-    def _check_smtp(config: dict[str, Any]) -> None:
-        client = open_smtp(config)
+    def _check_smtp(self, config: dict[str, Any]) -> None:
+        client = self._open_smtp(config)
         client.connect()
         client.quit()
 
@@ -133,7 +148,7 @@ class MailService(ChannelService):
         config = self.store.get_config()
         last_uid = int(self.store.get_cursor("last_uid", 0) or 0)
         out: list[tuple[bytes, int]] = []
-        with open_imap(config) as imap:
+        with self._open_imap(config) as imap:
             for uid in imap.search_uids_since(last_uid):
                 try:
                     raw = imap.fetch_rfc822(uid)
@@ -151,7 +166,7 @@ class MailService(ChannelService):
             return None
 
         config = self.store.get_config()
-        self_address = _from_address(config).lower()
+        self_address = _from_address(config, self.workspace).lower()
         if from_addr == self_address:
             return None
         if parsed["auto_reply"] or is_system_sender(from_addr):
@@ -204,7 +219,7 @@ class MailService(ChannelService):
     def _build_message(self, chat_key: str, text: str,
                         reply_to: Optional[dict[str, Any]]) -> EmailMessage:
         config = self.store.get_config()
-        from_address = _from_address(config)
+        from_address = _from_address(config, self.workspace)
         prefix = str(config.get("subject_prefix") or "Re:")
         reply_to = reply_to or {}
 
@@ -229,7 +244,7 @@ class MailService(ChannelService):
     def _send_sync(self, chat_key: str, text: str, reply_to: Optional[dict[str, Any]]) -> None:
         message = self._build_message(chat_key, text, reply_to)
         config = self.store.get_config()
-        with open_smtp(config) as smtp:
+        with self._open_smtp(config) as smtp:
             smtp.send(message)
 
     async def send_text(self, chat_key: str, text: str, **kwargs: Any) -> None:

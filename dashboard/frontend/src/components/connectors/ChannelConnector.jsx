@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { MessageSquare, Plus, RefreshCw, Save, Trash2, Wifi } from 'lucide-react';
 import {
-  listChannels, getChannelConfig, updateChannelConfig, testChannel,
+  listChannels, getChannelConfig, updateChannelConfig, deleteChannelConfig, testChannel,
   getChannelStatus, getChannelBindings, createChannelBinding, deleteChannelBinding,
   getAgents, listFlows, getGmailStatus,
 } from '../../api';
@@ -13,6 +13,7 @@ import PageLoader from '../PageLoader';
 import MailPresetPicker from './MailPresetPicker';
 import { presetForAddress } from './mailPresets';
 import GmailSignInNote from './GmailSignInNote';
+import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from './ConnectorSource';
 
 // One tab for every chat channel that is not Telegram: Slack, Discord,
 // Microsoft Teams, mail. The backend describes each channel's config fields
@@ -27,10 +28,10 @@ const btnDanger = 'flex items-center gap-1.5 border border-red-200 text-red-700 
 /** Whether a field's ``{other: value}`` condition (hidden_when, optional_when) holds. */
 const when = (cond, values) => Object.entries(cond || {}).some(([k, v]) => String(values?.[k] ?? '') === String(v));
 
-function FieldInput({ field, value, isSet, onChange, t, name, required }) {
+function FieldInput({ field, value, isSet, onChange, t, name, required, disabled }) {
   const label = t(`connectors.fields.${name}.${field.key}`, { defaultValue: field.key });
   const hint = t(`connectors.fieldHints.${name}.${field.key}`, { defaultValue: '' });
-  const common = { className: inputCls, value: value ?? '', onChange: (e) => onChange(e.target.value) };
+  const common = { className: inputCls, value: value ?? '', onChange: (e) => onChange(e.target.value), disabled };
   let input;
   if (field.kind === 'select') {
     input = (
@@ -72,7 +73,10 @@ function initialValues(fields, config) {
   return next;
 }
 
-export function ConfigForm({ name, fields: allFields, presets = [], config, onSave, onClear, onTest, saving, testing, testResult, t }) {
+export function ConfigForm({
+  name, fields: allFields, presets = [], config, onSave, onClear, onTest, saving, testing,
+  testResult, t, readOnly, workspace,
+}) {
   // A hidden field is written by the backend (an OAuth callback), never typed.
   const fields = allFields.filter((f) => f.kind !== 'hidden');
   const [values, setValues] = useState(() => initialValues(fields, config));
@@ -89,9 +93,9 @@ export function ConfigForm({ name, fields: allFields, presets = [], config, onSa
   useEffect(() => {
     if (!googleMode) return undefined;
     let live = true;
-    getGmailStatus().then((r) => { if (live) setGmail(r.data); }).catch(() => { if (live) setGmail(null); });
+    getGmailStatus(workspace).then((r) => { if (live) setGmail(r.data); }).catch(() => { if (live) setGmail(null); });
     return () => { live = false; };
-  }, [googleMode]);
+  }, [googleMode, workspace]);
   const setValue = (key, v) => setValues((vs) => {
     const next = { ...vs, [key]: v };
     if ((key === 'imap_user' || key === 'from_address') && !vs.imap_host) {
@@ -126,10 +130,14 @@ export function ConfigForm({ name, fields: allFields, presets = [], config, onSa
 
   return (
     <div className="space-y-3">
-      <MailPresetPicker presets={presets} value={presetId} onPick={applyPreset} t={t} inputCls={inputCls}
-        googleActive={googleMode}
-        onUseGoogle={hasGoogleMode ? () => setValue('auth_mode', 'google') : undefined} />
-      {googleMode && <GmailSignInNote status={gmail} t={t} />}
+      {!readOnly && (
+        <>
+          <MailPresetPicker presets={presets} value={presetId} onPick={applyPreset} t={t} inputCls={inputCls}
+            googleActive={googleMode}
+            onUseGoogle={hasGoogleMode ? () => setValue('auth_mode', 'google') : undefined} />
+          {googleMode && <GmailSignInNote status={gmail} t={t} />}
+        </>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         {fields.filter((f) => !when(f.hidden_when, values)).map((f) => (
           <FieldInput
@@ -141,32 +149,37 @@ export function ConfigForm({ name, fields: allFields, presets = [], config, onSa
             value={values[f.key]}
             isSet={Boolean(config?.[`has_${f.key}`])}
             onChange={(v) => setValue(f.key, v)}
+            disabled={readOnly}
           />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={submit} disabled={saving} className={btnPrimary}>
-          {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          {t('common.save')}
-        </button>
-        {onTest && (
-          <button type="button" onClick={onTest} disabled={testing} className={btnSecondary}>
-            {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-            {t('settings.testConnection')}
-          </button>
-        )}
-        {secretsSet.length > 0 && onClear && (
-          <button type="button" onClick={() => onClear(secretsSet.map((f) => f.key))} disabled={saving} className={btnDanger}>
-            <Trash2 className="w-3.5 h-3.5" /> {t('connectors.clearSecrets')}
-          </button>
-        )}
-      </div>
-      {testResult && (
-        <div className={`text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-          {testResult.ok
-            ? <>{t('settings.connectedAs')} <strong>{testResult.identity || 'ok'}</strong></>
-            : <>{t('settings.testFailed')}: {testResult.error}</>}
-        </div>
+      {!readOnly && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={submit} disabled={saving} className={btnPrimary}>
+              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {t('common.save')}
+            </button>
+            {onTest && (
+              <button type="button" onClick={onTest} disabled={testing} className={btnSecondary}>
+                {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                {t('settings.testConnection')}
+              </button>
+            )}
+            {secretsSet.length > 0 && onClear && (
+              <button type="button" onClick={() => onClear(secretsSet.map((f) => f.key))} disabled={saving} className={btnDanger}>
+                <Trash2 className="w-3.5 h-3.5" /> {t('connectors.clearSecrets')}
+              </button>
+            )}
+          </div>
+          {testResult && (
+            <div className={`text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+              {testResult.ok
+                ? <>{t('settings.connectedAs')} <strong>{testResult.identity || 'ok'}</strong></>
+                : <>{t('settings.testFailed')}: {testResult.error}</>}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -175,7 +188,8 @@ export function ConfigForm({ name, fields: allFields, presets = [], config, onSa
 // A new binding goes to the current workspace, like everything else made on
 // this page; the bindings table below still lists every workspace's chats.
 function BindingForm({ name, onCreated, t }) {
-  const { selectedWorkspace: workspace } = useWorkspace();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
   const [chatKey, setChatKey] = useState('');
@@ -185,20 +199,19 @@ function BindingForm({ name, onCreated, t }) {
 
   useEffect(() => {
     setTarget('');
-    if (!workspace) return;
     getAgents(workspace).then((r) => setAgents(r.data || [])).catch(() => setAgents([]));
     listFlows(workspace).then((r) => setFlows(r.data || [])).catch(() => setFlows([]));
   }, [workspace]);
 
   const submit = async () => {
-    if (!chatKey.trim() || !workspace) return;
+    if (!chatKey.trim()) return;
     setBusy(true);
     setError('');
     try {
       const payload = { chat_key: chatKey.trim(), workspace };
       if (target.startsWith('agent:')) payload.agent_id = target.slice(6);
       if (target.startsWith('flow:')) payload.flow_id = target.slice(5);
-      const { data } = await createChannelBinding(name, payload);
+      const { data } = await createChannelBinding(name, payload, workspace);
       setChatKey('');
       onCreated(data);
     } catch (e) {
@@ -224,7 +237,7 @@ function BindingForm({ name, onCreated, t }) {
           {agents.map((a) => <option key={a.id} value={`agent:${a.id}`}>{a.name || a.id}</option>)}
           {flows.map((f) => <option key={f.id} value={`flow:${f.id}`}>{t('settings.flow')}: {f.name || f.id}</option>)}
         </select>
-        <button type="button" onClick={submit} disabled={busy || !chatKey.trim() || !workspace} className={btnPrimary}>
+        <button type="button" onClick={submit} disabled={busy || !chatKey.trim()} className={btnPrimary}>
           <Plus className="w-3.5 h-3.5" /> {t('connectors.channels.bind')}
         </button>
       </div>
@@ -234,6 +247,9 @@ function BindingForm({ name, onCreated, t }) {
 
 export default function ChannelConnector({ name }) {
   const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  const isDefaultWorkspace = workspace === 'default';
   const [loading, setLoading] = useState(true);
   const [spec, setSpec] = useState(null);
   const [config, setConfig] = useState(null);
@@ -244,13 +260,19 @@ export default function ChannelConnector({ name }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState('');
+  // Whether "Define for this workspace" was clicked: the inherited, read
+  // only form becomes editable, and saving is what creates this workspace's
+  // own definition (connectors/channels/store.py).
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    setEditing(false);
     try {
       const [specs, cfg, st, bs] = await Promise.all([
-        listChannels(), getChannelConfig(name), getChannelStatus(name), getChannelBindings(name),
+        listChannels(), getChannelConfig(name, workspace), getChannelStatus(name, workspace),
+        getChannelBindings(name, workspace),
       ]);
       setSpec((specs.data || []).find((s) => s.name === name) || { name, fields: [] });
       setConfig(cfg.data);
@@ -262,17 +284,17 @@ export default function ChannelConnector({ name }) {
     } finally {
       setLoading(false);
     }
-  }, [name, t]);
+  }, [name, workspace, t]);
 
   useEffect(() => { load(); }, [load]);
 
   const refreshStatus = useCallback(async () => {
     try {
-      const [st, bs] = await Promise.all([getChannelStatus(name), getChannelBindings(name)]);
+      const [st, bs] = await Promise.all([getChannelStatus(name, workspace), getChannelBindings(name, workspace)]);
       setStatus(st.data || {});
       setBindings(bs.data || []);
     } catch { /* wait for the next event */ }
-  }, [name]);
+  }, [name, workspace]);
   useLiveRefetch(refreshStatus, { type: `channel_${name}.changed` });
 
   const save = async (payload) => {
@@ -280,9 +302,10 @@ export default function ChannelConnector({ name }) {
     setError('');
     setTestResult(null);
     try {
-      const { data } = await updateChannelConfig(name, payload);
+      const { data } = await updateChannelConfig(name, payload, workspace);
       setConfig(data);
       setAllowed((data.allowed || []).join('\n'));
+      setEditing(false);
       await refreshStatus();
     } catch (e) {
       setError(`${t('settings.errors.save')}: ${e.response?.data?.detail || e.message}`);
@@ -295,7 +318,7 @@ export default function ChannelConnector({ name }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const { data } = await testChannel(name);
+      const { data } = await testChannel(name, workspace);
       setTestResult(data);
     } catch (e) {
       setTestResult({ ok: false, error: e.response?.data?.detail || e.message });
@@ -304,10 +327,25 @@ export default function ChannelConnector({ name }) {
     }
   };
 
+  const removeDefinition = async () => {
+    if (!window.confirm(t('connectors.source.confirmRemove'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const { data } = await deleteChannelConfig(name, workspace);
+      setConfig(data);
+      setAllowed((data.allowed || []).join('\n'));
+    } catch (e) {
+      setError(`${t('settings.errors.save')}: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const removeBinding = async (key) => {
     if (!window.confirm(t('connectors.channels.confirmRemoveBinding', { chatKey: key }))) return;
     try {
-      await deleteChannelBinding(name, key);
+      await deleteChannelBinding(name, key, workspace);
       setBindings((bs) => bs.filter((b) => b.chat_key !== key));
     } catch (e) {
       setError(`${t('settings.errors.removeBinding')}: ${e.response?.data?.detail || e.message}`);
@@ -320,17 +358,33 @@ export default function ChannelConnector({ name }) {
   const inboundUrl = config?.inbound_url
     ? `${window.location.origin}${config.inbound_url}`
     : null;
+  const readOnly = !isDefaultWorkspace && config?.source === 'default' && !editing;
 
   return (
     <div className="space-y-5">
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      <SectionCard title={t(`connectors.channels.title.${name}`)}>
+      <SectionCard
+        title={t(`connectors.channels.title.${name}`)}
+        actions={<ConnectorSourceBadge source={config?.source} />}
+      >
         <p className="text-sm text-gray-600">{t(`connectors.channels.intro.${name}`)}</p>
         {inboundUrl && (
           <p className="text-xs text-gray-500">
             {t('connectors.channels.inboundUrl')}: <code className="bg-gray-100 rounded px-1">{inboundUrl}</code>
           </p>
+        )}
+        {isDefaultWorkspace ? (
+          <ConnectorDefinedIn definedIn={config?.defined_in} />
+        ) : (
+          <ConnectorSourceActions
+            payload={config}
+            isDefaultWorkspace={isDefaultWorkspace}
+            editing={editing}
+            onDefine={() => setEditing(true)}
+            onRemove={removeDefinition}
+            busy={saving}
+          />
         )}
         <ConfigForm
           name={name}
@@ -344,6 +398,8 @@ export default function ChannelConnector({ name }) {
           testing={testing}
           testResult={testResult}
           t={t}
+          readOnly={readOnly}
+          workspace={workspace}
         />
         {config?.has_loop && (
           <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
@@ -351,7 +407,7 @@ export default function ChannelConnector({ name }) {
               <label className="text-sm font-medium text-gray-700">{t('connectors.channels.enabled')}</label>
               <p className="text-xs text-gray-500">{t('connectors.channels.enabledHint')}</p>
             </div>
-            <label className="inline-flex items-center cursor-pointer">
+            <label className="relative inline-flex items-center cursor-pointer">
               <input
                 type="checkbox"
                 className="sr-only peer"

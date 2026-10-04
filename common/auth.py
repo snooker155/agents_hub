@@ -41,6 +41,11 @@ def auth_headers() -> Dict[str, str]:
     is what guarantees this variable actually reaches those processes even when
     the token was only ever configured via ``.env`` (see its docstring).
 
+    ``AGENTS_HUB_RUN_TOKEN`` comes first: a run's own process (an agent run,
+    a flow, a carrier) is handed a token of its own that reaches only the
+    relay routes (``common/run_tokens.py``, :data:`RELAY_ROUTES`), and none
+    of the hub-wide credentials below.
+
     ``AGENTS_HUB_SERVICE_TOKEN`` is the fallback, for ``AUTH_MODE=multi`` with
     no shared API token: a subprocess has no session and no password, so the
     backend mints one random service credential per process and exports it the
@@ -57,7 +62,8 @@ def auth_headers() -> Dict[str, str]:
     open-by-default behaviour, so an unconfigured deployment posts exactly as
     it did before.
     """
-    token = (os.environ.get("AGENTS_HUB_API_TOKEN", "").strip()
+    token = (os.environ.get("AGENTS_HUB_RUN_TOKEN", "").strip()
+             or os.environ.get("AGENTS_HUB_API_TOKEN", "").strip()
              or os.environ.get("AGENTS_HUB_SERVICE_TOKEN", "").strip()
              or os.environ.get("AGENTS_HUB_API_KEY", "").strip())
     return {"Authorization": f"Bearer {token}"} if token else {}
@@ -73,7 +79,15 @@ def auth_headers() -> Dict[str, str]:
 # own bearer token (``AUTH_SCIM_TOKEN``, see dashboard/backend/routes/scim.py):
 # it sits outside ``/api`` so the operator token never applies to it, and is
 # listed here so the intent is in one place.
-SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/scim/v2")
+#
+# The chat channels' inbound webhooks authenticate the platform themselves:
+# Slack's events and interactions by the signing secret's HMAC
+# (routes/slack.py), Teams' activities by the Bot Framework JWT
+# (routes/teams_channel.py). The hub's own credential is never what Slack or
+# Teams send, so without this they could not reach a token or multi mode hub.
+SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/scim/v2",
+                                "/api/channels/slack/events", "/api/channels/slack/interactions",
+                                "/api/channels/teams/messages")
 
 
 def _is_self_authenticating(path: str) -> bool:
@@ -176,7 +190,7 @@ WIDGET_PUBLIC_PREFIXES = ("/api/widgets/public",)
 #: access is restricted too: an env block is a list of secret *names*, and a
 #: policy is the shape of the guardrails somebody would have to get around.
 OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members",
-                                   "secrets"})
+                                   "secrets", "isolation"})
 
 #: Path segments directly under ``/api/workspaces/`` that are routes, not
 #: workspace names. Without this, ``POST /api/workspaces/attach`` would be read
@@ -267,6 +281,46 @@ def _has_prefix(path: str, prefixes) -> bool:
 #: same credential as the rest of the API even though it lives outside
 #: ``/api``, where OpenAI clients expect to find it.
 CLOSED_OUTSIDE_API_PREFIXES = ("/v1",)
+
+
+#: The routes a run's own process calls back on: its live events, the
+#: invalidations and channel events it relays, the inbox push, and, from a
+#: container with a read-only state mount, its run state. A run token reaches
+#: these and nothing else; people reach none of them (a member could otherwise
+#: write any run's record, delegate as another user through ``launched_by``,
+#: or push events into somebody else's chat). Prefix entries end in ``/``.
+RELAY_ROUTES = (
+    ("*", "/api/run-state/"),
+    ("POST", "/api/sessions/*/events"),
+    ("POST", "/api/instances/*/events"),
+    ("POST", "/api/stream/notify"),
+    ("POST", "/api/stream/publish"),
+    ("POST", "/api/plan/notifications/publish"),
+)
+
+#: Principal kinds the relay routes accept: a run token, and the hub's own
+#: credentials (the service one, and the shared token in ``token`` mode) for
+#: hub processes that are not runs (a worker on another host relays with the
+#: token it is configured with).
+RELAY_KINDS = frozenset({"run", "service", "token"})
+
+
+def is_relay_route(method: str, path: str) -> bool:
+    """Whether ``method path`` is one of :data:`RELAY_ROUTES`."""
+    method = (method or "").upper()
+    path = path.rstrip("/") or path
+    for want_method, pattern in RELAY_ROUTES:
+        if want_method != "*" and want_method != method:
+            continue
+        if pattern.endswith("/"):
+            if path.startswith(pattern) or path == pattern.rstrip("/"):
+                return True
+            continue
+        want = [p for p in pattern.split("/") if p]
+        have = [p for p in path.split("/") if p]
+        if len(want) == len(have) and all(w == "*" or w == h for w, h in zip(want, have)):
+            return True
+    return False
 
 
 def is_open_path(method: str, path: str) -> bool:
@@ -362,6 +416,10 @@ def authorize(
     needs any principal at all (the token either matched or it did not), and
     ``multi`` runs the role matrix. Admins bypass membership entirely, and so
     does the service credential the hub's own subprocess relays carry.
+
+    In ``token`` and ``multi`` the relay routes (:data:`RELAY_ROUTES`) belong
+    to runs and the hub itself: a run token reaches only them, and a person
+    reaches none of them.
     """
     if mode == SINGLE:
         return True
@@ -369,6 +427,12 @@ def authorize(
         return True
     if principal is None:
         return False
+    relay = is_relay_route(method, path)
+    if principal.kind == "run":
+        # A run token reaches its relays and nothing else, whatever its role.
+        return relay
+    if relay:
+        return principal.kind in RELAY_KINDS
     if mode == TOKEN:
         return True
     if not principal.reaches(workspace):

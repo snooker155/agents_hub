@@ -229,11 +229,6 @@ export type AnswerRequest = {
   "answered_by"?: string;
 };
 
-export type ApplyBody = {
-  "agent_id": string;
-  "workspace"?: string | null;
-};
-
 export type ApplyOpsRequest = {
   "ops"?: unknown[];
 };
@@ -1014,6 +1009,11 @@ export type InterruptRequest = {
   "key"?: string;
   "node"?: string;
   "output"?: string | null;
+};
+
+export type IsolationPut = {
+  "isolated"?: boolean | null;
+  "allow_domains"?: string[] | null;
 };
 
 export type JobCreate = {
@@ -1963,6 +1963,9 @@ export type TelegramConfigResponse = {
   "bot_username"?: string | null;
   "running": boolean;
   "allowed_chat_ids"?: number[];
+  "workspace"?: string;
+  "source"?: string;
+  "defined_in"?: string[] | null;
 };
 
 export type TelegramConfigUpdate = {
@@ -1979,6 +1982,8 @@ export type TelegramStatusResponse = {
   "bot_username"?: string | null;
   "has_token": boolean;
   "enabled": boolean;
+  "workspace"?: string;
+  "source"?: string;
 };
 
 export type TestLocalModelRequest = {
@@ -2205,7 +2210,7 @@ export type WorldGenerateIn = {
 
 export type routes__channels__BindingCreate = {
   "chat_key": string;
-  "workspace": string;
+  "workspace"?: string | null;
   "agent_id"?: string | null;
   "flow_id"?: string | null;
   "title"?: string | null;
@@ -2216,11 +2221,21 @@ export type routes__channels__SendRequest = {
   "text": string;
 };
 
+export type routes__connection_proposals__ApplyBody = {
+  "values"?: Record<string, unknown>;
+  "secrets"?: Record<string, string>;
+};
+
 export type routes__loops__RunIn = {
   "goal"?: string;
   "workspace"?: string | null;
   "task_id"?: string | null;
   "seed"?: Record<string, unknown>;
+};
+
+export type routes__memory_consolidation__ApplyBody = {
+  "agent_id": string;
+  "workspace"?: string | null;
 };
 
 export type routes__teams__RunIn = {
@@ -2232,7 +2247,7 @@ export type routes__teams__RunIn = {
 
 export type routes__telegram__BindingCreate = {
   "chat_id": number;
-  "workspace": string;
+  "workspace"?: string | null;
   "agent_id"?: string | null;
   "flow_id"?: string | null;
   "title"?: string | null;
@@ -2665,6 +2680,7 @@ export interface ApiPaths {
   "/api/channels/{name}/config": {
     get: { response: unknown };
     put: { body: ChannelConfigUpdate; response: unknown };
+    delete: { response: unknown };
   };
   "/api/channels/{name}/send": {
     post: { body: routes__channels__SendRequest; response: unknown };
@@ -2710,6 +2726,12 @@ export interface ApiPaths {
   "/api/cluster/members/{member_id}/logs": {
     get: { response: unknown };
   };
+  "/api/connection-proposals": {
+    get: { response: unknown };
+  };
+  "/api/connection-proposals/{approval_id}/apply": {
+    post: { body: routes__connection_proposals__ApplyBody; response: unknown };
+  };
   "/api/connections": {
     get: { response: unknown };
     post: { body: CreateConnection; response: unknown };
@@ -2734,6 +2756,7 @@ export interface ApiPaths {
   "/api/connectors/{name}/config": {
     get: { response: unknown };
     put: { body: ConnectorConfigUpdate; response: unknown };
+    delete: { response: unknown };
   };
   "/api/connectors/{name}/test": {
     post: { response: unknown };
@@ -3020,6 +3043,7 @@ export interface ApiPaths {
   "/api/git/config": {
     get: { response: unknown };
     put: { body: GitConfigUpdate; response: unknown };
+    delete: { response: unknown };
   };
   "/api/git/github-app": {
     get: { response: Record<string, unknown> };
@@ -3257,7 +3281,7 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/memory/consolidations/{job_id}/apply": {
-    post: { body: ApplyBody; response: unknown };
+    post: { body: routes__memory_consolidation__ApplyBody; response: unknown };
   };
   "/api/memory/consolidations/{job_id}/discard": {
     post: { response: unknown };
@@ -4217,6 +4241,7 @@ export interface ApiPaths {
   "/api/telegram/config": {
     get: { response: TelegramConfigResponse };
     put: { body: TelegramConfigUpdate; response: TelegramConfigResponse };
+    delete: { response: TelegramConfigResponse };
   };
   "/api/telegram/send": {
     post: { body: routes__telegram__SendRequest; response: unknown };
@@ -4486,11 +4511,16 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/workspaces/{name}/github-installation": {
+    get: { response: Record<string, unknown> };
     put: { body: InstallationBinding; response: Record<string, unknown> };
   };
   "/api/workspaces/{name}/instructions": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/isolation": {
+    get: { response: unknown };
+    put: { body: IsolationPut; response: unknown };
   };
   "/api/workspaces/{name}/loop-settings": {
     get: { response: unknown };
@@ -4514,6 +4544,9 @@ export interface ApiPaths {
   "/api/workspaces/{name}/policy": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/policy/import-hooks-file": {
+    post: { response: unknown };
   };
   "/api/workspaces/{name}/secrets": {
     get: { response: Record<string, unknown>[] };

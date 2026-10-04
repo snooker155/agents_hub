@@ -135,6 +135,11 @@ def decide_approval(approval_id: str, body: DecideBody, request: Request):
     decision = str(body.decision or "").strip().lower()
     if decision not in tool_approvals.DECISIONS:
         raise HTTPException(status_code=400, detail="decision must be approve or deny")
+    if decision == "approve" and approval.get("tool") == "propose_connection":
+        # A yes here would tell the agent the connection exists while nothing
+        # was set up: a proposal is approved by applying it.
+        raise HTTPException(status_code=400, detail="a connection proposal is approved by applying it: "
+                                                    "POST /api/connection-proposals/{id}/apply")
     author = principal or "operator"
     settled = tool_approvals.decide(approval_id, decision, note=body.note, author=author)
     details = {"run_id": approval.get("run_id"), "tool": approval.get("tool"),

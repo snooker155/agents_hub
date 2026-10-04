@@ -255,6 +255,8 @@ export default {
   hooks: 'Hooks',
   hooksHint: 'A command or HTTP call around every matching tool call or run, as JSON keyed by event: PreToolUse and PostToolUse (also before_tool_call and after_tool_call), before_run and after_run. The full reference is in',
   hooksDocsLink: 'Tools in the docs',
+  hooksFileIgnored: "A .hooks.json file in this workspace's folder is not run: agents write into that folder, so a hook from there could run a command on the hub on an agent's say so. Read it, and import it if you want to keep it.",
+  importHooksFile: "Import the file as this workspace's hooks",
   hooksInvalidJson: 'That is not valid JSON.',
   hooksMustBeObject: 'Hooks must be a JSON object keyed by event.',
   saveHooks: 'Save hooks',

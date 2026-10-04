@@ -584,12 +584,18 @@ class AgentFactory:
                 *skills_tools,
             ]
         else:
-            memory_tools = [
+            # The pool-id tools reach only pools bound to the agent in this
+            # workspace (memory/tool.py, common/workspace_scope.py): with none
+            # bound they would refuse every call, so a workspace run does not
+            # offer them. Outside a workspace (and for the service's own
+            # agents) they stay as they were.
+            from common.workspace_scope import is_service_wide as _svc_wide
+            _generic = [] if (_ws_name and not _svc_wide(agent_id)) else [
                 read_memory_tool, write_memory_tool, search_memory_tool,
                 read_structured_memory_tool, write_structured_memory_tool,
                 append_journal_tool,
-                *skills_tools,
             ]
+            memory_tools = [*_generic, *skills_tools]
 
         from tools.graph_builder import GRAPH_BUILDER_TOOLS
         # Web tools are plain per-tool grants (no group alias): web_search and
@@ -817,6 +823,15 @@ class AgentFactory:
         # three belong to the remote service. Branch before any of that work so
         # a remote record never touches the LangChain assembly path.
         if _spec is not None and _spec.is_remote():
+            # An imported agent (Claude Code, Codex, any remote service) gets
+            # the conversation sent to its own endpoint: a way out of an
+            # isolated workspace (common/isolation.py), so it does not run there.
+            from common import isolation as _iso
+            from common.workspace_context import workspace_name_from_path as _ws_of
+            if workspace and _iso.is_isolated(_ws_of(workspace)):
+                raise _iso.IsolationError(
+                    f"'{_spec.id}' is an imported agent that runs outside the hub; workspace "
+                    f"'{_ws_of(workspace)}' is isolated, so it cannot run there.")
             from agents.remote_agent import RemoteAgent
             return RemoteAgent(
                 agent_id=_spec.id,
@@ -1068,8 +1083,14 @@ class AgentFactory:
         # the last one that should run outside the workspace's hooks and the
         # approval gate. A server that will not connect is skipped with its
         # error recorded on its own entry, never failing the build.
-        from mcp_client import append_mcp_tools
-        tools = append_mcp_tools(tools, tool_list, workspace)
+        from common import isolation as _isolation
+        from common.workspace_context import workspace_name_from_path as _ws_name_of
+        _isolated_ws = _isolation.is_isolated(_ws_name_of(workspace)) if workspace else False
+        if not _isolated_ws:
+            # An isolated workspace never connects an MCP server: a stdio one
+            # runs a command on the hub's host, a remote one is a way out.
+            from mcp_client import append_mcp_tools
+            tools = append_mcp_tools(tools, tool_list, workspace)
 
         # A tool result past the workspace's spill size goes to a file under
         # tool-outputs/ and the model sees its head, its tail and the path
@@ -1180,6 +1201,42 @@ class AgentFactory:
                     "have saved anything."
                 )
 
+        # An isolated workspace (common/isolation.py): whatever the record and
+        # the automatic additions above hold, only the allowlist reaches the
+        # model. A shared agent (the main agent) keeps working here with less;
+        # the prompt says what was taken off so it does not promise it.
+        if _isolated_ws:
+            _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+            _kept_names, _removed = _isolation.filter_tools(_names)
+            if _removed:
+                tools = [t for t, n in zip(tools, _names) if _isolation.tool_allowed(n)]
+                log.info("isolated workspace: %s runs without %s", agent_id, ", ".join(sorted(set(_removed))))
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n## This workspace is isolated\n"
+                "Shell commands and code run in a sandbox container with no network at all. "
+                "You can read web pages only from the sites this workspace allows, with "
+                "fetch_url, web_search and the read only browser tools; nothing can be sent "
+                "out. Tools that would reach outside are not available here"
+                + (f" ({', '.join(sorted(set(_removed)))})" if _removed else "")
+                + ". Do not offer to send, post, publish or connect anything."
+            )
+
+        # One workspace per run (common/workspace_scope.py), in every
+        # workspace: tools that see the whole service stay with the service's
+        # own agents, workspace management with the main agent in "default",
+        # and a tool that takes a workspace may name only the run's own.
+        from common import workspace_scope as _scope
+        _run_ws = _ws_name_of(workspace) if workspace else None
+        _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or ""))
+        if _out_of_scope:
+            tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
+            log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
+        if _run_ws and not _scope.is_service_wide(agent_id):
+            from agents.isolation_guard import pin_workspace
+            tools = pin_workspace(tools, _run_ws)
+
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
         # (memory pools, skills, clarify-gate ask_user, the project graph reader,
@@ -1195,6 +1252,7 @@ class AgentFactory:
             + secret_grant_ids(list(getattr(_spec, "secrets", None) or []) + _extra_secrets if _spec else _extra_secrets),
             override=bool(_spec.capability_override) if _spec else False,
             delegates=list(_spec.delegates or []) if _spec else [],
+            isolated=_isolated_ws,
         )
 
         # Create agent

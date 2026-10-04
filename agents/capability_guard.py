@@ -56,6 +56,19 @@ def _owner_workspace(agent_id: str) -> Optional[str]:
     return getattr(spec, "owner_workspace", None) if spec is not None else None
 
 
+def _owned_by_isolated(agent_id: str, workspace: Optional[str] = None) -> bool:
+    """Whether the agent's owner workspace (``workspace`` when the caller
+    knows it, else the stored record's) is isolated."""
+    owner = workspace if workspace is not None else _owner_workspace(agent_id)
+    if not owner:
+        return False
+    try:
+        from common.isolation import is_isolated
+        return is_isolated(owner)
+    except Exception:  # noqa: BLE001 - not known to be isolated: the guard applies
+        return False
+
+
 def is_system_workspace_agent(agent_id: str, workspace: Optional[str] = None) -> bool:
     """Whether the system workspace rule applies: one of the loop's seeded
     agents, or an agent owned by the system workspace (the ``workspace``
@@ -304,6 +317,13 @@ def check_agent_tools(
     if guard_mode() == "off":
         return None
 
+    # An agent an isolated workspace owns (common/isolation.py): its shell and
+    # code have no network and its other tools are the perimeter's allowlist,
+    # so nothing it combines can send data out. The perimeter is the guard
+    # there, and the agent is free inside it.
+    if _owned_by_isolated(agent_id, workspace):
+        return None
+
     violation = _effective_violation(agent_id, tools, delegates=delegates)
     if violation is None:
         return None
@@ -386,8 +406,13 @@ def enforce_built_tools(
     override: bool = False,
     delegates: Optional[Sequence[str]] = None,
     workspace: Optional[str] = None,
+    isolated: bool = False,
 ) -> None:
     """Build-time enforcement over the *resolved* tool instances.
+
+    ``isolated``: the build is for an isolated workspace (common/isolation.py),
+    whose tools were already cut to the perimeter's allowlist; only the system
+    workspace rule applies then, the combinations do not.
 
     The system workspace rule is checked first and raises in every mode: a
     tool injected after the record was written must not give a loop agent a
@@ -412,7 +437,7 @@ def enforce_built_tools(
         raise CapabilityViolation(agent_id, system_violation)
 
     mode = guard_mode()
-    if mode == "off":
+    if mode == "off" or isolated:
         return
 
     violation = _effective_violation(agent_id, names, delegates=delegates)

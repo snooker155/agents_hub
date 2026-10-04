@@ -22,7 +22,7 @@ Remote agents cannot take injects (409).
 
 Mode `system` is a privileged addition to the agent's instructions. The loop takes it before the next model call like an inject, but appends it to the system prompt, under "Operator instructions added during this run", for every later model call of the run, where it carries the authority of the rest of the instructions. The append form is used for every provider: Anthropic and Gemini accept one system instruction ahead of the conversation and no system message in the middle of it, OpenAI and the local servers accept either. With a cached system prompt (Anthropic), the addition is one more text block after the cached ones, so the cached prefix stays valid.
 
-Only an operator may send one: the run's owner (the owner of the chat, or the person who filed the task) or an admin; outside `multi` mode, the one operator. The service credential that a run's own process and every delegated run carry is always refused (403), so no agent can raise its own instructions. A run with no known owner (a delegated run, a flow node) takes system messages from admins only. Teams and remote agents take none (400 and 409).
+Only an operator may send one: the run's owner (the owner of the chat, or the person who filed the task) or an admin; outside `multi` mode, the one operator. A run's own credential (the run token its process and every delegated run carry, which reaches only the relay routes) and the service credential are always refused (403), so no agent can raise its own instructions. A run with no known owner (a delegated run, a flow node) takes system messages from admins only. Teams and remote agents take none (400 and 409).
 
 It is stored with the other steering messages, so a run that picks up again under its own id (a checkpoint resume, a chat retry) puts it back in the system prompt. It shows on the run page under "Instructions added during the run" (`loop.system_messages`), and in the stream as `steer_delivered` with `mode: "system"`. One that arrives while a task run writes its final answer gets one more pass, in which the model checks its answer against it. One that no run took is marked expired and is never sent as a chat turn.
 
@@ -36,7 +36,7 @@ A switch that cannot be honoured when the loop takes it (the model was disabled 
 
 The run records each switch on `loop.model_switches` (step, from, to, who, error), and each call the new model answered on `loop.answered_by` with its own tokens and catalog model, the way a fallback's call is recorded, so the run's cost prices those calls at the new model's rates and the rest at the run's own model. The run page lists the switches and marks those calls "switched". A run that picks up again under its own id (a checkpoint resume) reads the switch back and stays on the new model.
 
-Anyone who may steer the run may switch it; the service credential (an agent's own process, a delegated run) is refused with 403, so no agent moves its own run to another model. Teams take none (400), remote agents none (409).
+Anyone who may steer the run may switch it; a run's own token and the service credential (an agent's own process, a delegated run) are refused with 403, so no agent moves its own run to another model. Teams take none (400), remote agents none (409).
 
 ## Interrupt
 

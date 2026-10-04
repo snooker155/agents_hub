@@ -188,31 +188,36 @@ class ConsentSettingsUpdate(BaseModel):
     scopes: Dict[str, List[str]] = {}
 
 
-def _catalog(request: Request) -> Dict[str, Any]:
+def _catalog(request: Request, workspace: Optional[str] = None) -> Dict[str, Any]:
+    """The providers, and whether each has an app registration to ask with in
+    ``workspace`` (its own Google or Microsoft connector, else the default
+    workspace's; the default's when omitted)."""
+    ws = str(workspace or "").strip() or "default"
     return {
         "providers": [{
             "id": p,
             "label": catalog.PROVIDER_LABELS[p],
             "access": catalog.keys_for(p),
             "default": list(catalog.DEFAULT_KEYS[p]),
-            "ready": flow.provider_ready(p),
+            "ready": flow.provider_ready(p, ws),
         } for p in catalog.PROVIDERS],
         "redirect_uri": flow.redirect_uri(_base(request)),
     }
 
 
 @router.get("/catalog")
-async def consent_catalog(request: Request):
-    return _catalog(request)
+async def consent_catalog(request: Request, workspace: Optional[str] = None):
+    return _catalog(request, workspace)
 
 
 @router.get("/agents/{agent_id}")
-async def get_agent_settings(agent_id: str, request: Request):
-    return {"agent_id": agent_id, **store.get_settings(agent_id), "catalog": _catalog(request)}
+async def get_agent_settings(agent_id: str, request: Request, workspace: Optional[str] = None):
+    return {"agent_id": agent_id, **store.get_settings(agent_id), "catalog": _catalog(request, workspace)}
 
 
 @router.put("/agents/{agent_id}")
-async def update_agent_settings(agent_id: str, data: ConsentSettingsUpdate, request: Request):
+async def update_agent_settings(agent_id: str, data: ConsentSettingsUpdate, request: Request,
+                                workspace: Optional[str] = None):
     from agents import registry
     spec = registry.get_agent(agent_id)
     if not spec:
@@ -232,7 +237,7 @@ async def update_agent_settings(agent_id: str, data: ConsentSettingsUpdate, requ
                  object_id=agent_id, workspace=getattr(spec, "owner_workspace", None),
                  ip=identity.client_ip(request),
                  details={"providers": saved["providers"], "scopes": saved["scopes"]})
-    return {"agent_id": agent_id, **saved, "catalog": _catalog(request)}
+    return {"agent_id": agent_id, **saved, "catalog": _catalog(request, workspace)}
 
 
 def _public_grant(row: Dict[str, Any]) -> Dict[str, Any]:

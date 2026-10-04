@@ -185,6 +185,28 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
     workspace = _resolve_shell_cwd()
     timeout = min(int(timeout or 30), 120)
 
+    # An isolated workspace (common/isolation.py): the command runs in a
+    # throwaway container with no network and only this folder mounted, never
+    # on the hub's host.
+    from common import isolation
+    if isolation.current_isolated():
+        result = isolation.run_shell_sandboxed(command, workspace, timeout=timeout)
+        stdout = result.get("stdout") or ""
+        stderr = result.get("stderr") or ""
+        if len(stdout) > _MAX_OUTPUT:
+            stdout = stdout[:_MAX_OUTPUT] + "\n...[truncated]"
+        if len(stderr) > _MAX_OUTPUT:
+            stderr = stderr[:_MAX_OUTPUT] + "\n...[truncated]"
+        parts = [f"exit_code: {result.get('exit_code')}"]
+        if result.get("error"):
+            parts.append(f"error: {result['error']}")
+        if stdout:
+            parts.append(f"stdout:\n{stdout}")
+        if stderr:
+            parts.append(f"stderr:\n{stderr}")
+        parts.append("sandbox: isolated workspace, no network")
+        return "\n".join(parts)
+
     try:
         proc = subprocess.run(
             command,

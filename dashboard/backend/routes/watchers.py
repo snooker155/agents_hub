@@ -67,12 +67,22 @@ def _uses_google(config: Any) -> bool:
     return value is True or str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _require_google_admin(request: Request, config: Any) -> None:
-    """Signing in with the Google connector reads the operator's own Gmail,
-    one account for the whole hub, so only an administrator may point a
-    workspace's watcher at it. A workspace editor uses a password secret."""
-    if _uses_google(config):
-        identity.require_role(_principal(request), admin=True)
+def _require_google_admin(request: Request, config: Any, workspace: Optional[str] = None) -> None:
+    """Signing in with Google reads the Gmail of the Google connector in
+    effect in the watcher's workspace (connectors/channels/store.py). When
+    that workspace defines its own connector, it is the workspace's account
+    and its editors may use it. When it inherits the default workspace's,
+    that is the operator's account for the whole hub, so only an
+    administrator may point a workspace's watcher at it; an editor uses a
+    password secret, or connects an account for the workspace first."""
+    if not _uses_google(config):
+        return
+    from connectors.channels.store import DEFAULT_WORKSPACE
+    from connectors.google import STORE as GOOGLE_STORE
+    ws = str(workspace or "").strip()
+    if ws and ws != DEFAULT_WORKSPACE and GOOGLE_STORE.defines(ws):
+        return
+    identity.require_role(_principal(request), admin=True)
 
 
 def _raise(exc: service.WatcherError):
@@ -98,17 +108,18 @@ def _audit(request: Request, action: str, watcher: Any, details: Optional[Dict[s
 
 
 @router.get("/kinds")
-async def list_kinds():
+async def list_kinds(workspace: Optional[str] = None):
     """The kinds and their config fields, for the form.
 
     The ``imap`` kind also carries the provider presets
     (``connectors/mail/presets.py``): pick Gmail and the host, port and TLS
     fields fill themselves. ``google`` says whether "Sign in with Google"
-    can work: connected, Gmail granted, and as whom.
+    can work: connected, Gmail granted, and as whom, for the Google connector
+    in effect in ``?workspace=`` (its own or the default's).
     """
     from connectors.google.auth import gmail_status
     return {
-        "google": gmail_status(),
+        "google": gmail_status(workspace or None),
         "kinds": [{"kind": k, "fields": kinds.CONFIG_FIELDS[k],
                    "presets": mail_presets.public() if k == "imap" else []} for k in KINDS],
         "interval": {"min": MIN_INTERVAL_SECONDS, "max": MAX_INTERVAL_SECONDS, "default": DEFAULT_INTERVAL_SECONDS},
@@ -135,13 +146,14 @@ async def list_watchers(request: Request, workspace: Optional[str] = None):
 @router.post("", status_code=201)
 async def create_watcher(request: Request, payload: WatcherCreate):
     _require_write(request, payload.workspace)
-    _require_google_admin(request, payload.config)
+    _require_google_admin(request, payload.config, payload.workspace)
     principal = _principal(request)
     try:
         watcher = service.create(payload.workspace, payload.model_dump(exclude={"workspace"}),
                                  created_by=getattr(principal, "username", None))
     except service.WatcherError as exc:
         _raise(exc)
+    watcher = service.stamp_google_source(watcher.id) or watcher
     _audit(request, "watcher.create", watcher)
     return service.to_dict(watcher, with_listeners=True)
 
@@ -156,11 +168,15 @@ async def update_watcher(request: Request, watcher_id: str, payload: WatcherUpda
     current = _load(request, watcher_id)
     _require_write(request, current.workspace)
     patch = payload.model_dump(exclude_unset=True)
-    _require_google_admin(request, patch.get("config"))
+    _require_google_admin(request, patch.get("config"), current.workspace)
     try:
         watcher = service.update(watcher_id, patch)
     except service.WatcherError as exc:
         _raise(exc)
+    if _uses_google(patch.get("config")):
+        # Saved again past the role check above: the Google connector in
+        # effect now is the one this watcher is approved to sign in with.
+        watcher = service.stamp_google_source(watcher.id) or watcher
     _audit(request, "watcher.update", watcher, {"changed": sorted(patch)})
     return service.to_dict(watcher, with_listeners=True)
 

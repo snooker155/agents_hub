@@ -21,6 +21,7 @@ export default {
       toolPolicy: 'Tool-Richtlinie',
       webPolicy: 'Webzugriff',
       personalMemory: 'Persönlicher Speicher',
+      isolation: 'Isolation',
       tasks: 'Aufgabenzuweisung',
       secrets: 'Secrets',
       palette: 'Farbpalette',

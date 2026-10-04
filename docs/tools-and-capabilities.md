@@ -43,6 +43,10 @@ against the single most dangerous tool.
 
 ## Lifting the block: per agent, or for every agent
 
+An agent of an [isolated workspace](isolation.md) is not judged at all: its
+shell and code have no network and its tools are the perimeter's allowlist, so
+nothing it combines can send data out.
+
 Two switches turn a refusal into a warning, and both keep the combination
 visible on the agent page and in the log rather than pretending it is gone.
 
@@ -334,6 +338,7 @@ and `ingests_untrusted`, writing grants `can_exfiltrate`.
 | Confluence | `confluence_search`, `confluence_read_page`, `confluence_import` | `reads_private`, `ingests_untrusted` |
 | | `confluence_create_page` | `can_exfiltrate` |
 | Databases | `db_list_connections`, `db_schema`, `db_query` | `reads_private` |
+| Connection proposals | `connection_options`, `propose_connection`, `connection_proposal_status` | none: names and flags only, a person applies the change ([connectors](connectors.md)) |
 
 ## Group aliases
 

@@ -19,7 +19,8 @@ export const getWatchersSummary = (workspace) =>
   api.get('/watchers/summary', { params: workspace ? { workspace } : {} });
 
 // { kinds: [{kind, fields: [{name, type, required, default}]}], interval: {min, max, default} }
-export const getWatcherKinds = () => api.get('/watchers/kinds');
+export const getWatcherKinds = (workspace) =>
+  api.get('/watchers/kinds', { params: workspace ? { workspace } : {} });
 
 export const createWatcher = (data) => api.post('/watchers', data);
 export const updateWatcher = (id, patch) => api.patch(one(id), patch);

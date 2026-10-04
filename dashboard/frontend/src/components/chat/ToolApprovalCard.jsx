@@ -14,6 +14,7 @@ import { ShieldAlert } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { decideToolApproval, listRunApprovals } from '../../api/toolApprovals';
 import { mergeServerApprovals } from './toolApprovals';
+import { ConnectionProposalCard } from './ConnectionProposalCard';
 
 const STATUS_CLASSES = {
   pending: 'bg-amber-100 text-amber-800',
@@ -46,7 +47,18 @@ function errorKey(err) {
   return 'toolApproval.errors.failed';
 }
 
+// An agent proposing a connection gets its own card: a form built from the
+// proposal's fields and a Connect button, instead of a raw input dump
+// (connection-proposals-contract.md). The check runs before any hook of the
+// generic card below, so it can switch cards without breaking hook order.
 export function ToolApprovalCard({ approval, live = true }) {
+  if (approval.tool === 'propose_connection') {
+    return <ConnectionProposalCard approval={approval} live={live} />;
+  }
+  return <GenericToolApprovalCard approval={approval} live={live} />;
+}
+
+function GenericToolApprovalCard({ approval, live = true }) {
   const { t } = useI18n();
   const [note, setNote] = useState('');
   const [sending, setSending] = useState('');

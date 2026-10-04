@@ -23,14 +23,19 @@ const silentStream = { connected: true, on: () => () => {}, acquireChannel: () =
 const ok = (data) => Promise.resolve({ data });
 
 vi.mock('../../api', () => ({
-  getTelegramConfig: () => ok({ enabled: false, has_token: false, allowed_users: [] }),
+  getTelegramConfig: () => ok({ enabled: false, has_token: false, allowed_users: [], source: 'here' }),
   updateTelegramConfig: () => ok({}),
+  deleteTelegramConfig: () => ok({}),
   testTelegramToken: () => ok({ ok: true }),
   getTelegramStatus: () => ok({ running: false }),
   getTelegramBindings: () => ok([]),
   deleteTelegramBinding: () => ok({}),
-  getGitConfig: () => ok({ github: { has_token: false }, gitlab: { has_token: false, base_url: '' } }),
+  getGitConfig: () => ok({
+    github: { has_token: false }, gitlab: { has_token: false, base_url: '' },
+    sources: { github: 'here', gitlab: 'here', bitbucket: 'here', gitea: 'here' },
+  }),
   updateGitConfig: () => ok({}),
+  deleteGitConfig: () => ok({}),
   testGitConnection: () => ok({ ok: true }),
   getBlenderConfig: () => ok({ enabled: false, binary_path: '', max_daemons: 2 }),
   updateBlenderConfig: () => ok({}),
@@ -42,30 +47,41 @@ vi.mock('../../api', () => ({
   getGitHubApp: () => ok({ configured: false, installations: [] }),
   syncGitHubApp: () => ok({ installations: [] }),
   setWorkspaceGitHubInstallation: () => ok({}),
+  getWorkspaceGithubInstallation: () => ok({ own: null, effective: null, source: 'default' }),
   getWorkspaces: () => ok([]),
   getAgents: () => ok([]),
   listFlows: () => ok([]),
   // The generic chat channels and credential connectors.
   listChannels: () => ok([{ name: 'slack', fields: [{ key: 'bot_token', secret: true, kind: 'password', required: true, options: [] }], has_loop: true }]),
-  getChannelConfig: () => ok({ config: { has_bot_token: false }, enabled: false, configured: false, allowed: [], running: false, has_loop: true }),
+  getChannelConfig: () => ok({ config: { has_bot_token: false }, enabled: false, configured: false, allowed: [], running: false, has_loop: true, source: 'here' }),
   updateChannelConfig: () => ok({}),
+  deleteChannelConfig: () => ok({}),
   testChannel: () => ok({ ok: true }),
   getChannelStatus: () => ok({ running: false }),
   getChannelBindings: () => ok([]),
   createChannelBinding: () => ok({}),
   deleteChannelBinding: () => ok({}),
   listConnectors: () => ok([{ name: 'jira', fields: [{ key: 'base_url', secret: false, kind: 'text', required: true, options: [] }] }]),
-  getConnectorConfig: () => ok({ config: {}, configured: false }),
+  getConnectorConfig: () => ok({ config: {}, configured: false, source: 'here' }),
   updateConnectorConfig: () => ok({}),
+  deleteConnectorConfig: () => ok({}),
   testConnector: () => ok({ ok: true }),
   googleOAuthStartUrl: () => '/api/google/oauth/start',
   disconnectGoogle: () => ok({}),
+  getGmailStatus: () => ok({ connected: false }),
 }));
 vi.mock('../../api/databases', () => ({
   listDbConnections: () => ok([]),
   createDbConnection: () => ok({}),
   deleteDbConnection: () => ok({}),
   testDbConnection: () => ok({ ok: true }),
+}));
+// The "Proposed by agents" panel (connection-proposals-contract.md): no
+// proposals here, so the panel renders nothing and every tab's text stays
+// exactly what it was before that panel existed.
+vi.mock('../../api/connectionProposals', () => ({
+  listConnectionProposals: () => ok({ proposals: [] }),
+  applyConnectionProposal: () => ok({}),
 }));
 
 const EVIDENCE = {
@@ -119,6 +135,27 @@ describe('Connectors', () => {
     const { container, unmount } = show();
     await waitFor(() => expect(container.querySelector('section')).toBeTruthy());
     expect(container.textContent).toMatch(/Telegram/);
+    unmount();
+  });
+
+  it('shows a banner naming the workspace and the default-visibility rule', async () => {
+    const { findByTestId, unmount } = show();
+    const banner = await findByTestId('connectors-workspace-banner');
+    expect(banner.textContent).toMatch(/default/i);
+    expect(banner.textContent).toMatch(/everywhere/i);
+    unmount();
+  });
+
+  it('names a non default workspace in the banner instead of "default"', async () => {
+    const { findByTestId, unmount } = render(
+      <StreamContext.Provider value={silentStream}>
+        <WorkspaceContext.Provider value={{ selectedWorkspace: 'acme', liveUpdates: false }}>
+          <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>
+        </WorkspaceContext.Provider>
+      </StreamContext.Provider>,
+    );
+    const banner = await findByTestId('connectors-workspace-banner');
+    expect(banner.textContent).toMatch(/acme/);
     unmount();
   });
 });

@@ -51,6 +51,8 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     # The system workspace's repository copy (tools/system_ops.py): a commit,
     # a written task result and a branch deletion have each already happened.
     "system_commit", "system_attach_patch", "system_prune_branches",
+    # A workspace created or deleted from the chat (tools/workspace_management.py).
+    "create_workspace", "delete_workspace",
 })
 
 
@@ -266,6 +268,15 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "db_list_connections": frozenset({READS_PRIVATE}),
     "db_schema": frozenset({READS_PRIVATE}),
     "db_query": frozenset({READS_PRIVATE}),
+    # Connection proposals (tools/connection_setup.py, connectors/proposals.py).
+    # They grant nothing: connection_options returns names and configured
+    # flags, never a value, URL or command of an existing item;
+    # propose_connection only records a proposal a person applies (secrets
+    # typed by that person, an MCP claim reset to every capability), and the
+    # one line it reads back is the hub's own summary of what was done.
+    "connection_options": frozenset(),
+    "propose_connection": frozenset(),
+    "connection_proposal_status": frozenset(),
 
     # ── project deployments (tools/project_deploy.py) ────────────────────────
     # Every answer carries the deployment's share key (in browser_url) and the
@@ -284,6 +295,21 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # grant as get_task. list_agents_tool, by contrast, returns only id, name
     # and description, so it stays in REVIEWED_NO_GRANT.
     "get_agent_tool": frozenset({READS_PRIVATE}),
+    # Workspace management (tools/workspace_management.py), the main agent's
+    # in the default workspace only (common/workspace_scope.py). The reads
+    # return workspace metadata the acting user owns: descriptions, the
+    # workspace instructions (operator-authored, like an agent's prompt), the
+    # agent roster and the default model, so they carry the get_agent_tool
+    # grant. The writes grant nothing: they change that metadata inside the
+    # hub and echo back the fields the caller passed. None of them reads or
+    # changes a secret, isolation, hooks, members or connectors.
+    "list_workspaces": frozenset({READS_PRIVATE}),
+    "get_workspace": frozenset({READS_PRIVATE}),
+    "create_workspace": frozenset(),
+    "update_workspace": frozenset(),
+    "delete_workspace": frozenset(),
+    "add_workspace_agent": frozenset(),
+    "remove_workspace_agent": frozenset(),
     # A scheduled job carries a title and message the operator or an agent
     # wrote for later delivery — the same class of authored content a task's
     # title and description carry, so list_scheduled is read under the same

@@ -197,10 +197,45 @@ def _imap_connect(cfg: Dict[str, Any], password: Any) -> Any:
     return client
 
 
-def _google_credentials(cfg: Dict[str, Any], login: Optional[Callable[[], tuple]]) -> GoogleToken:
+#: Kept in an imap watcher's state under ``use_google``: the workspace whose
+#: Google connector the watcher was set up to sign in with (stamped by the
+#: route on create and update, by the first poll for an older watcher).
+GOOGLE_FROM = "google_from"
+
+
+def google_source(workspace: Optional[str]) -> str:
+    """The workspace whose Google connector a watcher in ``workspace`` signs
+    in with: its own when it defines one, else the default workspace."""
+    from connectors.channels.store import in_workspace
+    from connectors.google import STORE as GOOGLE_STORE
+    return in_workspace(workspace, GOOGLE_STORE.effective_workspace)
+
+
+def _check_google_source(watcher: Any) -> str:
+    """The Google connector a watcher uses must stay the one it was set up
+    with. A watcher a workspace editor pointed at the workspace's own account
+    must not read the operator's mailbox once the workspace drops its own
+    connector and falls back to the default's: that takes an administrator
+    saving the watcher again (dashboard/backend/routes/watchers.py)."""
+    source = google_source(getattr(watcher, "workspace", None))
+    approved = str((getattr(watcher, "state", None) or {}).get(GOOGLE_FROM) or "")
+    if approved and approved != source:
+        raise ProbeError(
+            f"the Google account this watcher signs in with is now the '{source}' workspace's, "
+            f"not the '{approved}' one it was set up with; save the watcher again to confirm")
+    return source
+
+
+def _google_credentials(cfg: Dict[str, Any], login: Optional[Callable[[], tuple]],
+                        workspace: Optional[str] = None) -> GoogleToken:
+    """Sign in with the Google connector in effect in the watcher's workspace:
+    its own when it defines one, else the default workspace's, never another
+    workspace's (connectors/channels/store.py). The poller runs outside any
+    run, so the workspace is passed explicitly."""
+    from connectors.channels.store import in_workspace
     from connectors.mail import oauth
     try:
-        address, token = oauth.google_login(login)
+        address, token = in_workspace(workspace, oauth.google_login, login)
         oauth.check_address(cfg.get("username") or "", address)
     except oauth.MailOAuthError as e:
         raise ProbeError(str(e)) from e
@@ -210,8 +245,10 @@ def _google_credentials(cfg: Dict[str, Any], login: Optional[Callable[[], tuple]
 def probe_imap(watcher: Any, secret: SecretResolver, *, connect: Optional[Callable[..., Any]] = None,
                google_login: Optional[Callable[[], tuple]] = None) -> Probe:
     cfg = dict(watcher.config or {})
+    keep: Dict[str, Any] = {}
     if cfg.get("use_google"):
-        password: Any = _google_credentials(cfg, google_login)
+        keep[GOOGLE_FROM] = _check_google_source(watcher)
+        password: Any = _google_credentials(cfg, google_login, getattr(watcher, "workspace", None))
         cfg["username"] = password.address
     else:
         password = secret(cfg.get("password_secret") or "")
@@ -229,10 +266,10 @@ def probe_imap(watcher: Any, secret: SecretResolver, *, connect: Optional[Callab
         uids = [int(u) for u in (data[0].split() if data and data[0] else []) if int(u) > last_uid]
         uids.sort()
         if not uids:
-            return Probe(state={"last_uid": last_uid}, summary="no new messages")
+            return Probe(state={"last_uid": last_uid, **keep}, summary="no new messages")
         if last_uid == 0:
             # First look: take the baseline, report nothing that was already there.
-            return Probe(state={"last_uid": uids[-1]}, summary=f"baseline taken, {len(uids)} messages in the folder")
+            return Probe(state={"last_uid": uids[-1], **keep}, summary=f"baseline taken, {len(uids)} messages in the folder")
         from_filter = (cfg.get("from_filter") or "").lower()
         subject_filter = (cfg.get("subject_filter") or "").lower()
         events: List[Dict[str, Any]] = []
@@ -266,7 +303,7 @@ def probe_imap(watcher: Any, secret: SecretResolver, *, connect: Optional[Callab
             bits.append(f"{skipped} filtered out")
         if unreported:
             bits.append(f"{unreported} older ones not reported")
-        return Probe(state={"last_uid": uids[-1]}, events=events, summary=", ".join(bits))
+        return Probe(state={"last_uid": uids[-1], **keep}, events=events, summary=", ".join(bits))
     finally:
         try:
             client.logout()
@@ -368,5 +405,6 @@ def probe(watcher: Any, secret: SecretResolver) -> Probe:
 
 __all__ = [
     "CONFIG_FIELDS", "MAX_EVENTS_PER_PROBE", "Probe", "ProbeError", "PROBES",
-    "validate_config", "probe", "probe_imap", "probe_http", "GoogleToken",
+    "validate_config", "probe", "probe_imap", "probe_http", "GoogleToken", "GOOGLE_FROM",
+    "google_source",
 ]

@@ -15,6 +15,34 @@ turns that section into the next release.
 
 ### Added
 
+- Workspace management from the chat (docs/workspaces.md "Managing
+  workspaces from the chat"): `list_workspaces`, `get_workspace`,
+  `create_workspace`, `update_workspace` (description, instructions, default
+  model only), `delete_workspace`, `add_workspace_agent` and
+  `remove_workspace_agent`, held by the main agent and working only in a run
+  of the `default` workspace, with the dashboard's rules and roles.
+  `delete_workspace` waits for a person's yes on every call
+  (`tools.approval.ALWAYS_GATED`), whatever the gate or a policy say.
+- Isolated workspaces (docs/isolation.md): a workspace switched to isolated
+  runs `run_shell` and `run_code` in a sandbox container with no network and
+  only its folder mounted, keeps only an allowlist of tools that stay inside
+  (a tool taking a `workspace` argument may name only this one), reads the
+  internet only from its own list of sites (GET only, no cookies, a read only
+  browser that refuses clicks, typing, posts and WebSockets, a per run
+  budget), and closes the hub's ways out for it: MCP servers, chat and
+  Telegram bindings, widgets, outbound webhooks, the personal memory pool,
+  hook files and `http` hooks, imported agents. Inside, the capability guard
+  does not refuse combinations. `GET/PUT /api/workspaces/{name}/isolation`
+  with readiness checks; an Isolation section in the workspace settings.
+- Connections set up from the chat (docs/connectors.md "Setting up from the
+  chat"): the agent tools `connection_options`, `propose_connection` and
+  `connection_proposal_status`, on the main agent by default. The agent fills
+  the non-secret fields of a connector, chat channel, MCP server, read-only
+  database, watcher or workspace secret; the person edits them, types the
+  secrets into a card in the chat (they never reach the model) and presses
+  Connect. The hub applies it as that person, runs the connection test and
+  the agent's turn reads the outcome. Proposals made outside the chat wait on
+  the Connectors page.
 - Agent version pins on every launch path (docs/agents.md "Versions and
   pinning"): chat turns, `/v1` agent completions (`agent_version` in the
   body), widgets (a version picker, migration 0032), plain messages to a
@@ -203,26 +231,6 @@ turns that section into the next release.
   sources on the web through the Web Search Agent and hands the shortlist to
   Screener; Screener scores CVs, postings, applications or proposals against
   criteria with evidence.
-- Agent inheritance (docs/agent-inheritance.md): an agent can `extends`
-  another, system agents included. The child takes the parent's prompt,
-  tools, model and settings and declares only what differs: its own prompt
-  text goes after the parent's, a `## Heading` the parent has replaces that
-  section (`{{parent}}` keeps the parent's text, `{{remove}}` drops it),
-  lists take additions and removals, other fields override. Changes to the
-  parent reach every child unless it pins a parent version; a parent change
-  that would give a child a blocked capability combination is refused, a
-  parent with children cannot be deleted, and detaching keeps today's
-  effective setup as the agent's own. The agent page has an Inheritance tab
-  showing where every field comes from with a reset to inherited, the create
-  dialog a "Based on" picker, `ah apply` reads `extends:` and `+tool` /
-  `-tool`, agent_creator can create children, and runs record the chain they
-  were built from. The finance and recruiting kits' agents now extend
-  Analyst, Verifier, Sourcer and Screener.
-- An upgrade that grants a system agent new tools, delegates or handoffs
-  checks every child that extends it: a child that would end up with a
-  blocked capability combination declines exactly what the parent gained
-  (`-item` deltas) and keeps running as before, with a version history row
-  and an inbox warning saying so (docs/agent-inheritance.md).
 - Help in the header (docs/help.md): a button on every page opens the
   Support agent, one conversation per person, that knows the docs and what
   this install has set up and what it lacks (providers, models, agents,
@@ -231,6 +239,52 @@ turns that section into the next release.
   or start the welcome tour. It changes nothing itself.
 
 ### Changed
+
+- Connectors live in the workspace that defines them; the default
+  workspace's live everywhere (docs/connectors.md "Connectors per
+  workspace"). Credential connectors, Google and Microsoft sign in, git tokens
+  and the GitHub App, trackers, Notion and Confluence resolve per workspace;
+  a chat bot (Slack, Discord, Teams, mail, Telegram) defined in a workspace is
+  its own bot with its own loop and serves only that workspace; database
+  connections of the default workspace are usable everywhere. Every connector
+  route takes `?workspace=`, and the Connectors page edits the selected
+  workspace's connectors.
+- Slack's events and interactions and Teams' messages webhooks are reachable
+  in token and multi mode: they authenticate the platform by its own
+  signature, and the hub's credential, which the platforms never send, kept
+  them out.
+
+- An agent works in its own workspace (docs/workspaces.md "One workspace per
+  run"): a tool's `workspace` argument may name only the run's workspace (so
+  no task, team run or flow lands in another one, and no workspace is created
+  by naming it), records named by id and listings stay within the workspace,
+  and the tools that see the whole service (every run, session, container,
+  instance, cost and log, and the system workspace's repository) are held only
+  by `service_agent`, `system_doctor` and `system_engineer`. Any other agent
+  is refused them at save time and loses them at build time. A tool that
+  creates or manages workspaces would work only for `main-agent` in `default`;
+  there is none today.
+- A `.hooks.json` file in a workspace folder is never run any more: agents
+  write into that folder, so a hook from it ran a command on the hub's host on
+  an agent's say so. Hooks come only from the workspace's stored settings; the
+  tool policy block reports a file it ignores and the owner may import it
+  (`POST /api/workspaces/{name}/policy/import-hooks-file`).
+
+- A run's process no longer holds a hub-wide credential (docs/identity.md
+  "Run tokens and the service credential"). Each launch of an agent run,
+  flow, loop, team, scenario or instance carrier gets its own run token
+  (`AGENTS_HUB_RUN_TOKEN`, migration 0040) that reaches only the relay routes
+  (run state, live events, stream relays, inbox push), slides while it is
+  used and is retired when the run closes. The shared `AGENTS_HUB_API_TOKEN`,
+  the admin service credential and a personal API key are stripped from a
+  run's environment. An agent with a shell could read them out of its own
+  process and act as an administrator.
+- The relay routes (`/api/run-state/...`, `POST /api/sessions/{id}/events`,
+  `POST /api/instances/{id}/events`, `POST /api/stream/notify|publish`,
+  `POST /api/plan/notifications/publish`) refuse people, administrators
+  included, in `token` and `multi` mode. A member could write any run's
+  record, delegate as another user through `launched_by`, or push events into
+  somebody else's chat.
 
 - The Researcher Agent is now `researcher` (was `researcher_agent`). An
   existing install renames it at startup, with a backup written first, in

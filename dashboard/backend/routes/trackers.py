@@ -13,6 +13,11 @@ Endpoints:
 - PUT  /api/trackers/projects/{project_id}        — set provider/remote_id/url
 - POST /api/trackers/projects/{project_id}/sync   — import/refresh tracker issues as tasks
 - GET  /api/trackers/{provider}/projects          — Jira projects / Linear teams, for a picker
+
+A sync uses the tracker connector of the project's workspace (its own, else
+the default workspace's; connectors/channels/store.py). The picker lists what
+the connector in effect in ``?workspace=`` reaches (the default's when
+omitted), so pass the project's workspace.
 """
 from __future__ import annotations
 
@@ -86,12 +91,13 @@ async def sync_project_tracker(project_id: str):
 
 
 @router.get("/{provider}/projects")
-async def list_tracker_projects(provider: str):
+async def list_tracker_projects(provider: str, workspace: Optional[str] = None):
     provider = provider.strip().lower()
     if provider not in ("jira", "linear"):
         raise HTTPException(status_code=400, detail=f"Unknown tracker provider: {provider!r}")
+    from common.workspace_context import normalize_workspace_name
     try:
-        client = get_provider(provider)
+        client = get_provider(provider, normalize_workspace_name(workspace or "") or "default")
         return await asyncio.to_thread(client.list_remotes)
     except TrackerError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -552,9 +552,9 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
         try:
             import requests
             from common.auth import auth_headers
-            port = os.environ.get("DASHBOARD_PORT", "8000")
+            from common.hostnet import hub_base_url
             requests.post(
-                f"http://localhost:{port}/api/stream/notify",
+                f"{hub_base_url()}/api/stream/notify",
                 json={"resource": resource, "meta": meta, "delta": delta},
                 headers=auth_headers(),
                 timeout=1.0,
@@ -613,10 +613,9 @@ def _relay_publish(channel: str, event: dict) -> None:
     try:
         import requests
         from common.auth import auth_headers
-        from common.hostnet import host_service_url
-        port = os.environ.get("DASHBOARD_PORT", "8000")
+        from common.hostnet import hub_base_url
         requests.post(
-            host_service_url(f"http://localhost:{port}") + "/api/stream/publish",
+            hub_base_url() + "/api/stream/publish",
             json={"channel": channel, "event": event},
             headers=auth_headers(),
             timeout=2.0,

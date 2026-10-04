@@ -117,16 +117,18 @@ async def lifespan(app: FastAPI):
     # when it loses it (common/singletons.py). Configured-and-enabled is
     # re-read on every check, so the Connectors page still applies live.
     try:
-        from common.singletons import supervisor as _supervisor, telegram_service
-        _supervisor.add(telegram_service())
+        from common.singletons import supervisor as _supervisor
+        # The default workspace's Telegram bot, the bot of every workspace
+        # that defines its own (role telegram@<workspace>), and a discoverer
+        # that adds or drops those as workspaces define or remove them.
+        from connectors.telegram import bots as _tg_bots
+        _tg_bots.register_all(_supervisor)
         # Every registered chat channel (connectors/channels/registry.py) is a
-        # leased service of the same shape as the Telegram poller.
+        # leased service of the same shape as the Telegram poller, one per
+        # workspace that defines a bot (role channel_<name>@<workspace>).
         try:
             from connectors.channels import registry as _channels
-            from connectors.channels.service import leased_service as _leased
-            for _spec in _channels.all_channels():
-                if _spec.has_loop:
-                    _supervisor.add(_leased(_spec.service))
+            _channels.register_all(_supervisor)
         except Exception as e:  # noqa: BLE001 - channels are optional
             log.warning(f"⚠ Chat channels not registered: {e}")
         await _supervisor.start()
@@ -724,6 +726,14 @@ for _loop_router in (tool_policy_router, outcomes_router, steering_router, guard
 # Deny, and the waiting run's side under /api/run-state (docs/hooks.md).
 from routes import tool_approvals as tool_approvals_router
 app.include_router(tool_approvals_router.router)
+# A connection an agent proposed (connectors/proposals.py), finished by a
+# person: the apply half of the same waiting call.
+from routes import connection_proposals as connection_proposals_router
+app.include_router(connection_proposals_router.router)
+# A workspace's isolation (common/isolation.py): the switch, its readiness
+# checks and the domains an isolated workspace may read from.
+from routes import isolation as isolation_router
+app.include_router(isolation_router.router)
 
 # An agent's own domain lists for web_search, fetch_url and the browser
 # (tools/web.py), on top of the workspace's and the global ones.

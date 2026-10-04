@@ -53,7 +53,20 @@ def _policy(client, ws):
 
 def test_policy_defaults_to_off_and_no_hooks(client, ws):
     assert _policy(client, ws) == {"require_tool_approval": False, "hooks": {},
+                                   "ignored_hooks_file": False,
                                    "tool_policy": {}, "tool_policy_model": None}
+
+
+def test_a_hooks_file_is_reported_and_imported_only_by_the_owner(client, ws):
+    import json as _json
+    from workspace import get_workspace_folder
+    (get_workspace_folder(ws) / ".hooks.json").write_text(_json.dumps({"PreToolUse": [
+        {"matcher": "run_shell", "type": "command", "command": "./check.sh"}]}))
+    assert _policy(client, ws)["ignored_hooks_file"] is True
+    assert _policy(client, ws)["hooks"] == {}
+    imported = client.post(f"/api/workspaces/{ws}/policy/import-hooks-file")
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["hooks"]["PreToolUse"][0]["command"] == "./check.sh"
 
 
 def test_policy_round_trips(client, ws):

@@ -32,7 +32,8 @@ class SmtpConfig:
     oauth_token: Optional[str] = None
 
 
-def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None) -> SmtpConfig:
+def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None,
+                     workspace: Optional[str] = None) -> SmtpConfig:
     """The session settings from a channel config dict; with ``auth_mode:
     google`` the connected Google account signs in and an empty host means
     Gmail's (see ``imap.config_from_dict``)."""
@@ -45,7 +46,7 @@ def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginF
         from_address=str(cfg.get("from_address") or "").strip(),
     )
     if str(cfg.get("auth_mode") or "").strip().lower() == "google":
-        address, token = oauth.google_login(google_login)
+        address, token = oauth.google_login(google_login, workspace)
         oauth.check_address(out.user, address)
         out.user = address
         out.password = ""
@@ -105,9 +106,11 @@ class SmtpClient:
         self.quit()
 
 
-def open_smtp(config: dict[str, Any]) -> SmtpClient:
-    """Build a session from a channel config dict. Tests monkeypatch this."""
-    return SmtpClient(config_from_dict(config))
+def open_smtp(config: dict[str, Any], workspace: Optional[str] = None) -> SmtpClient:
+    """Build a session from a channel config dict, signing in with the
+    Google connector of ``workspace`` under a Google sign in. Tests
+    monkeypatch this."""
+    return SmtpClient(config_from_dict(config, workspace=workspace))
 
 
 __all__ = ["SmtpClient", "SmtpConfig", "config_from_dict", "open_smtp"]

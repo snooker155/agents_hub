@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { MessageSquare, RefreshCw, Save, Trash2, Wifi } from 'lucide-react';
 import {
-  getTelegramConfig, updateTelegramConfig, testTelegramToken,
+  getTelegramConfig, updateTelegramConfig, deleteTelegramConfig, testTelegramToken,
   getTelegramStatus, getTelegramBindings, deleteTelegramBinding,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import { useLiveRefetch } from '../stream';
+import { useWorkspace } from '../workspace';
 import PageLoader from '../PageLoader';
+import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from './ConnectorSource';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -23,6 +25,9 @@ import PageLoader from '../PageLoader';
 
 export default function TelegramConnector() {
   const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  const isDefaultWorkspace = workspace === 'default';
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState({ enabled: false, has_token: false, bot_username: null, running: false });
   const [status, setStatus] = useState({});
@@ -32,15 +37,20 @@ export default function TelegramConnector() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState('');
+  // "Define for this workspace" was clicked: the inherited, read only bot
+  // token becomes editable, and a save is what creates this workspace's own
+  // bot (connectors/channels/store.py).
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    setEditing(false);
     try {
       const [cfgResp, statusResp, bindingsResp] = await Promise.all([
-        getTelegramConfig(),
-        getTelegramStatus(),
-        getTelegramBindings(),
+        getTelegramConfig(workspace),
+        getTelegramStatus(workspace),
+        getTelegramBindings(workspace),
       ]);
       setConfig(cfgResp.data);
       setStatus(statusResp.data);
@@ -50,7 +60,7 @@ export default function TelegramConnector() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [workspace, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -62,11 +72,11 @@ export default function TelegramConnector() {
   // from elsewhere.
   const refreshStatus = useCallback(async () => {
     try {
-      const { data } = await getTelegramStatus();
+      const { data } = await getTelegramStatus(workspace);
       setStatus(data);
       setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
     } catch { /* a failed read just waits for the next event */ }
-  }, []);
+  }, [workspace]);
   useLiveRefetch(refreshStatus, { type: 'telegram.changed' });
 
   const handleSave = async ({ enabled, clear_token } = {}) => {
@@ -78,13 +88,14 @@ export default function TelegramConnector() {
       if (tokenInput.trim()) payload.bot_token = tokenInput.trim();
       if (clear_token) payload.clear_token = true;
       if (enabled !== undefined) payload.enabled = enabled;
-      const { data } = await updateTelegramConfig(payload);
+      const { data } = await updateTelegramConfig(payload, workspace);
       setConfig(data);
       setTokenInput('');
+      setEditing(false);
       // Refresh status + bindings after a save (poller may have just started/stopped).
       const [statusResp, bindingsResp] = await Promise.all([
-        getTelegramStatus(),
-        getTelegramBindings(),
+        getTelegramStatus(workspace),
+        getTelegramBindings(workspace),
       ]);
       setStatus(statusResp.data);
       setBindings(bindingsResp.data || []);
@@ -99,7 +110,7 @@ export default function TelegramConnector() {
     setTesting(true);
     setTestResult(null);
     try {
-      const { data } = await testTelegramToken();
+      const { data } = await testTelegramToken(workspace);
       setTestResult(data);
     } catch (e) {
       setTestResult({ ok: false, error: e.message });
@@ -108,10 +119,24 @@ export default function TelegramConnector() {
     }
   };
 
+  const handleRemoveDefinition = async () => {
+    if (!window.confirm(t('connectors.source.confirmRemove'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const { data } = await deleteTelegramConfig(workspace);
+      setConfig(data);
+    } catch (e) {
+      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeleteBinding = async (chatId) => {
     if (!window.confirm(t('settings.confirmRemoveBinding', { chatId }))) return;
     try {
-      await deleteTelegramBinding(chatId);
+      await deleteTelegramBinding(chatId, workspace);
       setBindings((bs) => bs.filter((b) => b.chat_id !== chatId));
     } catch (e) {
       setError(`${t('settings.errors.removeBinding')}: ` + (e.response?.data?.detail || e.message));
@@ -124,14 +149,28 @@ export default function TelegramConnector() {
     );
   }
 
+  const readOnly = !isDefaultWorkspace && config?.source === 'default' && !editing;
+
   return (
     <div className="space-y-5">
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      <SectionCard title={t('settings.telegramBot')}>
+      <SectionCard title={t('settings.telegramBot')} actions={<ConnectorSourceBadge source={config?.source} />}>
         <p className="text-sm text-gray-600">
           {t('settings.telegram.introBefore')} <code className="text-xs bg-gray-100 rounded px-1">/agent &lt;id&gt;</code>{t('settings.telegram.introAfter')}
         </p>
+        {isDefaultWorkspace ? (
+          <ConnectorDefinedIn definedIn={config?.defined_in} />
+        ) : (
+          <ConnectorSourceActions
+            payload={config}
+            isDefaultWorkspace={isDefaultWorkspace}
+            editing={editing}
+            onDefine={() => setEditing(true)}
+            onRemove={handleRemoveDefinition}
+            busy={saving}
+          />
+        )}
 
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -146,38 +185,41 @@ export default function TelegramConnector() {
             placeholder={config.has_token ? t('settings.keepExistingToken') : t('settings.telegram.pasteBotToken')}
             className={inputCls}
             autoComplete="new-password"
+            disabled={readOnly}
           />
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => handleSave({})}
-              disabled={saving || !tokenInput.trim()}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              {t('settings.saveToken')}
-            </button>
-            <button
-              type="button"
-              onClick={handleTest}
-              disabled={testing || !config.has_token}
-              className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
-            >
-              {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-              {t('settings.testConnection')}
-            </button>
-            {config.has_token && (
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
               <button
                 type="button"
-                onClick={() => handleSave({ clear_token: true, enabled: false })}
-                disabled={saving}
-                className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                onClick={() => handleSave({})}
+                disabled={saving || !tokenInput.trim()}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
               >
-                <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
+                {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {t('settings.saveToken')}
               </button>
-            )}
-          </div>
-          {testResult && (
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={testing || !config.has_token}
+                className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
+              >
+                {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                {t('settings.testConnection')}
+              </button>
+              {config.has_token && (
+                <button
+                  type="button"
+                  onClick={() => handleSave({ clear_token: true, enabled: false })}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
+                </button>
+              )}
+            </div>
+          )}
+          {testResult && !readOnly && (
             <div className={`mt-2 text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
               {testResult.ok
                 ? <>{t('settings.connectedAs')} <strong>@{testResult.bot?.username}</strong> (id {testResult.bot?.id})</>
@@ -191,12 +233,12 @@ export default function TelegramConnector() {
             <label className="text-sm font-medium text-gray-700">{t('settings.pollingEnabled')}</label>
             <p className="text-xs text-gray-500">{t('settings.whenOnTheBackendLong')}</p>
           </div>
-          <label className="inline-flex items-center cursor-pointer">
+          <label className="relative inline-flex items-center cursor-pointer">
             <input
               type="checkbox"
               className="sr-only peer"
               checked={config.enabled}
-              disabled={saving || !config.has_token}
+              disabled={saving || !config.has_token || readOnly}
               onChange={(e) => handleSave({ enabled: e.target.checked })}
             />
             <span className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-disabled:opacity-50 relative transition-colors">

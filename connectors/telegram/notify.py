@@ -12,6 +12,9 @@ process, the plan scheduler thread, and agent subprocesses — none of which
 share the poller's event loop. Delivery is best-effort: any failure is logged
 and swallowed so it never breaks inbox persistence, which stays the source of
 truth.
+
+A workspace's notifications go out through the bot that serves it
+(:func:`bot_store`): its own when it defines one, else the default's.
 """
 from __future__ import annotations
 
@@ -34,15 +37,28 @@ def _chunk(text: str, limit: int = _MAX_LEN) -> list[str]:
     return [text[i : i + limit] for i in range(0, len(text), limit)]
 
 
-def chat_ids_for_workspace(workspace: Optional[str]) -> list[int]:
-    """Chat IDs eligible for a workspace's notifications.
+def bot_store(workspace: Optional[str]) -> telegram_store.TelegramStore:
+    """The store of the bot serving ``workspace``: the workspace's own when
+    it defines one, else the default workspace's."""
+    ws = (workspace or "").strip()
+    if ws and ws != telegram_store.DEFAULT_WORKSPACE and telegram_store.defines(ws):
+        return telegram_store.for_workspace(ws)
+    return telegram_store.for_workspace(telegram_store.DEFAULT_WORKSPACE)
+
+
+def chat_ids_for_workspace(workspace: Optional[str], store: Optional[telegram_store.TelegramStore] = None) -> list[int]:
+    """Chat IDs eligible for a workspace's notifications, on ``store``'s bot
+    (the one serving ``workspace`` when omitted).
 
     A binding with no workspace, or one matching the target workspace, is
     eligible. When ``workspace`` is falsy, every bound chat is eligible.
     """
     target = (workspace or "").strip()
+    store = store or bot_store(workspace)
+    if getattr(store, "workspace", None) not in (None, telegram_store.DEFAULT_WORKSPACE):
+        target = ""  # a workspace's own bot: every chat of it is that workspace's
     out: list[int] = []
-    for b in telegram_store.list_bindings():
+    for b in store.list_bindings():
         try:
             cid = int(b.get("chat_id", 0))
         except (TypeError, ValueError):
@@ -82,17 +98,18 @@ def notify_workspace(workspace: Optional[str], title: str, body: str = "") -> in
     Telegram is disabled, has no token, or no chats are bound — callers can
     treat this as best-effort and ignore the result.
     """
-    if not telegram_store.is_enabled() or not telegram_store.has_token():
+    store = bot_store(workspace)
+    if not store.is_enabled() or not store.has_token():
         return 0
-    token = telegram_store.get_token().strip()
+    token = store.get_token().strip()
     if not token:
         return 0
     text = title if not body else f"{title}\n\n{body}"
     sent = 0
-    for cid in chat_ids_for_workspace(workspace):
+    for cid in chat_ids_for_workspace(workspace, store):
         if _send_text(token, cid, text):
             sent += 1
     return sent
 
 
-__all__ = ["chat_ids_for_workspace", "notify_workspace"]
+__all__ = ["bot_store", "chat_ids_for_workspace", "notify_workspace"]

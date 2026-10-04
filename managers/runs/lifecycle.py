@@ -327,14 +327,19 @@ def close_run(
     """Mark a run as finished and return the updated record.
 
     Extra keyword arguments (e.g. process=...) are merged into the update.
+    The run token its launch was given stops sliding and keeps a short grace
+    for the events still in flight (common/run_tokens.py).
     """
-    return _update_run(run_id, {
+    record = _update_run(run_id, {
         "status": status,
         "finished_at": _utc_now_iso(),
         "exit_code": exit_code,
         "error": error,
         **extra,
     })
+    from common import run_tokens
+    run_tokens.retire_for_run(run_id)
+    return record
 
 
 def close_run_from_result(

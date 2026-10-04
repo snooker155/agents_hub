@@ -10,6 +10,10 @@ chat gets a workspace when an operator binds it from the dashboard
 (``POST /api/channels/<name>/bindings``), never by asking the bot, so a user
 who finds the bot can neither talk to it (the allowlist) nor grant
 themselves a workspace (this file).
+
+A bot a workspace defines for itself serves that workspace only
+(``workspace=`` below): every chat of it is in that workspace, ``/workspace``
+cannot name another one and ``/workspaces`` lists no other.
 """
 from __future__ import annotations
 
@@ -125,8 +129,12 @@ def unbound_reply(binding: Optional[dict[str, Any]], chat_key: str) -> str:
 
 
 def handle_command(store: ChannelStore, chat_key: str, text: str, *,
-                   title: Optional[str] = None) -> Optional[str]:
-    """Answer a command, or return None when ``text`` is not one."""
+                   title: Optional[str] = None, workspace: Optional[str] = None) -> Optional[str]:
+    """Answer a command, or return None when ``text`` is not one.
+
+    ``workspace`` is set for a workspace's own bot: the chat is in that
+    workspace whatever its binding says, and no command can leave it.
+    """
     if not is_command(text):
         return None
     chat_key = str(chat_key)
@@ -134,6 +142,9 @@ def handle_command(store: ChannelStore, chat_key: str, text: str, *,
     cmd = cmd[1:].split("@", 1)[0].lower()
     args = args.strip()
     binding = store.get_binding(chat_key) or {}
+    own = (workspace or "").strip() or None
+    if own:
+        binding = dict(binding, workspace=own)
     workspace = binding.get("workspace")
 
     if cmd == "start":
@@ -150,12 +161,18 @@ def handle_command(store: ChannelStore, chat_key: str, text: str, *,
         return HELP_TEXT
 
     if cmd == "workspaces":
+        if own:
+            return f"This bot serves workspace `{own}` only."
         names = workspace_names()
         if not names:
             return "No workspaces found."
         return "Workspaces:\n" + "\n".join(f"• {w}" for w in names)
 
     if cmd == "workspace":
+        if own:
+            if not args or args == own:
+                return f"Current workspace: {own}. This bot serves this workspace only."
+            return f"This bot serves workspace `{own}` only; it cannot switch to `{args}`."
         if not args:
             return f"Current workspace: {workspace or '(not set)'}. Ask the operator to change it."
         return (

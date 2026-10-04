@@ -218,12 +218,14 @@
         "watchers"
       ],
       "headings": [
+        "Connectors per workspace",
         "Chat channels",
         "Git",
         "Telegram",
         "Issue trackers",
         "Integrations",
         "Blender",
+        "Setting up from the chat",
         "Gotchas"
       ]
     },
@@ -1223,6 +1225,8 @@
         "What a workspace holds",
         "Per-workspace memory",
         "The Settings tab",
+        "One workspace per run",
+        "Managing workspaces from the chat",
         "The default workspace",
         "The system workspace",
         "Gotchas"
@@ -1925,6 +1929,29 @@
         "Setup",
         "The `run_code` tool and the code view",
         "Doctor"
+      ]
+    },
+    {
+      "id": "isolation",
+      "title": "Isolated workspaces",
+      "summary": "A workspace as a perimeter: shell and code run in a sandbox container with no network, only an allowlist of tools that stay inside, the internet readable only on the workspace's own list of sites (GET only, read only browser), and every hub way out (MCP, channels, widgets, webhooks, personal memory, hook files) closed.",
+      "surface": "Workspace settings, Isolation section",
+      "related": [
+        "workspaces",
+        "sandboxes",
+        "tools-and-capabilities",
+        "hooks",
+        "browser",
+        "mcp",
+        "secrets"
+      ],
+      "headings": [
+        "What changes inside",
+        "The tools an agent keeps",
+        "Reading the internet",
+        "The hub's own ways out",
+        "Turning it on",
+        "Gotchas"
       ]
     },
     {

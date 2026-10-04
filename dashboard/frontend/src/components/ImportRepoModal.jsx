@@ -34,10 +34,16 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // The git token in effect is the one of the workspace a repo would land
+  // in (connectors/channels/store.py: the default workspace's token works
+  // everywhere, another workspace's own token works only there) — the
+  // project already being connected, or the target of a new import.
+  const effectiveWorkspace = (mode === 'connect' ? project?.workspace : workspace) || 'default';
+
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await getGitConfig();
+        const { data } = await getGitConfig(effectiveWorkspace);
         setGitConfig(data);
         const first = PROVIDERS.find((p) => data[p]?.has_token);
         if (first) setProvider(first);
@@ -46,7 +52,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
         setGitConfig({ github: { has_token: false }, gitlab: { has_token: false } });
       }
     })();
-  }, []);
+  }, [effectiveWorkspace]);
 
   // Load repos when the provider changes or the search is submitted (debounced).
   useEffect(() => {
@@ -56,7 +62,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       setLoadingRepos(true);
       setError('');
       try {
-        const { data } = await listGitRepos(provider, search.trim() || undefined);
+        const { data } = await listGitRepos(provider, search.trim() || undefined, effectiveWorkspace);
         if (!cancelled) setRepos(data || []);
       } catch (e) {
         if (!cancelled) {
@@ -68,7 +74,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       }
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [provider, search]);
+  }, [provider, search, effectiveWorkspace]);
 
   const selectRepo = (repo) => {
     setSelectedRepo(repo);

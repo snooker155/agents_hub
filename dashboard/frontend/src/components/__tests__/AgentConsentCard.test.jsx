@@ -39,15 +39,16 @@ describe('AgentConsentCard', () => {
     expect(await screen.findByTestId('consent-redirect-uri')).toHaveTextContent('https://hub.example/consent/callback');
     expect(await screen.findByText('v@gmail.com')).toBeInTheDocument();
     expect(api.listConsentGrants).toHaveBeenCalledWith('w1', 'a1');
+    expect(api.getConsentSettings).toHaveBeenCalledWith('a1', 'w1');
     expect(screen.getByText('consent.notReady')).toBeInTheDocument();
   });
 
-  it('switches a provider on with its default access and saves', async () => {
+  it('switches a provider on with its default access and saves, carrying the workspace', async () => {
     render(<AgentConsentCard agentId="a1" />);
     fireEvent.click(await screen.findByLabelText('Google'));
     fireEvent.click(screen.getByRole('button', { name: 'consent.save' }));
     await waitFor(() => expect(api.updateConsentSettings).toHaveBeenCalledWith(
-      'a1', { providers: ['google'], scopes: { google: ['calendar'] } }));
+      'a1', { providers: ['google'], scopes: { google: ['calendar'] } }, 'w1'));
     expect(await screen.findByText('consent.saved')).toBeInTheDocument();
   });
 

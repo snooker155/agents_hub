@@ -204,7 +204,9 @@ def run_git_publish(
                 code="unresolved_remote",
             )
         try:
-            provider = get_provider(provider_name)
+            # The token of the project's workspace (its own, else the
+            # default's), whoever calls: the tool in a run, or the route.
+            provider = get_provider(provider_name, proj.workspace)
         except GitProviderError as e:
             return _err(str(e), code="provider_error")
         try:
@@ -250,7 +252,8 @@ def run_git_publish(
     try:
         git_ops.create_branch(repo_dir, branch_name)
         commit_sha = git_ops.commit_all(repo_dir, title)
-        git_ops.push(repo_dir, branch_name, provider=provider_name if has_provider else None)
+        git_ops.push(repo_dir, branch_name, provider=provider_name if has_provider else None,
+                     workspace=proj.workspace)
     except GitOpsError as e:
         return _err(str(e), code="git_error")
 
@@ -340,10 +343,17 @@ def git_publish(
     title, description and result so far. Or write your own summary.
     Set `open_pr=False` to just commit and push without opening anything.
     """
-    result = run_git_publish(
-        project, branch=branch, title=title, body=body, base=base,
-        draft=draft, open_pr=open_pr,
-    )
+    # Only a project of the run's workspace (common/workspace_scope.py); the
+    # shared implementation below also serves the dashboard, for a person.
+    from tools.project_management import resolve_visible_project
+    proj = resolve_visible_project(project)
+    if proj is None:
+        result = _err(f"No project found matching {project!r}", code="not_found")
+    else:
+        result = run_git_publish(
+            proj.id, branch=branch, title=title, body=body, base=base,
+            draft=draft, open_pr=open_pr,
+        )
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 

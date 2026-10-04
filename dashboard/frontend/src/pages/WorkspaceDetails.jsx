@@ -3,12 +3,13 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
+import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
@@ -1249,6 +1250,7 @@ const SETTINGS_GROUPS = [
       { id: 'toolPolicy', icon: Shield },
       { id: 'webPolicy', icon: Globe },
       { id: 'personalMemory', icon: UserRound },
+      { id: 'isolation', icon: ShieldAlert },
       { id: 'tasks', icon: CheckSquare, saves: true },
     ],
   },
@@ -1368,6 +1370,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
           )}
           {active.id === 'webPolicy' && <WorkspaceDomainPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
+          {active.id === 'isolation' && <WorkspaceIsolation key={workspace} workspace={workspace} />}
           {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}

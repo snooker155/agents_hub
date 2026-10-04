@@ -23,3 +23,12 @@
 - get_scenario_run_tool / get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
 - stop_scenario_run_tool / stop_team_run_tool / stop_loop_run_tool: End a run that is still going.
 - search_docs / read_doc: Search and read the service's own documentation, including the release history.
+- connection_options: See what can be connected (connectors, chat channels, MCP servers, databases, watchers, secrets), with field keys and what already exists. Never shows a value.
+- propose_connection: Prepare a connection; the person edits it, types the secrets in a card and presses Connect. Returns what was set up and the test result.
+- connection_proposal_status: Check a proposal made outside the chat.
+- list_workspaces: List the workspaces the user can see, with their description, agents and tasks counts and whether each is isolated. Only in the default workspace.
+- get_workspace: Show one workspace: description, the start of its instructions, default model, agents, isolation and whether its folder is attached.
+- create_workspace: Create a workspace with a description, instructions and extra agents; the system agents are always in it and the user becomes its owner.
+- update_workspace: Change a workspace's description, instructions or default model, nothing else.
+- add_workspace_agent / remove_workspace_agent: Add an agent to a workspace or take one out. System agents stay; another workspace's own agent needs to be shared first.
+- delete_workspace: Delete a workspace once the user has said yes on the approval card. The default and the system workspace cannot be deleted; an attached folder is only detached.

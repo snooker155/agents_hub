@@ -51,17 +51,10 @@ def _is_configured(provider: str) -> bool:
 def _resolve_project(ref: str):
     """A project by id, or by an unambiguous name/folder match — the same
     resolution tools/git_publish.py's ``_resolve_project`` uses, since an
-    agent is as likely to have a project's name in hand as its id."""
-    from common.paths import PROJECTS_FILE
-    from projects.storage import ProjectStore
-    from workspace import project_folder_name
-
-    projects = ProjectStore(path=PROJECTS_FILE).list()
-    for p in projects:
-        if p.id == ref:
-            return p
-    matches = [p for p in projects if p.name == ref or project_folder_name(p.name) == ref]
-    return matches[0] if len(matches) == 1 else None
+    agent is as likely to have a project's name in hand as its id. Only the
+    projects of the run's workspace: another workspace's is not found."""
+    from tools.project_management import resolve_visible_project
+    return resolve_visible_project(ref)
 
 
 # ── tracker_list_issues ──────────────────────────────────────────────────
@@ -136,7 +129,10 @@ def tracker_sync(project: str) -> str:
     provider = str(proj.tracker.provider or "none")
     if provider not in _PROVIDERS:
         return json.dumps(_err(f"Project {proj.name!r} has no tracker configured"))
-    if not _is_configured(provider):
+    # The sync uses the project's workspace's tracker connector (its own, else
+    # the default's), so that is the one that must be configured.
+    from connectors.channels.store import in_workspace
+    if not in_workspace(getattr(proj, "workspace", None) or None, _is_configured, provider):
         return json.dumps(_not_configured(provider))
     try:
         result = sync_tracker_issues(proj)

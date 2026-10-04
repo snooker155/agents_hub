@@ -16,6 +16,9 @@ How the pieces fit:
   (``POST /app/installations/{id}/access_tokens``). An installation is bound
   to at most one workspace (``github_installations.workspace``), and a run in
   that workspace whose agent declares ``GITHUB_TOKEN`` receives that token.
+  Like every connector (connectors/channels/store.py), an installation bound
+  to the default workspace serves every workspace that has none of its own;
+  one bound to another workspace serves that workspace only.
   The token is cached, encrypted with the secrets key, until five minutes
   before it expires; with no ``AGENTS_HUB_SECRET_KEY`` nothing is cached and a
   fresh token is issued each time, since a plain text token in the database
@@ -378,6 +381,21 @@ def installation_for_workspace(workspace: str) -> Optional[int]:
     return int(row["installation_id"]) if row else None
 
 
+def installation_in_effect(workspace: str) -> Tuple[Optional[int], str]:
+    """``(installation id, the workspace it is bound to)`` for a run in
+    ``workspace``: the workspace's own binding, else the default workspace's,
+    never another workspace's. ``(None, "")`` when neither has one."""
+    ws = str(workspace or "").strip() or "default"
+    own = installation_for_workspace(ws)
+    if own is not None:
+        return own, ws
+    if ws != "default":
+        inherited = installation_for_workspace("default")
+        if inherited is not None:
+            return inherited, "default"
+    return None, ""
+
+
 def bind_installation(installation_id: int, workspace: str) -> Dict[str, Any]:
     """Bind an installation to one workspace. A workspace holds one binding,
     so whatever was bound to it before is unbound in the same transaction."""
@@ -575,7 +593,8 @@ def token_for_run(workspace: str, agent_id: Optional[str],
 
     The launching user's token first when the agent says
     ``github_identity: user`` and that user connected their account; else the
-    installation token of the workspace's bound installation; else None.
+    installation token of the workspace's bound installation, or of the
+    default workspace's when the workspace has none of its own; else None.
     """
     try:
         if not configured():
@@ -584,7 +603,7 @@ def token_for_run(workspace: str, agent_id: Optional[str],
             token = user_token(str(user_id))
             if token:
                 return token
-        installation_id = installation_for_workspace(workspace)
+        installation_id, _bound_to = installation_in_effect(workspace)
         if installation_id is None:
             return None
         return installation_token(installation_id)
@@ -597,7 +616,8 @@ __all__ = [
     "GitHubAppError", "IDENTITIES", "IDENTITY_APP", "IDENTITY_USER", "RENEW_BEFORE",
     "api_url", "app_id", "app_jwt", "bind_installation", "client_id", "configured",
     "connect_url", "disconnect", "exchange_code", "get_installation", "identity_of",
-    "install_url", "installation_for_workspace", "installation_token", "installations",
+    "install_url", "installation_for_workspace", "installation_in_effect", "installation_token",
+    "installations",
     "list_installations", "private_key", "slug", "status", "status_for", "token_for_run",
     "unbind", "user_token", "web_url",
 ]

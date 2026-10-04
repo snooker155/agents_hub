@@ -175,15 +175,22 @@ def test_http_backend_sends_no_header_when_token_unset(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_base_subprocess_env_carries_token_from_settings(monkeypatch):
+def test_base_subprocess_env_carries_a_run_token_not_the_shared_one(monkeypatch):
+    # The shared token reaches the whole API; a run's process, where an
+    # agent's shell runs, gets a token of its own that reaches only the
+    # relay routes (common/run_tokens.py), even when the shared token sits in
+    # the backend's own environment.
+    from common import run_tokens
     from common.config import settings
     from common.subprocess_env import base_subprocess_env
 
-    monkeypatch.delenv("AGENTS_HUB_API_TOKEN", raising=False)
+    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "api_token", TOKEN)
 
-    env = base_subprocess_env("default")
-    assert env["AGENTS_HUB_API_TOKEN"] == TOKEN
+    env = base_subprocess_env("default", run_id="run-1", session_id="sess-1")
+    assert "AGENTS_HUB_API_TOKEN" not in env
+    assert "AGENTS_HUB_SERVICE_TOKEN" not in env
+    assert run_tokens.resolve(env[run_tokens.ENV])["run_id"] == "run-1"
 
 
 def test_base_subprocess_env_omits_token_when_unconfigured(monkeypatch):

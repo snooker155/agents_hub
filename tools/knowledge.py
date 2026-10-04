@@ -44,11 +44,11 @@ def _truncate(text: str) -> Tuple[str, bool]:
 
 def _notion_client():
     """A configured ``NotionClient``, or None when the connector has no token."""
-    from connectors.knowledge import NOTION
+    from connectors.knowledge import NOTION, notion_client
     if not NOTION.is_configured():
         return None
-    from connectors.knowledge.notion import NotionClient
-    return NotionClient(NOTION.store.get("api_token"))
+    # The run's workspace's Notion connector, its own or the default's.
+    return notion_client()
 
 
 def _confluence_client():
@@ -58,12 +58,10 @@ def _confluence_client():
     (the SSRF check on a non-atlassian.net host) — callers handle that the
     same way they handle any other ``ConfluenceError``.
     """
-    from connectors.knowledge import CONFLUENCE
+    from connectors.knowledge import CONFLUENCE, confluence_client
     if not CONFLUENCE.is_configured():
         return None
-    from connectors.knowledge.confluence import ConfluenceClient
-    store = CONFLUENCE.store
-    return ConfluenceClient(store.get("base_url"), store.get("email"), store.get("api_token"))
+    return confluence_client()
 
 
 def _import_file(source: str, title: str, page_id: str, url: str, markdown: str,

@@ -24,6 +24,15 @@ same write-only discipline ``ChannelStore.public_config`` applies to a
 channel's secret fields, just done by hand here since the secret lives inside
 a list item rather than in the store's flat config.
 
+The list is one hub-wide list in the default workspace's document, each
+record carrying its own ``workspace``: :data:`STORE` follows the running
+code's workspace (connectors/channels/store.py), so a run in a workspace that
+happened to save a ``databases`` connector config of its own would otherwise
+read and write a different, empty list. :data:`_LIST` is bound to that one
+document whatever the caller's workspace; which connections a workspace sees
+is decided by the records' ``workspace`` field (:func:`list_connections`,
+:func:`find_connection`).
+
 Everything that actually opens a connection lives in drivers.py, behind
 guard.py's statement check; dashboard/backend/routes/databases.py and
 tools/databases.py are the two callers of this module.
@@ -46,6 +55,8 @@ DEFAULT_TIMEOUT_SECONDS = 20
 MAX_TIMEOUT_SECONDS = 300
 
 STORE = ChannelStore("databases", secret_fields=())
+#: The connection list's one document (see the module docstring).
+_LIST = STORE.for_workspace("default")
 
 _SCHEME_PREFIXES: dict[str, tuple[str, ...]] = {
     "postgres": ("postgresql://", "postgres://"),
@@ -124,12 +135,12 @@ def public(connection: dict[str, Any]) -> dict[str, Any]:
 
 
 def _all_connections() -> list[dict[str, Any]]:
-    items = STORE.get_cursor("connections", [])
+    items = _LIST.get_cursor("connections", [])
     return [dict(c) for c in items] if isinstance(items, list) else []
 
 
 def _save_connections(items: list[dict[str, Any]]) -> None:
-    STORE.set_cursor("connections", items)
+    _LIST.set_cursor("connections", items)
 
 
 def list_connections(workspace: Optional[str] = None) -> list[dict[str, Any]]:
@@ -146,8 +157,21 @@ def get_connection(connection_id: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def usable_connections(workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    """The connections a run in ``workspace`` may use: its own, and the
+    default workspace's, which live everywhere (docs/connectors.md
+    "Connectors per workspace"). Every connection when ``workspace`` is None."""
+    if workspace is None:
+        return _all_connections()
+    if workspace == "default":
+        return list_connections("default")
+    return list_connections(workspace) + list_connections("default")
+
+
 def find_connection(workspace: Optional[str], ref: str) -> Optional[dict[str, Any]]:
-    """A connection by id, or by an unambiguous name within ``workspace``.
+    """A connection by id, or by an unambiguous name, among the ones
+    ``workspace`` may use (:func:`usable_connections`); a name of the
+    workspace's own wins over the same name of the default's.
 
     Used by the tools (tools/databases.py), where an agent is more likely to
     have the connection's name in hand than its id.
@@ -155,11 +179,17 @@ def find_connection(workspace: Optional[str], ref: str) -> Optional[dict[str, An
     ref = str(ref or "").strip()
     if not ref:
         return None
+    usable = usable_connections(workspace)
     by_id = get_connection(ref)
-    if by_id is not None and (not workspace or by_id.get("workspace") == workspace):
+    if by_id is not None and (not workspace or any(c.get("id") == by_id.get("id") for c in usable)):
         return by_id
-    matches = [c for c in list_connections(workspace) if c.get("name") == ref]
-    return matches[0] if len(matches) == 1 else None
+    for scope in ([workspace, "default"] if workspace and workspace != "default" else [workspace]):
+        matches = [c for c in usable if c.get("name") == ref and (scope is None or c.get("workspace") == scope)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
+    return None
 
 
 def create_connection(

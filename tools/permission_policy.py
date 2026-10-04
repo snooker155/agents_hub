@@ -177,6 +177,11 @@ def resolve_mode(
     name = str(tool_id or "").strip()
     if not name or name in NEVER_GATED:
         return ALWAYS_ALLOW, SOURCE_NEVER_GATED
+    from tools.approval import ALWAYS_GATED
+    if name in ALWAYS_GATED:
+        # Irreversible on the hub itself: a person says yes every time, no
+        # policy or switched off gate lifts it.
+        return ALWAYS_ASK, SOURCE_APPROVAL_LIST
 
     mine = agent_policy(agent_spec)
     if name in mine:

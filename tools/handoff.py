@@ -155,7 +155,11 @@ def _perform(*, caller_id: str, caller_name: str, targets: List[str], default_fi
     spec = get_agent(target)
     if spec is None:
         return _json_err(f"Agent '{target}' does not exist.", code="not_found")
-    ws = sink.workspace or workspace
+    # The conversation's workspace; with none recorded on the sink or the
+    # build, the run's own (common/workspace_scope.py), so a target is never
+    # taken unchecked while the run does work in a workspace.
+    from common.workspace_scope import current_workspace
+    ws = sink.workspace or workspace or current_workspace()
     if ws:
         from common.workspace_context import filter_agents_for_workspace
         if not filter_agents_for_workspace([spec], ws):

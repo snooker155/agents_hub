@@ -28,7 +28,8 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from common.workspace_context import resolve_active_workspace
+from common.workspace_context import filter_agents_for_workspace, resolve_active_workspace
+from common.workspace_scope import check_record, current_agent, is_service_wide
 from tools._json import json_err, json_ok
 
 
@@ -42,6 +43,90 @@ def _json_ok(payload: Dict[str, Any]) -> str:
 def _json_err(message: str, *, code: str = "bad_request",
               extra: Optional[Dict[str, Any]] = None) -> str:
     return json_err(message, code=code, extra=extra, default=str)
+
+
+# ── workspace scope ──────────────────────────────────────────────────────────
+
+def _set_hidden(evalset, *, write: bool = False) -> bool:
+    """Whether an eval set is out of this run's reach, answered like a
+    missing set (``common.workspace_scope.check_record``). A set with no
+    workspace is global for reading (``store.list_eval_sets`` lists it
+    everywhere) and is the default workspace's to change."""
+    if evalset is None:
+        return False
+    ws = getattr(evalset, "workspace", None)
+    if not ws and not write:
+        return False
+    return check_record(ws, what="eval set") is not None
+
+
+def _run_hidden(run) -> bool:
+    """Whether an eval run belongs to another workspace than this run's."""
+    if run is None:
+        return False
+    return check_record(getattr(run, "workspace", None), what="eval run") is not None
+
+
+def _visible_set(eval_set_id: str, *, write: bool = False):
+    from evals import store
+    evalset = store.get_eval_set(eval_set_id)
+    return None if _set_hidden(evalset, write=write) else evalset
+
+
+def _target_error(target: Any, agent_id: Optional[str] = None,
+                  workspace: Optional[str] = None) -> Optional[str]:
+    """Why a target may not be measured from this workspace, or None.
+
+    An agent target must be available here (the notion the workspace's agent
+    list uses); a flow, team, loop or scenario must belong to this workspace
+    or to none. Measuring anything else would run another workspace's record
+    in this one. The service's own agents may measure anything."""
+    from evals.models import normalize_target
+    try:
+        norm = normalize_target(target or None, agent_id)
+    except ValueError:
+        return None  # an unknown kind is the model's own error to report
+    kind, ident = norm.get("kind") or "agent", norm.get("id") or ""
+    if not ident or is_service_wide(current_agent()):
+        return None
+    ws = workspace or resolve_active_workspace()
+    if not ws:
+        return None
+    missing = f"{kind.capitalize()} '{ident}' not found"
+    if kind == "agent":
+        from agents.registry import get_agent
+        spec = get_agent(ident)
+        if spec is not None and not filter_agents_for_workspace([spec], ws):
+            return missing
+        return None
+    record_ws = None
+    try:
+        if kind == "flow":
+            from flow import store as flow_store
+            flow = flow_store.get_flow(ident)
+            record_ws = flow.get("workspace") if flow else None
+        elif kind == "team":
+            from teams import store as team_store
+            record_ws = getattr(team_store.get_team(ident), "workspace", None)
+        elif kind == "loop":
+            from loops import store as loop_store
+            record_ws = getattr(loop_store.get_loop(ident), "workspace", None)
+        elif kind == "scenario":
+            from playground import store as pg_store
+            record_ws = getattr(pg_store.get_scenario(ident), "workspace", None)
+    except Exception:  # noqa: BLE001 - an unreadable record is the runner's to report
+        return None
+    if record_ws and check_record(record_ws, what=kind, workspace=ws):
+        return missing
+    return None
+
+
+def _configs_error(configs: List[Any], workspace: Optional[str]) -> Optional[str]:
+    for cfg in configs:
+        err = _target_error(cfg.target, cfg.agent_id, workspace)
+        if err:
+            return err
+    return None
 
 
 def _summary(evalset) -> Dict[str, Any]:
@@ -88,8 +173,7 @@ class GetEvalInput(BaseModel):
 def get_eval_tool(eval_set_id: str) -> str:
     """Return one eval set in full: every case and every grader."""
     try:
-        from evals import store
-        evalset = store.get_eval_set(eval_set_id)
+        evalset = _visible_set(eval_set_id)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         return _json_ok({"eval_set": evalset.to_dict()})
@@ -148,6 +232,9 @@ def create_eval_tool(name: str, description: str = "", agent_id: Optional[str] =
         from evals import store
         from evals.models import EvalSet, GraderSpec
 
+        refused = _target_error(target, agent_id, workspace)
+        if refused:
+            return _json_err(refused, code="not_found")
         evalset = EvalSet(
             name=name.strip(),
             description=description or "",
@@ -190,9 +277,14 @@ def modify_eval_tool(eval_set_id: str, name: Optional[str] = None,
         from evals import store
         from evals.models import GraderSpec
 
-        evalset = store.get_eval_set(eval_set_id)
+        evalset = _visible_set(eval_set_id, write=True)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
+        if target is not None or agent_id is not None:
+            refused = _target_error(target, agent_id if target is None else None,
+                                    evalset.workspace)
+            if refused:
+                return _json_err(refused, code="not_found")
         if name is not None:
             evalset.name = name.strip()
         if description is not None:
@@ -238,8 +330,20 @@ def add_eval_case_tool(eval_set_id: str, input: str, expected: Optional[str] = N
         from evals import store
         from evals.models import Case
 
+        if not _visible_set(eval_set_id, write=True):
+            return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         artifact = None
         if from_task_id:
+            # A task of another workspace reads as missing: its files and
+            # context are that workspace's.
+            from tasks.service import get_task as _get_task
+            try:
+                source = _get_task(str(from_task_id))
+            except Exception:  # noqa: BLE001 - snapshot_task reports a bad id itself
+                source = None
+            if source is not None and check_record(getattr(source, "workspace", None),
+                                                   what="task"):
+                return _json_err(f"Task not found: {from_task_id}", code="invalid")
             from evals.snapshot import snapshot_task
             artifact = snapshot_task(from_task_id)
         case = Case(input=input, expected=expected, rubric=rubric,
@@ -265,6 +369,8 @@ def remove_eval_case_tool(eval_set_id: str, case_id: str) -> str:
     """Remove one case from an eval set. Past results for it are left alone."""
     try:
         from evals import store
+        if not _visible_set(eval_set_id, write=True):
+            return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         evalset = store.remove_case(eval_set_id, case_id)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
@@ -305,10 +411,9 @@ def estimate_eval_tool(eval_set_id: str,
     config's `repeats`, plus a judge call per cell when the graders include one.
     """
     try:
-        from evals import store
         from evals.runner import project_cost
 
-        evalset = store.get_eval_set(eval_set_id)
+        evalset = _visible_set(eval_set_id)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         resolved = _configs(configs, evalset)
@@ -316,6 +421,9 @@ def estimate_eval_tool(eval_set_id: str,
             return _json_err(
                 "No configs given and the set has no default target. Say which "
                 "agent, flow, team, loop or scenario should be measured.", code="invalid")
+        refused = _configs_error(resolved, evalset.workspace)
+        if refused:
+            return _json_err(refused, code="not_found")
         return _json_ok({"estimate": project_cost(evalset, resolved)})
     except Exception as e:
         return _json_err(f"Failed to estimate the sweep: {e}", code="internal")
@@ -361,7 +469,7 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
         from evals import store
         from evals.runner import diff_runs, project_cost, run_eval
 
-        evalset = store.get_eval_set(eval_set_id)
+        evalset = _visible_set(eval_set_id)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         if not evalset.cases:
@@ -373,6 +481,11 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
             return _json_err(
                 "No configs given and the set has no default target. Say which "
                 "agent, flow, team, loop or scenario should be measured.", code="invalid")
+        # A global set (no workspace) is run in the caller's workspace.
+        run_ws = evalset.workspace or resolve_active_workspace()
+        refused = _configs_error(resolved, run_ws)
+        if refused:
+            return _json_err(refused, code="not_found")
 
         if not user_approved:
             return _json_err(
@@ -389,11 +502,12 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
         # "previous" would be the run we are about to create.
         previous_run_id = None
         if compare_with_previous:
-            history = store.list_eval_runs(eval_set_id, limit=1)
+            history = [r for r in store.list_eval_runs(eval_set_id, limit=20)
+                       if not _run_hidden(r)]
             previous_run_id = history[0].eval_run_id if history else None
 
         run = run_eval(eval_set_id, resolved,
-                       workspace=evalset.workspace, cost_ceiling=cost_ceiling)
+                       workspace=run_ws, cost_ceiling=cost_ceiling)
         payload: Dict[str, Any] = {"eval_run": run.to_dict(),
                                    "matrix": store.build_matrix(run.eval_run_id)}
         if compare_with_previous:
@@ -425,7 +539,12 @@ def list_eval_runs_tool(eval_set_id: Optional[str] = None, limit: int = 20) -> s
     """
     try:
         from evals import store
-        runs = store.list_eval_runs(eval_set_id, limit)
+        if eval_set_id and not _visible_set(eval_set_id):
+            return _json_ok({"eval_runs": []})
+        # Only this workspace's runs; read past the limit so the filter does
+        # not leave the page short.
+        runs = [r for r in store.list_eval_runs(eval_set_id, min(limit * 10, 1000))
+                if not _run_hidden(r)][:limit]
         return _json_ok({"eval_runs": [r.to_dict() for r in runs]})
     except Exception as e:
         return _json_err(f"Failed to list eval runs: {e}", code="internal")
@@ -446,7 +565,7 @@ def get_eval_run_tool(eval_run_id: str) -> str:
     try:
         from evals import store
         run = store.get_eval_run(eval_run_id)
-        if not run:
+        if not run or _run_hidden(run):
             return _json_err(f"Eval run '{eval_run_id}' not found", code="not_found")
         evalset = store.get_eval_set(run.eval_set_id)
         return _json_ok({

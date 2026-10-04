@@ -25,9 +25,9 @@ moment: *may this tool call happen?*
   deny or ask still wins) and, when nothing sets a mode, falls back to the
   approval gate above, so a workspace without a policy behaves as before.
 
-Configuration lives per workspace, in ``<workspace>/.hooks.json`` or under a
-``hooks`` key in the workspace metadata (the metadata wins when both exist, so a
-hook set can be managed centrally without a file in the agent's working tree)::
+Configuration lives per workspace, under the ``hooks`` key of the workspace
+metadata, which only the workspace's owner sets. A ``<workspace>/.hooks.json``
+file is never run: agents write into that folder (see :func:`load_hooks`)::
 
     {
       "PreToolUse": [
@@ -118,12 +118,19 @@ class HookOutcome:
 # -------------------- configuration --------------------
 
 def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
-    """Read the hook configuration for *workspace*.
+    """Read the hook configuration for *workspace*: the ``hooks`` key of the
+    workspace metadata, which only the workspace's owner can set (the Settings
+    tool policy block, ``PUT /api/workspaces/{name}/policy``).
 
-    The workspace metadata ``hooks`` key wins over the ``.hooks.json`` file, so a
-    centrally managed hook set is not silently overridden by a file an agent
-    could write into its own workspace. Returns ``{}`` for anything unreadable or
-    malformed: a broken hook file must not stop every agent in the workspace.
+    A ``.hooks.json`` file in the workspace folder is never read. Agents write
+    into that folder, and a hook from it would run a command on the hub's host
+    or post a call to any address on the agent's say so. A file left from
+    before is reported (:func:`ignored_hooks_file`) and can be imported by the
+    owner (``POST /api/workspaces/{name}/policy/import-hooks-file``).
+
+    In an isolated workspace (common/isolation.py) an ``http`` hook never
+    runs either: it sends the call out. Returns ``{}`` for anything unreadable
+    or malformed: a broken config must not stop every agent in the workspace.
     """
     from tools.approval import workspace_name
     ws = workspace_name(workspace)
@@ -138,24 +145,50 @@ def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
             raw = meta_hooks
     except Exception:
         raw = None
-
-    if raw is None:
-        try:
-            from workspace import get_workspace_folder
-            folder = get_workspace_folder(ws)
-            if folder is None:
-                return {}
-            path = folder / HOOKS_FILENAME
-            if not path.is_file():
-                return {}
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - config errors are logged, not fatal
-            logger.warning("hooks: unreadable %s for workspace %s: %s", HOOKS_FILENAME, ws, exc)
-            return {}
-
     if not isinstance(raw, dict):
+        if ignored_hooks_file(ws) is not None:
+            _warn_ignored_file(ws)
         return {}
-    return normalize_events(raw)
+
+    events = normalize_events(raw)
+    try:
+        from common import isolation
+        isolated = isolation.is_isolated(ws)
+    except Exception:  # noqa: BLE001 - an unreadable workspace is treated as isolated
+        isolated = True
+    if isolated:
+        return {event: [h for h in entries
+                        if str(h.get("type") or "command").strip().lower() != "http"]
+                for event, entries in events.items()}
+    return events
+
+
+_WARNED_FILES: set = set()
+
+
+def _warn_ignored_file(ws: str) -> None:
+    if ws in _WARNED_FILES:
+        return
+    _WARNED_FILES.add(ws)
+    logger.warning("hooks: %s in workspace %s is ignored; the owner can import it from Settings, "
+                   "tool policy", HOOKS_FILENAME, ws)
+
+
+def ignored_hooks_file(workspace: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The parsed ``.hooks.json`` of *workspace* when one is there (and is a
+    JSON object), else None. Only ever shown or imported by a person, never run."""
+    try:
+        from workspace import get_workspace_folder
+        folder = get_workspace_folder(str(workspace or ""))
+        if folder is None:
+            return None
+        path = folder / HOOKS_FILENAME
+        if not path.is_file():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - an unreadable file is not one to import
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def normalize_events(raw: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
@@ -1086,10 +1119,11 @@ def guard_action_tools(
     tool policy either, so an installation that uses none of them pays nothing
     but one config read per agent build.
     """
-    from tools.approval import NEVER_GATED
+    from tools.approval import ALWAYS_GATED, NEVER_GATED
 
     guard = ToolGuard(agent_id=agent_id, spec=spec, workspace=workspace)
-    if not guard.hooks() and not guard.gate_enabled() and not guard.has_policy():
+    always = any(getattr(t, "name", "") in ALWAYS_GATED for t in tools)
+    if not always and not guard.hooks() and not guard.gate_enabled() and not guard.has_policy():
         # Sequence guardrails (guardrails/sequence.py) need the wrapper too.
         from guardrails.sequence import has_rules
         if not has_rules(guard.workspace, spec):

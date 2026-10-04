@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   getSettings, updateSettings, testProvider as postTestProvider, testLocalModel,
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
-  getWorkspacePolicy, updateWorkspacePolicy,
+  getWorkspacePolicy, updateWorkspacePolicy, importWorkspaceHooksFile,
 } from '../../api';
 import { useI18n } from '../../i18n';
 
@@ -239,6 +239,24 @@ export function useWorkspaceSettings(workspace) {
     await savePolicy({ hooks: parsed });
   };
 
+  // The folder's .hooks.json is never run; importing it is the owner choosing
+  // to keep what it says.
+  const importHooksFile = async () => {
+    setPolicySaving(true);
+    setError('');
+    try {
+      const { data } = await importWorkspaceHooksFile(workspace);
+      setPolicy(data);
+      setHooksText(JSON.stringify(data.hooks || {}, null, 2));
+      setPolicySaved(true);
+      setTimeout(() => setPolicySaved(false), 3000);
+    } catch (e) {
+      setError(`${t('settings.errors.policySave')}: ` + (e.response?.data?.detail || e.message));
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
   const fetchModels = async (provider) => {
     const baseUrl = provider === 'ollama'
       ? (getFieldValue('ollama_base_url') || 'http://localhost:11434')
@@ -302,7 +320,7 @@ export function useWorkspaceSettings(workspace) {
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
-    policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks,
+    policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks, importHooksFile,
     savePolicy,
     streamingSaving, toggleStreaming,
     capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,

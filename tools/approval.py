@@ -65,6 +65,9 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "delete_scenario_tool",
     "delete_eval_tool",
     "remove_eval_case_tool",
+    # A whole workspace: its folder, settings and roster (an attached folder
+    # is only detached). tools/workspace_management.py.
+    "delete_workspace",
     # Stopping or restarting something that is running: whatever it was
     # producing is lost.
     "stop_run",
@@ -100,8 +103,16 @@ REASONING_TOOL_NAMES = frozenset({
 })
 
 # ``ask_user`` is how an agent reaches the human in the first place. Gating it
-# would need approval to ask for approval.
-NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user"})
+# would need approval to ask for approval. ``propose_connection`` is a person's
+# answer by construction (connectors/proposals.py): gating it would show two
+# cards for one decision.
+NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user", "propose_connection"})
+
+
+#: Tools that wait for a person's yes on every call, whatever the gate, the
+#: workspace's or the agent's policy say: irreversible actions on the hub
+#: itself. Deleting a workspace removes its folder and every record in it.
+ALWAYS_GATED: frozenset[str] = frozenset({"delete_workspace"})
 
 
 def needs_approval(tool_id: str, agent_spec: Any = None) -> bool:
@@ -342,6 +353,7 @@ def chat_answer_text(tool_id: str, tool_input: Any, approval: Dict[str, Any],
 
 
 __all__ = [
+    "ALWAYS_GATED",
     "NEEDS_APPROVAL",
     "NEVER_GATED",
     "REASONING_TOOL_NAMES",

@@ -244,18 +244,22 @@ def connector_status(name: str, workspace: Optional[str] = None) -> Optional[boo
         except Exception:  # noqa: BLE001 - the probe must not break the kit listing
             log.debug("kits: could not list database connections", exc_info=True)
             return False
+    # The connector in effect in ``workspace`` (connectors/channels/store.py):
+    # its own definition, else the default workspace's.
+    from connectors.channels.store import in_workspace
     try:
         from connectors import credentials
         spec = credentials.get(name)
         if spec is not None:
-            return spec.is_configured()
+            return bool(in_workspace(workspace, spec.is_configured))
     except Exception:  # noqa: BLE001, S110 - a connector's own probe must not break the kit listing
         log.debug("kits: could not read connector status for %r", name, exc_info=True)
     try:
         from connectors.channels import registry as channels
         spec = channels.get(name)
         if spec is not None:
-            return bool(spec.store.is_configured(*spec.service.required_fields))
+            return bool(in_workspace(workspace, spec.store.is_configured,
+                                     *spec.service.required_fields))
     except Exception:  # noqa: BLE001, S110 - a channel's own probe must not break the kit listing
         log.debug("kits: could not read channel status for %r", name, exc_info=True)
     return None

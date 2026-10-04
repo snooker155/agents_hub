@@ -32,6 +32,18 @@ A binding targets either an agent (`agent_id`) or a flow (`flow_id`) — never
 both. The token is write-only from the API perspective — callers see only
 `has_token: bool`.
 
+Bots per workspace (docs/connectors.md "Connectors per workspace"), the same
+shape as ``connectors/channels/store.py``: the default workspace's bot is the
+document under ``"state"`` and serves every workspace; a workspace that
+defines its own bot has a document of its own under ``"state@<workspace>"``,
+with its own token, allowlist, update offset and bindings, and that bot
+serves that workspace only. The module level functions below follow the
+running code (:func:`connectors.channels.store.scope_workspace`): the current
+workspace's bot when it defines one, else the default's.
+:func:`for_workspace` gives a :class:`TelegramStore` bound to exactly one
+workspace's document, for the routes that edit a workspace's bot and for the
+poller serving it.
+
 `allowed_chat_ids` is the gate on who the bot will talk to at all: an empty
 list rejects every chat once a token is configured (the safe default — the
 operator opts specific chats in, rather than the bot answering anyone who
@@ -65,6 +77,12 @@ _TG_FILE = AGENTS_HUB_ROOT / "telegram.json"
 _store = DocStore("telegram")
 
 _STATE_KEY = "state"
+DEFAULT_WORKSPACE = "default"
+
+
+def _key_for(workspace: Optional[str]) -> str:
+    ws = str(workspace or "").strip()
+    return _STATE_KEY if not ws or ws == DEFAULT_WORKSPACE else f"{_STATE_KEY}@{ws}"
 
 
 def _utc_iso() -> str:
@@ -114,184 +132,295 @@ def _coerce(data: Any) -> dict[str, Any]:
     return out
 
 
-def load() -> dict[str, Any]:
-    """Return the full state dict (token included; internal use only)."""
-    _ensure_legacy_imported()
-    return _coerce(_store.get(_STATE_KEY))
+class TelegramStore:
+    """One workspace's Telegram bot, or (``workspace=None``) the bot of the
+    running code: its workspace's own when it defines one, else the default's."""
 
+    def __init__(self, workspace: Optional[str] = None) -> None:
+        self.workspace = (str(workspace).strip() or DEFAULT_WORKSPACE) if workspace is not None else None
 
-def get_token() -> str:
-    return str(load().get("bot_token") or "")
+    # ── workspaces ───────────────────────────────────────────────────────────
 
+    def for_workspace(self, workspace: Optional[str]) -> "TelegramStore":
+        return TelegramStore(workspace or DEFAULT_WORKSPACE)
 
-def is_enabled() -> bool:
-    return bool(load().get("enabled"))
+    def defines(self, workspace: Optional[str]) -> bool:
+        key = _key_for(workspace)
+        return key == _STATE_KEY or _store.exists(key)
 
+    def effective_workspace(self) -> str:
+        if self.workspace is not None:
+            return self.workspace
+        from connectors.channels.store import scope_workspace
+        ws = scope_workspace()
+        if ws and ws != DEFAULT_WORKSPACE and _store.exists(_key_for(ws)):
+            return ws
+        return DEFAULT_WORKSPACE
 
-def has_token() -> bool:
-    return bool(get_token().strip())
+    def defined_workspaces(self) -> list[str]:
+        prefix = f"{_STATE_KEY}@"
+        return sorted(k[len(prefix):] for k in _store.keys() if k.startswith(prefix))
 
+    def remove_workspace(self, workspace: Optional[str]) -> bool:
+        key = _key_for(workspace)
+        if key == _STATE_KEY:
+            return False
+        return _store.delete(key)
 
-def set_token(token: Optional[str]) -> None:
-    """Set or clear the bot token."""
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        data["bot_token"] = (token or "").strip()
-        _store.put(_STATE_KEY, data)
+    def _key(self) -> str:
+        return _key_for(self.effective_workspace())
 
+    def _update(self, fn) -> Any:
+        _ensure_legacy_imported()
+        key = self._key()
+        with _store.transaction():
+            data = _coerce(_store.get(key))
+            result = fn(data)
+            if result is not _NO_WRITE:
+                _store.put(key, data)
+            return None if result is _NO_WRITE else result
 
-def set_enabled(enabled: bool) -> None:
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        data["enabled"] = bool(enabled)
-        _store.put(_STATE_KEY, data)
+    # ── state ────────────────────────────────────────────────────────────────
 
+    def load(self) -> dict[str, Any]:
+        """Return the full state dict (token included; internal use only)."""
+        _ensure_legacy_imported()
+        return _coerce(_store.get(self._key()))
 
-def get_allowed_chat_ids() -> list[int]:
-    """Chat ids the bot will process updates from. Empty = reject everyone."""
-    raw = load().get("allowed_chat_ids") or []
-    out = []
-    for v in raw:
+    def get_token(self) -> str:
+        return str(self.load().get("bot_token") or "")
+
+    def is_enabled(self) -> bool:
+        return bool(self.load().get("enabled"))
+
+    def has_token(self) -> bool:
+        return bool(self.get_token().strip())
+
+    def set_token(self, token: Optional[str]) -> None:
+        """Set or clear the bot token."""
+        self._update(lambda d: d.__setitem__("bot_token", (token or "").strip()))
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._update(lambda d: d.__setitem__("enabled", bool(enabled)))
+
+    def get_allowed_chat_ids(self) -> list[int]:
+        """Chat ids the bot will process updates from. Empty = reject everyone."""
+        out = []
+        for v in self.load().get("allowed_chat_ids") or []:
+            try:
+                out.append(int(v))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def set_allowed_chat_ids(self, chat_ids: list[int]) -> None:
+        """Replace the chat id allowlist."""
+        cleaned = []
+        for v in chat_ids or []:
+            try:
+                cleaned.append(int(v))
+            except (TypeError, ValueError):
+                continue
+        self._update(lambda d: d.__setitem__("allowed_chat_ids", cleaned))
+
+    def is_chat_allowed(self, chat_id: int) -> bool:
+        """Whether a chat may talk to the bot. An empty allowlist allows no one."""
         try:
-            out.append(int(v))
+            chat_id = int(chat_id)
         except (TypeError, ValueError):
-            continue
-    return out
+            return False
+        return chat_id in set(self.get_allowed_chat_ids())
 
+    def get_update_offset(self) -> int:
+        return int(self.load().get("update_offset") or 0)
 
-def set_allowed_chat_ids(chat_ids: list[int]) -> None:
-    """Replace the chat id allowlist."""
-    cleaned = []
-    for v in chat_ids or []:
-        try:
-            cleaned.append(int(v))
-        except (TypeError, ValueError):
-            continue
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        data["allowed_chat_ids"] = cleaned
-        _store.put(_STATE_KEY, data)
+    def set_update_offset(self, offset: int) -> None:
+        self._update(lambda d: d.__setitem__("update_offset", int(offset or 0)))
 
+    # ── bindings ─────────────────────────────────────────────────────────────
 
-def is_chat_allowed(chat_id: int) -> bool:
-    """Whether a chat may talk to the bot. An empty allowlist allows no one."""
-    try:
-        chat_id = int(chat_id)
-    except (TypeError, ValueError):
-        return False
-    return chat_id in set(get_allowed_chat_ids())
+    def list_bindings(self) -> list[dict[str, Any]]:
+        return list(self.load().get("bindings") or [])
 
-
-def get_update_offset() -> int:
-    return int(load().get("update_offset") or 0)
-
-
-def set_update_offset(offset: int) -> None:
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        data["update_offset"] = int(offset or 0)
-        _store.put(_STATE_KEY, data)
-
-
-# ── Bindings ─────────────────────────────────────────────────────────────────
-
-def list_bindings() -> list[dict[str, Any]]:
-    return list(load().get("bindings") or [])
-
-
-def get_binding(chat_id: int) -> Optional[dict[str, Any]]:
-    for b in list_bindings():
-        if int(b.get("chat_id", 0)) == int(chat_id):
-            return dict(b)
-    return None
-
-
-def upsert_binding(
-    *,
-    chat_id: int,
-    agent_id: str,
-    workspace: Optional[str] = None,
-    conversation_id: Optional[str] = None,
-    title: Optional[str] = None,
-    flow_id: Optional[str] = None,
-) -> dict[str, Any]:
-    """Create or update a chat→agent/flow binding. Returns the resulting binding.
-
-    A binding targets either an agent (``agent_id``) or a flow (``flow_id``);
-    setting one clears the other so the chat has a single unambiguous target.
-    """
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        bindings = list(data.get("bindings") or [])
-        existing = None
-        for b in bindings:
+    def get_binding(self, chat_id: int) -> Optional[dict[str, Any]]:
+        for b in self.list_bindings():
             if int(b.get("chat_id", 0)) == int(chat_id):
-                existing = b
-                break
-        if existing is None:
-            existing = {
-                "chat_id": int(chat_id),
-                "agent_id": agent_id,
-                "flow_id": flow_id,
-                "workspace": workspace,
-                "conversation_id": conversation_id,
-                "title": title,
-                "created_at": _utc_iso(),
-                "last_message_at": None,
-            }
-            bindings.append(existing)
-        else:
-            existing["agent_id"] = agent_id
-            existing["flow_id"] = flow_id
-            if workspace is not None:
-                existing["workspace"] = workspace
-            if conversation_id is not None:
-                existing["conversation_id"] = conversation_id
-            if title is not None:
-                existing["title"] = title
-        data["bindings"] = bindings
-        _store.put(_STATE_KEY, data)
-        return dict(existing)
-
-
-def touch_binding(chat_id: int) -> None:
-    """Update last_message_at for a binding (best-effort, no error if missing)."""
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        for b in data.get("bindings") or []:
-            if int(b.get("chat_id", 0)) == int(chat_id):
-                b["last_message_at"] = _utc_iso()
-                _store.put(_STATE_KEY, data)
-                return
-
-
-def reset_conversation(chat_id: int, new_conversation_id: str) -> Optional[dict[str, Any]]:
-    """Replace conversation_id for a binding (used by `/reset`)."""
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        for b in data.get("bindings") or []:
-            if int(b.get("chat_id", 0)) == int(chat_id):
-                b["conversation_id"] = new_conversation_id
-                _store.put(_STATE_KEY, data)
                 return dict(b)
         return None
 
+    def upsert_binding(
+        self,
+        *,
+        chat_id: int,
+        agent_id: str,
+        workspace: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        title: Optional[str] = None,
+        flow_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Create or update a chat→agent/flow binding. Returns the resulting binding.
+
+        A binding targets either an agent (``agent_id``) or a flow (``flow_id``);
+        setting one clears the other so the chat has a single unambiguous target.
+        """
+        def _apply(data: dict[str, Any]) -> dict[str, Any]:
+            bindings = list(data.get("bindings") or [])
+            existing = None
+            for b in bindings:
+                if int(b.get("chat_id", 0)) == int(chat_id):
+                    existing = b
+                    break
+            if existing is None:
+                existing = {
+                    "chat_id": int(chat_id),
+                    "agent_id": agent_id,
+                    "flow_id": flow_id,
+                    "workspace": workspace,
+                    "conversation_id": conversation_id,
+                    "title": title,
+                    "created_at": _utc_iso(),
+                    "last_message_at": None,
+                }
+                bindings.append(existing)
+            else:
+                existing["agent_id"] = agent_id
+                existing["flow_id"] = flow_id
+                if workspace is not None:
+                    existing["workspace"] = workspace
+                if conversation_id is not None:
+                    existing["conversation_id"] = conversation_id
+                if title is not None:
+                    existing["title"] = title
+            data["bindings"] = bindings
+            return dict(existing)
+
+        return self._update(_apply)
+
+    def touch_binding(self, chat_id: int) -> None:
+        """Update last_message_at for a binding (best-effort, no error if missing)."""
+        def _apply(data: dict[str, Any]) -> Any:
+            for b in data.get("bindings") or []:
+                if int(b.get("chat_id", 0)) == int(chat_id):
+                    b["last_message_at"] = _utc_iso()
+                    return None
+            return _NO_WRITE
+
+        self._update(_apply)
+
+    def reset_conversation(self, chat_id: int, new_conversation_id: str) -> Optional[dict[str, Any]]:
+        """Replace conversation_id for a binding (used by `/reset`)."""
+        def _apply(data: dict[str, Any]) -> Any:
+            for b in data.get("bindings") or []:
+                if int(b.get("chat_id", 0)) == int(chat_id):
+                    b["conversation_id"] = new_conversation_id
+                    return dict(b)
+            return _NO_WRITE
+
+        return self._update(_apply)
+
+    def remove_binding(self, chat_id: int) -> bool:
+        def _apply(data: dict[str, Any]) -> Any:
+            original = list(data.get("bindings") or [])
+            kept = [b for b in original if int(b.get("chat_id", 0)) != int(chat_id)]
+            if len(kept) == len(original):
+                return _NO_WRITE
+            data["bindings"] = kept
+            return True
+
+        return bool(self._update(_apply))
+
+
+#: Returned by an update function that changed nothing: skip the write.
+_NO_WRITE = object()
+
+#: The bot of the running code (see the module docstring).
+STORE = TelegramStore()
+
+
+def for_workspace(workspace: Optional[str]) -> TelegramStore:
+    """The store of exactly ``workspace``'s bot (the default's when empty)."""
+    return STORE.for_workspace(workspace)
+
+
+def defines(workspace: Optional[str]) -> bool:
+    return STORE.defines(workspace)
+
+
+def effective_workspace() -> str:
+    return STORE.effective_workspace()
+
+
+def defined_workspaces() -> list[str]:
+    return STORE.defined_workspaces()
+
+
+def remove_workspace(workspace: Optional[str]) -> bool:
+    return STORE.remove_workspace(workspace)
+
+
+def load() -> dict[str, Any]:
+    return STORE.load()
+
+
+def get_token() -> str:
+    return STORE.get_token()
+
+
+def is_enabled() -> bool:
+    return STORE.is_enabled()
+
+
+def has_token() -> bool:
+    return STORE.has_token()
+
+
+def set_token(token: Optional[str]) -> None:
+    STORE.set_token(token)
+
+
+def set_enabled(enabled: bool) -> None:
+    STORE.set_enabled(enabled)
+
+
+def get_allowed_chat_ids() -> list[int]:
+    return STORE.get_allowed_chat_ids()
+
+
+def set_allowed_chat_ids(chat_ids: list[int]) -> None:
+    STORE.set_allowed_chat_ids(chat_ids)
+
+
+def is_chat_allowed(chat_id: int) -> bool:
+    return STORE.is_chat_allowed(chat_id)
+
+
+def get_update_offset() -> int:
+    return STORE.get_update_offset()
+
+
+def set_update_offset(offset: int) -> None:
+    STORE.set_update_offset(offset)
+
+
+def list_bindings() -> list[dict[str, Any]]:
+    return STORE.list_bindings()
+
+
+def get_binding(chat_id: int) -> Optional[dict[str, Any]]:
+    return STORE.get_binding(chat_id)
+
+
+def upsert_binding(**kwargs: Any) -> dict[str, Any]:
+    return STORE.upsert_binding(**kwargs)
+
+
+def touch_binding(chat_id: int) -> None:
+    STORE.touch_binding(chat_id)
+
+
+def reset_conversation(chat_id: int, new_conversation_id: str) -> Optional[dict[str, Any]]:
+    return STORE.reset_conversation(chat_id, new_conversation_id)
+
 
 def remove_binding(chat_id: int) -> bool:
-    _ensure_legacy_imported()
-    with _store.transaction():
-        data = _coerce(_store.get(_STATE_KEY))
-        original = list(data.get("bindings") or [])
-        kept = [b for b in original if int(b.get("chat_id", 0)) != int(chat_id)]
-        if len(kept) == len(original):
-            return False
-        data["bindings"] = kept
-        _store.put(_STATE_KEY, data)
-        return True
+    return STORE.remove_binding(chat_id)

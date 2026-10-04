@@ -13,6 +13,11 @@ nonce to the provider. The callback hashes what comes back and finds the row
 by it, so a forged or replayed callback finds nothing, a callback on another
 API replica still finds its row, and finishing the row clears both, which is
 what makes the link single use.
+
+The app registration. A request is asked with the Google or Microsoft
+connector of the workspace the turn ran in (its own, else the default
+workspace's; connectors/channels/store.py). The public page and the callback
+run outside any turn, so they name the request's workspace explicitly.
 """
 from __future__ import annotations
 
@@ -67,12 +72,14 @@ def redirect_uri(base: Optional[str] = None) -> str:
     return f"{(base or public_base()).rstrip('/')}{CALLBACK_PATH}"
 
 
-def provider_ready(provider: str) -> bool:
+def provider_ready(provider: str, workspace: Optional[str] = None) -> bool:
+    """Whether the app registration in effect in ``workspace`` (the running
+    code's when None) exists to ask end users with."""
     if provider == catalog.GOOGLE:
         from connectors.google.auth import consent_ready
-        return consent_ready()
+        return consent_ready(workspace)
     from connectors.microsoft.graph import consent_ready
-    return consent_ready()
+    return consent_ready(workspace)
 
 
 # ── the agent's side ─────────────────────────────────────────────────────────
@@ -96,7 +103,7 @@ def request_access(provider: str, purpose: str = "", *,
         raise ConsentFlowError(
             "not_enabled", f"This agent is not set up to ask for {catalog.PROVIDER_LABELS[provider]} "
             "access. The operator turns it on in the agent's Account access card.")
-    if not provider_ready(provider):
+    if not provider_ready(provider, workspace):
         raise ConsentFlowError(
             "not_configured", f"The hub has no {catalog.PROVIDER_LABELS[provider]} app registration "
             "to ask with. The operator sets it up on the Connectors page.")
@@ -164,11 +171,14 @@ def begin(row: Dict[str, Any], *, base: Optional[str] = None) -> str:
         raise ConsentFlowError("used")
     provider = row["provider"]
     scopes = catalog.provider_scopes(provider, row["scopes"])
+    workspace = row.get("workspace") or None
     if provider == catalog.GOOGLE:
         from connectors.google.auth import build_consent_url
-        return build_consent_url(redirect_uri(base), state, scopes, code_challenge=challenge)
+        return build_consent_url(redirect_uri(base), state, scopes, code_challenge=challenge,
+                                 workspace=workspace)
     from connectors.microsoft.graph import build_consent_url
-    return build_consent_url(redirect_uri(base), state, scopes, code_challenge=challenge)
+    return build_consent_url(redirect_uri(base), state, scopes, code_challenge=challenge,
+                             workspace=workspace)
 
 
 def _exchange(row: Dict[str, Any], code: str, verifier: str,
@@ -176,9 +186,12 @@ def _exchange(row: Dict[str, Any], code: str, verifier: str,
     """``(refresh_token, account_email, granted provider scopes)``."""
     provider = row["provider"]
     scopes = catalog.provider_scopes(provider, row["scopes"])
+    # The same app registration the consent screen was opened with: the
+    # request's workspace's.
+    workspace = row.get("workspace") or None
     if provider == catalog.GOOGLE:
         from connectors.google.auth import GoogleError, exchange_code, fetch_userinfo
-        tokens = exchange_code(code, redirect_uri(base), code_verifier=verifier)
+        tokens = exchange_code(code, redirect_uri(base), code_verifier=verifier, workspace=workspace)
         refresh = tokens.get("refresh_token")
         if not refresh:
             raise GoogleError("Google returned no refresh token")
@@ -186,7 +199,8 @@ def _exchange(row: Dict[str, Any], code: str, verifier: str,
         granted = str(tokens.get("scope") or "").split() or scopes
         return str(refresh), str(info.get("email") or ""), granted
     from connectors.microsoft.graph import GraphError, exchange_delegated_code, fetch_me
-    tokens = exchange_delegated_code(code, redirect_uri(base), scopes, code_verifier=verifier)
+    tokens = exchange_delegated_code(code, redirect_uri(base), scopes, code_verifier=verifier,
+                                     workspace=workspace)
     refresh = tokens.get("refresh_token")
     if not refresh:
         raise GraphError("Microsoft returned no refresh token")

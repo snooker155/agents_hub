@@ -31,10 +31,8 @@ from agents.agent_launcher import (
     preregister_run as rm_preregister_run,
 )
 from common.entity_sink import record_entity
-from common.workspace_context import (
-    filter_agents_for_workspace,
-    task_in_workspace,
-)
+from common.workspace_context import filter_agents_for_workspace
+from common.workspace_scope import check_record, current_agent, is_service_wide
 from common.session_service import get_or_create_task_session, add_run_to_session
 from tasks.context import augment_params_with_block_reason
 from tasks.service import (
@@ -58,6 +56,7 @@ from tools.task_management import (
     _uuid_from_str,
     _task_to_dict,
     _active_workspace,
+    _task_out_of_scope,
 )
 from tools._json import json_err as _json_err, json_ok as _json_ok
 
@@ -137,6 +136,37 @@ def _delegation_blocked(agent_id: str) -> Optional[str]:
 
 
 
+def _agent_available(spec: Any, ws: Optional[str]) -> bool:
+    """Whether ``spec`` may be run, assigned, inspected or delegated to from
+    ``ws``: the notion the workspace's agent list uses
+    (``filter_agents_for_workspace``). The service's own agents reach every
+    agent; no workspace at all (the CLI) keeps every agent reachable."""
+    if spec is None:
+        return False
+    if not ws or is_service_wide(current_agent()):
+        return True
+    return bool(filter_agents_for_workspace([spec], ws))
+
+
+def _agent_owner_error(spec: Any) -> Optional[str]:
+    """Why the running agent may not change or delete ``spec``, or None.
+
+    Only an agent owned by this run's workspace (``owner_workspace``; an
+    agent with no owner belongs to ``default``) may be changed, and never a
+    system agent. The service's own agents may change any agent; a call with
+    no workspace (the CLI) is left as it was."""
+    if is_service_wide(current_agent()):
+        return None
+    ws = _active_workspace()
+    if not ws:
+        return None
+    if getattr(spec, "system", False):
+        return f"Agent '{spec.id}' is a system agent and cannot be changed from a workspace"
+    if check_record(getattr(spec, "owner_workspace", None), what="agent", workspace=ws):
+        return f"Agent '{spec.id}' not found"
+    return None
+
+
 @tool("list_agents_tool")
 def list_agents_tool() -> str:
     """List all available agents from the registry. Returns JSON with an array of agents.
@@ -198,11 +228,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         ws = _active_workspace()
-        if ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{task_id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         if getattr(task, "status", None) == TaskStatus.stopped:
             return _json_err("Task is stopped and cannot be assigned", code="invalid_task")
         existing_agent = getattr(task, "assigned_agent_type", None)
@@ -231,7 +258,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
-        if ws and not filter_agents_for_workspace([spec], ws):
+        if not _agent_available(spec, ws):
             return _json_err(
                 f"Agent '{agent_id}' is not available in workspace '{ws}'",
                 code="forbidden",
@@ -429,7 +456,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
         # of the current workspace); the argument is only a fallback for callers
         # with no active workspace context.
         ws = _active_workspace() or workspace
-        if ws and not filter_agents_for_workspace([spec], ws):
+        if not _agent_available(spec, ws):
             return _json_err(
                 f"Agent '{agent_id}' is not available in workspace '{ws}'",
                 code="forbidden",
@@ -693,7 +720,8 @@ def list_flows_tool() -> str:
         flows = []
         for f in flow_store.list_flows():
             f_ws = f.get("workspace")
-            if ws and f_ws and f_ws != ws:
+            # A flow with no workspace is shared by every workspace.
+            if ws and f_ws and check_record(f_ws, what="flow", workspace=ws):
                 continue
             flows.append({
                 "id": f.get("id"),
@@ -772,12 +800,8 @@ def run_flow_tool(
 
         ws = _active_workspace()
         flow_ws = flow.get("workspace")
-        if ws and flow_ws and flow_ws != ws:
-            return _json_err(
-                f"Flow '{flow_id}' belongs to workspace '{flow_ws}', not the active "
-                f"workspace '{ws}'",
-                code="forbidden",
-            )
+        if flow_ws and check_record(flow_ws, what="flow", workspace=ws):
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
         ws_name = flow_ws or ws
         desc = (description or flow.get("description") or "").strip()
@@ -837,11 +861,8 @@ def start_agent_tool(task_id: str) -> str:
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         ws = _active_workspace()
-        if ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{task_id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         agent_id = getattr(task, "assigned_agent_type", None)
         if not agent_id:
             return _json_err(
@@ -957,12 +978,8 @@ def reject_assignment_tool(task_id: str) -> str:
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{task_id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         if getattr(task, "assigned_agent_run_id", None):
             return _json_err(
                 "Task already has an active run and cannot be rejected; stop it first",
@@ -996,12 +1013,8 @@ def stop_agent_tool(task_id: str) -> str:
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{task_id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         current_run_id = str(getattr(task, "assigned_agent_run_id", None) or "")
         stopped = rm_stop_run(str(task.id), run_id=current_run_id or None)
         if not stopped:
@@ -1078,7 +1091,12 @@ def wait_for_agent_tool(task_id: str, interval: int = 2) -> str:
     import time
     time.sleep(max(2, min(interval, 60)))
     # return get_agent_status_tool.invoke({"task_id": task_id})
-    task = svc_get_task(task_id)
+    try:
+        task = svc_get_task(_uuid_from_str(task_id))
+    except Exception:  # noqa: BLE001 - an unreadable id reads as no task, as before
+        task = None
+    if _task_out_of_scope(task):
+        return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
     return _json_ok({
             "message": "Agent status update after waiting. Call get_agent_status_tool with task id.",
             "task": _task_to_dict(task) if task else None,
@@ -1102,11 +1120,8 @@ def get_agent_status_tool(task_id: str) -> str:
         tid = _uuid_from_str(task_id)
         task = svc_get_task(tid)
         ws = _active_workspace()
-        if task and ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{task_id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         # Use the run_id already on the task — no need to scan all runs by task_id.
         current_run_id = getattr(task, "assigned_agent_run_id", None)
         status = run_manager.get_run_by_id(str(current_run_id)) if current_run_id else None
@@ -1273,6 +1288,8 @@ def create_agent_tool(
             return _json_err(f"Agent with id '{agent_id}' already exists", code="conflict")
         parent_eff = None
         if extends:
+            if not _agent_available(reg_get_agent(extends), _active_workspace()):
+                return _json_err(f"Parent agent '{extends}' not found", code="not_found")
             from agents import inheritance
             parent_eff = inheritance.parent_effective(extends, extends_version)
             if parent_eff is None:
@@ -1414,7 +1431,7 @@ def get_agent_tool(agent_id: str) -> str:
     """Get details of a specific agent by ID."""
     try:
         spec = reg_get_agent(agent_id)
-        if not spec:
+        if not spec or not _agent_available(spec, _active_workspace()):
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")
         from agents import prompt_assembly
         definition = {
@@ -1463,6 +1480,9 @@ def modify_agent_tool(
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        refused = _agent_owner_error(spec)
+        if refused:
+            return _json_err(refused, code="not_found" if refused.endswith("not found") else "forbidden")
 
         changed: List[str] = []
 
@@ -1578,6 +1598,11 @@ def delete_agent_tool(agent_id: str) -> str:
         protected = {"orchestrator", "decomposer", "agent_creator", "flow_creator"}
         if agent_id in protected:
             return _json_err(f"Agent '{agent_id}' is a system agent and cannot be deleted", code="forbidden")
+        spec = reg_get_agent(agent_id)
+        if spec is not None:
+            refused = _agent_owner_error(spec)
+            if refused:
+                return _json_err(refused, code="not_found" if refused.endswith("not found") else "forbidden")
         removed = reg_remove_agent(agent_id)
         if not removed:
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")

@@ -31,18 +31,65 @@ from views import focus as _focus
 from views.models import ViewValidationError, SUPPORTED_KINDS
 from views.owner import current_owner
 from views.ops import OpError, get_at
-from views.store import (
-    create_view as _store_create_view,
-    append_ops as _append_ops,
-    get_view as _get_view,
-    revert_to as _revert_to,
-    add_asset as _add_asset,
-    save_checkpoint as _save_checkpoint,
-    checkpoint_seq as _checkpoint_seq,
-    list_checkpoints as _list_checkpoints,
-)
+from views import store as _view_store
+from views.store import create_view as _store_create_view
 
 log = logging.getLogger(__name__)
+
+
+# ── workspace scope ───────────────────────────────────────────────────────────
+#
+# An agent reads and changes only the views of the workspace its run belongs
+# to (common/workspace_scope.py). A view of another workspace is answered like
+# a missing one, by every tool below: the store wrappers return what the store
+# returns for an unknown id. The service's own agents reach every view, and a
+# call with no workspace at all (the CLI) keeps reaching every view too.
+
+def _view_denied(view_id: str) -> Optional[str]:
+    """The scope error for a view of another workspace, else None (also for
+    an unknown id: the store answers that one)."""
+    if not view_id:
+        return None
+    from common.workspace_scope import check_record
+    try:
+        row = _view_store.view_index_row(view_id)
+    except Exception:  # noqa: BLE001 - the store call that follows reports it
+        return None
+    if row is None:
+        return None
+    return check_record(row.get("workspace"), what=f"view {view_id}")
+
+
+def _get_view(view_id: str):
+    return None if _view_denied(view_id) else _view_store.get_view(view_id)
+
+
+def _append_ops(view_id: str, ops, **kw):
+    if _view_denied(view_id):
+        raise KeyError(view_id)
+    return _view_store.append_ops(view_id, ops, **kw)
+
+
+def _revert_to(view_id: str, seq: int) -> bool:
+    return False if _view_denied(view_id) else _view_store.revert_to(view_id, seq)
+
+
+def _add_asset(view_id: str, src_abs: str, dest_name=None) -> str:
+    if _view_denied(view_id):
+        raise KeyError(view_id)
+    return _view_store.add_asset(view_id, src_abs, dest_name)
+
+
+def _save_checkpoint(view_id: str, name: str):
+    return None if _view_denied(view_id) else _view_store.save_checkpoint(view_id, name)
+
+
+def _checkpoint_seq(view_id: str, name: str):
+    return None if _view_denied(view_id) else _view_store.checkpoint_seq(view_id, name)
+
+
+def _list_checkpoints(view_id: str):
+    return {} if _view_denied(view_id) else _view_store.list_checkpoints(view_id)
 
 
 def _deep_merge(base: Any, patch: Any) -> Any:
@@ -312,8 +359,10 @@ def _resolve_vid(view_id: str) -> str:
     binding = current_view_binding.get()
     if explicit:
         # The first view a run names becomes its default target, so a worker
-        # asked to continue view X passes the id once, not on every call.
-        if binding is not None and not binding.get("id") and not studio:
+        # asked to continue view X passes the id once, not on every call. A
+        # view of another workspace never becomes it.
+        if (binding is not None and not binding.get("id") and not studio
+                and not _view_denied(explicit)):
             binding["id"] = explicit
         return explicit
     # The Studio binding first: a conversation bound to a view edits that view.
@@ -875,6 +924,8 @@ def view_compute(runtime: str, params: str = "", steps: int = 400, dt: float = 0
     vid = _resolve_vid(view_id)
     if not vid:
         return _no_view()
+    if _get_view(vid) is None:
+        return json.dumps({"ok": False, "error": f"view not found: {vid}"})
     from views.compute import SERVER_RUNTIMES
     if runtime not in SERVER_RUNTIMES:
         return json.dumps({"ok": False, "error": f"unknown runtime {runtime!r}; available: {list(SERVER_RUNTIMES)}"})
@@ -966,6 +1017,8 @@ def view_serve_stop(view_id: str = "") -> str:
     vid = _resolve_vid(view_id)
     if not vid:
         return _no_view()
+    if _get_view(vid) is None:
+        return json.dumps({"ok": False, "error": f"view not found: {vid}"})
     from views.serve import stop_service
     stopped = stop_service(vid)
     _apply(vid, [{"op": "remove", "path": "serve"}])

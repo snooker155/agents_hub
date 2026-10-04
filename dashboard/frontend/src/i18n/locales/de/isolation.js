@@ -1,0 +1,25 @@
+export default {
+  title: 'Isolation',
+  explainer: 'Innerhalb dieses Workspace darf ein Agent alles tun. Shellbefehle und Code laufen in einem Sandboxcontainer ganz ohne Netzwerk. Das Internet lässt sich nur auf den unten aufgeführten Seiten lesen, über den Hub, nur mit GET. Werkzeuge, die den Perimeter umgehen, sind deaktiviert und können hier nicht hinzugefügt werden.',
+  switchLabel: 'Isolierter Workspace',
+  statusOn: 'Dieser Workspace ist isoliert.',
+  statusOff: 'Dieser Workspace ist nicht isoliert.',
+  confirmOff: 'Isolation ausschalten? Shell Befehle und Code laufen dann wieder auf dem Host des Hubs, Agenten bekommen die Werkzeuge zurück, die nach außen reichen, und MCP Server, Kanäle und Widgets lassen sich wieder anbinden.',
+  readiness: 'Bereitschaft des Hubs',
+  checks: {
+    docker: 'Docker',
+    sandbox_image: 'Sandbox Image',
+  },
+  domains: 'Seiten, die der Agent lesen darf',
+  domainsHint: 'Ein Host pro Zeile. Ein Host erlaubt auch seine eigenen Subdomains.',
+  saveDomains: 'Seiten speichern',
+  domainsSaved: 'Gespeichert.',
+  offendingAgents: 'Agenten mit Werkzeugen außerhalb des Perimeters',
+  offendingAgentsHint: 'Entfernen Sie diese Werkzeuge vom Agenten, oder verschieben Sie ihn in einen anderen Workspace, bevor Sie die Isolation einschalten.',
+  badge: 'Isoliert',
+  toolHint: 'In einem isolierten Workspace nicht verfügbar',
+  errors: {
+    load: 'Der Isolationsstatus konnte nicht geladen werden.',
+    save: 'Konnte nicht gespeichert werden.',
+  },
+};

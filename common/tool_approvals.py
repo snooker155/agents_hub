@@ -148,6 +148,24 @@ def list_for_run(run_id: str, *, status: Optional[str] = None) -> List[Dict[str,
     return [_row(r) for r in rows]
 
 
+def list_for_tool(tool: str, *, status: Optional[str] = None,
+                  workspace: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    """Every call of ``tool`` that waited, newest first; ``status`` and
+    ``workspace`` narrow it. The Connectors page lists the connection
+    proposals still open this way (connectors/proposals.py)."""
+    sql = "SELECT * FROM tool_approvals WHERE tool = ?"
+    params: List[Any] = [str(tool)]
+    if status:
+        sql += " AND status = ?"
+        params.append(str(status))
+    if workspace:
+        sql += " AND (workspace = ? OR workspace IS NULL)"
+        params.append(str(workspace))
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit or 100), 500)))
+    return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
+
+
 def _settle(approval_id: str, status: str, *, note: str = "", author: Any = None) -> Optional[Dict[str, Any]]:
     """Move a pending row to ``status``. Returns the row when this call moved
     it, None when it was no longer pending (answered, expired or cancelled by
@@ -198,6 +216,13 @@ def _expired(row: Dict[str, Any]) -> bool:
         return _now() >= datetime.fromisoformat(str(row.get("expires_at")))
     except (TypeError, ValueError):
         return False
+
+
+def is_expired(row: Dict[str, Any]) -> bool:
+    """Whether a row's deadline has passed, whatever its status still says: a
+    call nobody waits on any more (a proposal left on the Connectors page) is
+    only closed when somebody next answers it."""
+    return _expired(row)
 
 
 # -------------------- where a call may wait --------------------
@@ -418,6 +443,7 @@ __all__ = [
     "DECISIONS", "DEFAULT_TIMEOUT_SECONDS", "INTERACTIVE_ORIGINS", "STATUSES",
     "STATUS_APPROVED", "STATUS_CANCELLED", "STATUS_DENIED", "STATUS_EXPIRED", "STATUS_PENDING",
     "TIMEOUT_ENV",
-    "chat_context", "close", "decide", "get", "hold", "list_for_run", "open_approval",
+    "chat_context", "close", "decide", "get", "hold", "is_expired", "list_for_run", "list_for_tool",
+    "open_approval",
     "timeout_seconds", "transport_for",
 ]

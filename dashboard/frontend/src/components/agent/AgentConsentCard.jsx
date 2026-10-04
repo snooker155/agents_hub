@@ -52,12 +52,12 @@ export default function AgentConsentCard({ agentId, readOnly = false }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getConsentSettings(agentId)
+    getConsentSettings(agentId, workspace)
       .then(({ data }) => { if (!cancelled) apply(data); })
       .catch(() => { if (!cancelled) setError(t('consent.loadFailed')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [agentId, t]);
+  }, [agentId, workspace, t]);
 
   useEffect(() => { loadGrants(); }, [loadGrants]);
 
@@ -86,7 +86,7 @@ export default function AgentConsentCard({ agentId, readOnly = false }) {
     setMessage('');
     setError('');
     try {
-      const { data } = await updateConsentSettings(agentId, { providers, scopes });
+      const { data } = await updateConsentSettings(agentId, { providers, scopes }, workspace);
       apply(data);
       setMessage(t('consent.saved'));
     } catch (err) {

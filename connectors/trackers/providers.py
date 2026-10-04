@@ -424,8 +424,15 @@ class LinearProvider(TrackerProvider):
         return [{"key": n.get("key"), "name": n.get("name")} for n in nodes]
 
 
-def get_provider(provider: str) -> TrackerProvider:
-    """Build a provider client from the stored credentials."""
+def get_provider(provider: str, workspace: Optional[str] = None) -> TrackerProvider:
+    """Build a provider client from the stored credentials of the connector
+    in effect in ``workspace``: its own when it defines one, else the default
+    workspace's (connectors/channels/store.py). ``None`` means the running
+    code's workspace (a run's context var); code acting for a workspace
+    outside a run (a route, a background sync) names it."""
+    if workspace is not None:
+        from connectors.channels.store import in_workspace
+        return in_workspace(workspace, get_provider, provider)
     if provider == "jira":
         return JiraProvider.from_store()
     if provider == "linear":

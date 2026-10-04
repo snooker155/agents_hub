@@ -52,13 +52,99 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+DEFAULT_WORKSPACE = "default"
+
+
+def _key_for(workspace: Optional[str]) -> str:
+    ws = str(workspace or "").strip()
+    return _STATE_KEY if not ws or ws == DEFAULT_WORKSPACE else f"{_STATE_KEY}@{ws}"
+
+
+def scope_workspace() -> Optional[str]:
+    """The workspace the running code works in, for picking a connector's
+    config: the run's context var, then ``AGENT_WORKSPACE``. Never the
+    workspace a person last selected in the UI: a background loop or a
+    request that names none uses the default workspace's connectors."""
+    import os
+    try:
+        from common.workspace_context import _workspace_ctx, normalize_workspace_name
+        return normalize_workspace_name(_workspace_ctx.get() or os.getenv("AGENT_WORKSPACE") or "")
+    except Exception:  # noqa: BLE001 - no workspace context: the default's connectors
+        return None
+
+
+def in_workspace(workspace: Optional[str], fn, *args, **kwargs):
+    """Call ``fn`` as code running in ``workspace``: a module's store
+    (``ChannelStore("jira")``) then picks that workspace's connector, or the
+    default's when it defines none, exactly as a run there would."""
+    from common.workspace_context import _workspace_ctx
+    token = _workspace_ctx.set(str(workspace or DEFAULT_WORKSPACE))
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _workspace_ctx.reset(token)
+
+
 class ChannelStore:
+    """A connector's config and state, one document per workspace that
+    defines the connector (docs/connectors.md "Connectors per workspace").
+
+    A connector lives in the workspace that defines it; the default
+    workspace's live everywhere. The store a module creates
+    (``ChannelStore("jira")``) follows the running code: it reads and writes
+    the document of the current workspace (:func:`scope_workspace`) when that
+    workspace defined the connector, else the default workspace's. A store
+    bound with :meth:`for_workspace` reads and writes exactly one workspace's
+    document, with no fallback: the routes that edit a workspace's
+    connectors, and a channel loop that serves one workspace, use that.
+    """
+
     def __init__(self, name: str, *, secret_fields: Iterable[str] = (),
-                 defaults: Optional[dict[str, Any]] = None) -> None:
+                 defaults: Optional[dict[str, Any]] = None,
+                 workspace: Optional[str] = None, _docstore: Optional[DocStore] = None) -> None:
         self.name = name
         self.secret_fields = tuple(secret_fields)
         self.defaults = dict(defaults or {})
-        self._store = DocStore(f"channel_{name}")
+        self._store = _docstore or DocStore(f"channel_{name}")
+        #: None for the module's store (follows the run); a name when bound.
+        self.workspace = (str(workspace).strip() or DEFAULT_WORKSPACE) if workspace is not None else None
+
+    # ── workspaces ───────────────────────────────────────────────────────────
+
+    def for_workspace(self, workspace: Optional[str]) -> "ChannelStore":
+        """This connector's store for exactly ``workspace`` (default when empty)."""
+        return ChannelStore(self.name, secret_fields=self.secret_fields, defaults=self.defaults,
+                            workspace=workspace or DEFAULT_WORKSPACE, _docstore=self._store)
+
+    def defines(self, workspace: Optional[str]) -> bool:
+        """Whether ``workspace`` has a document of its own (the default always does)."""
+        key = _key_for(workspace)
+        return key == _STATE_KEY or self._store.exists(key)
+
+    def effective_workspace(self) -> str:
+        """The workspace whose document this store uses right now."""
+        if self.workspace is not None:
+            return self.workspace
+        ws = scope_workspace()
+        if ws and ws != DEFAULT_WORKSPACE and self._store.exists(_key_for(ws)):
+            return ws
+        return DEFAULT_WORKSPACE
+
+    def defined_workspaces(self) -> list[str]:
+        """The workspaces other than the default that define this connector."""
+        prefix = f"{_STATE_KEY}@"
+        return sorted(k[len(prefix):] for k in self._store.keys() if k.startswith(prefix))
+
+    def remove_workspace(self, workspace: Optional[str]) -> bool:
+        """Drop a workspace's own document, so it falls back to the default
+        workspace's connector again. The default's own cannot be removed."""
+        key = _key_for(workspace)
+        if key == _STATE_KEY:
+            return False
+        return self._store.delete(key)
+
+    def _key(self) -> str:
+        return _key_for(self.effective_workspace())
 
     # ── state ────────────────────────────────────────────────────────────────
 
@@ -89,13 +175,14 @@ class ChannelStore:
 
     def load(self) -> dict[str, Any]:
         """The full state, secrets included (internal use only)."""
-        return self._coerce(self._store.get(_STATE_KEY))
+        return self._coerce(self._store.get(self._key()))
 
     def _update(self, fn) -> Any:
+        key = self._key()
         with self._store.transaction():
-            data = self._coerce(self._store.get(_STATE_KEY))
+            data = self._coerce(self._store.get(key))
             result = fn(data)
-            self._store.put(_STATE_KEY, data)
+            self._store.put(key, data)
             return result
 
     # ── config ───────────────────────────────────────────────────────────────

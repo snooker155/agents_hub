@@ -447,7 +447,7 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     # (see the launcher above), so the environment needs none here.
     env = _build_env(ws_name, session_id, str(log_file), instance_id,
                      agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None,
-                     key_id=str(spec.get("key_id") or "") or None)
+                     key_id=str(spec.get("key_id") or "") or None, run_id=run_id)
     # What the caller put on the spec through child_env fills the gaps only:
     # the launcher's own values (credentials, relay token, run ids) always win.
     extra = spec.get("env")
@@ -682,7 +682,8 @@ def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], O
 def _build_env(ws_name: str, session_id: str, log_file: str,
                instance_id: Optional[str] = None, *, agent_id: Optional[str] = None,
                user_id: Optional[str] = None, key_id: Optional[str] = None,
-               extra_secret_names: Optional[Sequence[str]] = None) -> Dict[str, str]:
+               extra_secret_names: Optional[Sequence[str]] = None,
+               run_id: Optional[str] = None) -> Dict[str, str]:
     # base env + run metadata only. No model override is injected: agent_run.py
     # resolves the model via create_agent's cascade (agent definition → workspace
     # override → workspace settings → global), so a single run honours the agent's
@@ -691,7 +692,8 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     from common.subprocess_env import base_subprocess_env, add_run_env
     from instances.registry import ENV_INSTANCE_ID
     env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id, key_id=key_id,
-                              extra_secret_names=extra_secret_names)
+                              extra_secret_names=extra_secret_names, run_id=run_id,
+                              session_id=session_id or None)
     add_run_env(env, session_id=session_id, log_file=log_file)
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)

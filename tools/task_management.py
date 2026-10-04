@@ -12,10 +12,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 from langchain_core.tools import tool
 from common.entity_sink import record_entity
+from common.workspace_scope import check_record
 from common.workspace_context import (
     resolve_active_workspace,
     resolve_active_project,
-    task_in_workspace,
     filter_tasks_for_workspace,
     filter_tasks_for_project,
 )
@@ -126,6 +126,40 @@ def _active_workspace(explicit: Optional[str] = None) -> Optional[str]:
     return resolve_active_workspace(explicit)
 
 
+def _task_out_of_scope(task: Optional[Task]) -> bool:
+    """Whether ``task`` belongs to another workspace than this run's.
+
+    A task of another workspace is answered like a missing one
+    (``common.workspace_scope.check_record``): the service's own agents reach
+    every workspace, and a call with no workspace at all (the CLI) is left
+    as it was.
+    """
+    if task is None:
+        return False
+    return check_record(getattr(task, "workspace", None), what="task",
+                        workspace=_active_workspace()) is not None
+
+
+def _task_not_found(ref: Any, key: str = "id") -> str:
+    return _json_err("Task not found", code="not_found", extra={key: str(ref)})
+
+
+def _foreign_task_ref(refs: Optional[List[Any]]) -> Optional[str]:
+    """The first of ``refs`` (task ids or keys) naming a task of another
+    workspace, or None. A reference to no task at all is left to the service,
+    which reports it as it always has."""
+    for ref in refs or []:
+        if ref in (None, ""):
+            continue
+        try:
+            task = svc_get_task(ref if isinstance(ref, UUID) else _uuid_from_str(str(ref)))
+        except Exception:  # noqa: BLE001 - an unreadable reference is the service's to report
+            continue
+        if _task_out_of_scope(task):
+            return str(ref)
+    return None
+
+
 def _inherit_project(parent_id: Optional[UUID]) -> tuple[Optional[str], Optional[str]]:
     """Resolve the (project, project_id) a newly created task should inherit.
 
@@ -218,6 +252,9 @@ def create_task(
             if active_ws:
                 ws_name = ws_create_workspace_folder(active_ws).name
         pid = _uuid_from_str(parent_id)
+        foreign = _foreign_task_ref([pid] if pid else []) or _foreign_task_ref(depends)
+        if foreign:
+            return _task_not_found(foreign)
         # Inherit the project of the controlling task so tasks created while
         # processing a project's task stay related to that project.
         proj_name, proj_id = _inherit_project(pid)
@@ -271,6 +308,9 @@ def add_subtask(parent_id: str, title: str, description: str = "", depends: Opti
     todo when they are all done.
     """
     try:
+        foreign = _foreign_task_ref([parent_id]) or _foreign_task_ref(depends)
+        if foreign:
+            return _task_not_found(foreign, key="parent_id" if foreign == str(parent_id) else "id")
         task = svc_add_subtask(
             parent_id=_uuid_from_str(parent_id),
             title=title,
@@ -300,12 +340,8 @@ def get_task(id: str) -> str:
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"id": id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(task, ws):
-            return _json_err(
-                f"Task '{id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(task):
+            return _task_not_found(id)
         _record_task(task, "viewed")
         return _json_ok({"task": _task_to_dict(task)})
     except Exception as e:
@@ -463,12 +499,11 @@ def update_task(
         existing = svc_get_task(tid)
         if not existing:
             return _json_err("Task not found", code="not_found", extra={"id": id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(existing, ws):
-            return _json_err(
-                f"Task '{id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(existing):
+            return _task_not_found(id)
+        foreign = _foreign_task_ref([parent_id] if parent_id else []) or _foreign_task_ref(depends)
+        if foreign:
+            return _task_not_found(foreign)
         fields: Dict[str, Any] = {}
         if title is not None:
             fields["title"] = title
@@ -528,12 +563,8 @@ def stop_task(id: str) -> str:
         existing = svc_get_task(tid)
         if not existing:
             return _json_err("Task not found", code="not_found", extra={"id": id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(existing, ws):
-            return _json_err(
-                f"Task '{id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(existing):
+            return _task_not_found(id)
         updated = svc_stop_task(tid)
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
@@ -561,12 +592,8 @@ def block_task(id: str, reason: str) -> str:
         existing = svc_get_task(tid)
         if not existing:
             return _json_err("Task not found", code="not_found", extra={"id": id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(existing, ws):
-            return _json_err(
-                f"Task '{id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(existing):
+            return _task_not_found(id)
         updated = svc_block_task(tid, reason)
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
@@ -607,12 +634,11 @@ def set_task_dependencies(id: str, depends: List[str]) -> str:
         existing = svc_get_task(tid)
         if not existing:
             return _json_err("Task not found", code="not_found", extra={"id": id})
-        ws = _active_workspace()
-        if ws and not task_in_workspace(existing, ws):
-            return _json_err(
-                f"Task '{id}' is outside the active workspace '{ws}'",
-                code="forbidden",
-            )
+        if _task_out_of_scope(existing):
+            return _task_not_found(id)
+        foreign = _foreign_task_ref(depends)
+        if foreign:
+            return _task_not_found(foreign)
         updated = svc_set_dependencies(tid, [_uuid_from_str(d) for d in depends])
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
@@ -641,17 +667,13 @@ def create_sequence(task_ids: List[str], sequence_id: Optional[str] = None, star
     """Assign a common sequence_id and order to given task IDs. Returns JSON with sequence info and tasks."""
     try:
         uuids = [UUID(s) for s in task_ids]
-        ws = _active_workspace()
-        if ws:
+        if _active_workspace():
             for tid in uuids:
                 t = svc_get_task(tid)
                 if t is None:
                     return _json_err(str(tid), code="not_found")
-                if not task_in_workspace(t, ws):
-                    return _json_err(
-                        f"Task '{tid}' is outside the active workspace '{ws}'",
-                        code="forbidden",
-                    )
+                if _task_out_of_scope(t):
+                    return _task_not_found(tid)
         seq_id = svc_create_sequence(uuids, sequence_id=sequence_id, start_order=start_order)
         # Fetch updated tasks for response
         tasks = []
@@ -685,6 +707,8 @@ def get_task_result(task_id: str) -> str:
         tid = _uuid_from_str(task_id)
         if tid is None:
             return _json_err("Invalid task_id", code="bad_request")
+        if _task_out_of_scope(svc_get_task(tid)):
+            return _json_err("No result found for this task", code="not_found")
         result = svc_get_task_result(tid)
         if result is None:
             return _json_err("No result found for this task", code="not_found")

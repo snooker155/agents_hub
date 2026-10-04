@@ -27,7 +27,8 @@ second and a half of import and bootstrap before anything happens.
 
 Direct mode needs no credential: it is the service. Over REST, whatever
 `common.auth.auth_headers()` finds in the environment goes on every request,
-tried in this order: `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
+tried in this order: `AGENTS_HUB_RUN_TOKEN` (a run's own relay token, only
+inside a run), `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
 `AGENTS_HUB_SERVICE_TOKEN` (minted for a hub's own subprocesses, not meant to
 be set by hand), `AGENTS_HUB_API_KEY` — a personal key
 ([api-keys](api-keys.md)), cut with `ah auth keys create` or from the Account

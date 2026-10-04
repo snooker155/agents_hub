@@ -66,3 +66,12 @@ def host_service_url(url: str) -> str:
     no-op, which is what keeps the same configuration working in both places.
     """
     return to_host_gateway(url) if in_container() else url
+
+
+def hub_base_url() -> str:
+    """The hub's base URL for a process calling back into it (relays, run
+    state): ``localhost`` on the API port, rewritten to the host gateway
+    alias when this process is itself containerized."""
+    import os
+    port = os.environ.get("DASHBOARD_PORT", "8000")
+    return host_service_url(f"http://localhost:{port}").rstrip("/")

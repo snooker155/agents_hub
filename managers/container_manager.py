@@ -232,8 +232,9 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
 # the run: Docker's own control variables, the HOST_PROJECT_ROOT bind-mount
 # translation, the host's SSH agent socket, and interpreter/venv paths that
 # are meaningless inside the image (the image bakes its own Python, HOME and
-# PATH). AGENTS_HUB_API_TOKEN is deliberately kept — the run's relay calls
-# back over HTTP and need it to authenticate.
+# PATH). AGENTS_HUB_RUN_TOKEN is deliberately kept: the run's relay calls
+# back over HTTP and need it to authenticate. It reaches only the relay routes
+# (common/run_tokens.py); the hub-wide tokens never reach a run's environment.
 _HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
 _HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
 #: The hub's secret encryption key (common/config.py ``secret_key``).

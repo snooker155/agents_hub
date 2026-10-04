@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -53,8 +52,9 @@ class EventForwarder:
     def __init__(self, instance_id: str, channels: List[str], port: Optional[int] = None) -> None:
         self.instance_id = instance_id
         self.channels = list(channels)
-        port = port or int(os.environ.get("DASHBOARD_PORT", "8000"))
-        self._url = f"http://localhost:{port}/api/instances/{instance_id}/events"
+        from common.hostnet import hub_base_url
+        base = hub_base_url() if port is None else f"http://localhost:{port}"
+        self._url = f"{base}/api/instances/{instance_id}/events"
         self._buf: List[str] = []
         self._buf_len = 0
         self._buf_base: Optional[Dict[str, Any]] = None

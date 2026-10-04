@@ -35,13 +35,15 @@ class ImapConfig:
     oauth_token: Optional[str] = None
 
 
-def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None) -> ImapConfig:
+def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginFn] = None,
+                     workspace: Optional[str] = None) -> ImapConfig:
     """The session settings from a channel config dict.
 
     With ``auth_mode: google`` the user is the connected Google account,
     the token comes from the Google connector, and an empty host means
     Gmail's; a configured user that is not that account is refused
-    (:class:`oauth.MailOAuthError`).
+    (:class:`oauth.MailOAuthError`). ``workspace`` picks the Google
+    connector: the one in effect there (the running code's when None).
     """
     ssl = str(cfg.get("imap_ssl") if cfg.get("imap_ssl") is not None else "yes").strip().lower() != "no"
     out = ImapConfig(
@@ -53,7 +55,7 @@ def config_from_dict(cfg: dict[str, Any], *, google_login: Optional[oauth.LoginF
         ssl=ssl,
     )
     if str(cfg.get("auth_mode") or "").strip().lower() == "google":
-        address, token = oauth.google_login(google_login)
+        address, token = oauth.google_login(google_login, workspace)
         oauth.check_address(out.user, address)
         out.user = address
         out.oauth_token = token
@@ -128,9 +130,11 @@ class ImapClient:
         self.logout()
 
 
-def open_imap(config: dict[str, Any]) -> ImapClient:
-    """Build a session from a channel config dict. Tests monkeypatch this."""
-    return ImapClient(config_from_dict(config))
+def open_imap(config: dict[str, Any], workspace: Optional[str] = None) -> ImapClient:
+    """Build a session from a channel config dict, signing in with the
+    Google connector of ``workspace`` under a Google sign in. Tests
+    monkeypatch this."""
+    return ImapClient(config_from_dict(config, workspace=workspace))
 
 
 __all__ = ["ImapClient", "ImapConfig", "config_from_dict", "open_imap"]

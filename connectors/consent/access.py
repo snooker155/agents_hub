@@ -148,16 +148,19 @@ def _rewrite_refresh(workspace: str, agent_id: str, principal: str, provider: st
         log.warning("consent: could not keep a rotated %s refresh token", provider, exc_info=True)
 
 
-def _refresh(provider: str, grant: Dict[str, Any]) -> Tuple[str, float, Optional[str]]:
-    """``(access_token, expiry, rotated refresh token or None)``. Raises the
-    provider's ``*GrantRevoked`` when the grant is dead."""
+def _refresh(provider: str, grant: Dict[str, Any],
+             workspace: Optional[str] = None) -> Tuple[str, float, Optional[str]]:
+    """``(access_token, expiry, rotated refresh token or None)``, with the app
+    registration of ``workspace`` (the grant's: its own connector, else the
+    default's), the one that issued the refresh token. Raises the provider's
+    ``*GrantRevoked`` when the grant is dead."""
     if provider == catalog.GOOGLE:
         from connectors.google.auth import refresh_user_token
-        token, expiry = refresh_user_token(grant["refresh_token"])
+        token, expiry = refresh_user_token(grant["refresh_token"], workspace=workspace)
         return token, expiry, None
     from connectors.microsoft.graph import refresh_delegated
     scopes = list(grant.get("scopes") or catalog.provider_scopes(provider, catalog.DEFAULT_KEYS[provider]))
-    data = refresh_delegated(grant["refresh_token"], scopes)
+    data = refresh_delegated(grant["refresh_token"], scopes, workspace=workspace)
     expiry = time.time() + float(data.get("expires_in") or 3600) - 60
     rotated = data.get("refresh_token")
     return str(data["access_token"]), expiry, (str(rotated) if rotated and rotated != grant["refresh_token"] else None)
@@ -189,7 +192,7 @@ def access_token(workspace: str, agent_id: str, principal: str, provider: str) -
         # A row that does not decrypt (the key changed) is as good as none.
         raise ConsentError(ASK_FIRST.format(label=label, provider=provider))
     try:
-        token, expiry, rotated = _refresh(provider, grant)
+        token, expiry, rotated = _refresh(provider, grant, workspace)
     except Exception as exc:
         if _grant_dead(exc):
             revoke(workspace, agent_id, principal, provider, by="provider", call_provider=False)

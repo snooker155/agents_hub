@@ -30,13 +30,15 @@ class MailOAuthError(Exception):
     """The connected Google account cannot sign in; the message is UI-safe."""
 
 
-def google_login(login: Optional[LoginFn] = None) -> tuple[str, str]:
-    """``(address, token)`` from the Google connector, or :class:`MailOAuthError`."""
+def google_login(login: Optional[LoginFn] = None, workspace: Optional[str] = None) -> tuple[str, str]:
+    """``(address, token)`` from the Google connector in effect in
+    ``workspace`` (its own, else the default workspace's; the running code's
+    when None), or :class:`MailOAuthError`."""
     if login is not None:
         return login()
     from connectors.google.auth import GoogleError, gmail_login
     try:
-        return gmail_login()
+        return gmail_login(workspace)
     except GoogleError as exc:
         raise MailOAuthError(str(exc)) from exc
 

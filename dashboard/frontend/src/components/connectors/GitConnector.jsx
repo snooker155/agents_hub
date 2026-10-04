@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Save, Trash2, Wifi } from 'lucide-react';
 import {
-  getGitConfig, updateGitConfig, testGitConnection,
+  getGitConfig, updateGitConfig, deleteGitConfig, testGitConnection,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import GitHubAppCard from './GitHubAppCard';
 import { useI18n } from '../../i18n';
+import { useWorkspace } from '../workspace';
 import PageLoader from '../PageLoader';
+import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from './ConnectorSource';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -17,10 +19,18 @@ import PageLoader from '../PageLoader';
 // across three locales in the same change as a page move would bury the move
 // in the diff. That rename is mechanical and the parity test guards it, so it
 // can happen on its own.
+//
+// Per workspace per provider, like every other connector (connectors/
+// channels/store.py): the default workspace's token works everywhere,
+// another workspace's own token works only there. The config GET answers
+// `sources` (per provider, "here" or "default") and, from the default
+// workspace, `defined_in` per provider.
 
 // ── Git connectors tab (GitHub / GitLab) ─────────────────────────────────────
 
-function GitProviderSection({ provider, label, hint, config, onSaved }) {
+function GitProviderSection({
+  provider, label, hint, config, source, definedIn, isDefaultWorkspace, workspace, onSaved,
+}) {
   const { t } = useI18n();
   const [tokenInput, setTokenInput] = useState('');
   const [baseUrl, setBaseUrl] = useState(config.base_url || '');
@@ -29,12 +39,16 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState('');
+  // "Define for this workspace" was clicked: the inherited, read only form
+  // becomes editable, and a save is what creates this workspace's own copy.
+  const [editing, setEditing] = useState(false);
 
   // GitLab and Gitea take a base URL (self hosted); Bitbucket Cloud takes a
   // username next to its app password.
   const isGitlab = provider === 'gitlab';
   const hasBaseUrl = provider === 'gitlab' || provider === 'gitea';
   const hasUsername = provider === 'bitbucket';
+  const readOnly = !isDefaultWorkspace && source === 'default' && !editing;
 
   const handleSave = async ({ clear_token } = {}) => {
     setSaving(true);
@@ -46,8 +60,9 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
       else if (tokenInput.trim()) payload.token = tokenInput.trim();
       if (hasBaseUrl && baseUrl.trim()) payload.base_url = baseUrl.trim();
       if (hasUsername && username.trim()) payload.username = username.trim();
-      const { data } = await updateGitConfig(payload);
+      const { data } = await updateGitConfig(payload, workspace);
       setTokenInput('');
+      setEditing(false);
       onSaved(data);
     } catch (e) {
       setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
@@ -60,7 +75,7 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const { data } = await testGitConnection(provider);
+      const { data } = await testGitConnection(provider, workspace);
       setTestResult(data);
     } catch (e) {
       setTestResult({ ok: false, error: e.response?.data?.detail || e.message });
@@ -69,9 +84,35 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
     }
   };
 
+  const handleRemove = async () => {
+    if (!window.confirm(t('connectors.source.confirmRemove'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const { data } = await deleteGitConfig(provider, workspace);
+      onSaved(data);
+    } catch (e) {
+      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <SectionCard title={label}>
+    <SectionCard title={label} actions={<ConnectorSourceBadge source={source} />}>
       <p className="text-sm text-gray-600">{hint}</p>
+      {isDefaultWorkspace ? (
+        <ConnectorDefinedIn definedIn={definedIn} />
+      ) : (
+        <ConnectorSourceActions
+          payload={{ source }}
+          isDefaultWorkspace={isDefaultWorkspace}
+          editing={editing}
+          onDefine={() => setEditing(true)}
+          onRemove={handleRemove}
+          busy={saving}
+        />
+      )}
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
 
       {hasBaseUrl && (
@@ -84,6 +125,7 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder={isGitlab ? 'https://gitlab.com' : 'https://gitea.example.com'}
             className={inputCls}
+            disabled={readOnly}
           />
         </div>
       )}
@@ -96,6 +138,7 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
             onChange={(e) => setUsername(e.target.value)}
             className={inputCls}
             autoComplete="off"
+            disabled={readOnly}
           />
         </div>
       )}
@@ -111,38 +154,41 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
           placeholder={config.has_token ? t('settings.keepExistingToken') : t('settings.git.pasteToken', { provider: label })}
           className={inputCls}
           autoComplete="new-password"
+          disabled={readOnly}
         />
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          <button
-            type="button"
-            onClick={() => handleSave({})}
-            disabled={saving || (!tokenInput.trim() && !hasBaseUrl && !hasUsername)}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-          >
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            {t('common.save')}
-          </button>
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={testing || !config.has_token}
-            className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
-          >
-            {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-            {t('settings.testConnection')}
-          </button>
-          {config.has_token && (
+        {!readOnly && (
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <button
               type="button"
-              onClick={() => handleSave({ clear_token: true })}
-              disabled={saving}
-              className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+              onClick={() => handleSave({})}
+              disabled={saving || (!tokenInput.trim() && !hasBaseUrl && !hasUsername)}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
             >
-              <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
+              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {t('common.save')}
             </button>
-          )}
-        </div>
-        {testResult && (
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={testing || !config.has_token}
+              className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
+            >
+              {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+              {t('settings.testConnection')}
+            </button>
+            {config.has_token && (
+              <button
+                type="button"
+                onClick={() => handleSave({ clear_token: true })}
+                disabled={saving}
+                className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
+              </button>
+            )}
+          </div>
+        )}
+        {testResult && !readOnly && (
           <div className={`mt-2 text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
             {testResult.ok
               ? <>{t('settings.connectedAs')} <strong>{testResult.login}</strong></>
@@ -156,6 +202,9 @@ function GitProviderSection({ provider, label, hint, config, onSaved }) {
 
 export default function GitConnector() {
   const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  const isDefaultWorkspace = workspace === 'default';
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState({
     github: { has_token: false }, gitlab: { has_token: false, base_url: 'https://gitlab.com' },
@@ -167,14 +216,14 @@ export default function GitConnector() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await getGitConfig();
+      const { data } = await getGitConfig(workspace);
       setConfig(data);
     } catch (e) {
       setError(`${t('settings.errors.gitLoad')}: ` + (e.response?.data?.detail || e.message));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [workspace, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -184,6 +233,9 @@ export default function GitConnector() {
     );
   }
 
+  const sourceOf = (provider) => config.sources?.[provider];
+  const definedInOf = (provider) => config.defined_in?.[provider];
+
   return (
     <div className="space-y-5">
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
@@ -192,6 +244,10 @@ export default function GitConnector() {
         label={t('settings.github')}
         hint={t('settings.usedToBrowseYourRepos')}
         config={config.github || {}}
+        source={sourceOf('github')}
+        definedIn={definedInOf('github')}
+        isDefaultWorkspace={isDefaultWorkspace}
+        workspace={workspace}
         onSaved={setConfig}
       />
       <GitHubAppCard />
@@ -200,6 +256,10 @@ export default function GitConnector() {
         label={t('settings.gitlab')}
         hint={t('settings.usedToBrowseYourProjects')}
         config={config.gitlab || {}}
+        source={sourceOf('gitlab')}
+        definedIn={definedInOf('gitlab')}
+        isDefaultWorkspace={isDefaultWorkspace}
+        workspace={workspace}
         onSaved={setConfig}
       />
       <GitProviderSection
@@ -207,6 +267,10 @@ export default function GitConnector() {
         label={t('connectors.git.bitbucket')}
         hint={t('connectors.git.bitbucketHint')}
         config={config.bitbucket || {}}
+        source={sourceOf('bitbucket')}
+        definedIn={definedInOf('bitbucket')}
+        isDefaultWorkspace={isDefaultWorkspace}
+        workspace={workspace}
         onSaved={setConfig}
       />
       <GitProviderSection
@@ -214,6 +278,10 @@ export default function GitConnector() {
         label={t('connectors.git.gitea')}
         hint={t('connectors.git.giteaHint')}
         config={config.gitea || {}}
+        source={sourceOf('gitea')}
+        definedIn={definedInOf('gitea')}
+        isDefaultWorkspace={isDefaultWorkspace}
+        workspace={workspace}
         onSaved={setConfig}
       />
     </div>

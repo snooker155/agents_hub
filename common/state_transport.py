@@ -25,7 +25,6 @@ reaches here) or are out of scope.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
@@ -281,9 +280,8 @@ class HttpStateTransport(StateTransport):
 
     def __init__(self, timeout: float = 10.0):
         self._timeout = timeout
-        port = os.environ.get("DASHBOARD_PORT", "8000")
-        from common.hostnet import host_service_url
-        self._base = host_service_url(f"http://localhost:{port}") + "/api/run-state"
+        from common.hostnet import hub_base_url
+        self._base = hub_base_url() + "/api/run-state"
 
     def _call(self, method: str, path: str, body: Dict[str, Any],
               timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:

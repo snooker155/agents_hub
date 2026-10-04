@@ -266,3 +266,16 @@ def no_launch(monkeypatch):
     import agents.agent_launcher as launcher
     monkeypatch.setattr(launcher, "start_run", _fake_start_run)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _reset_workspace_context():
+    """Every test starts outside any workspace. A run started in process sets
+    the workspace on a context var its tools scope by
+    (common/workspace_scope.py); a test that left it set would put the next
+    test "in" that workspace."""
+    from common.workspace_context import _project_ctx, _workspace_ctx
+    ws_token, project_token = _workspace_ctx.set(None), _project_ctx.set(None)
+    yield
+    _workspace_ctx.reset(ws_token)
+    _project_ctx.reset(project_token)

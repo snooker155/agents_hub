@@ -255,6 +255,8 @@ export default {
   hooks: 'Хуки',
   hooksHint: 'Команда или HTTP-вызов вокруг каждого подходящего вызова инструмента или запуска, в виде JSON с ключами по событиям: PreToolUse и PostToolUse (или before_tool_call и after_tool_call), before_run и after_run. Полный справочник:',
   hooksDocsLink: 'Инструменты в документации',
+  hooksFileIgnored: 'Файл .hooks.json в папке этого пространства не выполняется: агенты пишут в эту папку, и хук оттуда мог бы запустить команду на хабе по воле агента. Прочитайте его и импортируйте, если хотите оставить.',
+  importHooksFile: 'Импортировать файл как хуки пространства',
   hooksInvalidJson: 'Это не корректный JSON.',
   hooksMustBeObject: 'Хуки должны быть JSON-объектом с ключами по событиям.',
   saveHooks: 'Сохранить хуки',

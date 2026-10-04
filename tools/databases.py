@@ -40,7 +40,15 @@ def _find_connection(connection: str) -> Tuple[Optional[str], Optional[Dict[str,
     from connectors.databases import store
 
     workspace = resolve_active_workspace()
-    return workspace, store.find_connection(workspace, connection)
+    record = store.find_connection(workspace, connection)
+    if record is None and workspace:
+        # A connection of another workspace is not found, except for the
+        # service's own agents, which reach one of any workspace by its id
+        # (common/workspace_scope.py).
+        from common.workspace_scope import current_agent, is_service_wide
+        if is_service_wide(current_agent()):
+            record = store.get_connection(str(connection or "").strip())
+    return workspace, record
 
 
 class DbListConnectionsInput(BaseModel):
@@ -49,16 +57,18 @@ class DbListConnectionsInput(BaseModel):
 
 @tool("db_list_connections", args_schema=DbListConnectionsInput)
 def db_list_connections() -> str:
-    """List the read-only database connections configured for this workspace.
+    """List the read-only database connections this workspace may use: its
+    own, and the default workspace's, which every workspace may use.
 
-    Each entry carries its id, name, kind and a host-only dsn_hint (never the
-    real connection string), plus allowed_schemas and row_limit.
+    Each entry carries its id, name, kind, the workspace it belongs to and a
+    host-only dsn_hint (never the real connection string), plus
+    allowed_schemas and row_limit.
     """
     from common.workspace_context import resolve_active_workspace
     from connectors.databases import store
 
     workspace = resolve_active_workspace()
-    records = store.list_connections(workspace)
+    records = store.usable_connections(workspace)
     return _ok({"connections": [store.public(r) for r in records]})
 
 

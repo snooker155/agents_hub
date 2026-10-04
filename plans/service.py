@@ -501,12 +501,11 @@ def _publish_notification(n: Notification) -> None:
     except Exception:
         pass
     try:
-        import os
         import requests
         from common.auth import auth_headers
-        port = os.environ.get("DASHBOARD_PORT", "8000")
+        from common.hostnet import hub_base_url
         requests.post(
-            f"http://localhost:{port}/api/plan/notifications/publish",
+            f"{hub_base_url()}/api/plan/notifications/publish",
             json=payload,
             headers=auth_headers(),
             timeout=2,

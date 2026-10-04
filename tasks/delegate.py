@@ -70,6 +70,15 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     if parent is None:
         return _err("The current task no longer exists", "not_found", task_id=parent_task_id)
 
+    # The delegating run works in one workspace: a parent task of another one
+    # is answered like a missing task (common/workspace_scope.py), unless
+    # the caller is one of the service's own agents.
+    from common.workspace_scope import is_service_wide, same_workspace
+    req_ws = str(request.get("workspace") or "")
+    if (req_ws and not is_service_wide(request.get("caller_agent_id"))
+            and not same_workspace(parent.workspace, req_ws)):
+        return _err("The current task no longer exists", "not_found", task_id=parent_task_id)
+
     spec = get_agent(agent_id)
     if not spec:
         return _err("Agent not found", "not_found", agent_id=agent_id)
