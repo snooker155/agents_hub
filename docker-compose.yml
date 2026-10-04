@@ -115,6 +115,11 @@ services:
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    # Wait for the bundled Postgres when its profile is on; skipped otherwise.
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
 
   # Dashboard: the built bundle behind nginx, which also proxies /api and
   # balances it over however many backend replicas are up.

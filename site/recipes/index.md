@@ -24,3 +24,5 @@ A recipe is a step-by-step guide to one feature. Each shows you how to set up a 
 | [Diagnostics](/recipes/doctor.md) | Run self-diagnostics to spot and fix configuration issues |
 | [Demo](/recipes/demo.md) | Try Agents Hub with the preloaded demo workspace |
 | [Lab](/recipes/lab.md) | Run experiments in the research lab scenario environment |
+| [Industry Kits](/recipes/industry-kits.md) | Install a ready-made team of agents for one line of work in a single step |
+| [Specialize an Agent](/recipes/specialize-an-agent.md) | Build a specialist that extends a system agent's prompt and tools instead of starting from a blank page |

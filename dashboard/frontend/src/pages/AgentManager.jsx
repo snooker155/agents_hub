@@ -29,6 +29,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import {
+  getAgent,
   getAgents,
   getAgentTools,
   getTasks,
@@ -43,6 +44,7 @@ import {
 } from '../api';
 import ImportAgentModal from '../components/ImportAgentModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
+import AgentParentPicker from '../components/agent/inheritance/AgentParentPicker';
 import { instancePath } from '../components/instanceUtils';
 import { useToast, errorDetail } from '../components/toast';
 
@@ -75,7 +77,7 @@ const AgentManager = () => {
   const [wizardData, setWizardData] = useState({
     id: '', name: '', description: '', domain: 'general',
     system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1,
-    agent_url: '', original_id: '',
+    agent_url: '', original_id: '', extends: '', extends_version: null,
   });
   const [availableTools, setAvailableTools] = useState([]);
   const [assignData, setAssignData] = useState({ task_id: '', agent_id: '' });
@@ -195,7 +197,7 @@ const AgentManager = () => {
   const openWizard = () => {
     setWizardStep(1);
     setWizardType('creator');
-    setWizardData({ id: '', name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1, agent_url: '', original_id: '' });
+    setWizardData({ id: '', name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1, agent_url: '', original_id: '', extends: '', extends_version: null });
     setCreatorInput('');
     setCreatorStreaming(false);
     setCreatorOutput('');
@@ -274,6 +276,26 @@ const AgentManager = () => {
     }
   };
 
+  // Picking a parent in the wizard preloads its own effective tools, so the
+  // review step shows what the child would run with before anyone touches
+  // the tools list — leaving it untouched means the child inherits them as
+  // is (agents/inheritance.py: equal to the parent's value stays inherited).
+  const handleWizardParentChange = async (next) => {
+    const hadNoParent = !wizardData.extends;
+    setWizardData((d) => ({ ...d, extends: next.extends, extends_version: next.extends_version }));
+    if (next.extends && hadNoParent) {
+      try {
+        const { data } = await getAgent(next.extends);
+        if (Array.isArray(data?.tools)) {
+          setWizardData((d) => ({ ...d, tools: data.tools }));
+        }
+      } catch {
+        // The tools list stays whatever it was; the create call still sends
+        // extends, so the backend resolves the merge regardless.
+      }
+    }
+  };
+
   const handleWizardSubmit = async () => {
     try {
       if (wizardType === 'creator') {
@@ -290,6 +312,9 @@ const AgentManager = () => {
         tools: wizardData.tools,
         capacity: wizardData.capacity,
         workspace: selectedWorkspace || null,
+        ...(wizardType === 'custom' && wizardData.extends
+          ? { extends: wizardData.extends, extends_version: wizardData.extends_version ?? undefined }
+          : {}),
       });
       const newAgentId = wizardData.id;
       // The backend already registers the agent in its owning workspace's
@@ -913,6 +938,17 @@ const AgentManager = () => {
                         onChange={e => setWizardData(d => ({ ...d, capacity: parseInt(e.target.value) || 1 }))}
                       />
                     </div>
+                    {wizardType === 'custom' && (
+                      <div className="pt-2 border-t border-gray-100">
+                        <AgentParentPicker
+                          agents={agents}
+                          excludeId={wizardData.id || undefined}
+                          value={{ extends: wizardData.extends, extends_version: wizardData.extends_version }}
+                          onChange={handleWizardParentChange}
+                          idPrefix="wizard-parent"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -922,9 +958,15 @@ const AgentManager = () => {
                     {wizardType === 'custom' && (
                       <>
                         <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.systemPrompt')} <span className="text-red-500">*</span></label>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                            {wizardData.extends ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}
+                            {!wizardData.extends && <span className="text-red-500"> *</span>}
+                          </label>
+                          {wizardData.extends && (
+                            <p className="text-[11px] text-gray-400 mb-1.5">{t('agentManager.yourAdditionsHint')}</p>
+                          )}
                           <textarea
-                            rows="5" placeholder={t('agentManager.youAreASpecializedAgent')}
+                            rows="5" placeholder={wizardData.extends ? t('agentManager.eGSameHeadingHint') : t('agentManager.youAreASpecializedAgent')}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                             value={wizardData.system_prompt}
                             onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
@@ -979,6 +1021,15 @@ const AgentManager = () => {
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.name')}</span><span className="text-gray-800">{wizardData.name}</span></div>
                       {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.description')}</span><span className="text-gray-700">{wizardData.description}</span></div>}
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.capacity')}</span><span className="text-gray-800">{t('agentManager.slotCount', { count: wizardData.capacity })}</span></div>
+                      {wizardType === 'custom' && wizardData.extends && (
+                        <div className="flex gap-2">
+                          <span className="text-gray-400 w-24 flex-shrink-0">{t('agentInheritance.basedOn')}</span>
+                          <span className="text-gray-800">
+                            {wizardData.extends}
+                            {wizardData.extends_version != null && ` · ${t('agentInheritance.versionN', { n: wizardData.extends_version })}`}
+                          </span>
+                        </div>
+                      )}
                       {wizardType === 'custom' && wizardData.tools.length > 0 && (
                         <div className="flex gap-2">
                           <span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.tools')}</span>
@@ -991,7 +1042,7 @@ const AgentManager = () => {
                       {wizardType === 'clone' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.source')}</span><span className=" text-gray-800">{wizardData.original_id}</span></div>}
                       {wizardType === 'custom' && wizardData.system_prompt && (
                         <div className="flex gap-2 flex-col">
-                          <span className="text-gray-400">{t('agentManager.systemPrompt')}</span>
+                          <span className="text-gray-400">{wizardData.extends ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}</span>
                           <p className="text-gray-700 text-xs bg-white border border-gray-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{wizardData.system_prompt}</p>
                         </div>
                       )}
@@ -1018,7 +1069,7 @@ const AgentManager = () => {
                     (wizardStep === 2 && wizardType === 'clone' && !wizardData.original_id) ||
                     (wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && (!wizardData.id || !wizardData.name)) ||
                     (wizardStep === 3 && wizardType === 'clone' && (!wizardData.id || !wizardData.name)) ||
-                    (wizardStep === 3 && wizardType === 'custom' && !wizardData.system_prompt) ||
+                    (wizardStep === 3 && wizardType === 'custom' && !wizardData.system_prompt && !wizardData.extends) ||
                     (wizardStep === 3 && wizardType === 'remote' && !wizardData.agent_url)
                   }
                   className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"

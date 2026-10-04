@@ -150,7 +150,9 @@ export default {
         "Die Kontextverdichtung kürzt die Historie, sobald ein langer Run sich dem Kontextfenster des Modells nähert.",
         "Die Tool-Suche verbirgt Tools hinter `search_tools`, sobald ein Agent mehr Tools hat als der Schwellenwert des Workspace.",
         "Die strukturierte Ausgabe prüft die endgültige Antwort gegen ein JSON Schema und unternimmt Reparaturversuche bei einer Abweichung.",
-        "Fallback-Modelle wiederholen einen fehlgeschlagenen Aufruf beim nächsten Modell in der Liste, mit denselben Tools."
+        "Fallback-Modelle wiederholen einen fehlgeschlagenen Aufruf beim nächsten Modell in der Liste, mit denselben Tools.",
+        "Ein Beratermodell, gewählt auf dem Tab **Modell** des Agenten, beantwortet bei schwierigen Schritten Fragen über `consult_advisor`; es sieht nur, was der Agent in den Aufruf schreibt, und seine Kosten zählen zum Run.",
+        "Ein Werkzeugergebnis über der Auslagerungsgrenze des Workspace wird als Datei unter `tool-outputs/` gespeichert; das Modell sieht Anfang, Ende und den Pfad und liest den Rest mit `read_file`."
       ]
     },
     "s1": {
@@ -193,6 +195,7 @@ export default {
         "**Steer** platziert Ihre Nachricht vor dem nächsten Modellschritt des Agenten, ohne ihn zu stoppen.",
         "**Interrupt** stoppt den Run wie **Stop** und startet ihn dann mit Ihrer Nachricht am Ende neu.",
         "**Queue** wartet im Chat, bis die aktuelle Runde beendet ist, bevor Ihre Nachricht eingeht.",
+        "**Anweisung** fügt Ihren Text für den Rest des Runs dem Systemprompt des Agenten hinzu. Nur der Besitzer des Runs oder ein Admin darf sie senden, nie ein Agent.",
         "Eine Nachricht, die eintrifft, während der Agent seine endgültige Antwort schreibt, geht nicht verloren: dafür läuft noch ein zusätzlicher Durchgang."
       ]
     },

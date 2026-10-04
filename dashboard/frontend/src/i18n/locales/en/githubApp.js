@@ -8,6 +8,7 @@ export default {
   install: 'Install',
   sync: 'Sync',
   noInstallations: 'No installations yet. Install the app on an account or organisation, then sync.',
+  inUseFor: 'For workspace {{workspace}}: using the installation on {{account}}.',
   account: 'Account',
   type: 'Type',
   repositories: 'Repositories',

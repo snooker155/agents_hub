@@ -499,7 +499,41 @@ def _render_agent(entity_id: str) -> Optional[Dict[str, str]]:
         "tools": list(getattr(spec, "tools", None) or []),
     })
     lines += _prose("Description", getattr(spec, "description", ""))
+    lines += _pulse_lines(spec)
     return {"title": getattr(spec, "name", "") or entity_id, "body": "\n".join(lines)}
+
+
+def _pulse_lines(spec: Any) -> List[str]:
+    """The agent's pulse (docs/proactive.md), when it has one: the schedule,
+    its state, the next tick and the last tick's outcome, so a chat about the
+    agent can answer what it is up to on its own."""
+    try:
+        from proactive.service import status as pulse_status
+        body = pulse_status(spec.id, limit=5)
+    except Exception:  # noqa: BLE001 - no pulse to describe
+        return []
+    if not body or not (body.get("profile") or {}).get("enabled") or not body.get("job"):
+        return []
+    job = body["job"]
+    fields = {
+        "pulse": body.get("schedule"),
+        "pulse_status": job.get("status") + (f" ({job['paused_reason']})" if job.get("paused_reason") else ""),
+        "next_tick": job.get("run_at") if job.get("status") == "scheduled" else None,
+        "pending_events": len(job.get("pending_events") or []) or None,
+    }
+    usage = body.get("usage") or {}
+    if usage:
+        fields["today"] = f"{usage.get('runs', 0)} ticks, ${usage.get('spent_usd', 0):.2f}"
+    lines = _fields(fields)
+    last = next((t for t in body.get("ticks") or [] if t.get("outcome")), None)
+    if last:
+        text = f"{last.get('at', '')}: {last.get('outcome')}"
+        if last.get("summary"):
+            text += f". {last['summary']}"
+        if last.get("next_check"):
+            text += f" Next check: {last['next_check']}"
+        lines += _prose("Last tick", text)
+    return lines
 
 
 # ── scheduled job ────────────────────────────────────────────────────────────

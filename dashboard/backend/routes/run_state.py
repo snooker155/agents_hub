@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/run-state", tags=["run-state"])
@@ -133,7 +133,13 @@ async def close_run_route(run_id: str, body: CloseRunBody):
     from managers.run_manager import close_run_from_result
 
     shim = _ResultShim(body.ok, body.agent_output, body.error, body.response_payload)
-    close_run_from_result(run_id, shim, **body.extra)
+    extra = dict(body.extra)
+    if isinstance(extra.get("loop"), dict) and extra["loop"].get("tool_spills"):
+        # Long tool outputs the container saved to files it could not
+        # register without a database (agents/tool_spill.py).
+        from agents.tool_spill import register_relayed_spills
+        extra["loop"] = register_relayed_spills(run_id, extra["loop"])
+    close_run_from_result(run_id, shim, **extra)
     return {"ok": True}
 
 
@@ -293,15 +299,44 @@ class DelegateBody(BaseModel):
     launched_by: Optional[str] = None
 
 
+def _caller_from_token(request: Request, body: DelegateBody) -> DelegateBody:
+    """A run token's request delegates as the run it was minted for, not as
+    whatever the body says: the workspace comes from the token, and the
+    calling agent from the run (or the instance) the token belongs to. A
+    container cannot claim to be the service agent or to sit in another
+    workspace (common/workspace_scope.py)."""
+    from common import identity, run_tokens
+
+    principal = identity.request_principal(request)
+    if principal is None or getattr(principal, "kind", "") != "run":
+        return body
+    row = run_tokens.get_by_id(getattr(principal, "credential_id", "")) or {}
+    agent_id: Optional[str] = None
+    if row.get("run_id"):
+        from managers.run_manager import get_run_by_id
+        agent_id = (get_run_by_id(str(row["run_id"])) or {}).get("agent_id")
+    elif row.get("instance_id"):
+        try:
+            from instances import store as instance_store
+            agent_id = (instance_store.get(str(row["instance_id"])) or {}).get("agent_id")
+        except Exception:  # noqa: BLE001 - an unknown instance leaves no caller: not service wide
+            agent_id = None
+    return body.model_copy(update={"workspace": row.get("workspace") or body.workspace,
+                                   "caller_agent_id": agent_id or None})
+
+
 @router.post("/tasks/{task_id}/delegate")
-async def delegate_route(task_id: str, body: DelegateBody):
+async def delegate_route(task_id: str, body: DelegateBody, request: Request):
     """Mirrors ``tasks.delegate.launch_delegation``: every check the tool
     makes (agent, workspace, allowlist, depth, model), the subtask, the
     launch. The answer is the function's own ``{"ok": ...}`` dict, refusals
-    included, so the tool renders it the same either way."""
+    included, so the tool renders it the same either way. A run token's
+    workspace and calling agent are its own, whatever the body says."""
     import asyncio
 
     from tasks.delegate import launch_delegation
+
+    body = _caller_from_token(request, body)
 
     def _launch() -> Dict[str, Any]:
         from common.identity import reset_current_user, set_current_user

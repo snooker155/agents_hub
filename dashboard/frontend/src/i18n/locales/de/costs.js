@@ -7,6 +7,8 @@ export default {
   to: 'Bis',
   refresh: 'Aktualisieren',
   totalCost: 'Gesamtkosten',
+  ofWhichContainers: 'davon Container: {{amount}}',
+  containerHint: 'Containerstunden von Docker-Läufen, bepreist nach Sandbox-Größe (docs/costs.md).',
   totalTokens: 'Tokens gesamt',
   period: 'Zeitraum',
   monthly: 'Monatlich',

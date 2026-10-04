@@ -131,6 +131,12 @@ def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], N
     check_launch_budget()
     spec.setdefault("key_id", launching_key())
     spec.setdefault("execution_mode", "local")
+    # An isolated workspace's agent loop runs on the hub, where the state it
+    # needs is (common/isolation.py): a container would need write access to
+    # the hub's database. Its shell and code go to the no-network sandbox.
+    from common import isolation
+    if isolation.is_isolated(spec.get("workspace")):
+        spec["execution_mode"] = "local"
     extra_env = _CHILD_ENV.get()
     if extra_env:
         spec["env"] = {**extra_env, **(spec.get("env") or {})}
@@ -183,6 +189,8 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
         flow_id=str(spec.get("entity_id") or "") if kind == "flow" else None,
         user_id=str(spec.get("launched_by") or "") or None,
         key_id=str(spec.get("key_id") or "") or None,
+        run_id=str(spec.get("run_id") or "") or None,
+        session_id=str(spec.get("session_id") or "") or None,
     )
     add_run_env(env, session_id=str(spec.get("session_id") or "") or None,
                 log_file=str(spec.get("log_file") or "") or None)
@@ -193,6 +201,11 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
     if isinstance(extra, dict):
         for key, value in extra.items():
             env[str(key)] = str(value)
+        # An extra layer may carry an environment's own proxy URL: the run's
+        # host-bound secrets move onto that token (environments/secret_egress.py).
+        from common.subprocess_env import route_secrets
+        route_secrets(env, execution_mode=str(spec.get("execution_mode") or "") or None,
+                      workspace=ws_name)
     return env
 
 
@@ -283,6 +296,9 @@ def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(spec["run_id"])
     env = build_env(spec)
     mode = str(spec.get("execution_mode") or "local")
+    from common import isolation
+    if isolation.is_isolated(spec.get("workspace")):
+        mode = "local"
     host = socket.gethostname()
 
     if mode == "docker":

@@ -5,8 +5,10 @@ import { autoGrowTextarea } from '../lib/autoGrow';
 import { useI18n } from '../i18n';
 import { getRunBrowserSession, setBrowserControl } from '../api/browser';
 import { listRunSteering, steerRun } from '../api/steering';
+import { flattenModelCatalog, getModelsCatalog } from '../api/agentLoop';
 import { BrowserToolbar, BrowserViewport, useBrowserSession } from './browser';
 import { steerCaption } from './chat/steering';
+import { policyVerdict } from './policyVerdict';
 
 /*
  * Live view of agent runs happening on one session channel.
@@ -128,7 +130,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return r;
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '' };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '', ...policyVerdict(ev) };
           return { ...r, tools };
         });
         break;
@@ -136,7 +138,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return { ...r, errors: [...r.errors, String(ev.error || '')] };
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || '') };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || ''), ...policyVerdict(ev) };
           return { ...r, tools };
         });
         break;
@@ -324,7 +326,24 @@ function useRunSteering(runId, done) {
   return { messages, refresh };
 }
 
-const RUN_STEER_MODES = ['inject', 'interrupt'];
+// `system` adds to the run's system prompt (only its owner or an admin).
+// `switch_model` moves the run to another enabled catalog model from its
+// next model call on (the message is the model's `provider/model` id).
+const RUN_STEER_MODES = ['inject', 'interrupt', 'system', 'switch_model'];
+
+// The enabled catalog models, read once the picker is first shown.
+function useCatalogModels(active) {
+  const [models, setModels] = useState(null);
+  useEffect(() => {
+    if (!active || models !== null) return undefined;
+    let alive = true;
+    getModelsCatalog()
+      .then(({ data }) => { if (alive) setModels(flattenModelCatalog(data)); })
+      .catch(() => { if (alive) setModels([]); });
+    return () => { alive = false; };
+  }, [active, models]);
+  return models || [];
+}
 
 function RunSteer({ runId, done }) {
   const { t } = useI18n();
@@ -334,13 +353,16 @@ function RunSteer({ runId, done }) {
   // Up to ten lines, then it scrolls (lib/autoGrow.js).
   useEffect(() => { autoGrowTextarea(steerRef.current); }, [text]);
   const [mode, setMode] = useState('inject');
+  const [model, setModel] = useState('');
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const switching = mode === 'switch_model';
+  const models = useCatalogModels(switching && !done);
   if (done && messages.length === 0 && !note) return null;
 
   const send = async () => {
-    const body = text.trim();
+    const body = switching ? model : text.trim();
     if (!body || sending) return;
     setSending(true);
     setError('');
@@ -349,7 +371,12 @@ function RunSteer({ runId, done }) {
       // An interrupted chat turn is carried on by the server: this page does
       // not own the conversation, so it cannot send the next turn itself.
       const { data } = await steerRun(runId, body, mode, { send: mode === 'interrupt' });
-      setText('');
+      if (switching) {
+        setModel('');
+        setNote(t('steering.switchQueued', { model: data?.message?.body || body }));
+      } else {
+        setText('');
+      }
       if (data?.next === 'relaunched') {
         setNote(t('steering.relaunched', { run: String(data.next_run_id || '').slice(0, 8) }));
       } else if (data?.next === 'sent') {
@@ -384,6 +411,8 @@ function RunSteer({ runId, done }) {
                 <div className="whitespace-pre-wrap break-words">{m.body}</div>
                 <div className="mt-0.5 flex flex-wrap gap-2 text-[10px] text-indigo-500">
                   {m.mode === 'interrupt' && <span className="font-semibold">{t('steering.interruptTag')}</span>}
+                  {m.mode === 'system' && <span className="font-semibold">{t('steering.systemTag')}</span>}
+                  {m.mode === 'switch_model' && <span className="font-semibold">{t('steering.switchTag')}</span>}
                   {caption && <span>{t(caption.key, caption.values)}</span>}
                   {m.author_name && <span>{t('steering.by', { name: m.author_name })}</span>}
                 </div>
@@ -415,6 +444,17 @@ function RunSteer({ runId, done }) {
             </div>
           </div>
           <div className="flex items-end gap-2">
+            {switching ? (
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                aria-label={t('steering.modelLabel')}
+                className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:border-indigo-400"
+              >
+                <option value="">{models.length ? t('steering.modelPlaceholder') : t('steering.noModels')}</option>
+                {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+              </select>
+            ) : (
             <textarea
               ref={steerRef}
               rows={1}
@@ -426,10 +466,11 @@ function RunSteer({ runId, done }) {
               placeholder={t('steering.inputPlaceholder')}
               className="flex-1 resize-none rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:border-indigo-400"
             />
+            )}
             <button
               type="button"
               onClick={send}
-              disabled={!text.trim() || sending}
+              disabled={(switching ? !model : !text.trim()) || sending}
               title={t(`steering.modeHints.${mode}`)}
               className="flex h-7 items-center gap-1 rounded-full bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
             >

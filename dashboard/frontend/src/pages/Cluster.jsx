@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Box, Cpu, Layers, Loader, RefreshCw, Repeat, ScrollText, Server, Trash2, Waypoints, X,
+  AlertTriangle, Box, Cpu, Layers, RefreshCw, Repeat, ScrollText, Server, Trash2, Waypoints, X,
 } from 'lucide-react';
 import { forgetMember, getCluster, getMemberLogs } from '../api';
 import { useChannel } from '../components/stream';
@@ -211,9 +211,7 @@ export default function Cluster() {
       )}
 
       {loading ? (
-        <div className="p-6 text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('cluster.loading')}
-        </div>
+        <PageLoader label={t('cluster.loading')} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           <Card icon={Server} title={t('cluster.members')} hint={t('cluster.membersHint')}>

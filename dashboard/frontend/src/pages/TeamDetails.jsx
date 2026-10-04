@@ -24,6 +24,7 @@ import {
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 /**
  * One team: what it is asked to do, how it is set up, and everything it has done.
  *
@@ -483,11 +484,7 @@ export default function TeamDetails() {
     set({ members: draft.members.map((m, i) => (i === idx ? member : m)) });
 
   if (!team || !draft) {
-    return (
-      <div className="p-6 text-sm text-gray-500 flex items-center gap-2">
-        <Loader className="w-4 h-4 animate-spin" /> {t('teamDetails.loadingTheTeam')}
-      </div>
-    );
+    return <PageLoader size="lg" label={t('teamDetails.loadingTheTeam')} />;
   }
 
   const entryId = draft.entry_agent_id || draft.members[0]?.agent_id;

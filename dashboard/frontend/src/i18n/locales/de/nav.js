@@ -21,7 +21,7 @@ export default {
   runGroups: 'Laufgruppen',
   messages: 'Läufe',
   views: 'Ansichten',
-  studio: 'Studio',
+  artifacts: 'Artefakte',
   agents: 'Agenten',
   services: 'Dienste',
   instances: 'Instanzen',
@@ -54,6 +54,7 @@ export default {
   health: 'Status',
   cluster: 'Cluster',
   connections: 'Verbindungen',
+  watchers: 'Watcher',
   connectors: 'Konnektoren',
   mcp: 'MCP-Server',
 };

@@ -13,6 +13,13 @@ Guidelines for creating agents:
 3. Select only the tools the agent needs — avoid over-provisioning
 4. Set an appropriate capacity (default 1; increase for parallel workloads)
 5. Describe the agent's domain (e.g. "engineering", "qa", "orchestration")
+6. When the new agent is a specialized version of an existing one ("a finance analyst", "a
+   medical analyst" from Analyst), create it as a child with `extends` instead of copying: it
+   inherits the parent's prompt, tools, model and settings and follows the parent's
+   improvements. Its system_prompt then holds only the additions: a `## Heading` the parent
+   has replaces that section, `{{parent}}` inside it keeps the parent's text, a body of
+   `{{remove}}` drops it. Tools take `+tool` / `-tool` entries, or leave them out to inherit.
+   Pin `extends_version` only when the user wants the child frozen against parent changes.
 
 Guidelines for modifying agents:
 1. Use get_agent_tool first to inspect the current configuration.

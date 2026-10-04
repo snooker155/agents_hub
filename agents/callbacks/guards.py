@@ -557,6 +557,43 @@ def charge_aux_spend(provider: str, model: str, prompt: int, completion: int,
     return cost
 
 
+def charge_flat_spend(usd: float) -> float:
+    """Add a call priced in dollars rather than tokens (a picture, a video,
+    common/aux_usage.py ``record_flat``) to the spend the run's cap checks.
+    Returns the amount added; 0 when the run has no cap."""
+    guard = RunBudgetGuard.from_env()
+    if guard is None or not usd or usd <= 0:
+        return 0.0
+    ledger = guard._ledger if guard._ledger is not None else _PROCESS_SPEND
+    with _SPEND_LOCK:
+        ledger["usd"] = float(ledger["usd"]) + float(usd)
+    return float(usd)
+
+
+def flat_spend_refusal(price_usd: Optional[float]) -> Optional[str]:
+    """Why a call priced at ``price_usd`` may not run under this run's cap,
+    or None. A cap already spent refuses, and so does a call that would cross
+    it. Under ``fail_closed`` a call with no price refuses too, the same rule
+    the guard applies to a model the catalog cannot price."""
+    guard = RunBudgetGuard.from_env()
+    if guard is None:
+        return None
+    spent = guard.spent_usd
+    if spent >= guard.limit_usd:
+        return (f"This run has spent its money cap (${spent:.2f} of ${guard.limit_usd:.2f}); "
+                "the call was not made.")
+    if price_usd is None:
+        if guard.fail_closed:
+            return ("This workspace enforces its budget fail closed and this model has no price "
+                    "set, so the call was not made. Set its price in the workspace's special "
+                    "models settings.")
+        return None
+    if spent + float(price_usd) > guard.limit_usd:
+        return (f"This call costs about ${float(price_usd):.2f} and would take the run past its "
+                f"money cap (${spent:.2f} of ${guard.limit_usd:.2f} spent); it was not made.")
+    return None
+
+
 class RunBudgetGuard(BaseCallbackHandler):
     """Pause a run once the task's runs have spent its money cap.
 

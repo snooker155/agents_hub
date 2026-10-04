@@ -9,7 +9,8 @@ it only relies on the ``step(dt)`` / ``frame()`` contract.
 Budgets (steps / wall-time / frame count) keep a heavy job from running away —
 the precise tier costs real CPU, so every job is bounded and reports what it did.
 The job runs in a background thread (see the ``view_compute`` tool) so it streams
-without blocking the agent turn; frames publish via the thread-safe broker.
+without blocking the agent turn; frames publish through
+``common.session_broker.publish_event`` (relayed to the backend out of process).
 """
 from __future__ import annotations
 
@@ -28,9 +29,11 @@ MAX_WALL_SECONDS = 30.0
 
 
 def _publish(view_id: str, event: Dict[str, Any]) -> None:
+    # publish_event, not the broker itself: the view_compute tool may run on a
+    # service replica, whose process has no broker loop (see views/store.py).
     try:
-        from common.session_broker import broker
-        broker.publish_threadsafe(f"view:{view_id}", event)
+        from common.session_broker import publish_event
+        publish_event(f"view:{view_id}", event)
     except Exception:
         pass
 

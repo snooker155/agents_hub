@@ -55,6 +55,12 @@ def _load_graph(project_id: str, view: str) -> Optional[Dict[str, Any]]:
     project = ProjectStore(path=PROJECTS_FILE).get(project_id)
     if project is None:
         return None
+    # The active project comes from the run, but it is still checked against
+    # the run's workspace (common/workspace_scope.py): a project of another
+    # workspace is not found.
+    from common.workspace_scope import check_record
+    if check_record(project.workspace, what=f"project {project_id}"):
+        return None
 
     saved = ProjectGraphStore().get(project_id, view)
     if saved:

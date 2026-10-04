@@ -29,7 +29,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
-from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate
+from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate, WorkspaceRoleUpdate
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -254,8 +254,28 @@ async def delete_workspace(name: str):
     return {"deleted": True, "detached": was_attached, "target_kept": target}
 
 
+def _target_rel_path(name: str, path: Optional[str], file_id: Optional[str]) -> str:
+    """The workspace-relative path a file route acts on. A link names the
+    file by ``file_id`` (files/service.py); ``path`` stays for old links and
+    for folders, which have no id."""
+    fid = (file_id or "").strip()
+    if fid:
+        from files import service as files_service
+        rel = files_service.folder_path_of(fid, name)
+        if rel is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return rel
+    rel_path = (path or "").strip()
+    if not rel_path:
+        raise HTTPException(status_code=400, detail="Query parameter 'file_id' or 'path' is required")
+    return rel_path
+
+
 @router.get("/{name}/files")
 async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
+    """The folder's files and directories as workspace-relative paths, and
+    ``ids``: path to file id for each file the registry knows, the id a link
+    to the file carries."""
     root = _require_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
@@ -276,15 +296,38 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
             directories = [p for p in directories if fnmatch.fnmatch(p, pattern)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": sorted(files), "directories": sorted(directories)}
+    from files import service as files_service
+    known = files_service.folder_ids(name)
+    ids = {rel: known[rel] for rel in files if rel in known}
+    return {"files": sorted(files), "directories": sorted(directories), "ids": ids}
+
+
+@router.get("/{name}/file-id")
+async def get_workspace_file_id(name: str, path: str):
+    """The file id of a folder file, registering the file when nothing wrote
+    it through the registry yet, so the page can put the id in its address."""
+    from files import service as files_service
+
+    root = _require_workspace_folder(name).resolve()
+    rel_path = (path or "").strip()
+    candidate = (root / rel_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    if not rel_path or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        record = files_service.ensure_folder_record(name, rel_path)
+    except files_service.FileError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"file_id": record["file_id"], "path": rel_path}
 
 
 @router.get("/{name}/file-content")
-async def get_workspace_file_content(name: str, path: str):
+async def get_workspace_file_content(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
     root = _require_workspace_folder(name).resolve()
-    rel_path = (path or "").strip()
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id)
 
     candidate = (root / rel_path).resolve()
     try:
@@ -352,12 +395,10 @@ def _extract_pdf_preview(candidate: Path) -> str:
 
 
 @router.get("/{name}/file-raw")
-async def get_workspace_file_raw(name: str, path: str):
+async def get_workspace_file_raw(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
     """Serve a workspace file's raw bytes (e.g. for in-browser PDF rendering)."""
     root = _require_workspace_folder(name).resolve()
-    rel_path = (path or "").strip()
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id)
 
     candidate = (root / rel_path).resolve()
     try:
@@ -378,13 +419,13 @@ async def get_workspace_file_raw(name: str, path: str):
 
 
 @router.delete("/{name}/files")
-async def delete_workspace_file(name: str, path: str):
-    """Delete one file or directory from a workspace."""
+async def delete_workspace_file(name: str, file_id: Optional[str] = None, path: Optional[str] = None):
+    """Delete one file (by ``file_id``, or ``path`` from an old client) or a
+    directory (by ``path``) from a workspace. The registry records of what
+    was deleted are tombstoned, so an id link to it answers 404."""
     _ensure_writable_workspace(name)
     root = create_workspace_folder(name).resolve()
-    rel_path = (path or "").strip().strip("/")
-    if not rel_path:
-        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+    rel_path = _target_rel_path(name, path, file_id).strip("/")
 
     candidate = (root / rel_path).resolve()
     try:
@@ -409,6 +450,14 @@ async def delete_workspace_file(name: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    from files import service as files_service
+    try:
+        if deleted_type == "directory":
+            files_service.unregister_tree(name, rel_path)
+        else:
+            files_service.unregister_path(name, rel_path)
+    except files_service.FileError:
+        pass  # a path the registry never follows has no record to tombstone
     return {"deleted": True, "path": rel_path, "type": deleted_type}
 
 
@@ -444,9 +493,18 @@ async def upload_workspace_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    rel = dest.relative_to(root).as_posix()
+    from files import service as files_service
+    file_id = None
+    try:
+        if files_service.is_indexable(rel):
+            file_id = files_service.register_path(name, rel, source="upload")["file_id"]
+    except files_service.FileError:
+        pass  # over a limit or under a skipped folder: the file is there, without an id
     return {
-        "path": dest.relative_to(root).as_posix(),
+        "path": rel,
         "size": len(content),
+        "file_id": file_id,
     }
 
 
@@ -591,11 +649,14 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
 #
 # Both live in the workspace metadata and are read live by the agent process:
 # ``tools.approval.approval_gate_enabled`` reads ``settings.require_tool_approval``
-# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (which wins over a
-# ``.hooks.json`` file in the folder). They are edited together here because an
+# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (a ``.hooks.json``
+# file in the folder is never run; the owner may import one). They are edited together here because an
 # operator thinks of them as one thing: what happens around a tool call.
 
-_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+# The tool events, their other names (agents/hooks.py EVENT_ALIASES) and the
+# run events. Each is stored under the name the operator wrote.
+_HOOK_EVENTS = ("PreToolUse", "PostToolUse", "before_tool_call", "after_tool_call",
+                "before_run", "after_run")
 _HOOK_TYPES = ("command", "http")
 
 
@@ -662,11 +723,18 @@ def _policy_payload(name: str) -> dict:
     metadata = get_workspace_metadata(name)
     settings = metadata.get("settings") or {}
     hooks = metadata.get("hooks")
+    from agents.hooks import ignored_hooks_file
     return {
         "require_tool_approval": bool(settings.get("require_tool_approval")),
         "hooks": hooks if isinstance(hooks, dict) else {},
+        # A .hooks.json in the folder is never run (agents write there); the
+        # owner sees it here and may import it.
+        "ignored_hooks_file": ignored_hooks_file(name) is not None,
         "tool_policy": clean_policy(settings.get("tool_policy")),
         "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
+        # Only when set: absent means the default (common/tool_approvals.py).
+        **({"tool_approval_timeout": settings["tool_approval_timeout"]}
+           if settings.get("tool_approval_timeout") is not None else {}),
     }
 
 
@@ -736,6 +804,28 @@ async def get_workspace_policy(name: str):
     return _policy_payload(name)
 
 
+@router.post("/{name}/policy/import-hooks-file")
+async def import_workspace_hooks_file(request: Request, name: str):
+    """Store the workspace folder's ``.hooks.json`` as the workspace's hooks.
+
+    The file itself is never run (agents write into the folder,
+    agents/hooks.py ``load_hooks``); importing it is the owner reading it and
+    choosing to keep it. Validated like a PUT, and replaces the stored hooks.
+    The file is left where it is.
+    """
+    _ensure_writable_workspace(name)
+    from agents.hooks import ignored_hooks_file
+    raw = ignored_hooks_file(name)
+    if raw is None:
+        raise HTTPException(status_code=404, detail="this workspace has no readable .hooks.json")
+    hooks = _validate_hooks(raw)
+    update_workspace_metadata(name, {"hooks": hooks})
+    audit.record("workspace.hooks_import", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"events": sorted(hooks)})
+    return _policy_payload(name)
+
+
 @router.put("/{name}/policy")
 async def update_workspace_policy(request: Request, name: str, payload: dict):
     """Replace the workspace's tool policy.
@@ -751,12 +841,31 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         raise HTTPException(status_code=400, detail="policy must be a key-value object")
 
     updates: dict = {}
-    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model")
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout")
     if any(key in payload for key in settings_keys):
         from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
         if "require_tool_approval" in payload:
             settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "tool_approval_timeout" in payload:
+            # How long a call held in a dashboard chat turn waits for a person
+            # (common/tool_approvals.py); empty means the default.
+            raw_timeout = payload.get("tool_approval_timeout")
+            if raw_timeout in (None, ""):
+                settings.pop("tool_approval_timeout", None)
+            else:
+                from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
+                try:
+                    seconds = int(float(raw_timeout))
+                except (TypeError, ValueError):
+                    seconds = -1
+                if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(f"tool_approval_timeout must be a number of seconds from "
+                                f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
+                    )
+                settings["tool_approval_timeout"] = seconds
         if "tool_policy" in payload:
             # Per-tool modes: tool id (or "*" for every other tool) to a mode.
             # A bad entry is refused rather than dropped, so what the page saved
@@ -816,11 +925,87 @@ async def update_workspace_personal_memory(request: Request, name: str, data: Wo
     it off; the agents' own switches are kept for when it is turned back on."""
     from memory import personal
     _ensure_writable_workspace(name)
+    if data.enabled:
+        # The personal pool is shared with the person's other workspaces:
+        # writing to it from an isolated one would carry data out.
+        from common import isolation
+        try:
+            isolation.ensure_not_isolated(name, "the personal memory pool, shared with other workspaces,")
+        except isolation.IsolationError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     result = personal.set_workspace_enabled(name, data.enabled)
     audit.record("workspace.personal_memory", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,
                  ip=identity.client_ip(request), details={"enabled": data.enabled})
     return result
+
+
+@router.get("/{name}/roles")
+async def get_workspace_roles(name: str):
+    """Which agent holds each role in this workspace (agents/roles.py): the
+    bound one or the role's default, and the agents that call the role."""
+    from agents import roles
+    _require_workspace_folder(name)
+    return {"workspace": name, "roles": roles.describe(name)}
+
+
+@router.put("/{name}/roles/{role}")
+async def update_workspace_role(request: Request, name: str, role: str, data: WorkspaceRoleUpdate):
+    """Give a role to one of the workspace's agents, or back to its default
+    (empty ``agent_id``). Refused when the agent is not in the workspace, or
+    when an agent that calls the role would then reach a capability
+    combination the guard blocks."""
+    from agents import roles
+    _ensure_writable_workspace(name)
+    try:
+        roles.set_binding(name, role, data.agent_id)
+    except roles.RoleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    audit.record("workspace.role", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={"role": role, "agent_id": data.agent_id or None})
+    notify_change("workspaces")
+    return {"workspace": name, "roles": roles.describe(name)}
+
+
+def _special_models_payload(name: str) -> dict:
+    from providers import special
+    return {
+        "workspace": name,
+        "own": special.masked(special.stored(name)),
+        "effective": special.masked(special.effective(name)),
+        "options": special.options_payload(),
+    }
+
+
+@router.get("/{name}/special-models")
+async def get_workspace_special_models(name: str):
+    """The special models of this workspace (providers/special.py): its own
+    choices, what it uses after the ``default`` workspace fills the gaps, and
+    the purposes, providers and model suggestions for the form."""
+    _require_workspace_folder(name)
+    return _special_models_payload(name)
+
+
+@router.put("/{name}/special-models")
+async def update_workspace_special_models(request: Request, name: str, payload: dict):
+    """Replace this workspace's own special model choices. A purpose left
+    out uses the ``default`` workspace's choice."""
+    from providers import special
+    _ensure_writable_workspace(name)
+    try:
+        config = special.save(name, payload.get("special_models", payload))
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Purposes and model ids only: a custom model's headers may carry a token.
+    audit.record("workspace.special_models", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={"purposes": sorted(k for k in config if k != "custom"),
+                          "custom": [c["id"] for c in config.get("custom") or []]})
+    notify_change("workspaces")
+    return _special_models_payload(name)
 
 
 @router.get("/{name}/env")

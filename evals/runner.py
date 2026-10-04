@@ -508,6 +508,13 @@ def run_eval(
     saved = store.save_eval_run(run)
     if saved.status == "completed" and evalset.suggest_on_failure:
         _maybe_auto_suggest(saved)
+    # Proactive agents listening for failing evals (proactive/events.py);
+    # a run with every cell passing wakes nobody.
+    try:
+        from proactive.events import eval_finished
+        eval_finished(saved)
+    except Exception:  # noqa: BLE001 - waking a pulse never fails the eval run
+        log.debug("eval event dispatch failed for %s", saved.eval_run_id, exc_info=True)
     return saved
 
 

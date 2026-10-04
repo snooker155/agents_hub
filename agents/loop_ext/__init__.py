@@ -9,6 +9,8 @@ and None when it does not:
   before its next step.
 - ``compaction``: old tool results leave the context before it fills up;
   Anthropic's server-side context management where available.
+- ``view_focus``: a view agent sees the tools of the view kind it is on
+  (the Studio's view, or the one the run created) and not the other kinds'.
 - ``tool_search``: an agent with many tools sees a short list and a
   ``search_tools`` tool; Anthropic's native deferred loading where available.
 - ``structured``: strict tool schemas where the provider supports them, and

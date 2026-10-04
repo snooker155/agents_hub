@@ -1,4 +1,99 @@
 {
+  "demo_task_run_about": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_task_run_about",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_about",
+        "text": "[demo] read_file src/app.py"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_about",
+        "text": "[demo] read_file docs/notes.md"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_about",
+        "text": "[demo] update_task DS-5 -> done"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_task_run_about"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_task_run_about",
+        "status": "completed",
+        "output": "Left as is for now: one sentence reads fine for a shop this size. Noted in docs/notes.md as an open item to revisit if the catalog grows."
+      }
+    }
+  ],
+  "demo_task_run_categories": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "text": "[demo] read_file src/app.py"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "text": "[demo] read_file data/sales.csv"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "text": "[demo] 20 rows, categories: Backpacks, Bottles, Maps"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "text": "[demo] update_task DS-6 -> done"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_task_run_categories"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_task_run_categories",
+        "status": "completed",
+        "output": "Confirmed: all twenty rows in data/sales.csv use exactly these three categories, matching src/app.py."
+      }
+    }
+  ],
   "demo_task_run_rename": [
     {
       "event": "tool_start",
@@ -43,6 +138,319 @@
       }
     }
   ],
+  "demo_chat_6_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "text": "[demo] demo_support answering: A customer asks whether the Trailpack fits a 15-inch laptop. What do we tell them?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "text": "[demo] read_file src/app.py"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "text": "[demo] read_file docs/notes.md"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "text": "[demo] read_file supplier-questions.md"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "text": "[demo] demo_support replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_6_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_6_run",
+        "status": "completed",
+        "output": "We do not know yet, so do not promise it. Neither src/app.py nor docs/notes.md says anything about a laptop sleeve, and the supplier's spec sheet has not arrived; the question is already on the list in supplier-questions.md.\n\nA safe answer: the Trailpack 32L is a hiking pack with no padded laptop sleeve, and we will confirm the internal dimensions as soon as the spec sheet is in. I have not sent anything."
+      }
+    }
+  ],
+  "demo_chat_5_run_2": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_5_run_2",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run_2",
+        "text": "[demo] demo_reviewer answering: Chase the spec sheet and unblock DS-3 once it arrives."
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run_2",
+        "text": "[demo] update_task DS-3 (note: waiting on the fabric spec sheet)"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run_2",
+        "text": "[demo] demo_reviewer replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_5_run_2"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_5_run_2",
+        "status": "completed",
+        "output": "I cannot email the supplier from here, so I left a note on DS-3 saying exactly what is missing. When the spec sheet lands in the project folder, reply here and I will move the task back to todo."
+      }
+    }
+  ],
+  "demo_chat_5_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] demo_reviewer answering: What is still open on the August report, and what is blocking?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] get_task DS-1"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] get_task DS-2"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] get_task DS-3"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] read_file docs/notes.md"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "text": "[demo] demo_reviewer replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_5_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_5_run",
+        "status": "completed",
+        "output": "Three things are open:\n\n1. **DS-3, explain the Trailpack's price**: blocked. We are waiting on the supplier's spec sheet for the fabric, so the materials note cannot be written yet.\n2. **DS-2, the sales chart**: in progress with the Demo Analyst. The chart itself already exists as a view.\n3. **DS-1, the catalog copy**: not started. The Demo Writer has blurbs drafted in chat, so this is a short task once someone picks it up.\n\nThe three closed tasks are signed off; nothing done is waiting on me."
+      }
+    }
+  ],
+  "demo_chat_4_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "text": "[demo] demo_analyst answering: Which product sells the most units, and is that also the one that makes the most money?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "text": "[demo] read_file data/sales.csv"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "text": "[demo] calculator sum(units), sum(revenue) by category"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "text": "[demo] view_get \"August sales\""
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "text": "[demo] demo_analyst replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_4_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_4_run",
+        "status": "completed",
+        "output": "No. Bottles sell the most units, but Backpacks make the most money.\n\n| Category | Units | Revenue |\n|---|---|---|\n| Bottles | 50 | $1,200 |\n| Maps | 43 | $645 |\n| Backpacks | 20 | $1,780 |\n\nTwenty Trailpacks at $89 outearn fifty bottles at $24. The raw rows are in the August sales table."
+      }
+    }
+  ],
+  "demo_chat_3_run_2": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_3_run_2",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run_2",
+        "text": "[demo] demo_writer answering: The bottle one is the weakest. Make it about what it is for, not what it is made of."
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run_2",
+        "text": "[demo] demo_writer replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_3_run_2"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_3_run_2",
+        "status": "completed",
+        "output": "Better:\n\n- **Summit Bottle 1L**: enough water for a half-day climb, and it does not dent when you drop it.\n\nThe other two stand. Still a draft: nothing in the project has changed."
+      }
+    }
+  ],
+  "demo_chat_3_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "text": "[demo] demo_writer answering: Write a one-line blurb for each of the three products. Plain, no adjectives stacked on top of each other."
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "text": "[demo] read_file src/app.py"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "text": "[demo] read_file docs/notes.md"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "text": "[demo] demo_writer replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_3_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_3_run",
+        "status": "completed",
+        "output": "Here are three, one line each:\n\n- **Trailpack 32L**: a 32-litre pack with a padded hip belt and a rain cover in the lid pocket.\n- **Summit Bottle 1L**: a single-wall steel bottle that fits a standard cage and takes a beating.\n- **Ridge Map Pack**: three waterproof trail maps of the Ridge range, folded to pocket size.\n\nDraft ready for review. I have not written them into src/app.py yet; say the word and I will."
+      }
+    }
+  ],
   "demo_chat_2_run": [
     {
       "event": "tool_start",
@@ -56,6 +464,27 @@
       "data": {
         "run_id": "demo_chat_2_run",
         "text": "[demo] demo_analyst answering: How did August sales break down by category?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "text": "[demo] read_file data/sales.csv"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "text": "[demo] calculator sum(revenue) by category"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "text": "[demo] create_view chart \"Sales by category\""
       }
     },
     {
@@ -93,6 +522,20 @@
       "data": {
         "run_id": "demo_chat_1_run",
         "text": "[demo] demo_writer answering: What does the Fernweh & Co. sample shop actually sell?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "text": "[demo] read_file src/app.py"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "text": "[demo] read_file data/sales.csv"
       }
     },
     {

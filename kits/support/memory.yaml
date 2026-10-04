@@ -1,0 +1,6 @@
+kind: memory_pool
+id: support-knowledge
+name: Support knowledge
+description: Answers, known issues and workarounds Triage and Resolver have learned, shared by both.
+blocks:
+  persona: "You keep the support team's shared knowledge: known issues, workarounds and the answers that come up again and again. Be terse, factual and specific; a vague note helps nobody at 2am."

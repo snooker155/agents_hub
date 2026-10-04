@@ -66,6 +66,7 @@ from views.store import (
 from views.serve import is_allowed_upstream
 from views.ops import OpError
 from views.models import SUPPORTED_KINDS, ViewValidationError
+from views import focus as _focus
 from views.studio import create_studio_view, scene_context_note
 from views.code import (
     diff_versions as _diff_code_versions, diff_version_list, runner_language, resolve_project_save_path,
@@ -715,7 +716,16 @@ async def save_code_view(view_id: str, payload: CodeSaveRequest):
 # the floating page-chat panel can host it (see components/pageChat).
 
 VIEW_CHAT_KIND = "view"
-VIEW_AGENT_ID = "visualizer"
+# The general view agent; a kind a specialist owns (views/focus.py:
+# SPECIALISTS) gets that agent instead, see ``view_agent_for``.
+VIEW_AGENT_ID = _focus.DEFAULT_VIEW_AGENT
+
+
+def view_agent_for(kind: Optional[str]) -> str:
+    """The agent a view's own chat and the Studio run for a view of *kind*:
+    the 3D modeler for a scene, the web view builder for html and code, the
+    visualizer for everything else."""
+    return _focus.agent_for_kind(kind)
 
 
 def _view_chat_prompt(view_id: str, history: List[dict], user_message: str) -> str:
@@ -801,7 +811,7 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
     load_for_stop=_load_view_stop,
     prompt=lambda ctx, history, msg: _view_chat_prompt(ctx.entity_id, history, msg),
     spec=lambda ctx: EntityChatSpec(
-        kind=VIEW_CHAT_KIND, agent_id=VIEW_AGENT_ID,
+        kind=VIEW_CHAT_KIND, agent_id=view_agent_for(ctx.doc.get("kind")),
         title=f"{ctx.doc.get('title') or ctx.entity_id} · view",
         workspace=ctx.workspace, workspace_path=_workspace_path(ctx.workspace),
     ),

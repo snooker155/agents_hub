@@ -25,6 +25,8 @@ def base_subprocess_env(
     flow_id: Optional[str] = None,
     key_id: Optional[str] = None,
     extra_secret_names: Optional[Iterable[str]] = None,
+    run_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, str]:
     """Base environment every agent-running subprocess needs.
 
@@ -37,31 +39,26 @@ def base_subprocess_env(
     declares in ``AgentSpec.secrets`` are merged in, resolved for ``user_id``
     (the user who launched the run) by ``common.secrets``: only the declared
     names, most specific scope first, nothing at all on any error. A docker
-    run inherits the same dict through ``container_env``. Called with the
-    workspace alone, the result is exactly what it always was.
+    run inherits the same dict through ``container_env``.
+
+    ``run_id`` and ``session_id`` name the launch the run token is minted for;
+    closing that run retires the token (``common.run_tokens.retire_for_run``).
     """
     from common.config import settings
     env = os.environ.copy()
     env["AGENT_WORKSPACE"] = workspace_name
     if settings.openai_api_key:
         env["OPENAI_API_KEY"] = settings.openai_api_key
-    # The token that gates /api requests (see common/auth.py). A plain
-    # os.environ.copy() already carries it when it was exported as a real
-    # environment variable, but pydantic-settings also accepts it from .env
-    # without ever writing it back to os.environ — so a token configured only
-    # that way would silently fail to reach the subprocess, and every relay
-    # POST it makes (SessionPublishCallback, session_broker._relay_notify)
-    # would get a 401. Set it explicitly, the same way as OPENAI_API_KEY above.
-    if settings.api_token:
-        env["AGENTS_HUB_API_TOKEN"] = settings.api_token
-    # AUTH_MODE=multi with no shared token: a subprocess has no session and no
-    # password, so it cannot authenticate as a user at all. The backend mints
-    # one random service credential per process and hands it down here; it acts
-    # as admin for the relay POSTs and dies with the process that issued it.
-    # See common/identity.py, "the service credential".
-    from common.identity import SERVICE_TOKEN_ENV, current_mode, service_token
-    if current_mode() == "multi" and not settings.api_token:
-        env[SERVICE_TOKEN_ENV] = service_token()
+    # The credential the child calls back with (its relays and, from a
+    # container, its run state): a run token of its own that reaches only those
+    # routes (common/run_tokens.py, common/auth.py RELAY_ROUTES). The shared API
+    # token and the admin service credential used to ride here, and either one
+    # reaches the whole API from a process an agent's shell runs in; both are
+    # taken out of the copied environment too. Nothing is minted in single
+    # mode, where the API asks for no credential.
+    from common import run_tokens
+    run_tokens.mint_for_env(env, kind="run", run_id=run_id, session_id=session_id,
+                            workspace=workspace_name or None)
     # Who the run is charged to, so the runs the child creates in turn are
     # charged to the same user and personal key (common/attribution.py).
     from common.attribution import child_env
@@ -76,7 +73,29 @@ def base_subprocess_env(
                                             extra_names=extra_secret_names))
         else:
             env.update(_secrets.env_for_flow(workspace_name, flow_id, user_id))
+        route_secrets(env, workspace=workspace_name)
     return env
+
+
+def route_secrets(env: Dict[str, str], *, execution_mode: Optional[str] = None,
+                  workspace: Optional[str] = None) -> Dict[str, str]:
+    """Send a run that holds host-bound secret placeholders through the egress
+    proxy, with the hub CA in its trust store (environments/secret_egress.py).
+
+    A no-op for a run without placeholders. Launchers call it once more after
+    layering an environment's own proxy URL on top, so the secret hosts land
+    on the token the run actually uses. A routing failure is logged, never
+    raised: the run then holds placeholders nobody swaps, which fails its
+    requests but leaks nothing.
+    """
+    try:
+        from environments.secret_egress import route_env
+        return route_env(env, execution_mode=execution_mode, workspace=workspace)
+    except Exception:  # noqa: BLE001 - see docstring
+        import logging
+        logging.getLogger(__name__).error("secret placeholders could not be routed through the "
+                                          "egress proxy", exc_info=True)
+        return env
 
 
 def add_run_env(

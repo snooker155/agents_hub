@@ -33,6 +33,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from common.entity_sink import record_entity
+from common.workspace_scope import check_record
 from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
@@ -73,13 +74,34 @@ def _approval_required(kind: str, entity_id: str, list_tool: str, run_tool: str,
 
 def _workspace_conflict(kind: str, entity_id: str, entity_ws: Optional[str],
                         active_ws: Optional[str]) -> Optional[str]:
-    """Refuse to run something belonging to a different workspace."""
-    if active_ws and entity_ws and entity_ws != active_ws:
+    """Refuse to run something belonging to a different workspace.
+
+    An entity with no workspace is shared by every workspace and runs in the
+    caller's; the service's own agents may run anything
+    (``common.workspace_scope.check_record``)."""
+    if entity_ws and check_record(entity_ws, what=kind, workspace=active_ws):
         return _json_err(
-            f"{kind.capitalize()} '{entity_id}' belongs to workspace "
-            f"'{entity_ws}', not the active workspace '{active_ws}'.",
+            f"{kind.capitalize()} '{entity_id}' is not in this workspace.",
             code="forbidden",
         )
+    return None
+
+
+def _run_hidden(run: Any) -> bool:
+    """Whether a run record belongs to another workspace than this run's:
+    answered like a missing run. A run with no workspace is the default
+    one's; the service's own agents reach every run."""
+    if run is None:
+        return False
+    return check_record(getattr(run, "workspace", None), what="run",
+                        workspace=resolve_active_workspace()) is not None
+
+
+def _latest_visible(runs: Any) -> Any:
+    """The newest of ``runs`` this workspace may read, or None."""
+    for run in runs or []:
+        if not _run_hidden(run):
+            return run
     return None
 
 
@@ -176,6 +198,10 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
         if not scenario:
             return _json_err("Scenario not found", code="not_found",
                              extra={"scenario_id": scenario_id})
+        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+        conflict = _workspace_conflict("scenario", scenario_id, scenario.workspace, active_ws)
+        if conflict:
+            return conflict
         if not scenario.roles:
             return _json_err(
                 "This scenario has no roles — a simulation needs participants. "
@@ -191,11 +217,6 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
         if not user_approved:
             return _approval_required("scenario", scenario_id,
                                       "list_scenarios_tool", "run_scenario_tool", estimate)
-
-        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        conflict = _workspace_conflict("scenario", scenario_id, scenario.workspace, active_ws)
-        if conflict:
-            return conflict
 
         run_ws = scenario.workspace or active_ws
 
@@ -243,12 +264,11 @@ def get_scenario_run_tool(sim_run_id: Optional[str] = None,
         if sim_run_id:
             run = store.get_sim_run(sim_run_id)
         elif scenario_id:
-            runs = store.list_sim_runs(scenario_id, limit=1)
-            run = runs[0] if runs else None
+            run = _latest_visible(store.list_sim_runs(scenario_id, limit=20))
         else:
             return _json_err("Provide either sim_run_id or scenario_id", code="invalid")
 
-        if not run:
+        if not run or _run_hidden(run):
             return _json_err("No simulation run found", code="not_found",
                              extra={"sim_run_id": sim_run_id, "scenario_id": scenario_id})
 
@@ -281,9 +301,10 @@ def stop_scenario_run_tool(sim_run_id: str) -> str:
     way. The world is kept as of the last tick that completed.
     """
     try:
+        from playground import store
         from playground.runner import stop_simulation
 
-        if not stop_simulation(sim_run_id):
+        if _run_hidden(store.get_sim_run(sim_run_id)) or not stop_simulation(sim_run_id):
             return _json_err("That simulation is not running", code="not_running",
                              extra={"sim_run_id": sim_run_id})
         return _json_ok({"message": "Simulation stopped.", "sim_run_id": sim_run_id})
@@ -332,6 +353,10 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
         team = store.get_team(team_id)
         if not team:
             return _json_err("Team not found", code="not_found", extra={"team_id": team_id})
+        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+        conflict = _workspace_conflict("team", team_id, team.workspace, active_ws)
+        if conflict:
+            return conflict
         if not team.members:
             return _json_err(
                 "This team has no members. Add some with modify_team_tool first.",
@@ -354,11 +379,6 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
         if not user_approved:
             return _approval_required("team", team_id, "list_teams_tool",
                                       "run_team_tool", estimate)
-
-        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        conflict = _workspace_conflict("team", team_id, team.workspace, active_ws)
-        if conflict:
-            return conflict
 
         run_ws = team.workspace or active_ws
 
@@ -406,12 +426,11 @@ def get_team_run_tool(team_run_id: Optional[str] = None,
         if team_run_id:
             run = store.get_run(team_run_id)
         elif team_id:
-            runs = store.list_runs(team_id, limit=1)
-            run = runs[0] if runs else None
+            run = _latest_visible(store.list_runs(team_id, limit=20))
         else:
             return _json_err("Provide either team_run_id or team_id", code="invalid")
 
-        if not run:
+        if not run or _run_hidden(run):
             return _json_err("No team run found", code="not_found",
                              extra={"team_run_id": team_run_id, "team_id": team_id})
 
@@ -442,9 +461,10 @@ def stop_team_run_tool(team_run_id: str) -> str:
     said up to that point is kept.
     """
     try:
+        from teams import store
         from teams.runner import stop_run
 
-        if not stop_run(team_run_id):
+        if _run_hidden(store.get_run(team_run_id)) or not stop_run(team_run_id):
             return _json_err("That team run is not running", code="not_running",
                              extra={"team_run_id": team_run_id})
         return _json_ok({"message": "Team run stopped.", "team_run_id": team_run_id})
@@ -494,6 +514,10 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         loop = store.get_loop(loop_id)
         if not loop:
             return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+        conflict = _workspace_conflict("loop", loop_id, loop.workspace, active_ws)
+        if conflict:
+            return conflict
 
         # A loop whose flow has been deleted or broken cannot run at all, and
         # the runner would only discover that after opening a run record.
@@ -501,6 +525,11 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         try:
             flow = flow_store.get_flow(loop.flow_id)
         except Exception:  # noqa: BLE001 — a broken flow reads the same as a missing one here
+            flow = None
+        # The loop runs its flow in the loop's workspace: a flow of another
+        # workspace reads as missing.
+        if flow is not None and flow.get("workspace") and check_record(
+                flow.get("workspace"), what="flow", workspace=loop.workspace or active_ws):
             flow = None
         if flow is None:
             return _json_err(
@@ -520,11 +549,6 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         if not user_approved:
             return _approval_required("loop", loop_id, "list_loops_tool",
                                       "run_loop_tool", estimate)
-
-        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        conflict = _workspace_conflict("loop", loop_id, loop.workspace, active_ws)
-        if conflict:
-            return conflict
 
         run_ws = loop.workspace or active_ws
 
@@ -573,12 +597,11 @@ def get_loop_run_tool(loop_run_id: Optional[str] = None,
         if loop_run_id:
             run = store.get_run(loop_run_id)
         elif loop_id:
-            runs = store.list_runs(loop_id, limit=1)
-            run = runs[0] if runs else None
+            run = _latest_visible(store.list_runs(loop_id, limit=20))
         else:
             return _json_err("Provide either loop_run_id or loop_id", code="invalid")
 
-        if not run:
+        if not run or _run_hidden(run):
             return _json_err("No loop run found", code="not_found",
                              extra={"loop_run_id": loop_run_id, "loop_id": loop_id})
 
@@ -617,7 +640,7 @@ def stop_loop_run_tool(loop_run_id: str) -> str:
     try:
         from loops import store
 
-        if not store.request_stop(loop_run_id):
+        if _run_hidden(store.get_run(loop_run_id)) or not store.request_stop(loop_run_id):
             return _json_err("That loop run is not running", code="not_running",
                              extra={"loop_run_id": loop_run_id})
         return _json_ok({"message": "Loop run stopping.", "loop_run_id": loop_run_id})

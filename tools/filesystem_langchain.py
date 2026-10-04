@@ -100,6 +100,11 @@ def _workspace_rel_prefix(ws_path: Optional[Path]) -> str:
 
 class ReadFileInput(BaseModel):
     path: str = Field(..., description="Workspace-relative or absolute path to read")
+    offset: int = Field(0, ge=0, description="Character to start at (0 is the start of the file)")
+    limit: Optional[int] = Field(
+        None, ge=1,
+        description="Most characters to return from offset on; leave out to read to the end",
+    )
 
 
 class ReadFileOutput(BaseModel):
@@ -239,16 +244,26 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         binary_threshold=c.get("binary_threshold", 4096),
     )
 
-    def _read_impl(path: str) -> str:
+    def _read_impl(path: str, offset: int = 0, limit: Optional[int] = None) -> str:
         try:
             content = _read_file(path, workspace=ws_path, config=cfg)
-            return json.dumps(ReadFileOutput(path=path, content=content).model_dump(), ensure_ascii=False)
+            if not offset and not limit:
+                return json.dumps(ReadFileOutput(path=path, content=content).model_dump(), ensure_ascii=False)
+            # A range: one part of a long file (a saved tool output, see
+            # agents/tool_spill.py), with where it sits in the whole.
+            start = max(0, int(offset or 0))
+            end = start + int(limit) if limit else len(content)
+            part = content[start:end]
+            return json.dumps({"path": path, "content": part, "offset": start,
+                               "returned_chars": len(part), "total_chars": len(content)},
+                              ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"read_file failed: {e}", "path": path}, ensure_ascii=False)
 
     read_tool = StructuredTool.from_function(
         name="read_file",
-        description="Read a UTF-8 text file (or extract text from a PDF) and return JSON with {path, content}.",
+        description=("Read a UTF-8 text file (or extract text from a PDF) and return JSON with {path, content}. "
+                     "offset and limit (characters) read one part of a long file."),
         func=_read_impl,
         args_schema=ReadFileInput,
     )

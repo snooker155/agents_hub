@@ -32,6 +32,17 @@ file in as ``hub_ssrf.py`` (see the Dockerfile), so the service runs the
 identical code rather than a re-typed copy that could drift. When this module
 is imported from the repository (the tests do that), ``hub_ssrf`` is not on
 the path and the import falls back to ``common.ssrf``: same file, same code.
+
+Read only sessions
+    The hub's browser tools (tools/browser.py) open a session for a run of
+    an isolated workspace (common/isolation.py) with ``read_only`` set. Such a
+    session only reads: every request the page makes must be a GET or a HEAD
+    with no body (:func:`check_method`), so a form post, a fetch or XHR with a
+    body and a beacon are refused; its allow list always applies (an empty one
+    refuses every host) and the hub's app pages are not exempt; WebSockets are
+    refused outright, since an open socket is a channel out; and the service
+    refuses the action endpoints (``/act``, and a person's clicks and typing on
+    ``/input``).
 """
 from __future__ import annotations
 
@@ -48,6 +59,9 @@ except ImportError:  # imported from the repository (tests)
 # WebSocket route; data:, blob: and about: never touch the network and are not
 # routed at all.
 NETWORK_SCHEMES = ("http", "https", "ws", "wss")
+
+#: The only methods a read only session's page may use.
+READ_METHODS = ("GET", "HEAD")
 
 
 def host_matches(host: str, pattern: str) -> bool:
@@ -84,18 +98,25 @@ class Policy:
     #: The hub's own origins and the app paths on them (see the module docstring).
     internal_origins: Tuple[str, ...] = field(default_factory=tuple)
     internal_paths: Tuple[str, ...] = field(default_factory=tuple)
+    #: A session that only reads (see the module docstring). Implies the
+    #: allow list, whatever ``allowlist_enabled`` says.
+    read_only: bool = False
 
     @classmethod
     def from_dict(cls, data: Optional[Mapping[str, Any]]) -> "Policy":
         data = data or {}
-        origins = tuple(o for o in (_origin(str(x)) for x in (data.get("internal_origins") or ())) if o)
+        read_only = bool(data.get("read_only"))
+        # A read only session reads only from its list: no hub app pages.
+        origins = () if read_only else tuple(
+            o for o in (_origin(str(x)) for x in (data.get("internal_origins") or ())) if o)
         paths = tuple(str(p) for p in (data.get("internal_paths") or ()) if str(p).startswith("/"))
         return cls(
             deny_domains=_clean(data.get("deny_domains")),
             allow_domains=_clean(data.get("allow_domains")),
-            allowlist_enabled=bool(data.get("allowlist_enabled")),
+            allowlist_enabled=bool(data.get("allowlist_enabled")) or read_only,
             internal_origins=origins,
             internal_paths=paths,
+            read_only=read_only,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -105,6 +126,7 @@ class Policy:
             "allowlist_enabled": self.allowlist_enabled,
             "internal_origins": list(self.internal_origins),
             "internal_paths": list(self.internal_paths),
+            "read_only": self.read_only,
         }
 
     def is_internal(self, url: str) -> bool:
@@ -134,6 +156,19 @@ def check_domain(url: str, policy: Policy) -> Tuple[bool, str]:
     return False, f"host {host!r} is not on the domain allowlist"
 
 
+def check_method(method: Optional[str], has_body: bool, policy: Policy) -> Tuple[bool, str]:
+    """A read only session's rule for one request: GET or HEAD, with no body.
+    Any method passes in a session that is not read only."""
+    if not policy.read_only:
+        return True, ""
+    verb = str(method or "").upper()
+    if verb not in READ_METHODS:
+        return False, f"this session only reads: {verb or 'an unknown'} requests are blocked"
+    if has_body:
+        return False, f"this session only reads: a {verb} request with a body is blocked"
+    return True, ""
+
+
 def check_url(url: str, policy: Policy, *, resolve: bool = True) -> Tuple[bool, str]:
     """Full check for one request the page wants to make.
 
@@ -159,4 +194,5 @@ def check_url(url: str, policy: Policy, *, resolve: bool = True) -> Tuple[bool, 
     return resolve_and_check(parsed.hostname or "")
 
 
-__all__ = ["Policy", "host_matches", "check_domain", "check_url", "NETWORK_SCHEMES"]
+__all__ = ["Policy", "host_matches", "check_domain", "check_method", "check_url", "NETWORK_SCHEMES",
+           "READ_METHODS"]

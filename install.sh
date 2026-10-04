@@ -11,6 +11,8 @@
 #   ./install.sh --cli-only       # just the terminal client (for AGENTS_HUB_URL)
 #   ./install.sh --with-rag       # add the RAG extras (pulls in torch)
 #   ./install.sh --with-demo      # seed the demo workspace on first start (docs/demo.md)
+#   ./install.sh --setup          # run the guided setup (ah setup) even if .env exists
+#   ./install.sh --no-setup       # never run it; copy .env.example instead
 #   ./install.sh --no-venv        # install into the environment already active
 #   ./install.sh --no-shell       # skip the shell integration
 #
@@ -23,6 +25,9 @@ EXTRAS="backend,agents"
 USE_VENV=1
 DO_SHELL=1
 WITH_DEMO=0
+# -1 until the flags are read: the guided setup runs on a first install from a
+# terminal, unless it was turned off; --setup runs it on a re-install too.
+DO_SETUP=-1
 # -1 until the flags are read: the dashboard is installed unless it was turned
 # off, or unless --cli-only means there is no service here to serve it.
 DO_FRONTEND=-1
@@ -37,6 +42,8 @@ while [ $# -gt 0 ]; do
         --cli-only)    EXTRAS="" ;;
         --with-rag)    EXTRAS="${EXTRAS:+$EXTRAS,}rag" ;;
         --with-demo)   WITH_DEMO=1 ;;
+        --setup)       DO_SETUP=1 ;;
+        --no-setup)    DO_SETUP=0 ;;
         # The dashboard is the default; --frontend stays accepted so the older
         # command line keeps working, and to force it alongside --cli-only.
         --frontend)    DO_FRONTEND=1 ;;
@@ -45,11 +52,17 @@ while [ $# -gt 0 ]; do
         --no-shell)    DO_SHELL=0 ;;
         --venv)        shift; VENV="${1:?--venv needs a path}" ;;
         --python)      shift; PYTHON="${1:?--python needs an interpreter}" ;;
-        -h|--help)     sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)     sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)             die "Unknown option: $1 (try --help)" ;;
     esac
     shift
 done
+
+if [ "$DO_SETUP" -eq -1 ]; then
+    # Questions need someone to answer them: a terminal on both ends, a service
+    # to configure (not --cli-only), and nothing configured yet.
+    if [ -t 0 ] && [ -t 1 ] && [ -n "$EXTRAS" ] && [ ! -f .env ]; then DO_SETUP=1; else DO_SETUP=0; fi
+fi
 
 if [ "$DO_FRONTEND" -eq -1 ]; then
     # --cli-only installs a client that talks to a backend elsewhere; the
@@ -103,7 +116,9 @@ AH="$BIN_DIR/ah"
 # 3. Configuration
 # ---------------------------------------------------------------------------
 
-if [ ! -f .env ]; then
+if [ "$DO_SETUP" -eq 1 ]; then
+    say "The guided setup writes .env at the end of the install"
+elif [ ! -f .env ]; then
     say "Creating .env from .env.example"
     cp .env.example .env
     warn "Put a provider key in .env before running an agent (DEFAULT_PROVIDER, OPENAI_API_KEY, OPENAI_MODEL)."
@@ -111,7 +126,9 @@ else
     say "Keeping the .env you already have"
 fi
 
-if [ "$WITH_DEMO" -eq 1 ]; then
+if [ "$WITH_DEMO" -eq 1 ] && [ "$DO_SETUP" -eq 1 ]; then
+    say "The guided setup asks about the demo workspace"
+elif [ "$WITH_DEMO" -eq 1 ]; then
     say "Turning on the demo workspace (DEMO_WORKSPACE=1)"
     if grep -q '^DEMO_WORKSPACE=' .env 2>/dev/null; then
         # In place, portable between GNU and BSD sed: write to a temp file and
@@ -144,6 +161,23 @@ if [ "$DO_SHELL" -eq 1 ]; then
     # Written by the CLI itself, between markers, so re-running replaces the
     # block instead of stacking another copy.
     "$AH" shell-init --install
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Guided setup
+# ---------------------------------------------------------------------------
+# Last, because it may end by starting the hub (`ah up` replaces it), and
+# everything above has to be in place by then.
+
+if [ "$DO_SETUP" -eq 1 ]; then
+    say "Starting the guided setup (ah setup)"
+    if ! "$AH" setup --shape local; then
+        warn "The setup did not finish. Run it again any time: ah setup"
+    fi
+    if [ ! -f .env ]; then
+        cp .env.example .env
+        warn "Created .env from .env.example; put a provider key in it, or run: ah setup"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

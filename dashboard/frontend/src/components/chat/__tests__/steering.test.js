@@ -62,8 +62,10 @@ describe('turn state', () => {
     expect(inFlightRunId(fresh, { loading: true, targetMode: 'team' })).toBeNull();
   });
 
-  it('offers all three modes with a run, only the queue without one, none when idle', () => {
-    expect(availableModes({ loading: true, runId: 'r' })).toEqual(['inject', 'interrupt', 'queue']);
+  it('offers every mode with a run, only the queue without one, none when idle', () => {
+    expect(availableModes({ loading: true, runId: 'r' })).toEqual(['inject', 'interrupt', 'queue', 'system']);
+    // A team has no system prompt of its own to add to.
+    expect(availableModes({ loading: true, runId: 'r', targetMode: 'team' })).toEqual(['inject', 'interrupt', 'queue']);
     expect(availableModes({ loading: true, runId: null })).toEqual(['queue']);
     expect(availableModes({ loading: false, runId: 'r' })).toEqual([]);
     expect(effectiveMode('interrupt', ['queue'])).toBe('queue');
@@ -102,6 +104,20 @@ describe('steered bubbles in the transcript', () => {
     const { messages: rest, texts } = takeQueuedSteers(out);
     expect(texts).toEqual(['mine', 'from the run page']);
     expect(rest.some((m) => m.steer)).toBe(false);
+  });
+
+  it('never sends an instruction as a turn or keeps it in the history', () => {
+    const pending = buildSteerBubble({ text: 'be brief', msgId: 's1', mode: 'system' });
+    const read = { ...pending, steer: { ...pending.steer, state: 'delivered' } };
+    expect(inHistory(read)).toBe(false);
+    const { messages: rest, texts } = takeQueuedSteers([user('u1', 'hi'), pending]);
+    expect(texts).toEqual([]);
+    expect(rest[1].steer).toMatchObject({ mode: 'system', state: 'expired' });
+  });
+
+  it('remembers the three ordinary modes but never an instruction', () => {
+    saveSteerMode('system');
+    expect(readLocalSteerMode()).not.toBe('system');
   });
 
   it('keeps a message out of the history until the model has read it', () => {

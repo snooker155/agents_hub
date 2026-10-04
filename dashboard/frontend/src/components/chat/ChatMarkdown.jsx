@@ -13,6 +13,8 @@
  * `citations` turns the reply's `[n]` markers into buttons that scroll to the
  * source they name; `[n]` inside code stays code. `codeActions` adds buttons
  * to every code block's header (the Chat page's "Open in Code panel").
+ * `linkComponent` replaces how links render (the Help panel turns in-app
+ * routes into navigation instead of a new tab).
  */
 import { useContext, useEffect, useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
@@ -268,7 +270,7 @@ const COMPONENTS = {
   'math-block': MathBlock,
 };
 
-export default function ChatMarkdown({ content, streaming = false, citations = null, onCite = null }) {
+export default function ChatMarkdown({ content, streaming = false, citations = null, onCite = null, linkComponent = null }) {
   const text = useMemo(() => {
     const trimmed = trimBubbleText(content);
     return normalizeMath(streaming ? closeOpenMarkdown(holdOpenMath(trimmed)) : trimmed);
@@ -283,10 +285,14 @@ export default function ChatMarkdown({ content, streaming = false, citations = n
     () => [[rehypeCitations, { known }], rehypeMathBlocks, ...(katex ? [[katex, KATEX_OPTIONS]] : [])],
     [known, katex],
   );
+  const components = useMemo(
+    () => (linkComponent ? { ...COMPONENTS, a: linkComponent } : COMPONENTS),
+    [linkComponent],
+  );
   return (
     <CitationFocusContext.Provider value={onCite}>
       <div className="chat-md">
-        <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={COMPONENTS}>
+        <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={components}>
           {text}
         </Markdown>
       </div>

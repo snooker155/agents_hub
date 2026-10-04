@@ -11,7 +11,7 @@
  *
  * It serves dashboard/frontend/dist-demo with `vite preview` on a free port
  * (building it first when it is missing or --build is given), opens each page
- * in headless Chromium at 1440 x 900, once in the light theme and once in
+ * in headless Chromium at 2560 x 1440 (a 2K screen, so nothing is cramped), once in the light theme and once in
  * the dark one, and writes:
  *
  *   site/public/screenshots/<id>.png                the six landing page shots
@@ -41,8 +41,8 @@ const DARK_DIR = join(SHOTS_DIR, 'dark');
 const SCHEMES = ['light', 'dark'];
 const RECIPES_DIR = join(SITE, 'recipes');
 
-const W = 1440;
-const H = 900;
+const W = 2560;
+const H = 1440;
 const PAGE = 'main header';
 
 /**
@@ -61,7 +61,8 @@ const LANDING = [
   // The caption describes the list view; the board is the default.
   { id: 'tasks', path: '/tasks', waitFor: PAGE, click: 'main header button:has-text("List")' },
   { id: 'flows', path: '/flows/demo_content_pipeline', waitFor: '.react-flow__node' },
-  { id: 'views', path: '/views', waitFor: 'main' },
+  // The Views folder of the Artifacts page (the caption still says gallery).
+  { id: 'views', path: '/artifacts?folder=__views__', waitFor: 'main' },
   { id: 'playground', path: '/playground/demo_market', waitFor: 'main' },
 ];
 
@@ -80,7 +81,7 @@ const RECIPE_PAGES = {
   'local-models': { path: '/settings/local', waitFor: 'main section' },
   thinking: { path: '/agents', waitFor: 'main .grid' },
   palette: { path: '/workspaces/demo', waitFor: PAGE },
-  'code-panel': { path: '/views', waitFor: PAGE },
+  'code-panel': { path: '/artifacts?folder=__views__', waitFor: PAGE },
   doctor: { path: '/health', waitFor: PAGE },
   demo: { path: '/chat', waitFor: 'main textarea' },
   lab: { path: '/playground', waitFor: PAGE },

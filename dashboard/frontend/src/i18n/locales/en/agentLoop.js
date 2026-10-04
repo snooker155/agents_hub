@@ -10,6 +10,19 @@ export default {
   schemaEmpty: 'Enter a JSON Schema, or switch to free text.',
   schemaInvalidJson: 'Not valid JSON: {{message}}',
   schemaNotObject: 'A JSON Schema must be a single JSON object.',
+  advisor: {
+    title: 'Advisor',
+    intro: 'A second model this agent may ask for advice on a hard step, with consult_advisor. It sees only the question and the context the agent writes into the call, never the run itself. Its cost counts toward the run and its budget.',
+    none: 'No advisor',
+    notInCatalog: '{{model}} (not enabled on the Models page)',
+    hint: 'Models come from the Models page. The workspace\'s agent loop settings limit the calls per run and the answer length.',
+  },
+  concurrency: {
+    title: 'Delegate concurrency',
+    intro: 'How many of this agent\'s delegated subtasks (delegate_task_tool) may run at once. A launch past the limit is refused with a clear message.',
+    label: 'Max concurrent delegates',
+    hint: 'From 1 to 32. Default 6. A run\'s own overrides can set a tighter or looser limit for that run alone.',
+  },
   fallback: {
     title: 'Fallback models',
     intro: 'Tried in order when this agent\'s own model refuses, is rate limited, or fails with a server error. The model that actually answered is recorded on the run.',

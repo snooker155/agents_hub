@@ -426,4 +426,8 @@ A prompt change that "feels better" on two examples is not a result. The whole
 point of this surface is to turn that into a number you can compare before and
 after.
 
-Related: [costs](costs.md), [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md), [experiments](experiments.md), [notifications](notifications.md).
+A run that finishes with a failing cell also wakes every [proactive
+agent](proactive.md) whose profile has an `eval` trigger (optionally for that
+eval set), with the failing configs and their pass counts as the event.
+
+Related: [costs](costs.md), [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md), [experiments](experiments.md), [notifications](notifications.md), [proactive](proactive.md).

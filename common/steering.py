@@ -4,7 +4,7 @@ Messages a person sends to a run while it is working (docs/steering.md).
 Until this existed a second message to a busy agent waited in a mailbox
 (``instances/inbox.py``) until the run was over, and the chat had no way to
 talk to a turn in progress at all. A steering message is written here instead
-and reaches the run one of two ways:
+and reaches the run one of three ways:
 
 - ``inject``: the agent loop claims it before its next model call and places
   it in the context right after the tool results the run had by then
@@ -13,6 +13,16 @@ and reaches the run one of two ways:
 - ``interrupt``: the run is stopped and the message starts the next one (a
   task relaunches its agent with the message in the instruction, a chat
   client sends it as its next turn); see ``dashboard/backend/routes/steering.py``.
+- ``system``: an operator's addition to the run's instructions. Claimed by the
+  loop like an inject, but appended to the system prompt for the rest of the
+  run instead of placed in the conversation (``agents/loop_ext/steering.py``).
+  Only the run's owner or an admin may send one, never an agent or a
+  delegated run (the route checks).
+- ``switch_model``: the body is a catalog model id (``provider/model``). The
+  loop claims it like the other two and runs every later model call of the
+  run on that model, with the same tools bound and the trail kept
+  (``agents/loop_ext/steering.py``). The route checks the id against the
+  enabled models; an agent's own credential may not send one.
 
 The loop checks for messages before every model call, from the backend
 process for a chat turn and from the run's own process (or container, over
@@ -36,7 +46,16 @@ log = logging.getLogger(__name__)
 
 MODE_INJECT = "inject"
 MODE_INTERRUPT = "interrupt"
-MODES = (MODE_INJECT, MODE_INTERRUPT)
+MODE_SYSTEM = "system"
+MODE_SWITCH_MODEL = "switch_model"
+MODES = (MODE_INJECT, MODE_INTERRUPT, MODE_SYSTEM, MODE_SWITCH_MODEL)
+
+#: Modes the agent loop takes before its next model call.
+LOOP_MODES = (MODE_INJECT, MODE_SYSTEM, MODE_SWITCH_MODEL)
+
+#: Loop modes that are not words for the conversation: one no run took is
+#: never handed back to a chat as its next turn.
+OPERATOR_MODES = (MODE_SYSTEM, MODE_SWITCH_MODEL)
 
 STATUS_PENDING = "pending"
 STATUS_DELIVERED = "delivered"
@@ -51,10 +70,11 @@ MAX_BODY_CHARS = 20000
 _COLUMNS = ("seq", "msg_id", "run_id", "body", "mode", "author_id", "author_name",
             "created_at", "delivered_at", "delivered_step", "status", "next_run_id")
 
-# The loop's check: pending inject messages of one run. Served by the index on
-# (run_id, delivered_at).
+# The loop's check: pending inject and system messages of one run. Served by
+# the index on (run_id, delivered_at).
+_LOOP_MODES_SQL = "mode IN ('inject', 'system', 'switch_model')"
 _PENDING_WHERE = ("run_id = ? AND delivered_at IS NULL AND status = 'pending' "
-                  "AND mode = 'inject'")
+                  f"AND {_LOOP_MODES_SQL}")
 
 
 def _now() -> str:
@@ -139,7 +159,7 @@ def retarget_pending(from_run_ids: List[str], to_run_id: str) -> int:
     with db.transaction() as conn:
         cur = conn.execute(
             f"UPDATE run_steering SET run_id = ? WHERE run_id IN ({marks}) "
-            "AND delivered_at IS NULL AND status = 'pending' AND mode = 'inject'",
+            f"AND delivered_at IS NULL AND status = 'pending' AND {_LOOP_MODES_SQL}",
             (str(to_run_id), *ids))
         return int(getattr(cur, "rowcount", 0) or 0)
 
@@ -149,13 +169,17 @@ def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     runs (a flow's nodes, a team): ``delivered`` as ``[{msg_id, after_step}]``
     and ``undelivered`` as ``[{msg_id, body}]``, the latter marked expired so
     the client sends them as its next turn. The client uses both to settle the
-    bubbles it drew, since a multi-run turn may not stream every notice."""
+    bubbles it drew, since a multi-run turn may not stream every notice. A
+    system message or a model switch no run took is expired and not handed
+    back: it was meant for those runs, not words for the conversation."""
     delivered_out: List[Dict[str, Any]] = []
     undelivered_out: List[Dict[str, Any]] = []
     for rid in [str(r) for r in (run_ids or []) if r]:
         for m in delivered(rid):
             delivered_out.append({"msg_id": m["msg_id"], "after_step": m.get("delivered_step")})
         for m in mark_expired(rid):
+            if m.get("mode") in OPERATOR_MODES:
+                continue
             undelivered_out.append({"msg_id": m["msg_id"], "body": m["body"]})
     return {"delivered": delivered_out, "undelivered": undelivered_out}
 
@@ -167,7 +191,7 @@ def get(msg_id: str) -> Optional[Dict[str, Any]]:
 
 
 def pending_count(run_id: str) -> int:
-    """How many inject messages are waiting for the run's next model call."""
+    """How many inject and system messages are waiting for the run's next model call."""
     if not run_id:
         return 0
     row = db.get_conn().execute(
@@ -177,7 +201,7 @@ def pending_count(run_id: str) -> int:
 
 
 def claim_pending(run_id: str, step: int) -> List[Dict[str, Any]]:
-    """Take every pending inject message of ``run_id``, oldest first, marking
+    """Take every pending inject and system message of ``run_id``, oldest first, marking
     each delivered at ``step`` (the number of tool results the run has).
 
     Atomic: each row is marked with a conditional UPDATE inside one write
@@ -227,15 +251,16 @@ def claim_pending(run_id: str, step: int) -> List[Dict[str, Any]]:
 
 
 def delivered(run_id: str) -> List[Dict[str, Any]]:
-    """The inject messages the loop has already taken for ``run_id``, in
-    order. A run that picks up again under the same id (a checkpoint resume,
-    the chat's retry after folding its history) reads these back so what the
-    person said is still in its context."""
+    """The inject and system messages the loop has already taken for
+    ``run_id``, in order. A run that picks up again under the same id (a
+    checkpoint resume, the chat's retry after folding its history) reads these
+    back so what the person said, and what an operator added to its
+    instructions, is still in its context."""
     if not run_id:
         return []
     rows = db.get_conn().execute(
         "SELECT * FROM run_steering WHERE run_id = ? AND status = 'delivered' "
-        "AND mode = 'inject' ORDER BY seq", (str(run_id),)).fetchall()
+        f"AND {_LOOP_MODES_SQL} ORDER BY seq", (str(run_id),)).fetchall()
     return [_row(r) for r in rows]
 
 
@@ -247,7 +272,7 @@ def list_for_run(run_id: str) -> List[Dict[str, Any]]:
 
 
 def undelivered(run_id: str) -> List[Dict[str, Any]]:
-    """The inject messages still waiting for ``run_id``, oldest first."""
+    """The inject and system messages still waiting for ``run_id``, oldest first."""
     if not run_id:
         return []
     rows = db.get_conn().execute(
@@ -292,7 +317,8 @@ def mark(msg_id: str, status: str, *, next_run_id: Optional[str] = None) -> Opti
 
 
 __all__ = [
-    "MODES", "MODE_INJECT", "MODE_INTERRUPT", "MAX_BODY_CHARS",
+    "MODES", "LOOP_MODES", "OPERATOR_MODES", "MODE_INJECT", "MODE_INTERRUPT", "MODE_SYSTEM",
+    "MODE_SWITCH_MODEL", "MAX_BODY_CHARS",
     "STATUS_PENDING", "STATUS_DELIVERED", "STATUS_EXPIRED", "STATUS_INTERRUPTED",
     "STATUS_FAILED",
     "post", "get", "pending_count", "claim_pending", "delivered", "list_for_run",

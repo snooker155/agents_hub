@@ -6,68 +6,16 @@ import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
-import {
-  Waypoints,
-  LayoutDashboard,
-  CheckSquare,
-  LogOut,
-  UserCog,
-  KeyRound,
-  Folder,
-  Database,
-  Factory,
-  Wrench,
-  Users,
-  Activity,
-  PlayCircle,
-  MessageCircle,
-  MessageSquare,
-  ScrollText,
-  Settings,
-  Sun,
-  Moon,
-  Monitor,
-  Network,
-  Radio,
-  Pause,
-  Cpu,
-  ChevronDown,
-  FolderGit2,
-  Box,
-  Boxes,
-  Shapes,
-  WifiOff,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Store,
-  CalendarClock,
-  BookOpen,
-  Brain,
-  DollarSign,
-  Images,
-  FlaskConical,
-  Gamepad2,
-  Repeat,
-  UsersRound,
-  GraduationCap,
-  Globe,
-  Share2,
-  Link2,
-  Plug,
-  Layers,
-  Container,
-  Rocket,
-  ShieldCheck,
-  BadgeCheck,
-  MessageSquareCode,
-  FileStack,
-} from 'lucide-react';
+import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
+import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
 import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
+import HelpPanel from './help/HelpPanel';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -311,13 +259,17 @@ const Layout = ({ children }) => {
         { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
         // An agent embedded on another site through one script tag.
         { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode },
-        // Files the workspace keeps by id: chat, memory, tasks and evals reuse them.
-        { name: t('nav.files'), path: '/files', icon: FileStack },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
-        { name: t('nav.views'), path: '/views', icon: Images },
-        { name: t('nav.studio'), path: '/studio', icon: Shapes },
+        // What the agents produced and work with: the views they built and the
+        // files the workspace keeps by id (chat, memory, tasks and evals reuse
+        // them), two tabs of one page. Memory stays under Tools on purpose: it
+        // is what the agents know about the user, not something they made.
+        // The Studio and a view's page are reached from here (the Studio
+        // button, a card's actions), so they light this item up and have no
+        // menu item of their own.
+        { name: t('nav.artifacts'), path: '/artifacts', icon: Images, also: ['/studio', '/views'] },
       ],
     },
     {
@@ -332,6 +284,9 @@ const Layout = ({ children }) => {
         // reports in, or this service reaches out to a system you use.
         { name: t('nav.connections'), path: '/connections', icon: Share2 },
         { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
+        // Observers of outside state (a mailbox, an HTTP resource) that wake a
+        // proactive agent when something changes. See docs/watchers.md.
+        { name: t('nav.watchers'), path: '/watchers', icon: Eye },
         // A third way in, and the one that is not an integration this product
         // wrote: an MCP server hands over tools nobody here has seen, which is
         // why attaching one asks for a capability declaration. See docs/mcp.md.
@@ -451,10 +406,11 @@ const Layout = ({ children }) => {
               {sidebarCollapsed && gi === 0 && <div className="pt-3" />}
               {group.items.map((item) => {
                 const Icon = item.icon;
+                const under = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
                 const isActive = !group.disabled && (
                   item.path === '/dashboard'
                     ? location.pathname === item.path
-                    : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
+                    : under(item.path) || (item.also || []).some(under)
                 );
                 if (group.disabled) {
                   return (
@@ -492,7 +448,7 @@ const Layout = ({ children }) => {
       {/* Main Content */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top Navbar */}
-        <header className="bg-white shadow-sm border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 z-10">
+        <header className="bg-white shadow-sm border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 z-30">
           <div className="flex items-center space-x-4">
             <button
               onClick={toggleSidebar}
@@ -514,6 +470,7 @@ const Layout = ({ children }) => {
                 </option>
               ))}
             </select>
+            <IsolationBadge workspace={selectedWorkspace} />
             <div className="h-5 w-px bg-gray-200" />
             {/* Global model picker */}
             <div className="relative" ref={modelPickerRef}>
@@ -600,6 +557,8 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            {/* Active watchers (docs/watchers.md): what is being observed right now */}
+            <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}
@@ -653,6 +612,8 @@ const Layout = ({ children }) => {
                 </button>
               </div>
             )}
+            {/* Help (docs/help.md): the Support agent, for a user who is lost */}
+            <HelpPanel />
           </div>
         </header>
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>

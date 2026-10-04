@@ -41,7 +41,6 @@ import {
   ShieldCheck,
   Compass,
   ScrollText,
-  Loader2,
   FileText,
   ClipboardCheck,
   Gauge,
@@ -80,6 +79,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getDoc } from '../api';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // ---------------------------------------------------------------------------
 // Docs — an in-app documentation hub with its own left-hand section nav.
 // Content is authored as JSX (rather than markdown files) so interactive
@@ -286,7 +286,7 @@ AGENT_EXECUTION_MODE=local`}</CodeBlock>
         <FeatureCard icon={Radio} title={t('docs.instancesDoc.title')} to="/instances">
           {t('docs.start.nextInstances')}
         </FeatureCard>
-        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/views">
+        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/artifacts">
           {t('docs.start.nextViews')}
         </FeatureCard>
         <FeatureCard icon={CalendarClock} title={t('docs.nav.plan')} to="/plan">
@@ -405,7 +405,7 @@ function Features() {
         <FeatureCard icon={Network} title={t('docs.orchestrator')} to="/orchestrator">
           {t('docs.configureRoutingSoTasksAre')}
         </FeatureCard>
-        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/views">
+        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/artifacts">
           {t('docs.chartsGraphs3dScenesAnd')}
         </FeatureCard>
         <FeatureCard icon={CalendarClock} title={t('docs.plan')} to="/plan">
@@ -511,7 +511,7 @@ function Tutorials() {
         steps={[
           <>{t('docs.bindTheVisualizationTools')} <code className="bg-gray-100 px-1 rounded">{t('docs.createView')}</code>{t('docs.toTheAgentOnIts')} <Link className="text-indigo-600 underline" to="/agents">{t('docs.agents')}</Link> {t('docs.page')}</>,
           <>{t('docs.askItSomethingWorthDrawing')} <Link className="text-indigo-600 underline" to="/chat">{t('docs.chat')}</Link> {t('docs.theViewRendersInlineIn')}</>,
-          <>{t('docs.openItFromThe')} <Link className="text-indigo-600 underline" to="/views">{t('docs.views')}</Link> {t('docs.galleryOrPress')} <strong>{t('docs.studio')}</strong> {t('docs.toKeepEditingItBy')}</>,
+          <>{t('docs.openItFromThe')} <Link className="text-indigo-600 underline" to="/artifacts">{t('docs.views')}</Link> {t('docs.galleryOrPress')} <strong>{t('docs.studio')}</strong> {t('docs.toKeepEditingItBy')}</>,
           <>{t('docs.in')} <Link className="text-indigo-600 underline" to="/studio">{t('docs.studio')}</Link>{t('docs.selectAnObjectInThe')}</>,
         ]}
       />
@@ -618,10 +618,7 @@ function ChangelogDoc() {
   if (error) return <Callout tone="warn">{t('docs.changelogError', { error })}</Callout>;
   if (!doc) {
     return (
-      <p className="flex items-center gap-2 text-sm text-gray-500">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        {t('docs.changelogLoading')}
-      </p>
+      <PageLoader size="sm" label={t('docs.changelogLoading')} />
     );
   }
   return (
@@ -654,10 +651,7 @@ function CorpusRef({ id }) {
       <div className="px-4 pb-4">
         {error && <Callout tone="warn">{t('docs.fullReferenceError', { error })}</Callout>}
         {!error && !doc && (
-          <p className="flex items-center gap-2 text-sm text-gray-500">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('docs.fullReferenceLoading')}
-          </p>
+          <PageLoader size="sm" label={t('docs.fullReferenceLoading')} />
         )}
         {doc && <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>}
       </div>

@@ -5,7 +5,7 @@ description: "Seed a workspace with sample agents, tasks, runs and views, take t
 
 # The demo workspace and the tour
 
-A fresh install has nothing to look at. The demo workspace fills every page with a small sample web shop: three agents, a project, a flow, a team, a scenario, views, tasks in every status and two recorded chats with their runs. The welcome tour walks through those pages. This site hosts the same frontend over recorded responses, so you can try it before installing anything.
+A fresh install has nothing to look at. The demo workspace fills every page with a small sample web shop: four agents, a project with files, a flow, a team, a scenario, views, tasks in every status, six recorded chats with their runs and sessions, an instance and a service to look at, and a published agent on the marketplace. The welcome tour walks through those pages. This site hosts the same frontend over recorded responses, so you can try it before installing anything.
 
 ## What you get
 
@@ -36,7 +36,7 @@ ah up
 
 4. The welcome window that opens on first launch has a **Start the tour** button. The tour moves from page to page: Chat, Agents, Tasks, Flows, Teams, Playground, Views, Health and Docs. It can be replayed later from the **Docs** page.
 
-5. Look around: the **Agents** page shows `demo_writer`, `demo_analyst` and `demo_reviewer`; **Tasks** has a board with todo, in progress, blocked and done cards, the done ones with results; **Sessions** and **Messages** show the recorded chats and their runs; **Views** holds a chart and a table of the sample sales, a note and a report; **Flows**, **Teams** and **Playground** each have one prebuilt entry.
+5. Look around: the **Agents** page shows `demo_writer`, `demo_analyst`, `demo_reviewer` and `demo_support`; **Tasks** has a board with todo, in progress, blocked and done cards, the done ones with results; **Chat**, **Sessions** and **Messages** show the six recorded chats and their runs, two of them over several turns; **Instances** and **Services** each hold an example record; **Files** lists the project files and two uploads; **Marketplace** lists the published Demo Writer and the content pipeline flow; **Views** holds a chart and a table of the sample sales, a note and a report; **Flows**, **Teams** and **Playground** each have one prebuilt entry.
 
 6. When you are done, switch back to your own workspace, or remove the demo from **Settings**. Anything you created outside the demo workspace stays.
 

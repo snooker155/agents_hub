@@ -27,6 +27,7 @@ from routes.sessions import (
 
     _extract_tools_from_progress,
     _extract_tools_from_log,
+    _attach_tool_verdicts,
     _build_thinking_trace,
     _parse_reasoning_line,
 )
@@ -285,7 +286,12 @@ async def get_message_insights(run_id: str, request: Request):
                     "started_at": None,
                     "finished_at": None,
                     "running": False,
+                    **({"evaluated_permission": tc["evaluated_permission"],
+                        "reason_code": tc.get("reason_code") or ""}
+                       if tc.get("evaluated_permission") else {}),
                 })
+        # What the tool gate made of each call (tools/permission_policy.py).
+        _attach_tool_verdicts(run_tools, log_text, rr_process.get("tool_calls"))
         for t in run_tools:
             t["agent_id"] = run.get("agent_id")
             t["run_id"] = run.get("run_id")
@@ -513,8 +519,10 @@ async def get_run_agent_version(run_id: str, request: Request):
     ``version``/``hash`` are the run's own (``run.agent_version``,
     ``managers.runs.lifecycle``); ``current_version`` is what the agent would
     build today; ``is_current`` compares the two; ``pinned`` is true only when
-    the run's task itself carries this exact pin (as opposed to the run
-    merely having landed on the version that happens to be live).
+    the run was asked for this exact version (``run.agent_version_pinned``,
+    set by a task, launch, chat turn or service pin) or its task carries it,
+    as opposed to the run merely having landed on the version that happens
+    to be live.
     """
     run = run_manager.get_run_by_id(run_id)
     if not run:
@@ -535,8 +543,9 @@ async def get_run_agent_version(run_id: str, request: Request):
 
     task = _run_task(run)
     pinned = bool(
-        task is not None and version is not None
-        and getattr(task, "agent_version", None) == version
+        version is not None
+        and (run.get("agent_version_pinned")
+             or (task is not None and getattr(task, "agent_version", None) == version))
     )
 
     return {

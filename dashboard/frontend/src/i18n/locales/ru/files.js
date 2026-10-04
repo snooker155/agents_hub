@@ -12,7 +12,7 @@ export default {
   syncSkipped_many: '{{count}} файлов пропущены (превышен лимит)',
   syncSkipped_other: '{{count}} файла пропущены (превышен лимит)',
   path: 'Путь в рабочем пространстве',
-  view: { label: 'Вид', tree: 'Дерево', list: 'Список' },
+  view: { label: 'Вид', cards: 'Карточки', tree: 'Дерево', list: 'Список' },
   tree: {
     count_one: '{{count}} файл',
     count_few: '{{count}} файла',
@@ -36,6 +36,7 @@ export default {
     task: 'Задача',
     eval: 'Оценка',
     api: 'API',
+    view: 'Представления',
   },
   columns: {
     name: 'Имя',

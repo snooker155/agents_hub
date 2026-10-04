@@ -27,8 +27,33 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from common.workspace_scope import check_record
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+
+def _foreign_agent(spec: Any, ws: Optional[str]) -> bool:
+    """Whether ``spec`` is another workspace's own agent (``owner_workspace``
+    set to another workspace and not shared): to this workspace it does not
+    exist. The service's own agents see every agent; no workspace (the CLI)
+    keeps every agent."""
+    owner = getattr(spec, "owner_workspace", None)
+    if not ws or not owner or getattr(spec, "shared", False):
+        return False
+    return check_record(owner, what="agent", workspace=ws) is not None
+
+
+def _hidden(team, *, write: bool = False) -> bool:
+    """Whether ``team`` is out of this run's reach, answered like a missing
+    team (``common.workspace_scope.check_record``). A team with no workspace
+    is shared by every workspace for reading (``store.list_teams`` lists it
+    everywhere) and is the default workspace's to change."""
+    if team is None:
+        return False
+    ws = getattr(team, "workspace", None)
+    if not ws and not write:
+        return False
+    return check_record(ws, what="team") is not None
 
 
 def _coerce_json(v: Any) -> Any:
@@ -100,9 +125,9 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
         errors.append(f"a team may hold at most {MAX_MEMBERS} members (got {len(members)})")
 
     from agents.registry import list_agents as reg_list_agents
-    all_specs = reg_list_agents()
-    all_ids = {getattr(s, "id", None) for s in all_specs}
     ws = normalize_workspace_name(workspace)
+    all_specs = [s for s in reg_list_agents() if not _foreign_agent(s, ws)]
+    all_ids = {getattr(s, "id", None) for s in all_specs}
     allowed_ids = (
         {getattr(s, "id", None) for s in filter_agents_for_workspace(all_specs, ws)}
         if ws else all_ids
@@ -353,7 +378,7 @@ def _get_team(team_id: str) -> str:
     from teams import store
 
     team = store.get_team(team_id)
-    if not team:
+    if not team or _hidden(team):
         return _json_err("Team not found", code="not_found", extra={"team_id": team_id})
     record_entity("team", team_id, "viewed", team.name)
     return _json_ok({"team": _simplify(team)})
@@ -386,7 +411,7 @@ def _modify_team(
     from teams.models import Team, utc_iso
 
     existing = store.get_team(team_id)
-    if not existing:
+    if not existing or _hidden(existing, write=True):
         return _json_err("Team not found", code="not_found", extra={"team_id": team_id})
 
     payload = existing.to_dict()
@@ -459,7 +484,7 @@ def _delete_team(team_id: str) -> str:
     from teams import store
 
     team = store.get_team(team_id)
-    if not team:
+    if not team or _hidden(team, write=True):
         return _json_err("Team not found", code="not_found", extra={"team_id": team_id})
     live = [r for r in store.list_runs(team_id, limit=5)
             if r.status in ("running", "stopping")]

@@ -4,6 +4,7 @@ import { getTools, getToolSource, updateToolSource } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const ToolsExplorer = () => {
   const { t } = useI18n();
   const [tools, setTools] = useState({ factory: [], swe: [], all: [] });
@@ -122,7 +123,7 @@ const ToolsExplorer = () => {
       />
 
       {loading ? (
-        <div className="text-center py-20 flex-1 min-h-0">{t('toolsExplorer.loadingToolDefinitions')}</div>
+        <PageLoader size="lg" label={t('toolsExplorer.loadingToolDefinitions')} />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
           <div className="lg:col-span-1 h-full min-h-0 border border-gray-200 rounded-xl bg-white p-3 overflow-y-auto">

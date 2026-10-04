@@ -46,7 +46,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
+from routes import channels as channels_router
+from routes import connectors as connectors_router
+from routes import slack as slack_router
+from routes import teams_channel as teams_channel_router
+from routes import trackers as trackers_router
+from routes import google as google_router
+from routes import databases as databases_router
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
+from routes import help_chat as help_chat_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
 from routes import oidc as oidc_router
@@ -109,10 +117,22 @@ async def lifespan(app: FastAPI):
     # when it loses it (common/singletons.py). Configured-and-enabled is
     # re-read on every check, so the Connectors page still applies live.
     try:
-        from common.singletons import supervisor as _supervisor, telegram_service
-        _supervisor.add(telegram_service())
+        from common.singletons import supervisor as _supervisor
+        # The default workspace's Telegram bot, the bot of every workspace
+        # that defines its own (role telegram@<workspace>), and a discoverer
+        # that adds or drops those as workspaces define or remove them.
+        from connectors.telegram import bots as _tg_bots
+        _tg_bots.register_all(_supervisor)
+        # Every registered chat channel (connectors/channels/registry.py) is a
+        # leased service of the same shape as the Telegram poller, one per
+        # workspace that defines a bot (role channel_<name>@<workspace>).
+        try:
+            from connectors.channels import registry as _channels
+            _channels.register_all(_supervisor)
+        except Exception as e:  # noqa: BLE001 - channels are optional
+            log.warning(f"⚠ Chat channels not registered: {e}")
         await _supervisor.start()
-        log.info("✓ Singleton supervisor started (telegram, online_evals)")
+        log.info("✓ Singleton supervisor started (telegram, channels, online_evals)")
     except Exception as e:
         log.warning(f"⚠ Could not start the singleton supervisor: {e}")
 
@@ -156,6 +176,15 @@ async def lifespan(app: FastAPI):
         log.info("✓ Plan scheduler started")
     except Exception as e:
         log.warning(f"⚠ Could not start plan scheduler: {e}")
+
+    # Start the watcher runner (polls mailboxes and HTTP resources, wakes the
+    # proactive agents listening; one replica through the "watchers" lease).
+    try:
+        from watchers.runner import runner as _watcher_runner
+        await _watcher_runner.start()
+        log.info("✓ Watcher runner started")
+    except Exception as e:  # noqa: BLE001 - watchers are optional, the app still serves
+        log.warning(f"⚠ Could not start the watcher runner: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
     # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
@@ -243,6 +272,11 @@ async def lifespan(app: FastAPI):
         await stop_bridge()
     except Exception:
         pass
+    try:
+        from watchers.runner import runner as _watcher_runner
+        await _watcher_runner.stop()
+    except Exception:  # noqa: BLE001 - shutdown goes on whatever the runner says
+        log.debug("watcher runner stop failed", exc_info=True)
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()
@@ -402,6 +436,14 @@ def _workspace_of(request) -> Optional[str]:
         header_workspace=request.headers.get("x-workspace"),
     )
 
+
+# Optimistic concurrency for agent edits (agents/revision.py): an If-Match or
+# expected_version that names an older definition is a 409 before the route
+# runs, and reads and writes of an agent carry its definition hash as ETag.
+# Registered before the guard so it sits inside it: only an authorised
+# request is ever checked or tagged.
+from agents.revision import AgentRevisionMiddleware
+app.add_middleware(AgentRevisionMiddleware)
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
 
@@ -589,6 +631,11 @@ app.include_router(project_deployments_router.apps_router)
 from routes import browser as browser_router
 app.include_router(browser_router.router)
 
+# Terminal: a shell in a run's or a service replica's container, over a
+# ticketed WebSocket. See docs/terminal.md.
+from routes import terminal as terminal_router
+app.include_router(terminal_router.router)
+
 # Replay domain: re-run a recorded run and diff outputs (regression eval)
 app.include_router(replay.router)
 
@@ -646,6 +693,9 @@ app.include_router(context_refs.router)
 # The page chat: one assistant, any page, about the records that page is showing
 app.include_router(page_chat.router)
 
+# The Help panel: the support agent, one thread per user, about the product itself
+app.include_router(help_chat_router.router)
+
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)
 
@@ -664,10 +714,35 @@ from routes import (
     guardrails as guardrails_router,
     agent_loop_settings as agent_loop_settings_router,
     memory_versions as memory_versions_router,
+    memory_consolidation as memory_consolidation_router,
+    agent_proactive as agent_proactive_router,
 )
 for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
-                     agent_loop_settings_router, memory_versions_router):
+                     agent_loop_settings_router, memory_versions_router, memory_consolidation_router,
+                     agent_proactive_router):
     app.include_router(_loop_router.router)
+
+# A tool call waiting for a person inside a chat turn: the chat's Approve and
+# Deny, and the waiting run's side under /api/run-state (docs/hooks.md).
+from routes import tool_approvals as tool_approvals_router
+app.include_router(tool_approvals_router.router)
+# A connection an agent proposed (connectors/proposals.py), finished by a
+# person: the apply half of the same waiting call.
+from routes import connection_proposals as connection_proposals_router
+app.include_router(connection_proposals_router.router)
+# A workspace's isolation (common/isolation.py): the switch, its readiness
+# checks and the domains an isolated workspace may read from.
+from routes import isolation as isolation_router
+app.include_router(isolation_router.router)
+
+# An agent's own domain lists for web_search, fetch_url and the browser
+# (tools/web.py), on top of the workspace's and the global ones.
+from routes import agent_web_domains as agent_web_domains_router
+app.include_router(agent_web_domains_router.router)
+
+# Watchers (watchers/, docs/watchers.md): observers that wake a proactive agent.
+from routes import watchers as watchers_router
+app.include_router(watchers_router.router)
 
 # Fourth-cycle stage 3: files a workspace keeps by id (chat, memory, tasks and
 # evals reuse them), and the chat widget an outside site embeds with one tag.
@@ -707,6 +782,18 @@ app.include_router(settings_router.router)
 
 # Telegram domain: bot config, bindings, and outbound message proxy
 app.include_router(telegram.router)
+app.include_router(channels_router.router)
+app.include_router(connectors_router.router)
+app.include_router(slack_router.router)
+app.include_router(teams_channel_router.router)
+app.include_router(trackers_router.router)
+app.include_router(google_router.router)
+# Consent portal: a widget or channel end user grants their own Google or
+# Microsoft account; the public page lives outside /api. See docs/consent.md.
+from routes import consent as consent_router
+app.include_router(consent_router.router)
+app.include_router(consent_router.public_router)
+app.include_router(databases_router.router)
 
 # Git connectors domain: GitHub/GitLab tokens, repo browsing
 app.include_router(git.router)
@@ -762,6 +849,15 @@ app.include_router(secrets_router.router)
 # The GitHub App: installations bound to workspaces, and people connecting
 # their own GitHub account (connectors/git/github_app.py).
 app.include_router(github_app_router.router)
+
+# An agent's default outcome rubric (fifth-cycle stage 4 "kits", tasks/outcome.py).
+from routes import agent_outcome as agent_outcome_router
+app.include_router(agent_outcome_router.router)
+
+# Industry agent kits: ready-made bundles a workspace installs in one step
+# (docs/kits.md, the ``kits/`` package, ``declarative/`` underneath).
+from routes import kits as kits_router
+app.include_router(kits_router.router)
 
 # ============================================================================
 # Entry Point

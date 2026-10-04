@@ -1384,14 +1384,19 @@ def test_the_view_chat_prompt_carries_the_live_view():
     assert prompt.rstrip().endswith("add the database")
 
 
-def test_the_visualizer_ships_with_the_product():
-    """A Studio pointed at an agent the install does not have is a dead page."""
+def test_the_view_agents_ship_with_the_product():
+    """A Studio pointed at an agent the install does not have is a dead page:
+    the visualizer and the two specialists the Studio opens kinds with."""
 
     from agents.registry import get_agent
     from common.bootstrap import seed_registry_from_bootstrap
-    from routes.views import VIEW_AGENT_ID
+    from routes.views import VIEW_AGENT_ID, view_agent_for
+    from views.focus import SPECIALISTS
+    from views.models import SUPPORTED_KINDS
 
     seed_registry_from_bootstrap()
 
-    spec = get_agent(VIEW_AGENT_ID)
-    assert spec is not None and spec.system is True
+    for agent_id in {VIEW_AGENT_ID, *SPECIALISTS.values()}:
+        spec = get_agent(agent_id)
+        assert spec is not None and spec.system is True, agent_id
+    assert {view_agent_for(k) for k in SUPPORTED_KINDS} == {VIEW_AGENT_ID, *SPECIALISTS.values()}

@@ -19,6 +19,8 @@ export default {
     instances: 'Инстансы',
     instancesLive: 'активно: {{count}}',
     noneRunning: 'нет запущенных',
+    pulse: 'Пульс',
+    pulseSub: 'действовали: {{acted}} · тихо: {{quiet}} · пропущено: {{skipped}} (24 ч)',
   },
   features: {
     heading: 'Возможности',

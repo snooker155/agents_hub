@@ -1,0 +1,23 @@
+export default {
+  title: 'Artefakte',
+  pageDescription: 'Was die Agenten gemacht haben und womit sie arbeiten: die Ansichten, die sie als Antwort gebaut haben, und die Dateien dieses Arbeitsbereichs, nebeneinander. Laden Sie eine Datei einmal hoch und hängen Sie sie dann über ihre ID im Chat an, fügen Sie sie einem Speicherpool hinzu oder geben Sie sie einer Aufgabe oder einem Evaluationsfall; öffnen Sie eine Ansicht, um sie im Gespräch weiter zu bearbeiten.',
+  loading: 'Wird geladen…',
+  viewsFolder: 'Ansichten',
+  viewCount_one: '{{count}} Ansicht',
+  viewCount_other: '{{count}} Ansichten',
+  allItems: 'Artefakte',
+  breadcrumb: 'Ordner',
+  folderGone: 'Diesen Ordner gibt es nicht mehr.',
+  empty: 'Noch nichts hier. Laden Sie eine Datei hoch oder bitten Sie einen Agenten um etwas zum Ansehen.',
+  openPage: 'Seite öffnen',
+  details: 'Details',
+  kind: 'Art',
+  summary: 'Zusammenfassung',
+  madeBy: 'Erstellt von',
+  dropInto: 'Loslassen, um in {{folder}} hochzuladen',
+  dropRoot: 'Loslassen, um in diesen Arbeitsbereich hochzuladen',
+  dropRefused: 'Ansichten werden von Agenten gebaut. Dateien bitte in einen Ordner ziehen.',
+  kinds: {
+    view: 'Ansicht',
+  },
+};

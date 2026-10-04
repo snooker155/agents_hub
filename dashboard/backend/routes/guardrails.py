@@ -59,8 +59,11 @@ class GuardrailUpdate(BaseModel):
 
 
 class GuardrailTest(BaseModel):
-    text: str
+    text: str = ""
     stage: str = "input"
+    # A sequence guardrail is tested on calls, not text: ``[{tool, input, ok}]``
+    # in the order a run would make them.
+    calls: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentGuardrailsUpdate(BaseModel):
@@ -186,9 +189,15 @@ async def delete_guardrail(request: Request, guardrail_id: str):
 
 @router.post("/api/guardrails/{guardrail_id}/test")
 async def test_guardrail(request: Request, guardrail_id: str, payload: GuardrailTest):
-    """Dry run: the check result for ``text``, with no event and no audit
-    record written (visibility only, no editor role needed)."""
+    """Dry run: the check result for ``text`` (or, for a sequence guardrail,
+    for ``calls`` made in order: the first one it would stop), with no event
+    and no audit record written (visibility only, no editor role needed)."""
     g = _load_visible(request, guardrail_id)
+    if g.kind == "sequence":
+        from guardrails import sequence
+        if not payload.calls:
+            raise HTTPException(status_code=400, detail="a sequence guardrail is tested with 'calls'")
+        return {"applies": True, **sequence.simulate(g, payload.calls)}
     stage = payload.stage if payload.stage in ("input", "output") else "input"
     if g.stage not in (stage, "both"):
         return {"applies": False, "passed": True, "reason": "",

@@ -64,6 +64,14 @@ export default {
     available: 'available',
     unavailable: 'unavailable',
   },
+  size: {
+    label: 'Sandbox size',
+    none: 'No preset',
+    small: 'Small',
+    medium: 'Medium',
+    large: 'Large',
+    hint: 'Sets cpus, memory and the process limit together (small: 1 cpu, 1g, 128 pids; medium: 2 cpu, 4g, 256 pids; large: 4 cpu, 8g, 512 pids). A resource limit below, when set, overrides the matching preset value. Priced per container-hour on the run\'s cost.',
+  },
   limits: {
     label: 'Resource limits',
     memoryPlaceholder: 'Memory, e.g. 2g',

@@ -2,7 +2,7 @@ Use this agent in the default workspace when you want to manage the agent regist
 
 Good fits:
 - "Create a new agent called `data-cleaner` with read_file and write_file"
-- "Update `researcher_agent` to use deeper reasoning and a more concise prompt"
+- "Update `researcher` to use deeper reasoning and a more concise prompt"
 - "Add search_text to `content-writer` and increase its capacity to 2"
 - "Show me all registered agents and their tools"
 - "Delete the unused `legacy-x` agent"

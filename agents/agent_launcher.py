@@ -33,6 +33,7 @@ Public API:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -104,10 +105,11 @@ def prepare_run(
     configuration in :func:`launch_prepared`.
     """
     from tasks import service as _ts
-    from agents.registry import get_agent
+    from agents.registry import get_agent, resolve_agent_id
     from workspace import as_param_dict, resolve_task_workspace
     from common.session_service import get_or_create_task_session
 
+    agent_id = resolve_agent_id(agent_id)  # a renamed agent's old id runs the agent
     if not get_agent(agent_id):
         raise ValueError(f"Unknown agent_id: {agent_id}")
 
@@ -132,6 +134,25 @@ def prepare_run(
             agent_version_pin = int(_raw_pin)
         except (TypeError, ValueError):
             agent_version_pin = None
+
+    # Per-run overrides (agents/run_overrides.py): params["overrides"], with
+    # the older separate params tool_policy and output_schema folded in as
+    # aliases. Validated before anything is written, so a bad key or a tool
+    # set the capability guard refuses never becomes a run (ValueError /
+    # CapabilityViolation to the caller).
+    from agents import run_overrides as _run_overrides
+    run_overrides = _run_overrides.validate_for_agent(
+        agent_id, params.get("overrides"),
+        tool_policy=params.get("tool_policy"), output_schema=params.get("output_schema"))
+
+    # How many of this run's own delegated subtasks delegate_task_tool may
+    # have running at once (agents/registry.py max_concurrent_delegates, or
+    # this run's own overrides key): resolved once, here, and carried to the
+    # run's own environment below so a container run enforces it without a
+    # database round trip, the same way the delegation depth travels.
+    from agents.registry import get_agent as _get_agent_for_launch
+    max_concurrent_delegates = _run_overrides.effective_max_concurrent_delegates(
+        _get_agent_for_launch(agent_id), run_overrides)
 
     # Budget gate: refuse to launch when the workspace has hit its hard cost cap.
     # Opt-in (only enforced when a hard cap is configured) and fail-open on any
@@ -194,6 +215,8 @@ def prepare_run(
         instance_id=instance_id,
         workspace=ws_name,
         agent_version_pin=agent_version_pin,
+        # What this run was asked to build differently (the run page shows it).
+        **({"overrides": _run_overrides.record_view(run_overrides)} if run_overrides else {}),
     )
 
     # agent_run.py's CLI: positional `agent` and optional positional `action`,
@@ -243,6 +266,12 @@ def prepare_run(
     for _name in (getattr(task, "secrets", None) or []):
         if str(_name or "").strip():
             cli_args.extend(["--extra-secret", str(_name).strip()])
+
+    # The run's overrides as one flag (an answer schema and a tool policy of
+    # a proactive tick included, proactive/service.py): the child folds them
+    # into the build (agents/run_overrides.py).
+    if run_overrides:
+        cli_args.extend(["--overrides", json.dumps(run_overrides, ensure_ascii=False, sort_keys=True)])
 
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
@@ -312,6 +341,29 @@ def prepare_run(
         except Exception:  # noqa: BLE001 - the run still launches without the environment note on its record
             pass
 
+    # The sandbox size (environments/models.py SIZE_PRESETS) and effective
+    # cpu limit of a docker-mode run's container, so common.pricing can price
+    # the hours it lived once it ends (docs/costs.md "Container hours"). A
+    # run without a size is still priced, per its effective cpus, once it is
+    # known to execute in docker.
+    container_profile: Dict[str, Any] = {}
+    if docker_options and docker_options.get("size"):
+        container_profile["container_size"] = str(docker_options["size"])
+    if docker_options and docker_options.get("cpus"):
+        container_profile["container_cpus"] = str(docker_options["cpus"])
+    elif execution_mode == "docker":
+        try:
+            from common.config import live_setting
+            from managers.container_manager import DEFAULT_RUN_CPUS
+            container_profile["container_cpus"] = live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)
+        except Exception:  # noqa: BLE001 - no cpu figure recorded is priced as "unknown", never blocks the launch
+            logging.getLogger(__name__).debug("launch: no cpu figure for run %s", run_id, exc_info=True)
+    if container_profile:
+        try:
+            _update_run(run_id, container_profile)
+        except Exception:  # noqa: BLE001 - same as the environment_id note above
+            logging.getLogger(__name__).debug("launch: container profile not recorded on run %s", run_id, exc_info=True)
+
     spec: Dict[str, Any] = {
         "kind": QUEUE_KIND,
         "run_id": run_id,
@@ -320,6 +372,9 @@ def prepare_run(
         "launch_env": launch_env,
         "docker_options": docker_options,
         "environment_id": environment_id,
+        # This run's own delegate concurrency limit (see max_concurrent_delegates
+        # above), applied to the child's environment in launch_prepared.
+        "max_concurrent_delegates": max_concurrent_delegates,
         "task_id": str(task_id),
         "agent_id": agent_id,
         "session_id": session_id,
@@ -392,7 +447,7 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     # (see the launcher above), so the environment needs none here.
     env = _build_env(ws_name, session_id, str(log_file), instance_id,
                      agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None,
-                     key_id=str(spec.get("key_id") or "") or None)
+                     key_id=str(spec.get("key_id") or "") or None, run_id=run_id)
     # What the caller put on the spec through child_env fills the gaps only:
     # the launcher's own values (credentials, relay token, run ids) always win.
     extra = spec.get("env")
@@ -405,6 +460,16 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     if isinstance(launch_env, dict):
         for key, value in launch_env.items():
             env[str(key)] = str(value)
+    # This run's own delegate concurrency limit (tools/delegation.py
+    # MAX_CONCURRENT_ENV): read directly off the environment by
+    # delegate_task_tool, so a container run enforces it with no database
+    # round trip, exactly like the delegation depth.
+    from tools.delegation import MAX_CONCURRENT_ENV
+    env[MAX_CONCURRENT_ENV] = str(int(spec.get("max_concurrent_delegates") or 6))
+    # Host-bound secrets ride the token the run actually uses, now that the
+    # environment may have replaced the proxy URL (environments/secret_egress.py).
+    from common.subprocess_env import route_secrets
+    route_secrets(env, execution_mode=execution_mode, workspace=ws_name)
 
     if execution_mode == "docker":
         _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id,
@@ -617,7 +682,8 @@ def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], O
 def _build_env(ws_name: str, session_id: str, log_file: str,
                instance_id: Optional[str] = None, *, agent_id: Optional[str] = None,
                user_id: Optional[str] = None, key_id: Optional[str] = None,
-               extra_secret_names: Optional[Sequence[str]] = None) -> Dict[str, str]:
+               extra_secret_names: Optional[Sequence[str]] = None,
+               run_id: Optional[str] = None) -> Dict[str, str]:
     # base env + run metadata only. No model override is injected: agent_run.py
     # resolves the model via create_agent's cascade (agent definition → workspace
     # override → workspace settings → global), so a single run honours the agent's
@@ -626,7 +692,8 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     from common.subprocess_env import base_subprocess_env, add_run_env
     from instances.registry import ENV_INSTANCE_ID
     env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id, key_id=key_id,
-                              extra_secret_names=extra_secret_names)
+                              extra_secret_names=extra_secret_names, run_id=run_id,
+                              session_id=session_id or None)
     add_run_env(env, session_id=session_id, log_file=log_file)
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)

@@ -13,6 +13,9 @@ const apiProxy = {
   '/api': {
     target: apiProxyTarget,
     changeOrigin: true,
+    // WebSockets under /api (the terminal, the browser's frame stream) need
+    // the upgrade forwarded too; http-proxy only does that when asked.
+    ws: true,
   },
   // The proxied pages live outside /api: a preview iframe loads
   // /preview/<ticket>/ and a deployed app is published under /apps/<slug>/
@@ -25,6 +28,11 @@ const apiProxy = {
   '/apps': {
     target: apiProxyTarget,
     changeOrigin: true,
+  },
+  // The consent portal's public page and OAuth callback (docs/consent.md).
+  // Not changeOrigin: the backend builds the callback address from Host.
+  '/consent': {
+    target: apiProxyTarget,
   },
 }
 

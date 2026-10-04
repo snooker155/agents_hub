@@ -379,7 +379,7 @@ export function LoggingSection({ s }) {
 
 export function Toggle({ checked, disabled, onChange }) {
   return (
-    <label className="inline-flex items-center cursor-pointer shrink-0">
+    <label className="relative inline-flex items-center cursor-pointer shrink-0">
       <input
         type="checkbox"
         className="sr-only peer"
@@ -500,6 +500,27 @@ export function ToolPolicySection({ s }) {
         </div>
         <Toggle checked={!!s.policy.require_tool_approval} disabled={s.policySaving} onChange={s.toggleApproval} />
       </div>
+      {/* How long a call held in a chat turn waits for Approve or Deny. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label htmlFor="tool-approval-timeout" className="text-sm text-gray-700">{t('settings.toolApprovalTimeout')}</label>
+        <input
+          id="tool-approval-timeout"
+          key={s.policy.tool_approval_timeout ?? 'default'}
+          type="number"
+          min={10}
+          max={86400}
+          defaultValue={s.policy.tool_approval_timeout ?? ''}
+          placeholder="600"
+          disabled={s.policySaving}
+          onBlur={(e) => {
+            const value = e.target.value.trim();
+            if (value === String(s.policy.tool_approval_timeout ?? '')) return;
+            s.savePolicy({ tool_approval_timeout: value === '' ? null : Number(value) });
+          }}
+          className={inputCls.replace('w-full', 'w-28')}
+        />
+        <p className="w-full text-xs text-gray-500">{t('settings.toolApprovalTimeoutHint')}</p>
+      </div>
 
       {/* The workspace's per-tool permission policy and the model
           that decides "auto" calls (tools/permission_policy.py). */}
@@ -525,6 +546,19 @@ export function ToolPolicySection({ s }) {
           className={`${inputCls} font-mono text-xs ${s.hooksError ? 'border-red-300' : ''}`}
         />
         {s.hooksError && <p className="mt-1 text-xs text-red-600">{s.hooksError}</p>}
+        {s.policy?.ignored_hooks_file && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="hooks-file-ignored">
+            <p>{t('settings.hooksFileIgnored')}</p>
+            <button
+              type="button"
+              onClick={s.importHooksFile}
+              disabled={s.policySaving}
+              className="mt-1.5 rounded border border-amber-300 bg-white px-2 py-1 font-medium hover:bg-amber-100 disabled:opacity-50"
+            >
+              {t('settings.importHooksFile')}
+            </button>
+          </div>
+        )}
         <div className="mt-2 flex items-center gap-3">
           <button
             type="button"

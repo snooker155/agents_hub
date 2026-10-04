@@ -23,7 +23,9 @@
         "tool-policy",
         "handoffs",
         "secrets",
-        "services"
+        "services",
+        "proactive",
+        "agent-inheritance"
       ],
       "headings": [
         "What an agent is made of",
@@ -33,8 +35,32 @@
         "Versions",
         "Versions and pinning",
         "Delegation",
+        "Inheritance",
         "The agent page",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "agent-inheritance",
+      "title": "Agent inheritance",
+      "summary": "An agent can extend another: start from its prompt, tools, model and the rest, and declare only what is different. A system agent can be a parent, never a child.",
+      "surface": "Agents",
+      "related": [
+        "agents",
+        "apply",
+        "kits",
+        "system-agents",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What is inherited and what is not",
+        "The prompt",
+        "List deltas",
+        "Reading the chain",
+        "Setting, changing and pinning the parent",
+        "Limits",
+        "The guard on a parent's change",
+        "ah apply"
       ]
     },
     {
@@ -95,6 +121,60 @@
       ]
     },
     {
+      "id": "apply",
+      "title": "Declarative files: ah apply",
+      "summary": "Agents, environments, deployments and memory pools declared in files in a repository; `ah apply` prints a plan (create, update, unchanged, drift, delete) and makes the hub match, recording hub ids in an `ah.lock` so the next apply updates instead of duplicating. Drift detection, `--prune`, `--export` from existing records.",
+      "surface": "Terminal",
+      "related": [
+        "cli",
+        "agents",
+        "environments",
+        "deployments",
+        "scheduling",
+        "memory",
+        "agent-inheritance"
+      ],
+      "headings": [
+        "A repository",
+        "Agents",
+        "Inheritance",
+        "Environments",
+        "Memory pools",
+        "Deployments",
+        "References",
+        "The plan",
+        "What cannot change in place",
+        "The lock file",
+        "Export",
+        "Options",
+        "From code",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "channels",
+      "title": "Chat channels",
+      "surface": "Connectors",
+      "summary": "Slack, Discord, Microsoft Teams and mail are chat channels where agents run in response to inbound messages. Each has bindings from chats to a workspace plus one agent or flow, and a status card showing running state and last error.",
+      "related": [
+        "connectors",
+        "notifications",
+        "proactive",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What every channel has",
+        "What a message does",
+        "Outbound",
+        "Slack",
+        "Discord",
+        "Microsoft Teams",
+        "Mail",
+        "The API",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "connections",
       "title": "Connections",
       "surface": "Connections",
@@ -123,20 +203,29 @@
       "id": "connectors",
       "title": "Connectors",
       "surface": "Connectors",
-      "summary": "Services this hub reaches out to: a Telegram bot, a GitHub or GitLab account, a local Blender install. The other direction from connections.",
+      "summary": "Services this hub reaches out to: chat channels (Slack, Discord, Teams, mail), git providers (GitHub, GitLab, Bitbucket, Gitea), Telegram, issue trackers (Jira, Linear), integrations (Google Workspace, Microsoft Graph), and Blender. The other direction from connections.",
       "related": [
         "connections",
+        "channels",
         "telegram",
+        "trackers",
+        "integrations",
         "projects",
         "views",
         "settings",
         "mcp",
-        "notifications"
+        "notifications",
+        "watchers"
       ],
       "headings": [
+        "Connectors per workspace",
+        "Chat channels",
+        "Git",
         "Telegram",
-        "GitHub and GitLab",
+        "Issue trackers",
+        "Integrations",
         "Blender",
+        "Setting up from the chat",
         "Gotchas"
       ]
     },
@@ -243,7 +332,8 @@
         "costs",
         "tools-and-capabilities",
         "experiments",
-        "notifications"
+        "notifications",
+        "proactive"
       ],
       "headings": [
         "The pieces",
@@ -456,13 +546,40 @@
         "flows",
         "imported-agents",
         "system-agents",
-        "registry"
+        "registry",
+        "kits"
       ],
       "headings": [
         "Publishing an agent, a flow or a skill",
         "Cloning one into your workspace",
         "When to reach for a published agent",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "kits",
+      "title": "Industry agent kits",
+      "surface": "Marketplace",
+      "summary": "A ready set of agents for one line of work, with the connectors it needs and an outcome rubric for each agent, installed into a workspace in one step. Support, finance operations and recruiting ship with the hub.",
+      "related": [
+        "apply",
+        "outcomes",
+        "marketplace",
+        "agents",
+        "connectors",
+        "channels",
+        "tools-and-capabilities",
+        "agent-inheritance"
+      ],
+      "headings": [
+        "The Kits tab",
+        "Manifest",
+        "Agent default outcome",
+        "Installing",
+        "Two workspaces, one kit",
+        "The lock",
+        "Specializing a system agent",
+        "Writing a kit"
       ]
     },
     {
@@ -518,7 +635,8 @@
       "related": [
         "skills",
         "tools-and-capabilities",
-        "workspaces"
+        "workspaces",
+        "proactive"
       ],
       "headings": [
         "The layers",
@@ -542,7 +660,8 @@
         "costs",
         "hub-as-provider",
         "local-models",
-        "settings"
+        "settings",
+        "special-models"
       ],
       "headings": [
         "Catalog vs. enabled",
@@ -550,7 +669,8 @@
         "Pricing",
         "Context window",
         "Providers",
-        "Local models"
+        "Local models",
+        "Special models"
       ]
     },
     {
@@ -587,6 +707,25 @@
         "Two kinds of page",
         "What the assistant is given",
         "One thread per page",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "help",
+      "title": "Help",
+      "summary": "The Help button in the header: the Support agent, for when you are lost. It reads what is set up and what is missing and suggests the next steps with links to the right pages.",
+      "surface": "Everywhere",
+      "related": [
+        "page-chat",
+        "system-agents",
+        "chat",
+        "sessions-and-runs",
+        "overview"
+      ],
+      "headings": [
+        "What it is for",
+        "What the agent is given",
+        "How it differs from the page chat",
         "Gotchas"
       ]
     },
@@ -661,7 +800,8 @@
         "telegram",
         "notifications",
         "deployments",
-        "environments"
+        "environments",
+        "proactive"
       ],
       "headings": [
         "Job kinds",
@@ -671,6 +811,70 @@
         "Lease and idempotency",
         "The firing journal",
         "Auto pause",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "proactive",
+      "title": "Proactive agents",
+      "summary": "An agent with a pulse of its own: it wakes up on a schedule, checks its sources, acts within a budget, writes to you only when it has something to say, and remembers between ticks what it saw.",
+      "surface": "Agents",
+      "related": [
+        "scheduling",
+        "agents",
+        "memory",
+        "notifications",
+        "costs",
+        "environments",
+        "deployments",
+        "tasks",
+        "agent-loop",
+        "audit",
+        "tools-and-capabilities",
+        "tool-policy",
+        "telegram",
+        "files",
+        "evals",
+        "demo",
+        "watchers"
+      ],
+      "headings": [
+        "What a tick is",
+        "The profile",
+        "Schedule and quiet hours",
+        "Budgets and limits",
+        "The tick's answer",
+        "Triggers besides the clock",
+        "Security",
+        "Memory between ticks",
+        "Notifications",
+        "The Pulse tab",
+        "The journal over time",
+        "API",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "watchers",
+      "title": "Watchers",
+      "summary": "Observers of outside state (a mailbox over IMAP, an HTTP resource) that poll on their own interval and wake a proactive agent when something changes, without running a model.",
+      "surface": "Watchers",
+      "related": [
+        "proactive",
+        "connectors",
+        "secrets",
+        "notifications",
+        "tools-and-capabilities",
+        "service-health",
+        "audit",
+        "scheduling"
+      ],
+      "headings": [
+        "What a watcher is",
+        "Kinds",
+        "Waking an agent",
+        "Polling",
+        "API",
         "Gotchas"
       ]
     },
@@ -795,7 +999,7 @@
     {
       "id": "skills",
       "title": "Skills",
-      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from a project's .claude/skills folders, SKILL.md import and export.",
+      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from any SKILL.md folder of a project repository, public skill sources connected in one click, a safety review with flags, scripts and the license verdict on every imported skill, SKILL.md import and export.",
       "surface": "Skills Catalog",
       "related": [
         "agents",
@@ -825,12 +1029,15 @@
         "marketplace",
         "service-health",
         "tools-and-capabilities",
-        "workspaces"
+        "workspaces",
+        "agent-inheritance",
+        "workspace-roles"
       ],
       "headings": [
         "What being a system agent means",
         "The roster",
-        "Why the last two are separate"
+        "Why the last two are separate",
+        "Swapping one of them out"
       ]
     },
     {
@@ -846,7 +1053,8 @@
         "sessions-and-runs",
         "notifications",
         "costs",
-        "outcomes"
+        "outcomes",
+        "proactive"
       ],
       "headings": [
         "Status",
@@ -857,6 +1065,25 @@
         "Files",
         "Outcome",
         "Agent version",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "trackers",
+      "title": "Issue trackers",
+      "surface": "Connectors",
+      "summary": "Jira and Linear are linked to a project's repository. A sync is idempotent: issues from the tracker become tasks. Tools read issues, create them, comment and transition their status.",
+      "related": [
+        "connectors",
+        "projects",
+        "tasks",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "Jira",
+        "Linear",
+        "Linking a project",
+        "Tools",
         "Gotchas"
       ]
     },
@@ -887,7 +1114,8 @@
         "chat",
         "scheduling",
         "tools-and-capabilities",
-        "connectors"
+        "connectors",
+        "proactive"
       ],
       "headings": [
         "What the binding does",
@@ -907,7 +1135,8 @@
         "system-agents",
         "web-logs",
         "mcp",
-        "browser"
+        "browser",
+        "proactive"
       ],
       "headings": [
         "The capability model",
@@ -1000,8 +1229,57 @@
         "What a workspace holds",
         "Per-workspace memory",
         "The Settings tab",
+        "One workspace per run",
+        "Managing workspaces from the chat",
         "The default workspace",
         "The system workspace",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "workspace-roles",
+      "title": "Workspace roles",
+      "summary": "A role is a kind of work (coder, reviewer, web search, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in Claude Code, Codex or Aider is one setting.",
+      "surface": "Workspace settings, Agent roles section",
+      "related": [
+        "agents",
+        "imported-agents",
+        "system-agents",
+        "handoffs",
+        "tools-and-capabilities",
+        "workspaces",
+        "special-models"
+      ],
+      "headings": [
+        "The roles",
+        "Choosing who holds a role",
+        "Where a reference works",
+        "The capability guard",
+        "Upgrading",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "special-models",
+      "title": "Special models",
+      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
+      "surface": "Models, Special models tab; Workspace settings, Special models section",
+      "related": [
+        "workspace-roles",
+        "models",
+        "files",
+        "costs",
+        "tools-and-capabilities",
+        "isolation",
+        "settings"
+      ],
+      "headings": [
+        "Purposes and tools",
+        "How an agent knows",
+        "Configuring",
+        "What a call produces",
+        "Money",
+        "Capabilities",
         "Gotchas"
       ]
     },
@@ -1017,7 +1295,8 @@
         "tasks",
         "instances",
         "flows",
-        "evals"
+        "evals",
+        "proactive"
       ],
       "headings": [
         "Outbound: webhooks and Slack",
@@ -1075,6 +1354,23 @@
         "How passwords and sessions are stored",
         "Picking a mode",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "integrations",
+      "title": "Integrations",
+      "surface": "Connectors",
+      "summary": "External services agents read from and write to: Google Workspace (Drive, Docs, Sheets, Calendar), Microsoft Graph (Outlook Calendar), and future connectors for Notion, Confluence and databases.",
+      "related": [
+        "connectors",
+        "tools-and-capabilities",
+        "files"
+      ],
+      "headings": [
+        "Google Workspace",
+        "Microsoft Graph",
+        "Notion and Confluence",
+        "Databases"
       ]
     },
     {
@@ -1245,7 +1541,8 @@
         "settings",
         "containers",
         "cli",
-        "github-app"
+        "github-app",
+        "watchers"
       ],
       "headings": [
         "Why this exists",
@@ -1274,7 +1571,8 @@
         "scim",
         "api-keys",
         "secrets",
-        "guardrails"
+        "guardrails",
+        "proactive"
       ],
       "headings": [
         "What is recorded",
@@ -1370,7 +1668,8 @@
         "agents",
         "tools-and-capabilities",
         "playground",
-        "views"
+        "views",
+        "proactive"
       ],
       "headings": [
         "What it holds",
@@ -1465,6 +1764,28 @@
       ]
     },
     {
+      "id": "terminal",
+      "title": "Terminal",
+      "summary": "A shell in a running container from the dashboard: a Docker run's container from the run page, a service replica's container from its row. Opened with a one-time ticket over a WebSocket; the hub keeps the shell through a dropped socket for a grace period and replays recent output on reconnect. Owner or admin only, audited on open and close.",
+      "surface": "Containers",
+      "related": [
+        "containers",
+        "services",
+        "sessions-and-runs",
+        "audit",
+        "identity",
+        "browser"
+      ],
+      "headings": [
+        "Opening one",
+        "Reconnecting",
+        "Who may open one",
+        "Settings",
+        "How it works",
+        "Limits"
+      ]
+    },
+    {
       "id": "tool-policy",
       "title": "Tool policy",
       "summary": "Three modes decide what an agent's tool call can do: always_allow runs it, always_ask holds it for approval, and auto sends it to a small model to classify.",
@@ -1474,7 +1795,8 @@
         "hooks",
         "tasks",
         "workspaces",
-        "guardrails"
+        "guardrails",
+        "proactive"
       ],
       "headings": [
         "Setting a policy",
@@ -1493,7 +1815,10 @@
       "related": [
         "tasks",
         "loops",
-        "evals"
+        "evals",
+        "agents",
+        "kits",
+        "apply"
       ],
       "headings": [
         "The rubric format",
@@ -1505,7 +1830,8 @@
         "Blocking",
         "API and audit",
         "In loops",
-        "Cost"
+        "Cost",
+        "An agent's default outcome"
       ]
     },
     {
@@ -1595,6 +1921,26 @@
       ]
     },
     {
+      "id": "consent",
+      "title": "Consent portal",
+      "summary": "A widget visitor or chat channel user grants an agent their own Google or Microsoft account through a public consent page: a signed single use link, the provider's sign in with offline access, the refresh token kept as their personal secret, the agent's Google and Outlook tools acting only as them in their own turns, and revoke by the person or the operator.",
+      "surface": "Agents",
+      "related": [
+        "widget",
+        "channels",
+        "secrets",
+        "connectors",
+        "audit"
+      ],
+      "headings": [
+        "Setting it up",
+        "What the end user sees",
+        "How it works in a turn",
+        "Security notes",
+        "Routes"
+      ]
+    },
+    {
       "id": "handoffs",
       "title": "Handoffs",
       "summary": "Give a chat conversation to another agent: targets, history filters (full, summary, last_n, none), limits, events, and handoff versus delegation.",
@@ -1637,6 +1983,29 @@
       ]
     },
     {
+      "id": "isolation",
+      "title": "Isolated workspaces",
+      "summary": "A workspace as a perimeter: shell and code run in a sandbox container with no network, only an allowlist of tools that stay inside, the internet readable only on the workspace's own list of sites (GET only, read only browser), and every hub way out (MCP, channels, widgets, webhooks, personal memory, hook files) closed.",
+      "surface": "Workspace settings, Isolation section",
+      "related": [
+        "workspaces",
+        "sandboxes",
+        "tools-and-capabilities",
+        "hooks",
+        "browser",
+        "mcp",
+        "secrets"
+      ],
+      "headings": [
+        "What changes inside",
+        "The tools an agent keeps",
+        "Reading the internet",
+        "The hub's own ways out",
+        "Turning it on",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "files",
       "title": "Workspace files",
       "summary": "Files uploaded once and referenced by id in chat, memory, tasks and evals, plus numbered RAG citations in answers.",
@@ -1645,15 +2014,41 @@
         "chat",
         "memory",
         "tasks",
-        "evals"
+        "evals",
+        "proactive"
       ],
       "headings": [
         "The object",
         "Limits",
         "Text for a model",
+        "Waking an agent",
         "Where it is used",
         "Citations",
         "API"
+      ]
+    },
+    {
+      "id": "sdk",
+      "title": "TypeScript SDK",
+      "summary": "A typed client for an Agents Hub from outside it: clients/agents-hub-ts, generated types from the hub's own OpenAPI schema plus a hand-written layer for agents, tasks, chat (with streaming) and the /v1 OpenAI compatible endpoints.",
+      "surface": "Integrations",
+      "related": [
+        "api-keys",
+        "hub-as-provider",
+        "widget",
+        "chat",
+        "cli"
+      ],
+      "headings": [
+        "What is generated, what is hand-written",
+        "agents and tasks",
+        "chat",
+        "v1",
+        "Errors",
+        "Streaming, underneath",
+        "The widget",
+        "Testing",
+        "Gotchas"
       ]
     },
     {

@@ -90,6 +90,12 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
         **{k: v for k, v in {
             "tool_policy": dict(getattr(spec, "tool_policy", None) or {}),
             "fallback_models": list(getattr(spec, "fallback_models", None) or []),
+            # The advisor model (tools/advisor.py); left out while unset.
+            "advisor_model": getattr(spec, "advisor_model", None) or None,
+            # The delegate concurrency limit (tools/delegation.py); left out
+            # at its default (6) like an unset loop policy.
+            "max_concurrent_delegates": (getattr(spec, "max_concurrent_delegates", None)
+                                         if getattr(spec, "max_concurrent_delegates", 6) != 6 else None),
             "output_schema": getattr(spec, "output_schema", None),
             "guardrails": sorted(getattr(spec, "guardrails", None) or []),
             "tool_search": getattr(spec, "tool_search", None),
@@ -123,12 +129,26 @@ def _hash_parts(parts: Dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _inherited_part(spec: Any, own: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """For a child (``extends``, agents/inheritance.py): the chain's links and
+    the effective prompt parts, so a parent's edit changes the child's hash
+    too. None for any other agent, whose hash is therefore what it always was."""
+    if not getattr(spec, "extends", None):
+        return None
+    from agents import inheritance
+    return {"chain": inheritance.chain_pins(spec),
+            **inheritance.effective_parts(spec, own=own)}
+
+
 def _fingerprint_spec(spec: Any) -> Dict[str, Any]:
     def_id = spec.def_id()
     parts = _spec_parts(spec)
     parts["instructions"] = prompt_assembly.read_instructions(def_id)
     parts["capabilities"] = prompt_assembly.read_capabilities(def_id)
     parts["usage"] = prompt_assembly.read_usage(def_id)
+    inherited = _inherited_part(spec)
+    if inherited is not None:
+        parts["inherited"] = inherited
     return {"hash": _hash_parts(parts), "parts": parts}
 
 
@@ -209,19 +229,29 @@ def snapshot_if_changed(
             next_parts["instructions"] = defn.get("instructions", fp["parts"]["instructions"])
             next_parts["capabilities"] = defn.get("capabilities", fp["parts"]["capabilities"])
             next_parts["usage"] = defn.get("usage", fp["parts"]["usage"])
+            next_inherited = _inherited_part(probe, own={
+                p: next_parts[p] for p in ("instructions", "capabilities", "usage")})
+            if next_inherited is not None:
+                next_parts["inherited"] = next_inherited
             if _hash_parts(next_parts) == fp["hash"]:
                 return None  # the pending write changes nothing
 
         version = int(latest["version"]) + 1 if latest is not None else 1
         spec_json = json.dumps(spec.to_dict(), ensure_ascii=False, sort_keys=True)
-        definition_json = json.dumps(
-            {
-                "instructions": fp["parts"].get("instructions", ""),
-                "capabilities": fp["parts"].get("capabilities", ""),
-                "usage": fp["parts"].get("usage", ""),
-            },
-            ensure_ascii=False,
-        )
+        definition: Dict[str, Any] = {
+            "instructions": fp["parts"].get("instructions", ""),
+            "capabilities": fp["parts"].get("capabilities", ""),
+            "usage": fp["parts"].get("usage", ""),
+        }
+        if fp["parts"].get("inherited"):
+            # A child: the files above are its OWN text; the effective parts
+            # are what it ran with (a pinned child of this version reads
+            # them), and the chain names every link's version.
+            from agents import inheritance
+            inh = fp["parts"]["inherited"]
+            definition["effective"] = {p: inh.get(p, "") for p in ("instructions", "capabilities", "usage")}
+            definition["chain"] = inheritance.run_chain(str(agent_id), version)
+        definition_json = json.dumps(definition, ensure_ascii=False)
         with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO agent_versions "
@@ -457,11 +487,11 @@ def rollback_to(agent_id: str, version: int, *, actor: Optional[str] = None) -> 
 
     def_id = restored_spec.def_id()
     defn = entry["definition"] or {}
-    _write_definition_files(def_id, defn)
+    _write_definition_files(def_id, defn, allow_empty=bool(restored_spec.extends))
     return restored_spec.to_dict()
 
 
-def _write_definition_files(def_id: str, defn: Dict[str, Any]) -> None:
+def _write_definition_files(def_id: str, defn: Dict[str, Any], *, allow_empty: bool = False) -> None:
     """Rewrite the three markdown files to match a stored snapshot.
 
     Mirrors the semantics of the dashboard's PUT /definition route: a
@@ -470,7 +500,8 @@ def _write_definition_files(def_id: str, defn: Dict[str, Any]) -> None:
     empty since ``add_agent`` would already have refused an unusable agent).
     """
     instructions = defn.get("instructions") or ""
-    if instructions.strip():
+    # A child's own instructions may be empty (agents/inheritance.py).
+    if instructions.strip() or allow_empty:
         prompt_assembly.write_instructions(def_id, instructions)
 
     caps_path = prompt_assembly.agent_dir(def_id) / prompt_assembly.CAPABILITIES_FILE

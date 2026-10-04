@@ -256,6 +256,10 @@ def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
         for step in reversed(turn["tools"]):
             if step.get("step") == event.get("step") or step.get("tool") == event.get("tool"):
                 step[field] = value
+                # What the tool gate made of the call (tools/permission_policy.py).
+                if event.get("evaluated_permission"):
+                    step["evaluated_permission"] = event.get("evaluated_permission")
+                    step["reason_code"] = event.get("reason_code") or ""
                 break
     elif kind == "node_start":
         label = event.get("label") or event.get("agent_id") or event.get("node_id")

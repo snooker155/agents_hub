@@ -15,9 +15,11 @@ import { applyOp } from '../views/opsClient';
 import ViewRenderer, { FILL_KINDS } from '../views/ViewRenderer';
 import ControlsPanel from '../views/ControlsPanel';
 import { KindIcon } from '../views/ViewCard';
+import { ownerLink } from '../views/owner';
 
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // The dedicated page for a single view — the whole content at full size, not a
 // preview. The Studio is where a view is *edited* (outliner, chat, op history);
 // this is where it is *read*: the renderer gets the entire viewport, the view's
@@ -58,34 +60,6 @@ function dataSource(view) {
   if (d.url) return `url · ${d.url}`;
   if (d.inline !== undefined) return 'inline';
   return null;
-}
-
-// Where each owner kind's own page lives (App.jsx routes). "run" is an agent
-// run (a row in `runs`, MessageDetails' route); the rest are entity runs
-// (common/entity_runs.py), whose own page takes the entity's id, not the
-// run's, so it needs `owner.entity_id` (dashboard/backend/routes/views.py
-// resolves it). Every entity page takes the run in its `?run=` parameter
-// (the loops page also names the loop with `?loop=`).
-const OWNER_ROUTE = {
-  run: (o) => `/messages/${o.id}`,
-  team: (o) => (o.entity_id ? `/teams/${o.entity_id}?run=${o.id}` : null),
-  flow: (o) => (o.entity_id ? `/flows/${o.entity_id}?run=${o.id}` : null),
-  scenario: (o) => (o.entity_id ? `/playground/${o.entity_id}?run=${o.id}` : null),
-  loop: (o) => (o.entity_id ? `/loops?loop=${o.entity_id}&run=${o.id}` : '/loops'),
-};
-
-// A view's owner as the backend returns it, falling back to the older
-// `run_id`-only shape for a view fetched before this field existed.
-function resolveOwner(view) {
-  if (view?.owner?.kind && view?.owner?.id) return view.owner;
-  if (view?.run_id) return { kind: 'run', id: view.run_id };
-  return null;
-}
-
-function ownerLink(view) {
-  const owner = resolveOwner(view);
-  if (!owner) return null;
-  return { to: OWNER_ROUTE[owner.kind]?.(owner) || null, label: `${owner.kind} · ${owner.id}` };
 }
 
 export default function ViewDetail() {
@@ -197,7 +171,7 @@ export default function ViewDetail() {
 
   const onDelete = useCallback(async () => {
     if (!window.confirm(t('viewDetail.confirmDelete'))) return;
-    try { await deleteView(viewId); navigate('/views'); } catch { flash(t('viewDetail.deleteFailed')); }
+    try { await deleteView(viewId); navigate('/artifacts?folder=__views__'); } catch { flash(t('viewDetail.deleteFailed')); }
   }, [t, viewId, navigate, flash]);
 
   const hasControls = !!(view?.controls
@@ -219,7 +193,7 @@ export default function ViewDetail() {
         icon={(props) => <KindIcon kind={view?.kind} {...props} />}
         title={view?.title || 'View'}
         subtitle={view?.summary}
-        backTo="/views"
+        backTo="/artifacts?folder=__views__"
         backLabel={t('viewDetail.views')}
         badges={view?.kind && (
           <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 flex-shrink-0">{view.kind}</span>
@@ -254,13 +228,13 @@ export default function ViewDetail() {
             padding: text run to the edge of a card is unreadable. */}
         <div ref={viewportRef}
              className={`flex-1 min-w-0 overflow-auto bg-gray-50 dark:bg-gray-950 ${flush ? '' : 'p-4'}`}>
-          {loading && <div className="h-full grid place-items-center text-gray-400">{t('viewDetail.loadingView')}</div>}
+          {loading && <div className="h-full grid place-items-center"><PageLoader size="sm" label={t('viewDetail.loadingView')} /></div>}
           {error && !loading && (
             <div className="h-full grid place-items-center">
               <div className="text-center">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2 text-amber-500" />
                 <p className="text-gray-500">{error}</p>
-                <Link to="/views" className="text-sm text-indigo-600 hover:underline">{t('viewDetail.backToViews')}</Link>
+                <Link to="/artifacts?folder=__views__" className="text-sm text-indigo-600 hover:underline">{t('viewDetail.backToViews')}</Link>
               </div>
             </div>
           )}

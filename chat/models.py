@@ -6,9 +6,9 @@ The Pydantic models for a chat exchange. They live in the ``chat`` core package
 be imported without the dashboard backend on ``sys.path``. The backend ``models``
 module re-exports them for the route layer and other backend consumers.
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class ChatHistoryMessage(BaseModel):
@@ -84,6 +84,27 @@ class ChatRequest(BaseModel):
     # copy that already finished continues *its* thread instead of forking a new
     # one. Set by the instances route; the web Chat page leaves it empty.
     instance_id: Optional[str] = None
+    # A stored agent version this turn is built from (agents/versions.py),
+    # instead of the live definition. Checked against the agent's history
+    # before the turn starts (400 for a version it does not have). A
+    # service's own pin (services/store.py) applies when this is empty.
+    agent_version: Optional[int] = None
+    # Per-run overrides for this turn (agents/run_overrides.py): model,
+    # provider, system, system_append, tools, skills, mcp, tool_policy,
+    # output_schema. An unknown key is a 400; a tool set the capability
+    # guard refuses is a 409. Kept on the run record as ``overrides``.
+    overrides: Optional[Dict[str, Any]] = None
+
+    @field_validator("agent_id")
+    @classmethod
+    def _current_agent_id(cls, value: Optional[str]) -> Optional[str]:
+        # A renamed agent's old id (agents.registry.LEGACY_AGENT_IDS) arrives
+        # from stored chats, widget threads and old clients: every turn runs,
+        # and is recorded, under the current id.
+        if not value:
+            return value
+        from agents.registry import LEGACY_AGENT_IDS, resolve_agent_id
+        return resolve_agent_id(value) if value.strip() in LEGACY_AGENT_IDS else value
 
     @model_validator(mode="after")
     def _require_target(self):

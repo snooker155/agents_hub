@@ -26,7 +26,7 @@ const GROUPS = [
   ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs', 'audit']],
   ['Models', ['models', 'local-models', 'hub-as-provider', 'model-structure']],
   ['Integrations', ['connections', 'connectors', 'mcp', 'marketplace', 'registry', 'github-app', 'notifications']],
-  ['Running the service', ['settings', 'containers', 'environments', 'sandboxes', 'service-health', 'runbook', 'slo', 'system-workspace']],
+  ['Running the service', ['settings', 'containers', 'terminal', 'environments', 'sandboxes', 'isolation', 'service-health', 'runbook', 'slo', 'system-workspace']],
   ['Deploying', ['deployment', 'scaling', 'workers', 'storage', 'backup']],
   ['Accounts and access', ['identity', 'sso', 'scim', 'api-keys']],
 ];
@@ -136,6 +136,7 @@ export default defineConfig({
       { text: 'Documentation', link: '/guide/overview', activeMatch: '/guide/' },
       { text: 'Install', link: '/guide/installation' },
       { text: 'Recipes', link: '/recipes/', activeMatch: '/recipes/' },
+      { text: 'Compare', link: '/compare' },
       { text: 'Changelog', link: '/guide/changelog' },
       // A separate app (the dashboard over recorded data), not a VitePress
       // page: `target` stops the VitePress router from trying to render it.

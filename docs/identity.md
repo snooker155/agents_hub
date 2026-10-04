@@ -218,21 +218,48 @@ workspace). Administrators, the shared token and the service credential see
 everything; a scoped API key sees its scope and nothing beyond it. None of
 this applies outside `multi` mode.
 
-## The service credential
+## Run tokens and the service credential
 
-Agent runs are subprocesses, and they report back over the same `/api` the
-browser uses: the run-state relay, the streaming callback in
-`agents/callbacks/streaming.py`, and `_relay_notify` in
-`common/session_broker.py`. A subprocess has no session and no password, so in
-`multi` mode it is given a credential of its own.
+Agent runs are subprocesses or containers, and they report back over the same
+`/api` the browser uses: the run state (`/api/run-state/...`, from a container
+with a read-only state mount), the streaming callback in
+`agents/callbacks/streaming.py`, a carrier's events, and `_relay_notify` and
+`publish_event` in `common/session_broker.py`. A subprocess has no session and
+no password, so in `token` and `multi` mode it is given a credential of its
+own: a **run token** (`common/run_tokens.py`), minted per launch and handed
+over as `AGENTS_HUB_RUN_TOKEN`.
 
-If `AGENTS_HUB_API_TOKEN` is configured, that is the credential, which is what
-those relays have always used. If it is not, the backend mints one random token
-per process, keeps it in memory, and exports it to every subprocess it launches
-as `AGENTS_HUB_SERVICE_TOKEN` (see `common/subprocess_env.py`). It never
-reaches disk and dies with the process that issued it. Requests carrying it act
-as an administrator, because a run writes on behalf of whoever started it and
-may touch any workspace.
+- **It reaches only the relay routes** (`common/auth.py` `RELAY_ROUTES`: the
+  run-state prefix, `POST /api/sessions/{id}/events`,
+  `POST /api/instances/{id}/events`, `POST /api/stream/notify`,
+  `POST /api/stream/publish`, `POST /api/plan/notifications/publish`). Any
+  other route answers 403 to it, whatever an agent's shell does with it.
+- **People do not reach those routes either.** A user session or a personal
+  key gets 403 there, administrators included: they are the hub's internal
+  surface, and through them a member could otherwise write any run's record,
+  delegate as somebody else (`launched_by`) or push events into another
+  person's chat. The service credential and, in `token` mode, the shared
+  token still reach them, for hub processes that are not runs (a worker on
+  another host).
+- **Only its hash is stored** (table `run_tokens`, migration 0040), so a run
+  that can read the database learns nothing it could present.
+- **It lives as long as it is used.** The expiry slides forward by
+  `AGENTS_HUB_RUN_TOKEN_TTL` seconds (default a day) while the process keeps
+  calling, so a week long loop keeps its relays and a token whose process died
+  stops working a day later. Closing the run retires it: the sliding stops and
+  ten minutes are left for the last events. A carrier restart retires the
+  previous carrier's token at once. Daily maintenance deletes tokens a week
+  past their expiry.
+
+The hub-wide credentials never reach a run's environment any more:
+`AGENTS_HUB_API_TOKEN`, `AGENTS_HUB_SERVICE_TOKEN` and `AGENTS_HUB_API_KEY` are
+taken out of it even when the backend's own environment holds them. In
+`single` mode nothing is minted, since the API asks nobody for a credential.
+
+The service credential itself stays for the hub's own processes: if
+`AGENTS_HUB_API_TOKEN` is configured, that is it; if not, the backend mints one
+random token per process and keeps it in memory. Requests carrying it act as an
+administrator.
 
 ## Tickets for streams
 

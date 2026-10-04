@@ -18,6 +18,7 @@ import logging
 import math
 import time
 from pathlib import Path
+from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -227,6 +228,18 @@ def build_artifact(op: str, path: str, before: str | None, after: str | None) ->
 
 
 # ── the callback ───────────────────────────────────────────────────────────────
+
+def _verdict(tool: Any, consumer: Any, inputs: Any = None) -> dict:
+    """``{evaluated_permission, reason_code}`` for a call that just ended, from
+    the run's per-call trail (tools/permission_policy.call_verdict)."""
+    from tools.permission_policy import call_verdict
+    return call_verdict(str(tool or ""), consumer, inputs)
+
+
+def _trail_marker(verdict: dict) -> str:
+    from tools.permission_policy import trail_marker
+    return trail_marker(verdict) if verdict else ""
+
 
 class ChatStreamCallback(BaseCallbackHandler):
     """Callback handler that forwards LLM/tool execution events to an asyncio queue."""
@@ -711,7 +724,7 @@ class ChatStreamCallback(BaseCallbackHandler):
         append_log(self.log_lines, line, self.log_file)
         self._pending_tool = {
             "step": self._step, "tool": name, "input": input_full,
-            "_started": time.perf_counter(),
+            "_started": time.perf_counter(), "_inputs": kwargs.get("inputs"),
         }
         # The reasoning tools (think/plan) are pass-through scratchpads: their
         # input *is* the content. Surface them as dedicated events so the UI can
@@ -736,12 +749,17 @@ class ChatStreamCallback(BaseCallbackHandler):
         line = f"[tool_end] output={formatted}"
         append_log(self.log_lines, line, self.log_file)
         pending = self._pending_tool
+        verdict: dict = {}
         if pending is not None:
             entry = dict(pending)
             entry["output"] = output_full
             dur = int((time.perf_counter() - entry.pop("_started", time.perf_counter())) * 1000)
-            # One consolidated marker per tool call: step, name, duration only.
-            mark = f"[tool_call] {_now()} step={entry.get('step')} tool={entry.get('tool')} duration_ms={dur}"
+            verdict = _verdict(entry.get("tool"), self, entry.pop("_inputs", None))
+            entry.update(verdict)
+            # One consolidated marker per tool call: step, name, duration and
+            # what the tool gate made of the call.
+            mark = (f"[tool_call] {_now()} step={entry.get('step')} tool={entry.get('tool')} "
+                    f"duration_ms={dur}{_trail_marker(verdict)}")
             append_log(self.log_lines, mark, self.log_file)
             self.thinking_history.append(mark)
             self.tool_history.append(entry)
@@ -749,7 +767,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         # think/plan already surfaced their content on tool_start; no generic end.
         if pending is not None and pending.get("tool") in ("think", "plan"):
             return
-        self._emit({"type": "tool_end", "output": output_full})
+        ids = {"step": pending.get("step"), "tool": pending.get("tool")} if pending else {}
+        self._emit({"type": "tool_end", "output": output_full, **ids, **verdict})
 
     def on_llm_error(self, error, **kwargs):
         line = f"[llm_error] {type(error).__name__}: {error}"
@@ -760,19 +779,22 @@ class ChatStreamCallback(BaseCallbackHandler):
         tool_name = (self._pending_tool or {}).get("tool", "unknown")
         line = f"[tool_error] tool={tool_name} {type(error).__name__}: {error}"
         append_log(self.log_lines, line, self.log_file)
+        verdict: dict = {}
         if self._pending_tool is not None:
             entry = dict(self._pending_tool)
             entry["output"] = f"ERROR: {error}"
             dur = int((time.perf_counter() - entry.pop("_started", time.perf_counter())) * 1000)
+            verdict = _verdict(entry.get("tool"), self, entry.pop("_inputs", None))
+            entry.update(verdict)
             mark = (
                 f"[tool_call] {_now()} step={entry.get('step')} "
-                f"tool={entry.get('tool')} duration_ms={dur} status=error"
+                f"tool={entry.get('tool')} duration_ms={dur} status=error{_trail_marker(verdict)}"
             )
             append_log(self.log_lines, mark, self.log_file)
             self.thinking_history.append(mark)
             self.tool_history.append(entry)
             self._pending_tool = None
-        self._emit({"type": "tool_error", "tool": tool_name, "error": str(error)})
+        self._emit({"type": "tool_error", "tool": tool_name, "error": str(error), **verdict})
 
     def on_chain_error(self, error, **kwargs):
         line = f"[chain_error] {type(error).__name__}: {error}"
@@ -909,23 +931,26 @@ class DelegationStreamCallback(BaseCallbackHandler):
         # them as think/plan events (matching ChatStreamCallback) and remember not
         # to emit a redundant generic tool_end for them.
         if name in ("think", "plan"):
-            self._pending_tool = {"tool": name}
+            self._pending_tool = {"tool": name, "inputs": kwargs.get("inputs")}
             self._send({"type": name, "step": self._step, "content": extract_reasoning_text(input_str)})
         else:
-            self._pending_tool = {"tool": name, "step": self._step}
+            self._pending_tool = {"tool": name, "step": self._step, "inputs": kwargs.get("inputs")}
             self._send({"type": "tool_start", "step": self._step, "tool": name, "input": str(input_str)})
 
     def on_tool_end(self, output, **kwargs):
         pending = self._pending_tool
         self._pending_tool = None
+        verdict = _verdict(pending.get("tool"), self, pending.get("inputs")) if pending else {}
         if pending is not None and pending.get("tool") in ("think", "plan"):
             return
-        self._send({"type": "tool_end", "output": str(output)})
+        self._send({"type": "tool_end", "output": str(output), **verdict})
 
     def on_tool_error(self, error, **kwargs):
-        tool = (self._pending_tool or {}).get("tool", "unknown")
+        pending = self._pending_tool or {}
+        tool = pending.get("tool", "unknown")
         self._pending_tool = None
-        self._send({"type": "tool_error", "tool": tool, "error": str(error)})
+        verdict = _verdict(tool, self, pending.get("inputs")) if pending else {}
+        self._send({"type": "tool_error", "tool": tool, "error": str(error), **verdict})
 
     def on_llm_end(self, response, **kwargs):
         # What the child's model said at this step: its own reasoning, then the

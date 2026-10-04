@@ -16,6 +16,16 @@ The loop's policies are switched and tuned in one place per workspace,
 - ``native`` (bool): use Anthropic's own context editing and deferred tool
   loading where the model supports them. Env ``AGENTS_HUB_LOOP_NATIVE``, on.
 - ``strict_tools`` (bool): read by the structured-output extension.
+- ``view_focus`` (bool): a view agent sees the tools of the view kind it is on
+  (agents/loop_ext/view_focus.py). Env ``AGENTS_HUB_LOOP_VIEW_FOCUS``, on.
+- ``tool_output_spill_chars`` (int): a tool result longer than this is saved to
+  a workspace file and the model sees its head, its tail and the file's path
+  (agents/tool_spill.py). 0 turns it off. Env
+  ``AGENTS_HUB_LOOP_TOOL_OUTPUT_SPILL_CHARS``, 20000.
+- ``advisor_max_calls`` (int): how many times one run may call
+  ``consult_advisor`` (tools/advisor.py). Env ``AGENTS_HUB_LOOP_ADVISOR_MAX_CALLS``, 5.
+- ``advisor_max_answer_chars`` (int): the longest advisor answer the agent is
+  handed. Env ``AGENTS_HUB_LOOP_ADVISOR_MAX_ANSWER_CHARS``, 4000.
 
 Any other key resolves the same way, with ``AGENTS_HUB_LOOP_<KEY>`` as its
 environment default. The workspace block is read once per agent build: a built
@@ -166,7 +176,27 @@ LOOP_SETTINGS: Dict[str, Dict[str, Any]] = {
     "tool_search_threshold": {"default": 30, "min": 1},
     "native": {"default": True},
     "strict_tools": {"default": False},
+    "view_focus": {"default": True},
+    "tool_output_spill_chars": {"default": 20000, "min": 0, "max": 1_000_000},
+    "advisor_max_calls": {"default": 5, "min": 0, "max": 50},
+    "advisor_max_answer_chars": {"default": 4000, "min": 200, "max": 50000},
 }
+
+
+def workspace_loop_setting(workspace: Optional[str], key: str, default: Any = None) -> Any:
+    """One loop setting for an agent's operating path, for a caller that has
+    the path but no built agent yet (the factory wrapping tools, a tool built
+    for one agent): the workspace value, else the environment default, else
+    *default* (:data:`LOOP_SETTINGS`'s default when none is given)."""
+    if default is None:
+        default = LOOP_SETTINGS.get(key, {}).get("default")
+    value = _workspace_block(workspace).get(key)
+    if value is not None:
+        try:
+            return _convert(value, default)
+        except _Unset:
+            pass
+    return env_setting(key, default)
 
 
 def workspace_loop_block(name: Optional[str]) -> Dict[str, Any]:
@@ -202,5 +232,5 @@ def effective_loop_setting(name: Optional[str], key: str) -> Any:
 
 __all__ = [
     "ENV_NAMES", "LOOP_SETTINGS", "effective_loop_setting", "env_name", "env_setting",
-    "loop_setting", "loop_settings", "workspace_loop_block",
+    "loop_setting", "loop_settings", "workspace_loop_block", "workspace_loop_setting",
 ]

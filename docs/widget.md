@@ -49,6 +49,7 @@ reaches every site within minutes and an unchanged script costs a 304.
 | `accent` | One of `navy`, `blue`, `teal`, `green`, `amber`, `rose`, `slate`. A name, never a colour: the script maps it to its own palette for light and dark. |
 | `language` | `auto` (the visitor's browser), `en`, `ru` or `de`. The script carries its strings in all three. |
 | `limits` | `messages_per_minute` per visitor (1 to 120, default 6), `attachment_max_bytes` (0 to 5 MB, default 2 MB, 0 turns attachments off), `max_attachments` per message (0 to 5, default 3), `tokens_per_day` for the whole widget (0 is no cap, default 200 000). |
+| `agent_version` | A stored version of the agent (docs/agents.md "Versions and pinning") the visitors talk to; `null` is the live definition. Checked against the agent's history; changing the agent without naming a version clears it. An agent the thread was handed to answers as it is. |
 
 ## Security model
 

@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import InstanceList from '../components/InstanceList';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal } from 'lucide-react';
+import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
@@ -18,6 +18,7 @@ import { AgentPageContext } from '../components/agent/context';
 import useDefinitionChatDescriptor from '../components/agent/useDefinitionChatDescriptor';
 import { PLANNING_TOOLS, defaultReasoningSettings } from '../components/agent/constants';
 import AgentModals from '../components/agent/AgentModals';
+import AgentConflictDialog from '../components/agent/AgentConflictDialog';
 import useAgentDocker from '../components/agent/useAgentDocker';
 import useAgentModel from '../components/agent/useAgentModel';
 import useAgentSkills from '../components/agent/useAgentSkills';
@@ -34,15 +35,19 @@ import StartInstanceModal from '../components/instances/StartInstanceModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
 import CommandsTab from '../components/agent/CommandsTab';
 import ConfigTab from '../components/agent/ConfigTab';
+import VersionsTab from '../components/agent/VersionsTab';
 import ModelTab from '../components/agent/ModelTab';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
 import HandoffsCard from '../components/agent/HandoffsCard';
 import LoopSettingsCard from '../components/agent/LoopSettingsCard';
+import ProactiveCard from '../components/agent/ProactiveCard';
 import AgentGuardrailsCard from '../components/agent/AgentGuardrailsCard';
 import LiveQualityCard from '../components/agent/LiveQualityCard';
 import ExperimentCard from '../components/agent/ExperimentCard';
 import PageLoader from '../components/PageLoader';
+import InheritanceHeaderLine from '../components/agent/inheritance/InheritanceHeaderLine';
+import InheritanceTab from '../components/agent/inheritance/InheritanceTab';
 
 // The tabs, the container-logs overlay and the pieces they share live in
 // `components/agent/`; this file is what loads the agent and what the tabs
@@ -85,6 +90,10 @@ const AgentDetails = () => {
   const [memoryData, setMemoryData] = useState('');
   // Shared memory pools attached to the agent; index 0 is the primary (write) pool.
   const [memoryPools, setMemoryPools] = useState([]);
+  // Pool ids in memoryPools whose binding is read only (agents.registry
+  // memory_pool_read_only_ids): recall still works, remember/forget/
+  // record_episode/link/the block tools refuse on that one pool.
+  const [memoryReadOnly, setMemoryReadOnly] = useState(() => new Set());
   const memoryDraftDirty = useRef(false);
   const markMemoryDraftDirty = useCallback(() => { memoryDraftDirty.current = true; }, []);
   const [isUpdatingMemory, setIsUpdatingMemory] = useState(false);
@@ -246,10 +255,15 @@ const AgentDetails = () => {
         const md = agentResp.data.memory_data;
         setMemoryType(mt);
         if (mt === 'shared') {
-          setMemoryPools(Array.isArray(md) ? md.map(String) : (md ? [String(md)] : []));
+          const raw = Array.isArray(md) ? md : (md ? [md] : []);
+          const ids = raw.map(e => (e && typeof e === 'object') ? String(e.id || '') : String(e)).filter(Boolean);
+          const ro = new Set(raw.filter(e => e && typeof e === 'object' && e.read_only).map(e => String(e.id)));
+          setMemoryPools(ids);
+          setMemoryReadOnly(ro);
           setMemoryData('');
         } else {
           setMemoryPools([]);
+          setMemoryReadOnly(new Set());
           setMemoryData(typeof md === 'string' ? md : JSON.stringify(md || '', null, 2));
         }
       }
@@ -384,8 +398,11 @@ const AgentDetails = () => {
     try {
       let data;
       if (memoryType === 'shared') {
-        // Primary pool first; a single pool is sent as a plain id string.
-        data = memoryPools.length === 1 ? memoryPools[0] : memoryPools;
+        // Primary pool first; a pool marked read only is sent as
+        // {id, read_only: true} instead of a plain id (routes/agents.py
+        // update_agent_memory), everything else as a plain id string.
+        const entries = memoryPools.map(pid => (memoryReadOnly.has(pid) ? { id: pid, read_only: true } : pid));
+        data = (entries.length === 1 && typeof entries[0] !== 'object') ? entries[0] : entries;
       } else {
         data = memoryData;
         try {
@@ -419,6 +436,21 @@ const AgentDetails = () => {
   const removePool = (pid) => {
     memoryDraftDirty.current = true;
     setMemoryPools(prev => prev.filter(p => p !== pid));
+    setMemoryReadOnly(prev => {
+      if (!prev.has(pid)) return prev;
+      const next = new Set(prev);
+      next.delete(pid);
+      return next;
+    });
+  };
+
+  const toggleReadOnly = (pid) => {
+    memoryDraftDirty.current = true;
+    setMemoryReadOnly(prev => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
   };
 
   const handleEraseMemory = async () => {
@@ -752,7 +784,7 @@ const AgentDetails = () => {
     handleSaveWsCapacity, handleToggleDefaultChat, handleToggleShared, handleUpdateMemory,
     sessions, runs, id, isDefaultChat, isUpdatingMemory, liveUpdates, loadingPool, memoryData,
     personalMemory, setPersonalMemory,
-    memoryDraftDirty, memoryPools, memoryType, servicesAtLimit, ownServices, reasoningSettings,
+    memoryDraftDirty, memoryPools, memoryReadOnly, toggleReadOnly, memoryType, servicesAtLimit, ownServices, reasoningSettings,
     regularToolIds, removePool, responseFormat, responseFormatSaving, selectedTools,
     selectedWorkspace, selfDelegation, selfDelegationSaving, setActiveTab, setCategoryTools,
     setClarifyGate, setClarifyGateSaving, setConnectedPool, setDelegates, setDelegatesMessage,
@@ -800,6 +832,8 @@ const AgentDetails = () => {
           </div>
         )}
       />
+
+      <InheritanceHeaderLine agent={agent} onManage={() => setActiveTab('inheritance')} />
 
       <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-indigo-600 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -870,13 +904,20 @@ const AgentDetails = () => {
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
             { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
+            { id: 'inheritance', label: t('agentDetails.tabs.inheritance'), icon: GitBranch },
             { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
+            { id: 'versions', label: t('agentDetails.tabs.versions'), icon: History },
             { id: 'model', label: t('agentDetails.tabs.model'), icon: BrainCircuit },
             { id: 'tools', label: t('agentDetails.tabs.tools'), icon: Wrench },
             { id: 'behavior', label: t('agentDetails.tabs.behavior'), icon: SlidersHorizontal },
             { id: 'memory', label: t('agentDetails.tabs.memory'), icon: Database },
             { id: 'skills', label: t('agentDetails.tabs.skills'), icon: BookOpen },
             { id: 'commands', label: t('agentDetails.tabs.commands'), icon: Terminal },
+            // The agent's own pulse, its guardrails and its A/B experiments
+            // (docs/proactive.md, docs/guardrails.md, docs/experiments.md).
+            { id: 'pulse', label: t('agentDetails.tabs.pulse'), icon: Activity },
+            { id: 'guardrails', label: t('agentDetails.tabs.guardrails'), icon: ShieldCheck },
+            { id: 'experiments', label: t('agentDetails.tabs.experiments'), icon: FlaskConical },
             { id: 'tasks', label: t('agentDetails.tabs.tasks'), icon: Clock },
             { id: 'runs', label: t('agentDetails.tabs.runs'), icon: FileText },
             { id: 'sessions', label: t('agentDetails.tabs.sessions'), icon: History },
@@ -921,6 +962,14 @@ const AgentDetails = () => {
           <LiveQualityCard agentId={id} />
         </>
       )}
+      {activeTab === 'inheritance' && (
+        <InheritanceTab
+          agentId={id}
+          agent={agent}
+          onChanged={fetchData}
+          onEditOwnInstructions={() => setActiveTab('config')}
+        />
+      )}
       {activeTab === 'instances' && <InstancesTab />}
       {activeTab === 'sessions' && <SessionsTab />}
       {activeTab === 'runs' && <RunsTab />}
@@ -936,13 +985,17 @@ const AgentDetails = () => {
       {activeTab === 'behavior' && <BehaviorTab />}
       {activeTab === 'tasks' && <TasksTab />}
       {activeTab === 'commands' && <CommandsTab />}
-      {activeTab === 'config' && (
-        <>
-          <ConfigTab />
-          <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />
-          <ExperimentCard agentId={id} />
-        </>
+      {activeTab === 'config' && <ConfigTab />}
+      {activeTab === 'versions' && <VersionsTab />}
+      {/* The agent's pulse: an imported agent runs elsewhere and is not
+          scheduled from here. */}
+      {activeTab === 'pulse' && (
+        agent?.type !== 'remote'
+          ? <ProactiveCard agentId={id} onSaved={fetchData} />
+          : <p className="text-sm text-gray-500 mt-6">{t('agentDetails.pulseRemote')}</p>
       )}
+      {activeTab === 'guardrails' && <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />}
+      {activeTab === 'experiments' && <ExperimentCard agentId={id} />}
       {activeTab === 'model' && (
         <>
           <ModelTab />
@@ -953,6 +1006,8 @@ const AgentDetails = () => {
       {activeTab === 'skills' && <SkillsTab />}
 
       <AgentModals />
+      {/* A save that meets somebody else's newer edit asks: reload or overwrite. */}
+      <AgentConflictDialog agentId={id} />
       <StartInstanceModal
         open={showStartInstance}
         onClose={() => setShowStartInstance(false)}

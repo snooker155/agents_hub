@@ -21,6 +21,8 @@ from tasks import service as tasks_service
 from tasks.models import CreatedBy, TaskStatus
 from workspace import project_folder_name
 
+from connectors.channels.store import in_workspace
+
 from .providers import get_provider
 
 
@@ -39,13 +41,17 @@ def sync_issues(project: Project) -> dict[str, int]:
 
     Returns {"imported": n, "updated": n, "total": n}.
     Raises GitProviderError / ValueError on configuration problems.
+
+    Reads the issues with the git connector of the project's workspace (its
+    own token when it defines the provider, else the default workspace's),
+    whoever calls: the Projects page's route or a run.
     """
     provider_name = str(project.repo.type.value if hasattr(project.repo.type, "value") else project.repo.type)
     remote_id = project.repo.remote_id
     if not remote_id:
         raise ValueError("Project repo has no remote_id — connect it to a GitHub/GitLab repo first")
 
-    provider = get_provider(provider_name)
+    provider = in_workspace(getattr(project, "workspace", None) or None, get_provider, provider_name)
     issues = provider.list_issues(remote_id)
 
     existing: dict[tuple, Any] = {}

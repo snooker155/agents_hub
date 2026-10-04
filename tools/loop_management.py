@@ -25,8 +25,22 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from common.workspace_scope import check_record
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+
+def _hidden(loop, *, write: bool = False) -> bool:
+    """Whether ``loop`` is out of this run's reach, answered like a missing
+    loop (``common.workspace_scope.check_record``). A loop with no workspace
+    is shared by every workspace for reading (``store.list_loops`` lists it
+    everywhere) and is the default workspace's to change."""
+    if loop is None:
+        return False
+    ws = getattr(loop, "workspace", None)
+    if not ws and not write:
+        return False
+    return check_record(ws, what="loop") is not None
 
 
 def _coerce_json(v: Any) -> Any:
@@ -122,10 +136,12 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
     ws = normalize_workspace_name(workspace)
     if flow and ws:
         flow_ws = normalize_workspace_name(flow.get("workspace"))
-        if flow_ws and flow_ws != ws:
-            warnings.append(
-                f"flow '{flow_id}' belongs to workspace '{flow_ws}' but the loop is "
-                f"in '{ws}'"
+        # A flow of another workspace does not exist from here: a loop that
+        # repeated it would run that workspace's flow in this one.
+        if flow_ws and check_record(flow_ws, what="flow", workspace=ws):
+            errors.append(
+                f"flow '{flow_id}' does not exist — create it with "
+                "create_flow_tool, or pick one from list_flows_tool"
             )
 
     mode = str(payload.get("evaluator_mode") or "final_agent")
@@ -139,7 +155,11 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
             errors.append("evaluator_mode 'agent' needs evaluator_agent_id")
         else:
             from agents.registry import get_agent as reg_get_agent
-            if not reg_get_agent(agent_id):
+            spec = reg_get_agent(agent_id)
+            owner = getattr(spec, "owner_workspace", None) if spec else None
+            if not spec or (ws and owner and not getattr(spec, "shared", False)
+                            and check_record(owner, what="agent", workspace=ws)):
+                # Another workspace's own agent does not exist from here.
                 errors.append(f"evaluator agent '{agent_id}' is not registered")
 
     def _num(key: str, default: Any) -> Optional[float]:
@@ -393,7 +413,7 @@ def _get_loop(loop_id: str) -> str:
     from loops import store
 
     loop = store.get_loop(loop_id)
-    if not loop:
+    if not loop or _hidden(loop):
         return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
     record_entity("loop", loop_id, "viewed", loop.name)
     return _json_ok({"loop": _simplify(loop)})
@@ -423,7 +443,7 @@ def _modify_loop(
     from loops.models import Loop, utc_iso
 
     existing = store.get_loop(loop_id)
-    if not existing:
+    if not existing or _hidden(existing, write=True):
         return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
 
     payload = existing.to_dict()
@@ -479,7 +499,7 @@ def _delete_loop(loop_id: str) -> str:
     from loops import store
 
     loop = store.get_loop(loop_id)
-    if not loop:
+    if not loop or _hidden(loop, write=True):
         return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
     live = [r for r in store.list_runs(loop_id, limit=5)
             if r.status in ("running", "stopping")]
@@ -518,7 +538,7 @@ def _validate_loop(
     if loop_id:
         from loops import store
         loop = store.get_loop(loop_id)
-        if not loop:
+        if not loop or _hidden(loop):
             return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
         payload = loop.to_dict()
         ws = normalize_workspace_name(payload.get("workspace")) or ws

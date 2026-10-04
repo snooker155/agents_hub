@@ -551,6 +551,36 @@ def _rag_file_entry(mem: SharedMemory, filename: str) -> Optional[dict]:
     return next((f for f in mem.rag_files if f.get("filename") == filename), None)
 
 
+_KNOWLEDGE = "knowledge/"
+
+
+def _knowledge_name(file_ref: str, workspace: Optional[str] = None) -> str:
+    """The knowledge folder file name a route's ``{file_ref}`` segment names.
+    A link carries the file's registry id (files/service.py); a bare file
+    name stays for old clients."""
+    from files import service as files
+
+    if not files.FILE_ID_RE.match(file_ref or ""):
+        return file_ref
+    record = files.get_file(file_ref)
+    rel = files.folder_path_of(file_ref, workspace or record["workspace"]) if record else None
+    name = rel[len(_KNOWLEDGE):] if rel and rel.startswith(_KNOWLEDGE) else ""
+    if not name or "/" in name:
+        raise HTTPException(status_code=404, detail="File not found in workspace knowledge dir")
+    return name
+
+
+def _knowledge_file_id(workspace: str, name: str) -> Optional[str]:
+    """The registry id of a knowledge folder file, registering it the first
+    time (a file uploaded before the registry followed the folder)."""
+    from files import service as files
+
+    try:
+        return files.ensure_folder_record(workspace, _KNOWLEDGE + name)["file_id"]
+    except files.FileError:
+        return None  # a hidden file or one over a limit has no id
+
+
 @router.get("/{memory_id}/files")
 async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
     """List all files in workspace knowledge dir, annotated with this pool's
@@ -584,6 +614,9 @@ async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
             "content_hash": live["content_hash"] if live else (entry.get("content_hash") if entry else None),
             # Set when the file was added from the workspace files (below).
             "workspace_file_id": entry.get("workspace_file_id") if entry else None,
+            # The id of this copy in the knowledge folder, what the file
+            # routes below take in their address.
+            "file_id": _knowledge_file_id(workspace, name),
         })
     return {"files": result}
 
@@ -607,7 +640,13 @@ async def upload_knowledge_file(
     content = await file.read()
     dest.write_bytes(content)
 
-    return {"filename": file.filename, "workspace": workspace, "status": "pending"}
+    from files import service as files
+    file_id = None
+    try:
+        file_id = files.register_path(workspace, _KNOWLEDGE + dest.name, source="memory")["file_id"]
+    except files.FileError:
+        pass  # over a limit: the file is in the folder, without an id
+    return {"filename": file.filename, "workspace": workspace, "status": "pending", "file_id": file_id}
 
 
 class FromWorkspaceFile(BaseModel):
@@ -667,14 +706,16 @@ async def add_workspace_file(memory_id: UUID, data: FromWorkspaceFile, request: 
             "workspace_file_id": record["file_id"]}
 
 
-@router.post("/{memory_id}/files/{filename}/index")
-async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str, request: Request):
-    """Chunk and embed a workspace knowledge file into this pool's vector store."""
+@router.post("/{memory_id}/files/{file_ref}/index")
+async def index_knowledge_file(memory_id: UUID, file_ref: str, workspace: str, request: Request):
+    """Chunk and embed a workspace knowledge file (by file id, or by name
+    from an old client) into this pool's vector store."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
     _require_pool_visible(request, mem)
+    filename = _knowledge_name(file_ref, workspace)
 
     kdir = workspace_knowledge_dir(workspace)
     path = kdir / filename
@@ -768,14 +809,15 @@ async def reindex_rag(
     return {"results": results}
 
 
-@router.delete("/{memory_id}/files/{filename}/index")
-async def deindex_knowledge_file(memory_id: UUID, filename: str, request: Request):
+@router.delete("/{memory_id}/files/{file_ref}/index")
+async def deindex_knowledge_file(memory_id: UUID, file_ref: str, request: Request):
     """Remove a file's index entry from this pool (does not delete the file from disk)."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
     _require_pool_visible(request, mem)
+    filename = _knowledge_name(file_ref)
 
     mem.rag_files = [f for f in mem.rag_files if f.get("filename") != filename]
     _persist_mem(store, mem)
@@ -786,19 +828,26 @@ async def deindex_knowledge_file(memory_id: UUID, filename: str, request: Reques
             "vector_error": err or None}
 
 
-@router.delete("/{memory_id}/files/{filename}")
-async def delete_knowledge_file(memory_id: UUID, filename: str, workspace: str, request: Request):
-    """Delete a file from disk and remove it from this pool's index."""
+@router.delete("/{memory_id}/files/{file_ref}")
+async def delete_knowledge_file(memory_id: UUID, file_ref: str, workspace: str, request: Request):
+    """Delete a file (by file id, or by name from an old client) from disk
+    and remove it from this pool's index."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
     _require_pool_visible(request, mem)
+    filename = _knowledge_name(file_ref, workspace)
 
     kdir = workspace_knowledge_dir(workspace)
     path = kdir / filename
     if path.exists():
         path.unlink()
+    from files import service as files
+    try:
+        files.unregister_path(workspace, _KNOWLEDGE + filename)
+    except files.FileError:
+        pass  # a name the registry never followed has no record
 
     mem.rag_files = [f for f in mem.rag_files if f.get("filename") != filename]
     _persist_mem(store, mem)

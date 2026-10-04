@@ -1,0 +1,24 @@
+id: finance
+name: Finance operations
+description: >
+  Pulls numbers from the company's own databases and spreadsheets, computes
+  the recurring metrics finance actually tracks, and has every figure
+  checked by a second agent before it reaches anyone outside the team.
+industry: Finance operations
+icon: calculator
+version: 1.0.0
+connectors:
+  required: [databases]
+  optional: [google]
+rubrics: >
+  Analyst is graded on using the real connected data (never inventing a
+  number), showing how every figure was computed, and flagging anything
+  that looks wrong rather than quietly reporting it. Reviewer is graded on
+  independently checking the arithmetic and the source of each figure, and
+  blocking a report that it has not actually verified.
+next_steps: >
+  Connect a database on the Connectors page (read-only credentials are
+  enough), and Google if reports should land in a shared sheet. Tell
+  Analyst which tables or views hold the numbers that matter in a note to
+  the Finance notes memory pool. The weekly metrics job on Analyst's Pulse
+  tab starts paused; turn it on once the database is connected.

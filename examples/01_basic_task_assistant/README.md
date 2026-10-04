@@ -54,7 +54,7 @@ Example task:
 
 Good starter agents:
 
-- `researcher_agent`
+- `researcher`
 - `swe_agent`
 - `decomposer`
 

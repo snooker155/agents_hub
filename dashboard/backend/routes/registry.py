@@ -382,6 +382,10 @@ async def submit_skill(skill_id: str, data: ReviewDecision, request: Request):
     if procedure.review_status not in ("draft", "rejected"):
         raise HTTPException(status_code=400,
                             detail=f"Skill is already '{procedure.review_status}'")
+    # Submitting publishes; a license that is not open refuses that
+    # (routes/skills.py, memory/skill_review.py).
+    from routes.skills import refuse_unpublishable
+    refuse_unpublishable(procedure)
 
     # Explicit, like a flow's or an agent's own submit: always moves to
     # in_review, whether or not the hub-wide toggle happens to be on.

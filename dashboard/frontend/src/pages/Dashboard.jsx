@@ -36,12 +36,14 @@ import {
   getSystemHealth,
   listConnections,
 } from '../api';
+import { getProactiveSummary } from '../api/proactive';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 import { poolName } from '../components/memoryManager/helpers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
+import PageLoader from '../components/PageLoader';
 const Dashboard = () => {
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const { t } = useI18n();
@@ -53,6 +55,7 @@ const Dashboard = () => {
   const [flows, setFlows] = useState([]);
   const [health, setHealth] = useState(null);
   const [connections, setConnections] = useState([]);
+  const [pulse, setPulse] = useState(null);
   const [loading, setLoading] = useState(true);
   const fetchData = useCallback(() => (
     Promise.allSettled([
@@ -64,9 +67,10 @@ const Dashboard = () => {
       listFlows(workspaceFilter),
       getSystemHealth(),
       listConnections(workspaceFilter),
+      getProactiveSummary(workspaceFilter),
     ])
       .then(([statsResp, agentsResp, runsResp, memResp, instSummaryResp, flowsResp, healthResp,
-              connectionsResp]) => {
+              connectionsResp, pulseResp]) => {
         // Each panel stands on its own: one failed endpoint must not blank the page.
         if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
         if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
@@ -80,6 +84,7 @@ const Dashboard = () => {
         if (connectionsResp.status === 'fulfilled') {
           setConnections(connectionsResp.value.data.connections || []);
         }
+        if (pulseResp.status === 'fulfilled') setPulse(pulseResp.value.data || null);
       })
       .catch((error) => console.error('Error fetching dashboard data:', error))
       .finally(() => setLoading(false))
@@ -92,11 +97,7 @@ const Dashboard = () => {
   useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   if (loading || !stats) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
+    return <PageLoader size="lg" />;
   }
 
   const activePods = runs.filter(r => r.status === 'running');
@@ -186,6 +187,21 @@ const Dashboard = () => {
             })}
             to="/connections"
             pulse={connections.some((c) => (c.stats || {}).running > 0)}
+          />
+        )}
+        {/* Proactive agents (docs/proactive.md): only once a pulse is on, for
+            the same reason as the connections card above. */}
+        {pulse?.totals?.agents > 0 && (
+          <StatCard
+            title={t('dashboard.stats.pulse')}
+            value={pulse.totals.agents}
+            icon={Activity}
+            color="bg-rose-500"
+            subtext={t('dashboard.stats.pulseSub', {
+              acted: pulse.totals.acted, quiet: pulse.totals.quiet, skipped: pulse.totals.skipped,
+            })}
+            to="/agents"
+            pulse={pulse.totals.running > 0}
           />
         )}
         <StatCard

@@ -24,6 +24,7 @@ import { useWorkspace } from '../components/workspace';
 import { CopyButton, SetupSnippet } from '../components/ConnectionSetup';
 import { ImportedMark } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 /**
  * One connection: its shape, what it has been running, and its credential.
@@ -295,7 +296,7 @@ export default function ConnectionDetail() {
     );
   }
   if (!data) {
-    return <PageContainer><p className="text-sm text-gray-400">{t('connections.loading')}</p></PageContainer>;
+    return <PageContainer><PageLoader size="lg" label={t('connections.loading')} /></PageContainer>;
   }
 
   const stats = data.stats || {};

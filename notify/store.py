@@ -72,7 +72,7 @@ INBOUND_SECRET_KEY = "notify_inbound_secret"
 ENDPOINT_KINDS = ("webhook", "slack")
 RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval",
               "slo_start_latency", "slo_error_rate")
-CHANNELS = ("dashboard", "telegram", "slack", "webhook")
+CHANNELS = ("dashboard", "telegram", "slack", "webhook", "discord", "teams", "mail")
 
 _MASK = "••••"
 
@@ -185,7 +185,14 @@ def endpoints_for_event(workspace: str, event_name: str) -> List[Dict[str, Any]]
 
     For internal use only (outbound delivery reads the real secret); anything
     that reaches a browser must go through :func:`masked_endpoint` first.
+
+    None for an isolated workspace (common/isolation.py): its notifications
+    and audit rows carry what its agents did, and a webhook or a Slack post
+    would carry that out. They stay in the hub's inbox and audit log.
     """
+    from common import isolation
+    if isolation.is_isolated(workspace):
+        return []
     out = []
     for item in list_endpoints(workspace):
         if not item.get("enabled", True):

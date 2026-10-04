@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { installAgentRevision } from './agentRevision';
 
 // Empty means same-origin: `/api/...` is served by whatever host the app was
 // loaded from. In dev that is the Vite server, which proxies /api to the
@@ -186,6 +187,10 @@ api.interceptors.response.use(
   },
 );
 
+// Agent edits carry the definition they were made against (If-Match), and a
+// conflict with somebody else's edit asks the user what to do (agentRevision.js).
+installAgentRevision(api);
+
 // Identity API (see docs/identity.md and dashboard/backend/routes/auth.py).
 // `getAuthMode` is public in every mode and is what the frontend renders from.
 export const getAuthMode = () => api.get('/auth/mode');
@@ -251,6 +256,9 @@ export const setWorkspaceSecret = (name, secret, data) =>
   api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, data);
 export const deleteWorkspaceSecret = (name, secret, params) =>
   api.delete(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, { params });
+// Where a secret may be sent (common/secrets.py "Secrets bound to hosts").
+export const setWorkspaceSecretHosts = (name, secret, data) =>
+  api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}/hosts`, data);
 // An agent's allowlist: the secret names a run of it may receive.
 export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
 export const updateAgentSecrets = (id, secrets, extra = {}) =>
@@ -431,6 +439,12 @@ export const updateAgentPersonalMemory = (id, enabled, workspace) => api.post(`/
 // Personal memory in a workspace: its switch and each agent's (memory/personal.py).
 export const getWorkspacePersonalMemory = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/personal-memory`);
 export const updateWorkspacePersonalMemory = (name, enabled) => api.put(`/workspaces/${encodeURIComponent(name)}/personal-memory`, { enabled });
+// Workspace roles (agents/roles.py): which agent does each kind of work here.
+export const getWorkspaceRoles = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/roles`);
+export const updateWorkspaceRole = (name, role, agentId) => api.put(`/workspaces/${encodeURIComponent(name)}/roles/${encodeURIComponent(role)}`, { agent_id: agentId || null });
+// Special models (providers/special.py): images, video, speech, transcription, own models.
+export const getWorkspaceSpecialModels = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/special-models`);
+export const updateWorkspaceSpecialModels = (name, config) => api.put(`/workspaces/${encodeURIComponent(name)}/special-models`, config);
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
 export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });
@@ -626,12 +640,20 @@ export const getWorkspaces = () => api.get('/workspaces');
 export const createWorkspace = (name) => api.post('/workspaces', { name });
 export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(name)}`);
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);
-export const getWorkspaceFileContent = (name, path) =>
-  api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: { path } });
-export const getWorkspaceFileRawUrl = (name, path) =>
-  `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?path=${encodeURIComponent(path)}`;
-export const deleteWorkspaceFile = (name, path) =>
-  api.delete(`/workspaces/${encodeURIComponent(name)}/files`, { params: { path } });
+// A folder file is named by its registry id ({ fileId }); a bare path string
+// stays for a file the registry does not follow and for folders.
+const workspaceFileParams = (ref) => (
+  ref && typeof ref === 'object' && ref.fileId ? { file_id: ref.fileId } : { path: typeof ref === 'object' ? ref?.path : ref });
+export const getWorkspaceFileContent = (name, ref) =>
+  api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: workspaceFileParams(ref) });
+export const getWorkspaceFileRawUrl = (name, ref) => {
+  const [key, value] = Object.entries(workspaceFileParams(ref))[0];
+  return `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?${key}=${encodeURIComponent(value || '')}`;
+};
+export const getWorkspaceFileId = (name, path) =>
+  api.get(`/workspaces/${encodeURIComponent(name)}/file-id`, { params: { path } });
+export const deleteWorkspaceFile = (name, ref) =>
+  api.delete(`/workspaces/${encodeURIComponent(name)}/files`, { params: workspaceFileParams(ref) });
 export const uploadWorkspaceFile = (name, file, path = '') => {
   const form = new FormData();
   form.append('file', file);
@@ -653,6 +675,9 @@ export const getWorkspacePolicy = (name) => api.get(`/workspaces/${encodeURIComp
 export const getWorkspaceWebPolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/web-policy`);
 export const updateWorkspaceWebPolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/web-policy`, policy);
 export const updateWorkspacePolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/policy`, policy);
+// A .hooks.json in the workspace folder is never run (agents write there);
+// the owner may import it as the workspace's hooks.
+export const importWorkspaceHooksFile = (name) => api.post(`/workspaces/${encodeURIComponent(name)}/policy/import-hooks-file`);
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
 export const updateWorkspaceDefaultModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/default-model`, data);
@@ -706,9 +731,10 @@ export const uploadMemoryFile = (id, workspace, file) => {
   form.append('file', file);
   return api.post(`/shared-memory/${id}/files/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
 };
-export const indexMemoryFile = (id, filename, workspace) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`, null, { params: { workspace } });
-export const deindexMemoryFile = (id, filename) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`);
-export const deleteMemoryFile = (id, filename, workspace) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}`, { params: { workspace } });
+// fileRef: the file id from listMemoryFiles (file_id), or its name when it has none.
+export const indexMemoryFile = (id, fileRef, workspace) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}/index`, null, { params: { workspace } });
+export const deindexMemoryFile = (id, fileRef) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}/index`);
+export const deleteMemoryFile = (id, fileRef, workspace) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(fileRef)}`, { params: { workspace } });
 export const listMemoryEpisodes = (id, params) => api.get(`/shared-memory/${id}/episodes`, { params });
 export const getMemoryEpisodesStats = (id) => api.get(`/shared-memory/${id}/episodes/stats`);
 export const deleteMemoryEpisode = (id, episodeId) => api.delete(`/shared-memory/${id}/episodes/${episodeId}`);
@@ -1086,16 +1112,38 @@ export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, 
   await consumeSSE(response, onEvent);
 };
 export const getProjectFiles = (id) => api.get(`/projects/${id}/files`);
-export const getProjectFileContent = (id, path) => api.get(`/projects/${id}/file-content`, { params: { path } });
+// { path, size, content, kind: 'text' | 'pdf' | 'binary', mime_type, truncated }: read the
+// way workspace files are, a PDF's text extracted.
+// ``ref`` is { fileId } (the registry id the file list hands out) or a path
+// string for a file the registry does not follow.
+const projectFileParams = (ref) => (ref && typeof ref === 'object' ? { file_id: ref.fileId } : { path: ref });
+export const getProjectFileContent = (id, ref) => api.get(`/projects/${id}/file-content`, { params: projectFileParams(ref) });
+// The bytes as a Blob (an image, a PDF or an HTML page to render), through the
+// authenticated client like api/files.js's getWorkspaceFileBlob.
+export const getProjectFileBlob = (id, ref) =>
+  api.get(`/projects/${id}/file-raw`, { params: projectFileParams(ref), responseType: 'blob' });
+export const getProjectFileId = (id, path) => api.get(`/projects/${id}/file-id`, { params: { path } });
 export const importProjectFromRepo = (data) => api.post('/projects/import-from-repo', data);
 export const connectProjectRepo = (id, data) => api.post(`/projects/${id}/connect-repo`, data);
 export const syncProjectIssues = (id) => api.post(`/projects/${id}/sync-issues`);
 
-// Git connectors API (GitHub / GitLab)
-export const getGitConfig = () => api.get('/git/config');
-export const updateGitConfig = (data) => api.put('/git/config', data);
-export const testGitConnection = (provider) => api.post('/git/test', { provider });
-export const listGitRepos = (provider, search) => api.get('/git/repos', { params: { provider, ...(search ? { search } : {}) } });
+// Git connectors API (GitHub / GitLab / Bitbucket / Gitea). Per workspace
+// like the other connectors (connectors/channels/store.py): the default
+// workspace's token works everywhere, another workspace's own token works
+// only there. The config GET answers `sources` (per provider, "here" or
+// "default") and, from the default workspace, `defined_in` per provider.
+export const getGitConfig = (workspace) =>
+  api.get('/git/config', { params: workspace ? { workspace } : {} });
+export const updateGitConfig = (data, workspace) =>
+  api.put('/git/config', data, { params: workspace ? { workspace } : {} });
+// Drops this workspace's own definition for one provider, so it inherits
+// the default's again.
+export const deleteGitConfig = (provider, workspace) =>
+  api.delete('/git/config', { params: { provider, ...(workspace ? { workspace } : {}) } });
+export const testGitConnection = (provider, workspace) =>
+  api.post('/git/test', { provider }, { params: workspace ? { workspace } : {} });
+export const listGitRepos = (provider, search, workspace) =>
+  api.get('/git/repos', { params: { provider, ...(search ? { search } : {}), ...(workspace ? { workspace } : {}) } });
 
 // Blender geometry connector
 export const getBlenderConfig = () => api.get('/blender/config');
@@ -1140,6 +1188,17 @@ export const runPlanJobNow = (id) => api.post(`/plan/jobs/${id}/run-now`);
 // cross-job view respectively).
 export const getJobFires = (id, params) => api.get(`/plan/jobs/${id}/fires`, { params });
 export const getFires = (params) => api.get('/plan/fires', { params });
+// Live preview of a cron field: the next few fire times, computed with the
+// scheduler's own next-run logic (see plans/service.py upcoming_runs), so the
+// hint shown while typing never disagrees with what the job will actually do.
+export const previewCron = (cron, timezone, count = 3, start, recurrence = 'cron') =>
+  api.get('/plan/cron/preview', { params: {
+    cron,
+    recurrence,
+    ...(timezone ? { timezone } : {}),
+    count,
+    ...(start ? { start } : {}),
+  } });
 
 // Notifications API — user inbox fed by the plan scheduler
 export const getNotifications = (params) => api.get('/plan/notifications', { params });
@@ -1153,14 +1212,27 @@ export const deleteNotification = (id) => api.delete(`/plan/notifications/${id}`
 // Live notification push now arrives on the shared `/api/stream` connection
 // (channel `__notifications__`) via the StreamProvider — no dedicated endpoint.
 
-// Telegram API
-export const getTelegramConfig = () => api.get('/telegram/config');
-export const updateTelegramConfig = (data) => api.put('/telegram/config', data);
-export const testTelegramToken = () => api.post('/telegram/test');
-export const getTelegramStatus = () => api.get('/telegram/status');
-export const getTelegramBindings = () => api.get('/telegram/bindings');
-export const deleteTelegramBinding = (chatId) => api.delete(`/telegram/bindings/${chatId}`);
-export const sendTelegramMessage = (chatId, text) => api.post('/telegram/send', { chat_id: chatId, text });
+// Telegram API — per workspace, like the other connectors (connectors/
+// channels/store.py): the default workspace's bot works everywhere, another
+// workspace's own bot works only there. `workspace` rides as a query param
+// on every call; omitted it means "the default", same as the backend reads it.
+export const getTelegramConfig = (workspace) =>
+  api.get('/telegram/config', { params: workspace ? { workspace } : {} });
+export const updateTelegramConfig = (data, workspace) =>
+  api.put('/telegram/config', data, { params: workspace ? { workspace } : {} });
+// Drops this workspace's own definition, so it inherits the default's again.
+export const deleteTelegramConfig = (workspace) =>
+  api.delete('/telegram/config', { params: workspace ? { workspace } : {} });
+export const testTelegramToken = (workspace) =>
+  api.post('/telegram/test', null, { params: workspace ? { workspace } : {} });
+export const getTelegramStatus = (workspace) =>
+  api.get('/telegram/status', { params: workspace ? { workspace } : {} });
+export const getTelegramBindings = (workspace) =>
+  api.get('/telegram/bindings', { params: workspace ? { workspace } : {} });
+export const deleteTelegramBinding = (chatId, workspace) =>
+  api.delete(`/telegram/bindings/${chatId}`, { params: workspace ? { workspace } : {} });
+export const sendTelegramMessage = (chatId, text, workspace) =>
+  api.post('/telegram/send', { chat_id: chatId, text }, { params: workspace ? { workspace } : {} });
 
 // Evals API — datasets, sweeps, score matrices (see evals/ and routes/evals.py)
 export const getEvalSets = (workspace) =>
@@ -1362,6 +1434,11 @@ export const syncGitHubApp = () => api.post('/git/github-app/sync');
 export const setWorkspaceGitHubInstallation = (workspace, installationId) =>
   api.put(`/workspaces/${encodeURIComponent(workspace)}/github-installation`,
     { installation_id: installationId ?? null });
+// A workspace's own installation binding plus the effective one (the
+// default's, when this workspace binds none of its own) and which one that
+// is: { own, effective, source: "here" | "default" }.
+export const getWorkspaceGithubInstallation = (workspace) =>
+  api.get(`/workspaces/${encodeURIComponent(workspace)}/github-installation`);
 export const getMyGitHub = () => api.get('/auth/github');
 export const disconnectMyGitHub = () => api.delete('/auth/github');
 // A plain link (the browser leaves for github.com), so the credential rides
@@ -1381,6 +1458,60 @@ export const connectGitHub = () =>
 // { preset } field through unchanged, so importing one reuses the same two
 // calls the import dialog already makes for a repository.
 export const getAgentImportPresets = () => api.get('/agent-import/presets');
+
+// Chat channels (Slack, Discord, Teams, mail): one API for every registered
+// channel, routes/channels.py. Telegram keeps its own routes above. Per
+// workspace like the credential connectors below: `workspace` rides as a
+// query param on every call, the default's when omitted.
+export const listChannels = () => api.get('/channels');
+export const getChannelConfig = (name, workspace) =>
+  api.get(`/channels/${name}/config`, { params: workspace ? { workspace } : {} });
+export const updateChannelConfig = (name, data, workspace) =>
+  api.put(`/channels/${name}/config`, data, { params: workspace ? { workspace } : {} });
+// Drops this workspace's own definition, so it inherits the default's again.
+export const deleteChannelConfig = (name, workspace) =>
+  api.delete(`/channels/${name}/config`, { params: workspace ? { workspace } : {} });
+export const testChannel = (name, workspace) =>
+  api.post(`/channels/${name}/test`, null, { params: workspace ? { workspace } : {} });
+export const getChannelStatus = (name, workspace) =>
+  api.get(`/channels/${name}/status`, { params: workspace ? { workspace } : {} });
+export const getChannelBindings = (name, workspace) =>
+  api.get(`/channels/${name}/bindings`, { params: workspace ? { workspace } : {} });
+export const createChannelBinding = (name, data, workspace) =>
+  api.post(`/channels/${name}/bindings`, data, { params: workspace ? { workspace } : {} });
+export const deleteChannelBinding = (name, chatKey, workspace) =>
+  api.delete(`/channels/${name}/bindings/${encodeURIComponent(chatKey)}`, { params: workspace ? { workspace } : {} });
+export const sendChannelMessage = (name, chatKey, text, workspace) =>
+  api.post(`/channels/${name}/send`, { chat_key: chatKey, text }, { params: workspace ? { workspace } : {} });
+
+// Credential connectors (Jira, Linear, Google, Microsoft, Notion,
+// Confluence): one API for every registered one, routes/connectors.py. Per
+// workspace: `workspace` rides as a query param, the default's when omitted;
+// GET answers `source: "here" | "default"` and, from the default workspace,
+// `defined_in`; DELETE drops a workspace's own definition.
+export const listConnectors = () => api.get('/connectors');
+export const getConnectorConfig = (name, workspace) =>
+  api.get(`/connectors/${name}/config`, { params: workspace ? { workspace } : {} });
+export const updateConnectorConfig = (name, data, workspace) =>
+  api.put(`/connectors/${name}/config`, data, { params: workspace ? { workspace } : {} });
+export const deleteConnectorConfig = (name, workspace) =>
+  api.delete(`/connectors/${name}/config`, { params: workspace ? { workspace } : {} });
+export const testConnector = (name, workspace) =>
+  api.post(`/connectors/${name}/test`, null, { params: workspace ? { workspace } : {} });
+// Google OAuth (routes/google.py): the start URL is opened in the browser,
+// the callback stores the refresh token, disconnect clears it. `gmail` also
+// asks for the Gmail scope, for IMAP and SMTP sign in (connectors/mail/oauth.py).
+export const googleOAuthStartUrl = ({ gmail = false, workspace } = {}) => {
+  const qs = new URLSearchParams();
+  if (gmail) qs.set('gmail', '1');
+  if (workspace) qs.set('workspace', workspace);
+  const query = qs.toString();
+  return `${API_ORIGIN}/api/google/oauth/start${query ? `?${query}` : ''}`;
+};
+export const disconnectGoogle = (workspace) =>
+  api.post('/google/oauth/disconnect', null, { params: workspace ? { workspace } : {} });
+export const getGmailStatus = (workspace) =>
+  api.get('/google/gmail/status', { params: workspace ? { workspace } : {} });
 
 export default api;
 

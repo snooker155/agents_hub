@@ -47,16 +47,50 @@ def turn_context() -> Optional[Dict[str, Any]]:
     return _turn_context.get()
 
 
-def turn_overrides() -> dict:
-    """Agent build overrides the current turn asks for: the service's version pin."""
+def turn_overrides(agent_id: Optional[str] = None) -> dict:
+    """Agent build overrides the current turn asks for: the service's version pin.
+
+    The pin is a version of the service's agent: an agent the conversation
+    was handed to in the same turn (chat/handoff.py) runs as it is, so when
+    ``agent_id`` is given and is not the agent the turn was addressed to,
+    there is nothing to pin.
+    """
     ctx = _turn_context.get() or {}
     version = ctx.get("agent_version")
     if version is None:
+        return {}
+    pinned_agent = ctx.get("pin_agent_id")
+    if agent_id and pinned_agent and str(agent_id) != str(pinned_agent):
         return {}
     try:
         return {"definition_version": int(version)}
     except (TypeError, ValueError):
         return {}
+
+
+def version_pin(request: ChatRequest) -> Optional[int]:
+    """The agent version this turn's run is built from: the request's own
+    ``agent_version``, else the service's pin (``turn_overrides``), else None
+    (the live definition)."""
+    if request.agent_version is not None:
+        return int(request.agent_version)
+    return turn_overrides(request.agent_id).get("definition_version")
+
+
+def request_overrides(request: ChatRequest) -> dict:
+    """``create_agent`` keywords for this turn beside the record's own model
+    cascade: the version pin (``version_pin``) and the per-run overrides
+    object (agents/run_overrides.py, already checked by
+    ``validate_chat_request``)."""
+    out: Dict[str, Any] = {}
+    pin = version_pin(request)
+    if pin is not None:
+        out["definition_version"] = pin
+    if request.overrides:
+        from agents import run_overrides
+        out.update(run_overrides.build_kwargs(
+            run_overrides.normalize(request.overrides, check_tool_ids=False)))
+    return out
 
 
 def get_pool_id(agent_id: str, workspace: str | None = None) -> str | None:
@@ -155,11 +189,31 @@ def agent_overrides(agent_id: str) -> dict:
 
 def validate_chat_request(request: ChatRequest):
     if request.flow_id or request.team_id:
+        # A pin and overrides name one agent's versions and tools; a flow or
+        # a team runs several agents as they are.
+        if request.agent_version is not None or request.overrides:
+            raise HTTPException(status_code=400,
+                                detail="agent_version and overrides apply to an agent target only")
         # Flow and team targets are validated lazily in their own pipelines.
         return None
     spec = registry.get_agent(request.agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' not found")
+    if request.agent_version is not None:
+        from tasks.service import validate_agent_version
+        try:
+            validate_agent_version(request.agent_id, int(request.agent_version))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.overrides:
+        from agents import run_overrides
+        from agents.capability_guard import CapabilityViolation
+        try:
+            request.overrides = run_overrides.validate_for_agent(request.agent_id, request.overrides)
+        except CapabilityViolation as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except run_overrides.OverrideError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return spec
 
 
@@ -276,7 +330,9 @@ def create_chat_run(request: ChatRequest, **run_extra):
             **({"service_id": turn["service_id"]} if turn.get("service_id") else {}),
             **({"budget_usd": turn["budget_usd"]} if turn.get("budget_usd") is not None else {}),
             **({"agent_version_pin": int(turn["agent_version"])}
-               if turn.get("agent_version") is not None else {}),
+               if turn.get("agent_version") is not None
+               and (not turn.get("pin_agent_id")
+                    or str(turn.get("pin_agent_id")) == str(request.agent_id)) else {}),
             **run_extra,
         }
         # The copy the message was addressed to, when it was not the replica
@@ -304,6 +360,15 @@ def create_chat_run(request: ChatRequest, **run_extra):
             instance_id = instance["instance_id"]
         except Exception:
             pass
+
+    # The version this turn was asked to run (the request's own pin; a
+    # service's pin is already in run_extra above) and its overrides, so the
+    # run page shows both.
+    if request.agent_version is not None:
+        run_extra["agent_version_pin"] = int(request.agent_version)
+    if request.overrides:
+        from agents import run_overrides as _run_overrides
+        run_extra.setdefault("overrides", _run_overrides.record_view(request.overrides))
 
     register_run(
         run_id,

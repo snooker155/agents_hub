@@ -1,13 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal } from 'lucide-react';
 
 import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
 import AgentVersion from '../components/run/AgentVersion';
+import RunOverrides from '../components/run/RunOverrides';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
+import { LazyTerminalPanel } from '../components/terminal';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
@@ -301,6 +303,7 @@ export default function MessageDetails() {
   // cheapest way to build one, so the button lives next to Replay rather than
   // requiring a trip to the Evals page to type the input back in by hand.
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [caseSavedMessage, setCaseSavedMessage] = useState('');
 
   const load = useCallback(async () => {
@@ -434,6 +437,17 @@ export default function MessageDetails() {
               {t('messageDetails.viewSession')}
             </button>
           )}
+          {/* A container run only: a run in local mode has no container to open a shell in. */}
+          {message?.container_name && ['running', 'stop', 'pending', 'queued'].includes(message?.status) && (
+            <button
+              onClick={() => setTerminalOpen(true)}
+              title={t('terminal.openRunHint')}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50"
+            >
+              <SquareTerminal className="w-4 h-4" />
+              {t('terminal.open')}
+            </button>
+          )}
           {message?.status === 'running' && (
             <button
               onClick={handleStop}
@@ -477,6 +491,16 @@ export default function MessageDetails() {
       {/* What the agent loop did beyond its tool trail: the model that answered, compactions,
           steering messages, guardrail checks (components/run/RunLoopPanel). */}
       <RunLoopPanel run={message} onChanged={load} showVersion={false} />
+
+      {terminalOpen && (
+        <LazyTerminalPanel kind="run" id={runId}
+                           title={`${t('terminal.title')}: ${message?.agent_id || runId}`}
+                           onClose={() => setTerminalOpen(false)} />
+      )}
+
+      {/* What this run was asked to build differently from its agent
+          (run.overrides: model, instructions, tools, skills, MCP, policy, schema). */}
+      <RunOverrides run={message} />
 
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">

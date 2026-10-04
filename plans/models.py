@@ -15,6 +15,19 @@ class JobKind(str, Enum):
     # Starts a run of a loop (loops/launcher.py). Used by the system
     # workspace's maintenance loop (common/system_workspace.py).
     loop = "loop"
+    # One tick of a proactive agent (proactive/service.py, docs/proactive.md):
+    # the scheduler fires it like an agent_task, but the firing first checks
+    # the agent's quiet hours, daily budget, tick limit and whether the
+    # previous tick is still running, and the task's answer is a structured
+    # outcome written back onto the journal row. One such job per agent,
+    # owned by the agent's proactive profile, never created by hand.
+    heartbeat = "heartbeat"
+    # Consolidates a memory pool's content and its recent sessions into a new
+    # pool (memory/consolidation.py, "dreams"): merged duplicates, outdated
+    # facts replaced, insights pulled from the sessions. The source pool is
+    # never modified; firing only starts a background job and returns its id,
+    # there is no Task and no run record for it.
+    memory_consolidate = "memory_consolidate"
 
 
 class JobStatus(str, Enum):
@@ -121,10 +134,26 @@ class ScheduledJob(BaseModel):
     # binding would.
     memory_access: str = "read"
 
+    # memory_consolidate only: the pool to consolidate and how many of its
+    # recent sessions to fold in (memory/consolidation.py). Kept apart from
+    # memory_pool_ids/memory_access above, which are an agent_task's
+    # deployment resources, a different concept this job kind has no use for.
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: int = 10
+    # Ids this job's firings have produced (memory_consolidations.id), newest
+    # last, the memory_consolidate analogue of created_task_ids.
+    created_consolidation_ids: List[str] = Field(default_factory=list)
+
     last_fired_at: Optional[datetime] = None
     last_error: Optional[str] = None
     # Task IDs created by firings of this job (newest last).
     created_task_ids: List[str] = Field(default_factory=list)
+    # heartbeat only: events that woke the agent and have not been handed to
+    # a tick yet (proactive.service.wake_agent). A wake pulls ``run_at`` to
+    # within the batching window; the tick that then starts takes every
+    # pending event into its prompt and clears the list. Capped at
+    # proactive.service.MAX_PENDING_EVENTS, oldest dropped first.
+    pending_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # -------------------- auto pause on repeated failure --------------------
     # A recurring job that keeps failing pauses itself rather than firing
@@ -190,6 +219,26 @@ class FireRecord(BaseModel):
     notification_id: Optional[str] = None
     loop_run_id: Optional[str] = None
     duration_ms: Optional[int] = None
+
+    # -------------------- heartbeat ticks (proactive/service.py) --------------------
+    # What the tick came to. Set at fire time for a tick that never started a
+    # task (``quiet_hours``, ``budget``, ``rate``, ``busy``, ``disabled``), and
+    # when the task's run finishes for one that did: ``acted``, ``quiet`` or
+    # ``blocked`` from the agent's structured answer, ``error`` for a failed
+    # run. None until then (a tick still running) and for every other kind.
+    outcome: Optional[str] = None
+    # The agent's own one-line account of the tick, and what it asked itself
+    # to check next time (the next tick's prompt carries it).
+    summary: Optional[str] = None
+    next_check: Optional[str] = None
+    # Estimated USD the tick's run(s) cost (common.pricing.run_cost_usd), so
+    # the daily budget is a sum over this journal rather than over every run.
+    cost_usd: Optional[float] = None
+    # How many ticks this row stands for. 1 for a row as written; the journal
+    # compaction (proactive.service.compact_journal) folds a day's quiet and
+    # skipped ticks into one row with their count, keeping acted, blocked and
+    # error rows as they are.
+    count: int = 1
 
 
 class Notification(BaseModel):

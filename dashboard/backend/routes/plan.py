@@ -63,6 +63,10 @@ class JobCreate(BaseModel):
     secrets: Optional[List[str]] = None
     memory_pool_ids: Optional[List[str]] = None
     memory_access: Optional[str] = None
+    # memory_consolidate only: the pool to consolidate and how many recent
+    # sessions to fold in (plans.service._validate_consolidate).
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: Optional[int] = None
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -70,6 +74,8 @@ class JobCreate(BaseModel):
             raise ValueError("Provide run_at or delay_minutes")
         if self.kind == JobKind.flow and not self.flow_id:
             raise ValueError("flow jobs require flow_id")
+        if self.kind == JobKind.memory_consolidate and not self.consolidate_pool_id:
+            raise ValueError("memory_consolidate jobs require consolidate_pool_id")
         return self
 
     def resolved_run_at(self) -> datetime:
@@ -97,6 +103,8 @@ class JobUpdate(BaseModel):
     secrets: Optional[List[str]] = None
     memory_pool_ids: Optional[List[str]] = None
     memory_access: Optional[str] = None
+    consolidate_pool_id: Optional[str] = None
+    consolidate_session_limit: Optional[int] = None
 
 
 # -------------------- jobs --------------------
@@ -147,6 +155,8 @@ async def create_job(payload: JobCreate):
             secrets=payload.secrets,
             memory_pool_ids=payload.memory_pool_ids,
             memory_access=payload.memory_access,
+            consolidate_pool_id=payload.consolidate_pool_id,
+            consolidate_session_limit=payload.consolidate_session_limit,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -256,6 +266,41 @@ async def list_fires(workspace: Optional[str] = None, only_errors: bool = False,
     """The firing journal across every job, newest first."""
     items = plan_service.list_fires(workspace=workspace, only_errors=only_errors, limit=limit)
     return [fire_to_dict(f) for f in items]
+
+
+# -------------------- cron preview --------------------
+
+@router.get("/cron/preview")
+async def cron_preview(
+    cron: str = "",
+    timezone: Optional[str] = None,
+    count: int = 5,
+    start: Optional[datetime] = None,
+    recurrence: Recurrence = Recurrence.cron,
+):
+    """Live preview for a schedule field: the next ``count`` fire times,
+    computed with the exact same logic the scheduler itself uses to fire a job
+    (``plans.service.upcoming_runs``, which wraps ``_next_run``), so this can
+    never predict a time the scheduler would not actually fire at. ``cron``
+    is read for ``recurrence=cron``; hourly, daily and weekly step from
+    ``start``, the job's first run.
+
+    Always 200, even for a bad expression: the caller is typing into a form
+    and wants feedback as it goes, not an exception on every keystroke.
+    """
+    count = max(1, min(count, 20))
+    if recurrence == Recurrence.cron and not cron.strip():
+        return {"valid": False, "error": "Cron expression required.", "upcoming_runs_at": [], "description": None}
+    try:
+        runs = plan_service.upcoming_runs(cron, timezone, count, start=start, recurrence=recurrence)
+    except ValueError as e:
+        return {"valid": False, "error": str(e), "upcoming_runs_at": [], "description": None}
+    return {
+        "valid": True,
+        "error": None,
+        "upcoming_runs_at": runs,
+        "description": plan_service.describe_cron(cron) if recurrence == Recurrence.cron else None,
+    }
 
 
 # -------------------- notifications --------------------

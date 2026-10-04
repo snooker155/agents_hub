@@ -42,7 +42,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from common import audit, identity
-from common.auth import WS_OWNER
+from common.auth import WS_OWNER, WS_VIEWER
 from connectors.git import github_app
 
 router = APIRouter(tags=["github-app"])
@@ -129,6 +129,19 @@ async def github_app_setup(request: Request):
         except github_app.GitHubAppError:
             pass
     return RedirectResponse(f"{_public_url(request)}/connectors?tab=git", status_code=302)
+
+
+@router.get("/api/workspaces/{name}/github-installation")
+async def get_workspace_installation(request: Request, name: str) -> dict:
+    """The installation a run in this workspace uses: its own binding, else
+    the default workspace's (``source``: "here", "default" or "none")."""
+    identity.require_role(_principal(request), workspace=name, role=WS_VIEWER)
+    own = github_app.installation_for_workspace(name)
+    effective, bound_to = github_app.installation_in_effect(name)
+    source = "none" if effective is None else ("here" if bound_to == name else "default")
+    return {"workspace": name, "installation_id": own, "effective_installation_id": effective,
+            "source": source,
+            "installation": github_app.get_installation(effective) if effective is not None else None}
 
 
 @router.put("/api/workspaces/{name}/github-installation")

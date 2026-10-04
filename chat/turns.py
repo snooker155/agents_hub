@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -53,8 +52,9 @@ class EventForwarder:
     def __init__(self, instance_id: str, channels: List[str], port: Optional[int] = None) -> None:
         self.instance_id = instance_id
         self.channels = list(channels)
-        port = port or int(os.environ.get("DASHBOARD_PORT", "8000"))
-        self._url = f"http://localhost:{port}/api/instances/{instance_id}/events"
+        from common.hostnet import hub_base_url
+        base = hub_base_url() if port is None else f"http://localhost:{port}"
+        self._url = f"{base}/api/instances/{instance_id}/events"
         self._buf: List[str] = []
         self._buf_len = 0
         self._buf_base: Optional[Dict[str, Any]] = None
@@ -168,6 +168,13 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
         "conversation_id": message.get("conversation_id"),
         "budget_usd": payload.get("budget_usd"),
         "agent_version": payload.get("agent_version"),
+        # Whose version the pin is: an agent the turn hands the conversation
+        # to runs as it is (chat/runs.py turn_overrides).
+        "pin_agent_id": request.agent_id,
+        # Where the turn came from: a tool call waiting for a person is shown
+        # as a card only in the dashboard's chat (common/tool_approvals.py),
+        # including for an agent this turn delegates to.
+        "source": request.source or "chat",
     }
 
     def _journal_budget(event: Dict[str, Any]) -> None:
@@ -211,6 +218,10 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
             tokens.append(("user", identity.set_current_user(str(payload["user_id"]))))
         if payload.get("key_id"):
             tokens.append(("key", api_keys.set_current_key_id(str(payload["key_id"]))))
+        if payload.get("end_user"):
+            # A widget or channel turn's end user (docs/consent.md).
+            from common import secrets as _end_user_scope
+            tokens.append(("end_user", _end_user_scope.set_end_user(str(payload["end_user"]))))
         try:
             async for event in pipelines.execute_locally(request, kind):
                 if isinstance(event, dict):
@@ -229,6 +240,9 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
                 try:
                     if which == "user":
                         identity.reset_current_user(token)
+                    elif which == "end_user":
+                        from common import secrets as _end_user_scope
+                        _end_user_scope.reset_end_user(token)
                     else:
                         api_keys.reset_current_key_id(token)
                 except Exception:  # noqa: BLE001 - a reset that cannot apply changes nothing

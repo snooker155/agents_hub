@@ -150,6 +150,11 @@ async def list_servers(workspace: Optional[str] = None):
 async def create_server(body: CreateServer, workspace: Optional[str] = None):
     """Attach a server. Its capability claim is part of attaching it."""
     ws = _workspace(workspace)
+    from common import isolation
+    try:
+        isolation.ensure_not_isolated(ws, "an MCP server")
+    except isolation.IsolationError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     _enforce_allowlist(body.model_dump())
     try:
         record = mcp_store.create_server(ws, body.model_dump())

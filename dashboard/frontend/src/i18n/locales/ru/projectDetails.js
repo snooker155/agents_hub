@@ -75,6 +75,7 @@ export default {
   projectFiles: 'Файлы проекта',
   loadingFiles: 'Загрузка файлов…',
   selectedFile: 'Выбранный файл',
+  fileView: { rendered: 'Просмотр', source: 'Исходник', text: 'Текст', download: 'Скачать' },
   selectAFileToPreview: 'Выберите файл, чтобы посмотреть содержимое.',
   noFilesFoundInThis: 'В папке проекта файлов не найдено.',
   bytes: '{{count}} байт',
@@ -122,6 +123,7 @@ export default {
   errors: {
     publish: 'Не удалось опубликовать ветку',
     loadFile: 'Не удалось загрузить файл',
+    downloadFile: 'Не удалось скачать файл',
     loadFiles: 'Не удалось загрузить файлы',
     gitStatus: 'Не удалось получить статус git',
     clone: 'Клонирование не удалось',
@@ -129,5 +131,21 @@ export default {
     issueSync: 'Синхронизация issues не удалась',
     extractSpec: 'Не удалось извлечь спецификацию из кода',
     loadTasks: 'Не удалось загрузить задачи',
+  },
+  tracker: {
+    title: "Трекер задач",
+    hint: "Отражать проект Jira или команду Linear как задачи этого проекта. Учётные данные задаются на",
+    connectors: "странице Коннекторы.",
+    saved: "Трекер сохранён.",
+    synced: "Синхронизировано: {{imported}} импортировано, {{updated}} обновлено, всего {{total}}.",
+    providers: {
+      none: "Без трекера",
+      jira: "Jira",
+      linear: "Linear",
+    },
+    remotePlaceholder: {
+      jira: "Ключ проекта, например PROJ",
+      linear: "Ключ команды, например ENG",
+    },
   },
 };

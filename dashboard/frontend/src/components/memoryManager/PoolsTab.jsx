@@ -24,6 +24,7 @@ import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
 import { useColumnHeight } from '../ChatColumn';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
+import { MemoryConsolidationPanel } from './MemoryConsolidationPanel';
 import ChatMarkdown from '../chat/ChatMarkdown';
 
 function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
@@ -69,6 +70,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const [historyTarget, setHistoryTarget] = useState(null);
   const openHistory = (target) => setHistoryTarget(target);
   const closeHistory = () => setHistoryTarget(null);
+
+  // Consolidation panel ("dreams", fifth-cycle stage 2): shown for the
+  // selected pool when open.
+  const [showConsolidation, setShowConsolidation] = useState(false);
 
   const selectPool = useCallback(async (id) => {
     try {
@@ -450,6 +455,13 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                   title={t('memoryVersions.poolHistory')}
                 >
                   <History className="w-3.5 h-3.5" /> {t('memoryVersions.poolHistory')}
+                </button>
+                <button
+                  onClick={() => setShowConsolidation(v => !v)}
+                  className="flex items-center gap-1 text-sm border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+                  title={t('memoryConsolidation.title')}
+                >
+                  <Brain className="w-3.5 h-3.5" /> {t('memoryConsolidation.title')}
                 </button>
                 {contentTab === 'notes' && (
                   <button onClick={() => { setShowAddNote(true); setEditingNote(null); setViewingNote(null); }} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
@@ -937,6 +949,14 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
           itemLabel={historyTarget.itemLabel}
           onClose={closeHistory}
           onChanged={() => selectPool(selected.id)}
+        />
+      )}
+
+      {showConsolidation && selected && (
+        <MemoryConsolidationPanel
+          poolId={selected.id}
+          onClose={() => setShowConsolidation(false)}
+          onApplied={() => selectPool(selected.id)}
         />
       )}
     </div>

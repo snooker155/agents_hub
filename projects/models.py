@@ -24,6 +24,7 @@ class RepoType(str, Enum):
     github = "github"
     gitlab = "gitlab"
     bitbucket = "bitbucket"
+    gitea = "gitea"
     local = "local"
     none = "none"
 
@@ -34,6 +35,19 @@ class RepoConfig(BaseModel):
     branch: Optional[str] = "main"
     local_path: Optional[str] = None   # Path within workspace (relative)
     remote_id: Optional[str] = None    # Provider repo id ("owner/repo" / path_with_namespace)
+
+
+class TrackerConfig(BaseModel):
+    """A project's link to an issue tracker (connectors/trackers: Jira, Linear).
+
+    ``provider`` is "none" until the Projects page connects one; ``remote_id``
+    is the Jira project key or the Linear team key — whichever ``provider``
+    names — and ``url`` is an optional display link to the project/team on
+    the tracker's own site.
+    """
+    provider: str = "none"  # none|jira|linear
+    remote_id: Optional[str] = None
+    url: Optional[str] = None
 
 
 class FrontendConfig(BaseModel):
@@ -64,6 +78,7 @@ class Project(BaseModel):
     repo: RepoConfig = Field(default_factory=RepoConfig)
     frontend: FrontendConfig = Field(default_factory=FrontendConfig)
     backend: BackendConfig = Field(default_factory=BackendConfig)
+    tracker: TrackerConfig = Field(default_factory=TrackerConfig)
 
     tags: List[str] = Field(default_factory=list)
 

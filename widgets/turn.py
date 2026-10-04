@@ -6,7 +6,9 @@ The turn is the web chat's own (``chat.pipelines.run_chat_pipeline`` through
 :class:`widgets.relay.TurnRelay`): the widget's workspace, the thread's
 current agent, the thread as ``conversation_id`` so the runs group into one
 conversation on the Messages page, ``source="widget"`` as the run's
-``message_origin``, and the widget owner as the acting user.
+``message_origin``, and the widget owner as the acting user. The visitor is
+the turn's end user (``widget:<widget_id>:<visitor_id>``), whose own Google or
+Microsoft consent the agent acts on (docs/consent.md).
 
 What reaches the visitor is a whitelist, not the pipeline's stream with bits
 removed: ``meta`` (the run id), ``token``, ``tool_start``/``tool_end`` with
@@ -199,6 +201,10 @@ class VisitorTurn:
             conversation_title=self.thread.get("title") or None,
             attachments=[ChatAttachment(**a) for a in self.attachments],
             source="widget",
+            # The widget's version pin, for its own agent only: an agent the
+            # thread was handed to answers as it is.
+            agent_version=(self.widget.get("agent_version")
+                           if self.agent_id == self.widget.get("agent_id") else None),
         )
 
     def start(self) -> Dict[str, Any]:
@@ -216,8 +222,11 @@ class VisitorTurn:
         store.touch_thread(self.thread["thread_id"], title=title)
         if title:
             self.thread = dict(self.thread, title=title)
+        from common.secrets import widget_principal
         self.relay = TurnRelay(self._request(history), user_id=self.widget["owner_id"],
-                               on_event=self.on_event).start()
+                               on_event=self.on_event,
+                               end_user=widget_principal(self.widget["widget_id"],
+                                                         self.thread["visitor_id"])).start()
         return self.user_message
 
     # ── the relay's task: keep the thread ────────────────────────────────────

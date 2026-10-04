@@ -5,6 +5,7 @@ import { useWorkspace } from '../components/workspace';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // Icon + accent per category. Unknown categories fall back to a generic box.
 const CATEGORY_META = {
   agent:     { labelKey: 'registry.categories.agent',     icon: Bot,      accent: 'text-cyan-600' },
@@ -139,7 +140,7 @@ export default function Registry() {
       />
 
       {loading ? (
-        <div className="text-sm text-slate-500">{t('registry.loadingRegistry')}</div>
+        <PageLoader label={t('registry.loadingRegistry')} />
       ) : error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       ) : orderedCats.length === 0 ? (

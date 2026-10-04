@@ -1,11 +1,21 @@
-import { useState } from 'react';
-import { Boxes, GitBranch, Link2, Send, Webhook } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Info, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
+import ChannelConnector from '../components/connectors/ChannelConnector';
+import DatabasesConnector from '../components/connectors/DatabasesConnector';
+import GoogleConnector from '../components/connectors/GoogleConnector';
+import KnowledgeConnector from '../components/connectors/KnowledgeConnector';
+import MicrosoftConnector from '../components/connectors/MicrosoftConnector';
+import TrackersConnector from '../components/connectors/TrackersConnector';
 import GitConnector from '../components/connectors/GitConnector';
 import TelegramConnector from '../components/connectors/TelegramConnector';
 import WebhooksConnector from '../components/connectors/WebhooksConnector';
+import { ConnectionProposalCard } from '../components/chat/ConnectionProposalCard';
+import { listConnectionProposals } from '../api/connectionProposals';
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
 /**
@@ -21,16 +31,85 @@ import { useI18n } from '../i18n';
  * which is not where anyone looked for them.
  */
 
+// The chat channels after Telegram share one component and one API
+// (components/connectors/ChannelConnector.jsx, routes/channels.py).
+const channel = (id, icon) => ({ id, icon, Component: () => <ChannelConnector name={id} /> });
+
+// A connector lives only in the workspace that defines it: the default
+// workspace's definition works everywhere, another workspace's own
+// definition works only there (connectors/channels/store.py). Every card
+// below says which one it is (ConnectorSourceBadge); this banner says it
+// once for the page, naming the workspace these tabs are about to change.
+function WorkspaceScopeBanner() {
+  const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  return (
+    <div
+      className="flex items-start gap-2 text-sm text-gray-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2"
+      data-testid="connectors-workspace-banner"
+    >
+      <Info className="w-4 h-4 mt-0.5 text-indigo-500 shrink-0" />
+      <span>
+        {t('connectors.workspaceBanner.title', { workspace })}{' '}
+        {t('connectors.workspaceBanner.rule')}
+      </span>
+    </div>
+  );
+}
+
+// The agent's own proposals for this workspace (connection-proposals-contract.md):
+// shown above the tabs so a pending one is not missed under whichever tab
+// happens to be open. A failed read just means nothing to show here yet; the
+// tab strip below still works.
+function ProposedConnections() {
+  const { t } = useI18n();
+  const { selectedWorkspace: workspace } = useWorkspace();
+  const [proposals, setProposals] = useState([]);
+
+  const load = useCallback(() => {
+    listConnectionProposals({ status: 'pending', workspace })
+      .then(({ data }) => setProposals(data?.proposals || []))
+      .catch(() => setProposals([]));
+  }, [workspace]);
+  useEffect(() => { load(); }, [load]);
+
+  if (proposals.length === 0) return null;
+  return (
+    <div className="space-y-2" data-testid="connection-proposals-panel">
+      <h2 className="text-sm font-semibold text-gray-800">{t('connectionProposal.panelTitle')}</h2>
+      {proposals.map((p) => (
+        <ConnectionProposalCard key={p.approval_id} approval={p} live onSettled={load} />
+      ))}
+    </div>
+  );
+}
+
 const TABS = [
   { id: 'telegram', icon: Send, Component: TelegramConnector },
+  channel('slack', Hash),
+  channel('discord', MessageCircle),
+  channel('teams', Users),
+  channel('mail', Mail),
   { id: 'git', icon: GitBranch, Component: GitConnector },
+  { id: 'trackers', icon: Ticket, Component: TrackersConnector },
+  { id: 'google', icon: Calendar, Component: GoogleConnector },
+  { id: 'microsoft', icon: Calendar, Component: MicrosoftConnector },
+  { id: 'knowledge', icon: BookOpen, Component: KnowledgeConnector },
+  { id: 'databases', icon: Database, Component: DatabasesConnector },
   { id: 'blender', icon: Boxes, Component: BlenderConnector },
   { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
 ];
 
 export default function Connectors() {
   const { t } = useI18n();
-  const [active, setActive] = useState('telegram');
+  // ?tab=google opens a tab directly: the Google OAuth callback lands there,
+  // and the mail forms link to it for "Connect with Gmail".
+  const [params] = useSearchParams();
+  const [active, setActive] = useState(() => {
+    const wanted = params.get('tab');
+    return TABS.some((tab) => tab.id === wanted) ? wanted : 'telegram';
+  });
   const { Component } = TABS.find((tab) => tab.id === active) || TABS[0];
 
   return (
@@ -40,6 +119,9 @@ export default function Connectors() {
         title={t('connectors.title')}
         description={t('connectors.description')}
       />
+
+      <WorkspaceScopeBanner />
+      <ProposedConnections />
 
       <div className="flex flex-wrap gap-1 border-b border-gray-200">
         {TABS.map(({ id, icon: Icon }) => (

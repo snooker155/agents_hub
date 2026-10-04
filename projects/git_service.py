@@ -47,7 +47,7 @@ def repo_provider(project) -> Optional[str]:
     is one a provider is registered for."""
     repo_type = str(project.repo.type.value if hasattr(project.repo.type, "value")
                     else project.repo.type)
-    return repo_type if repo_type in ("github", "gitlab") else None
+    return repo_type if repo_type in ("github", "gitlab", "bitbucket", "gitea") else None
 
 
 def run_issue_sync(project) -> Dict[str, Any]:
@@ -69,23 +69,27 @@ def sync_issues(project) -> Dict[str, Any]:
         raise ServiceError(400, str(e))
 
 
-def resolve_repo_info(provider_name: str, remote_id: str) -> Dict[str, Any]:
+def resolve_repo_info(provider_name: str, remote_id: str,
+                      workspace: Optional[str] = None) -> Dict[str, Any]:
     """``get_provider(provider_name).get_repo(remote_id)``, mapped to a 400
-    ``ServiceError`` instead of letting ``GitProviderError`` escape."""
+    ``ServiceError`` instead of letting ``GitProviderError`` escape. The token
+    is the one ``workspace`` uses: its own, or the default workspace's."""
     try:
-        return get_provider(provider_name).get_repo(remote_id)
+        return get_provider(provider_name, workspace).get_repo(remote_id)
     except GitProviderError as e:
         raise ServiceError(400, str(e))
 
 
 def clone_from_provider(clone_url: str, clone_dir: Path, *,
-                        branch: Optional[str], provider_name: Optional[str]) -> str:
+                        branch: Optional[str], provider_name: Optional[str],
+                        workspace: Optional[str] = None) -> str:
     """Clone a repo URL into ``clone_dir``. Raises a 500 ``ServiceError`` on
     failure — the shape ``import_from_repo`` / ``connect_repo`` used before
     this split (``clone_repo`` below has its own, slightly different, mapping
     for a timeout, and keeps that distinction)."""
     try:
-        return git_ops.clone(clone_url, clone_dir, branch=branch, provider=provider_name)
+        return git_ops.clone(clone_url, clone_dir, branch=branch, provider=provider_name,
+                             workspace=workspace)
     except GitOpsError as e:
         raise ServiceError(500, f"Clone failed: {e}")
 
@@ -103,7 +107,7 @@ def clone_repo(project, ws_folder: Path) -> Dict[str, Any]:
 
     try:
         output = git_ops.clone(repo.url, clone_dir, branch=repo.branch or None,
-                               provider=repo_provider(project))
+                               provider=repo_provider(project), workspace=project.workspace)
     except GitOpsError as e:
         status = 504 if "timed out" in str(e) else 500
         raise ServiceError(status, str(e))
@@ -149,7 +153,7 @@ def git_pull(project, ws_folder: Path) -> Dict[str, Any]:
         raise ServiceError(404, "Repo directory not found")
 
     try:
-        output = git_ops.pull(repo_path, provider=repo_provider(project))
+        output = git_ops.pull(repo_path, provider=repo_provider(project), workspace=project.workspace)
     except GitOpsError as e:
         status = 504 if "timed out" in str(e) else 500
         raise ServiceError(status, str(e))

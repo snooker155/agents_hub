@@ -147,7 +147,7 @@ exec $SHELL                  # pick up the shell integration
 ah up                        # backend on :8000 and built dashboard on :5173
 ```
 
-Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
+On a first install from a terminal it finishes with `ah setup`, the guided configuration (database, accounts, providers and default models; [docs/installation.md](./docs/installation.md), "Guided setup"), which writes `.env` for you. Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--setup` / `--no-setup`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
 
 ### A.1 Install Python dependencies
 
@@ -335,7 +335,7 @@ docker compose logs -f backend    # tail backend logs
 Once both services are up:
 
 1. Visit `http://localhost:5173` (Path A) or `http://localhost:8080` (Docker Compose).
-2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `code_reviewer`, `researcher_agent`, …, the full seed roster is `bootstrap/agents.json`). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
+2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `code_reviewer`, `researcher`, …, the full seed roster is `bootstrap/agents.json`). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
 3. Create a **workspace** from the Workspaces page.
 4. Open the **Chat** page, pick an agent, send a test message ("hello, who are you?"). A successful reply confirms the provider key, model, and registry are all wired up correctly.
 5. Open **Memory Manager** to confirm shared memory pools (notes / structured slots / journal) are reachable. Episodes and the knowledge graph are populated as agents run.

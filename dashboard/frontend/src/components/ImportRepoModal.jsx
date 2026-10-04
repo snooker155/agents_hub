@@ -5,6 +5,10 @@ import { getGitConfig, listGitRepos, importProjectFromRepo, connectProjectRepo }
 import { useI18n } from '../i18n';
 import PageLoader from './PageLoader';
 
+// The git providers the Connectors page can hold a token for (connectors/git/store.py).
+const PROVIDERS = ['github', 'gitlab', 'bitbucket', 'gitea'];
+const PROVIDER_LABELS = { github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket', gitea: 'Gitea' };
+
 const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none";
 
 /**
@@ -30,19 +34,25 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // The git token in effect is the one of the workspace a repo would land
+  // in (connectors/channels/store.py: the default workspace's token works
+  // everywhere, another workspace's own token works only there) — the
+  // project already being connected, or the target of a new import.
+  const effectiveWorkspace = (mode === 'connect' ? project?.workspace : workspace) || 'default';
+
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await getGitConfig();
+        const { data } = await getGitConfig(effectiveWorkspace);
         setGitConfig(data);
-        const first = ['github', 'gitlab'].find((p) => data[p]?.has_token);
+        const first = PROVIDERS.find((p) => data[p]?.has_token);
         if (first) setProvider(first);
       } catch (e) {
         setError(e.response?.data?.detail || e.message);
         setGitConfig({ github: { has_token: false }, gitlab: { has_token: false } });
       }
     })();
-  }, []);
+  }, [effectiveWorkspace]);
 
   // Load repos when the provider changes or the search is submitted (debounced).
   useEffect(() => {
@@ -52,7 +62,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       setLoadingRepos(true);
       setError('');
       try {
-        const { data } = await listGitRepos(provider, search.trim() || undefined);
+        const { data } = await listGitRepos(provider, search.trim() || undefined, effectiveWorkspace);
         if (!cancelled) setRepos(data || []);
       } catch (e) {
         if (!cancelled) {
@@ -64,7 +74,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       }
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [provider, search]);
+  }, [provider, search, effectiveWorkspace]);
 
   const selectRepo = (repo) => {
     setSelectedRepo(repo);
@@ -105,7 +115,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
     }
   };
 
-  const availableProviders = ['github', 'gitlab'].filter((p) => gitConfig?.[p]?.has_token);
+  const availableProviders = PROVIDERS.filter((p) => gitConfig?.[p]?.has_token);
   const canSubmit = selectedRepo && !submitting && (mode === 'connect' || workspace);
 
   return (
@@ -140,8 +150,8 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
                       provider === p ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    {p === 'github' ? <Github className="w-4 h-4" /> : <Gitlab className="w-4 h-4" />}
-                    {p === 'github' ? 'GitHub' : 'GitLab'}
+                    {p === 'github' ? <Github className="w-4 h-4" /> : p === 'gitlab' ? <Gitlab className="w-4 h-4" /> : <GitBranch className="w-4 h-4" />}
+                    {PROVIDER_LABELS[p]}
                   </button>
                 ))}
               </div>

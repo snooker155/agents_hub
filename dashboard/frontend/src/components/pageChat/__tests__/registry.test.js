@@ -31,6 +31,12 @@ describe('describeRoute', () => {
     expect(describeRoute('/plan')).toEqual({ scope: 'plan', refs: [] });
   });
 
+  it('keeps one thread per open file on the Artifacts page', () => {
+    expect(describeRoute('/artifacts')).toEqual({ scope: 'artifacts', refs: [] });
+    expect(describeRoute('/artifacts/files')).toEqual({ scope: 'artifacts-files', refs: [] });
+    expect(describeRoute('/artifacts/files', '?file=file_1')).toEqual({ scope: 'file:file_1', refs: [] });
+  });
+
   it('does not read a playground sub-page as a scenario id', () => {
     expect(describeRoute('/playground/runs').refs).toEqual([]);
     expect(describeRoute('/playground/worlds').refs).toEqual([]);

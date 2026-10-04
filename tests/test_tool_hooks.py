@@ -9,18 +9,27 @@ import pytest
 from agents import hooks
 
 
+_STORED: dict = {}
+
+
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    """A workspace folder whose hook config the loader will find."""
+    """A workspace folder, and its stored metadata, where the hook config lives."""
     ws = tmp_path / "hooked"
     ws.mkdir()
     monkeypatch.setattr("workspace.storage.WORKSPACES_ROOT", tmp_path)
     monkeypatch.setenv("AGENT_WORKSPACE", "hooked")
+    _STORED.clear()
+    meta = lambda name: {"hooks": _STORED[name]} if name in _STORED else {}  # noqa: E731
+    monkeypatch.setattr("workspace.storage.get_workspace_metadata", meta)
+    monkeypatch.setattr("workspace.get_workspace_metadata", meta)
     return ws
 
 
 def _write_hooks(ws, config):
-    (ws / hooks.HOOKS_FILENAME).write_text(json.dumps(config), encoding="utf-8")
+    """The owner stores the hooks on the workspace (never a file: see
+    test_a_hooks_file_is_never_run)."""
+    _STORED[ws.name] = config
 
 
 def _script(ws, name, body):
@@ -233,21 +242,23 @@ def test_no_configuration_means_no_work(workspace):
 def test_a_broken_config_file_does_not_stop_the_workspace(workspace):
     (workspace / hooks.HOOKS_FILENAME).write_text("{not json", encoding="utf-8")
     assert hooks.load_hooks("hooked") == {}
+    assert hooks.ignored_hooks_file("hooked") is None
 
 
-def test_workspace_metadata_hooks_win_over_the_file(workspace, monkeypatch):
-    _write_hooks(workspace, {"PreToolUse": [
-        {"matcher": ".*", "type": "command",
-         "command": _script(workspace, "file.sh", "exit 2")},
-    ]})
-    monkeypatch.setattr(
-        "workspace.storage.get_workspace_metadata",
-        lambda name: {"hooks": {"PreToolUse": []}},
-    )
-    monkeypatch.setattr("workspace.get_workspace_metadata",
-                        lambda name: {"hooks": {"PreToolUse": []}})
-    assert hooks.load_hooks("hooked") == {"PreToolUse": []}
+def test_a_hooks_file_is_never_run(workspace, monkeypatch):
+    # An agent writes into its workspace folder: a hook from there would run a
+    # command on the host (or post the call anywhere) on the agent's say so.
+    marker = workspace / "ran.txt"
+    (workspace / hooks.HOOKS_FILENAME).write_text(json.dumps({"PreToolUse": [
+        {"matcher": ".*", "type": "command", "command": f"touch {marker}; exit 2"},
+    ]}), encoding="utf-8")
+    assert hooks.load_hooks("hooked") == {}
     assert hooks.run_pre_tool_use("run_shell", {}, workspace="hooked").decision == "allow"
+    assert not marker.exists()
+    # The owner sees it and may import it; then the stored copy is what runs.
+    assert hooks.ignored_hooks_file("hooked")["PreToolUse"][0]["matcher"] == ".*"
+    _write_hooks(workspace, {"PreToolUse": []})
+    assert hooks.load_hooks("hooked") == {"PreToolUse": []}
 
 
 def test_the_hook_runs_in_the_workspace_folder(workspace):

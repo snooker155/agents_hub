@@ -77,6 +77,19 @@ const ROUTE_SUBJECTS = [
       return id ? { scope: `job:${id}`, refs: [{ kind: 'job', id }] } : { scope: 'plan' };
     },
   },
+  // The Artifacts page: its Views tab is the gallery, one thread; its Files
+  // tab keeps the open file in the query (`?file=<id>`, where citations and
+  // chat links land), so a question asked over one file stays with that file.
+  // A workspace file is not an attachable reference kind (chat/references.py),
+  // so the scope carries the id and the refs stay empty.
+  { match: /^\/artifacts$/, subject: () => ({ scope: 'artifacts' }) },
+  {
+    match: /^\/artifacts\/files$/,
+    subject: (m, params) => {
+      const id = params.get('file');
+      return id ? { scope: `file:${id}` } : { scope: 'artifacts-files' };
+    },
+  },
 ];
 
 /**

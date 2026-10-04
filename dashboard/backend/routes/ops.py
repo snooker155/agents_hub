@@ -104,6 +104,10 @@ def _singleton_info() -> Dict[str, bool]:
         current = {str(rec["role"]): not rec.get("expired") for rec in leases.all_leases()}
     except Exception:
         pass
+    # A workspace's own chat bots hold roles of their own
+    # (``channel_slack@team-a``, ``telegram@team-a``): listed when held.
+    roles += sorted(r for r in current if "@" in r and r.split("@", 1)[0].startswith(("channel_", "telegram"))
+                    and r not in roles)
     return {role: bool(current.get(role, False)) for role in roles}
 
 

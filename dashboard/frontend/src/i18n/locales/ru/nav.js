@@ -21,7 +21,7 @@ export default {
   runGroups: 'Группы запусков',
   messages: 'Запуски',
   views: 'Представления',
-  studio: 'Студия',
+  artifacts: 'Артефакты',
   agents: 'Агенты',
   services: 'Сервисы',
   instances: 'Инстансы',
@@ -54,6 +54,7 @@ export default {
   health: 'Статус',
   cluster: 'Кластер',
   connections: 'Подключения',
+  watchers: 'Вотчеры',
   connectors: 'Коннекторы',
   mcp: 'MCP-серверы',
 };

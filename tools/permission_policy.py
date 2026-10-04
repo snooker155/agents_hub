@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -176,6 +177,11 @@ def resolve_mode(
     name = str(tool_id or "").strip()
     if not name or name in NEVER_GATED:
         return ALWAYS_ALLOW, SOURCE_NEVER_GATED
+    from tools.approval import ALWAYS_GATED
+    if name in ALWAYS_GATED:
+        # Irreversible on the hub itself: a person says yes every time, no
+        # policy or switched off gate lifts it.
+        return ALWAYS_ASK, SOURCE_APPROVAL_LIST
 
     mine = agent_policy(agent_spec)
     if name in mine:
@@ -591,8 +597,13 @@ def record(
 
 
 def audit_decision(decision: Decision, *, agent_id: str, run_id: str, task_id: str,
-                   workspace: Optional[str]) -> None:
-    """An ``tool.policy`` audit row for a classifier that said deny or ask."""
+                   workspace: Optional[str], code: str = "") -> None:
+    """A ``tool.policy`` audit row for one decided call.
+
+    The guard writes one for every deny and ask, for every ``auto`` decision
+    and for a person's approval being spent; never for a plain allow, which
+    every read-only call of every agent would turn into noise.
+    """
     try:
         from common import audit
         audit.record(
@@ -603,7 +614,12 @@ def audit_decision(decision: Decision, *, agent_id: str, run_id: str, task_id: s
             result=decision.decision,
             details={"agent_id": agent_id, "run_id": run_id, "task_id": task_id,
                      "tool": decision.tool, "mode": decision.mode,
-                     "decision": decision.decision, "reason": decision.reason},
+                     "decision": decision.decision, "reason": decision.reason,
+                     "by": decision.by,
+                     "evaluated_permission": permission_of(decision.decision),
+                     "reason_code": code or reason_code(
+                         by=decision.by, decision=decision.decision, mode=decision.mode,
+                         source=decision.source, reason=decision.reason)},
         )
     except Exception:  # noqa: BLE001 - an audit write must not decide the tool call
         log.debug("tool policy: audit write failed", exc_info=True)
@@ -687,6 +703,181 @@ def list_decisions(
     return out
 
 
+# -------------------- the per-call trail --------------------
+#
+# The decisions above are the ones worth a row in the Tool policy card. The
+# trail below is thinner and covers every call: what the gate made of it
+# (``evaluated_permission``: allow, deny or ask) and why, as a short stable
+# ``reason_code``. The guard notes it on the run's LoopState when it decides;
+# the run's callbacks (agents/callbacks/run_statistics.py, chat_stream.py,
+# streaming.py) read it back when the call ends and put both fields on the
+# call's record in the run payload and on the live ``tool_end`` event. A call
+# no guard saw (the workspace and the agent set no hooks, gate or policy) reads
+# back as ``allow`` with ``default_allow``.
+
+PERMISSION_ALLOW = "allow"
+PERMISSION_DENY = "deny"
+PERMISSION_ASK = "ask"
+
+#: Every reason code the trail can carry, for the UI and the docs.
+REASON_CODES = (
+    "default_allow",        # nothing set: the call runs as it always did
+    "never_gated",          # reasoning tools and ask_user, never gated
+    "policy_always_allow",  # an operator set always_allow for the tool
+    "policy_always_ask",    # an operator set always_ask for the tool
+    "approval_list",        # the workspace gate and the approval list
+    "auto_run",             # the auto classifier said run
+    "auto_deny",            # the auto classifier said deny
+    "auto_ask",             # the auto classifier said ask
+    "auto_unclear",         # the classifier failed or gave no usable answer
+    "hook_deny",            # a PreToolUse hook denied the call
+    "hook_ask",             # a PreToolUse hook asked for a person
+    "human_approved",       # a person approved this exact call earlier
+    "human_denied",         # a person denied the call in the chat, or nobody answered
+    "think_required",       # the think gate refused an action before a think
+    "guardrail_deny",       # a sequence guardrail refused the call
+    "guardrail_ask",        # a sequence guardrail asked for a person
+)
+
+#: How each failure of the classifier phrases its fallback ``ask``.
+_UNCLEAR_PREFIX = "The policy classifier "
+
+_SCRATCH_TRAIL = "tool_policy_trail"
+#: Entries kept per run; a consumer that never reads them cannot grow the list.
+TRAIL_LIMIT = 512
+
+_trail_local = threading.local()
+
+
+def permission_of(decision: str) -> str:
+    """The trail's word for a policy decision (``run`` reads as ``allow``)."""
+    return {RUN: PERMISSION_ALLOW, DENY: PERMISSION_DENY, ASK: PERMISSION_ASK}.get(
+        str(decision or ""), PERMISSION_ALLOW)
+
+
+def reason_code(*, by: str, decision: str, mode: str = "", source: str = "",
+                reason: str = "", approved: bool = False) -> str:
+    """The stable code for one decided call (see :data:`REASON_CODES`)."""
+    if approved:
+        return "human_approved"
+    if by == "hook":
+        return "hook_deny" if decision == DENY else "hook_ask"
+    if by == "auto":
+        if decision == RUN:
+            return "auto_run"
+        if decision == DENY:
+            return "auto_deny"
+        return "auto_unclear" if str(reason or "").startswith(_UNCLEAR_PREFIX) else "auto_ask"
+    if by == "think":
+        return "think_required"
+    if by == "guardrail":
+        return "guardrail_deny" if decision == DENY else "guardrail_ask"
+    if mode == ALWAYS_ASK or decision == ASK:
+        return "approval_list" if source == SOURCE_APPROVAL_LIST else "policy_always_ask"
+    if source == SOURCE_NEVER_GATED:
+        return "never_gated"
+    if source in EXPLICIT_SOURCES:
+        return "policy_always_allow"
+    return "default_allow"
+
+
+def default_verdict(tool: str) -> Dict[str, str]:
+    """What a call no guard saw reads back as."""
+    code = "never_gated" if str(tool or "") in NEVER_GATED else "default_allow"
+    return {"evaluated_permission": PERMISSION_ALLOW, "reason_code": code}
+
+
+def _trail() -> List[Dict[str, Any]]:
+    """This run's trail: on the LoopState, or per thread outside a loop run."""
+    state = _state()
+    if state is not None:
+        return state.scratch.setdefault(_SCRATCH_TRAIL, [])
+    trail = getattr(_trail_local, "trail", None)
+    if trail is None:
+        trail = _trail_local.trail = []
+    return trail
+
+
+def note_call(tool: str, permission: str, code: str, *, fingerprint: str = "") -> None:
+    """Note what the gate made of one call, for the run's callbacks to read.
+
+    Never raises: the trail is a record of the decision, not part of it.
+    """
+    try:
+        trail = _trail()
+        with _trail_lock:
+            trail.append({"tool": str(tool or ""), "evaluated_permission": permission,
+                          "reason_code": code, "fingerprint": fingerprint, "read_by": set()})
+            if len(trail) > TRAIL_LIMIT:
+                del trail[: len(trail) - TRAIL_LIMIT]
+    except Exception:  # noqa: BLE001 - a lost trail entry reads back as the default
+        log.debug("tool policy: could not note %s on the trail", tool, exc_info=True)
+
+
+def revise_call(tool: str, permission: str, code: str, *, fingerprint: str) -> None:
+    """Turn the unread ``ask`` the trail holds for one call into its answer.
+
+    A call answered while its turn waits (agents/hooks.py, chat approvals)
+    keeps one trail entry: the run's callbacks read the oldest unread entry
+    for a tool, so an answer noted after the ask would be read by the next
+    call of that tool instead. Notes a new entry when there is no ask to
+    revise. Never raises, like :func:`note_call`.
+    """
+    try:
+        trail = _trail()
+        with _trail_lock:
+            for entry in reversed(trail):
+                if (entry.get("fingerprint") == fingerprint and not entry["read_by"]
+                        and entry.get("evaluated_permission") == PERMISSION_ASK):
+                    entry.update(evaluated_permission=permission, reason_code=code)
+                    return
+    except Exception:  # noqa: BLE001 - see docstring
+        log.debug("tool policy: could not revise %s on the trail", tool, exc_info=True)
+        return
+    note_call(tool, permission, code, fingerprint=fingerprint)
+
+
+def call_verdict(tool: str, consumer: Any, inputs: Any = None) -> Dict[str, str]:
+    """``{evaluated_permission, reason_code}`` for a call that just ended.
+
+    *consumer* is the callback asking (each callback reads each entry once, so
+    several callbacks on one run all see the same verdict). The entry is the
+    oldest one for *tool* this consumer has not read yet, preferring the one
+    whose fingerprint matches *inputs* when two calls of one tool ran side by
+    side. Nothing noted means no guard saw the call: :func:`default_verdict`.
+    """
+    name = str(tool or "")
+    try:
+        trail = _trail()
+        key = id(consumer)
+        wanted = ""
+        if inputs is not None:
+            from tools.approval import call_fingerprint
+            wanted = call_fingerprint(name, inputs)
+        with _trail_lock:
+            candidates = [e for e in trail if e.get("tool") == name and key not in e["read_by"]]
+            if not candidates:
+                return default_verdict(name)
+            chosen = next((e for e in candidates if wanted and e.get("fingerprint") == wanted),
+                          candidates[0])
+            chosen["read_by"].add(key)
+            return {"evaluated_permission": chosen["evaluated_permission"],
+                    "reason_code": chosen["reason_code"]}
+    except Exception:  # noqa: BLE001 - an unreadable trail reads back as the default
+        log.debug("tool policy: could not read the trail for %s", name, exc_info=True)
+        return default_verdict(name)
+
+
+def trail_marker(verdict: Dict[str, str]) -> str:
+    """The suffix the ``[tool_call]`` log marker carries, parsed back by the
+    run views (dashboard/backend/routes/sessions.py)."""
+    return (f" permission={verdict.get('evaluated_permission') or PERMISSION_ALLOW}"
+            f" reason_code={verdict.get('reason_code') or 'default_allow'}")
+
+
+_trail_lock = threading.Lock()
+
+
 __all__ = [
     "ALWAYS_ALLOW",
     "ALWAYS_ASK",
@@ -695,20 +886,31 @@ __all__ = [
     "DENY",
     "Decision",
     "EXPLICIT_SOURCES",
+    "PERMISSION_ALLOW",
+    "PERMISSION_ASK",
+    "PERMISSION_DENY",
+    "REASON_CODES",
     "RUN",
     "audit_decision",
     "cached_decision",
+    "call_verdict",
     "classifier_model",
     "classify",
     "clean_policy",
+    "default_verdict",
     "effective_policy",
     "has_policy",
     "list_decisions",
+    "note_call",
     "parse_decision",
+    "permission_of",
     "prune",
+    "reason_code",
     "record",
+    "revise_call",
     "remember_decision",
     "resolve_mode",
     "task_context",
+    "trail_marker",
     "workspace_settings",
 ]

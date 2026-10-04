@@ -110,4 +110,7 @@ export default {
   allHiddenBySystemFilter: 'Alle Agenten hier werden mit dem Produkt ausgeliefert, und Systemagenten sind ausgeblendet.',
   connectExternal: 'Externes verbinden',
   connectExternalHint: 'Einen Agenten anhängen, der anderswo läuft und hierher meldet',
+  yourAdditions: 'Ihre Ergänzungen',
+  yourAdditionsHint: 'Wird zum Prompt des übergeordneten Agenten hinzugefügt. Eine Überschrift wie "## Gleiche Überschrift" ersetzt diesen Abschnitt des übergeordneten Agenten an seiner Stelle, {{parent}} darin übernimmt zusätzlich dessen Text, und ein Abschnitt, dessen Inhalt nur {{remove}} ist, entfernt ihn.',
+  eGSameHeadingHint: 'z. B. ## Tonfall\nAntworte immer in kurzen, einfachen Sätzen.',
 };

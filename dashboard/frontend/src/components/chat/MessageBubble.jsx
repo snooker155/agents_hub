@@ -21,8 +21,12 @@ import { LiveThoughts } from './reasoning';
 import LiveDelegation from './liveDelegation';
 import { currentActivity, foldDelegationTools } from './trail';
 import { steerCaption } from './steering';
+import ToolApprovals from './ToolApprovalCard';
+import { pendingApproval } from './toolApprovals';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
+import LiveMark from '../liveMark/LiveMark';
+import { stateForTurn } from '../liveMark/activity';
 import { Bot, User } from 'lucide-react';
 
 function WorkingDots({ label }) {
@@ -68,6 +72,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {caption && (
             <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
+              {msg.steer.mode === 'system' && <span className="font-semibold mr-1">{t('steering.systemTag')}</span>}
               {t(caption.key, caption.values)}
             </span>
           )}
@@ -96,6 +101,20 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
   const trail = isStreaming && hasTrail && !activity ? foldDelegationTools(msg.timeline) : [];
   const liveDelegation = trail[trail.length - 1]?.type === 'delegation' ? trail[trail.length - 1] : null;
   const showWorking = isStreaming && !text && !liveThought && !liveDelegation;
+  // A tool call of this turn waits for a person: say so instead of "running".
+  const waitingOn = isStreaming ? pendingApproval(msg) : null;
+  const workingLabel = waitingOn
+    ? t('toolApproval.waiting', { tool: waitingOn.tool })
+    : runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel');
+  // While the turn is live the avatar is the live mark, showing the step.
+  const markState = isStreaming
+    ? stateForTurn({
+      waiting: !!waitingOn,
+      thinking: !!liveThought,
+      tool: runningTool,
+      text: !!text,
+    })
+    : null;
   const done = !isStreaming;
   const views = done ? messageViews(msg) : [];
   const shownViewIds = new Set(views.map((v) => v.view_id));
@@ -104,9 +123,13 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
     <div className="flex gap-3 mb-6 mx-2 flex-row">
       {/* Avatar */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
-        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
-          <Bot className="w-4 h-4" />
-        </div>
+        {markState ? (
+          <LiveMark state={markState} initial="working" size={32} className="w-8 h-8" />
+        ) : (
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
+            <Bot className="w-4 h-4" />
+          </div>
+        )}
         {agentName && (
           <span className="text-[9px] text-gray-400 font-medium text-center leading-tight max-w-[56px] break-words">
             {agentName}
@@ -121,7 +144,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
       >
         {liveDelegation ? <LiveDelegation key={liveDelegation.run_id} entry={liveDelegation} /> : null}
         {showWorking ? (
-          <WorkingDots label={runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel')} />
+          <WorkingDots label={workingLabel} />
         ) : text ? (
           <ChatCodeActionsContext.Provider value={codeActions}>
             <CitedText content={text} citations={msg.citations} anchor={msg.id} streaming={isStreaming} />
@@ -131,8 +154,10 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         {liveThought ? <LiveThoughts text={liveThought} /> : null}
         {/* A tool started while text was on show: a one-line notice under it. */}
         {runningTool && !showWorking ? (
-          <span className="mt-1 block"><WorkingDots label={t('chat.runningTool', { tool: runningTool })} /></span>
+          <span className="mt-1 block"><WorkingDots label={workingLabel} /></span>
         ) : null}
+        {/* A tool call waiting for a person: Approve / Deny in the same turn. */}
+        <ToolApprovals msg={msg} live={isStreaming} />
         {/* Files the agent created / edited / deleted during this turn. */}
         <MessageFiles files={msg.files} artifactsByPath={artifactsByPath} />
         {done && (
@@ -161,9 +186,7 @@ function TypingIndicator({ agentName }) {
   const { t } = useI18n();
   return (
     <div className="flex gap-3 mb-6">
-      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center">
-        <Bot className="w-4 h-4 text-white" />
-      </div>
+      <LiveMark state="working" size={32} className="flex-shrink-0 w-8 h-8" />
       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 flex items-center gap-2">
         <span className="text-xs text-gray-400">{t('chat.agentIsWorking', { agent: agentName })}</span>
         <span className="flex gap-1">

@@ -19,6 +19,7 @@ import useViewChatDescriptor from '../views/useViewChatDescriptor';
 
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // Kind labels live in the i18n `viewKinds` namespace so the Studio picker and
 // the Views gallery name the same thing the same way.
 const KIND_VALUES = [
@@ -304,7 +305,7 @@ export default function Studio() {
       <AppBar
         icon={Shapes}
         title={doc?.title || 'Studio'}
-        backTo="/views"
+        backTo="/artifacts?folder=__views__"
         backLabel={t('studio.views')}
         badges={doc?.kind && (
           <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">{doc.kind}</span>
@@ -371,7 +372,7 @@ export default function Studio() {
           {/* viewport + linked views + op strip */}
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex-1 relative bg-gray-50 dark:bg-gray-950 min-h-0">
-              {loading && <div className="absolute inset-0 grid place-items-center text-gray-400">{t('studio.loading')}</div>}
+              {loading && <div className="absolute inset-0 grid place-items-center"><PageLoader size="sm" label={t('studio.loading')} /></div>}
               {doc && (
                 <ViewRenderer
                   view={doc}

@@ -22,6 +22,7 @@ import { RunView, TWO_COLUMNS } from './playground/run-view';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 /**
  * One scenario — setting it up and watching it run.
  *
@@ -174,9 +175,7 @@ export default function PlaygroundScenario() {
   if (loading) {
     return (
       <PageContainer>
-        <div className="flex items-center gap-2 text-sm text-gray-500 py-10">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </div>
+        <PageLoader size="lg" />
       </PageContainer>
     );
   }

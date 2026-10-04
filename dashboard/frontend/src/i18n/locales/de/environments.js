@@ -64,6 +64,14 @@ export default {
     available: 'verfügbar',
     unavailable: 'nicht verfügbar',
   },
+  size: {
+    label: 'Sandbox-Größe',
+    none: 'Keine Vorlage',
+    small: 'Klein',
+    medium: 'Mittel',
+    large: 'Groß',
+    hint: 'Legt cpus, Speicher und das Prozesslimit zusammen fest (klein: 1 cpu, 1g, 128 pids; mittel: 2 cpu, 4g, 256 pids; groß: 4 cpu, 8g, 512 pids). Ein unten gesetztes Ressourcenlimit überschreibt den passenden Vorlagenwert. Wird im Lauf als Container-Stunden abgerechnet.',
+  },
   limits: {
     label: 'Ressourcenlimits',
     memoryPlaceholder: 'Speicher, z. B. 2g',

@@ -1,23 +1,27 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getProject, updateProject, deleteProject, getProjectTasks,
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
-  getProjectFiles, getProjectFileContent,
+  getProjectFiles, getProjectFileContent, getProjectFileBlob, getProjectFileId,
   syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
 import DeployPanel from '../components/projects/DeployPanel';
+import TrackerCard from '../components/projects/TrackerCard';
 import ProjectGraph from '../components/flow/ProjectGraph';
 import PlannerChat from '../components/flow/PlannerChat';
 import TaskBoard from '../components/TaskBoard';
+import FileViewer from '../components/files/FileViewer';
+import { frameType, hasSourceView, isHtmlFile, isPdfFile, needsBytes, objectUrl } from '../lib/fileKind';
+import { saveBlobAs } from '../api/files';
 import { useWorkspace } from '../components/workspace';
 import {
   FolderGit2, Globe, Server, GitBranch, Github, Gitlab, ChevronLeft,
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Search, ChevronUp, Zap, Link2, PanelRightOpen, Trash2,
+  Search, ChevronUp, Zap, Link2, PanelRightOpen, Trash2, Eye,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -86,7 +90,11 @@ export default function ProjectDetails() {
   const onDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('Overview');
+  // ?file=<file id> opens that file on the Files tab; the address names a
+  // file by its registry id, a path from an old link still opens.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedFile = searchParams.get('file') || '';
+  const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : 'Overview');
   const [taskToolbar, setTaskToolbar] = useState(null);
   const [plannerToolbar, setPlannerToolbar] = useState(null);
   const [showPlanner, setShowPlanner] = useState(false);
@@ -104,8 +112,16 @@ export default function ProjectDetails() {
   const [filesError, setFilesError] = useState('');
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [selectedFilePath, setSelectedFilePath] = useState('');
-  const [selectedFileContent, setSelectedFileContent] = useState('');
+  // { text, kind, mimeType, truncated } from file-content, and for an image,
+  // a PDF or an HTML page an object URL of its bytes (components/files/FileViewer).
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFileUrl, setSelectedFileUrl] = useState('');
   const [selectedFileSize, setSelectedFileSize] = useState(0);
+  const [fileSourceView, setFileSourceView] = useState(false);
+  const fileUrlRef = useRef('');
+  const fileRequest = useRef(0);
+  // Project-relative path to registry id (GET /projects/{id}/files).
+  const fileIdsRef = useRef({});
   const [fileContentLoading, setFileContentLoading] = useState(false);
   const [fileContentError, setFileContentError] = useState('');
 
@@ -152,23 +168,81 @@ export default function ProjectDetails() {
 
   useEffect(() => { fetchProject(); }, [fetchProject, id]);
 
-  const loadFileContent = useCallback(async (path) => {
+  const replaceFileUrl = useCallback((next) => {
+    if (fileUrlRef.current) URL.revokeObjectURL?.(fileUrlRef.current);
+    fileUrlRef.current = next;
+    setSelectedFileUrl(next);
+  }, []);
+  useEffect(() => () => { if (fileUrlRef.current) URL.revokeObjectURL?.(fileUrlRef.current); }, []);
+
+  // The registry id of a project file, asked for once when the list had none.
+  const fileIdOf = useCallback(async (path) => {
+    if (fileIdsRef.current[path]) return fileIdsRef.current[path];
+    try {
+      const { data } = await getProjectFileId(id, path);
+      if (!data?.file_id) return null;
+      fileIdsRef.current = { ...fileIdsRef.current, [path]: data.file_id };
+      return data.file_id;
+    } catch {
+      return null;
+    }
+  }, [id]);
+  const fileRef = (path) => (fileIdsRef.current[path] ? { fileId: fileIdsRef.current[path] } : path);
+
+  // Opens a file; ``link`` puts its id in the address, for a file the user
+  // picked or a link opened, not for the first one shown.
+  const loadFileContent = useCallback(async (path, { link = false } = {}) => {
     if (!path) return;
+    // A click on another file while this one loads wins: older answers are dropped.
+    const request = ++fileRequest.current;
     setSelectedFilePath(path);
     setFileContentLoading(true);
     setFileContentError('');
-    setSelectedFileContent('');
+    setSelectedFile(null);
     setSelectedFileSize(0);
+    setFileSourceView(false);
+    replaceFileUrl('');
+    const fileId = await fileIdOf(path);
+    if (request !== fileRequest.current) return;
+    if (link) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (fileId) next.set('file', fileId);
+        else next.delete('file');
+        return next;
+      }, { replace: true });
+    }
+    const ref = fileId ? { fileId } : path;
     try {
-      const resp = await getProjectFileContent(id, path);
-      setSelectedFileContent(resp.data.content || '');
-      setSelectedFileSize(resp.data.size || 0);
+      const { data } = await getProjectFileContent(id, ref);
+      if (request !== fileRequest.current) return;
+      const viewed = { name: path, mimeType: data.mime_type };
+      setSelectedFile({
+        text: data.content ?? null, kind: data.kind || 'text',
+        mimeType: data.mime_type || '', truncated: Boolean(data.truncated),
+      });
+      setSelectedFileSize(data.size || 0);
+      if (needsBytes(viewed)) {
+        const { data: blob } = await getProjectFileBlob(id, ref);
+        if (request !== fileRequest.current) return;
+        replaceFileUrl(objectUrl(blob, frameType(viewed)));
+      }
     } catch (e) {
+      if (request !== fileRequest.current) return;
       setFileContentError(e.response?.data?.detail || t('projectDetails.errors.loadFile'));
     } finally {
-      setFileContentLoading(false);
+      if (request === fileRequest.current) setFileContentLoading(false);
     }
-  }, [id, t]);
+  }, [id, t, replaceFileUrl, fileIdOf, setSearchParams]);
+
+  const downloadSelectedFile = async () => {
+    try {
+      const { data } = await getProjectFileBlob(id, fileRef(selectedFilePath));
+      saveBlobAs(data, selectedFilePath.split('/').pop());
+    } catch (e) {
+      toast.error(t('projectDetails.errors.downloadFile'), errorDetail(e));
+    }
+  };
 
   const loadFiles = useCallback(async () => {
     setFilesLoading(true);
@@ -176,19 +250,26 @@ export default function ProjectDetails() {
     try {
       const resp = await getProjectFiles(id);
       const list = resp.data.files || [];
+      const ids = resp.data.ids || {};
+      fileIdsRef.current = ids;
       setFiles(list);
       if (list.length) {
+        const byId = Object.keys(ids).find((p) => ids[p] === linkedFile);
+        const linked = byId || (list.includes(linkedFile) ? linkedFile : '');
+        const first = linked || list[0];
         const top = new Set();
         list.forEach((p) => { if (p.includes('/')) top.add(p.split('/')[0]); });
+        first.split('/').slice(0, -1).forEach((_, i, parts) => top.add(parts.slice(0, i + 1).join('/')));
         setExpandedFolders(top);
-        loadFileContent(list[0]);
+        // A link with a path is rewritten to the file's id.
+        loadFileContent(first, { link: Boolean(linked) && !byId });
       }
     } catch (e) {
       setFilesError(e.response?.data?.detail || e.message || t('projectDetails.errors.loadFiles'));
     } finally {
       setFilesLoading(false);
     }
-  }, [id, loadFileContent, t]);
+  }, [id, loadFileContent, t, linkedFile]);
 
   useEffect(() => {
     if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
@@ -297,7 +378,7 @@ export default function ProjectDetails() {
     }
   };
 
-  const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
+  const isConnectedRepo = ['github', 'gitlab', 'bitbucket', 'gitea'].includes(project?.repo?.type) && project?.repo?.remote_id;
   // A repo attached with a remote but no GitHub/GitLab provider still has
   // somewhere to push; it just cannot open a pull/merge request, so the
   // publish modal offers a reduced, push-only path instead of hiding the
@@ -343,6 +424,9 @@ export default function ProjectDetails() {
 
 
   const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const viewedFile = { name: selectedFilePath, mimeType: selectedFile?.mimeType };
+  // A PDF or an HTML page fills the panel edge to edge in its frame.
+  const framed = Boolean(selectedFileUrl) && !fileSourceView && (isPdfFile(viewedFile) || isHtmlFile(viewedFile));
 
   const toggleFolder = (path) => setExpandedFolders((prev) => {
     const next = new Set(prev);
@@ -373,7 +457,7 @@ export default function ProjectDetails() {
       <button
         key={node.path}
         type="button"
-        onClick={() => loadFileContent(node.path)}
+        onClick={() => loadFileContent(node.path, { link: true })}
         className={`flex items-center gap-1 w-full text-left px-2 py-1 rounded text-sm truncate ${selectedFilePath === node.path ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
         style={{ paddingLeft: `${depth * 12 + 20}px` }}
       >
@@ -636,7 +720,7 @@ export default function ProjectDetails() {
                 {t('projectDetails.projectProgress')}
               </h3>
               {tasksLoading ? (
-                <div className="text-center py-8 text-gray-400">{t('projectDetails.loading')}</div>
+                <PageLoader size="sm" label={t('projectDetails.loading')} />
               ) : total === 0 ? (
                 <div className="text-center py-8 text-gray-400">
                   <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -759,20 +843,58 @@ export default function ProjectDetails() {
                 {renderFileNodes(fileTree)}
               </div>
               <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden min-h-0 flex flex-col">
-                <div className="px-4 py-2 border-b bg-gray-50 shrink-0">
-                  <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
-                  <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
-                  {selectedFileSize > 0 && (
-                    <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
+                <div className="px-4 py-2 border-b bg-gray-50 shrink-0 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
+                    <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
+                    {selectedFileSize > 0 && (
+                      <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
+                    )}
+                  </div>
+                  {selectedFilePath && selectedFile && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {hasSourceView(viewedFile) && (
+                        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setFileSourceView(false)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${!fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            <Eye className="w-3.5 h-3.5" /> {t('projectDetails.fileView.rendered')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFileSourceView(true)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            <Code2 className="w-3.5 h-3.5" /> {t(isPdfFile(viewedFile) ? 'projectDetails.fileView.text' : 'projectDetails.fileView.source')}
+                          </button>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={downloadSelectedFile}
+                        title={t('projectDetails.fileView.download')}
+                        aria-label={t('projectDetails.fileView.download')}
+                        className="inline-flex items-center p-1.5 text-gray-600 border border-gray-200 rounded-lg hover:bg-white"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )}
                 </div>
-                <div className="p-4 flex-1 min-h-0 overflow-auto">
+                <div className={`${framed ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
                   {fileContentLoading ? (
-                    <p className="text-sm text-gray-500">{t('projectDetails.loading')}</p>
+                    <p className="text-sm text-gray-500 p-4">{t('projectDetails.loading')}</p>
                   ) : fileContentError ? (
-                    <p className="text-sm text-red-600">{fileContentError}</p>
-                  ) : selectedFilePath ? (
-                    <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
+                    <p className="text-sm text-red-600 p-4">{fileContentError}</p>
+                  ) : selectedFilePath && selectedFile ? (
+                    <FileViewer
+                      name={selectedFilePath} mimeType={selectedFile.mimeType} url={selectedFileUrl}
+                      text={selectedFile.text} kind={selectedFile.kind} truncated={selectedFile.truncated}
+                      source={fileSourceView} frameClassName="w-full h-full border-0 bg-white"
+                      codeClassName=""
+                    />
                   ) : (
                     <p className="text-sm text-gray-500">{t('projectDetails.selectAFileToPreview')}</p>
                   )}
@@ -846,8 +968,10 @@ export default function ProjectDetails() {
             )}
           </div>
 
+          <TrackerCard projectId={project.id} workspace={project.workspace} />
+
           {gitLoading ? (
-            <div className="text-center py-8 text-gray-400">{t('projectDetails.loadingGitStatus')}</div>
+            <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />
           ) : gitStatus ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border border-gray-200 p-5">

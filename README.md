@@ -26,7 +26,7 @@
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
-<p align="center">Current release: <b><!-- version -->0.8.0<!-- /version --></b> (<a href="./CHANGELOG.md">what changed</a>)</p>
+<p align="center">Current release: <b><!-- version -->0.9.0<!-- /version --></b> (<a href="./CHANGELOG.md">what changed</a>)</p>
 
 ---
 
@@ -75,7 +75,9 @@ cd agents_hub
 ./install.sh                    # venv, service, dashboard, the `ah` command, the shell hook
 ```
 
-Put a provider key in the `.env` the installer created, then, in a new terminal:
+On a first install it ends in `ah setup`, which asks for the database, the
+accounts, the providers and their default models, then offers to start the
+hub. Otherwise, in a new terminal:
 
 ```bash
 ah up                           # API on :8000, dashboard on :5173
@@ -144,56 +146,11 @@ The website shows the same pictures in whichever theme you read it in.
 
 ## What it does
 
-**Run work.** Chat with any agent directly, or track it as a task with subtasks,
-dependencies and a result that outlives the conversation. Four ways to put more
-than one agent on a problem: **flows** (a DAG, each node once), **loops** (re-run
-a flow until an agent judges the result good enough), **teams** (a roster over a
-shared message board) and the **orchestrator** (route a task to the best fit).
-An agent can also be kept running: a resident **instance** with a mailbox, or a
-**service** with replicas that a supervisor keeps alive and that chat turns run
-on. Scheduled jobs fire future notifications, agent tasks and flow triggers.
-
-**Define agents.** Every agent is a folder of layered markdown: `instructions.md`
-plus optional `capabilities.md` and `usage.md`. Tools are granted by name and
-nothing is granted by default, with a per-call permission policy, guardrails,
-structured output and fallback models in the loop. Memory comes in layers
-(core blocks, notes and slots, episodic events, skills, a knowledge graph, RAG),
-plus a **personal memory** about the person the agents work with, one private
-pool per user and workspace. A capability guard refuses tool sets that compose
-into a data-exfiltration primitive. An agent that already exists elsewhere can
-be imported from its own git repository, or be Claude Code or Codex, and run in
-its own process with streaming and token accounting intact.
-
-**See what happened.** Agents answer with **views**: charts, graphs, 3D scenes,
-simulations, tables, documents and slide decks with PowerPoint export, edited
-conversationally in Studio. Files the agents write are **workspace files**,
-cited in RAG answers. **Evals** turn "did that prompt change help" into a
-number; any recorded run becomes a regression case, or is replayed against
-another model and diffed, and a failed case proposes a prompt fix. **Costs** are
-broken down by workspace, agent, model, project, user and API key, with budgets
-enforced at run launch and a money cap per run. The **web request log** keeps
-every page an agent fetched, with the text it actually received.
-
-**Ship what they build.** A project's own frontend and backend run from inside
-the hub as a **project deployment**: proposed from the folder, deployed as
-containers or processes, kept alive by a supervisor, published under
-`/apps/<slug>/` and opened in the agent's own browser. Agents are also
-available as models on an OpenAI-compatible `/v1`, as an embeddable chat
-widget, and over Telegram.
-
-**Watch what runs elsewhere.** An agent that already runs in production can
-report into the hub instead of being driven by it: a connection, one LangGraph
-callback (`clients/agents-hub-langgraph` for Python, `-js` for TypeScript), and
-its runs, costs and the path each one took land here like any other run. A
-team that exports OpenTelemetry traces needs no library at all. See
-[docs/connections.md](./docs/connections.md).
-
-**Operate it.** A React dashboard on a single server-sent event stream, a Cluster
-page with every backend, worker, replica and container and its logs, a model
-catalog with per-model pricing and a local models runtime, MCP servers, GitHub
-and GitLab connectors, OIDC single sign-on with SCIM, audit, API keys and
-secrets, health probes, SLOs and a support bundle, and a CLI that does all of it
-from a terminal.
+- **Run work.** Chat with an agent or hand it a task. Put several on one problem as a flow, a loop, a team, or through the orchestrator. Keep an agent running as an instance or a service.
+- **Define agents.** A folder of markdown, tools granted by name, layered memory, guardrails, structured output. Import one from git, or run Claude Code or Codex.
+- **See what happened.** Every run keeps its prompt, tool calls, tokens and cost. Agents answer with views: charts, tables, documents, slides. Evals turn a prompt change into a number.
+- **Ship and connect.** Deploy a project's app from inside the hub. Expose agents on an OpenAI-compatible `/v1`, as a chat widget, or over Telegram. Agents running elsewhere report in over one callback.
+- **Operate it.** One dashboard and CLI: cluster, models, MCP, SSO with SCIM, audit, budgets, health and SLOs.
 
 ## Deployment options
 

@@ -1,6 +1,6 @@
 export default {
   guardrails: 'Guardrails',
-  pageDescription: 'Prüfungen von Ein- und Ausgabe eines Laufs: eine Regel oder ein Richtermodell, und ein Stopp-Signal, das den Lauf bei Auslösung anhält.',
+  pageDescription: 'Prüfungen von Eingabe, Ausgabe und Werkzeugaufrufen eines Laufs: eine Regel oder ein Richtermodell, und ein Stopp-Signal, das den Lauf bei Auslösung anhält.',
   refresh: 'Aktualisieren',
   showArchived: 'Archivierte anzeigen',
   noGuardrails: 'Noch keine Guardrails. Läufe werden ungeprüft ausgeführt, bis eines erstellt wird.',
@@ -28,6 +28,7 @@ export default {
     input: 'Eingabe',
     output: 'Ausgabe',
     both: 'Eingabe und Ausgabe',
+    tool: 'Werkzeugaufrufe',
   },
   kind: {
     label: 'Art',
@@ -36,11 +37,13 @@ export default {
     pii: 'Personenbezogene Daten (PII)',
     max_chars: 'Maximale Länge',
     judge: 'Richtermodell',
+    sequence: 'Reihenfolge der Werkzeugaufrufe',
   },
   action: {
     label: 'Aktion',
     block: 'Blockieren: stoppt den Lauf',
     warn: 'Warnen: protokolliert es, der Lauf läuft weiter',
+    ask: 'Fragen: ein Mensch entscheidet über den Aufruf',
   },
   appliesTo: {
     label: 'Gilt für',
@@ -72,6 +75,30 @@ export default {
     instructionPlaceholder: 'Der Text darf keinen medizinischen Rat enthalten.',
     instructionHint: 'Der Richter beantwortet nur, ob der Text diese Anweisung verletzt, und warum.',
   },
+  sequence: {
+    rule: 'Regel',
+    rules: {
+      after: 'Nur nach einem anderen Werkzeug',
+      sum_max: 'Summe eines Arguments höchstens',
+      same_as: 'Argument stimmt mit einem früheren Aufruf überein',
+    },
+    hints: {
+      after: 'Das Werkzeug läuft erst, wenn das andere in diesem Lauf gelaufen ist.',
+      sum_max: 'Die Werte des Arguments über alle Aufrufe dieser Werkzeuge ergeben zusammen höchstens das Limit, pro Lauf.',
+      same_as: 'Das Argument muss dem entsprechen, das ein früherer Aufruf des Quellwerkzeugs verwendet hat, etwa dasselbe Konto.',
+    },
+    tool: 'Werkzeug',
+    after_tool: 'Nur nach',
+    require_success: 'Der frühere Aufruf muss erfolgreich gewesen sein',
+    tools: 'Werkzeuge',
+    toolsPlaceholder: 'Eines pro Zeile',
+    argument: 'Argument',
+    max: 'Limit pro Lauf',
+    source_tool: 'Früheres Werkzeug',
+    source_argument: 'Dessen Argument',
+    sourceArgumentPlaceholder: 'gleicher Name, wenn leer',
+    patternsHint: 'Werkzeugnamen nehmen * als Platzhalter (mcp__bank__*). Argumente sind Pfade mit Punkten (payee.account).',
+  },
   model: 'Richtermodell',
   modelPlaceholder: 'Anbieter/Modell, z. B. anthropic/claude-haiku-4-5 (leer: der Standard des Arbeitsbereichs)',
   testBox: {
@@ -84,6 +111,12 @@ export default {
     blocked: 'Würde blockieren: {{reason}}',
     warned: 'Würde warnen: {{reason}}',
     judgeError: 'Das Richtermodell war nicht erreichbar: {{error}}',
+    callsLabel: 'Werkzeugaufrufe',
+    callsHint: 'Eine JSON-Liste von Aufrufen in der Reihenfolge eines Laufs: {"tool", "input", "ok"}. Nichts wird aufgezeichnet.',
+    callsInvalid: 'Die Aufrufe müssen eine JSON-Liste sein.',
+    callsPassed: 'Bestanden: kein Aufruf würde angehalten.',
+    callBlocked: 'Würde Aufruf {{n}} ({{tool}}) blockieren: {{reason}}',
+    callAsked: 'Würde einen Menschen zu Aufruf {{n}} ({{tool}}) fragen: {{reason}}',
   },
   events: {
     title: 'Letzte Ereignisse',

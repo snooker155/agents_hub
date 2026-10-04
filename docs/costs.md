@@ -30,6 +30,22 @@ at its own model and counted against the run's money cap while it runs. A call a
 [fallback model](agent-loop.md) answered is priced at the fallback's rate, not the
 agent's.
 
+## Container hours
+
+A docker-mode run also spends container time, not just tokens. The hours its
+container lived (`started_at` to `finished_at`) are priced per hour against
+the sandbox `size` its [environment](environments.md) names (`small`
+`0.05`, `medium` `0.10`, `large` `0.20` USD/h by default), or, for a run with
+no size, per vCPU-hour against its effective `cpus` (`0.05` USD/vCPU-h by
+default, so a plain 2-cpu run prices the same as `medium`). These are live
+settings (`AGENTS_HUB_CONTAINER_HOUR_SMALL`/`_MEDIUM`/`_LARGE`/`_PER_CPU` in
+`.env`), not catalog entries, resolved the same way other container defaults
+are. The line is added to the run's cost (`common.pricing.container_cost_usd`)
+on top of its tokens and the model calls made beside its own loop above, and
+the run page shows it next to the run's container profile when one applies.
+Zero for a local-mode run, or a docker-mode run missing either timestamp
+(recorded before this was tracked).
+
 The [outcome](outcomes.md) grader is different: it grades a whole attempt after it
 ended, so each grading is a run of its own (agent `outcome_grader`, channel `outcome`),
 tied to the task and to the work it graded, and added to that work's total when it is

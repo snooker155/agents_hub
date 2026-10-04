@@ -18,7 +18,7 @@ An agent run with visible `think` and `plan` tool calls in the log before the fi
 
 ## Steps
 
-1. Go to **Agents** and open any agent (e.g. `researcher_agent`).
+1. Go to **Agents** and open any agent (e.g. `researcher`).
 
 2. Open the **Reasoning Capabilities** section.
 

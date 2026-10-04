@@ -180,14 +180,14 @@ def run_git_publish(
         return _err(f"Repo directory not found for project {proj.name!r}. Clone it first.", code="not_found")
 
     provider_name = str(getattr(proj.repo.type, "value", proj.repo.type) or "")
-    has_provider = provider_name in ("github", "gitlab")
+    has_provider = provider_name in ("github", "gitlab", "bitbucket", "gitea")
 
-    # A GitHub/GitLab project opens a pull/merge request, so it needs the
-    # remote resolved to an owner/repo and a working provider client before
-    # anything touches the working tree. Anything else (a plain git remote,
-    # bitbucket, a repo attached with no provider at all) still gets to push:
-    # it just cannot ask a provider API to open a request afterwards, so the
-    # reduced path below only ever commits and pushes.
+    # A project on one of the four providers opens a pull/merge request, so
+    # it needs the remote resolved to an owner/repo and a working provider
+    # client before anything touches the working tree. Anything else (a
+    # plain git remote, a repo attached with no provider at all) still gets
+    # to push: it just cannot ask a provider API to open a request
+    # afterwards, so the reduced path below only ever commits and pushes.
     provider = None
     remote_id = None
     repo_default: Optional[str] = None
@@ -204,7 +204,9 @@ def run_git_publish(
                 code="unresolved_remote",
             )
         try:
-            provider = get_provider(provider_name)
+            # The token of the project's workspace (its own, else the
+            # default's), whoever calls: the tool in a run, or the route.
+            provider = get_provider(provider_name, proj.workspace)
         except GitProviderError as e:
             return _err(str(e), code="provider_error")
         try:
@@ -250,7 +252,8 @@ def run_git_publish(
     try:
         git_ops.create_branch(repo_dir, branch_name)
         commit_sha = git_ops.commit_all(repo_dir, title)
-        git_ops.push(repo_dir, branch_name, provider=provider_name if has_provider else None)
+        git_ops.push(repo_dir, branch_name, provider=provider_name if has_provider else None,
+                     workspace=proj.workspace)
     except GitOpsError as e:
         return _err(str(e), code="git_error")
 
@@ -272,13 +275,15 @@ def run_git_publish(
     if open_pr:
         pr_body = body.strip() or _build_body(task_ctx)
         try:
-            if provider_name == "github":
-                pr = provider.create_pull_request(
+            if provider_name == "gitlab":
+                pr = provider.create_merge_request(
                     remote_id, title=title, body=pr_body, head=branch_name,
                     base=target_base, draft=draft,
                 )
             else:
-                pr = provider.create_merge_request(
+                # github, bitbucket, gitea all open through create_pull_request
+                # with the identical call shape.
+                pr = provider.create_pull_request(
                     remote_id, title=title, body=pr_body, head=branch_name,
                     base=target_base, draft=draft,
                 )
@@ -338,10 +343,17 @@ def git_publish(
     title, description and result so far. Or write your own summary.
     Set `open_pr=False` to just commit and push without opening anything.
     """
-    result = run_git_publish(
-        project, branch=branch, title=title, body=body, base=base,
-        draft=draft, open_pr=open_pr,
-    )
+    # Only a project of the run's workspace (common/workspace_scope.py); the
+    # shared implementation below also serves the dashboard, for a person.
+    from tools.project_management import resolve_visible_project
+    proj = resolve_visible_project(project)
+    if proj is None:
+        result = _err(f"No project found matching {project!r}", code="not_found")
+    else:
+        result = run_git_publish(
+            proj.id, branch=branch, title=title, body=body, base=base,
+            draft=draft, open_pr=open_pr,
+        )
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 

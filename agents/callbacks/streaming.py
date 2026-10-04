@@ -13,6 +13,7 @@ bookkeeping.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -48,7 +49,10 @@ class SessionPublishCallback(BaseCallbackHandler):
         self.session_id = session_id
         self.run_id = run_id
         self.agent_id = agent_id
-        self._url = f"http://localhost:{port}/api/sessions/{session_id}/events"
+        from common.hostnet import hub_base_url
+        base = hub_base_url() if port is None or str(port) == os.environ.get("DASHBOARD_PORT", "8000") \
+            else f"http://localhost:{port}"
+        self._url = f"{base}/api/sessions/{session_id}/events"
         self._step = 0
         # Token batching state. LangChain dispatches callbacks from the agent's
         # execution thread, but executor- and model-level dispatch can overlap,
@@ -161,10 +165,11 @@ class SessionPublishCallback(BaseCallbackHandler):
             "continuation": True,
         })
 
-    def on_tool_start(self, serialized, input_str, **_):
+    def on_tool_start(self, serialized, input_str, **kwargs):
         self._step += 1
         name = (serialized or {}).get("name", "tool") if isinstance(serialized, dict) else "tool"
         inp = str(input_str or "")
+        self._tool = (name, kwargs.get("inputs"))
         self._post({
             "type": "tool_start",
             "step": self._step,
@@ -173,11 +178,22 @@ class SessionPublishCallback(BaseCallbackHandler):
             "run_id": self.run_id,
         })
 
+    def _verdict(self) -> dict:
+        """What the tool gate made of the call that just ended
+        (tools/permission_policy.call_verdict)."""
+        tool = getattr(self, "_tool", None)
+        self._tool = None
+        if not tool:
+            return {}
+        from tools.permission_policy import call_verdict
+        return call_verdict(str(tool[0] or ""), self, tool[1])
+
     def on_tool_end(self, output, **_):
         self._post({
             "type": "tool_end",
             "output": str(output or "")[:240],
             "run_id": self.run_id,
+            **self._verdict(),
         })
 
     def on_tool_error(self, error, **_):
@@ -185,6 +201,7 @@ class SessionPublishCallback(BaseCallbackHandler):
             "type": "tool_error",
             "error": str(error),
             "run_id": self.run_id,
+            **self._verdict(),
         })
 
     def on_llm_error(self, error, **_):

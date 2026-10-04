@@ -38,8 +38,22 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from common.workspace_scope import check_record
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+
+def _hidden(spec, *, write: bool = False) -> bool:
+    """Whether the world ``spec`` is out of this run's reach, answered like a
+    missing world (``common.workspace_scope.check_record``). A world with no
+    workspace is shared by every workspace for reading (``store.list_worlds``
+    lists it everywhere) and is the default workspace's to change."""
+    if spec is None:
+        return False
+    ws = getattr(spec, "workspace", None)
+    if not ws and not write:
+        return False
+    return check_record(ws, what="world") is not None
 
 
 def _coerce_json(v: Any) -> Any:
@@ -391,7 +405,7 @@ def _get_world(world_id: str) -> str:
     from playground import store
 
     spec = store.get_world(world_id)
-    if not spec:
+    if not spec or _hidden(spec):
         return _json_err(f"World not found: {world_id}", code="not_found")
     return _json_ok(_report(spec))
 
@@ -479,7 +493,7 @@ def _modify_world(world_id: str, **changes: Any) -> str:
     from playground.worlds import WorldSpec
 
     spec = store.get_world(world_id)
-    if not spec:
+    if not spec or _hidden(spec, write=True):
         return _json_err(f"World not found: {world_id}", code="not_found")
 
     data = spec.to_dict()
@@ -549,7 +563,7 @@ def _validate_world(world_id: str) -> str:
     from playground.worlds import problem_messages, validate_world, warnings_for
 
     spec = store.get_world(world_id)
-    if not spec:
+    if not spec or _hidden(spec):
         return _json_err(f"World not found: {world_id}", code="not_found")
     problems = problem_messages(validate_world(spec))
     return _json_ok({
@@ -569,7 +583,8 @@ def _delete_world(world_id: str) -> str:
     """
     from playground import store
 
-    if not store.get_world(world_id):
+    spec = store.get_world(world_id)
+    if not spec or _hidden(spec, write=True):
         return _json_err(f"World not found: {world_id}", code="not_found")
     users = store.scenarios_using_world(world_id)
     if users:

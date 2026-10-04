@@ -17,6 +17,7 @@ import { useAuth } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { useFormatters, useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white '
   + 'px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50';
@@ -200,9 +201,7 @@ function PaletteSection({ t }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
       )}
       {loading ? (
-        <p className="text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </p>
+        <PageLoader size="sm" />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -359,9 +358,7 @@ function SessionsSection({ t }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
       )}
       {loading ? (
-        <p className="text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </p>
+        <PageLoader size="sm" />
       ) : sessions.length === 0 ? (
         <p className="text-sm text-gray-500">{t('account.sessions.empty')}</p>
       ) : (
@@ -483,9 +480,7 @@ function GitHubSection({ t }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
       )}
       {status === null && !error ? (
-        <p className="text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </p>
+        <PageLoader size="sm" />
       ) : status && (
         <div className="flex flex-wrap items-center justify-between gap-3 border border-gray-100 rounded-lg px-3 py-2.5">
           <div className="flex items-start gap-2 text-sm">

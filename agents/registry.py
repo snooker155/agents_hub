@@ -44,21 +44,53 @@ log = logging.getLogger(__name__)
 
 # -------------------- Data models --------------------
 
+def _pool_entry_id(entry: Any) -> str:
+    """A binding entry's pool id: entries are normally a plain id, or
+    ``{"id": pool_id, "read_only": true}`` to mark that one binding read
+    only (:func:`memory_pool_read_only_ids`) without changing its shape."""
+    if isinstance(entry, dict):
+        return str(entry.get("id") or "").strip()
+    return str(entry or "").strip()
+
+
 def normalize_memory_pools(memory_type: str, memory_data: Any) -> List[str]:
     """Normalize a memory assignment to a list of pool ids, primary first.
 
-    Accepts a single pool id (legacy) or a list of ids; strips and dedupes.
-    Returns [] unless memory_type is 'shared' with at least one pool.
+    Accepts a single pool id (legacy), a list of ids, or a list mixing ids
+    with ``{"id", "read_only"}`` entries; strips and dedupes. Returns [] unless
+    memory_type is 'shared' with at least one pool.
     """
     if memory_type != "shared" or not memory_data:
         return []
     raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
     pools: List[str] = []
     for p in raw:
-        pid = str(p).strip()
+        pid = _pool_entry_id(p)
         if pid and pid not in pools:
             pools.append(pid)
     return pools
+
+
+def memory_pool_read_only_ids(memory_type: str, memory_data: Any) -> frozenset:
+    """Pool ids in *memory_data* whose binding entry is ``{"id", "read_only": true}``.
+
+    A read-only binding keeps the memory tools attached (so recall and the
+    other pools of the same agent keep working) but makes every write that
+    targets this one pool refuse (memory/tool.py, agents/agent_factory.py),
+    which is finer-grained than dropping the write tools for the whole run
+    the way ``Task.memory_access`` (plans/models.py, a deployment's resources)
+    does for every pool a task binds.
+    """
+    if memory_type != "shared" or not memory_data:
+        return frozenset()
+    raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
+    out: set[str] = set()
+    for p in raw:
+        if isinstance(p, dict) and p.get("read_only"):
+            pid = _pool_entry_id(p)
+            if pid:
+                out.add(pid)
+    return frozenset(out)
 
 
 @dataclass(frozen=True)
@@ -146,6 +178,12 @@ class AgentSpec:
     # workspace is delegatable. When non-empty, only these ids (intersected with
     # workspace availability) are visible and runnable as delegation targets.
     delegates: List[str] = field(default_factory=list)
+    # How many of this agent's delegated subtasks (delegate_task_tool,
+    # tools/delegation.py) may be running at once; a launch past the limit is
+    # refused with a clear message. 1..32, default 6. A run's own
+    # `overrides.max_concurrent_delegates` (agents/run_overrides.py) replaces
+    # this for that run alone.
+    max_concurrent_delegates: int = 6
     # Reasoning capability settings — keyed by tool id (e.g. "think", "plan")
     reasoning: Dict[str, Any] = field(default_factory=dict)
     # Structured response format this agent may emit (rendered as buttons / a
@@ -187,6 +225,13 @@ class AgentSpec:
     # so pull requests come from the app's bot; "user" hands out the token of
     # the person who launched the run, when they connected their account.
     github_identity: str = "app"
+    # Domain lists for the web tools (tools/web.py ``web_search`` /
+    # ``fetch_url``, and the browser's navigation): ``allowed_domains``, when
+    # set, narrows this agent to those hosts and their subdomains on top of
+    # whatever the workspace allows; ``blocked_domains`` adds to the
+    # workspace's deny list. A blocked host wins over an allowed one.
+    allowed_domains: List[str] = field(default_factory=list)
+    blocked_domains: List[str] = field(default_factory=list)
     # ── Loop policies (agents/agent_loop.py, fourth-cycle stage 2) ──────────
     # Per-tool permission policy (tools/permission_policy.py): tool id, or
     # "*" for this agent's default, mapped to "always_allow", "always_ask" or
@@ -197,6 +242,11 @@ class AgentSpec:
     # limited or fails with a server error, as catalog ids "provider/model"
     # (agents/loop_ext/fallback.py). Empty means no fallback.
     fallback_models: List[str] = field(default_factory=list)
+    # A second model the agent may ask for advice mid-run (tools/advisor.py,
+    # ``consult_advisor``), as a catalog id "provider/model" from the Models
+    # page. It sees only the question and the context the agent writes into
+    # the call, never the run's trail. None means no advisor and no tool.
+    advisor_model: Optional[str] = None
     # JSON Schema the agent's final answer must match (agents/loop_ext/
     # structured.py): validated, repaired by a retry, the run fails when it
     # still does not match. None means free text.
@@ -219,6 +269,13 @@ class AgentSpec:
     # "summary", "last_n:<N>" or "none" (normalize_handoff_history). A single
     # handoff may only narrow it.
     handoff_history: str = "full"
+    # ── Proactive profile (proactive/, docs/proactive.md) ───────────────────
+    # The agent's own pulse: a schedule, quiet hours, a daily budget and a
+    # brief saying what to check and when to act. Stored as a plain dict and
+    # normalized by ``proactive.profile.normalize_profile``; the registry only
+    # keeps it. Empty means no pulse. Not seed-owned: a system agent ships
+    # without one and the operator switches it on.
+    proactive: Dict[str, Any] = field(default_factory=dict)
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -241,6 +298,28 @@ class AgentSpec:
     review_note: Optional[str] = None
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[str] = None
+    # ── Default outcome (fifth cycle, stage 4 "kits") ───────────────────────
+    # What "done" looks like for this agent, in the absence of a task of its
+    # own outcome (tasks/outcome.py): same shape as ``Task.outcome``, a
+    # mapping {"rubric": markdown, "max_iterations": int, "grader":
+    # {"provider", "model"} | None, "threshold": float | None}. None means no
+    # default: a task assigned to this agent is graded only when the task
+    # names its own outcome. A task picks this up when it is first assigned
+    # to the agent and has no outcome of its own yet (tasks/service.py,
+    # ``assign_executor``).
+    default_outcome: Optional[Dict[str, Any]] = None
+    # ── Inheritance (agents/inheritance.py, docs/agent-inheritance.md) ──────
+    # The parent agent this one extends, or None. ``get_agent`` returns the
+    # EFFECTIVE spec (the parent's resolved fields with this record's own
+    # overrides and list deltas applied); the stored record keeps only what
+    # the child sets itself. ``extends_version`` pins the parent to one of its
+    # stored versions (agents/versions.py); None follows its current state.
+    extends: Optional[str] = None
+    extends_version: Optional[int] = None
+    # SCALAR_FIELDS (agents/inheritance.py) the child sets itself.
+    overrides: List[str] = field(default_factory=list)
+    # LIST_FIELDS deltas: {field: {"add": [...], "remove": [...]}}.
+    list_deltas: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
 
     def is_remote(self) -> bool:
         """Whether this record is an externally hosted (HTTP) agent.
@@ -369,6 +448,8 @@ class AgentSpec:
         # Only write delegates when restricted, to keep unrestricted records clean.
         if self.delegates:
             d["delegates"] = list(self.delegates)
+        if self.max_concurrent_delegates != 6:
+            d["max_concurrent_delegates"] = self.max_concurrent_delegates
         # Only write the approval overrides when set, to keep default records clean.
         if self.approval_tools:
             d["approval_tools"] = list(self.approval_tools)
@@ -378,6 +459,10 @@ class AgentSpec:
             d["secrets"] = list(self.secrets)
         if self.github_identity and self.github_identity != "app":
             d["github_identity"] = self.github_identity
+        if self.allowed_domains:
+            d["allowed_domains"] = list(self.allowed_domains)
+        if self.blocked_domains:
+            d["blocked_domains"] = list(self.blocked_domains)
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
@@ -386,6 +471,8 @@ class AgentSpec:
             d["tool_policy"] = dict(self.tool_policy)
         if self.fallback_models:
             d["fallback_models"] = list(self.fallback_models)
+        if self.advisor_model:
+            d["advisor_model"] = self.advisor_model
         if self.output_schema:
             d["output_schema"] = dict(self.output_schema)
         if self.guardrails:
@@ -399,6 +486,9 @@ class AgentSpec:
             d["handoffs"] = list(self.handoffs)
         if self.handoff_history and self.handoff_history != "full":
             d["handoff_history"] = self.handoff_history
+        # Proactive profile: only written when the agent has one.
+        if self.proactive:
+            d["proactive"] = dict(self.proactive)
         # Only write the external-agent descriptor when the record has one, so
         # built-in agents keep a clean JSON shape.
         if self.remote:
@@ -415,6 +505,16 @@ class AgentSpec:
             d["reviewed_by"] = self.reviewed_by
         if self.reviewed_at:
             d["reviewed_at"] = self.reviewed_at
+        if self.default_outcome:
+            d["default_outcome"] = dict(self.default_outcome)
+        # Inheritance: only written on a child, so other records keep their shape.
+        if self.extends:
+            d["extends"] = self.extends
+            if self.extends_version is not None:
+                d["extends_version"] = int(self.extends_version)
+            d["overrides"] = list(self.overrides or [])
+            d["list_deltas"] = {k: {"add": list(v.get("add") or []), "remove": list(v.get("remove") or [])}
+                                for k, v in (self.list_deltas or {}).items()}
         return d
 
     def load_callable(self) -> Callable[..., Any]:
@@ -516,8 +616,33 @@ def replace_all_raw(records: List[Dict[str, Any]]) -> None:
 
 def export_snapshot() -> Dict[str, Any]:
     """The registry as the snapshot file for a run container holds it: the
-    same ``{"agents": [...]}`` shape agents.json had."""
-    return {"agents": load_all_raw()}
+    same ``{"agents": [...]}`` shape agents.json had.
+
+    A child (``extends``) is written RESOLVED, with its effective prompt
+    parts and chain beside it: the container has no database to read a
+    pinned parent version from, and must run exactly what was resolved here
+    (agents/inheritance.py reads these keys in snapshot mode)."""
+    records = load_all_raw()
+    if not any(isinstance(r, dict) and r.get("extends") for r in records):
+        return {"agents": records}
+    from agents import inheritance
+    out: List[Dict[str, Any]] = []
+    for rec in records:
+        if not rec.get("extends"):
+            out.append(rec)
+            continue
+        eff = get_agent(str(rec.get("id") or ""))
+        if eff is None:
+            out.append(rec)
+            continue
+        resolved = {**rec, **eff.to_dict(), inheritance.SNAPSHOT_RESOLVED_KEY: True}
+        try:
+            resolved[inheritance.SNAPSHOT_PARTS_KEY] = inheritance.effective_parts(eff)
+            resolved[inheritance.SNAPSHOT_CHAIN_KEY] = inheritance.chain_pins(eff.id)
+        except Exception:  # noqa: BLE001 - a missing prompt part must not stop the run's snapshot
+            log.warning("could not resolve the prompt of '%s' for the run snapshot", eff.id, exc_info=True)
+        out.append(resolved)
+    return {"agents": out}
 
 
 def _registry_signature() -> str:
@@ -600,6 +725,10 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     for k in essential_fields:
         if k not in ad or not isinstance(ad[k], str) or not ad[k].strip():
             raise ValueError(f"Agent missing required field '{k}' or value is empty: {ad}")
+
+    # ``@`` starts a workspace role reference (agents/roles.py), never an id.
+    if str(ad.get("id") or "").strip().startswith("@"):
+        raise ValueError(f"Agent id cannot start with '@' (that names a workspace role): {ad.get('id')}")
 
     # normalize optional fields
     # Keep reading default_params for backward compatibility with old JSON files
@@ -687,6 +816,12 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if did and did not in delegates:
                 delegates.append(did)
 
+    try:
+        max_concurrent_delegates = int(ad.get("max_concurrent_delegates") or 6)
+    except (TypeError, ValueError):
+        max_concurrent_delegates = 6
+    max_concurrent_delegates = min(32, max(1, max_concurrent_delegates))
+
     def _id_list(raw: Any) -> List[str]:
         """A clean, de-duplicated list of tool ids from whatever JSON holds."""
         out: List[str] = []
@@ -703,6 +838,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     github_identity = str(ad.get("github_identity") or "app").strip().lower()
     if github_identity not in ("app", "user"):
         github_identity = "app"
+    # Host names, lower-cased; a stray scheme or path is dropped, not kept.
+    allowed_domains = [h for h in (x.lower().split("://")[-1].split("/")[0].lstrip(".")
+                                   for x in _id_list(ad.get("allowed_domains"))) if h]
+    blocked_domains = [h for h in (x.lower().split("://")[-1].split("/")[0].lstrip(".")
+                                   for x in _id_list(ad.get("blocked_domains"))) if h]
 
     raw_policy = ad.get("tool_policy") or {}
     tool_policy: Dict[str, str] = {}
@@ -712,6 +852,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if k and m in TOOL_POLICY_MODES:
                 tool_policy[k] = m
     fallback_models = _id_list(ad.get("fallback_models"))
+    advisor_model = str(ad.get("advisor_model") or "").strip() or None
     output_schema = ad.get("output_schema") or None
     if not isinstance(output_schema, dict):
         output_schema = None
@@ -725,6 +866,9 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     own_id = str(ad.get("id") or "").strip()
     handoffs = [h for h in _id_list(ad.get("handoffs")) if h != own_id]
     handoff_history = normalize_handoff_history(ad.get("handoff_history"))
+    proactive = ad.get("proactive") or {}
+    if not isinstance(proactive, dict):
+        proactive = {}
 
     owner_user = ad.get("owner_user") or None
     # common.review.default_status: a legacy record with no stored value
@@ -735,6 +879,32 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     review_note = ad.get("review_note") or None
     reviewed_by = ad.get("reviewed_by") or None
     reviewed_at = ad.get("reviewed_at") or None
+
+    raw_default_outcome = ad.get("default_outcome")
+    default_outcome: Optional[Dict[str, Any]] = None
+    if isinstance(raw_default_outcome, dict) and raw_default_outcome:
+        try:
+            from tasks.outcome import normalize_outcome
+            default_outcome = normalize_outcome(raw_default_outcome)
+        except Exception:  # noqa: BLE001 - a stored record is never refused on load over its
+            # default outcome; an unreadable one is dropped instead of blocking every other
+            # agent in the registry.
+            log.warning("agent '%s': could not read default_outcome, dropping it",
+                        ad.get("id"), exc_info=True)
+            default_outcome = None
+
+    # Inheritance fields (agents/inheritance.py). Lenient like the rest: a
+    # stored typo is dropped, never fatal for the whole registry.
+    from agents.inheritance import normalize_list_deltas, normalize_overrides
+    extends = str(ad.get("extends") or "").strip() or None
+    extends_version: Optional[int] = None
+    if extends and ad.get("extends_version") is not None:
+        try:
+            extends_version = int(ad.get("extends_version"))
+        except (TypeError, ValueError):
+            extends_version = None
+    overrides = normalize_overrides(ad.get("overrides")) if extends else []
+    list_deltas = normalize_list_deltas(ad.get("list_deltas")) if extends else {}
 
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
@@ -782,24 +952,34 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
         delegates=delegates,
+        max_concurrent_delegates=max_concurrent_delegates,
         approval_tools=approval_tools,
         approval_exempt=approval_exempt,
         secrets=secrets,
         github_identity=github_identity,
+        allowed_domains=allowed_domains,
+        blocked_domains=blocked_domains,
         tool_policy=tool_policy,
         fallback_models=fallback_models,
+        advisor_model=advisor_model,
         output_schema=output_schema,
         guardrails=guardrails,
         tool_search=tool_search,
         compaction=compaction,
         handoffs=handoffs,
         handoff_history=handoff_history,
+        proactive=proactive,
         remote=remote,
         owner_user=owner_user,
         review_status=review_status,
         review_note=review_note,
         reviewed_by=reviewed_by,
         reviewed_at=reviewed_at,
+        default_outcome=default_outcome,
+        extends=extends,
+        extends_version=extends_version,
+        overrides=overrides,
+        list_deltas=list_deltas,
     )
 
 
@@ -834,7 +1014,50 @@ def _maybe_reload() -> List[AgentSpec]:
     return specs
 
 
+def _effective_specs() -> List[AgentSpec]:
+    """The registry with every inheritance chain resolved (agents/inheritance.py),
+    cached alongside the stored list it was computed from: it is rebuilt
+    exactly when :func:`_maybe_reload` rebuilds the stored list. Inside a run
+    container the snapshot already holds resolved records (export_snapshot),
+    so nothing is resolved there."""
+    raws = _maybe_reload()
+    if _REGISTRY_CACHE.get("effective_for") is raws and _REGISTRY_CACHE.get("effective") is not None:
+        return _REGISTRY_CACHE["effective"]  # type: ignore[return-value]
+    if snapshot.in_snapshot_mode() or not any(s.extends for s in raws):
+        effective = raws
+    else:
+        from agents.inheritance import resolve_all
+        resolved = resolve_all(raws)
+        effective = [resolved[s.id] for s in raws]
+    _REGISTRY_CACHE["effective_for"] = raws
+    _REGISTRY_CACHE["effective"] = effective
+    return effective
+
+
 # -------------------- Public API --------------------
+
+def list_agents_raw() -> List[AgentSpec]:
+    """Every agent as STORED: a child carries only its own fields, overrides
+    and list deltas. Use :func:`list_agents` for what an agent runs with."""
+    return list(_maybe_reload())
+
+
+def get_agent_raw(agent_id: str) -> Optional[AgentSpec]:
+    """One agent as stored (see :func:`list_agents_raw`), legacy ids resolved."""
+    if not agent_id:
+        return None
+    aid = resolve_agent_id(agent_id)
+    for spec in _maybe_reload():
+        if spec.id == aid:
+            return spec
+    return None
+
+
+def children_of(agent_id: str) -> List[str]:
+    """Ids of the agents that extend ``agent_id`` directly, pinned or not."""
+    aid = resolve_agent_id(agent_id)
+    return [s.id for s in _maybe_reload() if s.extends and resolve_agent_id(s.extends) == aid]
+
 
 def list_agents(limit: Optional[int] = None, offset: Optional[int] = None) -> List[AgentSpec]:
     """Return the list of available AgentSpec objects (validated).
@@ -846,8 +1069,11 @@ def list_agents(limit: Optional[int] = None, offset: Optional[int] = None) -> Li
     the ``/api/agents`` route's workspace visibility rules) pages the filtered
     result itself instead; this is for a caller that wants a page of the raw
     registry.
+
+    Every spec is the EFFECTIVE one: an agent that ``extends`` another comes
+    back with its chain resolved (:func:`list_agents_raw` for stored records).
     """
-    specs = list(_maybe_reload())
+    specs = list(_effective_specs())
     if limit is None and offset is None:
         return specs
     start = offset or 0
@@ -860,13 +1086,51 @@ def count_agents() -> int:
     return len(_maybe_reload())
 
 
+#: Agent ids that were renamed, old id to new id. A reference stored outside
+#: this repo (a run or chat record, a script, a ``/v1`` model id, a widget
+#: snippet on someone's site) can still carry the old id, so every lookup
+#: resolves it through :func:`resolve_agent_id`. Stored configuration is
+#: rewritten once at startup (``common/legacy_agent_ids.py``); this map is what
+#: keeps the rest working. Add a line here when a system agent is renamed.
+LEGACY_AGENT_IDS: Dict[str, str] = {
+    "researcher_agent": "researcher",
+}
+
+
+def resolve_agent_id(agent_id: Any) -> str:
+    """The current id for ``agent_id``: the renamed id for a legacy one, else
+    ``agent_id`` itself (stripped). A record that still carries the old id
+    (a registry the startup migration has not reached yet, or a run
+    container's snapshot taken before it) wins over the alias."""
+    aid = str(agent_id or "").strip()
+    new_id = LEGACY_AGENT_IDS.get(aid)
+    if not new_id:
+        return aid
+    try:
+        specs = _maybe_reload()
+    except Exception:  # noqa: BLE001 - an unreadable registry resolves to the current id
+        return new_id
+    if any(spec.id == aid for spec in specs) and not any(spec.id == new_id for spec in specs):
+        return aid
+    return new_id
+
+
 def get_agent(agent_id: str) -> Optional[AgentSpec]:
-    """Return a specific agent by id or None if not found."""
+    """Return a specific agent by id or None if not found. A legacy id
+    (:data:`LEGACY_AGENT_IDS`) returns the renamed agent. The spec is the
+    EFFECTIVE one (inheritance resolved); :func:`get_agent_raw` is the
+    stored record."""
     if not agent_id:
         return None
-    for spec in _maybe_reload():
+    specs = _effective_specs()
+    for spec in specs:
         if spec.id == agent_id:
             return spec
+    new_id = LEGACY_AGENT_IDS.get(str(agent_id).strip())
+    if new_id:
+        for spec in specs:
+            if spec.id == new_id:
+                return spec
     return None
 
 
@@ -948,37 +1212,131 @@ def add_agent(
     ``actor``/``note`` are attributed to the version-history snapshot this call
     may take (see below); both are optional and go unused when nothing needs
     snapshotting.
-    """
-    from agents.capability_guard import enforce_agent_tools
 
-    _prev = get_agent(spec.id)
+    Inheritance: a spec with ``extends`` is taken as the EFFECTIVE spec the
+    caller wants (what ``get_agent`` returned, with some fields changed). It is
+    diffed against the parent's effective spec (agents/inheritance.py
+    ``to_stored``): a scalar equal to the parent's is inherited, a different
+    one is an override, list fields become add/remove deltas and dict fields
+    keep only the keys that differ. So every per field route
+    (``dataclasses.replace(get_agent(id), ...)`` then ``add_agent``) works on a
+    child without flattening it. :func:`save_raw` stores a record as given.
+    """
+    from agents import inheritance
+
+    # A retired id resolves to the renamed agent everywhere, so a new record
+    # under it would be unreachable. A record that still carries it (an
+    # install the startup rename has not reached) may still be saved.
+    if spec.id in LEGACY_AGENT_IDS and not any(s.id == spec.id for s in _maybe_reload()):
+        raise ValueError(
+            f"'{spec.id}' is the old id of the agent '{LEGACY_AGENT_IDS[spec.id]}'. "
+            f"Edit '{LEGACY_AGENT_IDS[spec.id]}', or choose another id."
+        )
+
+    if spec.extends:
+        inheritance.validate_extends(spec)
+        parent_eff = inheritance.parent_effective(spec.extends, spec.extends_version)
+        if parent_eff is None:
+            raise inheritance.InheritanceError(f"Parent agent '{spec.extends}' not found.")
+        stored = inheritance.to_stored(spec, parent_eff)
+    elif spec.overrides or spec.list_deltas or spec.extends_version is not None:
+        stored = replace(spec, overrides=[], list_deltas={}, extends_version=None)
+    else:
+        stored = spec
+    _save_record(stored, user_edit=user_edit, actor=actor, note=note)
+
+
+def save_raw(
+    spec: AgentSpec,
+    *,
+    user_edit: bool = True,
+    actor: Optional[str] = None,
+    note: Optional[str] = None,
+) -> None:
+    """Store ``spec`` exactly as given (its overrides and list deltas are kept,
+    nothing is diffed), with the same checks as :func:`add_agent`: the
+    inheritance rules, the capability guard on the effective result and on
+    every unpinned descendant, version history and the review gate. Used to
+    change or repin a parent while keeping a child's own changes, and to reset
+    one override to inherited."""
+    from agents import inheritance
+
+    if spec.extends:
+        inheritance.validate_extends(spec)
+    _save_record(spec, user_edit=user_edit, actor=actor, note=note)
+
+
+def _save_record(
+    stored: AgentSpec,
+    *,
+    user_edit: bool,
+    actor: Optional[str],
+    note: Optional[str],
+) -> None:
+    """Guard, snapshot and write one stored record (see :func:`add_agent`)."""
+    # ``@`` starts a workspace role reference (agents/roles.py), never an id.
+    if str(stored.id or "").startswith("@"):
+        raise ValueError(f"Agent id cannot start with '@' (that names a workspace role): {stored.id}")
+    from agents.capability_guard import enforce_agent_tools
+    from agents import inheritance
     from tools.capabilities import secret_grant_ids
+
+    _prev = get_agent(stored.id)
+
+    # The effective spec this record will have, and every unpinned
+    # descendant's, computed against the registry with this record in place.
+    candidates = [s for s in _maybe_reload() if s.id != stored.id] + [stored]
+    needs_resolution = any(s.extends for s in candidates) and not snapshot.in_snapshot_mode()
+    resolved = inheritance.resolve_all(candidates) if needs_resolution else {s.id: s for s in candidates}
+    effective = resolved.get(stored.id, stored)
 
     # Declared secrets ride along as pseudo tool ids (``secrets:<NAME>``) that
     # grant reads_private, so holding a token closes the trifecta like any
-    # private-data tool would.
+    # private-data tool would. A child is judged on its effective tools; the
+    # override is the record's own (never inherited).
     enforce_agent_tools(
-        spec.id,
-        list(spec.tools or []) + secret_grant_ids(spec.secrets),
+        stored.id,
+        list(effective.tools or []) + secret_grant_ids(effective.secrets),
         previous_tools=(list(_prev.tools or []) + secret_grant_ids(_prev.secrets)) if _prev else None,
-        override=bool(spec.capability_override),
+        override=bool(stored.capability_override),
         # The workspace the record is owned by, so a brand new agent of the
         # system workspace meets the no push rule at save time, not only at
         # build time (agents.capability_guard.is_system_workspace_agent).
-        workspace=getattr(spec, "owner_workspace", None),
+        workspace=getattr(stored, "owner_workspace", None),
         # The spec being saved, not the (possibly stale-or-absent) registry
         # record: a brand-new agent, or one whose delegates list is being
         # narrowed in this very call, must be judged on the allowlist it is
         # about to have. See agents.capability_guard.check_agent_tools.
-        delegates=list(spec.delegates or []),
+        delegates=list(effective.delegates or []),
     )
+    # One workspace per run (common/workspace_scope.py): tools that see the
+    # whole service belong to the service's own agents, workspace management
+    # to the main agent.
+    from common import workspace_scope
+    workspace_scope.check_agent_tools(stored.id, list(effective.tools or []))
+    # An agent an isolated workspace owns holds only the tools that stay
+    # inside its perimeter, and is never an imported (remote) agent
+    # (common/isolation.py). Never softened by mode or override.
+    from common import isolation
+    _owner = getattr(stored, "owner_workspace", None)
+    isolation.check_agent_tools(_owner, list(effective.tools or []))
+    if _owner and effective.is_remote() and isolation.is_isolated(_owner):
+        raise isolation.IsolationError(
+            f"Workspace '{_owner}' is isolated: an imported agent runs outside the hub and "
+            "cannot belong to it.", status=400)
+
+    # A parent's change reaches every child that follows it: each one is
+    # checked with its new effective tool set and the save is refused, naming
+    # the child, when one of them would form a blocked combination.
+    descendants = inheritance.unpinned_descendants(stored.id, candidates) if needs_resolution else []
+    if descendants:
+        inheritance.enforce_descendants(stored.id, descendants, resolved, {s.id: s for s in candidates})
 
     # A system agent the operator edits stops tracking the seed: bootstrap's
     # sync skips records carrying this flag, so the edit survives every restart.
     # Bootstrap itself writes with user_edit=False and leaves the flag alone.
-    if user_edit and spec.system and not spec.user_modified:
-        import dataclasses as _dc
-        spec = _dc.replace(spec, user_modified=True)
+    if user_edit and stored.system and not stored.user_modified:
+        stored = replace(stored, user_modified=True)
 
     # Registry review gate (common.review, shared with flows and skills).
     # Publishing — going from not-shared to shared — is the moment an agent
@@ -988,39 +1346,51 @@ def add_agent(
     # recorded through set_review_status) leaves review_status exactly as the
     # caller set it, so this never fights an explicit approve/reject.
     was_shared = bool(_prev.shared) if _prev is not None else False
-    gated = review_mod.gate_on_publish(was_shared, spec.shared, spec.review_status)
+    gated = review_mod.gate_on_publish(was_shared, stored.shared, stored.review_status)
     if gated is not None:
-        spec = replace(spec, review_status=gated, reviewed_by=None,
-                       reviewed_at=None, review_note=None)
+        stored = replace(stored, review_status=gated, reviewed_by=None,
+                         reviewed_at=None, review_note=None)
 
     # Snapshot whatever is currently stored into version history before this
     # call replaces it, so history never has a gap. Only fires when the agent
     # already exists and its stored definition differs from the last snapshot
     # on file; best-effort, never blocks a legitimate write (see
-    # agents.versions.snapshot_if_changed).
+    # agents.versions.snapshot_if_changed). The children that follow this
+    # agent change with it, so their current state is captured too.
     if _prev is not None:
         try:
             from agents.versions import snapshot_if_changed
-            snapshot_if_changed(spec.id, next_spec=spec, actor=actor, note=note)
+            snapshot_if_changed(stored.id, next_spec=effective, actor=actor, note=note)
+            for child_id in descendants:
+                snapshot_if_changed(child_id, actor=actor, note=f"before '{stored.id}' changed")
         except Exception:
-            log.warning("could not snapshot version history for '%s'", spec.id, exc_info=True)
+            log.warning("could not snapshot version history for '%s'", stored.id, exc_info=True)
 
     if snapshot.in_snapshot_mode():
         snapshot.refuse_write("the agent registry")
     _ensure_legacy_imported()
     with _agents_store.transaction():
-        _agents_store.put(spec.id, spec.to_dict())
+        _agents_store.put(stored.id, stored.to_dict())
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
-    _notify_agents_changed(spec.id)
+    _notify_agents_changed(stored.id)
+    for child_id in descendants:
+        _notify_agents_changed(child_id)
 
 
 def remove_agent(agent_id: str) -> bool:
-    """Remove an agent from the registry by id. Returns True if found and removed."""
+    """Remove an agent from the registry by id. Returns True if found and removed.
+
+    Raises :class:`agents.inheritance.AgentHasChildren` (a ValueError) when
+    other agents extend this one: they would lose their parent."""
     if snapshot.in_snapshot_mode():
         snapshot.refuse_write("the agent registry")
     _ensure_legacy_imported()
+    children = children_of(agent_id)
+    if children:
+        from agents.inheritance import AgentHasChildren
+        raise AgentHasChildren(str(agent_id), children)
     if not _agents_store.delete(str(agent_id)):
         return False
 

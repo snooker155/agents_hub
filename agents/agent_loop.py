@@ -71,6 +71,18 @@ class LoopState:
     #: A message is placed after the tool result of step ``n`` (0 = before the
     #: first tool call) and stays there on every later model call.
     injections: List[Dict[str, Any]] = field(default_factory=list)
+    #: Steering mode ``system``: operator additions to the instructions, same
+    #: shape as ``injections``. Appended to the system prompt on every model
+    #: call after the one that took them (agents/loop_ext/steering.py).
+    system_messages: List[Dict[str, Any]] = field(default_factory=list)
+    #: Steering mode ``switch_model``: a person moved the run to another
+    #: model. ``{"after_step", "msg_id", "from", "to", "at", "by", "error"}``;
+    #: every model call after ``after_step`` runs on ``to`` (the latest entry
+    #: without an ``error`` wins), see agents/loop_ext/steering.py.
+    model_switches: List[Dict[str, Any]] = field(default_factory=list)
+    #: Tool results too long for the context, saved to a workspace file
+    #: (agents/tool_spill.py): ``{"tool", "path", "file_id", "chars"}``.
+    tool_spills: List[Dict[str, Any]] = field(default_factory=list)
     #: Tool search: names of deferred tools the model has loaded so far.
     loaded_tools: List[str] = field(default_factory=list)
     #: Compaction: one entry per fold or clearing pass (what, how much, when).
@@ -105,6 +117,12 @@ class LoopState:
         out: Dict[str, Any] = {}
         if self.injections:
             out["injections"] = [dict(i) for i in self.injections]
+        if self.system_messages:
+            out["system_messages"] = [dict(i) for i in self.system_messages]
+        if self.model_switches:
+            out["model_switches"] = [dict(i) for i in self.model_switches]
+        if self.tool_spills:
+            out["tool_spills"] = [dict(i) for i in self.tool_spills]
         if self.loaded_tools:
             out["loaded_tools"] = list(self.loaded_tools)
         if self.compactions:
@@ -316,6 +334,14 @@ class LoopExtension:
         """
         return scratchpad
 
+    def shape_prompt(self, state: LoopState, messages: List[Any]) -> List[Any]:
+        """Change the filled prompt (every message the model is sent, system
+        message first) right before the model call. Used for what belongs in
+        the system message rather than the conversation (steering mode
+        ``system``). Only extensions that override it are applied, so the
+        chain of an agent with none is unchanged."""
+        return messages
+
     def select_tools(self, state: LoopState, tools: List[Any]) -> List[Any]:
         """The tools to bind for this model call (default: all of them).
 
@@ -346,11 +372,14 @@ class LoopExtension:
 #: Extension modules, in the order their hooks run. Each exposes
 #: ``extension_for(agent) -> Optional[LoopExtension]``. Steering runs before
 #: compaction so a folded context still carries the user's latest words;
-#: tool search selects before structured decides on strict schemas; fallback
-#: wraps last, around everything the others bound.
+#: view focus resolves the active view's kind and marks its tools loaded
+#: before tool search selects, and tool search selects before structured
+#: decides on strict schemas; fallback wraps last, around everything the
+#: others bound.
 EXTENSION_MODULES: Sequence[str] = (
     "agents.loop_ext.steering",
     "agents.loop_ext.compaction",
+    "agents.loop_ext.view_focus",
     "agents.loop_ext.tool_search",
     "agents.loop_ext.structured",
     "agents.loop_ext.fallback",
@@ -459,7 +488,25 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
                 bound = ext.wrap_model(state, bound, lambda other: _bind(other, state, selected))
             except Exception:  # noqa: BLE001
                 log.warning("agent_loop: %s.wrap_model failed", ext.name, exc_info=True)
+        if prompt_shapers:
+            return (RunnableLambda(lambda _x, _p=payload: _p) | prompt
+                    | RunnableLambda(lambda value, _s=state: _shape_prompt(_s, value)) | bound)
         return RunnableLambda(lambda _x, _p=payload: _p) | prompt | bound
+
+    prompt_shapers = [e for e in exts if type(e).shape_prompt is not LoopExtension.shape_prompt]
+
+    def _shape_prompt(state: LoopState, value: Any) -> Any:
+        from langchain_core.prompt_values import ChatPromptValue
+        try:
+            messages = list(value.to_messages())
+        except AttributeError:
+            return value
+        for ext in prompt_shapers:
+            try:
+                messages = ext.shape_prompt(state, list(messages))
+            except Exception:  # noqa: BLE001 - keep the prompt as filled rather than fail the step
+                log.warning("agent_loop: %s.shape_prompt failed", ext.name, exc_info=True)
+        return ChatPromptValue(messages=messages)
 
     return RunnableLambda(_route, name="agent_loop") | ToolsAgentOutputParser()
 

@@ -1,0 +1,10 @@
+# Execution profiles. A deployment names one by its id below.
+kind: environment
+id: research-sandbox
+description: Web access limited to the search provider and documentation sites.
+mode: inherit
+network:
+  type: limited
+  allowed_hosts: [docs.python.org, en.wikipedia.org]
+env:
+  REPORT_STYLE: brief

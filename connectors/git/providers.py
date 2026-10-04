@@ -1,5 +1,6 @@
 """
-Provider abstraction over the GitHub REST v3 and GitLab REST v4 APIs.
+Provider abstraction over the GitHub REST v3, GitLab REST v4, Bitbucket
+Cloud REST 2.0 and Gitea (GitHub-shaped) APIs.
 
 Only the small surface needed by the dashboard is implemented:
   - test_connection()  — validate the token, return the authenticated login
@@ -8,8 +9,8 @@ Only the small surface needed by the dashboard is implemented:
   - list_issues(remote_id) — all issues (open + closed), normalized
   - auth_header()      — HTTP header for token-safe git clone/pull injection
   - default_branch(remote_id) — the branch a publish must never push directly to
-  - create_pull_request(...)  — GitHubProvider only, POST /repos/{o}/{r}/pulls
-  - create_merge_request(...) — GitLabProvider only, POST /projects/{id}/merge_requests
+  - create_pull_request(...)  — GitHub, Bitbucket, Gitea: POST .../pulls (or .../pullrequests)
+  - create_merge_request(...) — GitLab only, POST /projects/{id}/merge_requests
 
 Normalized shapes:
   repo:  {provider, remote_id, name, full_name, description, default_branch,
@@ -289,12 +290,220 @@ class GitLabProvider(GitProvider):
         return {"url": data.get("web_url"), "number": data.get("iid")}
 
 
-def get_provider(provider: str) -> GitProvider:
-    """Build a provider client from the stored configuration."""
+class BitbucketProvider(GitProvider):
+    """Bitbucket Cloud (not Server/Data Center). Basic auth: a username plus
+    an app password, or an API token with the account's email as username —
+    the operator supplies both; there is no bearer-token form here the way
+    GitHub and GitLab have one."""
+
+    name = "Bitbucket"
+    _api = "https://api.bitbucket.org/2.0"
+
+    def __init__(self, token: str, username: str = ""):
+        super().__init__(token)
+        self.username = (username or "").strip()
+        if not self.username:
+            raise GitProviderError(
+                "No Bitbucket username configured. Add it alongside the app "
+                "password in Settings -> Git."
+            )
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Basic {_b64(f'{self.username}:{self.token}')}"}
+
+    def auth_header(self) -> str:
+        return f"Authorization: Basic {_b64(f'{self.username}:{self.token}')}"
+
+    def test_connection(self) -> dict[str, Any]:
+        resp = self._get(f"{self._api}/user", self._headers())
+        data = resp.json()
+        return {"ok": True, "login": data.get("username"), "error": None}
+
+    def _normalize_repo(self, r: dict) -> dict[str, Any]:
+        full_name = r.get("full_name")
+        links = r.get("links") or {}
+        clone_links = links.get("clone") or []
+        clone_url = next((c.get("href") for c in clone_links if c.get("name") == "https"), None)
+        return {
+            "provider": "bitbucket",
+            "remote_id": full_name,
+            "name": r.get("name"),
+            "full_name": full_name,
+            "description": r.get("description"),
+            "default_branch": (r.get("mainbranch") or {}).get("name") or "main",
+            "clone_url": clone_url,
+            "web_url": (links.get("html") or {}).get("href"),
+            "private": bool(r.get("is_private")),
+        }
+
+    def list_repos(self, search: Optional[str] = None) -> list[dict[str, Any]]:
+        repos: list[dict] = []
+        url: Optional[str] = f"{self._api}/repositories?role=member"
+        while url and len(repos) < 300:
+            resp = self._get(url, self._headers())
+            data = resp.json()
+            repos.extend(data.get("values") or [])
+            url = data.get("next")
+        out = [self._normalize_repo(r) for r in repos[:300]]
+        if search:
+            q = search.lower()
+            out = [r for r in out if q in (r["full_name"] or "").lower()]
+        return out
+
+    def get_repo(self, remote_id: str) -> dict[str, Any]:
+        resp = self._get(f"{self._api}/repositories/{remote_id}", self._headers())
+        return self._normalize_repo(resp.json())
+
+    def list_issues(self, remote_id: str) -> list[dict[str, Any]]:
+        items: list[dict] = []
+        url: Optional[str] = f"{self._api}/repositories/{remote_id}/issues"
+        try:
+            while url and len(items) < _MAX_ISSUES:
+                resp = self._get(url, self._headers())
+                data = resp.json()
+                items.extend(data.get("values") or [])
+                url = data.get("next")
+        except GitProviderError as e:
+            if "not found" in str(e).lower():
+                return []  # the repo's issue tracker is disabled
+            raise
+        issues = []
+        for it in items[:_MAX_ISSUES]:
+            state = (it.get("state") or "").lower()
+            issues.append({
+                "number": it.get("id"),
+                "title": it.get("title") or "",
+                "body": ((it.get("content") or {}).get("raw")) or "",
+                "state": "open" if state in ("new", "open") else "closed",
+                "labels": [],
+                "url": ((it.get("links") or {}).get("html") or {}).get("href"),
+                "updated_at": it.get("updated_on"),
+                "author": (it.get("reporter") or {}).get("display_name"),
+            })
+        return issues
+
+    def create_pull_request(
+        self, owner_repo: str, *, title: str, body: str, head: str, base: str,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """POST /repositories/{workspace}/{slug}/pullrequests. Bitbucket has
+        no draft flag on this endpoint, so ``draft`` is accepted for the same
+        call shape as the other providers and otherwise ignored."""
+        payload = {
+            "title": title,
+            "description": body,
+            "source": {"branch": {"name": head}},
+            "destination": {"branch": {"name": base}},
+        }
+        resp = self._post(f"{self._api}/repositories/{owner_repo}/pullrequests", self._headers(), payload)
+        data = resp.json()
+        return {"url": ((data.get("links") or {}).get("html") or {}).get("href"), "number": data.get("id")}
+
+
+class GiteaProvider(GitProvider):
+    """A self-hosted Gitea instance. Its REST API mirrors GitHub's shape
+    closely enough to reuse GitProvider's paginate/get/post helpers as-is."""
+
+    name = "Gitea"
+
+    def __init__(self, token: str, base_url: str):
+        super().__init__(token)
+        base_url = (base_url or "").strip().rstrip("/")
+        if not base_url:
+            raise GitProviderError(
+                "No Gitea base URL configured. Add one in Settings -> Git."
+            )
+        # No common.ssrf.resolve_and_check here on purpose: Gitea is commonly
+        # self-hosted on the LAN or on localhost, and this URL is the
+        # operator's own choice (not attacker-controlled input reached
+        # through an agent), so the usual "no private addresses" guard would
+        # just break the common case instead of defending anything.
+        self._api = f"{base_url}/api/v1"
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"token {self.token}", "Accept": "application/json"}
+
+    def test_connection(self) -> dict[str, Any]:
+        resp = self._get(f"{self._api}/user", self._headers())
+        data = resp.json()
+        return {"ok": True, "login": data.get("login") or data.get("username"), "error": None}
+
+    def _normalize_repo(self, r: dict) -> dict[str, Any]:
+        return {
+            "provider": "gitea",
+            "remote_id": r.get("full_name"),
+            "name": r.get("name"),
+            "full_name": r.get("full_name"),
+            "description": r.get("description"),
+            "default_branch": r.get("default_branch") or "main",
+            "clone_url": r.get("clone_url"),
+            "web_url": r.get("html_url"),
+            "private": bool(r.get("private")),
+        }
+
+    def list_repos(self, search: Optional[str] = None) -> list[dict[str, Any]]:
+        repos = self._paginate(f"{self._api}/user/repos", self._headers(), {}, limit=300)
+        out = [self._normalize_repo(r) for r in repos]
+        if search:
+            q = search.lower()
+            out = [r for r in out if q in (r["full_name"] or "").lower()]
+        return out
+
+    def get_repo(self, remote_id: str) -> dict[str, Any]:
+        resp = self._get(f"{self._api}/repos/{remote_id}", self._headers())
+        return self._normalize_repo(resp.json())
+
+    def list_issues(self, remote_id: str) -> list[dict[str, Any]]:
+        items = self._paginate(
+            f"{self._api}/repos/{remote_id}/issues", self._headers(),
+            {"state": "all", "type": "issues"}, limit=_MAX_ISSUES,
+        )
+        return [{
+            "number": it.get("number"),
+            "title": it.get("title") or "",
+            "body": it.get("body") or "",
+            "state": "closed" if it.get("state") == "closed" else "open",
+            "labels": [l.get("name") for l in (it.get("labels") or []) if isinstance(l, dict)],
+            "url": it.get("html_url"),
+            "updated_at": it.get("updated_at"),
+            "author": (it.get("user") or {}).get("login"),
+        } for it in items]
+
+    def auth_header(self) -> str:
+        return f"Authorization: token {self.token}"
+
+    def create_pull_request(
+        self, owner_repo: str, *, title: str, body: str, head: str, base: str,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """POST /repos/{owner}/{repo}/pulls. Gitea has no draft flag on this
+        endpoint either, so ``draft`` is accepted and ignored, same as
+        Bitbucket above."""
+        resp = self._post(
+            f"{self._api}/repos/{owner_repo}/pulls", self._headers(),
+            {"title": title, "body": body, "head": head, "base": base},
+        )
+        data = resp.json()
+        return {"url": data.get("html_url"), "number": data.get("number")}
+
+
+def get_provider(provider: str, workspace: Optional[str] = None) -> GitProvider:
+    """Build a provider client from the stored configuration in effect in
+    ``workspace``: its own entry for the provider when it defines one, else
+    the default workspace's (connectors/git/store.py). ``None`` means the
+    running code's workspace; a route or a job acting for a project names
+    the project's."""
+    if workspace is not None:
+        from connectors.channels.store import in_workspace
+        return in_workspace(workspace, get_provider, provider)
     if provider == "github":
         return GitHubProvider(store.get_token("github"))
     if provider == "gitlab":
         return GitLabProvider(store.get_token("gitlab"), store.get_base_url("gitlab"))
+    if provider == "bitbucket":
+        return BitbucketProvider(store.get_token("bitbucket"), store.get_username("bitbucket"))
+    if provider == "gitea":
+        return GiteaProvider(store.get_token("gitea"), store.get_base_url("gitea"))
     raise GitProviderError(f"Unknown git provider: {provider!r}")
 
 

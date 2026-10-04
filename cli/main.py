@@ -257,10 +257,30 @@ def _workspace_source(explicit: Optional[str] = None) -> str:
 _backend = None
 
 
+def _apply_saved_remote() -> None:
+    """Use the hub `ah setup` saved (its remote shape, or "point this ah at
+    it" after a Docker setup), unless AGENTS_HUB_URL already names one.
+
+    Applied only on the way to the service handle, so commands that start
+    servers (`ah up`) never hand the saved address to the processes they spawn.
+    """
+    if os.environ.get("AGENTS_HUB_URL", "").strip():
+        return
+    remote = _read_state().get("remote")
+    if not isinstance(remote, dict) or not remote.get("url"):
+        return
+    os.environ["AGENTS_HUB_URL"] = str(remote["url"])
+    if remote.get("api_key"):
+        os.environ.setdefault("AGENTS_HUB_API_KEY", str(remote["api_key"]))
+    if remote.get("api_token"):
+        os.environ.setdefault("AGENTS_HUB_API_TOKEN", str(remote["api_token"]))
+
+
 def hub():
     """The service handle — direct calls, or HTTP when AGENTS_HUB_URL is set."""
     global _backend
     if _backend is None:
+        _apply_saved_remote()
         try:
             _backend = get_backend()
         except Exception as e:
@@ -1323,12 +1343,13 @@ def secrets_list(
         console.print(f"[dim]No secrets in {ws}.[/dim]")
         return
     table = Table(box=box.SIMPLE, show_header=True, title=f"secrets in {ws}")
-    for col in ("name", "agent", "user", "hint", "updated"):
+    for col in ("name", "agent", "user", "hosts", "hint", "updated"):
         table.add_column(col)
     for r in rows:
         table.add_row(r["name"], r.get("agent_id") or "[dim]any[/dim]",
-                      r.get("user_id") or "[dim]any[/dim]", r.get("hint") or "",
-                      str(r.get("updated_at") or "")[:19])
+                      r.get("user_id") or "[dim]any[/dim]",
+                      ", ".join(r.get("allowed_hosts") or []) or "[dim]any[/dim]",
+                      r.get("hint") or "", str(r.get("updated_at") or "")[:19])
     console.print(table)
 
 
@@ -1340,6 +1361,11 @@ def secrets_set(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace name."),
     agent: Optional[str] = typer.Option(None, "--agent", help="Only for this agent."),
     user: Optional[str] = typer.Option(None, "--user", help="Only for runs this user launches."),
+    host: Optional[List[str]] = typer.Option(
+        None, "--host",
+        help="Only send it to this host (repeatable; subdomains match). The run then holds a "
+             "placeholder and the egress proxy puts the value in on the way out."),
+    any_host: bool = typer.Option(False, "--any-host", help="Clear the host restriction."),
 ):
     """Store or replace a secret."""
     ws = _secrets_workspace(workspace)
@@ -1347,14 +1373,18 @@ def secrets_set(
         value = sys.stdin.read().rstrip("\n")
     elif value is None:
         value = typer.prompt(f"Value for {name}", hide_input=True)
+    hosts: Optional[List[str]] = [] if any_host else (list(host) if host else None)
 
     def direct(s):
-        row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local")
+        row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local",
+                           allowed_hosts=hosts)
         _secrets_audit("secret.set", ws, name, agent, user)
         return row
 
-    _secrets_call(direct, "PUT", f"/api/workspaces/{ws}/secrets/{name}",
-                  json={"value": value, "agent_id": agent, "user_id": user})
+    body = {"value": value, "agent_id": agent, "user_id": user}
+    if hosts is not None:
+        body["allowed_hosts"] = hosts
+    _secrets_call(direct, "PUT", f"/api/workspaces/{ws}/secrets/{name}", json=body)
     console.print(f"[green]Set[/green] {name} in {ws}.")
 
 
@@ -1405,6 +1435,9 @@ from cli.commands.api import api_command  # noqa: E402
 from cli.commands.costs import costs_app  # noqa: E402
 from cli.commands.files import files_app  # noqa: E402
 from cli.commands.support import support_bundle  # noqa: E402
+from cli.commands.apply import apply_command  # noqa: E402
+from cli.commands.kit import kit_app  # noqa: E402
+from cli.onboard import setup_command  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
@@ -1421,7 +1454,12 @@ app.add_typer(user_app, name="user")
 app.add_typer(costs_app, name="costs")
 app.add_typer(files_app, name="files")
 app.command("support-bundle")(support_bundle)
+app.command("setup")(setup_command)
+# OpenClaw's name for the same first-run flow, for hands that type it.
+app.command("onboard", hidden=True)(setup_command)
 app.command("api")(api_command)
+app.command("apply")(apply_command)
+app.add_typer(kit_app, name="kit")
 
 # Every name `ah` already answers to without touching the OpenAPI schema: the
 # groups above, the ones defined earlier in this file, and the bare commands.
@@ -1431,6 +1469,7 @@ _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
     "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "files", "costs",
     "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
+    "setup", "onboard", "support-bundle", "version", "doctor", "apply", "kit",
 }
 
 

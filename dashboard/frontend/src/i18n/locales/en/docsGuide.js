@@ -150,7 +150,9 @@ export default {
         "Compaction shortens the context once a long run gets close to the model's context window.",
         "Tool search hides tools behind `search_tools` once an agent has more tools than the workspace threshold.",
         "Structured output validates the final answer against a JSON Schema, with repair attempts on a mismatch.",
-        "Fallback models retry a failed call on the next model in the list, with the same tools."
+        "Fallback models retry a failed call on the next model in the list, with the same tools.",
+        "An advisor model, chosen on the agent's **Model** tab, answers `consult_advisor` questions on hard steps; it sees only what the agent writes into the call, and its cost counts toward the run.",
+        "A tool result longer than the workspace's spill size is saved to a file under `tool-outputs/`; the model sees its start, its end and the path, and reads the rest with `read_file`."
       ]
     },
     "s1": {
@@ -193,6 +195,7 @@ export default {
         "**Steer** places your message before the agent's next model step, without stopping it.",
         "**Interrupt** stops the run like **Stop**, then relaunches it with your message added at the end.",
         "**Queue** waits for the current turn to finish before your message goes in, in chat.",
+        "**Instruction** adds your text to the agent's system prompt for the rest of the run. Only the run's owner or an admin may send one, never an agent.",
         "A message that arrives while the agent is writing its final answer still gets one more pass instead of being lost."
       ]
     },

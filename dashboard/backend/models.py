@@ -71,6 +71,20 @@ class AgentCreateCustom(BaseModel):
     # receiver sees by default (chat/handoff.py; see AgentHandoffsUpdate).
     handoffs: List[str] = []
     handoff_history: str = "full"
+    # Inheritance (agents/inheritance.py): the parent agent this one extends,
+    # optionally pinned to one of its stored versions. With ``extends`` the
+    # prompt is optional (system_prompt holds only the child's own additions)
+    # and every field not given is inherited; ``tools``, when given, is the
+    # child's full effective list.
+    extends: Optional[str] = None
+    extends_version: Optional[int] = None
+
+
+class AgentExtendsUpdate(BaseModel):
+    """``PUT /api/agents/{id}/extends``: set, change or repin the parent;
+    ``extends: null`` detaches (the effective setup becomes the agent's own)."""
+    extends: Optional[str] = None
+    extends_version: Optional[int] = None
 
 
 class AgentCloneToWorkspace(BaseModel):
@@ -114,6 +128,12 @@ class AgentPersonalMemoryUpdate(BaseModel):
 class WorkspacePersonalMemoryUpdate(BaseModel):
     # Whether personal memory exists in the workspace at all.
     enabled: bool
+
+
+class WorkspaceRoleUpdate(BaseModel):
+    # The agent that holds the role in the workspace (agents/roles.py);
+    # empty or the role's default returns it to the default.
+    agent_id: Optional[str] = None
 
 
 class AgentResponseFormatUpdate(BaseModel):
@@ -190,6 +210,14 @@ class SkillImportMarkdown(BaseModel):
     workspace: str
     content: str
     agent_id: str = ""
+
+
+class SkillSourceAdd(BaseModel):
+    # Connect a public repository of skills to a workspace (memory/skill_sources.py):
+    # an https URL on github.com, gitlab.com or bitbucket.org, or owner/name.
+    workspace: str
+    url: str
+    branch: Optional[str] = None
 
 
 class SkillSharingUpdate(BaseModel):
@@ -509,6 +537,11 @@ class AgentListItem(BaseModel):
     # Annotated onto every row by the route (not part of AgentSpec.to_dict()).
     has_running_node: bool = False
     is_default_chat_agent: bool = False
+    # Inheritance (agents/inheritance.py): the parent, its pinned version,
+    # and how many agents extend this one.
+    extends: Optional[str] = None
+    extends_version: Optional[int] = None
+    children_count: int = 0
 
 
 class AgentDetail(AgentListItem):
@@ -528,6 +561,8 @@ class AgentDetail(AgentListItem):
     handoffs: Optional[List[str]] = None
     handoff_history: Optional[str] = None
     episodic_write_enabled: Optional[bool] = None
+    # Ids of the agents that extend this one (detail only).
+    children: List[str] = []
 
 
 class AgentPage(BaseModel):

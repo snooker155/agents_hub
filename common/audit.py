@@ -45,7 +45,7 @@ EVENT_NAME = "audit"
 SKIP_PREFIXES = (
     "/api/run-state", "/api/stream", "/api/ingest", "/api/sessions/",
     "/api/instances/", "/api/chat/message", "/api/page-chat", "/api/views/",
-    "/api/audit", "/api/widgets/public/",
+    "/api/help-chat", "/api/audit", "/api/widgets/public/",
 )
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -79,7 +79,7 @@ def should_log_request(method: str, path: str, principal: Any = None) -> bool:
     for prefix in SKIP_PREFIXES:
         if path == prefix.rstrip("/") or path.startswith(prefix):
             return False
-    if principal is not None and getattr(principal, "kind", "") == "service":
+    if principal is not None and getattr(principal, "kind", "") in ("service", "run"):
         return False
     return True
 

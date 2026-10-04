@@ -552,9 +552,9 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
         try:
             import requests
             from common.auth import auth_headers
-            port = os.environ.get("DASHBOARD_PORT", "8000")
+            from common.hostnet import hub_base_url
             requests.post(
-                f"http://localhost:{port}/api/stream/notify",
+                f"{hub_base_url()}/api/stream/notify",
                 json={"resource": resource, "meta": meta, "delta": delta},
                 headers=auth_headers(),
                 timeout=1.0,
@@ -602,6 +602,47 @@ def flush_relayed_notifications(timeout: float = 2.0) -> int:
         send()
         sent += 1
     return sent
+
+
+def _relay_publish(channel: str, event: dict) -> None:
+    """Forward one channel event to the backend over HTTP, in the caller's
+    thread and in order (no debounce: a view op or a frame must arrive after
+    the one before it, and none may be dropped the way a coalesced
+    invalidation can be). Best effort: a backend that cannot be reached loses
+    the live update, never the caller's work, which is already on disk."""
+    try:
+        import requests
+        from common.auth import auth_headers
+        from common.hostnet import hub_base_url
+        requests.post(
+            hub_base_url() + "/api/stream/publish",
+            json={"channel": channel, "event": event},
+            headers=auth_headers(),
+            timeout=2.0,
+        )
+    except Exception:  # noqa: BLE001 - best-effort same-machine relay, must not break the caller
+        log.debug("relay publish failed for %s", channel, exc_info=True)
+
+
+def publish_event(channel: str, event: dict) -> None:
+    """Publish one event on ``channel`` from wherever the caller happens to run.
+
+    In the backend process this is ``broker.publish_threadsafe``. In a process
+    without the broker's loop (an instance runner executing a chat turn, an
+    agent or flow subprocess, the CLI) ``publish_threadsafe`` has nowhere to
+    deliver and returns silently, so the event is instead POSTed to the
+    backend's ``/api/stream/publish`` (dashboard/backend/routes/stream.py),
+    which republishes it on the same channel for every connected tab. Use this
+    for anything a page follows live that an agent tool may produce out of
+    process: view ops and frames (``view:<id>``) are the first case; the
+    Studio lost its intermediate scenes when agents moved onto replicas and
+    the broadcast kept going to the replica's own, loop-less broker.
+    """
+    loop = broker._loop
+    if loop is not None and loop.is_running():
+        broker.publish_threadsafe(channel, event)
+    else:
+        _relay_publish(channel, event)
 
 
 def notify_change(resource: str, **meta) -> None:

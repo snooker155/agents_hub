@@ -437,7 +437,7 @@ class StatsCollectorCallback(BaseCallbackHandler):
         self.thinking_history.append(line)
         self._emit_thinking(line)
 
-    def on_tool_start(self, serialized, input_str, **_):
+    def on_tool_start(self, serialized, input_str, **kwargs):
         self.tool_calls += 1
         self._tool_was_used = True
         self._tool_step += 1
@@ -445,23 +445,34 @@ class StatsCollectorCallback(BaseCallbackHandler):
         input_full = str(input_str)
         self._pending_tool = {
             "tool": name, "input": input_full, "step": self._tool_step,
-            "_started": time.perf_counter(),
+            "_started": time.perf_counter(), "_inputs": kwargs.get("inputs"),
         }
         self._emit_tool_start(name, input_full)
 
     def _mark_tool(self, entry: Dict[str, Any], *, ok: bool) -> None:
-        """Emit a single completed-tool marker with step, name and duration."""
+        """Emit a single completed-tool marker with step, name, duration and
+        what the tool gate made of the call (tools/permission_policy.py)."""
+        from tools.permission_policy import trail_marker
         dur = int((time.perf_counter() - entry.get("_started", time.perf_counter())) * 1000)
         status = "" if ok else " status=error"
         self._mark(
             f"[tool_call] {_now()} step={entry.get('step')} "
-            f"tool={entry.get('tool')} duration_ms={dur}{status}"
+            f"tool={entry.get('tool')} duration_ms={dur}{status}{trail_marker(entry)}"
         )
+
+    def _with_verdict(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """The call's ``evaluated_permission`` and ``reason_code`` from the run's
+        per-call trail (tools/permission_policy.call_verdict)."""
+        from tools.permission_policy import call_verdict
+        entry.update(call_verdict(str(entry.get("tool") or ""), self, entry.get("_inputs")))
+        return entry
 
     def on_tool_end(self, output, **_):
         output_full = str(output)
         if self._pending_tool is not None:
-            entry = {**self._pending_tool, "output": output_full}
+            entry = self._with_verdict({**self._pending_tool, "output": output_full})
+            from agents.tool_spill import spill_fields  # the file a long result went to
+            entry.update(spill_fields(output_full))
             self._mark_tool(entry, ok=True)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
@@ -469,7 +480,7 @@ class StatsCollectorCallback(BaseCallbackHandler):
 
     def on_tool_error(self, error, **_):
         if self._pending_tool is not None:
-            entry = {**self._pending_tool, "output": f"ERROR: {error}"}
+            entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}"})
             self._mark_tool(entry, ok=False)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None

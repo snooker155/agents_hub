@@ -8,11 +8,27 @@ run finds in its working directory. This is the Files API shape of the
 Anthropic and OpenAI platforms, with the file belonging to a workspace
 rather than to an account.
 
-The Files page (`/files`) lists the files of the selected workspace, as a
-tree by their paths in the workspace folder (folders closed until opened; a
-search opens every folder with a match) or as a flat table; the choice is
-remembered per browser. Open a file there with `/files?file=<id>`: that is
-where a chat attachment, a citation or a "where used" link lands.
+The Artifacts page (`/artifacts`; the old `/files` and `/artifacts/files`
+redirect there with their query) lists the files of the selected workspace
+next to the views its agents built (docs/views.md), which sit in a virtual
+**Views** folder at the root. Three ways to look at the same list, remembered
+per browser: cards (a card per folder, file and view, with a breadcrumb; the
+open folder is `?folder=<path>`), a tree by path (folders closed until opened;
+a search opens every folder with a match) and a flat table. Open a file with
+`/files?file=<id>`: that is where a chat attachment, a citation or a "where
+used" link lands; a view row, or the details button of its card, opens the
+view's panel the same way (`?view=<id>`): the live card as a column, what
+made it, Studio, its page, delete. A view's exports land here as files, and
+an html view is built from them, so the two sit together.
+
+The list is the drop target. Dragging files or folders over it turns it into
+a drop field for the open folder (the root in the tree and the list): a
+dropped folder keeps its structure, and everything lands in the workspace
+folder at that path (`POST /api/files` with a `path` form field writes the
+file there and registers it, replacing a file already at the path), where the
+agents' file tools see it. A loose file dropped at the root goes to the file
+store as before. The Views folder takes no files: views are built by agents,
+so over it the field says so and the drop does nothing.
 
 ## The object
 
@@ -56,6 +72,15 @@ file updates the same record (size, hash, type), so an id a chat turn or a
 task already holds keeps pointing at the file; `delete_file` tombstones it.
 Deleting such a file on the Files page deletes it from the folder.
 
+An address names a folder file by its id too. The Files tab of a workspace
+(`/workspaces/<name>?tab=files&file=<id>`) and of a project
+(`/projects/<id>?file=<id>`) keep the open file that way, a chat link to a
+file an agent wrote carries the id, and the folder routes take `file_id`
+(below). The folder listings return `ids`, path to id for every registered
+file; a file nothing registered yet gets its id from the `file-id` route the
+first time it is opened. A link or a client that still sends a path, or a
+file name for a memory pool, keeps working.
+
 Hidden entries (a leading dot, where the hub keeps `.logs`, `.views`,
 `.patch_backups`) and version control, cache, virtual environment and build
 folders (`INDEX_SKIP_DIRS`) are never registered.
@@ -95,6 +120,12 @@ archive, a spreadsheet) is named with its type and size, never inlined.
 `File: name (id)` blocks within one character budget for all files together:
 the file that crosses it is cut with a marker and the files after it are
 named only.
+
+## Waking an agent
+
+A file added, uploaded or rewritten wakes every [proactive
+agent](proactive.md) of the workspace whose profile has a `file` trigger
+matching its path or name, with the file id, path and source as the event.
 
 ## Where it is used
 
@@ -175,6 +206,12 @@ carry their citations too.
 | `GET /api/files/{id}/usage` | chats, memory pools, tasks and eval cases that reference it |
 | `DELETE /api/files/{id}` | delete (content removed, tombstone kept) |
 | `POST /api/shared-memory/{pool}/files/from-workspace` | add a file to a memory pool, `{"file_id"}` |
+| `GET /api/workspaces/{name}/files` | the folder's paths, with `ids` (path to file id) |
+| `GET /api/workspaces/{name}/file-id?path=` | the id of a folder file, registering it the first time |
+| `GET /api/workspaces/{name}/file-content?file_id=` and `file-raw?file_id=` | a folder file's preview and bytes (`path=` still accepted) |
+| `DELETE /api/workspaces/{name}/files?file_id=` | delete a folder file (`path=` for a folder) |
+| `GET /api/projects/{id}/file-id?path=`, `file-content?file_id=`, `file-raw?file_id=` | the same for a project's folder |
+| `POST /api/shared-memory/{pool}/files/{file_id}/index`, `DELETE …/{file_id}/index`, `DELETE …/{file_id}` | index, de-index or delete a knowledge file by id (a file name still accepted) |
 
 Reading needs the file's workspace to be visible to the caller; upload and
 delete need the `editor` role there. Upload and delete leave audit rows

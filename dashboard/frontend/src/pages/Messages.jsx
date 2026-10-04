@@ -493,7 +493,7 @@ export default function Messages() {
 
                   <div className="md:self-center md:flex md:justify-center">
                     <div className="md:hidden text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('messages.status')}</div>
-                    <RunStatusBadge status={msg.status} />
+                    <RunStatusBadge status={msg.status} awaiting={msg.awaiting} />
                   </div>
 
                   <div className="text-sm text-gray-700 md:self-center md:text-center">

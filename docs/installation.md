@@ -17,6 +17,9 @@ Running more than one backend, or backends and workers on different hosts,
 is a deployment rather than an install: [deployment](deployment.md) lists
 the shapes.
 
+Any of A to C can also be set up by answering questions instead:
+[guided setup](#guided-setup-ah-setup) below.
+
 ## Prerequisites
 
 | Tool | Version | Needed for |
@@ -127,6 +130,9 @@ Flags: `--no-frontend` (the service without the dashboard's npm packages),
 either), `--with-rag` (adds the RAG extras, which pull in torch),
 `--with-demo` (turns on `DEMO_WORKSPACE` in `.env`, so the demo workspace is
 seeded the first time the service starts, see [demo](demo.md)),
+`--setup` / `--no-setup` (the [guided setup](#guided-setup-ah-setup), which
+otherwise runs on a first install from a terminal and then writes `.env`
+itself),
 `--no-venv`, `--no-shell`, `--venv PATH`, `--python PATH`.
 
 Then, in a new terminal:
@@ -148,8 +154,11 @@ cd dashboard/frontend && npm install && cd ../..
 dependencies. The extras are read from the requirement files in the repository,
 so `[backend]`, `[agents]` and `[rag]` stay in step with them.
 
+`[connectors]` adds the drivers the connectors need (MySQL, ClickHouse, msal,
+google-auth; `requirements-connectors.txt`).
+
 `requirements.lock` pins the exact resolution of those requirement files (minus
-`rag` and `postgres`) for Python 3.11 and 3.12; it is what the backend Docker
+`rag`, `postgres` and `connectors`) for Python 3.11 and 3.12; it is what the backend Docker
 image and CI install from, and `pip install -r requirements.lock` reproduces
 the same environment by hand.
 
@@ -165,6 +174,77 @@ program, and the two servers start directly:
 python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
+
+## Guided setup (`ah setup`)
+
+`ah setup` asks its way through the whole install, the way OpenClaw's first
+run does, and writes nothing until you confirm a review of every value:
+
+1. **Install**: this checkout (Path C), Docker from the published images
+   (Path A, into a folder of your choice), Compose from this checkout
+   (Path B), or a hub that already runs somewhere else. Then QuickStart
+   (sensible defaults, only what cannot be guessed) or Advanced.
+2. **Database**: SQLite; Postgres in a Docker container setup starts for you
+   (on this machine) or in the same stack (the Docker paths, the `postgres`
+   profile); or a Postgres you already have, tested before it is accepted.
+   An existing SQLite state can be copied across (`ah db migrate`).
+3. **Access**: no sign-in, one shared token (generated), or accounts: the
+   first administrator and any further people, with single sign-on in
+   Advanced. `AGENTS_HUB_SECRET_KEY` is generated once and never rotated by
+   a later run.
+4. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
+   Each key or address is checked by asking the provider for its model list,
+   and the default model is picked from presets matched against that list
+   (balanced, strongest, fastest), from the whole list, or typed. On this
+   machine the presets are also enabled in the [Models](models.md) catalog
+   with the default starred.
+5. **Features**: the demo workspace; in Advanced the dashboard port, where
+   agents run, web search, RAG, and for Compose the browser, Redis and the
+   local model runtime.
+6. **Review** of every setting it will write (secrets masked) and every
+   action it will take.
+7. **Apply**: installs missing Python extras, starts Postgres, writes
+   `.env` (the previous one is kept as `.env.bak-<time>`), creates the
+   accounts, fills the catalog, and offers to start the hub (`ah up`, or
+   `docker compose up -d` followed by creating the accounts through the
+   API). After a Docker setup it can point `ah` at the stack with a personal
+   API key of the new administrator.
+
+`./install.sh` runs it by itself on a first install from a terminal
+(`--no-setup` skips it, `--setup` runs it on a re-install). Run it again
+whenever a setting should change: every question then defaults to the value
+in force, and an empty answer to a key keeps the current key.
+
+```bash
+ah setup                       # ask
+ah setup --shape docker --dir ~/agents-hub
+ah setup --dry-run             # stop after the review
+ah setup --answers setup.json  # unattended, see below
+ah setup --disconnect          # forget a hub the remote shape saved
+```
+
+For an unattended install every question has a key, and an answers file
+gives the answers by that key; whatever it leaves out takes the question's
+default, and a missing required answer stops with its name:
+
+```json
+{
+  "shape": "docker",
+  "dir": "/srv/agents-hub",
+  "database": "postgres-bundled",
+  "auth": "multi",
+  "admin": {"username": "admin", "password": "change-me-now"},
+  "users": [{"username": "dana", "role": "member"}],
+  "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
+  "demo": false,
+  "start": true
+}
+```
+
+Passwords left out are generated and printed once at the end. The remote
+shape saves the hub's address and a credential in the CLI's own state file
+(`~/.config/agents-hub/cli.json`); `AGENTS_HUB_URL` in the environment still
+wins over it.
 
 ## Configuration
 

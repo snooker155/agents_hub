@@ -225,48 +225,163 @@ def _project_root_path(project) -> Optional[Path]:
     return root if root.exists() else None
 
 
+def _skip_dir(name: str) -> bool:
+    """Folders the file list never enters: hidden ones, dependencies and
+    build output, the same ones the workspace's file index skips."""
+    from files.service import INDEX_SKIP_DIRS
+
+    return name.startswith(".") or name in INDEX_SKIP_DIRS
+
+
+_MAX_LISTED_FILES = 5000
+#: A PDF is read whole to extract its text; anything else is cut at the
+#: preview length (files.service.preview_path).
+_MAX_PDF_PREVIEW_BYTES = 20 * 1024 * 1024
+_PREVIEW_CHARS = 200_000
+# Types a browser would run as this origin: served as plain text, like the
+# workspace files are (routes/files.py).
+_ACTIVE_TYPES = frozenset({
+    "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml",
+    "text/javascript", "application/javascript", "application/x-javascript",
+    "application/ecmascript", "text/ecmascript",
+})
+
+
 @router.get("/{project_id}/files")
 async def list_project_files(project_id: str):
-    """List all files inside the project's subfolder (hides dot-files/folders)."""
+    """List the files inside the project's subfolder: hidden entries and
+    dependency or build folders (node_modules, venv, dist...) left out,
+    at most 5000. ``truncated`` says the list was cut."""
+    import os
+
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     root = _project_root_path(project)
     if root is None:
-        return {"files": []}
+        return {"files": [], "truncated": False}
     files = []
+    truncated = False
     try:
-        for p in root.rglob("*"):
-            if not p.is_file():
-                continue
-            rel = p.relative_to(root).as_posix()
-            if any(seg.startswith(".") for seg in rel.split("/")):
-                continue
-            files.append(rel)
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if not _skip_dir(d))
+            for name in sorted(filenames):
+                if name.startswith("."):
+                    continue
+                if len(files) >= _MAX_LISTED_FILES:
+                    truncated = True
+                    break
+                files.append((Path(dirpath) / name).relative_to(root).as_posix())
+            if truncated:
+                break
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": sorted(files)}
+    from files import service as files_service
+    prefix = project_folder_name(project.name) + "/"
+    known = files_service.folder_ids(project.workspace)
+    listed = set(files)
+    ids = {rel[len(prefix):]: fid for rel, fid in known.items()
+           if rel.startswith(prefix) and rel[len(prefix):] in listed}
+    return {"files": sorted(files), "truncated": truncated, "ids": ids}
 
 
-@router.get("/{project_id}/file-content")
-async def get_project_file_content(project_id: str, path: str):
-    """Return the content of a single file inside the project folder."""
+def _project_file(project_id: str, path: Optional[str], file_id: Optional[str] = None) -> Path:
+    """The file a route names inside the project folder, or an HTTP error:
+    by ``file_id`` (files/service.py, what a link carries), or by ``path``
+    for old links and files the registry does not follow."""
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     root = _project_root_path(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project folder not found")
-    target = (root / path).resolve()
-    if not str(target).startswith(str(root) + "/") and str(target) != str(root):
+    rel = (path or "").strip()
+    fid = (file_id or "").strip()
+    if fid:
+        from files import service as files_service
+        prefix = project_folder_name(project.name) + "/"
+        in_ws = files_service.folder_path_of(fid, project.workspace) or ""
+        if not in_ws.startswith(prefix):
+            raise HTTPException(status_code=404, detail="File not found")
+        rel = in_ws[len(prefix):]
+    if not rel:
+        raise HTTPException(status_code=400, detail="Query parameter 'file_id' or 'path' is required")
+    target = (root / rel).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Path outside project folder")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    return target
+
+
+@router.get("/{project_id}/file-id")
+async def get_project_file_id(project_id: str, path: str):
+    """The file id of a project file, registering the file when nothing wrote
+    it through the registry yet, so the page can put the id in its address."""
+    from files import service as files_service
+
+    target = _project_file(project_id, path)
+    project = _store.get(project_id)
+    rel = target.relative_to(_project_root_path(project)).as_posix()
     try:
-        content = target.read_text(encoding="utf-8", errors="replace")
+        record = files_service.ensure_folder_record(
+            project.workspace, f"{project_folder_name(project.name)}/{rel}")
+    except files_service.FileError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"file_id": record["file_id"], "path": rel}
+
+
+@router.get("/{project_id}/file-content")
+async def get_project_file_content(project_id: str, path: Optional[str] = None, file_id: Optional[str] = None):
+    """A file of the project folder for preview, read the way workspace files
+    are (files.service.preview_path): ``kind`` is ``text``, ``pdf`` (its
+    text extracted) or ``binary`` (``content`` null); ``mime_type`` lets the
+    page render an image, a PDF or an HTML page from ``file-raw``."""
+    from files.service import preview_path
+
+    target = _project_file(project_id, path, file_id)
+    size = target.stat().st_size
+    if target.suffix.lower() == ".pdf" and size > _MAX_PDF_PREVIEW_BYTES:
+        raise HTTPException(status_code=413, detail=(
+            f"PDF is too large to extract its text ({size} bytes). "
+            f"Limit is {_MAX_PDF_PREVIEW_BYTES} bytes."))
+    try:
+        preview = await asyncio.to_thread(preview_path, target, max_chars=_PREVIEW_CHARS)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"path": path, "content": content, "size": target.stat().st_size}
+    root = _project_root_path(_store.get(project_id))
+    return {"path": target.relative_to(root).as_posix(), "size": size, "content": preview["text"], "kind": preview["kind"],
+            "mime_type": preview["mime_type"], "truncated": preview["truncated"]}
+
+
+@router.get("/{project_id}/file-raw")
+async def get_project_file_raw(project_id: str, path: Optional[str] = None, file_id: Optional[str] = None):
+    """The bytes of a project file, for an image, a PDF or an HTML page shown
+    in the browser. Types that would run as this origin come back as plain
+    text with a sandbox policy; the page renders HTML from a blob in a
+    sandboxed frame instead."""
+    from urllib.parse import quote
+
+    from fastapi.responses import FileResponse
+    from files.service import guess_mime
+
+    target = _project_file(project_id, path, file_id)
+    mime = guess_mime(target.name)
+    if mime in _ACTIVE_TYPES:
+        mime = "text/plain; charset=utf-8"
+    ascii_name = target.name.encode("ascii", "replace").decode("ascii").replace('"', "_").replace("?", "_")
+    return FileResponse(
+        str(target),
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(target.name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            "Cache-Control": "private, max-age=0",
+        },
+    )
 
 
 # ─────────────────────────── SPEC FROM CODE ────────────────────────────
@@ -1373,7 +1488,7 @@ async def import_from_repo(payload: ProjectImportFromRepo):
 
     try:
         repo_info = await asyncio.to_thread(
-            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+            git_service.resolve_repo_info, payload.provider, payload.remote_id, payload.workspace)
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -1392,7 +1507,7 @@ async def import_from_repo(payload: ProjectImportFromRepo):
     try:
         await asyncio.to_thread(
             git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
-            branch=branch, provider_name=payload.provider,
+            branch=branch, provider_name=payload.provider, workspace=payload.workspace,
         )
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
@@ -1436,7 +1551,7 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
 
     try:
         repo_info = await asyncio.to_thread(
-            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+            git_service.resolve_repo_info, payload.provider, payload.remote_id, project.workspace)
     except ServiceError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -1458,7 +1573,7 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
         try:
             await asyncio.to_thread(
                 git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
-                branch=branch, provider_name=payload.provider,
+                branch=branch, provider_name=payload.provider, workspace=project.workspace,
             )
             cloned = True
         except ServiceError as e:

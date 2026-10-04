@@ -110,4 +110,7 @@ export default {
   allHiddenBySystemFilter: 'Every agent here ships with the product, and system agents are hidden.',
   connectExternal: 'Connect external',
   connectExternalHint: 'Attach an agent that runs elsewhere and reports here',
+  yourAdditions: 'Your additions',
+  yourAdditionsHint: 'Added on top of the parent\'s prompt. A heading such as "## Same heading" replaces that parent section in place, {{parent}} inside it keeps the parent section\'s text too, and a section whose body is only {{remove}} drops it.',
+  eGSameHeadingHint: 'e.g. ## Tone\nAlways answer in short, plain sentences.',
 };

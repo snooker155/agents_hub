@@ -17,6 +17,7 @@ import { TemplateMenu, TemplateModal } from './playground/template-modal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n, statusLabel } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 // The card shows its scenario's last run, because a scenario has no status of
 // its own — "is this one running right now" is a fact about that run.
@@ -168,9 +169,7 @@ export default function Playground() {
       )}
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-gray-500 py-10">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </div>
+        <PageLoader />
       ) : scenarios.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
           <Gamepad2 className="w-8 h-8 text-gray-300 mx-auto mb-3" />

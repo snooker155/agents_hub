@@ -24,4 +24,8 @@ export default {
     importedHint: 'Recorded from OpenTelemetry spans after the run had already finished, so there is no live view of it.',
     partialHint: 'Its root span never arrived, so the input, the answer and the outcome may be missing.',
   },
+  cronHint: {
+    next: 'Next: {{times}}',
+    checking: 'Checking…',
+  },
 };

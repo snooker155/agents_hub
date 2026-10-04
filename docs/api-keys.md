@@ -66,10 +66,12 @@ revoked or its owner goes away.
   [the hub as a provider](hub-as-provider.md)); every call is counted and
   audited under the key's owner.
 
-`common.auth.auth_headers()` tries `AGENTS_HUB_API_TOKEN`, then
-`AGENTS_HUB_SERVICE_TOKEN`, then `AGENTS_HUB_API_KEY`, in that order, so a
-process that already has the shared token or the service credential keeps
-using it; a personal key is what is left for everything else.
+`common.auth.auth_headers()` tries `AGENTS_HUB_RUN_TOKEN` (a run's own token,
+see [identity](identity.md#run-tokens-and-the-service-credential)), then
+`AGENTS_HUB_API_TOKEN`, then `AGENTS_HUB_SERVICE_TOKEN`, then
+`AGENTS_HUB_API_KEY`, in that order, so a process that already has a run token,
+the shared token or the service credential keeps using it; a personal key is
+what is left for everything else.
 
 ## How it differs from `AGENTS_HUB_API_TOKEN`
 

@@ -32,10 +32,11 @@ from common.auth import LOCAL_OPERATOR_ID, MULTI, Principal
 
 
 #: Principal kinds that are never checked against membership: the local
-#: single-operator principal, the shared API token, and the service credential
-#: the hub's own subprocess relays carry (a run writes on behalf of whoever
-#: started it, across any workspace it touches).
-_UNRESTRICTED_KINDS = ("local", "token", "service")
+#: single-operator principal, the shared API token, the service credential
+#: and a run token (common/run_tokens.py; a run writes on behalf of whoever
+#: started it, across any workspace it touches, and only through the relay
+#: routes, which common.auth.authorize keeps it to).
+_UNRESTRICTED_KINDS = ("local", "token", "service", "run")
 
 
 def _is_privileged(principal: Optional[Principal]) -> bool:

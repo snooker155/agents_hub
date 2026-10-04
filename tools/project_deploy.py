@@ -38,17 +38,10 @@ def _err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, A
 
 def _resolve_project(ref: str):
     """A project by id, or by an unambiguous name/folder match (the same
-    rule tools/git_publish.py applies)."""
-    from common.paths import PROJECTS_FILE
-    from projects.storage import ProjectStore
-    from workspace import project_folder_name
-
-    projects = ProjectStore(path=PROJECTS_FILE).list()
-    for p in projects:
-        if p.id == ref:
-            return p
-    matches = [p for p in projects if p.name == ref or project_folder_name(p.name) == ref]
-    return matches[0] if len(matches) == 1 else None
+    rule tools/git_publish.py applies), among the projects of the run's
+    workspace: a project of another workspace is not found."""
+    from tools.project_management import resolve_visible_project
+    return resolve_visible_project(ref)
 
 
 def _summary(dep) -> Dict[str, Any]:

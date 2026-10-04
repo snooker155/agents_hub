@@ -9,6 +9,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import { usePageChatSubject } from '../components/pageChat/pageChat';
+import PageLoader from '../components/PageLoader';
 const card = 'bg-white p-6 rounded-xl shadow-sm border border-gray-100';
 const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
 
@@ -126,7 +127,7 @@ function ReportSection({ t, workspace }) {
         <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3">{error}</p>
       )}
       {loading ? (
-        <p className="text-sm text-gray-500 flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> {t('costs.loadingCosts')}</p>
+        <PageLoader size="sm" label={t('costs.loadingCosts')} />
       ) : rows.length === 0 ? (
         <p className="text-sm text-gray-400">{t('costs.noRecordedSpend')}</p>
       ) : (
@@ -261,6 +262,11 @@ export default function Costs() {
         <div className={card}>
           <div className="text-xs text-gray-500 uppercase tracking-wide">{t('costs.totalCost')}</div>
           <div className="text-3xl font-bold text-gray-800 mt-1">{fmtUsd(totals.cost)}</div>
+          {totals.container_cost > 0 && (
+            <div className="text-xs text-gray-400 mt-1" title={t('costs.containerHint')}>
+              {t('costs.ofWhichContainers', { amount: fmtUsd(totals.container_cost) })}
+            </div>
+          )}
         </div>
         <div className={card}>
           <div className="text-xs text-gray-500 uppercase tracking-wide">{t('costs.runs')}</div>
@@ -336,7 +342,7 @@ export default function Costs() {
       )}
 
       {loading ? (
-        <div className="flex items-center gap-2 text-gray-500 p-8"><Loader className="w-4 h-4 animate-spin" /> {t('costs.loadingCosts')}</div>
+        <PageLoader label={t('costs.loadingCosts')} />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Breakdown title={t('costs.byModel')} rows={data?.by_model} />

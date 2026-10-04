@@ -965,6 +965,28 @@ def _ticket_principal(request) -> Optional[Principal]:
                      scope=tuple(scope) if scope is not None else None)
 
 
+def _run_principal(presented: Optional[str]) -> Optional[Principal]:
+    """The principal of a run token (common/run_tokens.py), or None.
+
+    It acts as the service credential did inside the relay routes (same id,
+    so records keep their owner stamp, and the same role), and
+    ``common.auth.authorize`` keeps it to those routes by its kind.
+    """
+    from common import run_tokens
+    if not run_tokens.looks_like_token(presented):
+        return None
+    try:
+        row = run_tokens.resolve(presented)
+    except Exception:  # noqa: BLE001 - an unreadable token store refuses the token, never widens it
+        log.debug("run token lookup failed", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return Principal(id=SERVICE_PRINCIPAL.id, username=f"run:{row.get('run_id') or row.get('instance_id') or ''}",
+                     role=ROLE_ADMIN, kind="run", via="run_token",
+                     credential_id=str(row.get("token_id") or ""))
+
+
 def current_principal(request) -> Optional[Principal]:
     """Resolve a request to a principal, or None when it is unauthenticated.
 
@@ -979,6 +1001,9 @@ def current_principal(request) -> Optional[Principal]:
         return LOCAL_PRINCIPAL
 
     presented = presented_credential(request)
+    run = _run_principal(presented)
+    if run is not None:
+        return run
     if mode == TOKEN:
         from common.config import settings
         configured = (settings.api_token or "").strip()

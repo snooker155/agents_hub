@@ -53,9 +53,9 @@ const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
 const Environments = lazy(() => import('./pages/Environments'));
+const Watchers = lazy(() => import('./pages/Watchers'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
-const Files = lazy(() => import('./pages/Files'));
 const Widgets = lazy(() => import('./pages/Widgets'));
 const AgentRegistry = lazy(() => import('./pages/AgentRegistry'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -80,10 +80,12 @@ const Marketplace = lazy(() => import('./pages/Marketplace'));
 const SkillsCatalog = lazy(() => import('./pages/SkillsCatalog'));
 const WebLogs = lazy(() => import('./pages/WebLogs'));
 const MarketplaceAgent = lazy(() => import('./pages/MarketplaceAgent'));
-const Views = lazy(() => import('./pages/Views'));
+const Artifacts = lazy(() => import('./pages/Artifacts'));
+const ArtifactsRedirect = lazy(() => import('./pages/Artifacts').then((m) => ({ default: m.ArtifactsRedirect })));
 const ViewDetail = lazy(() => import('./pages/ViewDetail'));
 const Studio = lazy(() => import('./pages/Studio'));
 const Docs = lazy(() => import('./pages/Docs'));
+const MarkLab = lazy(() => import('./pages/MarkLab'));
 // Identity pages. Both are inert outside AUTH_MODE=multi: the login screen is
 // never reached and the users route is not registered. See docs/identity.md.
 const Login = lazy(() => import('./pages/Login'));
@@ -158,7 +160,8 @@ function AppRoutes() {
         <Route path="/tasks/:id" element={guard(<TaskDetails />)} />
         <Route path="/plan" element={guard(<Plan />)} />
         <Route path="/deployments" element={guard(<Deployments />)} />
-        <Route path="/files" element={guard(<Files />)} />
+        {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
+        <Route path="/files" element={<ArtifactsRedirect />} />
         <Route path="/widgets" element={guard(<Widgets />)} />
         <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
@@ -185,6 +188,7 @@ function AppRoutes() {
         <Route path="/connections" element={guard(<Connections />)} />
         <Route path="/connections/:connectionId" element={guard(<ConnectionDetail />)} />
         <Route path="/connectors" element={guard(<Connectors />)} />
+        <Route path="/watchers" element={guard(<Watchers />)} />
         <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
@@ -201,7 +205,9 @@ function AppRoutes() {
         <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
-        <Route path="/views" element={guard(<Views />)} />
+        <Route path="/artifacts" element={guard(<Artifacts />)} />
+        <Route path="/artifacts/files" element={<ArtifactsRedirect />} />
+        <Route path="/views" element={<ArtifactsRedirect folder="__views__" />} />
         <Route path="/views/:viewId" element={guard(<ViewDetail />)} />
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />
@@ -251,6 +257,7 @@ function AppRoutes() {
         )}
         <Route path="/docs" element={guard(<Docs />)} />
         <Route path="/docs/:section" element={guard(<Docs />)} />
+        <Route path="/mark-lab" element={guard(<MarkLab />)} />
         {/* The api client sends a browser whose session died to /login; once
             AuthGate has let it back in there is nothing to show at that path. */}
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />

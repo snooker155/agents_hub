@@ -27,5 +27,12 @@ export default {
   },
   add: 'Secret speichern',
   delete: 'Secret löschen',
+  hostsColumn: 'Hosts',
+  anyHost: 'jeder Host',
+  hostsField: 'Erlaubte Hosts, z. B. api.github.com',
+  hostsHint: 'Kommagetrennt. Mit Hosts erhält ein Lauf einen Platzhalter, und der Egress-Proxy setzt den echten Wert nur in Anfragen an diese Hosts ein (Subdomains zählen mit). Erfordert AGENTS_HUB_EGRESS_PROXY.',
+  editHosts: 'Hosts von {{name}} bearbeiten',
+  saveHosts: 'Hosts speichern',
+  cancelHosts: 'Abbrechen',
   nameHint: 'Großbuchstaben, Ziffern und Unterstriche, beginnend mit einem Buchstaben.',
 };

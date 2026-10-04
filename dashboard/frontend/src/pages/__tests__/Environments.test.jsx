@@ -136,6 +136,27 @@ describe('Environments — creating one', () => {
     expect(payload.workspace).toBeNull();
     expect(payload.mode).toBe('inherit');
     expect(payload.sandbox_provider).toBe('inherit');
+    expect(payload.size).toBeNull();
+  });
+
+  it('picks a sandbox size preset', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText(/no environments yet/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /new environment/i }));
+    fireEvent.change(screen.getByPlaceholderText(/sandboxed-python/i), { target: { value: 'sized-env' } });
+    fireEvent.change(screen.getByLabelText(/sandbox size/i), { target: { value: 'medium' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+    await waitFor(() => expect(createEnvironment).toHaveBeenCalled());
+    expect(createEnvironment.mock.calls[0][0].size).toBe('medium');
+  });
+
+  it('shows the environment size on its row', async () => {
+    getEnvironments.mockImplementation(() => ok([{ ...ENV, size: 'large' }]));
+    show();
+    await waitFor(() => expect(screen.getByText('sandboxed-python')).toBeInTheDocument());
+    expect(screen.getByText(/large/i)).toBeInTheDocument();
   });
 
   it('shows availability hints next to the sandbox provider picker', async () => {

@@ -2,11 +2,14 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
+import { WorkspaceContext } from '../workspace';
 
 // The GitHub App card says whether the app is configured (naming the
 // variables when not), links to the install page, lists installations with
 // their workspace binding, binds and unbinds through the workspace route,
-// syncs, and hides itself from a non-admin the backend refuses.
+// syncs, shows the selected workspace's effective installation and its
+// source (own or the default's, GET /api/workspaces/{name}/github-installation),
+// and hides itself from a non-admin the backend refuses.
 
 const ok = (data) => Promise.resolve({ data });
 const fail = (status, detail) => Promise.reject({ response: { status, data: { detail } } });
@@ -15,12 +18,14 @@ const getGitHubApp = vi.fn();
 const syncGitHubApp = vi.fn();
 const setWorkspaceGitHubInstallation = vi.fn(() => ok({}));
 const getWorkspaces = vi.fn(() => ok([{ name: 'default' }, { name: 'acme' }]));
+const getWorkspaceGithubInstallation = vi.fn(() => ok({ own: null, effective: null, source: 'default' }));
 
 vi.mock('../../api', () => ({
   getGitHubApp: (...a) => getGitHubApp(...a),
   syncGitHubApp: (...a) => syncGitHubApp(...a),
   setWorkspaceGitHubInstallation: (...a) => setWorkspaceGitHubInstallation(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
+  getWorkspaceGithubInstallation: (...a) => getWorkspaceGithubInstallation(...a),
 }));
 
 import GitHubAppCard from '../connectors/GitHubAppCard';
@@ -37,12 +42,17 @@ const APP = {
   ],
 };
 
-const show = () => render(<I18nProvider><GitHubAppCard /></I18nProvider>);
+const show = (workspace = 'acme') => render(
+  <WorkspaceContext.Provider value={{ selectedWorkspace: workspace }}>
+    <I18nProvider><GitHubAppCard /></I18nProvider>
+  </WorkspaceContext.Provider>,
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
   getGitHubApp.mockImplementation(() => ok(APP));
   syncGitHubApp.mockImplementation(() => ok(APP));
+  getWorkspaceGithubInstallation.mockImplementation(() => ok({ own: null, effective: null, source: 'default' }));
 });
 
 describe('GitHubAppCard', () => {
@@ -80,5 +90,25 @@ describe('GitHubAppCard', () => {
     const { container } = show();
     await waitFor(() => expect(getGitHubApp).toHaveBeenCalled());
     await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it("shows the selected workspace's effective installation with a source badge", async () => {
+    getWorkspaceGithubInstallation.mockImplementation(() => ok({
+      own: null, effective: { installation_id: 11, account_login: 'acme-org' }, source: 'default',
+    }));
+    show('acme');
+    await waitFor(() => expect(getWorkspaceGithubInstallation).toHaveBeenCalledWith('acme'));
+    const line = await screen.findByTestId('github-app-effective');
+    expect(line.textContent).toMatch(/acme-org/);
+    expect(line.textContent).toMatch(/default workspace/i);
+  });
+
+  it('refetches the effective installation after a binding changes', async () => {
+    show('default');
+    await waitFor(() => expect(screen.getByText('octo')).toBeInTheDocument());
+    getWorkspaceGithubInstallation.mockClear();
+    fireEvent.change(screen.getByLabelText(/workspace for octo/i), { target: { value: 'default' } });
+    await waitFor(() => expect(setWorkspaceGitHubInstallation).toHaveBeenCalledWith('default', 22));
+    await waitFor(() => expect(getWorkspaceGithubInstallation).toHaveBeenCalled());
   });
 });

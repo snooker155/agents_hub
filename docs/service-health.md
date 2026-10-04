@@ -209,6 +209,18 @@ The [system workspace](system-workspace.md) exists and its repository copy
 has been made. Skip when `SYSTEM_WORKSPACE=false`. Fix: restart to seed it,
 then sync the copy (`POST /api/system/sync`).
 
+### Check: skills
+
+No skill attached to an agent carries a high flag from the
+[safety review](skills.md#safety-review), no published skill carries a
+license that is not open, no high-flagged skill waits in a catalog, and every
+repository skill has been reviewed. Skip when there are no skills. The detail
+lists the flagged skills and says whether the `skill-scanner` command (Cisco's
+open-source scanner) is installed for a deeper, offline second opinion. Fix:
+open the skill on the Skills page, read its flags, then detach or delete it,
+or keep it knowingly; for an unreviewed repository skill, **Sync from
+repositories**.
+
 ## Support bundle
 
 `GET /api/support/bundle` (admin only), the Health page's **Download support

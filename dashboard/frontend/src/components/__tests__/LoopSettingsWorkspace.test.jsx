@@ -20,6 +20,10 @@ const DEFAULTS = {
   tool_search_threshold: 30,
   native: true,
   strict_tools: false,
+  view_focus: true,
+  tool_output_spill_chars: 20000,
+  advisor_max_calls: 5,
+  advisor_max_answer_chars: 4000,
 };
 
 function payload(settings, overrides = {}) {
@@ -31,6 +35,7 @@ function payload(settings, overrides = {}) {
     tool_search_threshold: 'AGENTS_HUB_TOOL_SEARCH_THRESHOLD',
     native: 'AGENTS_HUB_LOOP_NATIVE',
     strict_tools: 'AGENTS_HUB_LOOP_STRICT_TOOLS',
+    view_focus: 'AGENTS_HUB_LOOP_VIEW_FOCUS',
   } };
 }
 
@@ -65,7 +70,7 @@ describe('LoopSettingsWorkspace', () => {
     );
     expect(compactionReset).toBeEnabled();
     expect(nativeReset).toBeDisabled();
-    expect(resetButtons.length).toBe(6);
+    expect(resetButtons.length).toBe(Object.keys(DEFAULTS).length);
   });
 
   it('shows the environment source when the effective value differs from the default without a workspace override', async () => {

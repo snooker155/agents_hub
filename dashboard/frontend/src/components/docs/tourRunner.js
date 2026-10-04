@@ -26,7 +26,7 @@ export const TOUR_STOPS = [
   { id: 'flows', path: '/flows', element: 'main header' },
   { id: 'teams', path: '/teams', element: 'main header' },
   { id: 'playground', path: '/playground', element: 'main header', feature: 'playground' },
-  { id: 'views', path: '/views', element: 'main header' },
+  { id: 'artifacts', path: '/artifacts', element: 'main header' },
   { id: 'health', path: '/health', element: 'main header' },
   { id: 'docs', path: '/docs', element: 'main header' },
 ];

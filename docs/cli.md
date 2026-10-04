@@ -27,7 +27,8 @@ second and a half of import and bootstrap before anything happens.
 
 Direct mode needs no credential: it is the service. Over REST, whatever
 `common.auth.auth_headers()` finds in the environment goes on every request,
-tried in this order: `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
+tried in this order: `AGENTS_HUB_RUN_TOKEN` (a run's own relay token, only
+inside a run), `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
 `AGENTS_HUB_SERVICE_TOKEN` (minted for a hub's own subprocesses, not meant to
 be set by hand), `AGENTS_HUB_API_KEY` — a personal key
 ([api-keys](api-keys.md)), cut with `ah auth keys create` or from the Account
@@ -53,11 +54,18 @@ A write from the CLI reaches an open dashboard the way a write from an agent
 subprocess does: the change goes to the shared database and a `<resource>.changed`
 event is relayed, so open tabs refetch instead of showing stale rows.
 
+`ah setup` (its remote shape, or "point this ah at it" after a Docker setup)
+saves the address and a personal key in the CLI's state file, and every
+command that reaches the service then uses them as if `AGENTS_HUB_URL` and
+`AGENTS_HUB_API_KEY` were set; variables in the environment still win, and
+`ah setup --disconnect` forgets the saved hub.
+
 ## Getting the command
 
 `./install.sh` installs it. See [installation](installation.md). Without an
 install, `python -m cli` from the checkout is the same program, and `ah` below
-stands for either.
+stands for either. `ah setup` is the guided install and configuration
+([installation](installation.md), "Guided setup").
 
 ## The commands
 
@@ -204,6 +212,23 @@ ah api get /api/flows/<id>/estimate --json-out
 for a list of objects. This is what the generated commands themselves are
 built on, so anything they can reach, this can reach too, with no CLI code
 written for it at all.
+
+### `ah apply`: entities from files in a repository
+
+Agents, environments, scheduled deployments and memory pools can live as
+files next to your code and be made real in the hub with one command:
+
+```bash
+ah apply hub/ --workspace team --dry-run   # print the plan only
+ah apply hub/ --workspace team             # create or update, write ah.lock
+ah apply hub/ --prune --yes                # also delete what the lock owns but no file declares
+ah apply --export researcher --out hub/    # start from what the hub already has
+```
+
+A lock file (`ah.lock`) records which hub record each declared resource
+became, so the next apply updates instead of creating again. It works the
+same in process and over `AGENTS_HUB_URL`. The file format, drift and prune
+rules are in [apply](apply.md).
 
 ## Running both servers
 

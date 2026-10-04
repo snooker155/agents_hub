@@ -344,6 +344,7 @@ html.dark {
 :where(html) .bg-violet-50\/50 { background-color: rgba(238, 243, 255, 0.50); }
 :where(html) .bg-indigo-50\/60 { background-color: rgba(238, 243, 255, 0.60); }
 :where(html) .bg-indigo-50\/70 { background-color: rgba(238, 243, 255, 0.70); }
+:where(html) .bg-indigo-50\/90 { background-color: rgba(238, 243, 255, 0.90); }
 :where(html) .border-fuchsia-100,
 :where(html) .border-indigo-100,
 :where(html) .border-purple-100,
@@ -369,6 +370,7 @@ html.dark {
 :where(html) .divide-indigo-300 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-purple-300 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-violet-300 > :not([hidden]) ~ :not([hidden]),
+:where(html) .focus\:border-indigo-300:focus,
 :where(html) .group:hover .group-hover\:border-indigo-300,
 :where(html) .hover\:border-indigo-300:hover,
 :where(html) .hover\:border-violet-300:hover { border-color: var(--brand-300); }
@@ -739,6 +741,7 @@ html.dark {
 :where(html.dark) .bg-violet-50\/50 { background-color: rgba(63, 102, 216, 0.080); }
 :where(html.dark) .bg-indigo-50\/60 { background-color: rgba(63, 102, 216, 0.096); }
 :where(html.dark) .bg-indigo-50\/70 { background-color: rgba(63, 102, 216, 0.112); }
+:where(html.dark) .bg-indigo-50\/90 { background-color: rgba(63, 102, 216, 0.144); }
 :where(html.dark) .bg-lime-100 { background-color: rgba(var(--hue-lime-rgb), 0.22); }
 :where(html.dark) .bg-lime-200 { background-color: rgba(var(--hue-lime-rgb), 0.30); }
 :where(html.dark) .bg-lime-50 { background-color: rgba(var(--hue-lime-rgb), 0.14); }
@@ -757,6 +760,7 @@ html.dark {
 :where(html.dark) .hover\:bg-red-50:hover { background-color: rgba(var(--hue-red-rgb), 0.14); }
 :where(html.dark) .bg-red-50\/40 { background-color: rgba(239, 68, 68, 0.056); }
 :where(html.dark) .bg-red-50\/50 { background-color: rgba(239, 68, 68, 0.070); }
+:where(html.dark) .bg-red-50\/90 { background-color: rgba(239, 68, 68, 0.126); }
 :where(html.dark) .bg-rose-100,
 :where(html.dark) .hover\:bg-rose-100:hover { background-color: rgba(var(--hue-rose-rgb), 0.22); }
 :where(html.dark) .bg-rose-200 { background-color: rgba(var(--hue-rose-rgb), 0.30); }
@@ -834,6 +838,7 @@ html.dark {
 :where(html.dark) .divide-indigo-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-purple-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-violet-300 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .focus\:border-indigo-300:focus,
 :where(html.dark) .group:hover .group-hover\:border-indigo-300,
 :where(html.dark) .hover\:border-indigo-300:hover,
 :where(html.dark) .hover\:border-violet-300:hover { border-color: var(--brand-border-300); }

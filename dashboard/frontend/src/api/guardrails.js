@@ -28,6 +28,12 @@ export const deleteGuardrail = (id) => api.delete(`/guardrails/${encodeURICompon
 export const testGuardrail = (id, text, stage) =>
   api.post(`/guardrails/${encodeURIComponent(id)}/test`, { text, stage });
 
+// A sequence guardrail is tested on tool calls, not text: `calls` is
+// [{tool, input, ok?}] in the order a run would make them. Answers
+// { applies, passed, index, tool?, reason }: the first call it would stop.
+export const testGuardrailCalls = (id, calls) =>
+  api.post(`/guardrails/${encodeURIComponent(id)}/test`, { calls });
+
 export const getGuardrailEvents = (params) => api.get('/guardrails/events', { params });
 
 // Saves the guardrail ids an agent lists on its own AgentSpec.guardrails

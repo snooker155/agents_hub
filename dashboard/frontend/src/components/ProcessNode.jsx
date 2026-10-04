@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import ProcessStepModal, { ToolCallDetail } from './ProcessStepModal';
+import PolicyBadge from './PolicyBadge';
 import { useI18n } from '../i18n';
 
 // One process step (input, output, thought, tool call) as a card: its label,
@@ -51,7 +52,10 @@ export default function ProcessNode({
       >
         <div className="flex items-center justify-between gap-2">
           <span className={`text-[11px] font-semibold truncate ${labelColor}`}>{label}</span>
-          <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+          <span className="flex items-center gap-1 shrink-0">
+            {tool ? <PolicyBadge tool={tool} /> : null}
+            <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+          </span>
         </div>
         {preview && (
           <div

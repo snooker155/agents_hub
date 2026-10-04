@@ -67,7 +67,7 @@ Launch backend and frontend normally.
 
 In the dashboard:
 
-1. Go to **Agents** and open any agent (e.g. `researcher_agent`).
+1. Go to **Agents** and open any agent (e.g. `researcher`).
 2. Open the **Reasoning Capabilities** section.
 3. Toggle **Think** on and pick a **Reasoning Depth** (start with `Deep` so the
    effect is obvious).
@@ -79,13 +79,13 @@ This persists to the agent's `reasoning` config via the reasoning endpoint.
 
 ```bash
 # Enable think (deep) + plan (numbered) for an agent
-curl -X POST http://localhost:8000/agents/researcher_agent/reasoning \
+curl -X POST http://localhost:8000/agents/researcher/reasoning \
   -H "Content-Type: application/json" \
   -d '{"think_enabled": true, "think_mode": "deep",
        "plan_enabled": true, "plan_format": "numbered"}'
 
 # Read it back to confirm
-curl http://localhost:8000/agents/researcher_agent/reasoning
+curl http://localhost:8000/agents/researcher/reasoning
 ```
 
 ### 4. Give the agent a task that forces reasoning

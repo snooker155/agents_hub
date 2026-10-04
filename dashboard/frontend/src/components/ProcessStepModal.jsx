@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import ObjectTree from './ObjectTree';
+import PolicyBadge from './PolicyBadge';
 import { parseToolOutput } from './toolFormatters';
 import { useI18n } from '../i18n';
 
@@ -50,6 +51,12 @@ export function ToolCallDetail({ tc }) {
   const echo = tc.tool === 'think' || tc.tool === 'plan';
   return (
     <div className="space-y-4">
+      {tc.evaluated_permission && (
+        <div className="flex items-center gap-2 text-xs text-gray-500" data-testid="tool-call-policy">
+          <span>{t('policyTrail.detail')}</span>
+          <PolicyBadge tool={tc} withReason />
+        </div>
+      )}
       {!echo && tc.input != null && tc.input !== '' && (
         <ParsedSection title={t('processGraph.input')} raw={tc.input} tone="text-gray-700" />
       )}

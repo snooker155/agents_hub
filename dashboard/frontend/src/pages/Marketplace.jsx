@@ -14,18 +14,24 @@ import {
   Terminal,
   GitBranch,
   Bot,
+  Package,
 } from 'lucide-react';
 import { getMarketplaceAgents, getMarketplaceFlows, addAgentToWorkspace, addFlowToWorkspace } from '../api';
+import { listKits } from '../api/kits';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import KitCard from '../components/marketplace/KitCard';
+import KitInstallDialog from '../components/marketplace/KitInstallDialog';
 const Marketplace = () => {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const [tab, setTab] = useState('agents');
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [kits, setKits] = useState([]);
+  const [installingKit, setInstallingKit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [addingId, setAddingId] = useState(null);
@@ -35,12 +41,14 @@ const Marketplace = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [agentsResp, flowsResp] = await Promise.all([
+      const [agentsResp, flowsResp, kitsResp] = await Promise.all([
         getMarketplaceAgents(selectedWorkspace || 'default'),
         getMarketplaceFlows(selectedWorkspace || 'default'),
+        listKits(selectedWorkspace || 'default'),
       ]);
       setAgents(agentsResp.data || []);
       setFlows(flowsResp.data || []);
+      setKits(kitsResp.data || []);
     } catch (error) {
       console.error('Error fetching marketplace catalog:', error);
     } finally {
@@ -135,17 +143,27 @@ const Marketplace = () => {
             >
               <GitBranch className="w-3.5 h-3.5 mr-1.5" /> Flows ({flows.length})
             </button>
+            <button
+              onClick={() => setTab('kits')}
+              className={`inline-flex items-center px-3 py-2 text-xs font-semibold transition-colors ${
+                tab === 'kits' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Package className="w-3.5 h-3.5 mr-1.5" /> {t('marketplace.kits.tab')} ({kits.length})
+            </button>
           </div>
-          <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder={tab === 'flows' ? t('marketplace.searchFlows') : t('marketplace.searchAgents')}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-64"
-            />
-          </div>
+          {tab !== 'kits' && (
+            <div className="relative">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder={tab === 'flows' ? t('marketplace.searchFlows') : t('marketplace.searchAgents')}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-64"
+              />
+            </div>
+          )}
         </>}
       />
 
@@ -164,6 +182,19 @@ const Marketplace = () => {
 
       {loading ? (
         <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('marketplace.loadingMarketplace')} /></div>
+      ) : tab === 'kits' ? (
+        kits.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
+            <Package className="w-10 h-10 text-gray-300 mb-3" />
+            <p className="text-gray-500 font-medium">{t('marketplace.kits.none')}</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {kits.map((kit) => (
+              <KitCard key={kit.id} kit={kit} onInstall={setInstallingKit} />
+            ))}
+          </div>
+        )
       ) : tab === 'flows' ? (
         visibleFlows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
@@ -348,6 +379,15 @@ const Marketplace = () => {
             </div>
           ))}
         </div>
+      )}
+
+      {installingKit && (
+        <KitInstallDialog
+          kit={installingKit}
+          workspace={selectedWorkspace}
+          onClose={() => setInstallingKit(null)}
+          onInstalled={() => fetchData()}
+        />
       )}
     </PageContainer>
   );

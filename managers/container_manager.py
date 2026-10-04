@@ -232,10 +232,13 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
 # the run: Docker's own control variables, the HOST_PROJECT_ROOT bind-mount
 # translation, the host's SSH agent socket, and interpreter/venv paths that
 # are meaningless inside the image (the image bakes its own Python, HOME and
-# PATH). AGENTS_HUB_API_TOKEN is deliberately kept — the run's relay calls
-# back over HTTP and need it to authenticate.
+# PATH). AGENTS_HUB_RUN_TOKEN is deliberately kept: the run's relay calls
+# back over HTTP and need it to authenticate. It reaches only the relay routes
+# (common/run_tokens.py); the hub-wide tokens never reach a run's environment.
 _HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
 _HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
+#: The hub's secret encryption key (common/config.py ``secret_key``).
+_SECRET_KEY_VARS = frozenset({"AGENTS_HUB_SECRET_KEY", "secret_key"})
 
 
 def container_env(env: Dict[str, str]) -> Dict[str, str]:
@@ -246,13 +249,39 @@ def container_env(env: Dict[str, str]) -> Dict[str, str]:
     instead of re-deriving the whole environment a run needs.
     """
     out: Dict[str, str] = {}
+    # A run holding host-bound secret placeholders must not also hold the key
+    # that decrypts the secrets table: the state dir (and the database in it)
+    # is mounted, so with the key the container could read the real values
+    # and the egress substitution would protect nothing.
+    holds_placeholders = bool(env.get("AGENTS_HUB_SECRET_PLACEHOLDERS"))
     for key, value in env.items():
         if key in _HOST_ONLY_EXACT:
             continue
         if any(key.startswith(p) for p in _HOST_ONLY_PREFIXES):
             continue
+        if holds_placeholders and key in _SECRET_KEY_VARS:
+            continue
+        if key in _STATE_PATH_VARS:
+            value = _state_path_in_container(value)
         out[key] = value
     return out
+
+
+#: Trust-store variables a run routed through the egress proxy gets
+#: (environments/secret_egress.py). They name files under the state dir,
+#: which a run container has mounted at CONTAINER_STATE_DIR.
+_STATE_PATH_VARS = frozenset({"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+                              "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS"})
+
+
+def _state_path_in_container(value: str) -> str:
+    """A host path under the state dir as the container sees it; anything
+    else unchanged."""
+    try:
+        rel = Path(value).resolve().relative_to(Path(AGENTS_HUB_ROOT).resolve())
+    except (ValueError, OSError):
+        return value
+    return str(PurePosixPath(CONTAINER_STATE_DIR) / PurePosixPath(*rel.parts))
 
 
 # ── Network management ────────────────────────────────────────────────────────
@@ -858,6 +887,38 @@ def container_running(container_name: str) -> bool:
         return bool((result.stdout or "").strip())
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def container_status(container_name: str) -> Optional[str]:
+    """The daemon's state for a container (``running``, ``exited``,
+    ``paused``...), or None when there is no such container (a run's
+    container is started with ``--rm``, so a finished run's is simply gone)."""
+    try:
+        result = _run(["docker", "inspect", "--format", "{{.State.Status}}", container_name],
+                      timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
+#: The shell a terminal opens: bash when the image has it, else sh. A login
+#: shell, so the image's profile (PATH, prompt) applies as it would over ssh.
+TERMINAL_SHELL = "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"
+
+
+def exec_shell_argv(container_name: str) -> List[str]:
+    """``docker exec -it`` into a container's shell, for common/terminal.py.
+
+    Run with a pseudo-terminal as its stdin and stdout: the CLI then puts
+    that terminal in raw mode, forwards every byte (Ctrl-C included) to the
+    container's own pty, and resizes it when it gets SIGWINCH. Nothing
+    else about the container changes: same user, same working directory,
+    same read-only root and dropped capabilities a hardened run has.
+    """
+    return ["docker", "exec", "-it", "-e", "TERM=xterm-256color",
+            container_name, "/bin/sh", "-c", TERMINAL_SHELL]
 
 
 def start_container(

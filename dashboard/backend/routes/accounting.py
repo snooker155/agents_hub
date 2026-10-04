@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse
 from agents import registry
 from common import api_keys, identity
 from common.pricing import (EVALUATION_CHANNELS, load_price_map, run_cached_tokens,
-                            run_cost_usd, run_tokens)
+                            run_cost_usd, run_tokens, container_cost_usd)
 from managers import run_manager
 
 log = logging.getLogger(__name__)
@@ -62,7 +62,9 @@ def _run_cost(run: Dict[str, Any], prices) -> float:
     ``routes/costs.py._run_cost``."""
     reported = run.get("reported_cost_usd")
     if isinstance(reported, (int, float)) and not isinstance(reported, bool):
-        return float(reported)
+        # The wrapped service prices its own model calls, not the container
+        # the hub ran it in, so the container hours are still added.
+        return float(reported) + container_cost_usd(run)
     return run_cost_usd(run, prices)
 
 

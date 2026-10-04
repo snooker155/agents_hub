@@ -93,6 +93,8 @@ function LiveThought({ text }) {
  * @param {boolean}  [props.inline]    false only for the copy inside the floating
  *   panel. Every other one is a chat the page is drawing itself, which is what
  *   tells the panel's launcher to stand down (see `useInlineChatOpen`).
+ * @param {function} [props.renderReply] text => nodes for the agent's replies,
+ *   for a host that renders more than plain text (the Help panel's links).
  * @param {string}   [props.composerClassName] extra classes on the composer
  *   block, replacing its default top margin — `mt-auto` pins it to the bottom
  *   of a panel that fills its card, and negative margins take its rule out to
@@ -117,6 +119,7 @@ export default function EntityChat({
   inline = true,
   composerClassName = '',
   onHide = null,
+  renderReply = null,
 }) {
   const { t } = useI18n();
   useInlineChatOpen(inline);
@@ -519,7 +522,7 @@ export default function EntityChat({
             )}
           </div>
         ) : (
-          feed.map((e, i) => <FeedItem key={i} e={e} />)
+          feed.map((e, i) => <FeedItem key={i} e={e} renderText={renderReply} />)
         )}
 
         {/* The run's floor: something is always showing while a turn is open,

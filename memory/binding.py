@@ -49,6 +49,22 @@ def effective_memory(spec, workspace: Optional[str] = None) -> Tuple[str, Any]:
     return "none", None
 
 
+def effective_read_only_pools(spec, workspace: Optional[str] = None) -> frozenset:
+    """Pool ids effective for *spec* in *workspace* whose binding is marked
+    read only (``agents.registry.memory_pool_read_only_ids``).
+
+    Resolved the same way as :func:`effective_memory`: the record's own
+    assignment in the home workspace, the workspace override elsewhere. The
+    Memory page's ``pool_override`` (effective_memory_pools' own parameter) is
+    deliberately not covered here: pinning a pool to look at it while
+    answering a question is not the agent's own binding, so it stays
+    writable regardless of what the binding says.
+    """
+    memory_type, memory_data = effective_memory(spec, workspace)
+    from agents.registry import memory_pool_read_only_ids
+    return memory_pool_read_only_ids(memory_type, memory_data)
+
+
 def effective_memory_pools(spec, workspace: Optional[str] = None,
                            pool_override: Optional[Any] = None,
                            personal_pool: Optional[str] = None) -> list:

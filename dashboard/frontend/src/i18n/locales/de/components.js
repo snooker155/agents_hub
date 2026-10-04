@@ -24,4 +24,8 @@ export default {
     importedHint: 'Aus OpenTelemetry-Spans aufgezeichnet, nachdem der Lauf beendet war; eine Live-Ansicht dazu gibt es nicht.',
     partialHint: 'Der Root-Span ist nie eingetroffen, daher können Eingabe, Antwort und Ergebnis fehlen.',
   },
+  cronHint: {
+    next: 'Nächste: {{times}}',
+    checking: 'Prüfung läuft…',
+  },
 };

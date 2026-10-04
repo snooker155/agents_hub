@@ -5,7 +5,7 @@ import socket
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 # This entrypoint is spawned as a subprocess with cwd set to the workspace
@@ -119,8 +119,33 @@ class _Heartbeat(threading.Thread):
 
 # -------------------- Run lifecycle --------------------
 
+def _overrides_field(overrides: Optional[dict]) -> dict:
+    """The run record's ``overrides`` field (absent when there are none)."""
+    if not overrides:
+        return {}
+    from agents.run_overrides import record_view
+    return {"overrides": record_view(overrides)}
+
+
+def _read_overrides(args: Any) -> dict:
+    """The run's overrides object from --overrides / --overrides-file, with
+    --tool-policy and --output-schema folded in (agents/run_overrides.py).
+    Raises ValueError for a file that cannot be read or an invalid object."""
+    from agents import run_overrides
+    raw: Any = getattr(args, "overrides", None)
+    path = getattr(args, "overrides_file", None)
+    if path:
+        try:
+            raw = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"cannot read --overrides-file {path}: {exc}") from exc
+    return run_overrides.fold_legacy(raw, tool_policy=getattr(args, "tool_policy", None),
+                                     output_schema=getattr(args, "output_schema", None))
+
+
 def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[str],
-                        definition_version: Optional[int] = None) -> Optional[str]:
+                        definition_version: Optional[int] = None,
+                        overrides: Optional[dict] = None) -> Optional[str]:
     """Create the run record at subprocess startup via run_manager.open_run."""
     try:
         # When invoked via CLI (not as a subprocess of agent_launcher), no log file
@@ -152,6 +177,7 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
             # so managers.runs.lifecycle.open_run can resolve the record's own
             # agent_version before the build below even starts.
             agent_version_pin=definition_version,
+            **_overrides_field(overrides),
         )
         return run_id
     except Exception:
@@ -225,7 +251,7 @@ def model_overrides(provider: Optional[str], model: Optional[str]) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("agent", help="Agent ID from definitions (e.g. swe_agent, researcher_agent)")
+    ap.add_argument("agent", help="Agent ID from definitions (e.g. swe_agent, researcher)")
     ap.add_argument("action", nargs="?", help="Optional action/instruction")
     ap.add_argument("--desc", help="Initial description for the task")
     ap.add_argument("--task-id", help="Optional task ID to associate with")
@@ -265,6 +291,21 @@ def main():
                     help="How this run may use the pools of --memory-pool: read builds it without the write tools")
     ap.add_argument("--extra-secret", action="append", default=[], metavar="NAME",
                     help="A secret name a deployment attached to this task, on top of the agent's own")
+    # A JSON Schema the final answer of this run alone must match (a proactive
+    # tick's outcome, proactive/service.py), on top of or instead of the
+    # agent's own output_schema.
+    ap.add_argument("--output-schema", metavar="JSON",
+                    help="JSON Schema the final answer of this run must match")
+    ap.add_argument("--tool-policy", metavar="JSON",
+                    help="Tool policy entries for this run alone, merged over the agent's own")
+    # The per-run overrides object (agents/run_overrides.py): model, system,
+    # tools, skills, mcp, tool_policy, output_schema. --tool-policy and
+    # --output-schema above are its aliases and fold into it.
+    ap.add_argument("--overrides", metavar="JSON",
+                    help="Per-run overrides as one JSON object (model, provider, system, "
+                         "system_append, tools, skills, mcp, tool_policy, output_schema)")
+    ap.add_argument("--overrides-file", metavar="PATH",
+                    help="Read the per-run overrides object from this JSON file")
     args = ap.parse_args()
 
     # Docker task runs only (the launcher appends this flag to the inner command
@@ -307,9 +348,11 @@ def main():
     # the agent — so we don't leave a half-started run that crashes in create_agent
     # (mirrors the get_agent guard in runtime/agent_launcher.start_run).
     from agents.registry import get_agent
-    if not get_agent(agent_id):
+    spec = get_agent(agent_id)
+    if not spec:
         log.error(f"Unknown agent_id: {agent_id}")
         sys.exit(1)
+    agent_id = getattr(spec, "id", None) or agent_id  # a renamed agent's old id runs under the current one
 
     # When invoked via CLI without a --run-id, generate one so the run is
     # always tracked regardless of how agent_run.py was invoked.
@@ -319,9 +362,18 @@ def main():
     # to operator hook commands (agents/hooks.py).
     os.environ["AGENT_RUN_ID"] = run_id
 
+    # The per-run overrides, read before the run record is written so a
+    # bad object fails the run before it starts, and so the record shows them.
+    try:
+        _run_overrides = _read_overrides(args)
+    except ValueError as exc:
+        log.error(f"Invalid overrides: {exc}")
+        sys.exit(2)
+
     # Register the run record early so the dashboard sees pid + log_file
     # immediately, before the (potentially slow) agent build below.
-    _register_run_start(run_id, agent_id, ws, args.task_id, definition_version=args.definition_version)
+    _register_run_start(run_id, agent_id, ws, args.task_id, definition_version=args.definition_version,
+                        overrides=_run_overrides)
 
     _state = get_state_transport()
     _heartbeat = _Heartbeat(run_id, _state)
@@ -387,6 +439,11 @@ def main():
         agent_overrides["memory_access"] = (args.memory_access or "write").strip().lower()
     if args.extra_secret:
         agent_overrides["extra_secrets"] = [n.strip() for n in args.extra_secret if str(n or "").strip()]
+    # The per-run overrides (--overrides, --overrides-file, and the older
+    # --output-schema / --tool-policy folded in as aliases), handed to the
+    # build as one object.
+    if _run_overrides:
+        agent_overrides["run_overrides"] = _run_overrides
 
     # Session continuation: forward tokens/tool events to the SSE broker.
     _extra_callbacks = []

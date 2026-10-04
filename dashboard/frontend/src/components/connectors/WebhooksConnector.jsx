@@ -448,7 +448,7 @@ function RulesSection({ workspace }) {
                   <td className="py-2 pr-3 text-gray-500 font-mono text-xs">{rule.agent_id || '—'}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{(rule.channels || []).join(', ')}</td>
                   <td className="py-2 pr-3">
-                    <label className="inline-flex items-center cursor-pointer">
+                    <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
                         className="sr-only peer"

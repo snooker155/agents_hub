@@ -205,6 +205,33 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
     return out
 
 
+def _validate_consolidate(kind: JobKind, workspace: Optional[str],
+                          consolidate_pool_id: Optional[str],
+                          consolidate_session_limit: Optional[int]) -> Dict[str, Any]:
+    """The memory_consolidate job's own resource: the pool it consolidates.
+
+    Unrelated to ``_validate_resources`` (an agent_task's deployment
+    resources): this job kind creates no Task and binds no agent, it just
+    points ``memory.consolidation.start`` at one pool.
+    """
+    from memory import consolidation as _mc
+    pool_id = str(consolidate_pool_id or "").strip() or None
+    limit = int(consolidate_session_limit or _mc.DEFAULT_SESSION_LIMIT)
+    limit = max(1, min(limit, _mc.MAX_SESSION_LIMIT))
+    if kind != JobKind.memory_consolidate:
+        if pool_id:
+            raise ValueError("consolidate_pool_id applies to memory_consolidate jobs only")
+        return {"consolidate_pool_id": None, "consolidate_session_limit": limit}
+    if not pool_id:
+        raise ValueError("memory_consolidate requires consolidate_pool_id")
+    from memory.store import MemoryStore
+    pool = MemoryStore().get(pool_id)
+    ws = (workspace or "").strip() or None
+    if pool is None or (pool.workspace and ws and pool.workspace != ws):
+        raise ValueError(f"memory pool '{pool_id}' does not exist in workspace '{ws or 'default'}'")
+    return {"consolidate_pool_id": pool_id, "consolidate_session_limit": limit}
+
+
 def create_job(
     *,
     kind: JobKind,
@@ -231,6 +258,8 @@ def create_job(
     secrets: Optional[List[str]] = None,
     memory_pool_ids: Optional[List[str]] = None,
     memory_access: Optional[str] = None,
+    consolidate_pool_id: Optional[str] = None,
+    consolidate_session_limit: Optional[int] = None,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
@@ -239,6 +268,7 @@ def create_job(
     resources = _validate_resources(kind, workspace, agent_id, project_id=project_id, file_ids=file_ids,
                                     secrets=secrets, memory_pool_ids=memory_pool_ids,
                                     memory_access=memory_access)
+    consolidate = _validate_consolidate(kind, workspace, consolidate_pool_id, consolidate_session_limit)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -260,6 +290,7 @@ def create_job(
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
         **resources,
+        **consolidate,
     )
     saved = plan_store.add(job)
     _notify_plan_changed()
@@ -311,6 +342,14 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
             merged = {k: fields.get(k, getattr(existing, k)) for k in _RESOURCE_FIELDS}
             agent_id = fields.get("agent_id", existing.agent_id)
             fields.update(_validate_resources(existing.kind, existing.workspace, agent_id, **merged))
+    if "consolidate_pool_id" in fields or "consolidate_session_limit" in fields:
+        existing = plan_store.get(job_id)
+        if existing is not None:
+            fields.update(_validate_consolidate(
+                existing.kind, existing.workspace,
+                fields.get("consolidate_pool_id", existing.consolidate_pool_id),
+                fields.get("consolidate_session_limit", existing.consolidate_session_limit),
+            ))
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -388,7 +427,21 @@ def create_notification(
         _push_endpoints(workspace, "slack", n)
     if channels and "webhook" in channels:
         _push_endpoints(workspace, "webhook", n)
+    # The chat channels of connectors/channels: "slack" reaches both the
+    # incoming-webhook endpoints above and the chats bound to the Slack bot.
+    for channel in ("slack", "discord", "teams", "mail"):
+        if channels and channel in channels:
+            _push_channel(channel, workspace, title, body)
     return n
+
+
+def _push_channel(channel: str, workspace: Optional[str], title: str, body: str) -> None:
+    """Best-effort delivery to the chats bound on a registered channel; never raises."""
+    try:
+        from connectors.channels.notify import notify_workspace
+        notify_workspace(channel, workspace, title, body)
+    except Exception:  # noqa: BLE001 - delivery is best effort, the tick goes on
+        log.debug("%s notification delivery failed", channel, exc_info=True)
 
 
 def _push_telegram(workspace: Optional[str], title: str, body: str) -> None:
@@ -448,12 +501,11 @@ def _publish_notification(n: Notification) -> None:
     except Exception:
         pass
     try:
-        import os
         import requests
         from common.auth import auth_headers
-        port = os.environ.get("DASHBOARD_PORT", "8000")
+        from common.hostnet import hub_base_url
         requests.post(
-            f"http://localhost:{port}/api/plan/notifications/publish",
+            f"{hub_base_url()}/api/plan/notifications/publish",
             json=payload,
             headers=auth_headers(),
             timeout=2,
@@ -530,6 +582,96 @@ def _upcoming_runs_at(job: ScheduledJob, count: int = 3) -> List[str]:
     except Exception:
         log.debug("upcoming_runs_at failed for job %s", job.id, exc_info=True)
         return []
+
+
+def upcoming_runs(
+    cron: Optional[str] = None, tz: Optional[str] = None, count: int = 5,
+    start: Optional[datetime] = None, recurrence: Recurrence = Recurrence.cron,
+) -> List[str]:
+    """Pure preview of a schedule's next ``count`` fire times, as ISO strings,
+    with no job created. Backs the ``/api/plan/cron/preview`` route and the
+    frontend's CronHint.
+
+    Wraps the schedule in a throwaway, never-persisted ``ScheduledJob`` and
+    steps it through the real ``_next_run``, the same function the scheduler
+    calls when a job fires, so a hint shown while typing can never disagree
+    with what the scheduler later does. For ``cron`` the first time is the
+    next occurrence after ``start`` (default now). For hourly, daily and
+    weekly, ``start`` is the job's first ``run_at``: it is the first time when
+    still ahead, otherwise the schedule rolls forward past now exactly as a
+    firing job would.
+
+    Raises ``ValueError`` (message safe to show the caller) for an invalid
+    cron expression or timezone name, validated the same way ``create_job``
+    validates them, or for a schedule that has nothing to preview.
+    """
+    recurrence = Recurrence(recurrence)
+    if recurrence == Recurrence.none:
+        raise ValueError("A one-off job has no recurring fire times.")
+    tz_name = _validate_timezone(tz)
+    now = _now()
+    count = max(0, count)
+    if recurrence == Recurrence.cron:
+        cron_expr = _validate_cron(cron)
+        base = _ensure_aware(start) if start is not None else now
+        probe = ScheduledJob(
+            kind=JobKind.notification, title="_cron_preview", run_at=base,
+            recurrence=Recurrence.cron, cron=cron_expr, timezone=tz_name, catch_up=True,
+        )
+        current = base
+        out: List[str] = []
+        for _ in range(count):
+            current = _next_run(probe, current)
+            probe = probe.model_copy(update={"run_at": current})
+            out.append(current.isoformat())
+        return out
+
+    if start is None:
+        raise ValueError("A start time is required to preview this schedule.")
+    first = _ensure_aware(start)
+    probe = ScheduledJob(
+        kind=JobKind.notification, title="_cron_preview", run_at=first,
+        recurrence=recurrence, timezone=tz_name, catch_up=False,
+    )
+    if first <= now:
+        first = _next_run(probe, now)
+    current = first
+    out = [current.isoformat()] if count else []
+    probe = probe.model_copy(update={"catch_up": True})
+    for _ in range(count - 1):
+        probe = probe.model_copy(update={"run_at": current})
+        current = _next_run(probe, current)
+        out.append(current.isoformat())
+    return out
+
+
+_WEEKDAY_NAMES = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
+
+def describe_cron(cron: str) -> Optional[str]:
+    """A short, best effort English description of the cron shapes
+    ``proactive.profile.schedule_cron`` produces (``*/N * * * *``,
+    ``0 */H * * *``, ``0 0 * * *``) plus the handful of patterns users type
+    by hand (a fixed daily or weekly time). ``None`` for anything else; the
+    cron preview still returns the fire times, just no prose.
+    """
+    parts = cron.split()
+    if len(parts) != 5:
+        return None
+    minute, hour, dom, month, dow = parts
+    if dom != "*" or month != "*":
+        return None
+    if minute.startswith("*/") and minute[2:].isdigit() and hour == "*" and dow == "*":
+        return f"every {minute[2:]} minutes"
+    if hour.startswith("*/") and hour[2:].isdigit() and minute == "0" and dow == "*":
+        return f"every {hour[2:]} hours"
+    if minute.isdigit() and hour.isdigit():
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+        if dow == "*":
+            return f"daily at {time_str}"
+        if dow.isdigit():
+            return f"weekly on {_WEEKDAY_NAMES[int(dow) % 7]} at {time_str}"
+    return None
 
 
 def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
@@ -702,11 +844,13 @@ def _record_fire(
     job: ScheduledJob, *, trigger: str, ok: bool, error_type: Optional[str],
     error: Optional[str], task_id: Optional[str], notification_id: Optional[str],
     loop_run_id: Optional[str], slot: datetime, duration_ms: int,
-) -> None:
+    outcome: Optional[str] = None, summary: Optional[str] = None,
+) -> Optional[FireRecord]:
     """Append one journal row; never raises (a journal write must not turn a
-    successful, or already-failed, firing into a harder failure)."""
+    successful, or already-failed, firing into a harder failure). Returns the
+    row, or None when the write failed."""
     try:
-        fire_store.add(FireRecord(
+        return fire_store.add(FireRecord(
             job_id=job.id,
             workspace=job.workspace,
             slot=slot,
@@ -718,9 +862,12 @@ def _record_fire(
             notification_id=notification_id,
             loop_run_id=loop_run_id,
             duration_ms=duration_ms,
+            outcome=outcome,
+            summary=summary,
         ))
     except Exception:
         log.debug("failed writing fire journal for job %s", job.id, exc_info=True)
+        return None
 
 
 def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
@@ -770,6 +917,10 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
     result: Dict[str, Any] = {"job_id": str(job.id), "kind": job.kind.value}
     error: Optional[str] = None
     error_type: Optional[str] = None
+    # Heartbeat only: a tick skipped for quiet hours says when the window
+    # ends, and the next run is moved there instead of the next cron slot.
+    resume_at: Optional[datetime] = None
+    skip_summary: Optional[str] = None
 
     if already_fired:
         result["skipped"] = "already_fired_this_slot"
@@ -796,6 +947,22 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 fired = _fire_loop(job)
                 result["task_id"] = fired.get("task_id")
                 result["loop_run_id"] = fired.get("loop_run_id")
+            elif job.kind == JobKind.heartbeat:
+                # A tick of a proactive agent (proactive/service.py): the
+                # gates (quiet hours, budget, tick limit, busy) may skip it,
+                # which is a normal outcome rather than a failure.
+                from proactive.service import fire_heartbeat
+                fired = fire_heartbeat(job, trigger=trigger)
+                if fired.get("task_id"):
+                    result["task_id"] = fired["task_id"]
+                else:
+                    result["skipped"] = fired.get("outcome")
+                    result["outcome"] = fired.get("outcome")
+                    skip_summary = fired.get("summary")
+                    if fired.get("resume_at") is not None:
+                        resume_at = _ensure_aware(fired["resume_at"])
+            elif job.kind == JobKind.memory_consolidate:
+                result["consolidation_id"] = _fire_memory_consolidate(job, trigger=trigger)
             else:
                 result["task_id"] = _fire_agent_task(job)
         except Exception as e:
@@ -809,8 +976,10 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         "last_fired_at": now,
         "last_error": error,
     }
-    if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop) and result.get("task_id"):
+    if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop, JobKind.heartbeat) and result.get("task_id"):
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
+    if job.kind == JobKind.memory_consolidate and result.get("consolidation_id"):
+        fields["created_consolidation_ids"] = [*job.created_consolidation_ids, result["consolidation_id"]]
 
     # -------------------- consecutive errors + auto pause --------------------
     # A one-off job (recurrence == none) is already terminal below (failed on
@@ -828,8 +997,12 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 fields["status"] = JobStatus.paused
                 fields["paused_reason"] = "target_missing" if target_missing else "errors"
                 _notify_job_paused(job, error, fields["consecutive_errors"])
-    else:
+    elif job.kind != JobKind.heartbeat:
         fields["consecutive_errors"] = 0
+    # A heartbeat's counter is fed by its *runs* (proactive.service.
+    # on_task_run_finished): a firing that only started the task says
+    # nothing about whether the tick will succeed, so it neither resets nor
+    # bumps the counter here.
 
     if job.recurrence == Recurrence.none:
         fields["status"] = JobStatus.failed if error else JobStatus.fired
@@ -844,6 +1017,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
             # alive and try again shortly rather than crashing the scheduler.
             log.error("failed computing next run for job %s: %s", job.id, e)
             fields["run_at"] = now + timedelta(hours=1)
+        if resume_at is not None and resume_at > fields["run_at"]:
+            fields["run_at"] = resume_at
     plan_store.update(job.id, **fields)
     result["ok"] = error is None
     if error:
@@ -851,15 +1026,26 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         result["error_type"] = error_type
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    outcome: Optional[str] = None
+    if job.kind == JobKind.heartbeat and not already_fired:
+        outcome = "error" if error else result.get("outcome")
     _record_fire(
         job, trigger=trigger, ok=error is None, error_type=error_type, error=error,
         task_id=result.get("task_id"), notification_id=result.get("notification_id"),
         loop_run_id=result.get("loop_run_id"), slot=slot, duration_ms=duration_ms,
+        outcome=outcome, summary=skip_summary,
     )
     return result
 
 
-def _fire_agent_task(job: ScheduledJob) -> str:
+def _fire_agent_task(
+    job: ScheduledJob,
+    *,
+    description: Optional[str] = None,
+    notify: bool = True,
+    launch_params: Optional[Dict[str, Any]] = None,
+    activity: str = "scheduled_fire",
+) -> str:
     """Materialize a Task for the job and start it. Returns the task id.
 
     Mirrors the manual assign flow in dashboard/backend/routes/tasks.py:
@@ -868,6 +1054,12 @@ def _fire_agent_task(job: ScheduledJob) -> str:
       grabs `ready` tasks with no agent, so it never sees this one unassigned.
     - preassigned agent + subprocess mode: launch the run directly.
     - no agent: set the task `ready` and let the orchestrator node route it.
+
+    ``description`` replaces the job's message as the task text (a heartbeat
+    tick builds its own prompt, proactive/service.py); ``notify=False`` skips
+    the "task started" inbox entry (a tick must not make noise before it
+    knows whether it has anything to say); ``launch_params`` reach the
+    launcher for a subprocess run (the tick's answer schema).
     """
     from tasks import service as tasks_service
     from tasks.models import CreatedBy, TaskStatus
@@ -879,7 +1071,7 @@ def _fire_agent_task(job: ScheduledJob) -> str:
 
     task = tasks_service.create_task(
         title=job.title,
-        description=job.message or job.title,
+        description=description or job.message or job.title,
         created_by=CreatedBy.user,
         status=TaskStatus.todo,
         workspace=ws_name,
@@ -900,7 +1092,7 @@ def _fire_agent_task(job: ScheduledJob) -> str:
         agent_version=job.agent_version if job.agent_id else None,
     )
     tasks_service.append_task_activity_log(
-        task.id, "scheduled_fire", f"Created by scheduled job {job.id}", job_id=str(job.id)
+        task.id, activity, f"Created by scheduled job {job.id}", job_id=str(job.id)
     )
 
     if job.agent_id:
@@ -940,12 +1132,17 @@ def _fire_agent_task(job: ScheduledJob) -> str:
         else:
             from agents import agent_launcher
 
-            run_id, session_id = agent_launcher.start_run(str(task.id), job.agent_id, None)
+            run_id, session_id = agent_launcher.start_run(
+                str(task.id), job.agent_id, dict(launch_params) if launch_params else None,
+            )
             tasks_service.assign_agent(task.id, job.agent_id, None, run_id=run_id)
             tasks_service.update_task(task.id, status=TaskStatus.in_progress, session_id=session_id)
     else:
         # Unassigned: orchestrator nodes pick up ready user tasks with no agent.
         tasks_service.update_task(task.id, status=TaskStatus.ready)
+
+    if not notify:
+        return str(task.id)
 
     # Surface the firing in the inbox so the user sees work has started.
     create_notification(
@@ -1062,6 +1259,24 @@ def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
         channels=job.channels,
     )
     return {"loop_run_id": run.loop_run_id, "task_id": run.task_id}
+
+
+def _fire_memory_consolidate(job: ScheduledJob, *, trigger: str) -> str:
+    """Start a consolidation of the job's pool. Returns the consolidation id.
+
+    Unlike every other kind this creates no Task: ``memory.consolidation.start``
+    queues its own row and runs it in a background thread, which this call
+    only has to kick off and name on the job's journal (``created_consolidation_ids``).
+    """
+    if not job.consolidate_pool_id:
+        raise ValueError("memory_consolidate job has no consolidate_pool_id")
+    from memory import consolidation as _mc
+    row = _mc.start(
+        job.consolidate_pool_id, session_limit=job.consolidate_session_limit,
+        workspace=job.workspace, trigger=trigger,
+        actor_kind="schedule", actor_id=str(job.id),
+    )
+    return str(row["id"])
 
 
 def claim_due_jobs(

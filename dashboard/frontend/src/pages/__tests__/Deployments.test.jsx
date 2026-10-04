@@ -25,10 +25,15 @@ const getAgents = vi.fn(() => ok([{ id: 'agent-1', name: 'Scout' }]));
 const listFlows = vi.fn(() => ok([{ id: 'flow-1', name: 'Onboarding' }]));
 const getLoops = vi.fn(() => ok([{ id: 'loop-1', name: 'Retry loop' }]));
 const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'sandboxed-python' }]));
+// CronHint (under the recurrence field once it is not 'none') debounces a
+// call to this; never resolving keeps every existing assertion exactly as
+// it was before the hint existed, since nothing here asserts on it.
+const previewCron = vi.fn(() => new Promise(() => {}));
 
 vi.mock('../../api', () => ({
   // Project deployments (the apps table on top of the page): none in these tests.
   listDeployedApps: () => Promise.resolve({ data: { items: [] } }),
+  previewCron: (...args) => previewCron(...args),
   getPlanJobs: (...args) => getPlanJobs(...args),
   createPlanJob: (...args) => createPlanJob(...args),
   updatePlanJob: (...args) => updatePlanJob(...args),
@@ -111,10 +116,10 @@ describe('Deployments — empty state', () => {
     await waitFor(() => expect(screen.getByText(/nothing scheduled yet/i)).toBeInTheDocument());
   });
 
-  it('asks the jobs API for agent_task, flow and loop kinds only', async () => {
+  it('asks the jobs API for the deployment kinds only (agent_task, flow, loop, heartbeat)', async () => {
     show();
     await waitFor(() => expect(getPlanJobs).toHaveBeenCalled());
-    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_task', 'flow', 'loop']);
+    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_task', 'flow', 'loop', 'heartbeat']);
   });
 });
 

@@ -36,6 +36,28 @@ export function useThemeColors(spec) {
   return useMemo(() => resolveSpec(spec, version), [spec, version]);
 }
 
+/** The mode actually applied to the page right now: 'dark' when `<html>` carries
+ * the `dark` class (ThemeContext.jsx sets it for dark, and for system when the
+ * system is dark), else 'light'. */
+export function appliedMode() {
+  if (typeof document !== 'undefined' && document.documentElement.classList.contains('dark')) {
+    return 'dark';
+  }
+  return 'light';
+}
+
+/**
+ * `appliedMode()` as a hook: re-renders the caller when the mode changes. The
+ * same subscription as the colours above (the `dark` class is one of the
+ * attributes it watches), so a renderer that embeds a third-party canvas
+ * (vega, three.js) can rebuild it on a theme toggle instead of staying in the
+ * palette it mounted with.
+ */
+export function useAppliedMode() {
+  useSyncExternalStore(subscribeToPalette, getPaletteVersion, getPaletteVersion);
+  return appliedMode();
+}
+
 // `version` is only a cache key: the custom properties themselves live
 // outside React, and a new version is what makes them resolve again.
 function resolveSpec(spec, version) { // eslint-disable-line no-unused-vars

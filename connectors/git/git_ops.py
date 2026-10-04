@@ -5,6 +5,11 @@ Auth is injected per-invocation via `git -c http.extraHeader=...`, so the
 token never lands in `.git/config`, the remote URL, or error output. When no
 token is configured for the provider, commands run unauthenticated (public
 repos keep working).
+
+The token is the one in effect in the workspace the command works for
+(connectors/git/store.py: the workspace's own, else the default's). The
+helpers that authenticate take ``workspace``; without it, the running code's
+workspace (a run's context var).
 """
 from __future__ import annotations
 
@@ -34,7 +39,10 @@ class GitOpsError(Exception):
     """Raised when a git command fails (message is UI-safe)."""
 
 
-def _auth_args(provider: Optional[str]) -> list[str]:
+def _auth_args(provider: Optional[str], workspace: Optional[str] = None) -> list[str]:
+    if workspace is not None:
+        from connectors.channels.store import in_workspace
+        return in_workspace(workspace, _auth_args, provider)
     if provider in store.PROVIDERS and store.has_token(provider):
         try:
             header = get_provider(provider).auth_header()
@@ -54,12 +62,13 @@ def _run(args: list[str], *, cwd: Optional[Path] = None, timeout: int) -> subpro
         raise GitOpsError(f"git operation timed out after {timeout}s") from e
 
 
-def clone(clone_url: str, dest: Path, *, branch: Optional[str] = None, provider: Optional[str] = None) -> str:
+def clone(clone_url: str, dest: Path, *, branch: Optional[str] = None, provider: Optional[str] = None,
+          workspace: Optional[str] = None) -> str:
     """Clone a repo. Retries without --branch when the requested branch is missing.
 
     Returns combined git output. Raises GitOpsError on failure.
     """
-    base = ["git", *_auth_args(provider), "clone"]
+    base = ["git", *_auth_args(provider, workspace), "clone"]
     if branch:
         result = _run([*base, "--branch", branch, clone_url, str(dest)], timeout=CLONE_TIMEOUT)
         if result.returncode == 0:
@@ -72,8 +81,8 @@ def clone(clone_url: str, dest: Path, *, branch: Optional[str] = None, provider:
     return result.stdout + result.stderr
 
 
-def pull(repo_dir: Path, *, provider: Optional[str] = None) -> str:
-    result = _run(["git", *_auth_args(provider), "pull"], cwd=repo_dir, timeout=PULL_TIMEOUT)
+def pull(repo_dir: Path, *, provider: Optional[str] = None, workspace: Optional[str] = None) -> str:
+    result = _run(["git", *_auth_args(provider, workspace), "pull"], cwd=repo_dir, timeout=PULL_TIMEOUT)
     if result.returncode != 0:
         raise GitOpsError(result.stderr.strip() or "git pull failed")
     return result.stdout + result.stderr
@@ -181,14 +190,15 @@ def commit_all(
     return sha_result.stdout.strip() or None
 
 
-def push(repo_dir: Path, branch: str, *, provider: Optional[str] = None, set_upstream: bool = True) -> str:
+def push(repo_dir: Path, branch: str, *, provider: Optional[str] = None, set_upstream: bool = True,
+         workspace: Optional[str] = None) -> str:
     """Push *branch* to origin. Never forces — a rejected push surfaces as GitOpsError.
 
     Auth is the same per-invocation ``http.extraHeader`` injection clone/pull
     use, so no token ever lands in the remote URL, `.git/config`, or a subprocess
     environment variable.
     """
-    args = ["git", *_auth_args(provider), "push"]
+    args = ["git", *_auth_args(provider, workspace), "push"]
     if set_upstream:
         args.append("-u")
     args.extend(["origin", branch])

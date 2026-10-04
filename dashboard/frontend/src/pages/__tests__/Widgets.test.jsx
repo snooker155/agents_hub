@@ -5,9 +5,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { I18nProvider } from '../../i18n';
 
 // Hoisted with the mocks below, which vitest lifts above every import.
-const { ok, api, getAgents } = vi.hoisted(() => {
+const { ok, api, getAgents, getAgentVersions } = vi.hoisted(() => {
   const resolve = (data) => Promise.resolve({ data });
-  return { ok: resolve, api: {}, getAgents: vi.fn(() => resolve([{ id: 'helper', name: 'Helper' }, { id: 'other', name: 'Other' }])) };
+  return {
+    ok: resolve,
+    api: {},
+    getAgents: vi.fn(() => resolve([{ id: 'helper', name: 'Helper' }, { id: 'other', name: 'Other' }])),
+    getAgentVersions: vi.fn(() => resolve({ versions: [] })),
+  };
 });
 
 const WIDGET = {
@@ -68,6 +73,7 @@ vi.mock('../../api/widgets', () => Object.fromEntries(
 vi.mock('../../api', () => ({
   API_ORIGIN: '',
   getAgents: (...args) => getAgents(...args),
+  getAgentVersions: (...args) => getAgentVersions(...args),
 }));
 
 vi.mock('../../components/workspace', () => ({
@@ -134,6 +140,20 @@ describe('Widgets page', () => {
     expect(payload.limits).toEqual({
       messages_per_minute: 6, attachment_max_bytes: 2097152, max_attachments: 3, tokens_per_day: 200000,
     });
+  });
+
+  it('pins the agent version a widget answers with', async () => {
+    getAgentVersions.mockImplementation(() => ok({ versions: [{ version: 1 }, { version: 2 }] }));
+    show();
+    await screen.findByText(/no widgets in this workspace yet/i);
+    fireEvent.click(screen.getByRole('button', { name: /new widget/i }));
+    await waitFor(() => expect(getAgentVersions).toHaveBeenCalledWith('helper'));
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'Pinned desk' } });
+    fireEvent.change(await screen.findByLabelText(/agent version/i), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() => expect(api.createWidget).toHaveBeenCalled());
+    expect(api.createWidget.mock.calls.at(-1)[0].agent_version).toBe(1);
+    getAgentVersions.mockImplementation(() => ok({ versions: [] }));
   });
 
   it('opens the conversations and the preview tabs', async () => {

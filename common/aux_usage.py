@@ -123,4 +123,34 @@ def record(purpose: str, *, provider: Optional[str] = None, model: Optional[str]
     return item
 
 
-__all__ = ["entry", "record", "usage_of"]
+def record_flat(purpose: str, *, provider: str, model: str, cost_usd: Optional[float],
+                units: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """Count one call priced in dollars, not tokens: a picture, a clip of
+    video, a stretch of speech (tools/special_models.py). ``cost_usd`` None
+    means the workspace set no price; the call is still listed, at zero.
+    The entry carries ``cost_usd``, which ``common.pricing`` adds to the run's
+    cost, and the amount is charged to the run's money cap at once."""
+    item: Dict[str, Any] = {
+        "purpose": str(purpose), "provider": str(provider or ""), "model": str(model or ""),
+        "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0,
+        "cost_usd": round(float(cost_usd or 0.0), 6),
+    }
+    if units is not None:
+        item["units"] = units
+    try:
+        from agents.callbacks.guards import charge_flat_spend
+        charge_flat_spend(item["cost_usd"])
+    except Exception:  # noqa: BLE001 - the cap is checked again on the agent's next call
+        log.debug("aux usage: flat budget charge failed", exc_info=True)
+    try:
+        from agents.agent_loop import current_state
+        state = current_state()
+    except Exception:  # noqa: BLE001 - no loop module means no run to count on
+        state = None
+    if state is None:
+        return item
+    state.aux_calls.append(item)
+    return item
+
+
+__all__ = ["entry", "record", "record_flat", "usage_of"]

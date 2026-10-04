@@ -26,6 +26,7 @@ in through ``/sync`` (memory/skill_import.py) and are changed in the
 repository, not here; a SKILL.md can also be imported as text and any skill
 exported as one.
 """
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -34,11 +35,14 @@ from fastapi.responses import PlainTextResponse
 from agents import registry
 from memory import skill_versions
 from memory.procedural import Procedure, ProcedureStore, find_procedure
+from memory.skill_review import is_publishable, review_skill
 from models import (
-    SkillCreate, SkillImportMarkdown, SkillInstall, SkillPin, SkillSharingUpdate, SkillSync,
-    SkillUpdate,
+    SkillCreate, SkillImportMarkdown, SkillInstall, SkillPin, SkillSharingUpdate,
+    SkillSourceAdd, SkillSync, SkillUpdate,
 )
 from workspace import get_workspace_metadata, is_system_agent
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -80,6 +84,13 @@ def _to_dict(p: Procedure) -> Dict[str, Any]:
         "tags": list(p.tags),
         "resources": list(p.resources),
         "allowed_tools": list(p.allowed_tools),
+        # SKILL.md ``license`` as written; ``publishable`` is false when it says
+        # the skill is not open (memory/skill_review.py).
+        "license": p.license or "",
+        "publishable": is_publishable(p),
+        # The safety review: severity, flags, scripts, license verdict. None
+        # for a skill nobody reviewed.
+        "safety": dict(p.safety) if p.safety else None,
         "source": p.source,
         "repo": dict(p.repo) if p.repo else None,
         "workspace": p.workspace,
@@ -96,6 +107,33 @@ def _to_dict(p: Procedure) -> Dict[str, Any]:
         "updated_at": p.updated_at.isoformat(),
         **_origin_state(p),
     }
+
+
+def refuse_unpublishable(p: Procedure) -> None:
+    """A skill whose license says it is not open stays in the workspace that
+    imported it: publishing it to the global catalog would redistribute it.
+    Shared with routes/registry.py (submit for review publishes too)."""
+    if not is_publishable(p):
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Skill '{p.name}' carries a license that does not allow redistribution "
+                    f"({p.license or 'see its LICENSE file'}); it can be used here but not "
+                    "published."),
+        )
+
+
+def rescan(p: Procedure) -> None:
+    """Refresh the safety review of a reviewed skill after its text changed
+    here (an edit or a restore of an attached copy). A skill nobody reviewed
+    stays unreviewed: the review is for text that came from outside."""
+    if p.safety is None:
+        return
+    from memory.skill_import import skill_dir_for
+    try:
+        p.safety = review_skill(description=p.description, body=p.body, resources=p.resources,
+                                skill_dir=skill_dir_for(p), declared_license=p.license)
+    except Exception:  # noqa: BLE001 - a failed review keeps the previous one
+        log.warning("skill %s review failed, the previous one stays", p.id, exc_info=True)
 
 
 def _refuse_repo_edit(p: Procedure) -> None:
@@ -215,7 +253,8 @@ async def create_skill(data: SkillCreate):
 
 
 def _create_skill(data: SkillCreate, *, allowed_tools: Optional[List[str]] = None,
-                  version_op: Optional[str] = None) -> Dict[str, Any]:
+                  version_op: Optional[str] = None, license: str = "",
+                  safety: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     name = data.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Skill name is required")
@@ -242,6 +281,8 @@ def _create_skill(data: SkillCreate, *, allowed_tools: Optional[List[str]] = Non
         body=body,
         tags=[t.strip() for t in (data.tags or []) if str(t).strip()],
         allowed_tools=list(allowed_tools or []),
+        license=license or "",
+        safety=safety,
         source="user",
         agent_id=agent_id,
         workspace=data.workspace,
@@ -255,9 +296,10 @@ def _create_skill(data: SkillCreate, *, allowed_tools: Optional[List[str]] = Non
 
 @router.post("/sync")
 async def sync_skills(data: SkillSync):
-    """Scan the workspace's .claude/skills folders and bring its repo skills in
-    step with them (memory/skill_import.py). Returns what was added, updated,
-    left alone, found missing, and which attached copies followed."""
+    """Scan the workspace's skill folders (.claude/skills and the other layouts
+    memory/skill_import.py knows) and bring its repo skills in step with them.
+    Returns what was added, updated, left alone, found missing, which attached
+    copies followed, and which skills the safety review flagged."""
     import asyncio
 
     from memory.skill_import import sync_workspace
@@ -282,11 +324,74 @@ async def import_skill_markdown(data: SkillImportMarkdown):
         raise HTTPException(status_code=400, detail=str(e))
     if not parsed.body:
         raise HTTPException(status_code=400, detail="SKILL.md has no instructions under its frontmatter")
+    # Pasted text came from outside: review it like a synced folder would be.
+    safety = review_skill(description=parsed.description, body=parsed.body, resources=[],
+                          skill_dir=None, declared_license=parsed.license)
     return _create_skill(
         SkillCreate(workspace=data.workspace, name=parsed.name, description=parsed.description,
                     body=parsed.body, tags=parsed.tags, agent_id=data.agent_id),
         allowed_tools=parsed.allowed_tools, version_op=skill_versions.OP_IMPORT,
+        license=parsed.license, safety=safety,
     )
+
+
+# ── sources ──────────────────────────────────────────────────────────────────
+
+@router.get("/sources")
+async def list_skill_sources(workspace: str = Query(...)):
+    """Public repositories of skills (memory/skill_sources.py): the curated
+    list with its licenses, each saying whether this workspace already has
+    it and what the sync found, plus repositories added by URL."""
+    from memory.skill_sources import list_sources
+    from workspace import get_workspace_folder
+
+    if get_workspace_folder(workspace) is None:
+        raise HTTPException(status_code=404, detail=f"Workspace {workspace!r} not found")
+    return list_sources(workspace)
+
+
+@router.post("/sources")
+async def add_skill_source(data: SkillSourceAdd):
+    """Connect a repository of skills: clone it under the workspace's
+    ``.skills/sources`` and sync its skills. Returns the source, the sync
+    report (with the skills the review flagged) and whether it was already
+    there (then it is pulled and synced instead)."""
+    import asyncio
+
+    from memory.skill_sources import SourceError, add_source
+
+    try:
+        return await asyncio.to_thread(add_source, data.workspace.strip(), data.url,
+                                       branch=data.branch)
+    except SourceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.post("/sources/{source_id}/update")
+async def update_skill_source(source_id: str, workspace: str = Query(...)):
+    """Pull a connected source and sync its skills: the sync report."""
+    import asyncio
+
+    from memory.skill_sources import SourceError, update_source
+
+    try:
+        return await asyncio.to_thread(update_source, workspace, source_id)
+    except SourceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@router.delete("/sources/{source_id}")
+async def remove_skill_source(source_id: str, workspace: str = Query(...)):
+    """Disconnect a source: its clone and the catalog entries it brought are
+    deleted; copies attached to agents stay."""
+    import asyncio
+
+    from memory.skill_sources import SourceError, remove_source
+
+    try:
+        return await asyncio.to_thread(remove_source, workspace, source_id)
+    except SourceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.get("/{skill_id}")
@@ -331,6 +436,7 @@ async def update_skill(skill_id: str, data: SkillUpdate):
         raise HTTPException(status_code=400, detail="A skill needs steps or instructions")
     if data.tags is not None:
         procedure.tags = [t.strip() for t in data.tags if str(t).strip()]
+    rescan(procedure)
     procedure.touch()
     store.update(procedure, version_note=(data.note or "").strip())
     return _to_dict(procedure)
@@ -377,6 +483,7 @@ async def restore_skill_version(skill_id: str, version: int):
     procedure.tags = content["tags"]
     procedure.resources = content["resources"]
     procedure.allowed_tools = content["allowed_tools"]
+    rescan(procedure)
     procedure.touch()
     ProcedureStore(procedure.workspace).update(
         procedure, version_op=skill_versions.OP_RESTORE, version_note=f"restored v{version}")
@@ -449,6 +556,8 @@ async def update_skill_sharing(skill_id: str, data: SkillSharingUpdate):
     procedure = find_procedure(skill_id)
     if not procedure:
         raise HTTPException(status_code=404, detail="Skill not found")
+    if data.shared:
+        refuse_unpublishable(procedure)
     procedure.shared = bool(data.shared)
     procedure.touch()
     ProcedureStore(procedure.workspace).update(procedure)
@@ -503,6 +612,8 @@ async def install_skill(skill_id: str, data: SkillInstall):
         body=source.body,
         resources=list(source.resources),
         allowed_tools=list(source.allowed_tools),
+        license=source.license or "",
+        safety=dict(source.safety) if source.safety else None,
         repo=dict(source.repo) if source.repo else None,
         agent_id=agent_id,
         workspace=target_ws,

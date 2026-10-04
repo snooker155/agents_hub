@@ -2,7 +2,7 @@
 Routes: steering a running run (docs/steering.md).
 
 ``POST /api/runs/{run_id}/steer`` takes a message for a run that is working
-right now, in one of two modes:
+right now, in one of three modes:
 
 - ``inject``: stored (``common.steering``) and taken by the agent loop before
   its next model call (``agents/loop_ext/steering.py``). The run keeps going.
@@ -13,6 +13,17 @@ right now, in one of two modes:
   client sends the message as its next turn itself, since it owns the
   conversation's history. With ``send`` (the run page, which does not own the
   conversation) this route starts that turn itself: ``{"next": "sent"}``.
+- ``system``: stored and taken by the loop like an inject, but appended to
+  the run's system prompt for the rest of the run. Only an operator may send
+  it: the run's owner (the chat's owner, the person who filed the task) or an
+  admin, never the service credential an agent's own process carries, so no
+  agent and no delegated run can raise its own instructions.
+- ``switch_model``: the message is a catalog model id (``provider/model``,
+  checked against the enabled models and stored in that form). The loop
+  moves the run to that model before its next model call and keeps going
+  with its whole trail. Anyone who may steer the run may switch it, except
+  the service credential: an agent must not move its own run to another
+  (and possibly dearer) model.
 
 ``run_id`` may also name a team run (teams/store.py): an inject is posted on
 the team's board as the user's message for the next member to read, an
@@ -25,7 +36,9 @@ after the run ended.
 
 Access follows the other single-run routes: the caller must see the run's
 workspace, and, being a write, steering in ``multi`` mode also needs an
-editor's role there. Every write lands in the audit log as ``run.steer``.
+editor's role there; a ``system`` message also needs the run's owner or an
+admin (:func:`_require_operator`). Every write lands in the audit log as
+``run.steer``.
 """
 from __future__ import annotations
 
@@ -82,6 +95,70 @@ def _require_can_steer(request: Request, run: Dict[str, Any]):
             raise HTTPException(status_code=403,
                                 detail="steering a run needs an editor's role in its workspace")
     return principal
+
+
+def _run_owner(run: Dict[str, Any]) -> Optional[str]:
+    """The user a run belongs to: the owner of its conversation for a chat
+    turn, the person who filed its task otherwise. None when neither is known
+    (a delegated run, a flow node)."""
+    try:
+        if str(run.get("session_type") or "") == "chat":
+            from common import chat_store
+            conv_id = str(run.get("conversation_id") or run.get("task_id") or "")
+            chat = chat_store.get_chat(conv_id) if conv_id else None
+            return str((chat or {}).get("owner") or "") or None
+        task = _task_of(run)
+        if task is None:
+            return None
+        return str(getattr(task, "created_by_user", "") or "") or None
+    except Exception:  # noqa: BLE001 - an unknown owner leaves the run to admins
+        log.debug("steering: owner lookup failed for %s", run.get("run_id"), exc_info=True)
+        return None
+
+
+def _require_operator(principal: Any, run: Dict[str, Any]) -> None:
+    """403 unless ``principal`` may add to this run's instructions.
+
+    The service credential is refused first and always: it is what a run's
+    own process (and every run it delegates to) presents to this API, so
+    accepting it would let an agent rewrite its own system prompt. Then an
+    admin may, and outside ``multi`` mode the one operator may. In ``multi``
+    mode a member must own the run (:func:`_run_owner`); a run with no known
+    owner is left to admins.
+    """
+    from common.auth import MULTI
+
+    if principal is None or getattr(principal, "kind", "") == "service":
+        raise HTTPException(status_code=403,
+                            detail="a system message is sent by an operator, not by an agent or a delegated run")
+    if principal.is_admin or identity.current_mode() != MULTI:
+        return
+    owner = _run_owner(run)
+    # owner_or_admin reads a "local" owner (filed before identity existed) as
+    # anyone's, the rule every other owned record follows.
+    if owner and access.owner_or_admin(principal, owner):
+        return
+    raise HTTPException(status_code=403,
+                        detail="only the run's owner or an admin may send a system message")
+
+
+def _require_not_agent(principal: Any) -> None:
+    """403 for the service credential, which every run's own process and
+    every delegated run carry: a model switch is a person's decision."""
+    if principal is not None and getattr(principal, "kind", "") == "service":
+        raise HTTPException(status_code=403,
+                            detail="a model switch is sent by a person, not by an agent or a delegated run")
+
+
+def _catalog_model(text: str) -> str:
+    """The canonical ``provider/model`` id of an enabled catalog model, 400
+    otherwise (the same lookup delegation and fallback models use)."""
+    from tools.delegation import resolve_model
+    try:
+        provider, model = resolve_model(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return f"{provider}/{model}"
 
 
 def _task_of(run: Dict[str, Any]):
@@ -252,6 +329,8 @@ def _validated(body: SteerBody):
     if len(text) > steering.MAX_BODY_CHARS:
         raise HTTPException(status_code=400,
                             detail=f"The message is longer than {steering.MAX_BODY_CHARS} characters")
+    if mode == steering.MODE_SWITCH_MODEL:
+        text = _catalog_model(text)
     return mode, text
 
 
@@ -264,6 +343,10 @@ def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, A
     run_id = team_run.team_run_id
     principal = _require_can_steer(request, {"workspace": team_run.workspace})
     mode, text = _validated(body)
+    if mode in steering.OPERATOR_MODES:
+        raise HTTPException(status_code=400, detail=(
+            "A system message or a model switch goes to one agent run; "
+            "steer a team with inject or interrupt"))
     status = str(team_run.status or "")
     if status != "running":
         raise HTTPException(status_code=409, detail={
@@ -306,7 +389,11 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             raise HTTPException(status_code=404, detail="Run not found")
         return _steer_team(team_run, body, request)
     principal = _require_can_steer(request, run)
+    if (body.mode or "").strip().lower() == steering.MODE_SWITCH_MODEL:
+        _require_not_agent(principal)
     mode, text = _validated(body)
+    if mode == steering.MODE_SYSTEM:
+        _require_operator(principal, run)
 
     status = str(run.get("status") or "")
     if status != "running":
@@ -315,7 +402,7 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             "status": status,
         })
     agent_id = str(run.get("agent_id") or "")
-    if mode == steering.MODE_INJECT and _agent_is_remote(agent_id):
+    if mode in steering.LOOP_MODES and _agent_is_remote(agent_id):
         raise HTTPException(status_code=409, detail={
             "message": "This agent runs elsewhere and cannot take a message mid-run; interrupt it instead",
             "status": status,
@@ -326,7 +413,7 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
     workspace = run.get("workspace")
     result: Dict[str, Any] = {"message": msg, "run_id": run_id}
 
-    if mode == steering.MODE_INJECT:
+    if mode in steering.LOOP_MODES:
         result["next"] = "wait"
     else:
         task = _task_of(run)

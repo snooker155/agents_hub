@@ -38,6 +38,15 @@ class SecretPut(BaseModel):
     value: str
     agent_id: Optional[str] = None
     user_id: Optional[str] = None
+    # Hosts the value may be sent to (common/secrets.py "Secrets bound to
+    # hosts"). None keeps what a replaced secret had; [] clears it.
+    allowed_hosts: Optional[List[str]] = None
+
+
+class SecretHostsPut(BaseModel):
+    allowed_hosts: List[str]
+    agent_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 class AgentSecretsPut(BaseModel):
@@ -68,9 +77,13 @@ def _check_scope(agent_id: Optional[str], user_id: Optional[str]) -> None:
         raise HTTPException(status_code=400, detail=f"Unknown user '{user_id}'")
 
 
-def _scope_details(name: str, agent_id: Optional[str], user_id: Optional[str]) -> dict:
+def _scope_details(name: str, agent_id: Optional[str], user_id: Optional[str],
+                   allowed_hosts: Optional[List[str]] = None) -> dict:
     # What the audit row carries: the name and the scope, never the value.
-    return {"name": name, "agent_id": agent_id or "", "user_id": user_id or ""}
+    details = {"name": name, "agent_id": agent_id or "", "user_id": user_id or ""}
+    if allowed_hosts is not None:
+        details["allowed_hosts"] = list(allowed_hosts)
+    return details
 
 
 @router.get("/api/workspaces/{name}/secrets")
@@ -91,12 +104,33 @@ async def put_workspace_secret(request: Request, name: str, secret: str, payload
     try:
         row = secret_store.set_secret(name, secret, payload.value, agent_id=agent_id,
                                       user_id=user_id,
-                                      created_by=getattr(principal, "id", None))
+                                      created_by=getattr(principal, "id", None),
+                                      allowed_hosts=payload.allowed_hosts)
     except secret_store.SecretsError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     audit.record("secret.set", principal=principal, object_type="secret", object_id=secret,
                  workspace=name, ip=identity.client_ip(request),
-                 details=_scope_details(secret, agent_id, user_id))
+                 details=_scope_details(secret, agent_id, user_id, row.get("allowed_hosts")))
+    return row
+
+
+@router.put("/api/workspaces/{name}/secrets/{secret}/hosts")
+async def put_workspace_secret_hosts(request: Request, name: str, secret: str,
+                                     payload: SecretHostsPut):
+    """Change where a secret may be sent without re-entering its value."""
+    principal = _principal(request)
+    identity.require_role(principal, workspace=name, role=WS_OWNER)
+    _require_workspace(name)
+    agent_id = (payload.agent_id or "").strip() or None
+    user_id = (payload.user_id or "").strip() or None
+    try:
+        row = secret_store.set_secret_hosts(name, secret, payload.allowed_hosts,
+                                            agent_id=agent_id, user_id=user_id)
+    except secret_store.SecretsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    audit.record("secret.hosts", principal=principal, object_type="secret", object_id=secret,
+                 workspace=name, ip=identity.client_ip(request),
+                 details=_scope_details(secret, agent_id, user_id, row.get("allowed_hosts")))
     return row
 
 

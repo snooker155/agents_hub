@@ -52,15 +52,16 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     it), ``run`` (the run record as launched), ``requested`` (the provider and
     model asked for, if any) and ``agent`` (id and name of the delegate).
     """
-    from agents.registry import get_agent
+    from agents.registry import get_agent, resolve_agent_id
     from common.agent_context import current_agent_id
     from common.workspace_context import filter_agents_for_workspace
     from tasks.service import CreatedBy, TaskStatus, add_subtask, assign_agent, get_task, update_task
-    from tools.delegation import enabled_models, max_depth, resolve_model
+    from tools.delegation import (DEFAULT_MAX_CONCURRENT_DELEGATES, PARENT_RUN_ENV, enabled_models,
+                                  max_depth, resolve_model, running_delegate_count)
     from tools.langchain_tools import _delegation_blocked
     from tools.task_management import _task_to_dict, _uuid_from_str
 
-    agent_id = str(request.get("agent_id") or "").strip()
+    agent_id = resolve_agent_id(request.get("agent_id"))
     text = str(request.get("input") or "")
     if not agent_id or not text.strip():
         return _err("agent_id and input are required", "bad_request")
@@ -69,6 +70,19 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     if parent is None:
         return _err("The current task no longer exists", "not_found", task_id=parent_task_id)
 
+    # The delegating run works in one workspace: a parent task of another one
+    # is answered like a missing task (common/workspace_scope.py), unless
+    # the caller is one of the service's own agents.
+    from common.workspace_scope import is_service_wide, same_workspace
+    req_ws = str(request.get("workspace") or "")
+    if (req_ws and not is_service_wide(request.get("caller_agent_id"))
+            and not same_workspace(parent.workspace, req_ws)):
+        return _err("The current task no longer exists", "not_found", task_id=parent_task_id)
+
+    # `@coder` and the like name whoever holds the role in the workspace the
+    # work happens in (agents/roles.py); the subtask records that agent.
+    from agents.roles import resolve as resolve_role
+    agent_id = resolve_role(agent_id, req_ws or parent.workspace)
     spec = get_agent(agent_id)
     if not spec:
         return _err("Agent not found", "not_found", agent_id=agent_id)
@@ -80,9 +94,14 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     # from the context variable; on the backend that is the request's caller.
     caller = str(request.get("caller_agent_id") or "") or None
     token = current_agent_id.set(caller) if caller else None
+    # A role in the caller's allowlist resolves in the delegation's workspace.
+    from common.workspace_context import _workspace_ctx
+    ws_token = _workspace_ctx.set(ws) if ws else None
     try:
         blocked = _delegation_blocked(agent_id)
     finally:
+        if ws_token is not None:
+            _workspace_ctx.reset(ws_token)
         if token is not None:
             current_agent_id.reset(token)
     if blocked:
@@ -94,6 +113,26 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
             f"This run is already {depth} delegation(s) deep; the limit is {max_depth()}. "
             "Do the work yourself or report what you could not do.",
             "too_deep", depth=depth, max_depth=max_depth())
+
+    # The delegating run's own concurrency limit (agents/registry.py
+    # max_concurrent_delegates, or this run's own overrides): how many of its
+    # delegated subtasks may be running at once. Counted against the parent
+    # run's live children (tools/delegation.running_delegate_count); a
+    # wait=false launch still counts until it finishes.
+    parent_run_id = str((request.get("env") or {}).get(PARENT_RUN_ENV) or "")
+    if parent_run_id:
+        try:
+            delegate_limit = int(request.get("max_concurrent_delegates") or DEFAULT_MAX_CONCURRENT_DELEGATES)
+        except (TypeError, ValueError):
+            delegate_limit = DEFAULT_MAX_CONCURRENT_DELEGATES
+        delegate_limit = max(1, min(32, delegate_limit))
+        running = running_delegate_count(parent_run_id)
+        if running >= delegate_limit:
+            return _err(
+                f"This run already has {running} delegated subtask(s) running; the limit is "
+                f"{delegate_limit}. Wait for one to finish, or raise max_concurrent_delegates "
+                "for this agent or run.",
+                "too_many_delegates", running=running, max_concurrent_delegates=delegate_limit)
 
     requested: Dict[str, str] = {}
     model = request.get("model")
@@ -134,6 +173,14 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     except BudgetExceededError as exc:
         update_task(child.id, status=TaskStatus.blocked, blocked_reason=str(exc))
         return _err(str(exc), "budget", task_id=str(child.id))
+    if parent_run_id:
+        # So a later delegation from the same parent run can count this one
+        # among its running children (running_delegate_count above).
+        try:
+            from managers.run_manager import update_run as _update_run_record
+            _update_run_record(run_id, {"parent_run_id": parent_run_id})
+        except Exception:  # noqa: BLE001 - the concurrency count degrades to "none running", never blocks the launch
+            log.debug("could not stamp parent_run_id on delegated run %s", run_id, exc_info=True)
     assign_agent(child.id, agent_id, params, run_id=run_id)
     update_task(child.id, status=TaskStatus.in_progress)
     if session_id:

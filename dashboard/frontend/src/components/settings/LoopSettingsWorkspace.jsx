@@ -15,6 +15,10 @@ const FIELDS = [
   { key: 'tool_search_threshold', i18n: 'toolSearchThreshold', kind: 'number', step: 1, min: 1 },
   { key: 'native', i18n: 'native', kind: 'bool' },
   { key: 'strict_tools', i18n: 'strictTools', kind: 'bool' },
+  { key: 'view_focus', i18n: 'viewFocus', kind: 'bool' },
+  { key: 'tool_output_spill_chars', i18n: 'toolOutputSpillChars', kind: 'number', step: 1000, min: 0, max: 1000000 },
+  { key: 'advisor_max_calls', i18n: 'advisorMaxCalls', kind: 'number', step: 1, min: 0, max: 50 },
+  { key: 'advisor_max_answer_chars', i18n: 'advisorMaxAnswerChars', kind: 'number', step: 100, min: 200, max: 50000 },
 ];
 
 // The value shown for *key* once the stored block, the environment and the
@@ -162,7 +166,7 @@ export default function LoopSettingsWorkspace({ workspace }) {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {field.kind === 'bool' ? (
-                  <label className="inline-flex items-center cursor-pointer">
+                  <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
                       className="sr-only peer"

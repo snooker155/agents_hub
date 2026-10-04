@@ -35,6 +35,14 @@ class Procedure(BaseModel):
     resources: List[str] = Field(default_factory=list)
     # SKILL.md ``allowed-tools``: informational, shown on the Skills page.
     allowed_tools: List[str] = Field(default_factory=list)
+    # SKILL.md ``license`` as written. A license that is not open keeps the
+    # skill out of the global catalog (memory/skill_review.py, is_publishable).
+    license: str = ""
+    # The safety review (memory/skill_review.py, review_skill): severity,
+    # flags, scripts, license verdict, scanned_at. None for a skill nobody
+    # reviewed (hand-written, or synced by a build without the review).
+    # Not part of the versioned content: it is derived from it.
+    safety: Optional[dict] = None
     # {"dir", "project_id", "root", "sha256", "synced_at", "missing"} for a repo skill.
     repo: Optional[dict] = None
     # Current version number in memory/skill_versions.py (0 before the first save
@@ -348,6 +356,27 @@ def _score_relevance(procedure: Procedure, query: str) -> float:
     return len(query_words & set(candidate.split())) / len(query_words)
 
 
+def _visible_procedures(store: "ProcedureStore", agent_id: str) -> List[Procedure]:
+    """The skills an agent sees at run time: its own, then those of the
+    agents it inherits from (agents/inheritance.py ``extends``), nearest
+    first. A name the agent already has hides an ancestor's skill of the
+    same name. Writing (create_skill) stays with the agent's own."""
+    try:
+        from agents.inheritance import skill_owner_ids
+        owners = skill_owner_ids(agent_id)
+    except Exception:  # noqa: BLE001 - an unreadable registry means own skills only
+        owners = [agent_id]
+    procedures = store.load()
+    out: List[Procedure] = []
+    names: set = set()
+    for owner in owners:
+        for p in procedures:
+            if p.agent_id == owner and p.name.strip().lower() not in names:
+                out.append(p)
+        names |= {p.name.strip().lower() for p in out}
+    return out
+
+
 def find_relevant_procedures(
     query: str,
     agent_id: str,
@@ -356,7 +385,7 @@ def find_relevant_procedures(
 ) -> List[Procedure]:
     """Return top-k procedures for this agent+workspace most relevant to the query."""
     store = ProcedureStore(workspace)
-    agent_procedures = [p for p in store.load() if p.agent_id == agent_id]
+    agent_procedures = _visible_procedures(store, agent_id)
     scored = sorted(
         [(p, _score_relevance(p, query)) for p in agent_procedures],
         key=lambda x: x[1],
@@ -374,7 +403,7 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
     """
     try:
         store = ProcedureStore(workspace)
-        procedures = [p for p in store.load() if p.agent_id == agent_id]
+        procedures = _visible_procedures(store, agent_id)
         if not procedures:
             return system_prompt
         from memory.skill_versions import effective_content
@@ -411,7 +440,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     def _list_skills(tags: Optional[str] = None, query: Optional[str] = None) -> str:
         try:
             store = ProcedureStore(workspace)
-            procedures = [p for p in store.load() if p.agent_id == agent_id]
+            procedures = _visible_procedures(store, agent_id)
 
             if tags:
                 tag_set = {t.strip().lower() for t in tags.split(",")}
@@ -460,7 +489,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
         try:
             if not name or not str(name).strip():
                 available = [
-                    p.name for p in ProcedureStore(workspace).load() if p.agent_id == agent_id
+                    p.name for p in _visible_procedures(ProcedureStore(workspace), agent_id)
                 ]
                 return json.dumps({
                     "ok": False,
@@ -468,7 +497,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
                     "available": available,
                 })
             store = ProcedureStore(workspace)
-            agent_procedures = [p for p in store.load() if p.agent_id == agent_id]
+            agent_procedures = _visible_procedures(store, agent_id)
             target = name.strip().lower()
             matches = [p for p in agent_procedures if p.name.strip().lower() == target]
             if not matches:
@@ -594,8 +623,8 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
                 return json.dumps({"ok": False,
                                    "error": "read_skill_file needs both 'name' and 'path'."})
             target = name.strip().lower()
-            matches = [p for p in ProcedureStore(workspace).load()
-                       if p.agent_id == agent_id and p.name.strip().lower() == target]
+            matches = [p for p in _visible_procedures(ProcedureStore(workspace), agent_id)
+                       if p.name.strip().lower() == target]
             if not matches:
                 return json.dumps({"ok": False, "error": f"Skill not found: {name!r}"})
             from memory.skill_import import read_resource

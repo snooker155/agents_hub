@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { History, Loader, Search, AlertTriangle } from 'lucide-react';
+import { History, Search, AlertTriangle } from 'lucide-react';
 import { getSimRuns, getScenarios } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { RunHistory } from './playground/history';
 import { isLiveRun } from './playground/status';
+import PageLoader from '../components/PageLoader';
 
 /**
  * Every simulation this install has run, newest first.
@@ -124,9 +125,7 @@ export default function PlaygroundRuns() {
       )}
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-gray-500 py-10">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </div>
+        <PageLoader />
       ) : (
         <>
           <RunHistory

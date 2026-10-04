@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain, HardDrive, Waypoints,
+  Brain, HardDrive, Waypoints, Sparkles,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -15,6 +15,8 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
+import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
+import PageLoader from '../components/PageLoader';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -212,7 +214,7 @@ function CatalogTab() {
   };
 
   if (!catalog) {
-    return <div className="flex items-center gap-2 text-gray-500 p-8"><Loader className="w-4 h-4 animate-spin" /> {t('models.loadingCatalog')}</div>;
+    return <PageLoader size="lg" label={t('models.loadingCatalog')} />;
   }
 
   return (
@@ -659,6 +661,33 @@ function UsageTab() {
   );
 }
 
+// ── Special models tab ────────────────────────────────────────────────────────
+
+/**
+ * The special models (providers/special.py) of the workspace picked in the
+ * header: the same form as the workspace settings' Special models section,
+ * so the two never drift.
+ */
+function SpecialModelsTab() {
+  const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  return (
+    <div className="max-w-3xl space-y-4 pt-2">
+      <p className="text-sm text-gray-600">
+        {t('models.specialFor')} <span className="font-semibold text-indigo-600">{workspace}</span>.{' '}
+        <Link
+          to={`/workspaces/${encodeURIComponent(workspace)}?tab=settings&section=specialModels`}
+          className="text-indigo-600 hover:text-indigo-800"
+        >
+          {t('models.specialInWorkspaceSettings')}
+        </Link>
+      </p>
+      <WorkspaceSpecialModels key={workspace} workspace={workspace} />
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Models() {
@@ -667,6 +696,7 @@ export default function Models() {
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
     { id: 'local', label: t('localModels.tab'), icon: HardDrive },
+    { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
   return (
@@ -693,7 +723,10 @@ export default function Models() {
           );
         })}
       </div>
-      {tab === 'catalog' ? <CatalogTab /> : tab === 'local' ? <LocalTab /> : <UsageTab />}
+      {tab === 'catalog' && <CatalogTab />}
+      {tab === 'local' && <LocalTab />}
+      {tab === 'special' && <SpecialModelsTab />}
+      {tab === 'usage' && <UsageTab />}
     </PageContainer>
   );
 }

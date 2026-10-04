@@ -11,6 +11,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm '
   + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none';
@@ -158,9 +159,7 @@ export default function Users() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {loading ? (
-          <p className="p-6 text-sm text-gray-500 flex items-center gap-2">
-            <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-          </p>
+          <PageLoader />
         ) : users.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">{t('auth.users.empty')}</p>
         ) : (
@@ -401,9 +400,7 @@ function GroupsSection({ groups, users, loading, reload, fail, clearError }) {
 
       <div className={cardCls}>
         {loading ? (
-          <p className="p-4 text-sm text-gray-500 flex items-center gap-2">
-            <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-          </p>
+          <PageLoader size="sm" />
         ) : groups.length === 0 ? (
           <p className="p-4 text-sm text-gray-500">{t('groups.empty')}</p>
         ) : (
@@ -535,9 +532,7 @@ function MappingsSection({ groups, mappings, workspaces, loading, reload, fail, 
 
       <div className={`${cardCls} mb-3`}>
         {loading ? (
-          <p className="p-4 text-sm text-gray-500 flex items-center gap-2">
-            <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-          </p>
+          <PageLoader size="sm" />
         ) : mappings.length === 0 ? (
           <p className="p-4 text-sm text-gray-500">{t('groups.mappings.empty')}</p>
         ) : (

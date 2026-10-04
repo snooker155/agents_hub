@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ChevronDown, ChevronLeft, ChevronRight, Download, History, Loader, RefreshCw,
+  ChevronDown, ChevronLeft, ChevronRight, Download, History, RefreshCw,
 } from 'lucide-react';
 import {
   getAuditLog, getAuditActions, auditExportUrl, getWorkspaces, navigateWithAuthTicket,
@@ -8,6 +8,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import DateInput from '../components/DateInput';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm w-full '
   + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none';
@@ -161,9 +162,7 @@ export default function Audit() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {loading ? (
-          <p className="p-6 text-sm text-gray-500 flex items-center gap-2">
-            <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-          </p>
+          <PageLoader />
         ) : rows.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">{t('audit.empty')}</p>
         ) : (

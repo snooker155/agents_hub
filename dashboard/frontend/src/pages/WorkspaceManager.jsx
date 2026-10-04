@@ -5,6 +5,7 @@ import { FolderPlus, Folder, Plus, Trash2 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const WorkspaceManager = () => {
   const { t } = useI18n();
   const [items, setItems] = useState([]);
@@ -72,7 +73,7 @@ const WorkspaceManager = () => {
       />
 
       {loading ? (
-        <div className="text-center py-10">{t('workspaceManager.loadingWorkspaces')}</div>
+        <PageLoader label={t('workspaceManager.loadingWorkspaces')} />
       ) : (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">

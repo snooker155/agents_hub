@@ -21,6 +21,13 @@ Policy
     then the private-network block. See ``policy.py`` and
     docs/tools-and-capabilities.md.
 
+Read only sessions
+    A session created with ``policy.read_only`` (the hub's run gateway opens
+    these for isolated workspaces) only reads: the page's requests must be
+    GET or HEAD with no body, its WebSockets are refused, its allow list always
+    applies, and ``/act`` and a person's clicks and typing on ``/input`` answer
+    403. Navigation, reading, scrolling and screenshots work as usual.
+
 Endpoints
     POST   /sessions                      {policy, run_id, workspace, owner, label} -> {session_id}
     GET    /sessions?run_id=&workspace=                       -> {sessions: [info]}
@@ -70,7 +77,7 @@ from urllib.parse import urljoin, urlparse
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from policy import Policy, check_url
+from policy import Policy, check_method, check_url
 
 log = logging.getLogger("browser_service")
 logging.basicConfig(level=os.environ.get("BROWSER_LOG_LEVEL", "INFO"))
@@ -182,6 +189,12 @@ def _make_route_handler(session: Session):
     """
     async def handler(route, request) -> None:
         url = request.url
+        if session.policy.read_only:
+            ok, reason = check_method(getattr(request, "method", ""), _has_body(request), session.policy)
+            if not ok:
+                session.note_blocked(url, reason)
+                await route.abort("blockedbyclient")
+                return
         ok, reason = await _checked(url, session.policy)
         if not ok:
             session.note_blocked(url, reason)
@@ -207,8 +220,24 @@ def _make_route_handler(session: Session):
     return handler
 
 
+def _has_body(request: Any) -> bool:
+    """Whether a Playwright request carries a body (a fetch or XHR payload,
+    a form post, a beacon). Unreadable counts as a body: a read only session
+    refuses what it cannot see into."""
+    try:
+        data = request.post_data_buffer
+    except Exception:  # noqa: BLE001 - see the docstring
+        return True
+    return bool(data)
+
+
 def _make_ws_handler(session: Session):
     async def handler(ws) -> None:
+        if session.policy.read_only:
+            # An open socket carries whatever the page writes into it.
+            session.note_blocked(ws.url, "this session only reads: WebSockets are blocked")
+            await ws.close(code=1008, reason="blocked by policy")
+            return
         ok, reason = await _checked(ws.url, session.policy)
         if not ok:
             session.note_blocked(ws.url, reason)
@@ -419,7 +448,19 @@ async def describe(s: Session) -> Dict[str, Any]:
         "owner": s.owner, "label": s.label, "url": getattr(s.page, "url", "") or "",
         "title": title, "created_at": s.created_at, "last_used_at": s.last_used_at,
         "controlled_by": s.controller(),
+        "read_only": s.policy.read_only,
     }
+
+
+#: What a person may still do on a read only session's live view: move
+#: around and look. Clicks and typing are writes (a form, a button).
+_READ_ONLY_INPUTS = frozenset({"navigate", "back", "forward", "reload", "scroll", "mousemove"})
+
+
+def _refuse_if_read_only(s: Session, what: str) -> None:
+    if s.policy.read_only:
+        raise HTTPException(status_code=403,
+                            detail=f"this browser session only reads: {what} is not allowed")
 
 
 def _agent_may_drive(s: Session) -> None:
@@ -573,6 +614,7 @@ async def perform(page: Any, action: str, selector: str, text: str) -> None:
 @app.post("/sessions/{session_id}/act", dependencies=[Depends(require_token)])
 async def act(session_id: str, body: Act) -> Dict[str, Any]:
     s = _session(session_id)
+    _refuse_if_read_only(s, body.action)
     _agent_may_drive(s)
     async with s.lock:
         try:
@@ -797,6 +839,8 @@ async def send_input(session_id: str, body: Input) -> Dict[str, Any]:
     may move as a result (a link, a form), so the landing is re-checked
     exactly as after an agent's ``/act``."""
     s = _session(session_id)
+    if body.kind not in _READ_ONLY_INPUTS:
+        _refuse_if_read_only(s, body.kind)
     s.person_touch()
     async with s.lock:
         if body.kind == "navigate":

@@ -259,6 +259,45 @@ class TaskWebhookRequest(BaseModel):
     agent_id: Optional[str] = None
 
 
+class AgentWakeRequest(BaseModel):
+    workspace: str
+    summary: str = ""
+    # Matched against the webhook trigger's optional ``name`` filter.
+    name: Optional[str] = None
+    data: Dict[str, Any] = {}
+
+
+@router.post("/api/webhooks/agents/{agent_id}/wake")
+async def webhook_wake_agent(agent_id: str, body: AgentWakeRequest, request: Request):
+    """Wake a proactive agent from outside (docs/proactive.md, "Triggers").
+
+    Signed with the workspace's inbound secret exactly like the task webhook
+    above, and as fail-closed: no secret, no wake. The agent must have a
+    ``webhook`` trigger on its profile that accepts this request's ``name``
+    (or none), and its pulse must run in the workspace the request was
+    signed for. The event joins the pulse's pending events and the next
+    tick is pulled to within the batching window.
+    """
+    ws = body.workspace
+    secret = notify_store.get_inbound_secret(ws)
+    if not secret:
+        raise HTTPException(status_code=401, detail="No inbound secret configured for this workspace")
+
+    raw_body = await request.body()
+    _require_signed(secret, raw_body, request, delivery_required=True)
+
+    from proactive.events import webhook_wake
+    try:
+        result = webhook_wake(agent_id, workspace=ws, name=body.name, summary=body.summary, data=body.data)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=f"the pulse is not accepting wakes ({result.get('reason')})")
+    return result
+
+
 @router.post("/api/webhooks/tasks", status_code=201)
 async def webhook_create_task(body: TaskWebhookRequest, request: Request):
     """Create a task from an external system's signed request.

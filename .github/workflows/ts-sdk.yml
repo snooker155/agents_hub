@@ -1,0 +1,39 @@
+name: TypeScript SDK
+
+# clients/agents-hub-ts has no Python dependency of its own and the main CI
+# job's node (whatever ubuntu-latest happens to ship) may be older than the
+# native TypeScript support this package relies on (tests/test_ts_sdk_fresh.py
+# skips in that case rather than failing). This job pins a Node new enough to
+# exercise it for real on every change to the package.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "clients/agents-hub-ts/**"
+      - "scripts/gen_ts_sdk.py"
+  pull_request:
+    paths:
+      - "clients/agents-hub-ts/**"
+      - "scripts/gen_ts_sdk.py"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/agents-hub-ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+
+      - name: Install devDependencies (typecheck only; the package itself has none)
+        run: npm install
+
+      - name: Type check (strict)
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

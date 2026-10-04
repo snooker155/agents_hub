@@ -14,12 +14,21 @@ owner from its environment.
 Ask for it. An agent with `create_view` builds the view instead of describing it
 in prose, and the view appears as its own object you can open, share and edit.
 `GET /api/views` accepts `owner_kind` and `owner_id`; responses carry `owner` and
-`owner_entity_id`. The Views list shows an owner chip linking to the run's page.
+`owner_entity_id`. The views gallery is the Views folder of the Artifacts page
+(`/artifacts?folder=__views__`; the old `/views` redirects there), shown as live
+cards, as rows of the tree or of the list next to the workspace's files
+(docs/files.md), since a view's exports become files and an html view is built
+from them. A card shows an owner chip linking to the run's page.
 
 ## Studio
 
-Studio is the view's own editing surface, bound to the **Visualizer** agent. You
-edit by talking: "make the bars horizontal", "colour by region", "add a slider
+Studio is the view's own editing surface, opened from the Artifacts page (the
+Studio button for a new view, a card's Studio action for an existing one; it
+has no menu item of its own), bound to the agent that owns the
+view's kind: the **Visualizer** for most kinds, the **3D Modeler** for a
+`scene3d` view, the **Web View Builder** for `html` and `code` views (see
+[Kind guides and specialists](#kind-guides-and-specialists)). You edit by
+talking: "make the bars horizontal", "colour by region", "add a slider
 for the year". The outliner lists the objects in the view, and selecting one is
 injected into the next prompt as scene context, so "make it bigger" resolves
 without re-reading the whole document.
@@ -29,8 +38,9 @@ without re-reading the whole document.
 Ask any chat agent for something to look at, a 3D object or a chart, and it
 delegates to the Visualizer. With no view open, the Visualizer creates one with
 `create_view` and builds it: the view it created becomes the default target of
-its view, scene and mesh tools for the rest of that run. It reports the
-`view_id` back, and the delegating agent either answers or delegates again with
+its view tools for the rest of that run, and the result of `create_view` carries
+the guide for that kind. A 3D object or a web page it passes on to the
+specialist that owns the kind. It reports the `view_id` back, and the delegating agent either answers or delegates again with
 that id to finish the same view. The reply shows each view the turn made as a
 live preview that opens full size and links to the view's page; build view
 lists them in its panel next to the changed files.
@@ -58,6 +68,34 @@ lists them in its panel next to the changed files.
   in prose. See [Code](#code) below.
 - **Slide decks** with layouts and themes, shown full screen and downloaded as
   PDF or PowerPoint. See [Slides](#slides) below.
+
+## Kind guides and specialists
+
+The fifteen kinds share one tool surface and have little in common, so what a
+view agent sees and is told depends on the kind of the view it is on.
+
+- **Tools follow the kind.** `views/focus.py` maps each kind to the tools that
+  act on it alone (`graph_*` for graphs, `scene_*` and `mesh_*` for 3D,
+  `slides_*` for decks, `sim_configure`, `view_compute` and `view_set_timeline`
+  for simulations, `document_set`, `math_plot`, `view_serve` for html). The
+  agent loop shows the model the common view tools plus the active kind's and
+  hides the others, see [agent-loop](agent-loop.md#view-focus).
+- **One guide per kind.** `views/guides/<kind>.md` says what to build with
+  which tool, in what order, and what the renderer expects. The agent reads it
+  when a view of that kind becomes its target: in the result of `create_view`,
+  in the first `view_get` on an existing view, or in the Studio's active-view
+  note. Each guide is read once per run, and the system prompt stays general.
+  Editing a guide changes the next call; no restart.
+- **Two specialists.** 3D modelling and web pages are different crafts, so
+  `scene3d` belongs to the `modeler_3d` agent and `html` and `code` to the
+  `web_view_builder` agent. The Studio and a view's own chat open those kinds
+  with the specialist. The `visualizer` stays the single entry point for any
+  other agent: it hands the conversation over when the user talks to it
+  directly, and delegates (`run_agent_tool` in a chat, `delegate_task_tool` in
+  a task) when it works for another agent. The three are system agents, so an
+  existing install receives the two new ones and the visualizer's handoff list
+  on its next start; a visualizer the install already had keeps its mesh tools,
+  which view focus hides unless the run is on a 3D view.
 
 ## Code
 

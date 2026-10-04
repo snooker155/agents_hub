@@ -12,7 +12,7 @@ import dataclasses
 from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agents import registry
 from managers import run_manager
@@ -197,6 +197,12 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     _running_by_agent: Dict[str, List[Dict[str, Any]]] = {}
     for instance in list_resident(live=True):
         _running_by_agent.setdefault(instance.get("agent_id"), []).append(instance)
+    # Inheritance (agents/inheritance.py): how many agents extend each one.
+    _children_count: Dict[str, int] = {}
+    for _raw in registry.list_agents_raw():
+        if _raw.extends:
+            _parent = registry.resolve_agent_id(_raw.extends)
+            _children_count[_parent] = _children_count.get(_parent, 0) + 1
 
     page: List[Dict[str, Any]] = []
     for item in page_items:
@@ -208,6 +214,9 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         agent["has_running_node"] = len(running_instances) > 0
         agent["system"] = agent["id"] in _SYS_IDS
         agent["is_default_chat_agent"] = agent["id"] == _default_chat_agent
+        agent.setdefault("extends", None)
+        agent.setdefault("extends_version", None)
+        agent["children_count"] = _children_count.get(agent["id"], 0)
         page.append(agent)
 
     if limit is None and offset is None:
@@ -291,6 +300,11 @@ async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     data = spec.to_dict()
     data["system"] = is_system_agent(agent_id)
     data["is_default_chat_agent"] = agent_id == _get_workspace_default_chat_agent(workspace)
+    # Inheritance (agents/inheritance.py): the effective spec above, plus the
+    # parent link and the agents that extend this one.
+    data.setdefault("extends", None)
+    data.setdefault("extends_version", None)
+    data["children"] = registry.children_of(spec.id)
     ws = (workspace or "default").strip() or "default"
     _apply_workspace_memory(data, ws, _workspace_memory_overrides(ws))
     return data
@@ -319,19 +333,29 @@ async def get_agent_definition(agent_id: str):
     capabilities = prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir)
     usage = prompt_assembly.read_usage(def_id, definitions_dir=defs_dir)
 
-    # Assembled prompt only when instructions exist
+    # Assembled prompt only when instructions exist. A child (extends) runs
+    # its own text merged into its parent chain's (agents/inheritance.py):
+    # system_prompt is that effective prompt, inherited_instructions the
+    # parent's effective instructions its own text is merged into.
     assembled = ""
-    if instructions:
+    inherited = ""
+    if spec.extends:
+        from agents import inheritance
+        assembled = inheritance.effective_prompt(spec, definitions_dir=defs_dir)
+        inherited = inheritance.inherited_instructions(spec, definitions_dir=defs_dir)
+    elif instructions:
         assembled = prompt_assembly.assemble_prompt(def_id, definitions_dir=defs_dir)
 
     return {
         "agent_id": spec.id,
-        "source": "markdown" if instructions else "missing",
+        "source": "markdown" if (instructions or spec.extends) else "missing",
         "definition_dir": str(folder),
         "system_prompt": assembled,
         "instructions": instructions,
         "capabilities": capabilities,
         "usage": usage,
+        "extends": spec.extends,
+        "inherited_instructions": inherited,
     }
 
 
@@ -339,6 +363,11 @@ class AgentInstructionsUpdate(BaseModel):
     instructions: Optional[str] = None
     capabilities: Optional[str] = None
     usage: Optional[str] = None
+    # Optimistic concurrency (agents/revision.py): the stored version number
+    # or the definition hash this edit was made against. A definition that
+    # moved since is a 409 (checked by AgentRevisionMiddleware before this
+    # route runs; the If-Match header does the same on every agent write).
+    expected_version: Optional[Union[int, str]] = None
 
 
 @router.put("/{agent_id}/definition")
@@ -385,7 +414,8 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     )
 
     if data.instructions is not None:
-        if data.instructions.strip():
+        # A child's own instructions may be empty: it then runs its parent's.
+        if data.instructions.strip() or spec.extends:
             prompt_assembly.write_instructions(def_id, data.instructions, definitions_dir=defs_dir)
         else:
             raise HTTPException(status_code=400, detail="instructions.md cannot be empty")
@@ -596,6 +626,39 @@ async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
     return {"description": new_spec.description}
 
 
+class AgentIdentityUpdate(BaseModel):
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    capacity: Optional[int] = Field(None, ge=1)
+
+
+@router.put("/{agent_id}/identity")
+async def update_agent_identity(agent_id: str, data: AgentIdentityUpdate):
+    """Rename an agent, or change its domain or capacity.
+
+    The id stays: it is what runs, tasks, locks and links address, so this
+    changes only the label and the two plain settings set at creation.
+    ``registry.add_agent`` snapshots the previous state into the version
+    history, as for every other structured edit.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    changes: Dict[str, Any] = {}
+    if data.name is not None:
+        if not data.name.strip():
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        changes["name"] = data.name.strip()
+    if data.domain is not None:
+        changes["domain"] = data.domain.strip() or "general"
+    if data.capacity is not None:
+        changes["capacity"] = data.capacity
+    if changes:
+        registry.add_agent(dataclasses.replace(spec, **changes))
+        spec = registry.get_agent(agent_id) or spec
+    return {"name": spec.name, "domain": spec.domain, "capacity": spec.capacity}
+
+
 @router.get("/{agent_id}/workspace-capacities")
 async def get_agent_workspace_capacities(agent_id: str):
     """Return workspace-specific capacity overrides for this agent (excludes 'default')."""
@@ -670,7 +733,14 @@ async def delete_agent(agent_id: str):
     spec = registry.get_agent(agent_id)
     def_id = spec.def_id() if spec else agent_id
 
-    found = registry.remove_agent(agent_id)
+    # A parent other agents extend cannot go (agents/inheritance.py).
+    from agents.inheritance import AgentHasChildren
+    try:
+        found = registry.remove_agent(agent_id)
+    except AgentHasChildren as e:
+        raise HTTPException(status_code=409, detail={
+            "error": "agent_has_children", "message": str(e), "children": e.children,
+        })
     if not found:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -706,18 +776,30 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
 
     memory_data = data.memory_data
     if data.memory_type == "shared":
-        # Accept a single pool id or a list (primary first); normalize to a
-        # deduped list, collapsed back to a plain string for a single pool so
-        # legacy single-pool records keep their shape.
+        # Accept a single pool id, a list (primary first), or an entry shaped
+        # {"id": pool_id, "read_only": true} marking that one binding read
+        # only (agents.registry.memory_pool_read_only_ids); normalize to a
+        # deduped list, collapsed back to a plain id for a single, writable
+        # pool so legacy single-pool records keep their shape.
         raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
         pools = []
+        seen_ids = set()
         for p in raw:
-            pid = str(p or "").strip()
-            if pid and pid not in pools:
+            if isinstance(p, dict):
+                pid = str(p.get("id") or "").strip()
+                if not pid or pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                pools.append({"id": pid, "read_only": True} if p.get("read_only") else pid)
+            else:
+                pid = str(p or "").strip()
+                if not pid or pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
                 pools.append(pid)
         if not pools:
             raise HTTPException(status_code=400, detail="At least one memory pool id is required for shared memory")
-        memory_data = pools[0] if len(pools) == 1 else pools
+        memory_data = pools[0] if len(pools) == 1 and not isinstance(pools[0], dict) else pools
 
     ws = (data.workspace or "default").strip() or "default"
     if ws == home_workspace(spec):
@@ -945,8 +1027,19 @@ async def list_agent_skills(agent_id: str, workspace: str):
     # so both pages read one record.
     from routes.skills import _to_dict as skill_to_dict
     store = ProcedureStore(workspace)
-    procedures = [p for p in store.load() if p.agent_id == agent_id]
-    return [skill_to_dict(p) for p in procedures]
+    loaded = store.load()
+    procedures = [p for p in loaded if p.agent_id == agent_id]
+    out = [skill_to_dict(p) for p in procedures]
+    # Skills of the agents this one extends (agents/inheritance.py) reach it
+    # at run time; listed after its own, read only, with where they come from.
+    from agents.inheritance import ancestor_ids
+    own_names = {p.name.strip().lower() for p in procedures}
+    for ancestor in ancestor_ids(agent_id):
+        for p in loaded:
+            if p.agent_id == ancestor and p.name.strip().lower() not in own_names:
+                own_names.add(p.name.strip().lower())
+                out.append({**skill_to_dict(p), "inherited_from": ancestor, "read_only": True})
+    return out
 
 
 @router.post("/{agent_id}/skills")
@@ -1002,7 +1095,13 @@ def _capability_conflict(e: CapabilityViolation) -> HTTPException:
     """409, not 400: the request is well-formed, the resulting *state* is
     refused. Carries the structured violation so the editor can name the
     offending capabilities and the tools (or delegation hops) that granted
-    them, plus the two switches that would let the save through."""
+    them, plus the two switches that would let the save through.
+
+    A parent's save refused for a child that inherits from it carries
+    ``error = "inherited_capability_violation"`` and the child's ``agent_id``."""
+    from agents.capability_guard import InheritedCapabilityViolation
+    if isinstance(e, InheritedCapabilityViolation):
+        return HTTPException(status_code=409, detail={"guard_mode": guard_mode(), **e.detail()})
     return HTTPException(
         status_code=409,
         detail={
@@ -1105,6 +1204,9 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
         registry.add_agent(new_spec)
     except CapabilityViolation as e:
         raise _capability_conflict(e)
+    # Read back: for a child (extends) the saved overrides and deltas differ
+    # from the ones the edited spec carried.
+    new_spec = registry.get_agent(agent_id) or new_spec
     return {**new_spec.to_dict(), "capability_warning": _capability_warning_dict(new_spec)}
 
 
@@ -1376,7 +1478,12 @@ async def clear_default_chat_agent(agent_id: str, workspace: Optional[str] = Non
 
 @router.post("/create")
 async def create_custom_agent(data: AgentCreateCustom, request: Request):
-    """Create a new agent: register structured fields and write instructions.md."""
+    """Create a new agent: register structured fields and write instructions.md.
+
+    With ``extends`` the new agent is a child (agents/inheritance.py): every
+    field not given is inherited from the parent, ``system_prompt`` is
+    optional and holds only the child's own additions, and ``tools``, when
+    given, is the child's full effective tool list."""
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
     # Checked before anything is written, so a bad target leaves no folder behind.
@@ -1384,22 +1491,14 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
     handoff_history = _validated_handoff_history(data.handoff_history or "full")
 
     factory = get_factory()
+    extends = (data.extends or "").strip() or None
 
     # When definition_id is supplied, reuse an existing shared definition folder
     # instead of authoring a new one (system_prompt is ignored).
     definition_id = (data.definition_id or "").strip() or None
-    if definition_id:
-        if not prompt_assembly.has_definition(definition_id, definitions_dir=factory.definitions_dir):
-            raise HTTPException(
-                status_code=400,
-                detail=f"definition '{definition_id}' does not exist",
-            )
-    else:
-        if not data.system_prompt or not data.system_prompt.strip():
-            raise HTTPException(status_code=400, detail="system_prompt is required")
-        prompt_assembly.write_instructions(
-            data.id, data.system_prompt, definitions_dir=factory.definitions_dir
-        )
+    if extends and definition_id:
+        raise HTTPException(status_code=400,
+                            detail="An agent that extends another cannot share a definition (definition_id).")
 
     # Agents created inside a (non-default) workspace are owned by — and only
     # visible in — that workspace until they are explicitly shared.
@@ -1410,30 +1509,83 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
     from common import identity
     owner_user = getattr(identity.request_principal(request), "id", None)
 
-    spec = registry.AgentSpec(
-        id=data.id,
-        definition_id=definition_id,
-        name=data.name,
-        description=data.description,
-        domain=data.domain,
-        type="langchain",
-        entrypoint="agents.agent_factory:build_agent_executor",
-        tools=data.tools,
-        capacity=data.capacity,
-        owner_workspace=owner_workspace,
-        handoffs=handoffs,
-        handoff_history=handoff_history,
-        owner_user=owner_user,
-    )
+    if extends:
+        from agents import inheritance
+        parent_eff = inheritance.parent_effective(extends, data.extends_version)
+        if parent_eff is None:
+            raise HTTPException(status_code=400, detail=f"Parent agent '{extends}' not found.")
+        given = data.model_fields_set
+        own: Dict[str, Any] = {}
+        if "tools" in given:
+            own["tools"] = list(data.tools)
+        if "handoffs" in given:
+            own["handoffs"] = handoffs
+        if "handoff_history" in given:
+            own["handoff_history"] = handoff_history
+        spec = inheritance.new_child_spec(
+            parent_eff,
+            extends_version=data.extends_version,
+            id=data.id,
+            name=data.name,
+            description=data.description,
+            domain=data.domain,
+            capacity=data.capacity,
+            owner_workspace=owner_workspace,
+            owner_user=owner_user,
+            **own,
+        )
+        # The registry's rules first, so a refused parent leaves no folder behind.
+        try:
+            inheritance.validate_extends(spec)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        prompt_assembly.write_instructions(
+            data.id, data.system_prompt or "", definitions_dir=factory.definitions_dir
+        )
+    else:
+        if definition_id:
+            if not prompt_assembly.has_definition(definition_id, definitions_dir=factory.definitions_dir):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"definition '{definition_id}' does not exist",
+                )
+        else:
+            if not data.system_prompt or not data.system_prompt.strip():
+                raise HTTPException(status_code=400, detail="system_prompt is required")
+            prompt_assembly.write_instructions(
+                data.id, data.system_prompt, definitions_dir=factory.definitions_dir
+            )
+
+        spec = registry.AgentSpec(
+            id=data.id,
+            definition_id=definition_id,
+            name=data.name,
+            description=data.description,
+            domain=data.domain,
+            type="langchain",
+            entrypoint="agents.agent_factory:build_agent_executor",
+            tools=data.tools,
+            capacity=data.capacity,
+            owner_workspace=owner_workspace,
+            handoffs=handoffs,
+            handoff_history=handoff_history,
+            owner_user=owner_user,
+        )
     try:
         registry.add_agent(spec)
     except CapabilityViolation as e:
+        if extends:
+            prompt_assembly.delete_definition(data.id, definitions_dir=factory.definitions_dir)
         raise HTTPException(
             status_code=409,
             detail={"error": "capability_violation", **e.violation.to_dict()},
         )
     except ValueError as e:
+        if extends:
+            prompt_assembly.delete_definition(data.id, definitions_dir=factory.definitions_dir)
         raise HTTPException(status_code=400, detail=str(e))
+    if extends:
+        spec = registry.get_agent(data.id) or spec
 
     # Register the new agent in its owning workspace's allowed_agents so it shows
     # up immediately in that workspace's UI.
@@ -1485,14 +1637,26 @@ async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace):
     # Copy every setting from the source, overriding only identity/ownership.
     # definition_id is set explicitly so the new record reuses the shared folder
     # (no write_instructions). shared=False keeps the copy scoped to its workspace.
+    # A child (extends) cannot share a definition folder: the copy extends the
+    # same parent and gets its own copy of the child's own text instead.
     new_spec = dataclasses.replace(
         source,
         id=new_id,
-        definition_id=def_id,
+        definition_id=None if source.extends else def_id,
         owner_workspace=owner_workspace,
         shared=False,
         is_default_chat_agent=False,
     )
+    if source.extends:
+        factory = get_factory()
+        prompt_assembly.write_instructions(
+            new_id, prompt_assembly.read_instructions(def_id, factory.definitions_dir),
+            definitions_dir=factory.definitions_dir)
+        for reader, writer in ((prompt_assembly.read_capabilities, prompt_assembly.write_capabilities),
+                               (prompt_assembly.read_usage, prompt_assembly.write_usage)):
+            text = reader(def_id, factory.definitions_dir)
+            if text:
+                writer(new_id, text, definitions_dir=factory.definitions_dir)
     try:
         registry.add_agent(new_spec)
     except ValueError as e:
@@ -1715,3 +1879,11 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
     context_setup=_definition_context_setup,
     post_turn=_definition_post_turn,
 )))
+
+
+# Agent inheritance (extends): GET /{id}/inheritance, PUT /{id}/extends and
+# DELETE /{id}/overrides/{field} live in their own module, included here so
+# main.py stays as it is.
+from routes.agent_inheritance import router as _inheritance_router  # noqa: E402
+
+router.include_router(_inheritance_router)

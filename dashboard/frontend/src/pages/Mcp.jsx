@@ -20,6 +20,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { capabilityLabel, CAPABILITY_ORDER } from '../lib/capabilities';
 import { useI18n } from '../i18n';
 import { useWorkspace } from '../components/workspace';
+import PageLoader from '../components/PageLoader';
 
 /**
  * MCP servers: tool collections somebody else runs, attached per workspace.
@@ -562,7 +563,7 @@ export default function Mcp() {
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
       {loading ? (
-        <p className="text-sm text-gray-400">{t('mcp.loading')}</p>
+        <PageLoader label={t('mcp.loading')} />
       ) : servers.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center">
           <Plug className="w-8 h-8 text-indigo-400 mx-auto mb-3" />

@@ -51,6 +51,11 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     # The system workspace's repository copy (tools/system_ops.py): a commit,
     # a written task result and a branch deletion have each already happened.
     "system_commit", "system_attach_patch", "system_prune_branches",
+    # A workspace created or deleted from the chat (tools/workspace_management.py).
+    "create_workspace", "delete_workspace",
+    # A paid picture, clip, audio or model call (tools/special_models.py):
+    # repeating it pays twice.
+    "generate_image", "generate_video", "synthesize_speech", "ask_special_model",
 })
 
 
@@ -105,6 +110,11 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # as a file in the working directory.
     "list_workspace_files": frozenset({READS_PRIVATE}),
     "read_workspace_file": frozenset({READS_PRIVATE}),
+    # A transcript of a workspace recording, and a workspace model's answer
+    # about a workspace file (tools/special_models.py), bring that file's
+    # content into the context like read_workspace_file does.
+    "transcribe_audio": frozenset({READS_PRIVATE}),
+    "ask_special_model": frozenset({READS_PRIVATE}),
 
     # ── memory reads ─────────────────────────────────────────────────────────
     "read_memory": frozenset({READS_PRIVATE}),
@@ -224,6 +234,58 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # grants nothing: this is the one direction that moves bytes outward.
     "git_publish": frozenset({CAN_EXFILTRATE}),
 
+    # ── connectors (tools/connector_tools.py aggregates these) ──────────────
+    # channel_send delivers agent-written text to a Slack/Discord/Teams/mail
+    # chat: the notify_user shape over another transport.
+    "channel_send": frozenset({CAN_EXFILTRATE}),
+    # Issue trackers (connectors/trackers: Jira, Linear). Reading an issue
+    # pulls text strangers wrote into context; a comment, a transition or a
+    # new issue carries agent-written text out.
+    "tracker_list_issues": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "tracker_get_issue": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "tracker_sync": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "tracker_comment": frozenset({CAN_EXFILTRATE}),
+    "tracker_transition": frozenset({CAN_EXFILTRATE}),
+    "tracker_create_issue": frozenset({CAN_EXFILTRATE}),
+    # Google Workspace (connectors/google): Drive, Docs, Sheets, Calendar.
+    # Documents and sheets are the operator's private data, written by
+    # whoever shared them; a write sends agent text into a Google account.
+    "google_drive_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "google_drive_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "google_sheets_read": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "google_sheets_append": frozenset({CAN_EXFILTRATE}),
+    "google_docs_create": frozenset({CAN_EXFILTRATE}),
+    "google_calendar_list": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "google_calendar_create": frozenset({CAN_EXFILTRATE}),
+    # Microsoft Graph (connectors/microsoft): the Outlook calendar.
+    "outlook_calendar_list": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "outlook_calendar_create": frozenset({CAN_EXFILTRATE}),
+    # Knowledge bases (connectors/knowledge: Notion, Confluence).
+    "notion_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "notion_read_page": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "notion_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "notion_create_page": frozenset({CAN_EXFILTRATE}),
+    "notion_append": frozenset({CAN_EXFILTRATE}),
+    "confluence_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "confluence_read_page": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "confluence_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
+    "confluence_create_page": frozenset({CAN_EXFILTRATE}),
+    # Read-only databases (connectors/databases): rows are operator data.
+    # The query only ever goes to a connection the operator configured, so
+    # nothing agent-chosen leaves the system.
+    "db_list_connections": frozenset({READS_PRIVATE}),
+    "db_schema": frozenset({READS_PRIVATE}),
+    "db_query": frozenset({READS_PRIVATE}),
+    # Connection proposals (tools/connection_setup.py, connectors/proposals.py).
+    # They grant nothing: connection_options returns names and configured
+    # flags, never a value, URL or command of an existing item;
+    # propose_connection only records a proposal a person applies (secrets
+    # typed by that person, an MCP claim reset to every capability), and the
+    # one line it reads back is the hub's own summary of what was done.
+    "connection_options": frozenset(),
+    "propose_connection": frozenset(),
+    "connection_proposal_status": frozenset(),
+
     # ── project deployments (tools/project_deploy.py) ────────────────────────
     # Every answer carries the deployment's share key (in browser_url) and the
     # services' commands and variables, operator-authored private content.
@@ -241,6 +303,21 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # grant as get_task. list_agents_tool, by contrast, returns only id, name
     # and description, so it stays in REVIEWED_NO_GRANT.
     "get_agent_tool": frozenset({READS_PRIVATE}),
+    # Workspace management (tools/workspace_management.py), the main agent's
+    # in the default workspace only (common/workspace_scope.py). The reads
+    # return workspace metadata the acting user owns: descriptions, the
+    # workspace instructions (operator-authored, like an agent's prompt), the
+    # agent roster and the default model, so they carry the get_agent_tool
+    # grant. The writes grant nothing: they change that metadata inside the
+    # hub and echo back the fields the caller passed. None of them reads or
+    # changes a secret, isolation, hooks, members or connectors.
+    "list_workspaces": frozenset({READS_PRIVATE}),
+    "get_workspace": frozenset({READS_PRIVATE}),
+    "create_workspace": frozenset(),
+    "update_workspace": frozenset(),
+    "delete_workspace": frozenset(),
+    "add_workspace_agent": frozenset(),
+    "remove_workspace_agent": frozenset(),
     # A scheduled job carries a title and message the operator or an agent
     # wrote for later delivery — the same class of authored content a task's
     # title and description carry, so list_scheduled is read under the same
@@ -294,6 +371,23 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # build). Nothing comes back to the caller, so unlike run_agent_tool it
     # opens no path for the caller to read through another agent.
     "handoff_to_agent",
+    # consult_advisor (tools/advisor.py): sends a question and context the
+    # agent writes to the advisor model the operator chose on the Models
+    # page, the same provider path the agent's own model calls take, and
+    # returns that model's answer. It reads nothing the agent does not
+    # already hold and reaches no destination the run does not already use.
+    "consult_advisor",
+    # wake_agent (tools/schedule_management.py): nudges another agent's pulse
+    # with a message and gets an acknowledgement back, never that agent's
+    # output. The woken agent runs on its own tool set under its own guard,
+    # and a profile that accepts wakes from agents decides whom it listens to.
+    "wake_agent",
+    # The consent portal (connectors/consent/tools.py). request_account_access
+    # hands the person in the conversation a link to a page they open
+    # themselves; revoke_account_access drops that person's own grant. Neither
+    # reads data nor sends anything out; what the grant lets the Google and
+    # Microsoft tools do is classified on those tools.
+    "request_account_access", "revoke_account_access",
 
     # ── filesystem writes ────────────────────────────────────────────────────
     # write_file, create_file and apply_unified_diff all return only the
@@ -305,6 +399,11 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # save_workspace_file stores text the agent already holds as a workspace
     # file and returns only the new record (id, name, size), like write_file.
     "save_workspace_file",
+    # The workspace's special models (tools/special_models.py) make a picture,
+    # a clip or audio from text the agent already holds and return only the
+    # new file's record. The model is the operator's chosen provider, the
+    # same trust as the agent's own model, so the prompt is not data sent out.
+    "generate_image", "generate_video", "synthesize_speech",
 
     # ── memory writes / derivations ──────────────────────────────────────────
     # write_memory persists into a pool, like write_structured_memory above.
@@ -688,7 +787,23 @@ def _delegates_of(agent_id: str) -> Optional[List[str]]:
     if spec is None:
         return None
     allow = list(getattr(spec, "delegates", None) or [])
-    return allow or None
+    return _expand_roles(allow) or None
+
+
+def _expand_roles(ids: Sequence[str]) -> List[str]:
+    """``ids`` with each workspace role reference (``@coder``) replaced by
+    every agent that may hold it in some workspace (agents/roles.py). The
+    guard judges an agent without a workspace, so it must see every path a
+    workspace's binding can open. Never raises: without the roles module the
+    ids stay as they are."""
+    if not any(str(i).startswith("@") for i in ids or []):
+        return list(ids or [])
+    try:
+        from agents.roles import expand_all  # lazy: avoid an import cycle
+        return expand_all(ids)
+    except Exception:  # noqa: BLE001 - a reference left unexpanded reaches no agent at run time either
+        log.debug("capability guard: could not expand role references", exc_info=True)
+        return list(ids or [])
 
 
 def _all_agent_ids() -> List[str]:
@@ -746,7 +861,7 @@ def _walk_delegation_graph(
 
     def _targets_of(aid: str) -> List[str]:
         if aid == agent_id and root_delegates is not None:
-            allow = list(root_delegates)
+            allow = _expand_roles(list(root_delegates))
             return allow if allow else _all_agent_ids()
         return _delegation_targets(aid)
 
@@ -879,6 +994,9 @@ def check_effective_combination(
 
 UNTRUSTED_CHANNELS: FrozenSet[str] = frozenset({
     "telegram", "git_issue", "issue_sync", "webhook", "email", "slack",
+    # The chat channels of connectors/channels (a run's ``source``) and the
+    # issue trackers of connectors/trackers.
+    "discord", "teams", "mail", "tracker_sync",
 })
 
 
@@ -914,6 +1032,11 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     # Every tool in the grant table that can send data outside.
     "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
     "notify_user", "schedule_notification", "view_serve", "schedule_management",
+    # The connector tools that write outward (tools/connector_tools.py).
+    "channel_send", "tracker_comment", "tracker_transition", "tracker_create_issue",
+    "google_sheets_append", "google_docs_create", "google_calendar_create",
+    "outlook_calendar_create", "notion_create_page", "notion_append",
+    "confluence_create_page",
     # Delegation reaches other agents' tools, which this rule cannot see.
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
     "run_team_tool", "run_loop_tool", "run_scenario_tool",
@@ -1088,6 +1211,25 @@ def _is_known_tool(tool_id: str) -> bool:
         return False
 
 
+def is_recognised_tool_id(tool_id: str) -> bool:
+    """True when ``grants_of`` would classify the id rather than warn about it.
+
+    Exactly the recognition path of :func:`grants_of`: a classification table,
+    a group alias, a secret grant, an MCP id (any server, configured or not)
+    or a catalog tool. ``False`` is the id ``grants_of`` logs as unknown, and
+    the one a stored tool list no longer has any use for: a renamed or retired
+    tool grants nothing and resolves to nothing at build time.
+    """
+    if tool_id == "run_code":
+        return True
+    if (tool_id in CAPABILITY_GRANTS or tool_id in CAPABILITY_GRANTS_EXTRA
+            or tool_id in ALIAS_GRANTS or tool_id in REVIEWED_NO_GRANT):
+        return True
+    if tool_id.startswith(SECRET_GRANT_PREFIX) or _mcp_server_of(tool_id) is not None:
+        return True
+    return _is_known_tool(tool_id)
+
+
 def capabilities_of(tool_ids: Iterable[str]) -> Set[str]:
     """Union of the capabilities granted by a tool list."""
     out: Set[str] = set()
@@ -1175,7 +1317,7 @@ __all__ = [
     "INGESTS_UNTRUSTED", "READS_PRIVATE", "CAN_EXFILTRATE", "CAPABILITIES",
     "CAPABILITY_LABELS", "CAPABILITY_GRANTS", "CAPABILITY_GRANTS_EXTRA",
     "REVIEWED_NO_GRANT", "ALIAS_GRANTS", "DELEGATING_TOOLS",
-    "MCP_TOOL_PREFIX", "MCP_ALIAS_PREFIX", "mcp_grants",
+    "MCP_TOOL_PREFIX", "MCP_ALIAS_PREFIX", "mcp_grants", "is_recognised_tool_id",
     "UNTRUSTED_CHANNELS", "channel_capabilities",
     "BLOCKED_COMBINATIONS", "Rule", "Violation",
     "grants_of", "capabilities_of", "capability_sources",

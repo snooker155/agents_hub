@@ -7,6 +7,7 @@ import MarkdownRenderer from '../../components/MarkdownRenderer';
 import { useChannel } from '../../components/stream';
 import { useI18n } from '../../i18n';
 import { isLiveStatus } from './status';
+import PageLoader from '../../components/PageLoader';
 
 /**
  * The run, read as one text — twice, side by side.
@@ -96,11 +97,7 @@ export default function StoryPane({ runId, status, ticksDone = 0, heightClass = 
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-gray-500 py-6">
-        <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-      </div>
-    );
+    return <PageLoader size="sm" />;
   }
 
   return (

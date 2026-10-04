@@ -273,6 +273,16 @@ def _workspace_files_specs() -> List[ToolSpec]:
             for t in WORKSPACE_FILE_TOOLS]
 
 
+def _special_model_specs() -> List[ToolSpec]:
+    # The workspace's special models (tools/special_models.py): images,
+    # video, speech, transcription and the workspace's own models. The
+    # workspace comes from the run, and a tool whose purpose has no model
+    # there is taken off the agent at build time.
+    from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
+    return [spec_from_tool(t, category="special_models", requires_workspace=True)
+            for t in SPECIAL_MODEL_TOOL_OBJECTS]
+
+
 def _memory_specs() -> List[ToolSpec]:
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
@@ -373,11 +383,11 @@ def _agent_management_specs() -> List[ToolSpec]:
 def _schedule_management_specs() -> List[ToolSpec]:
     from tools.schedule_management import (
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
     )
     tools = [
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled,
+        cancel_scheduled, update_scheduled, wake_agent,
     ]
     return [spec_from_tool(t, category="schedule_management") for t in tools]
 
@@ -508,6 +518,28 @@ def _documentation_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="documentation") for t in DOCS_TOOLS]
 
 
+def _connector_specs() -> List[ToolSpec]:
+    # Tools that act through a connector (tools/connector_tools.py): a chat
+    # channel, an issue tracker, Google Workspace, Microsoft Graph, Notion,
+    # Confluence, a read-only database. One category, "connectors", because
+    # each is only as available as the connector it sits on.
+    from tools.connector_tools import connector_tools
+    from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
+    own = {t.name for t in WORKSPACE_MANAGEMENT_TOOLS}
+    return [spec_from_tool(t, category="connectors") for t in connector_tools()
+            if getattr(t, "name", "") not in own]
+
+
+def _workspace_management_specs() -> List[ToolSpec]:
+    # The main agent's workspace tools (tools/workspace_management.py). They
+    # reach the factory through tools/connector_tools.py, but they manage
+    # workspaces, not a connector: catalogued next to the agent management
+    # tools. Only main-agent in the default workspace keeps them at build
+    # time (common/workspace_scope.py).
+    from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
+    return [spec_from_tool(t, category="agent_management") for t in WORKSPACE_MANAGEMENT_TOOLS]
+
+
 def _geometry_specs() -> List[ToolSpec]:
     from tools.geometry import GEOMETRY_TOOLS, create_geometry_tools
     tools = [*GEOMETRY_TOOLS, *create_geometry_tools(None)]
@@ -519,6 +551,7 @@ def _geometry_specs() -> List[ToolSpec]:
 _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _filesystem_specs,
     _workspace_files_specs,
+    _special_model_specs,
     _memory_specs,
     _coordination_specs,
     _task_management_specs,
@@ -527,6 +560,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _calculator_specs,
     _agent_coordination_specs,
     _agent_management_specs,
+    _workspace_management_specs,
     _schedule_management_specs,
     _flow_management_specs,
     _world_management_specs,
@@ -545,6 +579,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _evals_specs,
     _documentation_specs,
     _geometry_specs,
+    _connector_specs,
 ]
 
 

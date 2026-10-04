@@ -97,6 +97,10 @@ def _turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
 
 # ── One agent's turn ─────────────────────────────────────────────────────────
 
+from common.workspace_context import own_context  # noqa: E402 - the runs below set the workspace
+
+
+@own_context
 def _run_member(
     *, team: Team, member: Optional[TeamMember], agent_id: str, speaker: str,
     prompt: str, workspace: Optional[str], task_id: Optional[str],
@@ -457,6 +461,7 @@ def _validate_for_run(team: Team) -> None:
         raise ValueError("A centralized team needs a leader agent")
 
 
+@own_context
 def run_team(
     team_id: str,
     goal: str,

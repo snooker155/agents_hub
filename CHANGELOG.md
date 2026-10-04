@@ -13,6 +13,555 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Workspace roles (docs/workspace-roles.md): coder, reviewer, planner,
+  visualizer, web search, verifier, researcher, analyst and writer. A
+  workspace gives each role to one of its agents (workspace settings, Agent
+  roles; `GET /api/workspaces/{name}/roles`, `PUT .../roles/{role}`), and
+  `@coder` and the like work as a target in `delegates`, `handoffs`,
+  `run_agent_tool`, `delegate_task_tool`, `assign_agent_tool` and
+  `handoff_to_agent`. Swapping the built-in coder for Claude Code, Codex or
+  Aider is one setting. A binding that would let a caller reach a blocked
+  capability combination is refused.
+- Special models (docs/special-models.md): a model per workspace for images,
+  video, speech and transcription, plus models of the workspace's own (a chat
+  model of any provider or an HTTP endpoint), each workspace using only the
+  models it added (Models page, Special models tab, and workspace settings;
+  `GET`/`PUT /api/workspaces/{name}/special-models`). Agents call
+  `generate_image`, `generate_video`, `synthesize_speech`, `transcribe_audio`
+  and `ask_special_model`; the prompt lists what each one runs, and a call
+  whose purpose has no model answers `model_not_added`. Results are saved
+  as workspace files; each call is priced, shown on the Costs page and
+  charged to the run's money cap.
+- Workspace management from the chat (docs/workspaces.md "Managing
+  workspaces from the chat"): `list_workspaces`, `get_workspace`,
+  `create_workspace`, `update_workspace` (description, instructions, default
+  model only), `delete_workspace`, `add_workspace_agent` and
+  `remove_workspace_agent`, held by the main agent and working only in a run
+  of the `default` workspace, with the dashboard's rules and roles.
+  `delete_workspace` waits for a person's yes on every call
+  (`tools.approval.ALWAYS_GATED`), whatever the gate or a policy say.
+- Isolated workspaces (docs/isolation.md): a workspace switched to isolated
+  runs `run_shell` and `run_code` in a sandbox container with no network and
+  only its folder mounted, keeps only an allowlist of tools that stay inside
+  (a tool taking a `workspace` argument may name only this one), reads the
+  internet only from its own list of sites (GET only, no cookies, a read only
+  browser that refuses clicks, typing, posts and WebSockets, a per run
+  budget), and closes the hub's ways out for it: MCP servers, chat and
+  Telegram bindings, widgets, outbound webhooks, the personal memory pool,
+  hook files and `http` hooks, imported agents. Inside, the capability guard
+  does not refuse combinations. `GET/PUT /api/workspaces/{name}/isolation`
+  with readiness checks; an Isolation section in the workspace settings.
+- Connections set up from the chat (docs/connectors.md "Setting up from the
+  chat"): the agent tools `connection_options`, `propose_connection` and
+  `connection_proposal_status`, on the main agent by default. The agent fills
+  the non-secret fields of a connector, chat channel, MCP server, read-only
+  database, watcher or workspace secret; the person edits them, types the
+  secrets into a card in the chat (they never reach the model) and presses
+  Connect. The hub applies it as that person, runs the connection test and
+  the agent's turn reads the outcome. Proposals made outside the chat wait on
+  the Connectors page.
+- Agent version pins on every launch path (docs/agents.md "Versions and
+  pinning"): chat turns, `/v1` agent completions (`agent_version` in the
+  body), widgets (a version picker, migration 0032), plain messages to a
+  pinned service, tasks taken by a resident worker in node mode, and the CLI
+  (`ah agent run --agent-version`, `ah task assign --agent-version`,
+  `ah task create --agent-version`). The run record says
+  `agent_version_pinned` and the run page shows the run as pinned.
+- Optimistic concurrency on agent edits (docs/agents.md "Editing an agent
+  that changed meanwhile"): reads and writes of an agent carry its
+  definition hash as `ETag`; a write with a stale `If-Match` or
+  `expected_version` is a 409 and writes nothing. The agent page asks to
+  reload or overwrite.
+- Per-run `overrides` (docs/agents.md "Per-run overrides"): `model`,
+  `provider`, `system`, `system_append`, `tools`, `skills`, `mcp`,
+  `tool_policy`, `output_schema` in one object, for task launches, chat
+  requests, `/v1` and the CLI (`--overrides`, `--overrides-file`). The
+  capability guard checks the overridden tool set, the build cache keys on
+  it, and the run page lists it. `--tool-policy` and `--output-schema` stay
+  as aliases.
+
+- Advisor model (`tools/advisor.py`, docs/agent-loop.md "Advisor"): an agent
+  can name an `advisor_model` from the Models page catalog (Loop settings card
+  on the Model tab, or `PUT /api/agents/{id}/loop-settings`) and then calls
+  `consult_advisor(question, context)` on a hard step. The advisor sees only
+  what the agent writes into the call. Each call is priced at the advisor's
+  own model in the run's cost and counted against the run's money cap; the
+  workspace loop settings `advisor_max_calls` (5) and
+  `advisor_max_answer_chars` (4000) bound it.
+- Steering mode `system` (docs/steering.md "System message"): the run's owner
+  or an admin can add to a running agent's instructions; the text is appended
+  to the system prompt for the rest of the run, for every provider, and kept
+  across a checkpoint resume. Agents and delegated runs cannot send one. The
+  chat composer and the run page offer it as Instruction.
+- Long tool results go to a workspace file (`agents/tool_spill.py`,
+  docs/agent-loop.md "Long tool results"): past the workspace loop setting
+  `tool_output_spill_chars` (20000) the full output is saved under
+  `tool-outputs/<run_id>/` as a registered file, and the model sees its start,
+  its end and the path. `read_file` takes `offset` and `limit` to read a part.
+  The run page links each saved output.
+- The tool gate's decision on every call (docs/tool-policy.md "The per-call
+  trail"): each tool call of a run, flow or team carries
+  `evaluated_permission` (allow, deny, ask) and a stable `reason_code`
+  (`default_allow`, `policy_always_allow`, `policy_always_ask`,
+  `approval_list`, `auto_run`, `auto_deny`, `auto_ask`, `auto_unclear`,
+  `hook_deny`, `hook_ask`, `human_approved`, `think_required`,
+  `never_gated`) in the run payload's `tool_calls`, on the live `tool_end`
+  event and in the run log. The process graph shows it as a badge on the
+  tool node and in the call's detail. Deny, ask and auto decisions and a
+  spent approval write a `tool.policy` audit row; a plain allow does not.
+- Secrets bound to hosts (docs/secrets.md "Secrets bound to hosts"): a
+  secret can name `allowed_hosts` (the Secrets card, `ah secrets set --host`,
+  `PUT /api/workspaces/{name}/secrets/{secret}/hosts`). A run then holds a
+  placeholder, and the egress proxy terminates TLS for those hosts with a
+  hub CA, swaps the real value into headers and the request target only on
+  the way to them, and refuses and audits (`egress.secret_refused`) a
+  placeholder headed anywhere else. With the proxy off such a launch is
+  refused unless `AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1`.
+- Per-agent `allowed_domains` and `blocked_domains` for `web_search`,
+  `fetch_url` and the browser (docs/tools-and-capabilities.md "Domain lists
+  per agent"): the Web domains card on the agent's Behavior tab, or
+  `PUT /api/agents/{id}/web-domains`. Blocked hosts join the workspace deny
+  list, allowed hosts narrow the agent within what the workspace allows, a
+  blocked host wins. `web_search` passes the merged lists to Tavily and Exa
+  as domain filters and to Brave as `site:` operators, and filters the
+  results by host as before.
+- Memory consolidation (`memory/consolidation.py`, the Memory page's pool
+  detail "Memory consolidation" panel): folds a pool and up to N of its
+  recent sessions into a NEW pool, merging duplicate notes, replacing
+  outdated facts and pulling out insights, while the source pool is never
+  touched. The model call goes through the provider layer the other memory
+  extractors use and its cost is recorded as auxiliary usage. Runs in a
+  background thread with a queued, running, done or failed status the panel
+  polls; the done result shows a diff against the source by block, note and
+  slot, and a person switches an agent's binding to it or discards it.
+  `POST /api/memory/{id}/consolidate`, `GET /api/memory/{id}/consolidations`,
+  `GET /api/memory/consolidations/{job_id}`,
+  `POST /api/memory/consolidations/{job_id}/apply`,
+  `POST /api/memory/consolidations/{job_id}/discard`. A scheduled job kind
+  `memory_consolidate` (`consolidate_pool_id`, `consolidate_session_limit`,
+  a pool picker and a session count on the Plan page's job form) runs it on
+  a schedule or with the plan's run-now. Session gathering checks every
+  workspace an agent's binding could reach, its home record and any
+  per-workspace override alike, not only the home one.
+- Read only at the binding level (`agents/registry.py`
+  `memory_pool_read_only_ids`, `memory/binding.py`
+  `effective_read_only_pools`): a pool an agent's own memory settings bind
+  (not only a deployment's whole-run `Task.memory_access`) can carry
+  `{"id", "read_only": true}` instead of a plain id. Recall and the rest of
+  an agent's pools keep working; `remember`, `forget`, `record_episode`,
+  `link` and the two core memory block tools refuse with a clear message on
+  that one pool instead. A block edit landing on an attached pool other than
+  the primary (already documented as read only) now refuses the same way
+  too, closing a gap where it silently went through. Settable from the
+  agent's Memory tab, a checkbox next to the primary pool and each
+  additional one.
+- Sequence guardrails (docs/guardrails.md "Sequence guardrails"): a new
+  guardrail kind on a run's tool calls, with rules `after`, `sum_max` and
+  `same_as` and the action `block` or `ask`, an editor and a calls Test box
+  on the Guardrails page, reason codes `guardrail_deny` and `guardrail_ask`.
+- Model switch mid-run (docs/steering.md "Model switch"): steering mode
+  `switch_model` moves a running run to another enabled catalog model from
+  its next model call, with the same tools and the whole trail; the calls
+  the new model answers are priced at its rates, and the run page shows the
+  switch. A Model picker in the run's steer box.
+- Terminal into a container (docs/terminal.md): a shell in a Docker run's
+  container from the run page, or in a service replica's container from its
+  row, over a WebSocket opened with a one-time ticket bound to that target.
+  The hub keeps the shell through a dropped socket for a grace period and
+  replays recent output on reconnect; resize, an idle timeout and a per-user
+  session limit; owner or admin only, `terminal.open`, `terminal.resume` and
+  `terminal.close` in the audit log. xterm.js in the dashboard; nginx and the
+  Vite dev proxy now forward WebSocket upgrades under `/api`.
+- Tool approval in the dashboard chat (docs/hooks.md "In chat"): a call the
+  gate, a hook, the tool policy or a guardrail holds now waits inside the same
+  chat turn, with a card under the bubble (Approve, Deny, a note) for the run's
+  owner or an admin. Approve runs the call in that turn, Deny hands the note
+  back as the tool's output, the wait ends on Stop or after 600 seconds
+  (`tool_approval_timeout`, `AGENTS_HUB_TOOL_APPROVAL_TIMEOUT`); the run reads
+  "awaiting approval" meanwhile. Audited as `tool.approval`, with
+  `human_approved` or `human_denied` on the policy trail. Telegram, the widget,
+  channels and `/v1` keep the advisory refusal.
+- Run hooks (docs/hooks.md "Run hooks"): `before_run` sees the agent, input and
+  model and may deny the run before its first model call; `after_run` sees the
+  final text, status, usage and cost and may replace the text. `before_tool_call`
+  and `after_tool_call` are accepted as names for `PreToolUse` and `PostToolUse`.
+- Delegate concurrency limit (docs/agents.md "Delegation"): `max_concurrent_delegates`
+  (1..32, default 6) on an agent or as a per-run `overrides` key; `delegate_task_tool`
+  refuses a launch past the number of the run's own delegated subtasks still
+  running, naming the count and the limit. The value travels to a container
+  run as an environment variable, like the delegation depth.
+- Sandbox size presets on an environment (docs/environments.md "Sandbox
+  size"): `small`/`medium`/`large` set `cpus`, `memory` and `pids_limit`
+  together; an explicit limit still overrides its matching preset value.
+  Picked from the Environments page.
+- Container hours in a run's cost (docs/costs.md "Container hours"): a
+  docker-mode run's container time, priced per hour against its sandbox size
+  or, with no size, per vCPU-hour, as its own line alongside the run's other
+  model calls.
+- Consent portal (docs/consent.md): a widget visitor or a chat channel user
+  grants an agent their own Google or Microsoft account through a public page
+  the agent links to (`request_account_access`), in English, Russian or
+  German. The refresh token is kept as their personal secret, the agent's
+  Google and Outlook tools act only as them in their own turns (an agent set
+  to "act as the end user" never falls back to the hub's account), and the
+  person (`revoke_account_access`) or the operator (Account access card on
+  the agent page) revokes it. Register `<hub>/consent/callback` with both
+  providers.
+- `ah apply` (docs/apply.md): agents, environments, scheduled deployments
+  and memory pools declared in files in a repository (an agent is a markdown
+  file with frontmatter, the rest YAML) and made real in the hub, in process
+  or over `AGENTS_HUB_URL`. A lock file (`ah.lock`) records what each file
+  became, so the next apply updates instead of creating again; the plan shows
+  create, update, unchanged, drift and blocked rows, `--prune` deletes only
+  what the lock owns, `--force` overwrites drift, `--export` writes files
+  from what the hub already has. Example bundle in `examples/apply/`.
+- TypeScript SDK `@agents-hub/sdk` (`clients/agents-hub-ts`, docs/sdk.md):
+  types generated from the hub's OpenAPI schema by `scripts/gen_ts_sdk.py`,
+  a typed `request()` for every route, and `agents`, `tasks`, `chat` (with
+  streaming) and the `/v1` OpenAI compatible surface on top. No runtime
+  dependencies; a widget page and a Node example. A test fails when the
+  committed types fall behind the routes.
+- Industry kits (docs/kits.md): ready agent sets for customer support,
+  finance operations and recruiting, each with real prompts, the connectors
+  it needs, a memory pool, a paused scheduled job and an outcome rubric per
+  agent. Installed from the Kits tab on the Marketplace page, `ah kit install`
+  or `POST /api/kits/{id}/install`, as the caller and through the same engine
+  as `ah apply`; a second workspace gets its own copies.
+- An agent's default outcome (docs/outcomes.md): a rubric on the agent
+  (Behavior tab, `GET/PUT /api/agents/{id}/default-outcome`, `outcome:` in an
+  apply file) that a task assigned to it inherits when the task has none.
+- Next fire times under every schedule field (docs/scheduling.md): the
+  Deployments and Plan job forms and the heartbeat card show the next runs,
+  or the parse error, while you type, from `GET /api/plan/cron/preview`,
+  which runs the scheduler's own next run logic for cron, hourly, daily and
+  weekly schedules.
+- `PUT /api/agents/{id}/identity` renames an agent or changes its domain or
+  capacity; `ah apply` uses it, so those fields update in place.
+- Comparison page on the site (`site/compare.md`): the hub against Anthropic
+  Managed Agents, the OpenAI Agents API and AWS AgentCore, row by row.
+- Five new system agents (docs/system-agents.md): Verifier checks non code
+  work (figures, facts, reports) against sources and the task's rubric and
+  passes or returns it, the counterpart of Code Reviewer; Analyst answers from
+  connected databases and workspace files, shows the query behind every
+  figure and hands charts to Visualizer; Writer turns notes and research into
+  documents in the workspace; Sourcer finds openings, candidates, vendors or
+  sources on the web through the Web Search Agent and hands the shortlist to
+  Screener; Screener scores CVs, postings, applications or proposals against
+  criteria with evidence.
+- Help in the header (docs/help.md): a button on every page opens the
+  Support agent, one conversation per person, that knows the docs and what
+  this install has set up and what it lacks (providers, models, agents,
+  chats, tasks, channels, accounts, MCP servers, skills, watchers), answers
+  in the user's language and ends with next steps that open dashboard pages
+  or start the welcome tour. It changes nothing itself.
+
+### Changed
+
+- The shipped system agents delegate by role: main-agent, orchestrator,
+  universal_agent and the creators name `@coder`, `@reviewer`, `@planner` and
+  `@visualizer`; researcher, verifier and sourcer `@web_search`; analyst
+  `@visualizer`; writer hands off to `@verifier`. Until a workspace binds a
+  role, it reaches the same agent as before. main-agent and universal_agent
+  also hold the five special model tools; writer, visualizer and
+  web_view_builder hold `generate_image`.
+- Agent ids cannot start with `@`.
+- Connectors live in the workspace that defines them; the default
+  workspace's live everywhere (docs/connectors.md "Connectors per
+  workspace"). Credential connectors, Google and Microsoft sign in, git tokens
+  and the GitHub App, trackers, Notion and Confluence resolve per workspace;
+  a chat bot (Slack, Discord, Teams, mail, Telegram) defined in a workspace is
+  its own bot with its own loop and serves only that workspace; database
+  connections of the default workspace are usable everywhere. Every connector
+  route takes `?workspace=`, and the Connectors page edits the selected
+  workspace's connectors.
+- Slack's events and interactions and Teams' messages webhooks are reachable
+  in token and multi mode: they authenticate the platform by its own
+  signature, and the hub's credential, which the platforms never send, kept
+  them out.
+
+- An agent works in its own workspace (docs/workspaces.md "One workspace per
+  run"): a tool's `workspace` argument may name only the run's workspace (so
+  no task, team run or flow lands in another one, and no workspace is created
+  by naming it), records named by id and listings stay within the workspace,
+  and the tools that see the whole service (every run, session, container,
+  instance, cost and log, and the system workspace's repository) are held only
+  by `service_agent`, `system_doctor` and `system_engineer`. Any other agent
+  is refused them at save time and loses them at build time. A tool that
+  creates or manages workspaces would work only for `main-agent` in `default`;
+  there is none today.
+- A `.hooks.json` file in a workspace folder is never run any more: agents
+  write into that folder, so a hook from it ran a command on the hub's host on
+  an agent's say so. Hooks come only from the workspace's stored settings; the
+  tool policy block reports a file it ignores and the owner may import it
+  (`POST /api/workspaces/{name}/policy/import-hooks-file`).
+
+- A run's process no longer holds a hub-wide credential (docs/identity.md
+  "Run tokens and the service credential"). Each launch of an agent run,
+  flow, loop, team, scenario or instance carrier gets its own run token
+  (`AGENTS_HUB_RUN_TOKEN`, migration 0040) that reaches only the relay routes
+  (run state, live events, stream relays, inbox push), slides while it is
+  used and is retired when the run closes. The shared `AGENTS_HUB_API_TOKEN`,
+  the admin service credential and a personal API key are stripped from a
+  run's environment. An agent with a shell could read them out of its own
+  process and act as an administrator.
+- The relay routes (`/api/run-state/...`, `POST /api/sessions/{id}/events`,
+  `POST /api/instances/{id}/events`, `POST /api/stream/notify|publish`,
+  `POST /api/plan/notifications/publish`) refuse people, administrators
+  included, in `token` and `multi` mode. A member could write any run's
+  record, delegate as another user through `launched_by`, or push events into
+  somebody else's chat.
+
+- The Researcher Agent is now `researcher` (was `researcher_agent`). An
+  existing install renames it at startup, with a backup written first, in
+  the registry, workspaces, other agents' delegates and handoffs, flows,
+  teams, loops, scenarios, eval sets, widgets, services, scheduled jobs and
+  version history; runs, chats and logs keep the old id. The old id still
+  resolves everywhere (runs, delegation, `/v1` `agent:researcher_agent`,
+  `/api/agents/researcher_agent/...`). The `ah apply` example's agents are
+  now `team_researcher` and `team_writer`.
+
+### Fixed
+
+- An environment's sandbox `size` picked on the Environments page was
+  dropped by the create and update routes and never saved.
+
+### Upgrade notes
+
+- On the first start, a system agent you edited by hand (so no longer synced
+  from the seed) has, once, each `delegates` or `handoffs` id that the seed
+  now names by role rewritten to the role (`swe_agent` becomes `@coder`).
+  Nothing changes in what it reaches until a workspace binds the role.
+- Migration 0032 adds `widgets.agent_version` (the widget's version pin).
+- Migration 0033 adds the `memory_consolidations` table.
+- Migration 0034 adds `secrets.allowed_hosts` (the hosts a secret may be sent to).
+- Migration 0035 adds the `tool_approvals` table (tool calls waiting for a person in a chat turn).
+- Migration 0039 adds the `consent_requests` and `consent_settings` tables (the consent portal).
+
+## [0.9.0] - 2026-10-03
+
+### Added
+
+- Mail provider presets in the IMAP watcher form and the mail channel
+  (`connectors/mail/presets.py`): pick Gmail, Outlook.com or Microsoft 365,
+  Yahoo, iCloud, Yandex, Mail.ru, Fastmail, Zoho, GMX or WEB.DE and the IMAP
+  and SMTP hosts, ports and TLS fill themselves; a typed address with a known
+  domain fills them too. Under the list the form says whether the provider
+  wants an app password (with a link to where it is made), the account
+  password, or has retired password sign-in altogether.
+- Gmail through the connected Google account (`connectors/mail/oauth.py`,
+  docs/integrations.md "Gmail"): Connect with Gmail on the Google tab asks
+  for the Gmail scope, and the IMAP watcher (`use_google`, administrators
+  only) and the mail channel (`auth_mode: google`) then sign in over XOAUTH2
+  with no app password, Gmail's hosts and the account's address filled in.
+  The Google OAuth consent now also asks for `openid` and `userinfo.email`,
+  and the callback lands on the Google tab (`/connectors?tab=google`).
+- `ah setup` (also `ah onboard`), a guided install and configuration in the
+  terminal (`cli/onboard/`, docs/installation.md "Guided setup"): how the hub
+  runs (this checkout, Docker from the published images, Compose from the
+  checkout, or a hub elsewhere), the database (SQLite, Postgres started in
+  Docker or in the stack, or an existing one, with the SQLite state copied
+  across), who signs in (the first administrator and further accounts, a
+  generated token, single sign-on), providers checked against their model
+  lists with balanced, strongest and fastest presets for the default model,
+  and features. Nothing is written before a review; the chosen models land
+  in the Models catalog, accounts are created in the database or through the
+  API of a freshly started stack, and `ah` can be pointed at that stack with
+  a personal key. `--answers FILE` runs it unattended, `--dry-run` stops at
+  the review. `install.sh` runs it on a first install from a terminal
+  (`--setup`, `--no-setup`). The quickstart compose file gained an optional
+  `postgres` profile, and the backend in both compose files waits for the
+  bundled Postgres when that profile is on.
+
+- Skill sources and a safety review (`memory/skill_sources.py`,
+  `memory/skill_review.py`, docs/skills.md). **Sources** on the Skills page
+  lists public repositories of Agent Skills whose license was checked
+  (Anthropic, Sentry, Hugging Face, Microsoft, Trail of Bits, Expo,
+  Cloudflare, one community collection); **Connect** clones one into the
+  workspace's hidden `.skills/sources` folder (not a project) and syncs its
+  skills, **Update** pulls and syncs again, **Disconnect** removes it, and
+  any https repository on github.com, gitlab.com or bitbucket.org can be
+  connected by URL (`/api/skills/sources`). Sources an earlier build made as
+  projects are moved there on first use. The skill sync now walks a repository
+  for every folder holding a SKILL.md (`.claude/skills`, `skills/`,
+  `plugins/`, `.github/plugins/*/skills/`, a skill at the repository root)
+  instead of one fixed path. Every skill synced from a repository or
+  imported as text is reviewed: flags for injection phrasing, data sent out,
+  installers piped to a shell, disabled permissions, base64 that gets
+  executed, credential paths, agent configuration writes, downloads and
+  unpinned dependencies; the files an agent could run, with opaque binaries
+  as a high flag; and the `license` field (or a LICENSE file) classified as
+  open or not. The card shows the flags, the scripts and the license, the
+  sync report lists `flagged`, a skill whose license is not open cannot be
+  published (409 on **Publish** and on the registry's submit), and the
+  doctor's new `skills` check warns while an attached skill carries a high
+  flag. Skills carry `license`, `publishable` and `safety` in the API.
+- Proactive agents (`proactive/`, docs/proactive.md): an agent record carries
+  a `proactive` profile (schedule as an interval or cron with a timezone,
+  quiet hours, a daily budget and a tick limit, a brief, delivery channels),
+  edited on the **Pulse** card of the agent page's Config tab or through
+  `GET/PUT /api/agents/{id}/proactive`. Switching it on creates one scheduled
+  job of the new kind `heartbeat`, owned by the profile. A tick checks the
+  quiet hours, the day's budget and tick count and whether the previous tick
+  is still running, then runs as an ordinary task of the agent with a
+  structured answer (`acted`, `quiet`, `blocked`, plus a summary and the next
+  check) that is written back onto the firing journal row with the tick's
+  cost. An acted tick is delivered to the inbox and the profile's channels, a
+  blocked one once per reason, a quiet one never. The agent's primary memory
+  pool gets a `heartbeat` core block rewritten after every tick, failed runs
+  feed the scheduler's auto pause, and acted ticks are audited. The Pulse card
+  shows the state, today's usage, pause, resume and wake now, and the tick
+  feed with quiet ticks folded into one row.
+- Watchers (`watchers/`, docs/watchers.md): observers of outside state that
+  wake a proactive agent when something changes, without running a model. Two
+  kinds, a mailbox over IMAP (new messages, with sender and subject filters,
+  the password in a workspace secret) and an HTTP resource (the body or one
+  JSON field, public hosts only). Each polls on its own interval from a leased
+  runner next to the plan scheduler, takes a baseline on its first look,
+  pauses itself after repeated failures, and hands its events to the agents
+  whose pulse lists it as a `watch` trigger. A **Watchers** page under Connect
+  with create, edit, pause, a dry-run test and a poll ahead of schedule
+  (`/api/watchers`), and an indicator in the header listing the active
+  watchers, their last check and the agents they wake.
+- Triggers besides the clock for a proactive agent (`proactive/events.py`,
+  docs/proactive.md "Triggers"): a signed `POST /api/webhooks/agents/{id}/wake`,
+  a workspace file added or rewritten, a task status change, an eval run with
+  failures, an unanswered Telegram message, and the new `wake_agent` tool for
+  other agents. Events join the heartbeat job's `pending_events` and pull its
+  next tick to within a batching window (`AGENTS_HUB_HEARTBEAT_EVENT_WINDOW_SECONDS`,
+  30 s), so several events become one tick that lists them all; the gates,
+  quiet hours and pauses apply as for a scheduled tick. The Pulse card edits
+  the triggers and shows the waiting events.
+- A proactive profile with an untrusted trigger (webhook, Telegram, file) is
+  checked by the capability guard like a tool list, and its ticks run with
+  the agent's outbound tools on `always_ask` through a per-run tool policy
+  (`--tool-policy`, folded into the spec for that build alone).
+- A **Pulse** card on the Dashboard (`GET /api/proactive/summary`), the
+  journal compaction of quiet ticks older than `AGENTS_HUB_HEARTBEAT_COMPACT_DAYS`
+  (7) into counted rows in the daily maintenance sweep, audit rows for every
+  profile change and acted tick, and a pulse on the demo's `demo_support`
+  with a seeded tick history.
+- A per-run answer schema: `agent_launcher.start_run` takes
+  `output_schema` in its params and the task runner's `--output-schema` folds
+  it into the agent's spec for that build alone.
+
+- View focus in the agent loop (`agents/loop_ext/view_focus.py`): a view
+  agent sees the tools of the view kind it is on and not the other kinds',
+  so a visualizer with fifty tools binds the slide tools while it builds a
+  deck and the mesh tools while it models. Off with the loop setting
+  `view_focus` (docs/agent-loop.md, "View focus").
+- One guide per view kind (`views/guides/<kind>.md`), handed to the agent
+  when a view of that kind becomes its target (`create_view`, the first
+  `view_get`, the Studio's active-view note), once per run. The visualizer's
+  instructions are the general part only (docs/views.md, "Kind guides and
+  specialists").
+- Two system agents: the **3D Modeler** (`modeler_3d`), which owns `scene3d`
+  views and the geometry tools, and the **Web View Builder**
+  (`web_view_builder`), which owns `html` and `code` views and can write a
+  page's files and serve a backend behind it. The Studio and a view's own chat
+  open those kinds with the specialist (`routes/views.py: view_agent_for`).
+- An **Artifacts** page (`/artifacts`) in place of the Views and Files menu
+  items: what the agents produced and work with, in one browser. The views
+  sit in a virtual Views folder next to the workspace's folders, and the
+  same list shows as cards (folder, file and live view cards with a
+  breadcrumb, the open folder in `?folder=`), as a tree or as a flat list.
+  `/views` and `/files` redirect into it with their query, so
+  `/files?file=<id>` links keep working. A view opens in a panel like a file
+  does (`?view=<id>`): the live card as a column, what made it, Studio, its
+  page, delete. The list is the drop target: files and folders dropped on it
+  land in the open folder of the workspace with their structure
+  (`POST /api/files` takes a `path`); the Views folder refuses the drop.
+  The Studio lost its menu item: it opens from this page. Memory stays its
+  own page.
+
+- Chat channels (Slack, Discord, Microsoft Teams, mail) running agents on
+  inbound messages: each has config fields (write-only secrets), an Enabled
+  switch, an allowlist of chat keys, bindings from chats to a workspace plus
+  agent or flow, and a status card. Each runs as one singleton supervised job
+  under a database lease. A message runs through the chat pipeline with
+  `source` set to the channel name (untrusted by the capability guard).
+  Commands in the chat (`/agent`, `/workspace`, `/help`) are built in. Tools:
+  `channel_send` to post to one chat or every chat bound to a workspace, and
+  each channel wakes proactive agents on an unanswered message. Generic API:
+  `GET /api/channels`, `GET|PUT /api/channels/<name>/config`,
+  `POST .../test`, `GET .../status`, `GET|POST|DELETE /api/channels/<name>/bindings`,
+  `POST .../send`. See docs/channels.md.
+
+- Jira and Linear issue trackers linked to a project's repository (docs/trackers.md):
+  a sync imports issues as tasks. An issue closes a task only while it is todo or
+  ready; a reopened issue reopens a done task. Tools: `tracker_list_issues`,
+  `tracker_get_issue`, `tracker_sync` (reading), `tracker_comment`,
+  `tracker_transition`, `tracker_create_issue` (writing). Issue bodies are wrapped
+  as untrusted text. API: `GET|PUT /api/trackers/projects/{id}` and
+  `POST /api/trackers/projects/{id}/sync`.
+
+- Google Workspace (Drive, Docs, Sheets, Calendar) and Microsoft Graph
+  (Outlook Calendar) connectors (docs/integrations.md): authenticate via service
+  account or OAuth for Google, or Entra app registration for Microsoft. Tools for
+  search, import, read, append, create on documents, spreadsheets and calendars.
+  The same Microsoft app registration backs the Teams chat channel.
+
+- Notion and Confluence connectors (docs/integrations.md): search, read a
+  page as markdown, import it into the workspace's files, create a page or
+  append to one. Read-only database connections per workspace (postgres,
+  mysql, clickhouse, sqlite) with a single-statement guard and a read-only
+  session, `db_list_connections`, `db_schema` and `db_query`, and
+  `/api/databases/connections`. The drivers (PyMySQL, clickhouse-connect, msal,
+  google-auth) are a new `connectors` extra, `requirements-connectors.txt`,
+  installed by the backend image and CI.
+- Bitbucket Cloud (username plus app password) and Gitea (base URL plus token)
+  git providers on the Connectors page alongside GitHub and GitLab. Repos, issue
+  import and publish work for them like for GitHub.
+
+### Changed
+
+- The Files tab of a project previews files the way the Artifacts page does
+  (`components/files/FileViewer.jsx`, shared by both): images, PDFs in the
+  browser's viewer or as extracted text, HTML in a sandboxed frame, Markdown
+  rendered, code highlighted, with a rendered/source switch and a download
+  button. `GET /api/projects/{id}/file-content` now returns `kind`,
+  `mime_type` and `truncated` (a long file is cut, not refused), the new
+  `GET /api/projects/{id}/file-raw` serves the bytes, and the file list skips
+  dependency and build folders such as `node_modules`.
+- The agent page's Config tab holds the prompt files alone. The version
+  history, the guardrails card, the pulse and the experiment card moved to
+  tabs of their own: **Versions**, **Guardrails**, **Pulse**, **Experiments**.
+- The visualizer no longer holds the mesh, scene and `view_serve` tools; it
+  hands 3D and web requests to the specialists (conversation handoff when the
+  user talks to it, `run_agent_tool` or `delegate_task_tool` when another agent
+  does). An install that already has the visualizer keeps its old tools (the
+  seed merges, never revokes) and receives the handoff and delegate lists on
+  its next start: `handoffs` is now a seed-owned field of system agents.
+- A file is named by its id in an address, not by its name or path. The Files
+  tab of a workspace and of a project keeps the open file as `?file=<id>`, a
+  chat link to a file an agent wrote carries the id, and the routes take
+  `file_id`: `GET /api/workspaces/{name}/file-content` and `file-raw`,
+  `DELETE /api/workspaces/{name}/files`, `GET /api/projects/{id}/file-content`
+  and `file-raw`, and `/api/shared-memory/{pool}/files/{file}` (index,
+  de-index, delete), which now take the id in the place of the file name. The
+  folder listings return `ids` (path to id) and the new `file-id` routes
+  register a file nothing wrote through the registry. A link or a client with
+  a path or a file name still works.
+
+### Fixed
+
+- Deleting a file or a folder on a workspace's Files tab, or a knowledge file
+  of a memory pool, now tombstones its workspace file records, so a link to
+  it answers 404 instead of a record whose content is gone.
+
+- A chart view follows the theme: it is drawn on its card with no slab of its
+  own (a spec that names a background is overridden), the dark vega theme
+  recolours axes, labels and legend, and a theme toggle re-embeds every view
+  instead of leaving it in the palette it mounted with
+  (`lib/themeColors.js: useAppliedMode`).
+- A chart fills its card. The renderer put `width: 'container'` and the
+  measured height on vega-embed's options, which hands them to the Vega view
+  as numbers, so a chart with a category axis fell back to Vega-Lite's 20px
+  band step: a sliver at the corner of the card. Both now go on the spec,
+  where Vega-Lite sizes the bands to them. The demo's sales chart is a sorted
+  horizontal bar chart with a titled axis and tooltips.
+
 ## [0.8.0] - 2026-09-30
 
 ### Added

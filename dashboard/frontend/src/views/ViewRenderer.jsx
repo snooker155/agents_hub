@@ -4,6 +4,10 @@ import TableView from './renderers/TableView';
 import ImageView from './renderers/ImageView';
 import AnnotationsLayer from './AnnotationsLayer';
 import { useI18n } from '../i18n';
+// The applied theme (the `dark` class ThemeContext toggles on <html>), as a
+// subscription: a toggle re-renders every view with the new theme, so a chart
+// embedded light is re-embedded dark instead of keeping the palette it mounted with.
+import { useAppliedMode } from '../lib/themeColors';
 
 // The kind → renderer dispatcher, mounted everywhere a view is shown (chat card,
 // Studio, gallery, message/task details). Heavy renderers (chart/diagram) are
@@ -23,14 +27,6 @@ const SlidesView = lazy(() => import('./renderers/SlidesView'));
 const DocumentView = lazy(() => import('./renderers/DocumentView'));
 const CodeView = lazy(() => import('./renderers/CodeView'));
 
-// Resolve the actually-applied theme from the DOM (ThemeContext toggles the
-// `dark` class on <html>), so renderers pick the right palette under 'system'.
-function resolvedTheme() {
-  if (typeof document !== 'undefined' && document.documentElement.classList.contains('dark')) {
-    return 'dark';
-  }
-  return 'light';
-}
 
 const RENDERERS = {
   markdown: ({ view }) => <MarkdownRenderer content={view?.spec?.markdown || ''} />,
@@ -70,9 +66,9 @@ function Fallback({ view }) {
 
 export default function ViewRenderer({ view, onSelect, onSendToAgent, onState, onOp, className = '' }) {
   const { t } = useI18n();
+  const theme = useAppliedMode();
   if (!view) return null;
   const Renderer = RENDERERS[view.kind] || Fallback;
-  const theme = resolvedTheme();
   const explain = (ann) => onSendToAgent && onSendToAgent(
     `Explain this ${ann.type || 'annotation'} on the "${view.title || view.kind}" view: ${ann.latex || ann.text || ann.title || ann.id}`,
   );

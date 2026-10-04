@@ -384,7 +384,10 @@ def open_receiving_run(request: Any, intent: HandoffIntent, *, handing_run_id: s
     from chat.context import build_chat_context
     from chat.runs import create_chat_run
 
-    receiving = request.model_copy(update={"agent_id": intent.to_agent_id, "instance_id": None})
+    # The version pin and the per-run overrides were asked for the handing
+    # agent (its versions, its tools); the receiving agent runs as it is.
+    receiving = request.model_copy(update={"agent_id": intent.to_agent_id, "instance_id": None,
+                                           "agent_version": None, "overrides": None})
     prompt, _workspace_abs = build_chat_context(receiving)
     run = create_chat_run(
         receiving,

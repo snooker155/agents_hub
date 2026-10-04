@@ -11,10 +11,15 @@ const STATUS_STYLES = {
   stopped:   { bg: 'bg-gray-100',   text: 'text-gray-600',   icon: Square },
   stop:      { bg: 'bg-orange-100', text: 'text-orange-700', icon: Square },
   pending:   { bg: 'bg-gray-100',   text: 'text-gray-500',   icon: Clock },
+  awaiting_approval: { bg: 'bg-amber-100', text: 'text-amber-800', icon: Clock },
 };
 
-export default function RunStatusBadge({ status }) {
+// `awaiting` is what a running chat turn waits on (common/tool_approvals.py):
+// a tool call held for a person reads as "awaiting approval", though the run
+// stays `running` so Stop and steering keep working on it.
+export default function RunStatusBadge({ status: rawStatus, awaiting = null }) {
   const { t } = useI18n();
+  const status = rawStatus === 'running' && awaiting?.kind === 'approval' ? 'awaiting_approval' : rawStatus;
   const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
   const Icon = s.icon;
   return (

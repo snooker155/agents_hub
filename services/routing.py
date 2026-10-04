@@ -59,7 +59,13 @@ def turn_payload(request: Any, kind: str, *, user_id: Optional[str] = None,
     """What a ``turn`` message carries: the request as JSON, which pipeline
     runs it, and who it acts as (the run is stamped and charged to them)."""
     dump = request.model_dump(mode="json") if hasattr(request, "model_dump") else dict(request)
-    return {"kind": kind, "request": dump, "user_id": user_id, "key_id": key_id}
+    payload = {"kind": kind, "request": dump, "user_id": user_id, "key_id": key_id}
+    # The end user of a widget or channel turn (common/secrets.py), so the
+    # replica acts on their consent token (docs/consent.md), not the hub's.
+    from common.secrets import current_end_user
+    if current_end_user():
+        payload["end_user"] = current_end_user()
+    return payload
 
 
 def dispatch_turn(request: Any, kind: str, *, user_id: Optional[str] = None,

@@ -157,6 +157,27 @@ def _require_agent(agent_id: str, workspace: str) -> str:
     return agent_id
 
 
+def validate_agent_version(agent_id: str, value: Any) -> Optional[int]:
+    """A stored version of ``agent_id`` the widget's turns are built from
+    (agents/versions.py), or None for the live definition."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise WidgetValidationError("agent_version must be a positive integer")
+    try:
+        version = int(value)
+    except (TypeError, ValueError) as exc:
+        raise WidgetValidationError("agent_version must be a positive integer") from exc
+    if version < 1:
+        raise WidgetValidationError("agent_version must be a positive integer")
+    from tasks.service import validate_agent_version as _validate
+    try:
+        _validate(agent_id, version)
+    except ValueError as exc:
+        raise WidgetValidationError(str(exc)) from exc
+    return version
+
+
 def agent_name(agent_id: Optional[str]) -> str:
     if not agent_id:
         return ""
@@ -200,6 +221,7 @@ def create_widget(payload: Dict[str, Any], *, owner_id: str) -> Dict[str, Any]:
         "accent": validate_accent(payload.get("accent")),
         "language": validate_language(payload.get("language")),
         "limits": validate_limits(payload.get("limits")),
+        "agent_version": validate_agent_version(agent_id, payload.get("agent_version")),
         "created_at": now,
         "updated_at": now,
         **_texts(payload, {}),
@@ -227,6 +249,12 @@ def update_widget(widget: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, 
         record["language"] = validate_language(payload["language"])
     if "limits" in payload and payload["limits"] is not None:
         record["limits"] = validate_limits(payload["limits"], base=record.get("limits"))
+    # A null agent_version clears the pin; a new agent without a pin given
+    # drops the old agent's pin (it names a version of the other agent).
+    if "agent_version" in payload:
+        record["agent_version"] = validate_agent_version(record["agent_id"], payload["agent_version"])
+    elif record.get("agent_id") != widget.get("agent_id"):
+        record["agent_version"] = None
     record.update(_texts(payload, record))
     record["updated_at"] = store.now_iso()
     return store.update_widget(record)

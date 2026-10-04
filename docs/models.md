@@ -57,4 +57,11 @@ Face, load and unload them. A model the runtime loads is added here under the
 provider `hub-local`, enabled, and disabled again when it is unloaded. See
 [local models](local-models.md).
 
-Related: [settings](settings.md), [costs](costs.md), [local models](local-models.md).
+## Special models
+
+Images, video, speech, transcription and models of a workspace's own are not
+chat models and are not in the catalog. The tab **Special models** picks them
+for the workspace chosen in the header, the same form as that workspace's
+settings. See [special models](special-models.md).
+
+Related: [settings](settings.md), [costs](costs.md), [local models](local-models.md), [special models](special-models.md).

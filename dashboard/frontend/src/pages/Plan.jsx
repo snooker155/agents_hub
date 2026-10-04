@@ -18,36 +18,15 @@ import {
   getAgents,
   getTelegramConfig,
   listFlows,
+  getSharedMemories,
 } from '../api';
-import {
-  CalendarClock,
-  Bell,
-  BellRing,
-  Plus,
-  RefreshCw,
-  Loader,
-  Trash2,
-  Pause,
-  Play,
-  X,
-  XCircle,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  Repeat,
-  Bot,
-  Pencil,
-  MailOpen,
-  Zap,
-  Send,
-  Workflow,
-  Rocket,
-} from 'lucide-react';
+import { Activity, AlertCircle, Bell, BellRing, Bot, Brain, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, Send, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
+import CronHint from '../components/CronHint';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -95,6 +74,24 @@ function KindBadge({ kind }) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
         <Workflow className="w-3 h-3" /> {t('plan.flow2')}
+      </span>
+    );
+  }
+  if (kind === 'heartbeat') {
+    // A proactive agent's pulse (docs/proactive.md), owned by the agent's
+    // profile: edited on the agent page, listed here like any other job.
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-700">
+        <Activity className="w-3 h-3" /> {t('plan.kinds.heartbeat')}
+      </span>
+    );
+  }
+  if (kind === 'memory_consolidate') {
+    // A pool and a few of its recent sessions folded into a new pool
+    // (memory/consolidation.py, "dreams"), reviewed on the Memory page.
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
+        <Brain className="w-3 h-3" /> {t('plan.kinds.memoryConsolidate')}
       </span>
     );
   }
@@ -154,7 +151,7 @@ function browserTimezone() {
 
 // ---- create / edit modal ----------------------------------------------------
 
-function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram }) {
+function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, telegram }) {
   const { t } = useI18n();
   const isEdit = !!job;
   const [kind, setKind] = useState(job?.kind || 'notification');
@@ -164,6 +161,8 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
   const [recurrence, setRecurrence] = useState(job?.recurrence || 'none');
   const [cron, setCron] = useState(job?.cron || '');
   const [tz, setTz] = useState(job?.timezone || browserTimezone());
+  const [consolidatePoolId, setConsolidatePoolId] = useState(job?.consolidate_pool_id || '');
+  const [consolidateSessionLimit, setConsolidateSessionLimit] = useState(job?.consolidate_session_limit ?? 10);
   const [agentId, setAgentId] = useState(job?.agent_id || '');
   const [flowId, setFlowId] = useState(job?.flow_id || '');
   const [seedText, setSeedText] = useState(job?.seed ? JSON.stringify(job.seed, null, 2) : '');
@@ -185,6 +184,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
     if (!title.trim()) { setError(t('plan.errors.titleRequired')); return; }
     if (!runAt) { setError(t('plan.errors.timeRequired')); return; }
     if (kind === 'flow' && !flowId) { setError(t('plan.errors.pickFlow')); return; }
+    if (kind === 'memory_consolidate' && !consolidatePoolId) { setError(t('plan.errors.pickPool')); return; }
     if (recurrence === 'cron' && !cron.trim()) { setError(t('plan.errors.cronRequired')); return; }
     let seed = null;
     if (kind === 'flow' && seedText.trim()) {
@@ -211,6 +211,10 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
           ...cronFields,
           agent_id: kind === 'agent_task' ? (agentId || null) : null,
           channels,
+          ...(kind === 'memory_consolidate' ? {
+            consolidate_pool_id: consolidatePoolId || null,
+            consolidate_session_limit: Number(consolidateSessionLimit) || 10,
+          } : {}),
         });
       } else {
         await createPlanJob({
@@ -225,6 +229,8 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
           flow_id: kind === 'flow' ? (flowId || null) : null,
           seed: kind === 'flow' ? seed : null,
           max_concurrent: kind === 'flow' ? (Number(maxConcurrent) || 0) : 1,
+          consolidate_pool_id: kind === 'memory_consolidate' ? consolidatePoolId : null,
+          consolidate_session_limit: kind === 'memory_consolidate' ? (Number(consolidateSessionLimit) || 10) : null,
           channels,
         });
       }
@@ -252,6 +258,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
               { value: 'notification', label: t('plan.kinds.notification'), icon: Bell, hint: t('plan.kinds.notificationHint') },
               { value: 'agent_task', label: t('plan.kinds.agentTask'), icon: Bot, hint: t('plan.kinds.agentTaskHint') },
               { value: 'flow', label: t('plan.kinds.flow'), icon: Workflow, hint: t('plan.kinds.flowHint') },
+              { value: 'memory_consolidate', label: t('plan.kinds.memoryConsolidate'), icon: Brain, hint: t('plan.kinds.memoryConsolidateHint') },
             ].map(({ value, label, icon: Icon, hint }) => (
               <button
                 key={value}
@@ -344,6 +351,10 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
           </div>
         )}
 
+        {recurrence !== 'none' && (
+          <CronHint recurrence={recurrence} cron={cron} timezone={tz} start={runAt} />
+        )}
+
         {kind === 'agent_task' && (
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.agent')}</label>
@@ -392,6 +403,31 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
                 placeholder='{"key": "value"}'
               />
               <p className="text-[11px] text-gray-400 mt-1">{t('plan.mergedIntoTheFlowApos')}</p>
+            </div>
+          </div>
+        )}
+
+        {kind === 'memory_consolidate' && (
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.consolidatePool')}</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={consolidatePoolId}
+                onChange={e => setConsolidatePoolId(e.target.value)}
+              >
+                <option value="">{t('plan.selectAPool')}</option>
+                {(pools || []).map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+              </select>
+            </div>
+            <div className="w-40">
+              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.consolidateSessionLimit')}</label>
+              <input
+                type="number" min="1" max="50"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={consolidateSessionLimit}
+                onChange={e => setConsolidateSessionLimit(e.target.value)}
+              />
             </div>
           </div>
         )}
@@ -453,6 +489,7 @@ export default function Plan() {
   const [notifications, setNotifications] = useState([]);
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [pools, setPools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showFinished, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
@@ -508,6 +545,7 @@ export default function Plan() {
   useEffect(() => {
     getAgents(workspaceFilter).then(r => setAgents(r.data || [])).catch(() => {});
     listFlows(workspaceFilter).then(r => setFlows(r.data || [])).catch(() => {});
+    getSharedMemories(workspaceFilter).then(r => setPools(r.data || [])).catch(() => {});
   }, [workspaceFilter]);
 
   useEffect(() => {
@@ -672,11 +710,13 @@ export default function Plan() {
                       ) : <span className="text-gray-400">{t('plan.once')}</span>}
                     </div>
                     <div className="md:text-center text-sm text-gray-600 truncate">
-                      {job.kind === 'agent_task'
+                      {job.kind === 'agent_task' || job.kind === 'heartbeat'
                         ? (job.agent_id || <span className="text-gray-400 italic">{t('plan.orchestrator')}</span>)
                         : job.kind === 'flow'
                           ? (job.flow_id || '—')
-                          : '—'}
+                          : job.kind === 'memory_consolidate'
+                            ? (pools.find(p => p.id === job.consolidate_pool_id)?.name || job.consolidate_pool_id || '—')
+                            : '—'}
                     </div>
                     <div className="md:text-center"><StatusBadge status={job.status} pausedReason={job.paused_reason} /></div>
                     <div className="flex md:justify-end items-center gap-1.5">
@@ -780,6 +820,7 @@ export default function Plan() {
           job={modalJob}
           agents={agents}
           flows={flows}
+          pools={pools}
           workspace={workspaceFilter}
           telegram={telegram}
           onClose={() => setModalJob(undefined)}

@@ -40,6 +40,9 @@ import PageLoader from '../components/PageLoader';
 const NETWORK_TYPES = ['unrestricted', 'none', 'limited'];
 const MODES = ['inherit', 'local', 'docker'];
 const SANDBOX_PROVIDERS = ['inherit', 'docker', 'local', 'e2b', 'modal'];
+// Keep in sync with environments/models.py SIZE_PRESETS (the size.hint
+// string below spells out what each one sets).
+const SANDBOX_SIZES = ['', 'small', 'medium', 'large'];
 
 function linesToList(text) {
   return (text || '')
@@ -118,6 +121,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
   const [allowPkgMgrs, setAllowPkgMgrs] = useState(env?.network?.allow_package_managers ?? true);
   const [sandboxProvider, setSandboxProvider] = useState(env?.sandbox_provider || 'inherit');
   const [providerAvailability, setProviderAvailability] = useState({});
+  const [size, setSize] = useState(env?.size || '');
   const [memory, setMemory] = useState(env?.limits?.memory || '');
   const [cpus, setCpus] = useState(env?.limits?.cpus || '');
   const [pidsLimit, setPidsLimit] = useState(env?.limits?.pids_limit ?? '');
@@ -150,6 +154,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
         allowed_hosts: networkType === 'limited' ? linesToList(allowedHostsText) : [],
         allow_package_managers: allowPkgMgrs,
       },
+      size: size || null,
       limits: {
         memory: memory.trim() || null,
         cpus: cpus.trim() || null,
@@ -305,6 +310,23 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             <p className="text-[11px] text-amber-600 mt-1">{providerAvailability[sandboxProvider].reason}</p>
           )}
           <p className="text-[11px] text-gray-400 mt-1">{t('environments.sandbox.hint')}</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.size.label')}</label>
+          <select
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={size}
+            onChange={(e) => setSize(e.target.value)}
+            aria-label={t('environments.size.label')}
+          >
+            {SANDBOX_SIZES.map((value) => (
+              <option key={value || 'none'} value={value}>
+                {value ? t(`environments.size.${value}`) : t('environments.size.none')}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-1">{t('environments.size.hint')}</p>
         </div>
 
         <div>
@@ -603,8 +625,13 @@ export default function Environments() {
                     <td className="px-4 py-3"><ModeBadge mode={env.mode} t={t} /></td>
                     <td className="px-4 py-3"><NetworkBadge network={env.network} t={t} /></td>
                     <td className="px-4 py-3 text-gray-600 text-xs">
+                      {env.size && (
+                        <span className="inline-block mr-1.5 text-[10px] font-bold uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                          {t(`environments.size.${env.size}`)}
+                        </span>
+                      )}
                       {[env.limits?.memory, env.limits?.cpus && `${env.limits.cpus} cpu`, env.limits?.pids_limit && `${env.limits.pids_limit} pids`]
-                        .filter(Boolean).join(' · ') || <span className="text-gray-400">—</span>}
+                        .filter(Boolean).join(' · ') || (!env.size && <span className="text-gray-400">—</span>)}
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs">
                       {t('environments.usageCounts', { instances: env.usage_counts?.instances || 0, jobs: env.usage_counts?.jobs || 0 })}

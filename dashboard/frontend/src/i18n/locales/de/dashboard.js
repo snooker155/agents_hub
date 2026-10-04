@@ -19,6 +19,8 @@ export default {
     instances: 'Instanzen',
     instancesLive: '{{count}} aktiv',
     noneRunning: 'keine laufend',
+    pulse: 'Puls',
+    pulseSub: '{{acted}} gehandelt · {{quiet}} still · {{skipped}} übersprungen (24 h)',
   },
   features: {
     heading: 'Funktionen',

@@ -3,6 +3,8 @@
 typer
 rich
 requests
+# `ah apply` reads its YAML and frontmatter files on the client side.
+pyyaml
 
 # These are NOT enough on their own. By default the CLI calls the service's
 # functions in this process, so it needs the service installed too:

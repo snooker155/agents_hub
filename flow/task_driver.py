@@ -93,9 +93,15 @@ def log_flow(flow_id, run_id, payload: Dict[str, Any]) -> None:
 def _resolve_agent_id(node: Dict[str, Any]) -> Optional[str]:
     """The agent a node runs, taken from its explicit ``agent_id``.
 
-    Nodes must carry a real agent id; there is no label/alias translation.
+    Nodes must carry a real agent id; there is no label translation. A
+    renamed agent's old id (agents.registry.LEGACY_AGENT_IDS) runs the agent
+    under its current id.
     """
-    return _node_value(node, "agent_id") or None
+    raw = _node_value(node, "agent_id")
+    if not raw:
+        return None
+    from agents.registry import resolve_agent_id
+    return resolve_agent_id(raw) or None
 
 
 def _close_node_run(

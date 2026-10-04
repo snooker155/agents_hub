@@ -452,6 +452,64 @@ def check_system_workspace(snap: Dict[str, Any]) -> Result:
             detail)
 
 
+# ── skills ───────────────────────────────────────────────────────────────────
+
+def check_skills(snap: Dict[str, Any]) -> Result:
+    """Skills from outside the team that the review flagged
+    (memory/skill_review.py): a high flag on a skill attached to an agent is
+    the thing to look at today, a flagged catalog entry before anyone
+    attaches it. Also counts skills with scripts and published skills whose
+    license is not open (the API refuses those, so a count here means an
+    older record). Skip when there are no skills."""
+    from memory.procedural import all_procedures
+    from memory.skill_review import is_publishable
+
+    procedures = all_procedures()
+    if not procedures:
+        return ("skip", "No skills in any workspace.", {})
+    attached_high: List[Dict[str, Any]] = []
+    catalog_high: List[Dict[str, Any]] = []
+    medium = 0
+    with_scripts = 0
+    unreviewed_repo = 0
+    unpublishable_shared = 0
+    for p in procedures:
+        safety = p.safety or {}
+        sev = safety.get("severity", "none")
+        row = {"id": str(p.id), "name": p.name, "workspace": p.workspace, "agent_id": p.agent_id or ""}
+        if sev == "high":
+            (attached_high if p.agent_id else catalog_high).append(row)
+        elif sev == "medium":
+            medium += 1
+        if safety.get("scripts"):
+            with_scripts += 1
+        if p.source == "repo" and p.safety is None:
+            unreviewed_repo += 1
+        if p.shared and not is_publishable(p):
+            unpublishable_shared += 1
+    detail = {
+        "skills": len(procedures), "attached_high": attached_high[:20],
+        "catalog_high": catalog_high[:20], "medium": medium, "with_scripts": with_scripts,
+        "unreviewed_repo": unreviewed_repo, "unpublishable_shared": unpublishable_shared,
+        "skill_scanner": shutil.which("skill-scanner") is not None,
+    }
+    if attached_high:
+        names = ", ".join(r["name"] for r in attached_high[:3])
+        return ("warn", f"{len(attached_high)} skill(s) attached to agents carry a high safety "
+                        f"flag ({names}); review them on the Skills page.", detail)
+    if unpublishable_shared:
+        return ("warn", f"{unpublishable_shared} published skill(s) carry a license that is not "
+                        "open; withdraw them from the global catalog.", detail)
+    if catalog_high:
+        return ("warn", f"{len(catalog_high)} catalog skill(s) carry a high safety flag; review "
+                        "them before attaching them to an agent.", detail)
+    if unreviewed_repo:
+        return ("warn", f"{unreviewed_repo} repository skill(s) have no review yet; run Sync "
+                        "from repositories on their Skills page.", detail)
+    return ("ok", f"{len(procedures)} skills, none with a high flag"
+                  + (f", {with_scripts} with scripts" if with_scripts else "") + ".", detail)
+
+
 # ── the list and the runner ──────────────────────────────────────────────────
 
 CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
@@ -468,6 +526,7 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("sandbox", "Sandbox providers", check_sandbox),
     ("frontend_build", "Frontend build", check_frontend_build),
     ("system_workspace", "System workspace", check_system_workspace),
+    ("skills", "Skill safety review", check_skills),
 ]
 
 

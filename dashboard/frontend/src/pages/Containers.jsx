@@ -12,6 +12,7 @@ import PreviewFrame from '../components/preview/PreviewFrame';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 const TABS = [
@@ -100,9 +101,7 @@ function LogViewer({ name, onClose }) {
         </div>
         <div className="flex-1 overflow-auto p-4 bg-gray-950 rounded-b-xl">
           {loading ? (
-            <div className="flex items-center justify-center h-32 text-gray-400">
-              <Loader className="w-5 h-5 animate-spin mr-2" /> {t('containers.loading')}
-            </div>
+            <PageLoader size="sm" label={t('containers.loading')} />
           ) : (
             <pre className="text-xs text-green-400 whitespace-pre-wrap leading-5">
               {logs || '(no output)'}
@@ -137,9 +136,7 @@ function DockerfileViewer({ agentId, onClose }) {
         </div>
         <div className="flex-1 overflow-auto p-4 bg-gray-950 rounded-b-xl">
           {loading ? (
-            <div className="flex items-center gap-2 text-gray-400 h-32 justify-center">
-              <Loader className="w-4 h-4 animate-spin" /> {t('containers.loading')}
-            </div>
+            <PageLoader size="sm" label={t('containers.loading')} />
           ) : (
             <pre className="text-xs text-cyan-300 whitespace-pre-wrap leading-5">{content}</pre>
           )}

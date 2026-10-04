@@ -91,6 +91,9 @@ def task_create(
     description: Optional[str] = typer.Option(None, "--desc", "-d", help="Task description."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
     decompose: bool = typer.Option(False, "--decompose", help="Auto-decompose into subtasks."),
+    agent_version: Optional[int] = typer.Option(
+        None, "--agent-version", min=1,
+        help="Pin the task's runs to this stored version of the agent it is assigned."),
 ):
     """Create a new task."""
     workspace = _active_workspace(workspace)
@@ -104,6 +107,8 @@ def task_create(
         body["project_id"] = project
     if decompose:
         body["should_decompose"] = True
+    if agent_version is not None:
+        body["agent_version"] = agent_version
 
     t = call(hub().create_task, body)
     console.print(f"[green]Task created:[/green] [bold]{str(t.get('id', ''))[:8]}[/bold]  {t.get('title')}")
@@ -113,14 +118,29 @@ def task_create(
 def task_assign(
     task_id: str = typer.Argument(..., help="Task ID (full or prefix)."),
     agent_id: str = typer.Argument(..., help="Agent ID to assign."),
+    agent_version: Optional[int] = typer.Option(
+        None, "--agent-version", min=1,
+        help="Run this stored version of the agent (this launch only; the task's own pin otherwise)."),
+    overrides: Optional[str] = typer.Option(
+        None, "--overrides", help="Per-run overrides as JSON (model, system, tools, skills, mcp, ...)."),
+    overrides_file: Optional[str] = typer.Option(
+        None, "--overrides-file", help="Read the per-run overrides from this JSON file (- for stdin)."),
 ):
     """Assign an agent to a task and start execution.
 
     Whether the run needs approval first is the workspace's assignment_mode, not
     a per-call choice; this always assigns directly.
     """
+    from cli.commands.agent import read_overrides
+
     task_id = _resolve_task_id(task_id)
-    result = call(hub().assign_task, task_id, agent_id)
+    params: dict = {}
+    if agent_version is not None:
+        params["agent_version"] = agent_version
+    run_overrides = read_overrides(overrides, overrides_file)
+    if run_overrides:
+        params["overrides"] = run_overrides
+    result = call(hub().assign_task, task_id, agent_id, params or None)
     console.print(f"[green]Assigned[/green] agent [bold]{agent_id}[/bold] to task [bold]{task_id[:8]}[/bold]")
     if result.get("run_id"):
         console.print(f"[dim]Run ID: {result['run_id']}[/dim]")

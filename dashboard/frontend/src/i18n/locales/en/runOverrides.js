@@ -1,0 +1,20 @@
+export default {
+  title: 'Run overrides',
+  hint: 'This run was built with these changes to the agent, for this run only.',
+  keys: {
+    model: 'Model',
+    provider: 'Provider',
+    system: 'Instructions (replaced)',
+    system_append: 'Instructions (appended)',
+    tools: 'Tools',
+    skills: 'Skills',
+    mcp: 'MCP servers',
+    tool_policy: 'Tool policy',
+    output_schema: 'Answer schema',
+  },
+  toolsAdd: 'added: {{tools}}',
+  toolsRemove: 'removed: {{tools}}',
+  skillsOn: 'on',
+  skillsOff: 'off',
+  none: 'none',
+};

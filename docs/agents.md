@@ -67,7 +67,7 @@ The registry keeps a history of an agent's past definitions. Right before a
 change replaces the stored record, or the dashboard's definition editor
 rewrites one of the three markdown files, the state about to be overwritten is
 snapshotted, unless it is already identical to the latest snapshot or the
-incoming write changes nothing. The Config tab's Version History section lists
+incoming write changes nothing. The agent page's **Versions** tab lists
 each snapshot with a summary of what changed since the one before it: tools
 added or removed, a model change, which markdown files were touched.
 
@@ -90,6 +90,42 @@ The run page panel shows that version against the agent's current one and offers
 The task page has a version picker (live or a stored version, via `PATCH /api/tasks/{id}` with `agent_version`, validated against the assigned agent's versions). The Deployments page job editor has the same picker for an `agent_task` job with an agent; `agent_version` requires `agent_id` on the job and is copied onto the task at fire time.
 
 A subtask never inherits its parent's pin, because a subtask usually runs a different agent. Environment and budget are inherited instead.
+
+Every other way to start a run takes a pin too, and a pinned run never quietly builds the live definition:
+
+| Where | How to pin |
+|---|---|
+| Task launch | `params.agent_version` on `POST /api/tasks/{id}/assign` (this launch only), else the task's own pin |
+| Chat turn | `agent_version` in the chat request (`/api/chat/message`, `/api/chat/stream`) |
+| `/v1` agent model | `agent_version` in the completion body (`extra_body` in an OpenAI SDK) |
+| Service | the service's `agent_version`: chat turns, `/v1`, widget turns and plain messages to its replicas |
+| Widget | the widget's `agent_version` (the widget form has a picker) |
+| Resident worker | a task taken by an instance in `node` mode builds the task's pin |
+| CLI | `ah agent run AGENT TEXT --agent-version N`, `ah task assign TASK AGENT --agent-version N`, `ah task create TITLE --agent-version N` |
+
+An unknown version is refused (400, or 404 on `/v1`). The run record says `agent_version_pinned: true` when the run was asked for its version, and the run page shows it as pinned. A pin names a version of one agent: when the conversation is handed to another agent, the receiving agent runs as it is.
+
+## Editing an agent that changed meanwhile
+
+Agent edits are optimistic: `GET /api/agents/{id}`, `GET /api/agents/{id}/definition` and every successful write under `/api/agents/{id}` return the definition hash as `ETag` (and the stored version as `X-Agent-Version`). A write may send it back as `If-Match: "<hash>"`, or `expected_version` in the JSON body (a version number or the hash). When the agent changed since, the write is refused with 409 and nothing is written: `{"detail", "error": "version_conflict", "current_hash", "current_version"}`. A write without either goes through as before, and `If-Match: *` always matches. The agent page sends the token on every edit and, on a conflict, asks whether to reload or overwrite.
+
+## Per-run overrides
+
+One run can differ from its agent without the agent changing: an `overrides` object, accepted by a task launch (`params.overrides`), a chat request, `/v1` agent completions, `ah agent run --overrides JSON` (or `--overrides-file PATH`), `ah task assign --overrides` and `python -m runtime.agent_run --overrides`. Keys:
+
+| Key | Effect |
+|---|---|
+| `model`, `provider` | the run's model |
+| `system` | replaces the agent's own instructions; workspace instructions, memory and tool guidance are still added |
+| `system_append` | appended to the agent's instructions (after `system` when both are given) |
+| `tools` | a list that replaces the tool list, or `{"add": [...], "remove": [...]}` |
+| `skills` | `true` or `false` turns skills on or off; a list of skill names lists only those |
+| `mcp` | MCP server ids; the run gets `mcp:<id>` for each instead of the record's servers |
+| `tool_policy` | entries merged over the agent's tool policy |
+| `output_schema` | JSON Schema the final answer must match |
+| `max_concurrent_delegates` | 1..32, over the agent's own default (6); see "Delegation" below |
+
+An unknown key, an unknown tool id or an invalid schema is a 400. The run's tool set goes through the capability guard against the record's own: a combination the record does not already form is refused (409), whatever the record's `capability_override`. The older `--tool-policy` and `--output-schema` flags (and the `tool_policy` / `output_schema` launch params) still work and fold into the object. The run record keeps the object as `overrides` and the run page lists it. An overridden build has its own entry in the agent build cache.
 
 ## Delegation
 
@@ -115,11 +151,27 @@ call returns after the launch; `get_agent_status_tool` and `get_task_result` on
 the subtask id read the outcome later, and the subtask shows under its parent
 on the task page with the model the run used.
 
+A run may not have more than `max_concurrent_delegates` (default 6) delegated
+subtasks running at once: the agent's own field (Model tab's loop settings
+card), or an `overrides.max_concurrent_delegates` just for one run (1..32,
+above `max_concurrent_delegates` in the per-run overrides table). A launch
+past the limit is refused with a clear message naming how many are already
+running; a `wait=false` launch still counts against it until its child
+finishes. The value reaches a container run as an environment variable the
+same way the delegation depth does.
+
 A handoff is the other kind of hand-over: instead of asking another agent for a
 result, the agent gives the conversation to it, and that agent answers the user
 from then on. The targets (`handoffs`) and the history the receiver sees by
 default (`handoff_history`) are set on the agent's Tools tab. See
 [handoffs](handoffs.md).
+
+## Inheritance
+
+An agent can `extend` another instead of being entirely its own: it starts
+from the parent's prompt, tools, model and the rest, and declares only what
+is particular to it, live against whatever the parent currently is. A system
+agent can be a parent, never a child. See [agent-inheritance](agent-inheritance.md).
 
 ## The agent page
 
@@ -127,8 +179,10 @@ One page per agent, in tabs:
 
 - **Overview**: the description, the model in use, the memory card (own
   pool, personal memory or neither) and what is running.
-- **Instructions**: the three layered files, editable, with versions
-  ("Versions" above).
+- **Config**: the three layered prompt files, editable, and the assembled
+  system prompt the agent actually receives. Nothing else lives here.
+- **Versions**: the definition's version history ("Versions" above): what
+  changed, the diff against what is live, rollback.
 - **Tools**: each tool as a compact card that toggles on click, up to six to
   a row, with its permission policy picked inside the card and the default
   for the other tools in the header ([tool-policy](tool-policy.md)); the
@@ -153,6 +207,12 @@ One page per agent, in tabs:
 - **Docker**: the agent's image and environment
   ([containers](containers.md)); when Docker is missing or not answering the
   tab says so instead of calling every image "not built".
+- **Pulse**: the agent's own schedule, quiet hours, budget, brief and
+  triggers, and the feed of its ticks ([proactive](proactive.md)).
+- **Guardrails**: which guardrails already apply and the `selected` ones the
+  agent opts into ([guardrails](guardrails.md)).
+- **Experiments**: an A/B experiment between two stored versions
+  ([experiments](experiments.md)).
 
 **Run** on the page starts a resident [instance](instances.md); **Deploy**
 keeps the agent running as a [service](services.md) with replicas.
@@ -166,4 +226,4 @@ keeps the agent running as a [service](services.md) with replicas.
 - `run_agent_tool` is refused inside a tracked task. Use `delegate_task_tool`
   there (a subtask run, optionally on another model), or assign and start.
 
-Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md).
+Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md), [proactive](proactive.md).

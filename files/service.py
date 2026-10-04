@@ -385,7 +385,9 @@ def create_file(workspace: str, name: str, data: bytes, *, mime_type: Optional[s
         shutil.rmtree(path.parent, ignore_errors=True)
         raise
     blobs.mirror(storage_key)
-    return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
+    record = get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
+    _emit_file_event(ws, record, "added")
+    return record
 
 
 def _storage_key(file_id: str) -> str:
@@ -481,6 +483,54 @@ def file_at_path(workspace: str, rel_path: str) -> Optional[Dict[str, Any]]:
     return _row_to_record(row) if row else None
 
 
+def folder_path_of(file_id: str, workspace: str) -> Optional[str]:
+    """The workspace-relative path of the folder file ``file_id`` in
+    ``workspace``, or None when the id is unknown, deleted, of another
+    workspace, or a stored upload rather than a file of the folder."""
+    row = _fetch(file_id)
+    if row is None:
+        return None
+    ws = _workspace_name(workspace)
+    prefix = f"{WORKSPACES_DIR}/{ws}/"
+    key = str(row["storage_key"] or "")
+    if row["workspace"] != ws or not key.startswith(prefix):
+        return None
+    return key[len(prefix):] or None
+
+
+def folder_ids(workspace: str) -> Dict[str, str]:
+    """Workspace-relative path to file id for every live record of a file in
+    the workspace folder, so a listing of the folder can link each file by id."""
+    ws = _workspace_name(workspace)
+    prefix = f"{WORKSPACES_DIR}/{ws}/"
+    rows = db.get_conn().execute(
+        "SELECT file_id, storage_key FROM workspace_files WHERE workspace = ? AND deleted_at IS NULL "
+        "ORDER BY created_at",
+        (ws,),
+    ).fetchall()
+    ids: Dict[str, str] = {}
+    for row in rows:
+        key = str(row["storage_key"] or "")
+        if key.startswith(prefix):
+            ids.setdefault(key[len(prefix):], str(row["file_id"]))
+    return ids
+
+
+def ensure_folder_record(workspace: str, rel_path: str, *,
+                         created_by: Optional[str] = None) -> Dict[str, Any]:
+    """The record of the folder file at ``rel_path``, registered first when
+    nothing wrote it through the registry (a file a process outside the
+    tools put there). A hidden file or one under a skipped folder is never
+    registered (``is_indexable``). Raises like :func:`register_path`."""
+    found = file_at_path(workspace, rel_path)
+    if found is not None:
+        return found
+    rel = workspace_rel_path(rel_path)
+    if not is_indexable(rel):
+        raise FileError(f"'{rel}' is in a folder the registry does not follow")
+    return register_path(workspace, rel, source=_folder_source(rel), created_by=created_by)
+
+
 def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
                    meta: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
     """:func:`register_path` plus what happened: ``added``, ``updated`` or
@@ -543,6 +593,19 @@ def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
     return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, values))), "added"
 
 
+def _emit_file_event(ws: str, record: Optional[Dict[str, Any]], change: str) -> None:
+    """Tell the proactive agents listening for files (proactive/events.py).
+    Best-effort: the file is already stored, a pulse that cannot be woken
+    is logged and nothing else."""
+    if not record or change == "unchanged":
+        return
+    try:
+        from proactive.events import file_changed
+        file_changed(ws, record, change)
+    except Exception:  # noqa: BLE001 - waking a pulse is a side channel of the write
+        log.debug("file event dispatch failed for %s", record.get("file_id"), exc_info=True)
+
+
 def register_path(workspace: str, rel_path: str, *, source: str = "agent",
                   created_by: Optional[str] = None,
                   meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -559,7 +622,46 @@ def register_path(workspace: str, rel_path: str, *, source: str = "agent",
     """
     ws = _workspace_name(workspace)
     rel = workspace_rel_path(rel_path)
-    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
+    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
+    _emit_file_event(ws, record, status)
+    return record
+
+
+def write_folder_file(workspace: str, rel_path: str, data: bytes, *, source: str = "upload",
+                      created_by: Optional[str] = None) -> Dict[str, Any]:
+    """Put ``data`` at ``<workspace folder>/rel_path`` and register it.
+
+    An upload that names a path lands in the folder, where the agents' file
+    tools see it, instead of the file store; the record is the one
+    :func:`register_path` keeps for folder files, so an existing file at the
+    path is replaced and its record updated in place. The limits are checked
+    before anything is written, so a refused upload leaves the folder as it
+    was. Raises :class:`FileError` for a path that leaves the workspace.
+    """
+    ws = _workspace_name(workspace)
+    rel = workspace_rel_path(rel_path)
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    data = bytes(data)
+    size = len(data)
+    per_file = max_file_bytes()
+    if size > per_file:
+        raise FileTooLarge(
+            f"'{rel}' is {size} bytes; the limit is {per_file} bytes per file ({MAX_FILE_MB_ENV})")
+    path = AGENTS_HUB_ROOT / _path_key(ws, rel)
+    previous = int(path.stat().st_size) if path.is_file() and not path.is_symlink() else 0
+    quota = max_workspace_bytes()
+    used = workspace_usage(ws)
+    if used - previous + size > quota:
+        raise WorkspaceQuotaExceeded(
+            f"workspace '{ws}' holds {used} bytes of files; adding {size} would pass its "
+            f"limit of {quota} bytes ({MAX_WORKSPACE_MB_ENV})")
+    if path.is_symlink() or path.is_dir():
+        raise FileError(f"'{rel}' is not a regular file of workspace '{ws}'")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
+    _emit_file_event(ws, record, status)
     return record
 
 
@@ -577,6 +679,17 @@ def unregister_path(workspace: str, rel_path: str) -> bool:
                      (_now(), str(row["file_id"])))
     blobs.delete(key)
     return True
+
+
+def unregister_tree(workspace: str, rel_dir: str) -> int:
+    """Tombstone the records of every folder file under ``rel_dir``, a
+    folder deleted from the workspace. Returns how many there were."""
+    ws = _workspace_name(workspace)
+    prefix = workspace_rel_path(rel_dir) + "/"
+    gone = [rel for rel in folder_ids(ws) if rel.startswith(prefix)]
+    for rel in gone:
+        unregister_path(ws, rel)
+    return len(gone)
 
 
 def _folder_source(rel: str) -> str:
@@ -735,6 +848,29 @@ def extract_text(file_id: str) -> Optional[str]:
     return data.decode("utf-8", errors="replace")
 
 
+def preview_path(path: Path, *, max_chars: int = 200_000) -> Dict[str, Any]:
+    """A preview of a file on disk that is not a registered record (a
+    project's folder): ``{kind, mime_type, text, truncated}`` read the way
+    :func:`extract_text` reads a record. ``kind`` is ``pdf`` (text extracted,
+    None without a PDF library), ``text`` or ``binary`` (``text`` None)."""
+    record = {"name": path.name, "mime_type": guess_mime(path.name)}
+    with open(path, "rb") as fh:
+        head = fh.read(8192)
+    if is_pdf(record):
+        kind, text = "pdf", _pdf_text(path)
+    elif is_text(record, head):
+        # A text file bigger than the preview is cut, not refused: four
+        # bytes per character is the worst case of UTF-8.
+        with open(path, "rb") as fh:
+            data = fh.read(max_chars * 4 + 1)
+        kind, text = "text", data.decode("utf-8", errors="replace")
+    else:
+        kind, text = "binary", None
+    truncated = text is not None and len(text) > max_chars
+    return {"kind": kind, "mime_type": record["mime_type"],
+            "text": text[:max_chars] if text is not None else None, "truncated": truncated}
+
+
 def _size_label(size: int) -> str:
     size = int(size or 0)
     if size < 1024:
@@ -863,10 +999,11 @@ def materialize(file_ids: List[str], dest_dir: Any) -> List[Path]:
 __all__ = [
     "FileError", "FileTooLarge", "WorkspaceQuotaExceeded",
     "create_file", "get_file", "get_files", "list_files", "read_bytes", "local_path",
-    "delete_file", "materialize", "locate_copy", "text_for_prompt", "extract_text", "describe",
+    "delete_file", "materialize", "locate_copy", "text_for_prompt", "extract_text", "preview_path", "describe",
     "find_duplicate", "workspace_usage", "limits", "max_file_bytes", "max_workspace_bytes",
     "record_use", "list_uses", "display_name", "disk_name", "guess_mime", "is_text", "is_pdf",
     "new_file_id", "FILE_ID_RE", "SOURCES",
-    "register_path", "unregister_path", "index_workspace", "file_at_path", "is_indexable",
+    "register_path", "unregister_path", "unregister_tree", "index_workspace", "file_at_path",
+    "is_indexable", "folder_path_of", "folder_ids", "ensure_folder_record",
     "workspace_rel_path", "WORKSPACES_DIR", "INDEX_SKIP_DIRS", "FOLDER_SOURCES",
 ]

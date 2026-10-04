@@ -6,4 +6,5 @@ export default {
   jobFieldLabel: 'Agent version',
   jobFieldLive: 'Live',
   saveFailed: 'Could not save the agent version pin',
+  widgetHint: 'Visitors talk to this version of the agent. Live follows every change to the agent.',
 };

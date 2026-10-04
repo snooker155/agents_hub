@@ -13,6 +13,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { inputClass, apiMessage } from './playground/world-spec';
 import PlaygroundSwitch from './playground/nav';
+import PageLoader from '../components/PageLoader';
 
 /**
  * Worlds — the environments a user builds instead of the ones we shipped.
@@ -96,9 +97,7 @@ export default function PlaygroundWorlds() {
       )}
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-gray-500 py-10">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </div>
+        <PageLoader />
       ) : worlds.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
           <Globe2 className="w-8 h-8 text-gray-300 mx-auto mb-3" />

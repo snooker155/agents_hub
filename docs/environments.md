@@ -45,11 +45,29 @@ Chat code panel use for a run in this environment: `inherit` (the default:
 which is where the *agent itself* runs; `sandbox_provider` is only where a
 snippet the agent hands to `run_code` runs.
 
+## Sandbox size
+
+`size` is `small`, `medium`, `large`, or unset. It sets `memory`, `cpus` and
+`pids_limit` together, as a named bundle instead of three separate numbers:
+
+| Size | cpus | memory | pids_limit |
+|---|---|---|---|
+| `small` | 1 | 1g | 128 |
+| `medium` | 2 | 4g | 256 |
+| `large` | 4 | 8g | 512 |
+
+An explicit value under **Limits** below always overrides the matching
+preset value, so naming a size and setting one limit on top of it (a bigger
+`pids_limit`, say) keeps the rest of the preset. A docker-mode run's
+container is priced per hour against its size (or, with no size, per vCPU
+against its effective `cpus`): see [costs](costs.md) "Container hours".
+
 ## Limits
 
 `memory`, `cpus` and `pids_limit` on a docker-mode environment become the
-container's `--memory`, `--cpus` and `--pids-limit`. Left unset, a run keeps
-the run profile's own defaults.
+container's `--memory`, `--cpus` and `--pids-limit`, overriding the matching
+value of the `size` preset above when both are set. Left unset entirely (no
+size, no explicit limit), a run keeps the run profile's own defaults.
 
 ## Network
 
@@ -111,6 +129,11 @@ userinfo in the proxy URL the run is handed
 the hosts of the configured model providers and the hub's own services (so a
 `network: none` run can still reach its model). An unknown or expired token
 gets `407`; a host outside the list gets `403`.
+
+The proxy also carries [secrets bound to hosts](secrets.md#secrets-bound-to-hosts):
+a run holding such a placeholder is routed through it even when its network is
+`open` (with a token that allows every host), and an environment's own token
+gains the secret hosts. Only for those hosts does the proxy terminate TLS.
 
 ## Plain variables
 

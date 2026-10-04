@@ -49,6 +49,38 @@ def _store():
     return ProjectStore(path=PROJECTS_FILE)
 
 
+def _project_denied(project) -> Optional[str]:
+    """The scope error for a project of another workspace, else None
+    (common/workspace_scope.py): an agent sees only the projects of the
+    workspace its run belongs to, the service's own agents every project."""
+    from common.workspace_scope import check_record
+    return check_record(getattr(project, "workspace", None), what=f"project {getattr(project, 'id', '')}")
+
+
+def visible_project(project_id: str):
+    """The project ``project_id`` names when the running agent may see it,
+    else None: a project of another workspace is not found."""
+    project = _store().get(project_id)
+    if project is None or _project_denied(project):
+        return None
+    return project
+
+
+def resolve_visible_project(ref: str):
+    """A project by id, or by an unambiguous name/folder match, among the
+    projects the running agent may see (tools/git_publish.py, project_deploy,
+    trackers). A project of another workspace is neither found by its id nor
+    makes a name of this workspace ambiguous."""
+    from workspace import project_folder_name
+
+    projects = [p for p in _store().list() if not _project_denied(p)]
+    for p in projects:
+        if p.id == ref:
+            return p
+    matches = [p for p in projects if p.name == ref or project_folder_name(p.name) == ref]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _simplify(project, *, tasks_count: Optional[int] = None) -> Dict[str, Any]:
     from workspace import project_folder_name
 
@@ -157,6 +189,11 @@ def _list_projects(workspace: Optional[str] = None, status: Optional[str] = None
     from tasks import service as tasks_service
 
     ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    if workspace:
+        from common.workspace_scope import check_record
+        denied = check_record(ws, what=f"workspace '{ws}'")
+        if denied:
+            return _json_err(denied, code="not_found")
     projects = [p for p in _store().list() if not ws or p.workspace == ws]
     if status:
         projects = [p for p in projects
@@ -201,7 +238,8 @@ def _create_project(
             "No workspace given and no active workspace — pass `workspace`.",
             code="no_workspace",
         )
-    if get_workspace_folder(ws) is None:
+    from common.workspace_scope import check_record
+    if check_record(ws, what=f"workspace '{ws}'") or get_workspace_folder(ws) is None:
         return _json_err(f"Workspace '{ws}' not found", code="not_found")
 
     bad = _enum_error(type, _TYPES, "type")
@@ -257,7 +295,7 @@ def _get_project(project_id: str) -> str:
     """Get a project's full record: workspace, folder, repo link, frontend/backend config and task count."""
     from tasks import service as tasks_service
 
-    project = _store().get(project_id)
+    project = visible_project(project_id)
     if not project:
         return _json_err("Project not found", code="not_found",
                          extra={"project_id": project_id})
@@ -285,7 +323,7 @@ def _modify_project(
     the reversible alternative to deleting.
     """
     store = _store()
-    if not store.get(project_id):
+    if not visible_project(project_id):
         return _json_err("Project not found", code="not_found",
                          extra={"project_id": project_id})
 
@@ -337,7 +375,7 @@ def _delete_project(project_id: str) -> str:
     from tasks import service as tasks_service
 
     store = _store()
-    project = store.get(project_id)
+    project = visible_project(project_id)
     if not project:
         return _json_err("Project not found", code="not_found",
                          extra={"project_id": project_id})
@@ -398,6 +436,8 @@ PROJECT_MANAGEMENT_TOOLS = [
 ]
 
 __all__ = [
+    "resolve_visible_project",
+    "visible_project",
     "list_projects_tool",
     "create_project_tool",
     "get_project_tool",

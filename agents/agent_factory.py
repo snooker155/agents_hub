@@ -77,6 +77,7 @@ from tools.schedule_management import (
     list_scheduled,
     cancel_scheduled,
     update_scheduled,
+    wake_agent,
 )
 
 
@@ -273,7 +274,13 @@ class AgentFactory:
         if spec is None:
             raise FileNotFoundError(f"Agent '{agent_id}' not found in agents.json")
 
-        system_prompt = assemble_prompt(spec.def_id(), definitions_dir=self.definitions_dir)
+        if spec.extends:
+            # A child (agents/inheritance.py): its own text merged into its
+            # parent chain's effective prompt.
+            from agents.inheritance import effective_prompt
+            system_prompt = effective_prompt(spec, definitions_dir=self.definitions_dir)
+        else:
+            system_prompt = assemble_prompt(spec.def_id(), definitions_dir=self.definitions_dir)
 
         return {
             "id": spec.id,
@@ -504,6 +511,7 @@ class AgentFactory:
             list_scheduled,
             cancel_scheduled,
             update_scheduled,
+            wake_agent,
         ]
 
         alias_groups: Dict[str, List[str]] = {
@@ -552,31 +560,42 @@ class AgentFactory:
         # The assignment is resolved per workspace — each workspace has its own.
         _pool_id: Optional[str] = None
         _extra_pool_ids: List[str] = []
+        _ro_pool_ids: frozenset = frozenset()
         if agent_id:
             from agents.registry import get_agent as _reg_get_pool
-            from memory.binding import effective_memory_pools
+            from memory.binding import effective_memory_pools, effective_read_only_pools
             _spec_pool = _reg_get_pool(agent_id)
             _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override, personal_pool)
                           if _spec_pool else [])
             if _mem_pools:
                 _pool_id = _mem_pools[0]
                 _extra_pool_ids = _mem_pools[1:]
+            # A pinned pool_override (the Memory page looking at one pool) is
+            # not the agent's own binding, so it is never read only this way.
+            if _spec_pool is not None and not pool_override:
+                _ro_pool_ids = effective_read_only_pools(_spec_pool, workspace)
 
         if _pool_id:
             from memory.knowledge_extract import create_extraction_tools
             memory_tools = [
                 *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write,
-                                     personal_pool_id=personal_pool),
+                                     personal_pool_id=personal_pool, read_only_pool_ids=_ro_pool_ids),
                 *create_extraction_tools(_pool_id),
                 *skills_tools,
             ]
         else:
-            memory_tools = [
+            # The pool-id tools reach only pools bound to the agent in this
+            # workspace (memory/tool.py, common/workspace_scope.py): with none
+            # bound they would refuse every call, so a workspace run does not
+            # offer them. Outside a workspace (and for the service's own
+            # agents) they stay as they were.
+            from common.workspace_scope import is_service_wide as _svc_wide
+            _generic = [] if (_ws_name and not _svc_wide(agent_id)) else [
                 read_memory_tool, write_memory_tool, search_memory_tool,
                 read_structured_memory_tool, write_structured_memory_tool,
                 append_journal_tool,
-                *skills_tools,
             ]
+            memory_tools = [*_generic, *skills_tools]
 
         from tools.graph_builder import GRAPH_BUILDER_TOOLS
         # Web tools are plain per-tool grants (no group alias): web_search and
@@ -596,6 +615,15 @@ class AgentFactory:
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
         available.extend(WORKSPACE_FILE_TOOLS)
+        # The workspace's special models (tools/special_models.py): plain
+        # per-tool grants; one without a model in the run's workspace
+        # answers that the model is not added.
+        from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
+        available.extend(SPECIAL_MODEL_TOOL_OBJECTS)
+        # Connector tools (tools/connector_tools.py): plain per-tool grants,
+        # like the web tools; each works only when its connector is set up.
+        from tools.connector_tools import connector_tools
+        available.extend(connector_tools())
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -625,6 +653,15 @@ class AgentFactory:
         inputs (markdown, registry spec, workspace/model settings) change.
         """
         from agents import agent_cache
+        from agents.registry import resolve_agent_id
+
+        # A renamed agent's old id (a stored team, scenario or chat that still
+        # names it) builds the agent under its current id, and a role reference
+        # (``@coder``) the agent that holds the role here (agents/roles.py).
+        if str(agent_id or "").startswith("@"):
+            from agents.roles import resolve as _resolve_role
+            agent_id = _resolve_role(agent_id, workspace)
+        agent_id = resolve_agent_id(agent_id)
 
         # A/B experiment arm (evals/experiments.py): open_run pinned a stored
         # version for this agent's run. Building with ``definition_version``
@@ -637,6 +674,19 @@ class AgentFactory:
             if pin is not None:
                 override_params = {**override_params, "definition_version": int(pin["version"])}
                 _record_experiment_assignment(pin)
+
+        # Per-run overrides (agents/run_overrides.py): the old separate
+        # ``tool_policy``/``output_schema`` keywords fold into the one object,
+        # normalised so the cache key below is the same for two requests that
+        # mean the same override, and different from the plain build's.
+        if any(k in override_params for k in ("run_overrides", "tool_policy", "output_schema")):
+            from agents import run_overrides as _ro
+            _params = dict(override_params)
+            _folded = _ro.fold_legacy(_params.pop("run_overrides", None),
+                                      tool_policy=_params.pop("tool_policy", None),
+                                      output_schema=_params.pop("output_schema", None),
+                                      check_tool_ids=False)
+            override_params = {**_params, **_ro.build_kwargs(_folded)}
 
         # Personal memory (memory/personal.py): the user's own pool, attached
         # next to the agent's own pools (or alone when it has none). Passed as
@@ -665,6 +715,10 @@ class AgentFactory:
     def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
         """``load_definition``'s shape, from a stored version instead of the
         live registry record and markdown files (an experiment arm)."""
+        if isinstance(parts.get("effective"), dict):
+            # A child's version: its own text is in the top level keys, what
+            # it ran with (merged with its chain) under "effective".
+            parts = parts["effective"]
         instructions = str(parts.get("instructions") or "")
         prompt_parts = [instructions]
         capabilities = str(parts.get("capabilities") or "").strip()
@@ -732,6 +786,26 @@ class AgentFactory:
         if _snapshot is not None:
             _spec = _snapshot[0]
 
+        # Per-run overrides (agents/run_overrides.py), one object: the model,
+        # the instructions, the tool list, skills, MCP servers, a tool policy
+        # merged over the record's (a proactive tick woken by untrusted input
+        # puts its outbound tools on "ask") and an answer schema (read by the
+        # loop's structured-output extension off the spec). The spec takes the
+        # policy, schema and skills switch here; the definition takes the
+        # instructions and tools below; the model joins the config. The old
+        # ``output_schema``/``tool_policy`` keywords are folded in, so a direct
+        # caller of this method keeps working. Popped so none of it reaches
+        # the agent constructor as a stray keyword.
+        from agents import run_overrides as _ro
+        _run_overrides = _ro.fold_legacy(
+            override_params.pop("run_overrides", None),
+            tool_policy=override_params.pop("tool_policy", None),
+            output_schema=override_params.pop("output_schema", None),
+            check_tool_ids=False,
+        )
+        _spec = _ro.apply_to_spec(_spec, _run_overrides)
+        override_params.update(_ro.model_params(_run_overrides))
+
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
         # field — it decides which pool the memory tools are bound to and which
@@ -758,6 +832,15 @@ class AgentFactory:
         # three belong to the remote service. Branch before any of that work so
         # a remote record never touches the LangChain assembly path.
         if _spec is not None and _spec.is_remote():
+            # An imported agent (Claude Code, Codex, any remote service) gets
+            # the conversation sent to its own endpoint: a way out of an
+            # isolated workspace (common/isolation.py), so it does not run there.
+            from common import isolation as _iso
+            from common.workspace_context import workspace_name_from_path as _ws_of
+            if workspace and _iso.is_isolated(_ws_of(workspace)):
+                raise _iso.IsolationError(
+                    f"'{_spec.id}' is an imported agent that runs outside the hub; workspace "
+                    f"'{_ws_of(workspace)}' is isolated, so it cannot run there.")
             from agents.remote_agent import RemoteAgent
             return RemoteAgent(
                 agent_id=_spec.id,
@@ -770,6 +853,14 @@ class AgentFactory:
 
         definition = (dict(_snapshot[1]) if _snapshot is not None
                       else self.load_definition(agent_id))
+        # The run's own instructions and tool list (run_overrides). A tool set
+        # the override changed is judged against the record's before anything
+        # is built: a combination the record does not already form is refused
+        # (CapabilityViolation), whatever the record's capability_override.
+        if _run_overrides:
+            definition = _ro.apply_to_definition(definition, _run_overrides)
+            if _ro.changes_tools(_run_overrides):
+                _ro.guard_tools(agent_id, list(definition.get("tools") or []), _spec)
 
         # Resolve model first — the provider drives auto defaults (e.g. episodic
         # write off for local providers). Injection below only changes tools and
@@ -801,9 +892,11 @@ class AgentFactory:
             try:
                 from memory.procedural import ProcedureStore as _SkillStore
                 from common.workspace_context import normalize_workspace_name as _norm_ws
+                from agents.inheritance import skill_owner_ids as _skill_owners
                 _skills_ws = _norm_ws(workspace)
+                _owners = set(_skill_owners(agent_id))
                 if _skills_ws and any(
-                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id == agent_id
+                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id in _owners
                 ):
                     _skill_tools.append("read_skill_file")
             except Exception:  # noqa: BLE001 - a store hiccup only drops the optional file tool
@@ -824,8 +917,13 @@ class AgentFactory:
         # Inject skills catalog (name + description only) into system prompt
         if ws_name and _spec and _spec.skills_enabled:
             try:
-                from memory.procedural import inject_skills_catalog as _inject_catalog
-                config["system_prompt"] = _inject_catalog(agent_id, ws_name, config.get("system_prompt", ""))
+                if isinstance(_run_overrides.get("skills"), list):
+                    # A run that names its skills lists only those.
+                    config["system_prompt"] = _ro.skills_catalog(
+                        agent_id, ws_name, config.get("system_prompt", ""), _run_overrides["skills"])
+                else:
+                    from memory.procedural import inject_skills_catalog as _inject_catalog
+                    config["system_prompt"] = _inject_catalog(agent_id, ws_name, config.get("system_prompt", ""))
             except Exception:
                 pass
 
@@ -994,8 +1092,21 @@ class AgentFactory:
         # the last one that should run outside the workspace's hooks and the
         # approval gate. A server that will not connect is skipped with its
         # error recorded on its own entry, never failing the build.
-        from mcp_client import append_mcp_tools
-        tools = append_mcp_tools(tools, tool_list, workspace)
+        from common import isolation as _isolation
+        from common.workspace_context import workspace_name_from_path as _ws_name_of
+        _isolated_ws = _isolation.is_isolated(_ws_name_of(workspace)) if workspace else False
+        if not _isolated_ws:
+            # An isolated workspace never connects an MCP server: a stdio one
+            # runs a command on the hub's host, a remote one is a way out.
+            from mcp_client import append_mcp_tools
+            tools = append_mcp_tools(tools, tool_list, workspace)
+
+        # A tool result past the workspace's spill size goes to a file under
+        # tool-outputs/ and the model sees its head, its tail and the path
+        # (agents/tool_spill.py). Innermost, so the hooks, the gate and the
+        # run's tool-call record all see the preview. Unchanged when off.
+        from agents.tool_spill import wrap_tools as _spill_wrap
+        tools = _spill_wrap(tools, workspace=workspace)
 
         # Human in the loop at the level of a single tool call: every action tool
         # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
@@ -1051,6 +1162,62 @@ class AgentFactory:
                     + HANDOFF_PROMPT
                 )
 
+        # Advisor (tools/advisor.py), only for an agent that names an advisor
+        # model. Appended after the guard like the handoff tool: it only asks
+        # a model a question the agent writes, acting on nothing outside the run.
+        if _spec is not None and getattr(_spec, "advisor_model", None):
+            from tools.advisor import advisor_prompt, create_advisor_tools
+            _advisor_tools = create_advisor_tools(_spec, workspace)
+            if _advisor_tools:
+                from agents.loop_ext.settings import workspace_loop_setting
+                tools = [*tools, *_advisor_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n"
+                    + advisor_prompt(_spec.advisor_model,
+                                     int(workspace_loop_setting(workspace, "advisor_max_calls") or 0))
+                )
+
+        # Consent portal (connectors/consent/, docs/consent.md), only for an
+        # agent whose consent settings name a provider. Appended after the
+        # guard like the handoff tool: one hands the end user a link, the
+        # other drops their own grant, and neither reaches anything else.
+        if _spec is not None:
+            try:
+                from connectors.consent.tools import consent_tools_for
+                _consent_tools, _consent_prompt = consent_tools_for(_spec)
+            except Exception:  # noqa: BLE001 - no consent tables yet: build without the tools
+                log.debug("consent tools unavailable for %s", agent_id, exc_info=True)
+                _consent_tools, _consent_prompt = [], ""
+            if _consent_tools:
+                tools = [*tools, *_consent_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _consent_prompt
+                )
+
+        # Special models (providers/special.py): the agent is told which of
+        # its special model tools have a model in this workspace and which do
+        # not. A tool without one stays and answers that the model is not
+        # added, so the agent can say so instead of quietly doing without.
+        from providers.special import SPECIAL_MODEL_TOOLS, prompt_section as _special_prompt
+        _tool_names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+        if any(n in SPECIAL_MODEL_TOOLS for n in _tool_names):
+            _special_text = _special_prompt(_tool_names, _ws_name_of(workspace) if workspace else None)
+            if _special_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _special_text
+                )
+
+        # Workspace roles (agents/roles.py): an agent that hands work to
+        # `@coder` and the like is told which agent holds each role here.
+        if _spec is not None:
+            from agents.roles import prompt_section as _roles_prompt
+            _roles_text = _roles_prompt(_spec, _ws_name_of(workspace) if workspace else None)
+            if _roles_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _roles_text
+                )
+
         if _memory_access == "read":
             from memory.binding import MEMORY_WRITE_TOOLS
             _before = len(tools)
@@ -1065,6 +1232,42 @@ class AgentFactory:
                     "record_episode, block writes) are not available here. Do not claim to "
                     "have saved anything."
                 )
+
+        # An isolated workspace (common/isolation.py): whatever the record and
+        # the automatic additions above hold, only the allowlist reaches the
+        # model. A shared agent (the main agent) keeps working here with less;
+        # the prompt says what was taken off so it does not promise it.
+        if _isolated_ws:
+            _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+            _kept_names, _removed = _isolation.filter_tools(_names)
+            if _removed:
+                tools = [t for t, n in zip(tools, _names) if _isolation.tool_allowed(n)]
+                log.info("isolated workspace: %s runs without %s", agent_id, ", ".join(sorted(set(_removed))))
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n## This workspace is isolated\n"
+                "Shell commands and code run in a sandbox container with no network at all. "
+                "You can read web pages only from the sites this workspace allows, with "
+                "fetch_url, web_search and the read only browser tools; nothing can be sent "
+                "out. Tools that would reach outside are not available here"
+                + (f" ({', '.join(sorted(set(_removed)))})" if _removed else "")
+                + ". Do not offer to send, post, publish or connect anything."
+            )
+
+        # One workspace per run (common/workspace_scope.py), in every
+        # workspace: tools that see the whole service stay with the service's
+        # own agents, workspace management with the main agent in "default",
+        # and a tool that takes a workspace may name only the run's own.
+        from common import workspace_scope as _scope
+        _run_ws = _ws_name_of(workspace) if workspace else None
+        _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or ""))
+        if _out_of_scope:
+            tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
+            log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
+        if _run_ws and not _scope.is_service_wide(agent_id):
+            from agents.isolation_guard import pin_workspace
+            tools = pin_workspace(tools, _run_ws)
 
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
@@ -1081,6 +1284,7 @@ class AgentFactory:
             + secret_grant_ids(list(getattr(_spec, "secrets", None) or []) + _extra_secrets if _spec else _extra_secrets),
             override=bool(_spec.capability_override) if _spec else False,
             delegates=list(_spec.delegates or []) if _spec else [],
+            isolated=_isolated_ws,
         )
 
         # Create agent

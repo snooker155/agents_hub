@@ -263,6 +263,10 @@ def _run_flow_once(
 
 # ── The loop ─────────────────────────────────────────────────────────────────
 
+from common.workspace_context import own_context  # noqa: E402 - kept beside its only use
+
+
+@own_context
 def run_loop(
     loop_id: str,
     *,

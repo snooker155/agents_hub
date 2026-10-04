@@ -39,6 +39,17 @@ def _store():
     return entity_chat_store()
 
 
+def _require_own(kind: str, entity_id: str) -> None:
+    """A chat keyed on a person (the Help panel's ``("help", "user-<id>")``)
+    is that person's alone: anyone else gets the same 404 as a thread that
+    does not exist, so a key cannot be probed. Every other kind is keyed on
+    a shared record and stays as open as the record itself."""
+    from routes.help_chat import HELP_CHAT_KIND, help_chat_id
+
+    if kind == HELP_CHAT_KIND and entity_id != help_chat_id():
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+
 @router.get("/sessions")
 async def list_entity_chat_sessions(
     kind: str = Query(...), entity_id: str = Query(...),
@@ -52,6 +63,7 @@ async def list_entity_chat_sessions(
     Empty for a chat nobody has written in yet, which is a state the list
     renders rather than an error.
     """
+    _require_own(kind, entity_id)
     return _store().history(kind, entity_id)
 
 
@@ -60,6 +72,7 @@ async def activate_entity_chat_session(payload: ActivateIn):
     """Reopen one thread, filing the current one under the archive."""
     from chat.entity_chat import entity_run_active
 
+    _require_own(payload.kind, payload.entity_id)
     if entity_run_active(payload.kind, payload.entity_id):
         raise HTTPException(status_code=409,
                             detail="A turn is still running in this chat")
@@ -77,6 +90,7 @@ async def delete_entity_chat_session(
     session_id: str = Query(...),
 ):
     """Drop one archived thread. The live one is cleared, not deleted."""
+    _require_own(kind, entity_id)
     if not _store().delete_session(kind, entity_id, session_id):
         raise HTTPException(status_code=404, detail="Chat session not found")
     return {"deleted": True, **_store().history(kind, entity_id)}

@@ -105,6 +105,31 @@ def _agent_version_for(
         return None
 
 
+def _agent_chain_for(agent_id: Optional[str], version: Optional[int]) -> Optional[list]:
+    """The inheritance chain a run of a child agent built from, root first:
+    ``[{id, version}]`` (agents/inheritance.py ``run_chain``), the one the
+    version row recorded when there is one. None for an agent that extends
+    nothing. Never raises."""
+    if not agent_id:
+        return None
+    try:
+        from agents import versions as agent_versions
+        if version is not None:
+            row = agent_versions.get_version_row(agent_id, int(version))
+            chain = ((row or {}).get("definition") or {}).get("chain")
+            if isinstance(chain, list) and chain:
+                return chain
+        from agents.registry import get_agent_raw
+        raw = get_agent_raw(agent_id)
+        if raw is None or not raw.extends:
+            return None
+        from agents.inheritance import run_chain
+        return run_chain(agent_id, version)
+    except Exception:  # noqa: BLE001 - best-effort, like agent_version: a run record never fails over it
+        log.debug("could not resolve the inheritance chain for '%s'", agent_id, exc_info=True)
+        return None
+
+
 def run_log_path(run_id: str) -> Path:
     """Canonical log file path for an agent run. Every run channel writes here
     so the UI can treat every run uniformly."""
@@ -179,6 +204,13 @@ def preopen_run(
         )
         if av is not None:
             record["agent_version"] = av
+            # The run was asked for this version (a task, a launch, a chat
+            # turn or a service pinned it), as opposed to landing on it.
+            if agent_version_pin is not None and av == int(agent_version_pin):
+                record["agent_version_pinned"] = True
+        chain = _agent_chain_for(agent_id, av)
+        if chain:
+            record["agent_chain"] = chain
     _upsert_run(record)
     if link_to_session and session_id:
         try:
@@ -249,8 +281,14 @@ def open_run(
             agent_id, requested_version=agent_version_pin,
             definition_hash=record.get("definition_hash"), route_experiment=True,
         )
-        if av is not None:
-            _update_run(run_id, {"agent_version": av})
+        chain = _agent_chain_for(agent_id, av)
+        if av is not None or chain:
+            _update_run(run_id, {**({"agent_version": av} if av is not None else {}),
+                                 **({"agent_version_pinned": True}
+                                    if agent_version_pin is not None and av is not None
+                                    and av == int(agent_version_pin)
+                                    else {}),
+                                 **({"agent_chain": chain} if chain else {})})
     if link_to_session and session_id:
         try:
             from common.session_service import add_run_to_session as _link
@@ -289,14 +327,19 @@ def close_run(
     """Mark a run as finished and return the updated record.
 
     Extra keyword arguments (e.g. process=...) are merged into the update.
+    The run token its launch was given stops sliding and keeps a short grace
+    for the events still in flight (common/run_tokens.py).
     """
-    return _update_run(run_id, {
+    record = _update_run(run_id, {
         "status": status,
         "finished_at": _utc_now_iso(),
         "exit_code": exit_code,
         "error": error,
         **extra,
     })
+    from common import run_tokens
+    run_tokens.retire_for_run(run_id)
+    return record
 
 
 def close_run_from_result(

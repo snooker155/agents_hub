@@ -21,34 +21,13 @@ import {
 } from '../api';
 import { getAgentVersions } from '../api/agentVersions';
 import { listWorkspaceFiles, uploadWorkspaceFileObject } from '../api/files';
-import {
-  Rocket,
-  Plus,
-  RefreshCw,
-  Loader,
-  Trash2,
-  Pause,
-  Play,
-  X,
-  XCircle,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  Repeat,
-  Bot,
-  Pencil,
-  Zap,
-  Workflow,
-  RotateCw,
-  History,
-  AlertTriangle,
-  Upload,
-} from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Upload, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { DeployStatusPill } from '../components/projects/DeployPanel';
 import { listDeployedApps } from '../api';
 import { useI18n } from '../i18n';
+import CronHint from '../components/CronHint';
 
 // Project deployments (docs/project-deployments.md): the apps the hub runs
 // for projects of this workspace, each opening on its project's Deploy tab.
@@ -127,6 +106,9 @@ function StatusBadge({ status, pausedReason, t }) {
 function KindIcon({ kind }) {
   if (kind === 'flow') return <Workflow className="w-3.5 h-3.5" />;
   if (kind === 'loop') return <RotateCw className="w-3.5 h-3.5" />;
+  // A proactive agent's pulse (docs/proactive.md): owned by the agent's
+  // profile, listed here because every tick is a deployment-shaped firing.
+  if (kind === 'heartbeat') return <Activity className="w-3.5 h-3.5" />;
   return <Bot className="w-3.5 h-3.5" />;
 }
 
@@ -423,6 +405,10 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
         )}
 
         {recurrence !== 'none' && (
+          <CronHint recurrence={recurrence} cron={cron} timezone={tz} start={runAt} />
+        )}
+
+        {recurrence !== 'none' && (
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
             <input
               type="checkbox"
@@ -533,7 +519,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                     )}
                     {/* Upload straight from the form: the file lands in the
                         workspace's file store and is selected here at once. */}
-                    <label className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
+                    <label className={`relative inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
                       {uploading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                       {t('deployments.uploadFile')}
                       <input type="file" multiple className="sr-only" onChange={onUpload} disabled={uploading} aria-label={t('deployments.uploadFile')} />
@@ -746,7 +732,7 @@ export default function Deployments() {
 
   const fetchData = useCallback(async () => {
     try {
-      const { data } = await getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop']);
+      const { data } = await getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat']);
       setJobs(data || []);
     } catch (err) {
       console.error('Failed to load deployments', err);

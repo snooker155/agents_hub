@@ -1,0 +1,28 @@
+export default {
+  title: 'Gedächtniskonsolidierung',
+  hint: 'Faltet diesen Pool und einige seiner letzten Sitzungen zu einem neuen Pool zusammen: doppelte Einträge zusammengeführt, veraltete Fakten ersetzt, Erkenntnisse herausgezogen. Der Quellpool wird nie verändert.',
+  sessionsLabel: 'letzte Sitzungen',
+  runNow: 'Jetzt ausführen',
+  none: 'Es wurde noch keine Konsolidierung ausgeführt.',
+  status: {
+    queued: 'Wartet',
+    running: 'Läuft',
+    done: 'Fertig',
+    failed: 'Fehlgeschlagen',
+    discarded: 'Verworfen',
+  },
+  blocks: 'Blöcke',
+  notes: 'Notizen',
+  slots: 'Strukturierte Felder',
+  noChanges: 'Der Vorschlag hat nichts geändert.',
+  pickAgent: 'Agent zum Umschalten wählen…',
+  switchBinding: 'Bindung umschalten',
+  discard: 'Verwerfen',
+  applied: 'Der Agent nutzt jetzt den konsolidierten Pool.',
+  errors: {
+    load: 'Die Konsolidierungshistorie konnte nicht geladen werden',
+    start: 'Die Konsolidierung konnte nicht gestartet werden',
+    apply: 'Die Bindung konnte nicht umgeschaltet werden',
+    discard: 'Das Ergebnis konnte nicht verworfen werden',
+  },
+};

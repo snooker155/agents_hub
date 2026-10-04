@@ -19,7 +19,10 @@ Canonical payload::
           "text":       str,           # plain-text output
           "structured": dict | None,   # AgentResponse payload (buttons, ...)
       },
-      "tool_calls":        [{step, tool, input, output}, ...],
+      "tool_calls":        [{step, tool, input, output,
+                             evaluated_permission, reason_code}, ...],
+                                    # the last two: what the tool gate made
+                                    # of the call (tools/permission_policy.py)
       "reasoning":         [str, ...],  # chronological thinking/trace lines
       "llm_invocations":   [...],       # per-LLM-call structured records
       "llm_raw_responses": [...],       # raw LLMResult dumps

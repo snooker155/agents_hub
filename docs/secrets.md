@@ -60,6 +60,13 @@ is whoever started it (the signed-in account in `multi` mode, `local`
 otherwise); a run started by a schedule or the system has no user, so only
 agent and workspace-wide values apply.
 
+Personal grants from end users are secrets too: `CONSENT_GOOGLE` and
+`CONSENT_MICROSOFT` at agent and user scope, where the user is a widget
+visitor or a channel chat (`widget:…`, `channel:…`) rather than a hub
+account. The consent portal writes and reads them; no run receives them in
+its environment, and they show in the list with that principal as the user
+(docs/consent.md).
+
 ## The agent's allowlist
 
 An agent receives a secret only if its record lists the name in `secrets`:
@@ -173,6 +180,53 @@ token of the person who launched it, when they connected their GitHub account
 on the Account page. An explicit secret always wins. See
 [github-app](github-app.md).
 
+## Secrets bound to hosts
+
+A secret may name the hosts it is for: `allowed_hosts` on the Secrets card
+(the Hosts column, editable in place), `ah secrets set NAME --host api.github.com`
+(repeatable, `--any-host` clears it), or
+`PUT /api/workspaces/{name}/secrets/{secret}/hosts` with `{"allowed_hosts": [...]}`.
+A host covers its subdomains, as in the egress allowlist.
+
+Such a secret never reaches the run in plain text. The run's environment holds
+a placeholder (`ahsec_` and 32 random characters) under the secret's name, and
+the run is routed through the [egress proxy](environments.md#the-egress-proxy)
+with a token that knows its placeholders. For the secret's hosts the proxy
+terminates TLS with a certificate it mints under a hub CA, swaps each
+placeholder in the request headers (inside `Authorization: Basic` too) and the
+request target for the real value, and opens its own TLS connection to the
+real server, verified the usual way. Every other host keeps the plain
+`CONNECT` tunnel. A placeholder the proxy can see on its way to any other host,
+or one this run does not hold, is refused with 403 and logged, with an
+`egress.secret_refused` audit row: that is what exfiltration looks like.
+Request bodies are not rewritten.
+
+The run trusts the hub CA through `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
+`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` (a bundle of the system CAs, `certifi`
+and the hub CA, at `<AGENTS_HUB_ROOT>/egress/ca-bundle.pem`) and
+`NODE_EXTRA_CA_CERTS` (the hub CA alone). The CA key is generated on first use
+under `<AGENTS_HUB_ROOT>/egress_ca/` with mode 0600, encrypted with the hub's
+secret key, so a docker run that mounts the state directory cannot sign with
+it; `AGENTS_HUB_EGRESS_CA_DIR` moves it elsewhere. A docker run that holds
+placeholders also loses `AGENTS_HUB_SECRET_KEY` from its environment, since
+with the key and the mounted database it could decrypt the real values. A
+local run shares the hub's filesystem and its `.env`, so the substitution
+there keeps values out of the model's view and off foreign hosts, but it is
+not a boundary against code that reads the hub's own files: use docker mode
+when that matters.
+
+The proxy has to be on (`AGENTS_HUB_EGRESS_PROXY=1`). With it off, a launch
+whose agent would receive a host-bound secret is refused with a message that
+says so, rather than handing the value out unbound or silently leaving it out.
+`AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1` hands such secrets over in plain text
+instead, with a warning in the log.
+
+In a chat turn, which runs inside the backend with no proxy in between, the
+hub's own code asks for a secret with the host it is about to call
+(`common.secrets.get(name, host=...)`); a host-bound secret is withheld from a
+call that names no host or another host. The git connector does this for its
+provider's API.
+
 ## Gotchas
 
 - **Rotating the key re-encrypts nothing.** Values written under the old key
@@ -204,3 +258,4 @@ on the Account page. An explicit secret always wins. See
 - [containers](containers.md): how a docker run gets its environment
 - [cli](cli.md): the `ah` command
 - [github-app](github-app.md): GitHub tokens the hub issues itself
+- [consent](consent.md): end users' own Google and Microsoft grants, kept as personal secrets

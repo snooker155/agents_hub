@@ -202,6 +202,12 @@ async def list_marketplace_skills(workspace: Optional[str] = None):
             "description": p.description,
             "steps_count": len(p.steps),
             "steps": list(p.steps),
+            # The text an installed copy would carry, so the skill can be read
+            # before it is installed.
+            "body": p.body or "",
+            "resources": list(p.resources),
+            "license": p.license or "",
+            "safety": dict(p.safety) if p.safety else None,
             "tags": list(p.tags),
             "source": p.source,
             "owner_workspace": p.workspace,

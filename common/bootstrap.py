@@ -14,6 +14,9 @@ deliberate exception (the last bullet):
   `bootstrap/workspaces/default/` only when it does not exist.
 - system agents shipped in `bootstrap/agents.json` are added to an existing
   registry when missing, so installs predating a new system agent pick it up.
+- an agent that was renamed (`agents.registry.LEGACY_AGENT_IDS`) has its stored
+  references rewritten to the new id, once, with a backup written first
+  (common/legacy_agent_ids.py). The old id keeps resolving through the alias.
 - for system agents that already exist, the fields the seed owns (tools,
   description, tier) are synced from it on every start, so a newly granted tool
   reaches installs that were created before it. Records the operator has edited
@@ -167,7 +170,7 @@ def ensure_system_agent(agent_id: str) -> bool:
 # declare it. Everything else (provider, model, temperature, capacity, memory
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
-_SEED_OWNED_FIELDS = ("description", "system", "delegates")
+_SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs")
 
 
 def _is_system_seed(ad: dict) -> bool:
@@ -220,9 +223,12 @@ def _sync_system_agents() -> list[str]:
         return []
 
     try:
-        from tools.capabilities import check_combination
+        from tools.capabilities import check_combination, is_recognised_tool_id as _recognised
     except ImportError:
         check_combination = None  # type: ignore[assignment]
+
+        def _recognised(_tool_id: str) -> bool:  # without the model, nothing can be called retired
+            return True
 
     changed: list[str] = []
     for ad in (live_raw.get("agents") or []):
@@ -242,9 +248,23 @@ def _sync_system_agents() -> list[str]:
         # from a stale list, and silently revoking a tool the operator relies on
         # is far worse than carrying one they no longer need. Seed order first,
         # so the record still reads like the shipped one.
+        #
+        # The one exception is an id the capability model no longer recognises
+        # at all: a tool that was renamed or retired (nodes became instances,
+        # so `node_logs` became `instance_logs`). It grants nothing, resolves
+        # to nothing at build time and only makes the guard log an unknown id
+        # on every build, so carrying it is not preservation, just noise.
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
-        effective = seed_tools + [t for t in live_tools if t not in seed_tools]
+        extra = [t for t in live_tools if t not in seed_tools]
+        retired = [t for t in extra if not _recognised(t)]
+        if retired:
+            log.warning(
+                "system agent sync: %r drops %s — no such tool exists any more.",
+                ad.get("id"), retired,
+            )
+            extra = [t for t in extra if t not in retired]
+        effective = seed_tools + extra
 
         # The merged set is checked even when it is identical to what is already
         # on disk: a record can already hold a blocked combination (the guard
@@ -338,8 +358,128 @@ def _sync_system_agents() -> list[str]:
         except Exception:
             log.exception("system agent sync: could not write the pre-sync backup to %s", backup)
 
+    held = _hold_back_inherited_grants(before, live_raw["agents"], changed)
     replace_all_raw(live_raw["agents"])
+    _record_held_back(held)
     return changed
+
+
+#: List fields a seed update can grow on a system parent and a child can
+#: decline with a ``-item`` delta (agents/inheritance.py LIST_FIELDS).
+_HOLD_BACK_FIELDS = ("tools", "delegates", "handoffs")
+
+
+def _hold_back_inherited_grants(before: list, after: list, changed: list) -> dict[str, dict]:
+    """Keep an upgrade from handing a child a blocked capability combination.
+
+    Every other save of a parent re-checks its children and is refused when
+    one of them would form a blocked combination (agents.registry.add_agent).
+    A seed update cannot be refused: it is the product changing. So a child
+    that the updated system parent would push over the line instead declines
+    what the parent gained in this update: each new item becomes a ``-item``
+    delta on the child, which therefore runs exactly as before. Children that
+    stay within the guard follow the parent as usual.
+
+    Mutates ``after`` (raw records) and returns ``{child_id: {field: [items]}}``
+    for :func:`_record_held_back`. Never raises: on any failure the sync goes
+    ahead and the build time guard still stops a child that would violate.
+    """
+    held: dict[str, dict] = {}
+    if not changed:
+        return held
+    try:
+        from agents import inheritance
+        from agents.capability_guard import CapabilityViolation, enforce_agent_tools
+        from agents.registry import _validate_agent_dict
+        from tools.capabilities import secret_grant_ids
+
+        def specs(records):
+            out = []
+            for rec in records:
+                try:
+                    out.append(_validate_agent_dict(rec))
+                except Exception:  # noqa: BLE001 - an invalid record is skipped here as everywhere else
+                    log.debug("hold back: skipping invalid record %r", rec.get("id"), exc_info=True)
+            return out
+
+        old_resolved = inheritance.resolve_all(specs(before))
+        by_id = {str(rec.get("id")): rec for rec in after if isinstance(rec, dict)}
+        children: list[str] = []
+        for parent_id in changed:
+            for cid in inheritance.unpinned_descendants(parent_id, specs(after)):
+                if cid not in children:
+                    children.append(cid)
+
+        for cid in children:  # nearest first, so a grandchild sees its parent's hold back
+            new_resolved = inheritance.resolve_all(specs(after))
+            new, old, rec = new_resolved.get(cid), old_resolved.get(cid), by_id.get(cid)
+            if new is None or old is None or rec is None:
+                continue
+            try:
+                enforce_agent_tools(
+                    cid, list(new.tools or []) + secret_grant_ids(new.secrets),
+                    previous_tools=list(old.tools or []) + secret_grant_ids(old.secrets),
+                    override=bool(rec.get("capability_override")),
+                    workspace=rec.get("owner_workspace"),
+                    delegates=list(new.delegates or []),
+                )
+                continue
+            except CapabilityViolation:
+                pass
+            deltas = dict(rec.get("list_deltas") or {})
+            gained: dict[str, list] = {}
+            for field_name in _HOLD_BACK_FIELDS:
+                was = list(getattr(old, field_name, None) or [])
+                new_items = [x for x in (getattr(new, field_name, None) or []) if x not in was]
+                if not new_items:
+                    continue
+                delta = dict(deltas.get(field_name) or {})
+                delta["remove"] = list(delta.get("remove") or []) + [
+                    x for x in new_items if x not in (delta.get("remove") or [])]
+                delta["add"] = [x for x in (delta.get("add") or []) if x not in new_items]
+                deltas[field_name] = delta
+                gained[field_name] = new_items
+            if gained:
+                rec["list_deltas"] = deltas
+                held[cid] = gained
+                log.warning(
+                    "system agent sync: %r keeps its previous setup and declines %s from its "
+                    "updated parent, which would have given it a blocked capability combination.",
+                    cid, gained,
+                )
+    except Exception:  # noqa: BLE001 - the sync must go ahead; the build time guard still applies
+        log.warning("system agent sync: could not check the children of updated system agents",
+                    exc_info=True)
+    return held
+
+
+def _record_held_back(held: dict[str, dict]) -> None:
+    """A version history row and an inbox notification for every child the
+    upgrade held back, so the decision is visible, not silent."""
+    for cid, gained in held.items():
+        items = ", ".join(x for values in gained.values() for x in values)
+        note = (f"Upgrade: kept the previous setup and declined {items} from the parent, "
+                "which would have formed a blocked capability combination.")
+        try:
+            from agents.versions import snapshot_if_changed
+            snapshot_if_changed(cid, actor="upgrade", note=note)
+        except Exception:  # noqa: BLE001 - history is best effort
+            log.debug("could not snapshot %r after holding it back", cid, exc_info=True)
+        try:
+            from agents.registry import get_agent_raw
+            from plans.service import create_notification
+            raw = get_agent_raw(cid)
+            create_notification(
+                title=f"Agent {cid} did not take its parent's new tools",
+                body=(f"After the update its parent gained {items}. Together with this agent's own "
+                      "setup that would form a blocked capability combination, so the agent keeps "
+                      "working as before without them. Review it on its Inheritance tab."),
+                severity="warning",
+                source={"kind": "agent", "id": cid},
+                workspace=getattr(raw, "owner_workspace", None),
+            )
+        except Exception:  # noqa: BLE001 - the inbox is best effort
+            log.debug("could not notify about holding back %r", cid, exc_info=True)
 
 
 def _grandfather_capability_violations() -> list[str]:
@@ -392,12 +532,95 @@ def ensure_initial_state() -> dict[str, bool]:
         "agents_file": _seed_agents_file(),
         "default_workspace": _seed_default_workspace(),
     }
+    # Before missing system agents are added: a renamed agent's old record is
+    # renamed in place rather than shadowed by a fresh copy of the seed.
+    result["legacy_agent_ids_renamed"] = _rename_legacy_agent_ids()
     result["system_agents_added"] = bool(_ensure_system_agents())
     result["system_agents_synced"] = bool(_sync_system_agents())
+    result["role_references_adopted"] = bool(_adopt_role_references())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
     result["system_workspace"] = _seed_system_workspace()
     result["demo_workspace"] = _seed_demo_workspace()
     return result
+
+
+#: Marks that :func:`_adopt_role_references` has run on this install.
+_ROLE_REFS_MARKER = "role_references_adopted"
+
+
+def _adopt_role_references() -> bool:
+    """Once per install: a system agent the operator edited keeps the ids the
+    seed has since replaced with workspace roles (agents/roles.py), since the
+    seed sync skips ``user_modified`` records. Where the seed's ``delegates``
+    or ``handoffs`` now name ``@coder`` and the record still names the role's
+    default agent (``swe_agent``), the id becomes the reference. Nothing else
+    the operator chose is touched, and until a workspace binds the role the
+    reference reaches the same agent. Never raising."""
+    import json
+    from datetime import datetime, timezone
+    try:
+        from common.docstore import DocStore
+        from agents.registry import load_all_raw, replace_all_raw
+        from agents.roles import ROLES, ref
+        markers = DocStore("bootstrap_markers")
+        if markers.get(_ROLE_REFS_MARKER):
+            return False
+        if not BOOTSTRAP_AGENTS_FILE.is_file():
+            return False
+        seed = {a["id"]: a for a in json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8")).get("agents") or []
+                if isinstance(a, dict) and a.get("id")}
+        records = load_all_raw()
+        if not records:
+            return False
+        before = json.loads(json.dumps(records))
+        default_to_ref = {r.default: ref(r.id) for r in ROLES}
+        changed: list[str] = []
+        for rec in records:
+            seed_rec = seed.get(rec.get("id"))
+            if not isinstance(rec, dict) or seed_rec is None or not _is_system_seed(seed_rec):
+                continue
+            for fld in ("delegates", "handoffs"):
+                live = list(rec.get(fld) or [])
+                wanted = set(seed_rec.get(fld) or [])
+                new = []
+                for aid in live:
+                    role_ref = default_to_ref.get(aid)
+                    target = role_ref if role_ref and role_ref in wanted else aid
+                    if target not in new:
+                        new.append(target)
+                if new != live:
+                    rec[fld] = new
+                    changed.append(f"{rec['id']}.{fld}")
+        if changed:
+            # A backup is an export, not state: next to where agents.json used
+            # to live, like the seed sync's.
+            backup = AGENTS_FILE.with_suffix(".json.pre-roles-backup")
+            if not backup.exists():
+                try:
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    backup.write_text(json.dumps({"agents": before}, ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+                except OSError:
+                    log.exception("workspace roles: could not write the backup to %s", backup)
+            replace_all_raw(records)
+            log.info("workspace roles: system agents now name roles in %s", ", ".join(changed))
+        markers.put(_ROLE_REFS_MARKER, {"at": datetime.now(timezone.utc).isoformat(), "changed": changed})
+        return bool(changed)
+    except Exception:  # noqa: BLE001 - startup must not raise; the literal ids keep working
+        log.debug("role reference adoption skipped", exc_info=True)
+        return False
+
+
+def _rename_legacy_agent_ids() -> bool:
+    """Rewrite stored references to a renamed agent's old id
+    (common/legacy_agent_ids.py). Idempotent and never raising."""
+    try:
+        from common.legacy_agent_ids import migrate_legacy_agent_ids
+        done = migrate_legacy_agent_ids()
+    except Exception:  # noqa: BLE001 - startup must not raise; the registry alias keeps old ids working
+        log.debug("legacy agent id rename skipped", exc_info=True)
+        return False
+    return bool(done.get("documents") or done.get("rows"))
 
 
 def _seed_system_workspace() -> bool:

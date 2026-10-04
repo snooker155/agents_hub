@@ -17,6 +17,7 @@ store argument for injection/testing.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
 
@@ -47,6 +48,8 @@ from tasks.storage import (
 from datetime import datetime, timezone
 from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 from common.session_broker import notify_change
+
+log = logging.getLogger(__name__)
 
 # The task store always lives at the fixed .agents_hub/tasks.json location.
 TASKS_FILE = str(DEFAULT_TASKS_FILE)
@@ -321,6 +324,14 @@ def update_task(
         if current and "status" in fields:
             new_status = fields["status"]  # normalized to TaskStatus above
             if new_status != current.status:
+                # Proactive agents listening for task changes (proactive/
+                # events.py). Best-effort, after the task itself is written.
+                try:
+                    from proactive.events import task_status_changed
+                    task_status_changed(updated, current.status, new_status)
+                except Exception:  # noqa: BLE001 - waking a pulse never fails the task update
+                    import logging as _logging
+                    _logging.getLogger(__name__).debug("task event dispatch failed for %s", task_id, exc_info=True)
                 if new_status == TaskStatus.blocked:
                     _cascade_block_descendants(task_id, updated.title, store=store)
                 elif current.status == TaskStatus.blocked:
@@ -1463,6 +1474,12 @@ def assign_executor(
     Writes ``executor``; the store keeps ``assigned_agent_type`` in agreement
     with it on the next read (tasks.storage._sync_executor) so every caller
     written for the old, agent-only shape of a task keeps working.
+
+    An agent executor carrying a ``default_outcome`` (agents/registry.py,
+    set on a kit's agents by their manifest) is inherited onto the task when
+    it has no outcome of its own yet: this is "assigned", whether the task
+    is getting its first executor or a later reassignment, so one hook
+    covers both without a call on every task-creation path.
     """
     if not isinstance(executor, Executor):
         executor = Executor.model_validate(executor)
@@ -1475,6 +1492,16 @@ def assign_executor(
     current = store.get(task_id)
     if current and current.pre_assignment_status is None:
         fields["pre_assignment_status"] = current.status
+    if current and not current.outcome and executor.kind == "agent" and executor.id:
+        try:
+            from agents.registry import get_agent
+            agent_spec = get_agent(executor.id)
+            default_outcome = getattr(agent_spec, "default_outcome", None) if agent_spec else None
+            if default_outcome:
+                fields["outcome"] = dict(default_outcome)
+        except Exception:  # noqa: BLE001 - inheriting a default rubric must not block the assignment
+            log.debug("could not inherit default_outcome for task %s from agent %s",
+                      task_id, executor.id, exc_info=True)
     updated = store.update(task_id, **fields)
     if updated:
         notify_change("tasks", task_id=str(task_id))

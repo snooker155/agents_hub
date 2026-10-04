@@ -1,0 +1,38 @@
+<!doctype html>
+<!--
+  A page embedding the hub's own chat widget (docs/widget.md): the script
+  tag talks to the widget's public API directly, with no SDK involved. See
+  node-example.mjs beside this file for the other shape: calling an agent
+  through @agents-hub/sdk instead of through a widget on a page.
+
+  Replace data-widget and data-key with a real widget's id and publishable
+  key (Widgets page, Embed tab, in the hub) and data-hub with the hub's own
+  address if this page is served from somewhere else.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agents Hub widget example</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <h1>Chat with us</h1>
+    <p>The bubble in the corner is the hub's widget, embedded with one script tag.</p>
+
+    <button id="open-chat" type="button">Open chat</button>
+
+    <script
+      src="https://hub.example.com/widget.js"
+      data-widget="wgt_0000000000000000"
+      data-key="ahw_replace-with-a-real-publishable-key"
+      async
+    ></script>
+    <script>
+      // A "Chat with us" button of your own, driving the same widget the
+      // snippet above drew (docs/widget.md, "The snippet").
+      document.getElementById("open-chat").addEventListener("click", () => {
+        window.AgentsHubWidget?.open();
+      });
+    </script>
+  </body>
+</html>

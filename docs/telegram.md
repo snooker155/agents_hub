@@ -24,4 +24,8 @@ In practice: an agent that is safe in the dashboard can be an unsafe combination
 on Telegram, because the channel supplies the ingest leg of the trifecta for
 free. See [tools-and-capabilities](tools-and-capabilities.md).
 
-Related: [chat](chat.md), [scheduling](scheduling.md).
+A message in a chat with no agent or flow bound gets the help text as before,
+and also wakes every [proactive agent](proactive.md) listening for Telegram
+(a `telegram` trigger on its profile), so somebody can look at it.
+
+Related: [chat](chat.md), [scheduling](scheduling.md), [proactive](proactive.md).

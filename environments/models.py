@@ -21,6 +21,10 @@ from pydantic import BaseModel, Field, field_validator
 
 Mode = Literal["inherit", "local", "docker"]
 NetworkType = Literal["unrestricted", "none", "limited"]
+#: A named sandbox size, each a bundle of cpus/memory/pids_limit (below).
+#: None (unset) keeps today's behaviour: the explicit ``limits`` fields, or
+#: the run profile's own defaults when those are unset too.
+SandboxSize = Literal["small", "medium", "large"]
 #: sandbox/registry.py provider names, plus "inherit" (the run's own default:
 #: CODE_RUNNER_PROVIDER, then the historical local fallback — see
 #: sandbox.registry.resolve). Only the tool run_code and the code view read
@@ -37,6 +41,17 @@ PACKAGE_MANAGER_HOSTS = (
     "registry.npmjs.org",
     "registry.yarnpkg.com",
 )
+
+#: The cpus/memory/pids_limit bundle each named size sets together
+#: (environments/launch.py docker_options, docs/environments.md "Sandbox
+#: size"). An explicit field on ``limits`` always overrides the matching
+#: preset value; the three are picked so a run's container-hour price
+#: (common/pricing.py) scales with cpus the same way across them.
+SIZE_PRESETS: Dict[str, Dict[str, object]] = {
+    "small": {"cpus": "1", "memory": "1g", "pids_limit": 128},
+    "medium": {"cpus": "2", "memory": "4g", "pids_limit": 256},
+    "large": {"cpus": "4", "memory": "8g", "pids_limit": 512},
+}
 
 _NAME_MAX = 80
 _HOST_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
@@ -134,8 +149,10 @@ class NetworkPolicy(BaseModel):
 
 
 class Limits(BaseModel):
-    """Container limits; None keeps the run profile's defaults
-    (managers.container_manager.DEFAULT_RUN_*, or the Settings values)."""
+    """Container limits; None keeps the environment's ``size`` preset
+    (:data:`SIZE_PRESETS`) when one is set, else the run profile's defaults
+    (managers.container_manager.DEFAULT_RUN_*, or the Settings values). A
+    field set here always overrides the matching preset value."""
     memory: Optional[str] = None
     cpus: Optional[str] = None
     pids_limit: Optional[int] = None
@@ -242,6 +259,11 @@ class Environment(BaseModel):
     packages: List[str] = Field(default_factory=list)
     network: NetworkPolicy = Field(default_factory=NetworkPolicy)
     limits: Limits = Field(default_factory=Limits)
+    #: A named bundle of cpus/memory/pids (:data:`SIZE_PRESETS`); None keeps
+    #: ``limits`` and the run profile's defaults as they were before this
+    #: field existed. Priced per container-hour on the run's cost
+    #: (common/pricing.py, docs/costs.md "Container hours").
+    size: Optional[SandboxSize] = None
     env: Dict[str, str] = Field(default_factory=dict)
     #: run_code / the code view's sandbox (sandbox/registry.py); "inherit"
     #: leaves the choice to CODE_RUNNER_PROVIDER (see sandbox.registry.resolve).
@@ -275,6 +297,12 @@ class Environment(BaseModel):
     def _image(cls, value):
         return validate_image(value)
 
+    @field_validator("size", mode="before")
+    @classmethod
+    def _size(cls, value):
+        text = str(value or "").strip().lower()
+        return text or None
+
     @field_validator("packages", mode="before")
     @classmethod
     def _packages(cls, value):
@@ -292,6 +320,6 @@ class Environment(BaseModel):
 
 __all__ = [
     "Environment", "NetworkPolicy", "Limits", "Mode", "NetworkType", "SandboxProviderType",
-    "PACKAGE_MANAGER_HOSTS", "normalize_host", "validate_packages",
+    "SandboxSize", "SIZE_PRESETS", "PACKAGE_MANAGER_HOSTS", "normalize_host", "validate_packages",
     "validate_image", "validate_env", "validate_name", "now_iso",
 ]

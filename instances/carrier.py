@@ -184,6 +184,12 @@ def _execution_mode(workspace: Optional[str], env_fields: Dict[str, Any]) -> str
     mode = ws_mode or agent_execution_mode()
     if env_fields.get("execution_mode") in ("local", "docker"):
         mode = env_fields["execution_mode"]
+    from common import isolation
+    if isolation.is_isolated(workspace):
+        # An isolated workspace's agent loop runs on the hub, next to the
+        # state it needs; its shell and code go to the no-network sandbox
+        # (common/isolation.py).
+        return "local"
     return "docker" if mode == "docker" else "local"
 
 
@@ -347,6 +353,14 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     env = os.environ.copy()
     from common.workspace_context import normalize_workspace_name
     env["AGENT_WORKSPACE"] = normalize_workspace_name(workspace) or "default"
+    # The carrier relays its turns' events back with a token of its own that
+    # reaches only the relay routes (common/run_tokens.py), never the shared
+    # API token or the service credential the copied environment may hold. A
+    # restart retires the previous carrier's token.
+    from common import run_tokens
+    run_tokens.retire_for_instance(instance_id)
+    run_tokens.mint_for_env(env, kind="instance", instance_id=instance_id,
+                            workspace=env["AGENT_WORKSPACE"])
     env[registry.ENV_INSTANCE_ID] = instance_id
     env_vars: Dict[str, str] = {str(k): str(v) for k, v in (env_fields.get("env") or {}).items()}
     env.update(env_vars)

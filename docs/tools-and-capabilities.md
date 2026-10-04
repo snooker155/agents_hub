@@ -31,7 +31,7 @@ against the single most dangerous tool.
 
 - **A web agent cannot also read your files or memory.** Split the work: one
   agent fetches, another reasons over the result. That is exactly why the Web
-  Search Agent and the Researcher Agent are separate.
+  Search Agent and the Researcher are separate.
 - **What a web tool actually read is recorded.** Every `web_search` and
   `fetch_url` call, with the text handed back and the flags raised against it,
   lands in the [web request log](web-logs.md).
@@ -42,6 +42,10 @@ against the single most dangerous tool.
   capabilities that collided.
 
 ## Lifting the block: per agent, or for every agent
+
+An agent of an [isolated workspace](isolation.md) is not judged at all: its
+shell and code have no network and its tools are the perimeter's allowlist, so
+nothing it combines can send data out.
 
 Two switches turn a refusal into a warning, and both keep the combination
 visible on the agent page and in the log rather than pretending it is gone.
@@ -132,6 +136,30 @@ line typed by hand is accepted too. A workspace's own lists replace the
 global ones for runs in that workspace: the workspace page, Settings tab,
 "Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
 workspace's metadata; an empty list there keeps the global one.
+
+## Domain lists per agent
+
+An agent can carry its own `allowed_domains` and `blocked_domains` (the Web
+domains card on its Behavior tab, or `PUT /api/agents/{id}/web-domains`). They
+merge with the workspace's lists and the global ones above:
+
+- the workspace's deny list (or the global one, when the workspace sets none)
+  plus the agent's `blocked_domains` always apply;
+- the workspace's allow list, when that policy is on, comes next;
+- the agent's `allowed_domains`, when set, narrows further: a host must be on
+  it as well. It cannot widen what the workspace allows;
+- a blocked host wins over an allowed one, and every entry covers its
+  subdomains.
+
+`fetch_url` refuses a host outside the merged lists with a tool result that
+names the list (`host 'x' is on this agent's blocked_domains`). `web_search`
+hands the lists to the search backend as its own filters (Tavily
+`include_domains` and `exclude_domains`, Exa `includeDomains` and
+`excludeDomains`, Brave `site:` and `-site:` in the query) and then filters the
+results by host whatever the backend did. The browser's session policy takes
+the agent's blocked hosts into its deny list and its allowed hosts into its
+allow list. `GET /api/agents/{id}/web-domains?workspace=` also answers the
+merged lists for that workspace.
 
 ## The browser tools
 
@@ -288,6 +316,30 @@ behaviour. It is a dashboard route, not an agent tool, so it carries no
 approval gate of its own, but it honours the view's own workspace scoping,
 mounting read-only exactly the way `mount_workspace` does here.
 
+## Connector tools
+
+Tools that integrate with external services come from [connectors](connectors.md),
+[channels](channels.md), [trackers](trackers.md) and [integrations](integrations.md).
+Each grants one or more capabilities: reading typically grants `reads_private`
+and `ingests_untrusted`, writing grants `can_exfiltrate`.
+
+| Connector | Tools | Grants |
+|---|---|---|
+| Chat channels | `channel_send` | `can_exfiltrate` |
+| Git | `git_publish` | `can_exfiltrate` |
+| Issue trackers (Jira, Linear) | `tracker_list_issues`, `tracker_get_issue`, `tracker_sync` | `reads_private`, `ingests_untrusted` |
+| | `tracker_comment`, `tracker_transition`, `tracker_create_issue` | `can_exfiltrate` |
+| Google Workspace | `google_drive_search`, `google_drive_import`, `google_sheets_read`, `google_calendar_list` | `reads_private`, `ingests_untrusted` |
+| | `google_sheets_append`, `google_docs_create`, `google_calendar_create` | `can_exfiltrate` |
+| Microsoft Graph | `outlook_calendar_list` | `reads_private`, `ingests_untrusted` |
+| | `outlook_calendar_create` | `can_exfiltrate` |
+| Notion | `notion_search`, `notion_read_page`, `notion_import` | `reads_private`, `ingests_untrusted` |
+| | `notion_create_page`, `notion_append` | `can_exfiltrate` |
+| Confluence | `confluence_search`, `confluence_read_page`, `confluence_import` | `reads_private`, `ingests_untrusted` |
+| | `confluence_create_page` | `can_exfiltrate` |
+| Databases | `db_list_connections`, `db_schema`, `db_query` | `reads_private` |
+| Connection proposals | `connection_options`, `propose_connection`, `connection_proposal_status` | none: names and flags only, a person applies the change ([connectors](connectors.md)) |
+
 ## Group aliases
 
 A tool list may name a group (`filesystem`, `task_management`, `service_ops`,
@@ -307,4 +359,10 @@ you agree. A workspace can also *enforce* it, holding a destructive call until a
 person answers on the task page, and run its own code around every tool call.
 See [hooks](hooks.md).
 
-Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md).
+A [proactive agent](proactive.md)'s profile is checked the same way: a
+webhook, Telegram or file trigger counts as ingesting untrusted content, a
+delivery channel other than the inbox as sending data outside. `wake_agent`
+grants nothing: it nudges another agent's pulse and gets only an
+acknowledgement back.
+
+Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md), [proactive](proactive.md).

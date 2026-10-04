@@ -37,7 +37,7 @@ import json
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -57,6 +57,11 @@ _SSE_HEADERS = {
 class ChannelUpdate(BaseModel):
     add: List[str] = []
     remove: List[str] = []
+
+
+class PublishEvent(BaseModel):
+    channel: str
+    event: dict
 
 
 class NotifyChange(BaseModel):
@@ -189,4 +194,24 @@ async def relay_notify(body: NotifyChange):
         notify_delta(body.resource, key, meta)
     else:
         notify_change(body.resource, **meta)
+    return {"ok": True}
+
+
+@router.post("/publish")
+async def relay_publish(body: PublishEvent):
+    """Re-publish one channel event coming from a process without the broker.
+
+    The counterpart of ``common.session_broker.publish_event``: an instance
+    runner or an agent subprocess has no event loop of its own, so a view op
+    it applies (``view:<id>``) or any other live event is POSTed here and
+    fanned out by the backend, which owns the broker, to the tabs following
+    that channel. Unlike ``/notify`` nothing is coalesced: every event is
+    delivered, in the order it arrived.
+    """
+    channel = body.channel.strip()
+    if not channel:
+        raise HTTPException(status_code=400, detail="channel is required")
+    if not body.event.get("type"):
+        raise HTTPException(status_code=400, detail="event needs a type")
+    await broker.apublish(channel, body.event)
     return {"ok": True}

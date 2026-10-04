@@ -23,6 +23,16 @@ def _workspace_root(workspace: Optional[Path] = None) -> Path:
     if get_swe_config().workspace_root is not None:
         return get_swe_config().workspace_root
     from common.paths import WORKSPACES_ROOT
+    # Tools built without an operating path would otherwise root at the folder
+    # of every workspace. Inside a run they root at the run's own workspace
+    # (common/workspace_scope.py); the service's own agents, and a call made
+    # outside any agent's run (the CLI), keep the whole root. A run is told
+    # apart by its agent, not by the workspace the UI last had selected.
+    from common.workspace_scope import current_agent, current_workspace, is_service_wide
+    agent = current_agent()
+    ws = current_workspace() if agent else None
+    if ws and not is_service_wide(agent):
+        return (WORKSPACES_ROOT / ws).resolve()
     return WORKSPACES_ROOT.resolve()
 
 

@@ -230,7 +230,11 @@ def test_the_help_block_is_gated_on_the_tool(live_registry):
     from agents.registry import add_agent
 
     spec = get_agent("main-agent")
-    stripped = [t for t in spec.tools if t not in ("search_docs", "read_doc")]
+    # The workspace tools are main-agent's alone (common/workspace_scope.py),
+    # so the probe, another agent, cannot be saved with them.
+    from common.workspace_scope import WORKSPACE_ADMIN_TOOLS
+    stripped = [t for t in spec.tools
+                if t not in ("search_docs", "read_doc") and t not in WORKSPACE_ADMIN_TOOLS]
     add_agent(dataclasses.replace(spec, id="docsless_probe", tools=stripped,
                                   definition_id="main-agent", system=False))
     try:
@@ -250,3 +254,18 @@ def test_docs_route_serves_the_changelog_and_404s_an_unknown_id():
     with pytest.raises(HTTPException) as err:
         docs_routes.get_doc("no-such-doc")
     assert err.value.status_code == 404
+
+
+def test_no_code_span_wraps_onto_a_line_starting_with_a_tag():
+    """The site (VitePress) reads markdown through Vue: when an inline code
+    span wraps so that its next line starts with ``<id>``, that line opens an
+    HTML element instead of continuing the code, and the unclosed element
+    fails the whole site build. Rewrap so the span stays on one line."""
+    import re
+    bad = []
+    for path in sorted(DOCS_DIR.glob("*.md")):
+        text = re.sub(r"^[ \t]*```.*?^[ \t]*```", "", path.read_text(), flags=re.S | re.M)
+        for m in re.finditer(r"`[^`\n]*\n[^`]*?`", text):
+            if any(line.lstrip().startswith("<") for line in m.group(0).split("\n")[1:]):
+                bad.append(f"{path.name}: {m.group(0)!r}")
+    assert not bad, "inline code wraps onto a line starting with a tag:\n" + "\n".join(bad)

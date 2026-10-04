@@ -60,6 +60,8 @@ class WidgetCreate(BaseModel):
     accent: str = "navy"
     language: str = "auto"
     limits: Optional[Dict[str, Any]] = None
+    # A stored version of the agent the widget's visitors talk to; None = live.
+    agent_version: Optional[int] = None
 
 
 class WidgetUpdate(BaseModel):
@@ -73,6 +75,8 @@ class WidgetUpdate(BaseModel):
     accent: Optional[str] = None
     language: Optional[str] = None
     limits: Optional[Dict[str, Any]] = None
+    # Sent as null, clears the pin (the update applies only the fields sent).
+    agent_version: Optional[int] = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -328,6 +332,11 @@ async def create_widget(request: Request, payload: WidgetCreate):
     principal = _principal(request)
     workspace = (payload.workspace or "default").strip() or "default"
     identity.require_role(principal, workspace=workspace, role=WS_EDITOR)
+    from common import isolation
+    try:
+        isolation.ensure_not_isolated(workspace, "a public chat widget")
+    except isolation.IsolationError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     owner_id = getattr(principal, "id", None) or identity.current_user_id()
     try:
         widget = service.create_widget(payload.model_dump(), owner_id=owner_id)

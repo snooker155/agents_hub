@@ -57,6 +57,33 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+      # Only when the `postgres` profile is on (COMPOSE_PROFILES=postgres in
+      # .env, which `ah setup` writes); otherwise the backend keeps SQLite on
+      # the volume and this entry is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # Postgres instead of SQLite, under a profile so a plain `up` never starts
+  # it. .env needs COMPOSE_PROFILES=postgres, POSTGRES_PASSWORD and
+  # AGENTS_HUB_DATABASE_URL=postgresql://agents_hub:<password>@postgres:5432/agents_hub
+  # (`ah setup` writes all three). No port is published.
+  postgres:
+    image: postgres:17-alpine
+    profiles:
+      - postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agents_hub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
+      POSTGRES_DB: agents_hub
+    volumes:
+      - agents_hub_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agents_hub -d agents_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   frontend:
     image: ghcr.io/snooker155/agents-hub-frontend:${AGENTS_HUB_TAG:-latest}
@@ -69,3 +96,4 @@ services:
 
 volumes:
   agents_hub_data:
+  agents_hub_pg:

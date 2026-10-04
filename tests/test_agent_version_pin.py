@@ -487,7 +487,9 @@ def test_get_agent_version_reports_a_pinned_run_against_the_live_one(runs_client
     assert body["version"] == v1
     assert body["current_version"] == v2
     assert body["is_current"] is False
-    assert body["pinned"] is False  # no task behind this run to carry the pin
+    # No task carries the pin, but the run was opened asked for v1 (a launch,
+    # a chat turn or a service pin): the run itself says it was pinned.
+    assert body["pinned"] is True
 
 
 def test_get_agent_version_reports_is_current_for_the_live_build(runs_client, two_versions):

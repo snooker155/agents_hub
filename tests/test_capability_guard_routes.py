@@ -247,7 +247,7 @@ def test_workspace_web_policy_route_reads_and_writes_the_lists(monkeypatch):
     assert store["settings"]["require_tool_approval"] is True
     # ...and tools/web.py honours the workspace list over the global one.
     from tools import web
-    monkeypatch.setattr(web, "_workspace_web_settings", lambda: store["settings"])
+    monkeypatch.setattr(web, "_workspace_web_settings", lambda workspace=None: store["settings"])
     monkeypatch.setattr("common.config.read_dot_env", lambda: {})
     assert web.check_domain_policy("https://en.wikipedia.org/x")[0] is True
     assert web.check_domain_policy("https://evil.test/")[0] is False

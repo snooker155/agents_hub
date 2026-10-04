@@ -34,6 +34,9 @@ Limits, all of which the tool states in its refusal:
   (``tools.langchain_tools._delegation_blocked``);
 * nesting stops at ``AGENTS_HUB_DELEGATION_MAX_DEPTH`` levels (3 by
   default): the depth travels to the child in its environment;
+* this run may not have more than ``max_concurrent_delegates`` (default 6,
+  the agent's own field or this run's own ``overrides``) delegated subtasks
+  running at once; a ``wait=false`` launch counts until its child finishes;
 * the workspace's hard budget cap applies to the launch as to any run, and
   the subtask inherits the parent task's per-run cap and environment.
 
@@ -72,6 +75,14 @@ DEFAULT_WAIT_SECONDS = 900.0
 MAX_WAIT_SECONDS = 4 * 3600.0
 POLL_SECONDS = 2.0
 
+#: How many of this run's delegated subtasks may be running at once (the
+#: agent's own ``max_concurrent_delegates`` field, or a run's own
+#: ``overrides.max_concurrent_delegates``), resolved once at launch and
+#: stamped into the run's own environment the same way the delegation depth
+#: is (agents/agent_launcher.py, agents/run_overrides.py).
+MAX_CONCURRENT_ENV = "AGENTS_HUB_MAX_CONCURRENT_DELEGATES"
+DEFAULT_MAX_CONCURRENT_DELEGATES = 6
+
 #: Run statuses that mean the child is not finished.
 LIVE_STATUSES = frozenset({
     "pending", "queued", "leased", "assigned", "starting", "running", "stop", "awaiting_approval",
@@ -99,6 +110,40 @@ def default_wait_seconds() -> float:
         return float(os.environ.get(WAIT_ENV, "") or DEFAULT_WAIT_SECONDS)
     except ValueError:
         return DEFAULT_WAIT_SECONDS
+
+
+def current_max_concurrent_delegates() -> int:
+    """This run's own delegate concurrency limit, as stamped into its
+    environment at launch (agents/agent_launcher.py); 6 when unset, e.g. for
+    a run started before this existed, or outside a launched run entirely."""
+    try:
+        return max(1, min(32, int(os.environ.get(MAX_CONCURRENT_ENV, "") or DEFAULT_MAX_CONCURRENT_DELEGATES)))
+    except ValueError:
+        return DEFAULT_MAX_CONCURRENT_DELEGATES
+
+
+def running_delegate_count(parent_run_id: str) -> int:
+    """How many runs ``delegate_task_tool`` launched from ``parent_run_id``
+    are still live (:data:`LIVE_STATUSES`): what the concurrency limit counts
+    against. A ``wait=false`` launch counts until the child finishes, same as
+    one the caller is still waiting on."""
+    if not parent_run_id:
+        return 0
+    try:
+        from common.entity_runs import leaf_children
+        from managers.run_manager import get_run_by_id
+    except Exception:  # noqa: BLE001 - an import hiccup must not block every delegation
+        log.debug("delegate concurrency: could not import run lookups", exc_info=True)
+        return 0
+    count = 0
+    try:
+        for child_id in leaf_children(parent_run_id):
+            rec = get_run_by_id(child_id) or {}
+            if str(rec.get("status") or "") in LIVE_STATUSES:
+                count += 1
+    except Exception:  # noqa: BLE001 - a store hiccup counts as "no running children" rather than refusing every launch
+        log.debug("delegate concurrency count failed for %s", parent_run_id, exc_info=True)
+    return count
 
 
 # ── the catalog, as an agent may pick from it ────────────────────────────────
@@ -353,6 +398,9 @@ def delegate_task_tool(agent_id: str, input: str, model: Optional[str] = None,
             "depth": current_depth(),
             "env": _child_env(),
             "launched_by": launching_user(),
+            # This run's own concurrency limit (see current_max_concurrent_delegates),
+            # checked by launch_delegation against this run's already-running children.
+            "max_concurrent_delegates": current_max_concurrent_delegates(),
         }
         transport = _transport()
         result = transport.delegate(parent_id, request)
@@ -411,6 +459,8 @@ DELEGATION_TOOLS = [delegate_task_tool, list_models_tool]
 
 __all__ = [
     "DEFAULT_MAX_DEPTH", "DEPTH_ENV", "MAX_DEPTH_ENV", "PARENT_RUN_ENV", "WAIT_ENV",
-    "DELEGATION_TOOLS", "current_depth", "delegate_task_tool", "enabled_models",
+    "MAX_CONCURRENT_ENV", "DEFAULT_MAX_CONCURRENT_DELEGATES",
+    "DELEGATION_TOOLS", "current_depth", "current_max_concurrent_delegates",
+    "running_delegate_count", "delegate_task_tool", "enabled_models",
     "list_models_tool", "max_depth", "resolve_model",
 ]

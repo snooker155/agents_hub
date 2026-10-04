@@ -11,14 +11,15 @@ auto-injected plan-store tools (save_plan / get_plan / list_plans / ...).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field, model_validator
 
 from common.entity_sink import record_entity
-from common.workspace_context import resolve_active_workspace
+from common.workspace_context import filter_agents_for_workspace, resolve_active_workspace
+from common.workspace_scope import check_record, current_agent, is_service_wide
 from plans.models import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
 from plans.service import job_to_dict
@@ -32,6 +33,29 @@ def _record_job(job, action: str) -> None:
     if job is None:
         return
     record_entity("job", str(job.id), action, (job.title or "").strip())
+
+
+def _job_hidden(job) -> bool:
+    """Whether ``job`` belongs to another workspace than this run's: answered
+    like a missing job (``common.workspace_scope.check_record``). A job with
+    no workspace is the default one's; the service's own agents reach every
+    job, and a call with no workspace (the CLI) is left as it was."""
+    return check_record((getattr(job, "workspace", None) or "").strip() or None,
+                        what="job", workspace=resolve_active_workspace()) is not None
+
+
+def _agent_unavailable(agent_id: str) -> bool:
+    """Whether ``agent_id`` is unknown, or not available in this run's
+    workspace (the notion the workspace's agent list uses). A job that would
+    run such an agent here is refused like an unknown agent."""
+    from agents.registry import get_agent as reg_get_agent
+    spec = reg_get_agent(agent_id)
+    if spec is None:
+        return True
+    ws = resolve_active_workspace()
+    if not ws or is_service_wide(current_agent()):
+        return False
+    return not filter_agents_for_workspace([spec], ws)
 
 
 def _now() -> datetime:
@@ -130,6 +154,11 @@ class NotifyUserInput(BaseModel):
     title: str = Field(..., min_length=1, description="Short notification title shown to the user")
     message: str = Field("", description="Notification body text")
     severity: str = Field("info", description="One of: info, success, warning, error")
+    channels: Optional[List[str]] = Field(
+        None,
+        description="Extra delivery channels besides the inbox: any of telegram, slack, discord, teams, mail, webhook. "
+                    "A chat channel reaches the chats bound in this workspace on the Connectors page.",
+    )
     telegram: bool = Field(
         False,
         description="Also deliver to the user's bound Telegram chat(s). Default false = inbox/bell only.",
@@ -231,10 +260,8 @@ def schedule_task(
     user's bound Telegram chat(s). Returns JSON with the created job.
     """
     try:
-        if agent_id:
-            from agents.registry import get_agent as reg_get_agent
-            if not reg_get_agent(agent_id):
-                return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        if agent_id and _agent_unavailable(agent_id):
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
         when = _resolve_run_at(run_at, delay_minutes)
         job = plan_service.create_job(
             kind=JobKind.agent_task,
@@ -263,7 +290,8 @@ schedule_task.description += "\n\n" + _TIME_HELP
 
 
 @tool("notify_user", args_schema=NotifyUserInput)
-def notify_user(title: str, message: str = "", severity: str = "info", telegram: bool = False) -> str:
+def notify_user(title: str, message: str = "", severity: str = "info", telegram: bool = False,
+                channels: Optional[List[str]] = None) -> str:
     """Send the user an immediate notification (inbox + dashboard bell), right now.
 
     Use this when something happens that the user should see even when they are
@@ -273,10 +301,14 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
     are already reported to the user automatically.
 
     Set telegram=true to also push the message to the user's bound Telegram
-    chat(s) for this workspace; otherwise it is inbox/bell only.
+    chat(s) for this workspace, or name other channels (slack, discord, teams,
+    mail, webhook) in ``channels``; otherwise it is inbox/bell only.
     """
     try:
-        channels = ["dashboard", "telegram"] if telegram else ["dashboard"]
+        extra = [str(c).strip().lower() for c in (channels or []) if str(c).strip()]
+        if telegram:
+            extra.append("telegram")
+        channels = ["dashboard", *dict.fromkeys(extra)]
         n = plan_service.create_notification(
             title=title,
             body=message,
@@ -292,6 +324,61 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
         })
     except Exception as e:
         return _json_err(f"Failed to send notification: {e}")
+
+
+class WakeAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="The proactive agent to wake")
+    message: str = Field(..., min_length=1,
+                         description="What happened and why it should look now, one or two sentences")
+
+
+def _pulse_elsewhere(agent_id: str) -> bool:
+    """Whether ``agent_id``'s pulse ticks in another workspace than this
+    run's (proactive/service.py ``_job_workspace``): waking it would be a
+    side effect there, so it is answered like an unknown agent."""
+    from agents.registry import get_agent as reg_get_agent
+    spec = reg_get_agent(agent_id)
+    if spec is None:
+        return False
+    try:
+        from proactive.service import _job_workspace, profile_of
+        pulse_ws = _job_workspace(spec, profile_of(spec))
+    except Exception:  # noqa: BLE001 - no profile: agent_wake reports it
+        return False
+    return check_record(pulse_ws, what="agent", workspace=resolve_active_workspace()) is not None
+
+
+@tool("wake_agent", args_schema=WakeAgentInput)
+def wake_agent(agent_id: str, message: str) -> str:
+    """Wake another agent's pulse now, with a message saying why.
+
+    Only for an agent whose proactive profile is on and lists an ``agent``
+    trigger that accepts you (docs/proactive.md, "Triggers"). The message
+    joins the events of its next tick; nothing comes back to you. Use it when
+    you noticed something another agent watches for, not to delegate work:
+    for that, use the delegation tools.
+    """
+    try:
+        from common.agent_context import current_agent_id
+        from proactive.events import agent_wake
+        if _pulse_elsewhere(agent_id):
+            raise LookupError(f"Agent '{agent_id}' not found")
+        caller = current_agent_id.get()
+        result = agent_wake(caller, agent_id, message)
+    except LookupError as e:
+        return _json_err(str(e), code="not_found")
+    except PermissionError as e:
+        return _json_err(str(e), code="forbidden")
+    except Exception as e:  # noqa: BLE001 - the tool reports, never raises into the loop
+        return _json_err(f"Failed to wake agent: {e}")
+    if not result.get("ok"):
+        return _json_err(f"The pulse of '{agent_id}' is not accepting wakes ({result.get('reason')}).",
+                         code="unavailable")
+    return _json_ok({
+        "message": f"Agent '{agent_id}' will tick within its batching window.",
+        "pending_events": result.get("pending"), "run_at": result.get("run_at"),
+        "paused": result.get("paused", False),
+    })
 
 
 @tool("list_scheduled", args_schema=ListScheduledInput)
@@ -325,9 +412,8 @@ def cancel_scheduled(id: str) -> str:
         job = plan_service.get_job(jid)
         if not job:
             return _json_err("Job not found", code="not_found", extra={"id": id})
-        ws = resolve_active_workspace()
-        if ws and (job.workspace or "").strip() not in ("", ws):
-            return _json_err(f"Job '{id}' is outside the active workspace '{ws}'", code="forbidden")
+        if _job_hidden(job):
+            return _json_err("Job not found", code="not_found", extra={"id": id})
         if job.status not in (JobStatus.scheduled, JobStatus.paused):
             return _json_err(f"Cannot cancel a job in status '{job.status.value}'", code="invalid_state")
         updated = plan_service.cancel_job(jid)
@@ -359,9 +445,8 @@ def update_scheduled(
         job = plan_service.get_job(jid)
         if not job:
             return _json_err("Job not found", code="not_found", extra={"id": id})
-        ws = resolve_active_workspace()
-        if ws and (job.workspace or "").strip() not in ("", ws):
-            return _json_err(f"Job '{id}' is outside the active workspace '{ws}'", code="forbidden")
+        if _job_hidden(job):
+            return _json_err("Job not found", code="not_found", extra={"id": id})
         if job.status not in (JobStatus.scheduled, JobStatus.paused):
             return _json_err(f"Cannot edit a job in status '{job.status.value}'", code="invalid_state")
 
@@ -380,8 +465,7 @@ def update_scheduled(
             fields["timezone"] = timezone
         if agent_id is not None:
             if agent_id.strip():
-                from agents.registry import get_agent as reg_get_agent
-                if not reg_get_agent(agent_id.strip()):
+                if _agent_unavailable(agent_id.strip()):
                     return _json_err(f"Agent '{agent_id}' not found", code="not_found")
                 fields["agent_id"] = agent_id.strip()
             else:

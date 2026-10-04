@@ -36,7 +36,21 @@ from langchain_core.tools import tool
 from common.entity_sink import record_entity
 from connectors.blender import history, pool
 from connectors.blender.daemon import CommandError, DaemonError
-from views.store import append_ops as _append_ops, get_view as _get_view, view_dir as _view_dir
+from views.store import view_dir as _view_dir
+
+
+# A view is reached through the scoped wrappers of tools/views.py: a view of
+# another workspace is "not found" here too (common/workspace_scope.py).
+# Imported at call time, since tools/views.py builds its tool list from this
+# module's.
+def _get_view(view_id):
+    from tools.views import _get_view as scoped
+    return scoped(view_id)
+
+
+def _append_ops(view_id, ops, **kw):
+    from tools.views import _append_ops as scoped
+    return scoped(view_id, ops, **kw)
 
 # Shared with the view tools rather than duplicated: same argument sloppiness to
 # absorb (models pass JSON as strings), same "no active view" answer.

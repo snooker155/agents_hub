@@ -46,8 +46,10 @@ RUN apt-get update \
 # AGENTS_HUB_DATABASE_URL names a postgresql:// database (docs/scaling.md).
 # It is not part of requirements.lock (see that file's header), so it is
 # still installed from its own requirement file.
-COPY requirements.lock requirements-postgres.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.lock -r /tmp/requirements-postgres.txt
+# The connector drivers (requirements-connectors.txt) ride along the same way:
+# imported lazily, inert until a connector is configured.
+COPY requirements.lock requirements-postgres.txt requirements-connectors.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.lock -r /tmp/requirements-postgres.txt -r /tmp/requirements-connectors.txt
 
 # ---------- the same stack plus the RAG extras ----------
 # Torch comes from the CPU-only index first so the image does not carry the

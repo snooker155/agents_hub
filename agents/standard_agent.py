@@ -244,6 +244,14 @@ class StandardAgent(AgentBase):
     #: wrote its final answer (agents/loop_ext/steering.claim_after_answer).
     MAX_STEERING_FOLLOWUPS = 2
 
+    #: The turn of a follow-up pass made only for operator instructions that
+    #: arrived during the answer (steering mode ``system``).
+    SYSTEM_FOLLOWUP_TEXT = (
+        "[The operator added to your instructions while you wrote that answer. "
+        "Check the answer against the added instructions and give the corrected "
+        "final answer, or the same one if it already complies.]"
+    )
+
     def _followup_input(self, state: Any, result: Any, instruction: str,
                         history: Any) -> Optional[tuple]:
         """The next executor input when messages arrived during the answer.
@@ -266,7 +274,12 @@ class StandardAgent(AgentBase):
         from langchain_core.messages import AIMessage, HumanMessage
         answer = result.get("output", "") if isinstance(result, dict) else str(result)
         prior = [*list(history or []), HumanMessage(content=instruction), AIMessage(content=answer or "")]
-        text = "\n\n".join(format_injection(str(i.get("text") or "")) for i in fresh)
+        spoken = [i for i in fresh if i.get("mode") != "system"]
+        # Only system-mode messages arrived: they are in the system prompt of
+        # the next pass already (claim_after_answer put them there), and the
+        # turn only has to ask the model to check its answer against them.
+        text = ("\n\n".join(format_injection(str(i.get("text") or "")) for i in spoken)
+                if spoken else self.SYSTEM_FOLLOWUP_TEXT)
         return self._executor_input(text, prior), fresh
 
     @staticmethod
@@ -275,7 +288,9 @@ class StandardAgent(AgentBase):
         trails, and the injections of both passes on the state."""
         for inj in fresh:
             inj["final"] = True  # arrived during an answer, delivered by a follow-up pass
-        state.injections = [*earlier, *fresh, *state.injections]
+        # A system-mode message lives on state.system_messages, not here.
+        spoken = [i for i in fresh if i.get("mode") != "system"]
+        state.injections = [*earlier, *spoken, *state.injections]
         if not isinstance(second, dict):
             return second
         merged = dict(second)
@@ -308,11 +323,21 @@ class StandardAgent(AgentBase):
         )
 
     def run(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent.
+        """Execute the agent, with the workspace's ``before_run`` and
+        ``after_run`` hooks around it (agents/hooks.py RunHooks): a deny ends
+        the run before its first model call.
 
         ``history`` (keyword) carries the conversation before this turn as
         LangChain messages; see :meth:`_executor_input`.
         """
+        from agents.hooks import RunHooks
+        run_hooks = RunHooks.for_agent(self, kwargs)
+        denied = run_hooks.before(instruction)
+        if denied is not None:
+            return denied
+        return run_hooks.after(self._run(instruction, **kwargs))
+
+    def _run(self, instruction: str, **kwargs) -> AgentResult:
         from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
         state, token = self._begin_loop(kwargs)
@@ -382,10 +407,23 @@ class StandardAgent(AgentBase):
             reset_state(token)
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent asynchronously using ainvoke (no threads required).
+        """Execute the agent asynchronously using ainvoke, with the run hooks
+        around it as in :meth:`run` (off the event loop: a hook may be a
+        process or an HTTP call).
 
         Takes the same ``history`` keyword as :meth:`run`.
         """
+        import asyncio
+        from agents.hooks import RunHooks
+        run_hooks = await asyncio.to_thread(RunHooks.for_agent, self, kwargs)
+        if run_hooks.active:
+            denied = await asyncio.to_thread(run_hooks.before, instruction)
+            if denied is not None:
+                return denied
+        result = await self._arun(instruction, **kwargs)
+        return await asyncio.to_thread(run_hooks.after, result) if run_hooks.active else result
+
+    async def _arun(self, instruction: str, **kwargs) -> AgentResult:
         import asyncio
         from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)

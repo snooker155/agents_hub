@@ -21,7 +21,7 @@ from managers import run_manager
 from agents import registry
 from tasks import service as tasks_service
 from common.pricing import (EVALUATION_CHANNELS, load_price_map, run_cached_tokens,
-                            run_cost_usd, run_tokens)
+                            run_cost_usd, run_tokens, container_cost_usd)
 from common import budget as budget_mod
 from common import audit, identity
 from common.workspace_context import normalize_workspace_name
@@ -49,7 +49,9 @@ def _run_cost(run: dict, prices) -> float:
     """
     reported = run.get("reported_cost_usd")
     if isinstance(reported, (int, float)) and not isinstance(reported, bool):
-        return float(reported)
+        # The wrapped service prices its own model calls, not the container
+        # the hub ran it in, so the container hours are still added.
+        return float(reported) + container_cost_usd(run)
     return run_cost_usd(run, prices)
 
 
@@ -88,7 +90,7 @@ async def get_costs(
     by_model: dict = {}
     by_project: dict = {}
     totals = {"runs": 0, "inbound_tokens": 0, "cached_tokens": 0,
-              "outbound_tokens": 0, "total_tokens": 0, "cost": 0.0}
+              "outbound_tokens": 0, "total_tokens": 0, "cost": 0.0, "container_cost": 0.0}
 
     def _bump(bucket: dict, key: str, label: str, run: dict,
               inbound: int, outbound: int, cached: int, cost: float):
@@ -140,6 +142,9 @@ async def get_costs(
         totals["outbound_tokens"] += outbound
         totals["total_tokens"] += inbound + outbound
         totals["cost"] += cost
+        # The part of ``cost`` that is container hours (common/pricing.py
+        # container_cost_usd), so the page can say how much is not tokens.
+        totals["container_cost"] += container_cost_usd(r)
 
     def _rows(bucket: dict) -> list:
         rows = list(bucket.values())
@@ -149,6 +154,7 @@ async def get_costs(
         return rows
 
     totals["cost"] = round(totals["cost"], 4)
+    totals["container_cost"] = round(totals["container_cost"], 4)
     return {
         "totals": totals,
         "by_workspace": _rows(by_workspace),
