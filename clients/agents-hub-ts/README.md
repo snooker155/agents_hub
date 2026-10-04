@@ -57,7 +57,7 @@ npm run gen       # regenerate the two generated files (needs Python, not Node)
 ## Requirements
 
 Running the package's `.ts` files directly, as `npm test` and the examples
-do, needs Node 22.6 or newer (native, unflagged type stripping) or a
+do, needs Node 22.18 or newer (native, unflagged type stripping) or a
 bundler; there is no build step and nothing here that cannot also run
 through `tsc`/esbuild/etc. if your own toolchain prefers that. The source is
 plain TypeScript with no non-erasable syntax (no enums, no namespaces, no

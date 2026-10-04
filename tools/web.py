@@ -1014,7 +1014,7 @@ def current_run_key() -> str:
         if rid:
             return f"run:{rid}"
     except Exception:  # noqa: BLE001 - no stream sink: try the environment
-        pass
+        log.debug("web: no stream sink for the run id", exc_info=True)
     rid = os.environ.get("AGENT_RUN_ID", "").strip()
     if rid:
         return f"run:{rid}"
@@ -1027,7 +1027,7 @@ def current_run_key() -> str:
         if sid:
             return f"session:{sid}"
     except Exception:  # noqa: BLE001 - outside any run
-        pass
+        log.debug("web: no task or session context", exc_info=True)
     return "default"
 
 

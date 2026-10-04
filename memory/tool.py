@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
 from .store import MemoryStore
+
+log = logging.getLogger(__name__)
 
 
 class ReadMemoryInput(BaseModel):
@@ -45,7 +48,7 @@ def _bound_pool_ids(agent_id: str, workspace: str) -> Optional[set]:
         if personal.enabled(spec, workspace):
             ids.add("personal")  # marker: the user's own personal pool, checked below
     except Exception:  # noqa: BLE001 - personal memory unreadable: own pools only
-        pass
+        log.debug("memory: personal pool unreadable for this agent", exc_info=True)
     return ids
 
 

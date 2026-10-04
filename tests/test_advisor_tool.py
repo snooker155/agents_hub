@@ -161,6 +161,16 @@ def test_the_advisor_is_part_of_the_agent_version():
     assert _validate_agent_dict(stored).advisor_model == "anthropic/big-thinker"
 
 
+def _probe_of_main_agent():
+    """main-agent's record without the workspace tools, which are main-agent's
+    alone (common/workspace_scope.py): a probe copied from it, another agent,
+    cannot be saved with them."""
+    from agents.registry import get_agent
+    from common.workspace_scope import WORKSPACE_ADMIN_TOOLS
+    spec = get_agent("main-agent")
+    return dataclasses.replace(spec, tools=[t for t in spec.tools if t not in WORKSPACE_ADMIN_TOOLS])
+
+
 @pytest.fixture
 def live_registry():
     from common.bootstrap import seed_registry_from_bootstrap
@@ -170,15 +180,14 @@ def live_registry():
 
 def test_the_factory_binds_the_tool_only_with_an_advisor(live_registry):
     from agents.agent_factory import AgentFactory
-    from agents.registry import add_agent, get_agent, remove_agent
+    from agents.registry import add_agent, remove_agent
 
     factory = AgentFactory()
     plain = factory._build_agent("main-agent")
     assert "consult_advisor" not in {t.name for t in plain._tools}
     assert "## Advisor" not in plain.system_prompt
 
-    spec = get_agent("main-agent")
-    add_agent(dataclasses.replace(spec, id="advised_probe", definition_id="main-agent", system=False,
+    add_agent(dataclasses.replace(_probe_of_main_agent(), id="advised_probe", definition_id="main-agent", system=False,
                                   advisor_model="anthropic/big-thinker"))
     try:
         built = factory._build_agent("advised_probe")
@@ -207,7 +216,7 @@ def test_the_loop_settings_route_takes_a_catalog_advisor(live_registry, monkeypa
     app.include_router(routes.router)
     client = TestClient(app)
     from agents.registry import add_agent, get_agent, remove_agent
-    add_agent(dataclasses.replace(get_agent("main-agent"), id="advised_route", definition_id="main-agent",
+    add_agent(dataclasses.replace(_probe_of_main_agent(), id="advised_route", definition_id="main-agent",
                                   system=False))
     try:
         assert client.get("/api/agents/advised_route/loop-settings").json()["advisor_model"] is None

@@ -70,7 +70,7 @@ def _run_workspace() -> Optional[str]:
         if state is not None and getattr(state, "workspace", None):
             return normalize_workspace_name(state.workspace)
     except Exception:  # noqa: BLE001 - outside the loop: the context variable below
-        pass
+        log.debug("workspace tools: no loop state, using the context variable", exc_info=True)
     return normalize_workspace_name(_workspace_ctx.get() or os.environ.get("AGENT_WORKSPACE"))
 
 

@@ -178,14 +178,25 @@ def test_editing_a_system_agent_is_flagged_in_the_prompt(seeded_registry):
     assert "clear yes" in prompt
 
 
+def _probe_of_main_agent():
+    """main-agent's record without the workspace tools, which are main-agent's
+    alone (common/workspace_scope.py): a probe copied from it, another agent,
+    cannot be saved with them."""
+    import dataclasses
+
+    from agents.registry import get_agent
+    from common.workspace_scope import WORKSPACE_ADMIN_TOOLS
+    spec = get_agent("main-agent")
+    return dataclasses.replace(spec, tools=[t for t in spec.tools if t not in WORKSPACE_ADMIN_TOOLS])
+
+
 def test_a_custom_agent_gets_no_such_warning(seeded_registry):
     import dataclasses
 
-    from agents.registry import add_agent, get_agent, remove_agent
+    from agents.registry import add_agent, remove_agent
     from routes.agents import _definition_chat_prompt
 
-    spec = get_agent("main-agent")
-    add_agent(dataclasses.replace(spec, id="custom_probe", system=False,
+    add_agent(dataclasses.replace(_probe_of_main_agent(), id="custom_probe", system=False,
                                   definition_id="main-agent"))
     try:
         prompt = _definition_chat_prompt("custom_probe", [{"role": "user", "content": "x"}], "x")
@@ -199,11 +210,10 @@ def test_an_already_edited_system_agent_is_not_warned_about_twice(seeded_registr
     repeating it every turn is noise."""
     import dataclasses
 
-    from agents.registry import add_agent, get_agent, remove_agent
+    from agents.registry import add_agent, remove_agent
     from routes.agents import _definition_chat_prompt
 
-    spec = get_agent("main-agent")
-    add_agent(dataclasses.replace(spec, id="edited_probe", system=True,
+    add_agent(dataclasses.replace(_probe_of_main_agent(), id="edited_probe", system=True,
                                   user_modified=True, definition_id="main-agent"))
     try:
         prompt = _definition_chat_prompt("edited_probe", [{"role": "user", "content": "x"}], "x")

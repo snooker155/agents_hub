@@ -12,7 +12,7 @@ Two things could silently drift apart from `clients/agents-hub-ts/`:
 
 The first is pure Python (`--check` dumps the schema from the app in
 process) and always runs, so a route change that forgets the SDK fails the
-ordinary test job. The second needs Node 22.6 or newer and is skipped
+ordinary test job. The second needs Node 22.18 or newer and is skipped
 without it.
 """
 from __future__ import annotations
@@ -44,17 +44,20 @@ def _node_version() -> tuple[int, int] | None:
         return None
 
 
-# Node's own, unflagged TypeScript support (plain type annotations stripped,
-# no transform) landed at 22.6; this package's sources rely on it since there
-# is no build step. An older `node` on PATH is not a broken package, just an
+# Node's own TypeScript support (plain type annotations stripped, no
+# transform) arrived at 22.6 behind --experimental-strip-types and runs
+# unflagged from 22.18 (and 23.6 on the 23 line); this package's sources rely
+# on it since there is no build step. An older `node` on PATH is not a broken package, just an
 # environment this test cannot exercise, so it is skipped rather than failed.
 _NODE_VERSION = _node_version()
 # The freshness check is pure Python and runs everywhere, so a route change
 # that forgets the SDK fails the ordinary test job; only the package's own
 # tests need a modern node.
 needs_node = pytest.mark.skipif(
-    _NODE_VERSION is None or _NODE_VERSION < (22, 6),
-    reason="node is missing or older than 22.6 (no native TypeScript support)",
+    _NODE_VERSION is None
+    or _NODE_VERSION < (22, 18)
+    or (_NODE_VERSION[0] == 23 and _NODE_VERSION < (23, 6)),
+    reason="node is missing or older than 22.18 (no unflagged TypeScript support)",
 )
 
 
@@ -80,7 +83,7 @@ def test_generated_files_match_the_current_routes(tmp_path):
 def test_package_tests_pass():
     """The SDK's own `node --test` suite (request building, auth header,
     error mapping, SSE parsing) against its TypeScript sources directly;
-    Node 22.6+ strips the types natively, so this needs no build step and no
+    Node 22.18+ strips the types natively, so this needs no build step and no
     `npm install` (the package has zero runtime dependencies)."""
     result = subprocess.run(
         ["node", "--test", "test/*.test.ts"],

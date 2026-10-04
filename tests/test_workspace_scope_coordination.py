@@ -425,7 +425,15 @@ def test_run_agent_tool_refuses_an_agent_not_available_here(two_ws):
 
 # ── tools/delegation.py (tasks/delegate.py behind it) ────────────────────────
 
-def test_delegation_refuses_a_parent_task_of_another_workspace(tasks):
+@pytest.fixture
+def direct_state(monkeypatch):
+    """The checks in tasks/delegate.py run in this process. Left alone, the
+    transport is the HTTP relay on Postgres (common.config.run_state_transport)
+    and the call would land on whatever backend listens on localhost."""
+    monkeypatch.setattr("common.config.run_state_transport", lambda: "db")
+
+
+def test_delegation_refuses_a_parent_task_of_another_workspace(tasks, direct_state):
     from common.agent_context import current_task_id
     from tools.delegation import delegate_task_tool
     token = current_task_id.set(str(tasks["b"].id))
@@ -441,7 +449,7 @@ def test_delegation_refuses_a_parent_task_of_another_workspace(tasks):
     assert not [t for t in list_tasks() if t.parent_id == tasks["b"].id]
 
 
-def test_delegation_refuses_an_agent_not_available_here(tasks):
+def test_delegation_refuses_an_agent_not_available_here(tasks, direct_state):
     from common.agent_context import current_task_id
     from tools.delegation import delegate_task_tool
     token = current_task_id.set(str(tasks["a"].id))

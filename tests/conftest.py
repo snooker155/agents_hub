@@ -273,9 +273,25 @@ def _reset_workspace_context():
     """Every test starts outside any workspace. A run started in process sets
     the workspace on a context var its tools scope by
     (common/workspace_scope.py); a test that left it set would put the next
-    test "in" that workspace."""
+    test "in" that workspace.
+
+    The same goes for the environment: runtime/agent_run.py, flow_run.py and
+    instance_run.py are subprocess entry points that export the run's identity
+    into os.environ, and a test that calls their main() in process would leave
+    AGENT_WORKSPACE behind for every later test on that worker."""
     from common.workspace_context import _project_ctx, _workspace_ctx
     ws_token, project_token = _workspace_ctx.set(None), _project_ctx.set(None)
+    saved_env = {key: os.environ.pop(key, None) for key in _RUN_IDENTITY_ENV}
     yield
     _workspace_ctx.reset(ws_token)
     _project_ctx.reset(project_token)
+    for key, value in saved_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+# What a runtime entry point exports about the run it is (see above).
+_RUN_IDENTITY_ENV = ("AGENT_WORKSPACE", "AGENT_RUN_ID", "AGENT_INSTANCE_ID", "AGENT_LOG_FILE",
+                     "AGENTS_HUB_ROLE")

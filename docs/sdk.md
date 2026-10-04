@@ -143,7 +143,7 @@ shapes an integration takes.
 
 ## Testing
 
-`node --test` against the TypeScript sources directly (Node 22.6+ strips
+`node --test` against the TypeScript sources directly (Node 22.18+ strips
 types natively, no build step), with a hand-rolled `fetch` double
 (`test/testing.ts`) recording what was sent and answering from a queue of
 canned responses: no network, no running hub. `npm run typecheck` runs
@@ -156,7 +156,7 @@ canned responses: no network, no running hub. `npm run typecheck` runs
   hand-curated; most callers only ever touch the handful of named types the
   hand-written resources already use.
 - Running the package's own `.ts` files directly (no build step) needs
-  Node 22.6 or newer, or a bundler; this is a dev convenience, not a promise
+  Node 22.18 or newer, or a bundler; this is a dev convenience, not a promise
   about what a consumer's runtime must be once the package starts shipping
   compiled output.
 - `ApiPaths` has no query parameter types yet, only path, body and response;

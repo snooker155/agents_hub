@@ -26,7 +26,7 @@ agents/callbacks/streaming.py:S110 1
 agents/capability_guard.py:BLE001 4
 agents/checkpoint.py:BLE001 6
 agents/checkpoint.py:S110 2
-agents/hooks.py:BLE001 3
+agents/hooks.py:BLE001 2
 agents/hooks.py:S110 1
 agents/importer/checks.py:BLE001 1
 agents/importer/service.py:BLE001 1
@@ -267,8 +267,8 @@ tests/test_hub_tracer.py:S110 1
 tests/test_run_entrypoints_docker_log.py:BLE001 1
 tests/test_run_entrypoints_docker_log.py:S110 1
 tools/approval.py:BLE001 4
-tools/browser.py:BLE001 8
-tools/browser.py:S110 4
+tools/browser.py:BLE001 6
+tools/browser.py:S110 2
 tools/calculator.py:BLE001 1
 tools/capabilities.py:BLE001 6
 tools/docs_tool.py:BLE001 2

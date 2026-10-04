@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22.11"
+          node-version: "22.18"
 
       - name: Install devDependencies (typecheck only; the package itself has none)
         run: npm install
