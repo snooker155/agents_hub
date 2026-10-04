@@ -166,7 +166,7 @@ export default function LoopSettingsWorkspace({ workspace }) {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {field.kind === 'bool' ? (
-                  <label className="inline-flex items-center cursor-pointer">
+                  <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
                       className="sr-only peer"

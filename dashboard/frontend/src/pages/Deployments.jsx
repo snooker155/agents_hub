@@ -519,7 +519,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                     )}
                     {/* Upload straight from the form: the file lands in the
                         workspace's file store and is selected here at once. */}
-                    <label className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
+                    <label className={`relative inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
                       {uploading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                       {t('deployments.uploadFile')}
                       <input type="file" multiple className="sr-only" onChange={onUpload} disabled={uploading} aria-label={t('deployments.uploadFile')} />
