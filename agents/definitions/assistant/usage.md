@@ -7,6 +7,7 @@ Good fits:
 - "What's new for me today?", "how did that run go?", "how much did I spend this month?"
 - "Create a task for the researcher about X", "run the nightly team" (it quotes the cost first)
 - "Remember that I prefer short answers"
+- "Pause the mail watcher", "restart the support instance" (a card asks first)
 
 Poor fits:
 - Building or editing a flow, loop, scenario, team or world: those have their own creator agents.
@@ -14,4 +15,5 @@ Poor fits:
 
 An administrator also has a service thread, in the default workspace, where the assistant can
 check the hub's health with the doctor, list sessions, instances and containers of every
-workspace and stop or restart them. Reading logs stays with the Service Agent.
+workspace and stop or restart them, and read users, groups, the audit trail, settings and the
+cluster. Reading logs stays with the Service Agent.

@@ -547,6 +547,9 @@ class LookupKind:
     #: tests/test_hub_lookup.py).
     pages: Tuple[str, ...] = ()
     aliases: Tuple[str, ...] = field(default_factory=tuple)
+    #: Service-wide records (users, the audit trail, the hub's health): read
+    #: only with ``service_lookup``, in an administrator's service thread.
+    admin: bool = False
 
 
 _REFERENCE_SUMMARIES = {
@@ -567,6 +570,16 @@ def _register(kind: LookupKind) -> None:
     KINDS[kind.kind] = kind
     for alias in kind.aliases:
         KINDS[alias] = kind
+
+
+#: Public names for the kind modules (chat/lookup_kinds/).
+register = _register
+row = _row
+matches = _matches
+short_time = _short_time
+money = _money
+first_line = _first_line
+visible = _visible
 
 
 for _kind, (_summary, _pages) in _REFERENCE_SUMMARIES.items():
@@ -590,9 +603,10 @@ _register(LookupKind("approval", "tool calls and tasks waiting for someone's app
                      _list_approvals, _approval_card, ()))
 
 
-def kind_names() -> List[str]:
-    """The canonical kinds, without aliases."""
-    return sorted({k.kind for k in KINDS.values()})
+def kind_names(*, admin: Optional[bool] = False) -> List[str]:
+    """The canonical kinds, without aliases: the person's (``admin`` False),
+    the service-wide ones (True) or all of them (None)."""
+    return sorted({k.kind for k in KINDS.values() if admin is None or k.admin == admin})
 
 
 #: Pages the assistant already answers for with a tool of its own rather than
@@ -620,13 +634,23 @@ def covered_pages() -> Dict[str, str]:
 
 def lookup(kind: str, *, query: str = "", entity_id: str = "", workspace: str = "",
            limit: int = DEFAULT_LIMIT, user_id: Optional[str] = None,
-           current: Optional[str] = None, cross_workspace: bool = True) -> Dict[str, Any]:
+           current: Optional[str] = None, cross_workspace: bool = True,
+           admin: bool = False) -> Dict[str, Any]:
     """List records of ``kind`` (no ``entity_id``) or describe one, as the
     person ``user_id`` sees them. ``current`` is the workspace the turn runs
-    in, used when ``workspace`` is empty. Raises :class:`LookupError_`."""
+    in, used when ``workspace`` is empty. ``admin`` reads the service-wide
+    kinds instead of the person's (``service_lookup``). Raises
+    :class:`LookupError_`."""
     spec = KINDS.get(str(kind or "").strip().lower())
-    if spec is None:
-        raise LookupError_(f"Unknown kind '{kind}'. Kinds: {', '.join(kind_names())}.")
+    if spec is None or spec.admin != admin:
+        if spec is not None and spec.admin:
+            raise LookupError_(
+                f"'{spec.kind}' is service-wide: an administrator reads it with service_lookup "
+                "in the service thread.", code="service_only")
+        tool = "service_lookup" if admin else "hub_lookup"
+        raise LookupError_(f"Unknown kind '{kind}' for {tool}. Kinds: {', '.join(kind_names(admin=admin))}.")
+    if admin:
+        _require_admin(user_id)
     ctx = context_for(user_id, workspace, current, cross_workspace=cross_workspace)
     limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
     where = ctx.workspace or ALL_WORKSPACES
@@ -641,5 +665,22 @@ def lookup(kind: str, *, query: str = "", entity_id: str = "", workspace: str = 
     return {"kind": spec.kind, "workspace": where, "query": query or "", "count": len(items), "items": items}
 
 
+def _require_admin(user_id: Optional[str]) -> None:
+    """The service-wide kinds are an administrator's. The tool that reads them
+    is only built into a service thread; this is the second check."""
+    from common import identity
+    from common.auth import MULTI
+    if identity.current_mode() != MULTI:
+        return
+    principal = principal_of(user_id)
+    if principal is None or not principal.is_admin:
+        raise LookupError_("Service-wide records are for administrators.", code="forbidden")
+
+
+# The kinds of waves 2 and 3 live in their own modules, which register
+# themselves here; imported last, once every helper above exists.
+from chat import lookup_kinds as _lookup_kinds  # noqa: E402,F401
+
 __all__ = ["ALL_WORKSPACES", "KINDS", "TOOL_PAGES", "LookupError_", "LookupKind", "context_for", "covered_pages",
-           "kind_names", "lookup", "principal_of", "reachable_workspaces"]
+           "first_line", "kind_names", "lookup", "matches", "money", "principal_of", "reachable_workspaces",
+           "register", "row", "short_time", "visible"]

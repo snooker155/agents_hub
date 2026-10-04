@@ -43,7 +43,7 @@
     {
       "id": "assistant",
       "title": "Assistant",
-      "summary": "A person's own assistant, by voice or text: the Assistant page with the live mark and push to talk, the assistant system agent, which extends the Main Agent, one thread per person at /api/assistant, turns in any workspace the person belongs to, speech in and out with the workspace's speech models or the browser's own, a spoken yes for a waiting card, one read-only hub_lookup over runs, sessions, spend, budgets, models, agents, notifications and approvals, a service thread with health tools for administrators, and turns refused with code budget once a limit is used up.",
+      "summary": "A person's own assistant, by voice or text: the Assistant page with the live mark and push to talk, the assistant system agent, which extends the Main Agent, one thread per person at /api/assistant, turns in any workspace the person belongs to, speech in and out with the workspace's speech models or the browser's own, a spoken yes for a waiting card, one read-only hub_lookup over runs, sessions, spend, budgets, models, agents, notifications and approvals, hub_lookup over every page's records, one-step changes with hub_action behind a card or a spoken yes, a service thread with health tools and service_lookup (users, audit, settings) for administrators, and turns refused with code budget once a limit is used up.",
       "surface": "Assistant",
       "related": [
         "system-agents",

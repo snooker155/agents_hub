@@ -265,8 +265,9 @@ def _routes() -> set:
 
 
 def test_coverage_report_of_dashboard_pages(capsys):
-    """A report, not a gate yet: the pages no lookup kind answers for. It
-    becomes blocking after wave 2; wave 1's own pages must be covered now."""
+    """A report of the pages no lookup kind answers for; wave 1's own pages
+    must be covered. Since waves 2 and 3 every page must be: the gate is
+    tests/test_hub_action.py."""
     covered = set(lookup.covered_pages())
     pages = _routes()
     uncovered = sorted(pages - covered - {"/login", "/mark-lab", "/assistant", "/"})

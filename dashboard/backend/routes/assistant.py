@@ -233,8 +233,8 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
         f"Person: {who}" + (f" ({user['username']})" if user else "")
         + (", administrator" if getattr(principal, "is_admin", False) else ""),
         f"Thread: {'service thread' if ctx.service else 'personal thread'}",
-        *(["Service tools this turn: yes (service_health, run_diagnostics and the lists; "
-           "call them yourself)"] if (ctx.service and ctx.workspace == "default") else []),
+        *(["Service tools this turn: yes (service_health, run_diagnostics, service_lookup and the "
+           "lists; call them yourself)"] if (ctx.service and ctx.workspace == "default") else []),
         f"This turn runs in workspace: {ctx.workspace}",
         f"Home workspace (thread and memory): {ctx.home}",
         "Workspaces this person can reach: " + (", ".join(ctx.reachable) or ctx.home),

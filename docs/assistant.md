@@ -90,9 +90,10 @@ In `multi` mode an administrator also has a service thread: `mode: service`,
 keyed `"service-<id>"`, living in `default`. Only there, and only when the
 turn runs in `default`, does the assistant hold the service tools
 (`common/workspace_scope.py` `ASSISTANT_SERVICE_TOOLS`: `service_health`,
-`run_diagnostics`, `list_sessions`, `routing_log`, `costs_summary`,
-`list_instances`, `list_containers`, and stopping or restarting a run, an
-instance or a container) and the workspace management tools. Run, error and
+`run_diagnostics`, `service_lookup`, `list_sessions`, `routing_log`,
+`costs_summary`, `list_instances`, `list_containers`, and stopping or
+restarting a run, an instance or a container) and the workspace management
+tools. Run, error and
 container logs are not among them: they carry text anyone could have written,
 the assistant can also send messages, and that combination is what the
 capability guard refuses; the Service Agent reads logs. A member asking for
@@ -120,6 +121,22 @@ assistant links as "show on screen".
 | `notification` | unread notifications | title, text, severity | |
 | `approval` | tool calls and tasks waiting for approval that the person may answer | tool, reason, run, expiry | the run or the task |
 | `task`, `view`, `project`, `scenario`, `loop`, `flow`, `team`, `job` | as the chat's reference picker lists them | as the picker renders them | their page |
+| `instance` (alias `node`) | resident and task copies of agents | status, agent, runs, environment, the error's first line | `/instances/<id>` |
+| `service` | agents kept running as replicas | status, replicas, environment, budget | `/services/<id>` |
+| `deployment` | project apps under `/apps` | status, mode, each service's state | the project's page |
+| `environment` | execution profiles | mode, image, packages, network policy, limits, variable names | `/environments` |
+| `browser` | browser sessions | owner, site (host only), read only or not | `/browser` |
+| `watcher` | mailbox and HTTP watchers | state, target host or mailbox, last check, error | `/watchers` |
+| `pulse` | proactive agents | schedule, budget, today's use, recent ticks' outcomes | the agent's page |
+| `eval` | eval sets with their last run | a set's cases count, graders and runs, or a run's status, cost and scores | `/evals` |
+| `guardrail` | guardrails | stage, kind, action, event counts by action, never the matched text | `/guardrails` |
+| `tool` | the tool catalog | capabilities, approval, the mode here, which agents hold it, recent decisions | `/tools` |
+| `connection` | connections reporting runs in | kind, disabled or not, reported runs | `/connections/<id>` |
+| `skill` | skills | review state, version, steps count, never the steps | `/skills` |
+| `mcp` | MCP servers (id `workspace/server`) | transport, enabled, tool count, approval, whether there is an error | `/mcp` |
+| `widget` | embeddable chat widgets | agent, allowed origins, on or off, threads count | `/widgets` |
+| `registry` | published agents, flows and skills, the MCP allowlist (id `type:id`) | review state, reviewer, owner workspace | `/registry` |
+| `account` | the one row `me` | the person's role, workspaces, spend and limit, API keys (names, never keys), sessions count | `/account` |
 
 `workspace` is the turn's workspace when empty, any workspace the person can
 reach, or `all`. Reach is the person's: a member reads their workspaces,
@@ -131,8 +148,63 @@ It returns metadata, never a run's answer, a log or a chat's messages: those
 hold whatever the run handled, web pages included, and an agent that both
 reads such text and can send messages is what the capability guard refuses
 ([tool policy](tool-policy.md)). The answer is a click away on the linked
-page. `tests/test_hub_lookup.py` prints which dashboard pages no kind or
-tool covers yet; the rest come in later waves.
+page. Every dashboard page is answered by a kind or by one of the
+assistant's own tools; `tests/test_hub_action.py` fails when a new page is
+added without one.
+
+Shared registry items are visible from every workspace, as on the
+Marketplace page. Text a stranger could have written stays out: a web
+address is reduced to its host, a remote server's error to "has an error",
+a watcher's fetched mail and a guardrail's matched text are never read.
+
+### Service-wide records
+
+In an administrator's service thread the assistant also holds
+`service_lookup`, the same catalog for the records that belong to no
+workspace. A person's lookup refuses these kinds (`service_only`), and the
+tool is not built into a personal thread at all.
+
+| Kind | Lists | One record (`id`) | Page |
+|---|---|---|---|
+| `user` | accounts, role, active or not | profile, workspaces count, last sign in, spend limit | `/users` |
+| `group` | groups with member counts | members count, mappings to roles and workspaces | `/users` |
+| `audit` | the audit trail, newest first | actor, action, object, workspace, result; from details only short codes | `/audit` |
+| `health` | the snapshot and the doctor's checks | a check's status, summary and docs section (`snapshot` for the whole) | `/health` |
+| `container` | managed containers | image, status, agent, host | `/containers` |
+| `web_log` | what `web_search` and `fetch_url` read | host, tool, status, severity, flags count | `/web-logs` |
+| `setting` | providers, rag, web, execution | plain settings; secrets as set or not, URLs without credentials | `/settings` |
+| `cluster` | cluster members | role, liveness, last heartbeat | `/cluster` |
+
+The doctor's three checks that call out over the network (provider,
+browser, model runtime) are not run from a lookup; their cards point to the
+Health page.
+
+## What it can change
+
+`hub_action` does one small thing to one record the person reaches: a kind,
+a verb and an id. Building, editing and deleting stay with the pages and
+the creator agents, and nothing here starts paid work.
+
+| Kind | Actions |
+|---|---|
+| `instance` | `stop` (a resident copy's process, or another copy's current run), `restart` (a resident copy) |
+| `service` | `pause`, `resume` |
+| `deployment` | `stop` (restarting runs the deploy pipeline: `deploy_project`) |
+| `browser` | `stop` (closes the session) |
+| `watcher`, `pulse` | `pause`, `resume` (a pulse's wake is paid work, so it is not here) |
+| `eval` | `cancel` (a running batch eval run) |
+| `guardrail` | `enable`, `disable` (a workspace's own; a global one is an administrator's, on its page) |
+| `connection`, `mcp`, `widget` | `enable`, `disable` |
+
+Every call waits for a yes: `hub_action` asks on every call, whatever the
+workspace's tool policy says, like `delete_workspace`. The card says in a
+sentence what will happen ("Pause watcher Inbox in team: it stops checking
+until resumed."); the person answers it on the screen or with a short
+spoken yes. Where nobody is in front of a card (Telegram, a channel, `/v1`)
+the call is refused. The action then runs with the person's role in the
+record's workspace, `editor` like the page's own button, and is written to
+the audit log as `assistant.<kind>.<action>`.
+
 
 ## Answers
 

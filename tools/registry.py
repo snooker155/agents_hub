@@ -501,9 +501,13 @@ def _service_ops_specs() -> List[ToolSpec]:
 
 
 def _hub_lookup_specs() -> List[ToolSpec]:
-    # The assistant's read-only view of the hub's records (chat/lookup.py).
-    from tools.hub_lookup import HUB_LOOKUP_TOOLS
-    return [spec_from_tool(t, category="service_ops") for t in HUB_LOOKUP_TOOLS]
+    # The assistant's view of the hub's records (chat/lookup.py), the
+    # administrator's service-wide one, and its one-step actions on them
+    # (chat/actions.py).
+    from tools.hub_action import HUB_ACTION_TOOLS
+    from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
+    return [spec_from_tool(t, category="service_ops")
+            for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS)]
 
 
 def _system_ops_specs() -> List[ToolSpec]:

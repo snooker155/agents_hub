@@ -51,6 +51,8 @@ SERVICE_WIDE_TOOLS = frozenset({
     # the hub's containers and resident instances
     "list_containers", "container_logs", "stop_container", "list_instances", "instance_logs",
     "instance_timeline", "stop_instance", "restart_instance",
+    # users, the audit trail, health and the rest (tools/hub_lookup.py)
+    "service_lookup",
     # the system workspace's repository copy
     "system_repo_sync", "system_run_tests", "system_commit", "system_attach_patch",
     "system_prune_branches",
@@ -78,7 +80,7 @@ ASSISTANT_AGENT = "assistant"
 ASSISTANT_SERVICE_TOOLS: frozenset = frozenset({
     "service_health", "run_diagnostics", "list_sessions", "routing_log", "costs_summary",
     "stop_run", "list_containers", "stop_container", "list_instances", "stop_instance",
-    "restart_instance",
+    "restart_instance", "service_lookup",
 })
 
 

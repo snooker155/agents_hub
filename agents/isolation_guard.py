@@ -73,10 +73,12 @@ class PinnedWorkspaceTool(BaseTool):
         return await self.inner.arun(tool_input)
 
 
-#: Read-only tools that scope themselves: ``hub_lookup`` (chat/lookup.py)
-#: reads the workspaces the person can see for the assistant, whose reach is
-#: the person's, and the turn's own workspace for any other agent.
-SELF_SCOPED_TOOLS = frozenset({"hub_lookup"})
+#: Tools that scope themselves: ``hub_lookup`` (chat/lookup.py) and
+#: ``hub_action`` (chat/actions.py) reach the workspaces the person can see
+#: for the assistant, whose reach is the person's, and the turn's own
+#: workspace for any other agent; ``service_lookup`` is service-wide and held
+#: only in an administrator's service thread.
+SELF_SCOPED_TOOLS = frozenset({"hub_lookup", "service_lookup", "hub_action"})
 
 
 def pin_workspace(tools: List[Any], workspace: str) -> List[Any]:

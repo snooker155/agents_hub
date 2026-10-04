@@ -1383,6 +1383,8 @@
         "tools": {
           "add": [
             "hub_lookup",
+            "hub_action",
+            "service_lookup",
             "service_health",
             "run_diagnostics",
             "list_sessions",
