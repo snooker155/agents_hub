@@ -220,6 +220,11 @@ In rough order of surprise:
 - **Teams** — members times rounds, plus everyone reading everyone.
 - **Flows** — one call per agent node, once.
 - **Chat** — one call per turn, plus any delegation.
+- **Voice** — the [assistant](assistant.md#voice) pays its workspace's
+  transcription price per recording and its speech price per 1000 characters
+  read aloud. A recording is a `voice` run in the person's home workspace
+  (Messages lists it as "Voice input"); speech is added to the turn's run.
+  Both count toward the person's limit.
 
 This is why the tools that start the first four refuse until you have approved
 them, and why the refusal carries the estimate: the number arrives before the

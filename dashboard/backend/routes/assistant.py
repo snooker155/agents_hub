@@ -1,6 +1,6 @@
 """
 The assistant: one conversation per person with the ``assistant`` agent,
-through which the whole service is usable by text (and, later, by voice).
+through which the whole service is usable by text and by voice.
 
 The machinery is the shared entity chat (:mod:`chat.entity_chat_router`), the
 same four routes as the Help panel (``routes/help_chat.py``) under
@@ -26,21 +26,38 @@ same four routes as the Help panel (``routes/help_chat.py``) under
 A turn is refused before it starts when the person's spend limit or the
 workspace's budget is used up: 402 with ``{"code": "budget", "message"}``.
 Every turn is a run stamped with the person (``launched_by``), so it shows in
-Messages and counts toward their limit.
+Messages and counts toward their limit. One turn at a time per thread: a send
+while one runs is 409 ``busy``.
+
+Voice (chat/voice.py) is two more routes around the same turn, not another
+loop: ``POST /transcribe`` turns a recording into text, which the browser
+shows and sends as a turn with ``voice: true``; ``POST /speak`` reads aloud a
+sentence of a turn's answer (or the hub's own phrase for a waiting card or a
+long step). Both call the speech models directly (providers/media.py), from
+the home workspace's special models with the personal fallback to
+``default``, and both are charged: a transcription as a ``voice`` run of its
+own, speech on the turn's run. A short spoken yes or no while a card waits in
+the thread answers that card (audited with ``via: voice``), except a
+connection card, whose secret is only ever typed.
 """
 from __future__ import annotations
 
+import logging
+import os
 import re
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from chat import voice
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 from common import access, identity
 from common.auth import MULTI
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["assistant"])
 
@@ -53,6 +70,15 @@ _ID_OK = re.compile(r"[^A-Za-z0-9_:.@+-]")
 MAX_KEY_CHARS = 120
 #: References per turn, as for the page chat.
 MAX_REFS = 8
+
+#: Largest recording ``transcribe`` takes, in bytes, and longest, in seconds
+#: (checked for WAV; a compressed recording is held to the size). The page
+#: stops recording at the same length.
+MAX_AUDIO_BYTES = int(os.environ.get("AGENTS_HUB_VOICE_MAX_BYTES", str(8 * 1024 * 1024)) or 0)
+MAX_AUDIO_SECONDS = float(os.environ.get("AGENTS_HUB_VOICE_MAX_SECONDS", "120") or 120)
+#: Longest text one ``speak`` call reads.
+MAX_SPEAK_CHARS = 1000
+_VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
 
 class AssistantRef(BaseModel):
@@ -70,7 +96,7 @@ class AssistantTurnIn(BaseModel):
     #: ``personal`` or ``service`` (an administrator's service thread).
     mode: str = MODE_PERSONAL
     references: List[AssistantRef] = []
-    #: Whether the message was spoken (stage 3 fills it from the transcript).
+    #: Whether the message was spoken: a transcript from ``/transcribe``.
     voice: bool = False
 
 
@@ -246,7 +272,78 @@ def _load(request: Request) -> SimpleNamespace:
     return resolve_thread(request, request.query_params.get("mode"))
 
 
+def _conversation_id(entity_id: str) -> str:
+    """The thread's current conversation id, as chat/entity_chat.py files its
+    runs (``task_id``): one per session epoch."""
+    from common.entity_chat_store import entity_chat_store
+    epoch = entity_chat_store().get_session_epoch(ASSISTANT_CHAT_KIND, entity_id)
+    return f"{ASSISTANT_CHAT_KIND}chat:{entity_id}" + (f":{epoch}" if epoch else "")
+
+
+def _latest_run(conv_id: str) -> Optional[Dict[str, Any]]:
+    from common import db
+    from managers.run_manager import get_run_by_id
+    row = db.get_conn().execute(
+        "SELECT run_id FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        (conv_id,)).fetchone()
+    return get_run_by_id(row["run_id"]) if row is not None else None
+
+
+def _waiting_cards(ctx: SimpleNamespace) -> List[Dict[str, Any]]:
+    """The calls waiting for a person in this thread's latest turn: held by
+    the turn itself or by an agent it delegated to."""
+    from common import tool_approvals
+    from managers.run_manager import get_run_by_id
+    conv_id = _conversation_id(ctx.entity_id)
+    latest = _latest_run(conv_id)
+    if latest is None:
+        return []
+    run_id = str(latest.get("run_id"))
+    out = []
+    for row in tool_approvals.list_pending(since=latest.get("created_at")):
+        if tool_approvals.is_expired(row):
+            continue
+        if row.get("run_id") == run_id or row.get("conversation_id") == conv_id:
+            out.append(row)
+            continue
+        held_by = get_run_by_id(str(row.get("run_id") or "")) or {}
+        if held_by.get("parent_run_id") == run_id:
+            out.append(row)
+    return out
+
+
+def _voice_answer(ctx: SimpleNamespace, message: str) -> Optional[List[Dict[str, Any]]]:
+    """A spoken yes or no to the card waiting in this thread, settled here
+    instead of becoming a turn. None when the message is not a short yes or
+    no, or no card waits: then it is an ordinary turn."""
+    decision = voice.consent(message)
+    if decision is None:
+        return None
+    cards = _waiting_cards(ctx)
+    if not cards:
+        return None
+    done = {"type": "done", "run_id": None}
+    if len(cards) > 1:
+        return [{"type": "voice_answer", "status": "ambiguous", "decision": decision,
+                 "message": "Several calls wait for an answer; answer them on the screen."}, done]
+    card = cards[0]
+    if card.get("tool") == voice.CONNECTION_TOOL:
+        # Its secret is typed into the card; nothing spoken settles it.
+        return [{"type": "voice_answer", "status": "on_screen", "approval_id": card.get("approval_id"),
+                 "tool": card.get("tool"), "decision": decision,
+                 "message": "A connection is set up in its card on the screen."}, done]
+    from managers.run_manager import get_run_by_id
+    from routes import tool_approvals as approvals_routes
+    run = get_run_by_id(str(card.get("run_id") or "")) or {}
+    principal = approvals_routes.require_answerer(ctx.principal, card, run)
+    settled = approvals_routes.answer(card, run, principal, decision,
+                                      f"By voice: {message.strip()}"[:200], via="voice")["approval"]
+    return [{"type": "voice_answer", "approval_id": card.get("approval_id"), "tool": card.get("tool"),
+             "decision": decision, "status": settled.get("status")}, done]
+
+
 def _load_send(request: Request, body: Dict[str, Any]) -> SimpleNamespace:
+    from chat.entity_chat import entity_run_active
     from common.bootstrap import ensure_system_agent
 
     try:
@@ -254,10 +351,16 @@ def _load_send(request: Request, body: Dict[str, Any]) -> SimpleNamespace:
     except Exception as e:  # noqa: BLE001 - surfaced as a normal validation error
         raise HTTPException(status_code=422, detail=str(e))
     ctx = resolve_thread(request, payload.mode)
+    ctx.payload = payload
+    ctx.voice_answer = _voice_answer(ctx, payload.message) if payload.voice else None
+    if ctx.voice_answer is not None:
+        return ctx
+    if entity_run_active(ASSISTANT_CHAT_KIND, ctx.entity_id):
+        raise HTTPException(status_code=409, detail={
+            "code": "busy", "message": "A turn is still running in this thread: wait for it or stop it."})
     if not ensure_system_agent(ASSISTANT_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{ASSISTANT_AGENT_ID}' agent is not registered")
-    ctx.payload = payload
     ctx.workspace = _target(ctx, payload.workspace)
     ctx.reachable = reachable_workspaces(ctx.principal)
     _check_budget(ctx.workspace)
@@ -297,6 +400,207 @@ def _meta(ctx: SimpleNamespace) -> Dict[str, Any]:
     }
 
 
+# ── voice ────────────────────────────────────────────────────────────────────
+
+def _model_not_added(purpose: str, home: str) -> HTTPException:
+    from common import personal_workspace
+    where = (f"this personal workspace or in '{personal_workspace.FALLBACK}', which it falls back to"
+             if personal_workspace.is_personal(home) else f"workspace '{home}'")
+    return HTTPException(status_code=409, detail={
+        "code": "model_not_added", "purpose": purpose,
+        "message": f"No {purpose} model is added in {where}. Add one on the Models page, "
+                   "Special models tab.",
+    })
+
+
+def _speech_entry(purpose: str, home: str) -> Dict[str, Any]:
+    from providers import special
+    entry = special.effective(home).get(purpose)
+    if not entry:
+        raise _model_not_added(purpose, home)
+    return entry
+
+
+def _provider_failed(what: str, exc: Exception) -> HTTPException:
+    log.info("assistant voice: %s failed: %s", what, exc)
+    return HTTPException(status_code=502, detail={"code": "provider_error",
+                                                  "message": f"{what} failed: {str(exc)[:300]}"})
+
+
+def _price(entry: Dict[str, Any]) -> Optional[float]:
+    price = entry.get("price_usd")
+    return None if price is None else float(price)
+
+
+@router.post("/api/assistant/transcribe")
+async def transcribe(request: Request):
+    """A recording (the request body, ``Content-Type`` audio/webm, audio/ogg,
+    audio/wav, audio/mp4 or audio/mpeg) as text, with the home workspace's
+    transcription model. Nothing is kept but the cost: a ``voice`` run with
+    the call's price, charged to the person and their home workspace.
+    ``?language=`` (``en``, ``ru``, ``de``) helps the model; ``?mode=service``
+    for an administrator's service thread."""
+    ctx = resolve_thread(request, request.query_params.get("mode"))
+    mime = str(request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    ext = voice.audio_extension(mime)
+    if ext is None:
+        raise HTTPException(status_code=415, detail={
+            "code": "unsupported_audio",
+            "message": "Send audio/webm, audio/ogg, audio/wav, audio/mp4 or audio/mpeg."})
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail={"code": "too_long",
+                                                     "message": "The recording is too large."})
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail={"code": "empty", "message": "The recording is empty."})
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail={"code": "too_long",
+                                                     "message": "The recording is too large."})
+    seconds = voice.wav_seconds(data) if ext == "wav" else None
+    if seconds is not None and seconds > MAX_AUDIO_SECONDS:
+        raise HTTPException(status_code=413, detail={
+            "code": "too_long", "message": f"The recording is longer than {int(MAX_AUDIO_SECONDS)} seconds."})
+
+    entry = _speech_entry("transcription", ctx.home)
+    _check_budget(ctx.home)
+    language = str(request.query_params.get("language") or "").strip().lower()[:5] or None
+    language = language or (entry.get("options") or {}).get("language")
+    import asyncio
+    from providers import media, special
+    try:
+        ep = special.entry_endpoint(entry, ctx.home)
+        text = await asyncio.to_thread(media.transcribe, ep, entry["model"],
+                                       (f"recording.{ext}", data, mime), language=language, prompt=None)
+    except Exception as exc:  # noqa: BLE001 - the page shows the provider's reason
+        raise _provider_failed("Transcription", exc)
+    item = voice.call_entry("transcription", entry, _price(entry), 1)
+    principal = ctx.principal
+    user_id = str(principal.id) if (_multi() and principal is not None) else None
+    run_id = voice.record_input_run(workspace=ctx.home, user_id=user_id, item=item,
+                                    agent_id=ASSISTANT_AGENT_ID, chars=len(text))
+    return {"text": text, "language": language, "run_id": run_id, "cost_usd": item["cost_usd"],
+            "seconds": seconds,
+            # Whether sending it would answer a waiting card rather than start a turn.
+            "consent": voice.consent(text)}
+
+
+class SpeakIn(BaseModel):
+    #: The assistant turn this speech belongs to (the ``run`` event of its stream).
+    run_id: str
+    #: A sentence of the turn's answer, as it streamed.
+    text: str = ""
+    #: Or: a card waiting in the turn, which the hub describes itself.
+    approval_id: str = ""
+    #: Or: the tool a long turn is busy with (``tool_start``), and the agent
+    #: it delegates to, if any.
+    tool: str = ""
+    agent: str = ""
+    #: The page's language, for the hub's own phrases.
+    language: str = ""
+    #: A voice of the speech model; the model's default when empty.
+    voice: str = ""
+
+
+def _thread_run(principal: Any, run_id: str) -> Dict[str, Any]:
+    """The run, once it is a turn of one of this person's assistant threads."""
+    from managers.run_manager import get_run_by_id
+    run = get_run_by_id(str(run_id or "").strip()) if run_id else None
+    if run is None:
+        raise HTTPException(status_code=404, detail="No such run")
+    task = str(run.get("task_id") or "")
+    prefix = f"{ASSISTANT_CHAT_KIND}chat:"
+    rest = task[len(prefix):] if task.startswith(prefix) else ""
+    mine = any(rest == key or rest.startswith(key + ":") for key in own_thread_ids())
+    if (not mine or run.get("message_origin") != f"{ASSISTANT_CHAT_KIND}-chat"
+            or (_multi() and str(run.get("launched_by") or "") != str(getattr(principal, "id", "")))):
+        raise HTTPException(status_code=403, detail="That run is not a turn of your assistant")
+    run["_thread_key"] = next(key for key in own_thread_ids() if rest == key or rest.startswith(key + ":"))
+    return run
+
+
+def _home_of_thread(principal: Any, key: str) -> str:
+    if not _multi() or key.startswith("service-"):
+        return "default"
+    from common import personal_workspace
+    return personal_workspace.ensure_personal_workspace(principal.id)
+
+
+def _phrase(body: SpeakIn, run: Dict[str, Any]) -> str:
+    """What to read: a sentence of the turn's own answer, or the hub's own
+    phrase for a card or a step. Anything else is refused."""
+    given = [name for name in ("text", "approval_id", "tool") if getattr(body, name)]
+    if len(given) != 1:
+        raise HTTPException(status_code=400, detail="Give exactly one of text, approval_id or tool")
+    if body.text:
+        if len(body.text) > MAX_SPEAK_CHARS:
+            raise HTTPException(status_code=413, detail={
+                "code": "too_long", "message": f"At most {MAX_SPEAK_CHARS} characters per call."})
+        known = voice.spoken_from_turn(body.text, run)
+        if known is None:
+            raise HTTPException(status_code=409, detail={
+                "code": "not_ready", "message": "The turn's text is not known here yet; try again when it ends."})
+        if not known:
+            raise HTTPException(status_code=403, detail={
+                "code": "not_in_answer", "message": "Only the turn's own answer is read aloud."})
+        return voice.speakable(body.text, body.language)
+    if body.approval_id:
+        from common import tool_approvals
+        from managers.run_manager import get_run_by_id
+        card = tool_approvals.get(body.approval_id)
+        held_by = (get_run_by_id(str(card.get("run_id") or "")) or {}) if card else {}
+        if card is None or not (card.get("run_id") == run["run_id"]
+                                or card.get("conversation_id") == run.get("task_id")
+                                or held_by.get("parent_run_id") == run["run_id"]):
+            raise HTTPException(status_code=404, detail="No such card in this turn")
+        return voice.approval_phrase(card, body.language)
+    agent_name = ""
+    if body.agent:
+        from agents.registry import get_agent
+        spec = get_agent(str(body.agent).strip()[:80])
+        agent_name = (getattr(spec, "name", "") or "") if spec is not None else ""
+    phrase = voice.progress_phrase(body.tool, agent_name, body.language)
+    if phrase is None:
+        raise HTTPException(status_code=400, detail="tool must be a tool name")
+    return phrase
+
+
+@router.post("/api/assistant/speak")
+async def speak(body: SpeakIn, request: Request):
+    """One stretch of speech for an assistant turn, as audio (audio/mpeg or
+    audio/wav, whatever the model returns). Reads only the turn's own words
+    (Markdown cleaned: links by their anchor, code and tables left to the
+    screen) or the hub's phrase for a waiting card or a long step; any other
+    text is refused. The price goes on the turn's run. 204 when nothing is
+    left to say once the Markdown is cleaned."""
+    principal = _principal(request)
+    run = _thread_run(principal, body.run_id)
+    home = _home_of_thread(principal, run["_thread_key"])
+    spoken = _phrase(body, run)
+    if not spoken:
+        return Response(status_code=204)
+    if body.voice and not _VOICE_NAME_RE.match(body.voice):
+        raise HTTPException(status_code=400, detail="voice must be a voice name")
+    entry = _speech_entry("speech", home)
+    _check_budget(str(run.get("workspace") or home))
+    price = _price(entry)
+    cost = None if price is None else price * len(spoken) / 1000.0
+    import asyncio
+    from providers import media, special
+    try:
+        ep = special.entry_endpoint(entry, home)
+        audio = await asyncio.to_thread(media.synthesize_speech, ep, entry["model"], spoken,
+                                        voice=body.voice or None, instructions=None,
+                                        options=dict(entry.get("options") or {}))
+    except Exception as exc:  # noqa: BLE001 - the page falls back to the browser's voice
+        raise _provider_failed("Speech synthesis", exc)
+    item = voice.call_entry("speech", entry, cost, round(len(spoken) / 1000.0, 3))
+    voice.charge_run(run["run_id"], item)
+    return Response(content=audio.data, media_type=audio.mime_type,
+                    headers={"Cache-Control": "no-store", "X-Voice-Chars": str(len(spoken)),
+                             "X-Voice-Cost-Usd": f"{item['cost_usd']:.6f}"})
+
+
 router.include_router(build_entity_chat_router(EntityChatRoute(
     kind=ASSISTANT_CHAT_KIND,
     path="",
@@ -306,6 +610,8 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
     spec=_spec,
     context_setup=_context_setup,
     meta_extra=_meta,
+    tap=lambda ctx: voice.turn_tap(SimpleNamespace(run_id=None)),
+    respond=lambda ctx, msg: ctx.voice_answer,
 )), prefix="/api/assistant")
 
 

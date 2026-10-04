@@ -335,6 +335,9 @@ async def run_entity_chat_turn(
     _open_run(run_id, spec.agent_id, task_id=conv_id, session_id=session_id,
               session_type="chat", message_origin=f"{spec.kind}-chat", channel="chat",
               workspace=spec.workspace, title=user_message[:60], log_file=str(log_file))
+    # The run id before any token, so a client can refer to the turn while it
+    # streams (the assistant reads its first sentences aloud: chat/voice.py).
+    await emit({"type": "run", "run_id": run_id})
 
     # The same chat-log scaffold every chat run writes. The Messages insights
     # view parses chat runs from these headers, so a run without them shows no

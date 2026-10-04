@@ -167,6 +167,20 @@ def list_for_tool(tool: str, *, status: Optional[str] = None,
     return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
 
 
+def list_pending(*, since: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Calls still waiting, newest first; ``since`` (ISO time) keeps those
+    opened after it. The assistant looks here for the card a spoken yes is
+    about (routes/assistant.py)."""
+    sql = "SELECT * FROM tool_approvals WHERE status = ?"
+    params: List[Any] = [STATUS_PENDING]
+    if since:
+        sql += " AND created_at >= ?"
+        params.append(str(since))
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit or 50), 500)))
+    return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
+
+
 def _settle(approval_id: str, status: str, *, note: str = "", author: Any = None) -> Optional[Dict[str, Any]]:
     """Move a pending row to ``status``. Returns the row when this call moved
     it, None when it was no longer pending (answered, expired or cancelled by
@@ -451,6 +465,7 @@ __all__ = [
     "STATUS_APPROVED", "STATUS_CANCELLED", "STATUS_DENIED", "STATUS_EXPIRED", "STATUS_PENDING",
     "TIMEOUT_ENV",
     "chat_context", "close", "decide", "get", "hold", "is_expired", "list_for_run", "list_for_tool",
+    "list_pending",
     "open_approval",
     "timeout_seconds", "transport_for",
 ]

@@ -95,6 +95,11 @@ money cap is charged at once, and a call it cannot pay for is refused before
 it is made. In a workspace whose budget is fail closed, a purpose with no
 price is refused too, the same rule as an unpriced chat model.
 
+The [assistant](assistant.md#voice) uses the speech and transcription models
+of the person's home workspace without a tool: it transcribes what the person
+says and reads its answers aloud, at the same prices. Transcription is recorded
+as a `voice` run of its own, speech on the turn's run (`voice_calls`).
+
 ## Capabilities
 
 `generate_image`, `generate_video` and `synthesize_speech` grant nothing: they

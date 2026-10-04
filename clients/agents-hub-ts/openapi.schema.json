@@ -10998,6 +10998,49 @@
         "title": "SnippetVersionCreate",
         "type": "object"
       },
+      "SpeakIn": {
+        "properties": {
+          "agent": {
+            "default": "",
+            "title": "Agent",
+            "type": "string"
+          },
+          "approval_id": {
+            "default": "",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "language": {
+            "default": "",
+            "title": "Language",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "tool": {
+            "default": "",
+            "title": "Tool",
+            "type": "string"
+          },
+          "voice": {
+            "default": "",
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "SpeakIn",
+        "type": "object"
+      },
       "SteerBody": {
         "properties": {
           "message": {
@@ -18301,6 +18344,45 @@
         ]
       }
     },
+    "/api/assistant/speak": {
+      "post": {
+        "description": "One stretch of speech for an assistant turn, as audio (audio/mpeg or\naudio/wav, whatever the model returns). Reads only the turn's own words\n(Markdown cleaned: links by their anchor, code and tables left to the\nscreen) or the hub's phrase for a waiting card or a long step; any other\ntext is refused. The price goes on the turn's run. 204 when nothing is\nleft to say once the Markdown is cleaned.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeakIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Speak",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
     "/api/assistant/stop": {
       "post": {
         "responses": {
@@ -18314,6 +18396,25 @@
           }
         },
         "summary": " Stop Chat",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/transcribe": {
+      "post": {
+        "description": "A recording (the request body, ``Content-Type`` audio/webm, audio/ogg,\naudio/wav, audio/mp4 or audio/mpeg) as text, with the home workspace's\ntranscription model. Nothing is kept but the cost: a ``voice`` run with\nthe call's price, charged to the person and their home workspace.\n``?language=`` (``en``, ``ru``, ``de``) helps the model; ``?mode=service``\nfor an administrator's service thread.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Transcribe",
         "tags": [
           "assistant"
         ]

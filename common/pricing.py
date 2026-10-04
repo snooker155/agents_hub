@@ -159,12 +159,16 @@ def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
     """Calls made on the run's behalf beside its own loop (a policy
     classifier, a guardrail judge, a schema repair, the outcome grader;
     common/aux_usage.py). They are not in the run's token totals, so they are
-    added, each at its own model."""
+    added, each at its own model; so are the voice calls of an assistant
+    turn (``voice_calls``)."""
     loop = run.get("loop")
-    if not isinstance(loop, dict):
-        return 0.0
+    calls = list(loop.get("aux_calls") or []) if isinstance(loop, dict) else []
+    # Speech read aloud from a turn's answer, and a recording transcribed
+    # before it (chat/voice.py): kept beside the loop's own record, which the
+    # turn rewrites when it ends.
+    calls += list(run.get("voice_calls") or [])
     total = 0.0
-    for call in loop.get("aux_calls") or []:
+    for call in calls:
         if not isinstance(call, dict):
             continue
         try:

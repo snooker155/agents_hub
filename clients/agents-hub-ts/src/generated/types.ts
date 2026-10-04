@@ -1793,6 +1793,16 @@ export type SnippetVersionCreate = {
   "base"?: string | null;
 };
 
+export type SpeakIn = {
+  "run_id": string;
+  "text"?: string;
+  "approval_id"?: string;
+  "tool"?: string;
+  "agent"?: string;
+  "language"?: string;
+  "voice"?: string;
+};
+
 export type SteerBody = {
   "message": string;
   "mode"?: string;
@@ -2512,7 +2522,13 @@ export interface ApiPaths {
     post: { response: unknown };
     delete: { response: unknown };
   };
+  "/api/assistant/speak": {
+    post: { body: SpeakIn; response: unknown };
+  };
   "/api/assistant/stop": {
+    post: { response: unknown };
+  };
+  "/api/assistant/transcribe": {
     post: { response: unknown };
   };
   "/api/audit": {
