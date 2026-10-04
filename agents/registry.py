@@ -726,6 +726,10 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         if k not in ad or not isinstance(ad[k], str) or not ad[k].strip():
             raise ValueError(f"Agent missing required field '{k}' or value is empty: {ad}")
 
+    # ``@`` starts a workspace role reference (agents/roles.py), never an id.
+    if str(ad.get("id") or "").strip().startswith("@"):
+        raise ValueError(f"Agent id cannot start with '@' (that names a workspace role): {ad.get('id')}")
+
     # normalize optional fields
     # Keep reading default_params for backward compatibility with old JSON files
     legacy_dp = ad.get("default_params")
@@ -1270,6 +1274,9 @@ def _save_record(
     note: Optional[str],
 ) -> None:
     """Guard, snapshot and write one stored record (see :func:`add_agent`)."""
+    # ``@`` starts a workspace role reference (agents/roles.py), never an id.
+    if str(stored.id or "").startswith("@"):
+        raise ValueError(f"Agent id cannot start with '@' (that names a workspace role): {stored.id}")
     from agents.capability_guard import enforce_agent_tools
     from agents import inheritance
     from tools.capabilities import secret_grant_ids

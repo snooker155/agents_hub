@@ -130,6 +130,12 @@ class WorkspacePersonalMemoryUpdate(BaseModel):
     enabled: bool
 
 
+class WorkspaceRoleUpdate(BaseModel):
+    # The agent that holds the role in the workspace (agents/roles.py);
+    # empty or the role's default returns it to the default.
+    agent_id: Optional[str] = None
+
+
 class AgentResponseFormatUpdate(BaseModel):
     # Structured response the agent may emit: "none" | "buttons" | "telegram".
     response_format: str = "none"

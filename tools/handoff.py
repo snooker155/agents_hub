@@ -92,7 +92,11 @@ def create_handoff_tools(spec: Any, workspace: Optional[str] = None) -> List[Str
         return []
     agent_id = str(getattr(spec, "id", "") or "")
     agent_name = str(getattr(spec, "name", "") or agent_id)
-    targets = [t for t in (getattr(spec, "handoffs", None) or []) if t and t != agent_id]
+    # A role reference (``@verifier``) names whoever holds the role in this
+    # workspace (agents/roles.py); the tool lists and accepts that agent.
+    from agents.roles import expand as _expand_roles
+    targets = [t for t in _expand_roles(getattr(spec, "handoffs", None) or [], workspace)
+               if t and t != agent_id]
     default_filter = str(getattr(spec, "handoff_history", "") or "full")
     listed = _target_lines(targets)
     if not listed:
@@ -132,6 +136,9 @@ def _perform(*, caller_id: str, caller_name: str, targets: List[str], default_fi
     from chat import handoff as handoff_mod
 
     target = str(target or "").strip()
+    if target.startswith("@"):
+        from agents.roles import resolve as _resolve_role
+        target = _resolve_role(target, workspace)
     reason = " ".join(str(reason or "").split())
     sink = handoff_mod.current()
     if sink is None:

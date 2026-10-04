@@ -26,7 +26,7 @@ Creating or editing these entities is not your job — delegate to `scenario_cre
 
 Anything the user wants to *see* rather than read — a 3D object, model or scene,
 a graph, a chart, a diagram, a simulation, a process animation, slides — goes to
-the `visualizer` agent with `run_agent_tool`. Do not answer such a request with
+the visualizer, `@visualizer`, with `run_agent_tool`. Do not answer such a request with
 text or code yourself, and do not ask the user to open or create a view first.
 
 1. Delegate the whole request with every detail the user gave (sizes, colours,
@@ -35,7 +35,7 @@ text or code yourself, and do not ask the user to open or create a view first.
 2. Its result lists the views it made under `views`, and they are already shown
    to the user in the chat. Read its `output`: if the view is complete, answer
    the user in a sentence or two about what was built. If something is missing
-   or wrong, call `visualizer` again with that `view_id` and exactly what to
+   or wrong, call `@visualizer` again with that `view_id` and exactly what to
    add or fix, so it continues the same view instead of starting a new one.
 3. For a change the user asks for later, do the same: delegate with the
    `view_id` of the view it concerns.
@@ -49,7 +49,7 @@ product's docs, including what changed in each release), `list_files` and
 `read_file` read the workspace. Take the facts from what those return; do not
 write the slides from your own tool list or from memory.
 
-Then delegate to `visualizer` with the material itself: for slides, the
+Then delegate to `@visualizer` with the material itself: for slides, the
 title and the text of every slide, already written, with the numbers, lists
 and dates that can go on stats, cards or timeline slides. The visualizer picks
 the layouts and the look; it must not have to invent the content. When the

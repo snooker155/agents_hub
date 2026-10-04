@@ -2200,6 +2200,10 @@ export type WorkspacePersonalMemoryUpdate = {
   "enabled": boolean;
 };
 
+export type WorkspaceRoleUpdate = {
+  "agent_id"?: string | null;
+};
+
 export type WorldGenerateIn = {
   "requirement": string;
   "workspace"?: string | null;
@@ -4548,6 +4552,12 @@ export interface ApiPaths {
   "/api/workspaces/{name}/policy/import-hooks-file": {
     post: { response: unknown };
   };
+  "/api/workspaces/{name}/roles": {
+    get: { response: unknown };
+  };
+  "/api/workspaces/{name}/roles/{role}": {
+    put: { body: WorkspaceRoleUpdate; response: unknown };
+  };
   "/api/workspaces/{name}/secrets": {
     get: { response: Record<string, unknown>[] };
   };
@@ -4559,6 +4569,10 @@ export interface ApiPaths {
     put: { body: SecretHostsPut; response: unknown };
   };
   "/api/workspaces/{name}/settings-overrides": {
+    get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/special-models": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
   };

@@ -537,10 +537,78 @@ def ensure_initial_state() -> dict[str, bool]:
     result["legacy_agent_ids_renamed"] = _rename_legacy_agent_ids()
     result["system_agents_added"] = bool(_ensure_system_agents())
     result["system_agents_synced"] = bool(_sync_system_agents())
+    result["role_references_adopted"] = bool(_adopt_role_references())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
     result["system_workspace"] = _seed_system_workspace()
     result["demo_workspace"] = _seed_demo_workspace()
     return result
+
+
+#: Marks that :func:`_adopt_role_references` has run on this install.
+_ROLE_REFS_MARKER = "role_references_adopted"
+
+
+def _adopt_role_references() -> bool:
+    """Once per install: a system agent the operator edited keeps the ids the
+    seed has since replaced with workspace roles (agents/roles.py), since the
+    seed sync skips ``user_modified`` records. Where the seed's ``delegates``
+    or ``handoffs`` now name ``@coder`` and the record still names the role's
+    default agent (``swe_agent``), the id becomes the reference. Nothing else
+    the operator chose is touched, and until a workspace binds the role the
+    reference reaches the same agent. Never raising."""
+    import json
+    from datetime import datetime, timezone
+    try:
+        from common.docstore import DocStore
+        from agents.registry import load_all_raw, replace_all_raw
+        from agents.roles import ROLES, ref
+        markers = DocStore("bootstrap_markers")
+        if markers.get(_ROLE_REFS_MARKER):
+            return False
+        if not BOOTSTRAP_AGENTS_FILE.is_file():
+            return False
+        seed = {a["id"]: a for a in json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8")).get("agents") or []
+                if isinstance(a, dict) and a.get("id")}
+        records = load_all_raw()
+        if not records:
+            return False
+        before = json.loads(json.dumps(records))
+        default_to_ref = {r.default: ref(r.id) for r in ROLES}
+        changed: list[str] = []
+        for rec in records:
+            seed_rec = seed.get(rec.get("id"))
+            if not isinstance(rec, dict) or seed_rec is None or not _is_system_seed(seed_rec):
+                continue
+            for fld in ("delegates", "handoffs"):
+                live = list(rec.get(fld) or [])
+                wanted = set(seed_rec.get(fld) or [])
+                new = []
+                for aid in live:
+                    role_ref = default_to_ref.get(aid)
+                    target = role_ref if role_ref and role_ref in wanted else aid
+                    if target not in new:
+                        new.append(target)
+                if new != live:
+                    rec[fld] = new
+                    changed.append(f"{rec['id']}.{fld}")
+        if changed:
+            # A backup is an export, not state: next to where agents.json used
+            # to live, like the seed sync's.
+            backup = AGENTS_FILE.with_suffix(".json.pre-roles-backup")
+            if not backup.exists():
+                try:
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    backup.write_text(json.dumps({"agents": before}, ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+                except OSError:
+                    log.exception("workspace roles: could not write the backup to %s", backup)
+            replace_all_raw(records)
+            log.info("workspace roles: system agents now name roles in %s", ", ".join(changed))
+        markers.put(_ROLE_REFS_MARKER, {"at": datetime.now(timezone.utc).isoformat(), "changed": changed})
+        return bool(changed)
+    except Exception:  # noqa: BLE001 - startup must not raise; the literal ids keep working
+        log.debug("role reference adoption skipped", exc_info=True)
+        return False
 
 
 def _rename_legacy_agent_ids() -> bool:

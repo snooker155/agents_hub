@@ -53,10 +53,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -324,7 +324,8 @@
         "delegate_task_tool",
         "run_agent_tool",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "generate_image"
       ],
       "commands": [],
       "capacity": 1,
@@ -422,7 +423,8 @@
         "read_file",
         "search_text",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "generate_image"
       ],
       "commands": [],
       "capacity": 1,
@@ -610,7 +612,7 @@
       "response_format": "buttons",
       "clarify_gate": true,
       "delegates": [
-        "web_searcher"
+        "@web_search"
       ],
       "capability_override": true
     },
@@ -693,7 +695,12 @@
         "update_workspace",
         "delete_workspace",
         "add_workspace_agent",
-        "remove_workspace_agent"
+        "remove_workspace_agent",
+        "generate_image",
+        "generate_video",
+        "synthesize_speech",
+        "transcribe_audio",
+        "ask_special_model"
       ],
       "commands": [],
       "capacity": 1,
@@ -709,10 +716,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
@@ -762,7 +769,12 @@
         "list_agents_tool",
         "get_flow_tool",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "generate_image",
+        "generate_video",
+        "synthesize_speech",
+        "transcribe_audio",
+        "ask_special_model"
       ],
       "commands": [],
       "capacity": 1,
@@ -779,10 +791,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "main-agent",
         "prompt-engineer",
         "plot-manager",
@@ -949,10 +961,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -1001,10 +1013,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -1050,10 +1062,10 @@
         "flow_creator",
         "memory_extractor",
         "architect_agent",
-        "planner",
-        "visualizer",
-        "swe_agent",
-        "code_reviewer",
+        "@planner",
+        "@visualizer",
+        "@coder",
+        "@reviewer",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -1210,7 +1222,8 @@
         "search_memory",
         "read_memory",
         "calculator",
-        "db_list_connections", "db_query",
+        "db_list_connections",
+        "db_query",
         "db_schema",
         "run_agent_tool",
         "search_docs",
@@ -1225,7 +1238,7 @@
       "temperature": 0.1,
       "skills_enabled": false,
       "delegates": [
-        "web_searcher"
+        "@web_search"
       ],
       "capability_override": true
     },
@@ -1260,7 +1273,7 @@
       "temperature": 0.1,
       "skills_enabled": false,
       "delegates": [
-        "visualizer"
+        "@visualizer"
       ]
     },
     {
@@ -1281,7 +1294,8 @@
         "create_file",
         "calculator",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "generate_image"
       ],
       "commands": [],
       "capacity": 1,
@@ -1292,7 +1306,7 @@
       "temperature": 0.4,
       "skills_enabled": false,
       "handoffs": [
-        "verifier"
+        "@verifier"
       ]
     },
     {
@@ -1320,7 +1334,7 @@
       "temperature": 0.3,
       "skills_enabled": false,
       "delegates": [
-        "web_searcher"
+        "@web_search"
       ],
       "handoffs": [
         "screener"

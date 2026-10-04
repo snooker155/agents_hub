@@ -15,6 +15,25 @@ turns that section into the next release.
 
 ### Added
 
+- Workspace roles (docs/workspace-roles.md): coder, reviewer, planner,
+  visualizer, web search, verifier, researcher, analyst and writer. A
+  workspace gives each role to one of its agents (workspace settings, Agent
+  roles; `GET /api/workspaces/{name}/roles`, `PUT .../roles/{role}`), and
+  `@coder` and the like work as a target in `delegates`, `handoffs`,
+  `run_agent_tool`, `delegate_task_tool`, `assign_agent_tool` and
+  `handoff_to_agent`. Swapping the built-in coder for Claude Code, Codex or
+  Aider is one setting. A binding that would let a caller reach a blocked
+  capability combination is refused.
+- Special models (docs/special-models.md): a model per workspace for images,
+  video, speech and transcription, plus models of the workspace's own (a chat
+  model of any provider or an HTTP endpoint), each workspace using only the
+  models it added (Models page, Special models tab, and workspace settings;
+  `GET`/`PUT /api/workspaces/{name}/special-models`). Agents call
+  `generate_image`, `generate_video`, `synthesize_speech`, `transcribe_audio`
+  and `ask_special_model`; the prompt lists what each one runs, and a call
+  whose purpose has no model answers `model_not_added`. Results are saved
+  as workspace files; each call is priced, shown on the Costs page and
+  charged to the run's money cap.
 - Workspace management from the chat (docs/workspaces.md "Managing
   workspaces from the chat"): `list_workspaces`, `get_workspace`,
   `create_workspace`, `update_workspace` (description, instructions, default
@@ -240,6 +259,14 @@ turns that section into the next release.
 
 ### Changed
 
+- The shipped system agents delegate by role: main-agent, orchestrator,
+  universal_agent and the creators name `@coder`, `@reviewer`, `@planner` and
+  `@visualizer`; researcher, verifier and sourcer `@web_search`; analyst
+  `@visualizer`; writer hands off to `@verifier`. Until a workspace binds a
+  role, it reaches the same agent as before. main-agent and universal_agent
+  also hold the five special model tools; writer, visualizer and
+  web_view_builder hold `generate_image`.
+- Agent ids cannot start with `@`.
 - Connectors live in the workspace that defines them; the default
   workspace's live everywhere (docs/connectors.md "Connectors per
   workspace"). Credential connectors, Google and Microsoft sign in, git tokens
@@ -302,6 +329,10 @@ turns that section into the next release.
 
 ### Upgrade notes
 
+- On the first start, a system agent you edited by hand (so no longer synced
+  from the seed) has, once, each `delegates` or `handoffs` id that the seed
+  now names by role rewritten to the role (`swe_agent` becomes `@coder`).
+  Nothing changes in what it reaches until a workspace binds the role.
 - Migration 0032 adds `widgets.agent_version` (the widget's version pin).
 - Migration 0033 adds the `memory_consolidations` table.
 - Migration 0034 adds `secrets.allowed_hosts` (the hosts a secret may be sent to).

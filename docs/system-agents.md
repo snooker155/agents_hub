@@ -90,4 +90,12 @@ delegating to the Web Search Agent, and holds no access to files or memory, so
 a shortlist built from the open web never carries anything private outward.
 Judging a candidate in depth is a separate step, handed to the Screener.
 
-Related: [agents](agents.md), [workspaces](workspaces.md), [marketplace](marketplace.md).
+## Swapping one of them out
+
+The system agents reach each other by role, not by id: code goes to `@coder`,
+web searches to `@web_search`, views to `@visualizer`. A workspace can give a
+role to another of its agents, an imported Claude Code for example, and every
+system agent that calls the role reaches that one there. See
+[workspace-roles](workspace-roles.md).
+
+Related: [agents](agents.md), [workspaces](workspaces.md), [marketplace](marketplace.md), [workspace-roles](workspace-roles.md).

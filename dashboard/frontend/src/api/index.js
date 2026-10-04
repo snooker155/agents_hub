@@ -439,6 +439,12 @@ export const updateAgentPersonalMemory = (id, enabled, workspace) => api.post(`/
 // Personal memory in a workspace: its switch and each agent's (memory/personal.py).
 export const getWorkspacePersonalMemory = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/personal-memory`);
 export const updateWorkspacePersonalMemory = (name, enabled) => api.put(`/workspaces/${encodeURIComponent(name)}/personal-memory`, { enabled });
+// Workspace roles (agents/roles.py): which agent does each kind of work here.
+export const getWorkspaceRoles = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/roles`);
+export const updateWorkspaceRole = (name, role, agentId) => api.put(`/workspaces/${encodeURIComponent(name)}/roles/${encodeURIComponent(role)}`, { agent_id: agentId || null });
+// Special models (providers/special.py): images, video, speech, transcription, own models.
+export const getWorkspaceSpecialModels = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/special-models`);
+export const updateWorkspaceSpecialModels = (name, config) => api.put(`/workspaces/${encodeURIComponent(name)}/special-models`, config);
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
 export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });

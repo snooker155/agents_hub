@@ -171,6 +171,9 @@ def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
             total += _tokens_cost(prices, str(call.get("provider") or ""), str(call.get("model") or ""),
                                   int(call.get("input_tokens") or 0), int(call.get("output_tokens") or 0),
                                   int(call.get("cached_tokens") or 0))
+            # A call priced in dollars rather than tokens (a picture, a video:
+            # common/aux_usage.record_flat).
+            total += max(0.0, float(call.get("cost_usd") or 0.0))
         except (TypeError, ValueError):
             continue
     return total

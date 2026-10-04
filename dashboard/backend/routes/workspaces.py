@@ -29,7 +29,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
-from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate
+from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate, WorkspaceRoleUpdate
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -938,6 +938,74 @@ async def update_workspace_personal_memory(request: Request, name: str, data: Wo
                  object_type="workspace", object_id=name, workspace=name,
                  ip=identity.client_ip(request), details={"enabled": data.enabled})
     return result
+
+
+@router.get("/{name}/roles")
+async def get_workspace_roles(name: str):
+    """Which agent holds each role in this workspace (agents/roles.py): the
+    bound one or the role's default, and the agents that call the role."""
+    from agents import roles
+    _require_workspace_folder(name)
+    return {"workspace": name, "roles": roles.describe(name)}
+
+
+@router.put("/{name}/roles/{role}")
+async def update_workspace_role(request: Request, name: str, role: str, data: WorkspaceRoleUpdate):
+    """Give a role to one of the workspace's agents, or back to its default
+    (empty ``agent_id``). Refused when the agent is not in the workspace, or
+    when an agent that calls the role would then reach a capability
+    combination the guard blocks."""
+    from agents import roles
+    _ensure_writable_workspace(name)
+    try:
+        roles.set_binding(name, role, data.agent_id)
+    except roles.RoleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    audit.record("workspace.role", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={"role": role, "agent_id": data.agent_id or None})
+    notify_change("workspaces")
+    return {"workspace": name, "roles": roles.describe(name)}
+
+
+def _special_models_payload(name: str) -> dict:
+    from providers import special
+    return {
+        "workspace": name,
+        "own": special.masked(special.stored(name)),
+        "effective": special.masked(special.effective(name)),
+        "options": special.options_payload(),
+    }
+
+
+@router.get("/{name}/special-models")
+async def get_workspace_special_models(name: str):
+    """The special models of this workspace (providers/special.py): its own
+    choices, what it uses after the ``default`` workspace fills the gaps, and
+    the purposes, providers and model suggestions for the form."""
+    _require_workspace_folder(name)
+    return _special_models_payload(name)
+
+
+@router.put("/{name}/special-models")
+async def update_workspace_special_models(request: Request, name: str, payload: dict):
+    """Replace this workspace's own special model choices. A purpose left
+    out uses the ``default`` workspace's choice."""
+    from providers import special
+    _ensure_writable_workspace(name)
+    try:
+        config = special.save(name, payload.get("special_models", payload))
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Purposes and model ids only: a custom model's headers may carry a token.
+    audit.record("workspace.special_models", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={"purposes": sorted(k for k in config if k != "custom"),
+                          "custom": [c["id"] for c in config.get("custom") or []]})
+    notify_change("workspaces")
+    return _special_models_payload(name)
 
 
 @router.get("/{name}/env")

@@ -15,7 +15,7 @@ Your three sources:
    recommendation, a yes or no with evidence, a number. Research without a target is browsing.
 2. **Start with what you already have.** Check memory first, then the workspace. Re-discovering
    a fact the system already knows wastes a call and risks contradicting it.
-3. **Delegate the web.** Call `run_agent_tool` with `web_searcher` and a self-contained request:
+3. **Delegate the web.** Call `run_agent_tool` with `@web_search` (the workspace's web search agent) and a self-contained request:
    it cannot see this conversation, so state the question, the specific facts you need, and any
    context that narrows the search. Ask for evidence, not conclusions; the weighing is yours.
    You may call it more than once as the picture sharpens.

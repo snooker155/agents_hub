@@ -53,6 +53,9 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "system_commit", "system_attach_patch", "system_prune_branches",
     # A workspace created or deleted from the chat (tools/workspace_management.py).
     "create_workspace", "delete_workspace",
+    # A paid picture, clip, audio or model call (tools/special_models.py):
+    # repeating it pays twice.
+    "generate_image", "generate_video", "synthesize_speech", "ask_special_model",
 })
 
 
@@ -107,6 +110,11 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # as a file in the working directory.
     "list_workspace_files": frozenset({READS_PRIVATE}),
     "read_workspace_file": frozenset({READS_PRIVATE}),
+    # A transcript of a workspace recording, and a workspace model's answer
+    # about a workspace file (tools/special_models.py), bring that file's
+    # content into the context like read_workspace_file does.
+    "transcribe_audio": frozenset({READS_PRIVATE}),
+    "ask_special_model": frozenset({READS_PRIVATE}),
 
     # ── memory reads ─────────────────────────────────────────────────────────
     "read_memory": frozenset({READS_PRIVATE}),
@@ -391,6 +399,11 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # save_workspace_file stores text the agent already holds as a workspace
     # file and returns only the new record (id, name, size), like write_file.
     "save_workspace_file",
+    # The workspace's special models (tools/special_models.py) make a picture,
+    # a clip or audio from text the agent already holds and return only the
+    # new file's record. The model is the operator's chosen provider, the
+    # same trust as the agent's own model, so the prompt is not data sent out.
+    "generate_image", "generate_video", "synthesize_speech",
 
     # ── memory writes / derivations ──────────────────────────────────────────
     # write_memory persists into a pool, like write_structured_memory above.
@@ -774,7 +787,23 @@ def _delegates_of(agent_id: str) -> Optional[List[str]]:
     if spec is None:
         return None
     allow = list(getattr(spec, "delegates", None) or [])
-    return allow or None
+    return _expand_roles(allow) or None
+
+
+def _expand_roles(ids: Sequence[str]) -> List[str]:
+    """``ids`` with each workspace role reference (``@coder``) replaced by
+    every agent that may hold it in some workspace (agents/roles.py). The
+    guard judges an agent without a workspace, so it must see every path a
+    workspace's binding can open. Never raises: without the roles module the
+    ids stay as they are."""
+    if not any(str(i).startswith("@") for i in ids or []):
+        return list(ids or [])
+    try:
+        from agents.roles import expand_all  # lazy: avoid an import cycle
+        return expand_all(ids)
+    except Exception:  # noqa: BLE001 - a reference left unexpanded reaches no agent at run time either
+        log.debug("capability guard: could not expand role references", exc_info=True)
+        return list(ids or [])
 
 
 def _all_agent_ids() -> List[str]:
@@ -832,7 +861,7 @@ def _walk_delegation_graph(
 
     def _targets_of(aid: str) -> List[str]:
         if aid == agent_id and root_delegates is not None:
-            allow = list(root_delegates)
+            allow = _expand_roles(list(root_delegates))
             return allow if allow else _all_agent_ids()
         return _delegation_targets(aid)
 

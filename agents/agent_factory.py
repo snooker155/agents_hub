@@ -615,6 +615,11 @@ class AgentFactory:
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
         available.extend(WORKSPACE_FILE_TOOLS)
+        # The workspace's special models (tools/special_models.py): plain
+        # per-tool grants; one without a model in the run's workspace
+        # answers that the model is not added.
+        from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
+        available.extend(SPECIAL_MODEL_TOOL_OBJECTS)
         # Connector tools (tools/connector_tools.py): plain per-tool grants,
         # like the web tools; each works only when its connector is set up.
         from tools.connector_tools import connector_tools
@@ -651,7 +656,11 @@ class AgentFactory:
         from agents.registry import resolve_agent_id
 
         # A renamed agent's old id (a stored team, scenario or chat that still
-        # names it) builds the agent under its current id.
+        # names it) builds the agent under its current id, and a role reference
+        # (``@coder``) the agent that holds the role here (agents/roles.py).
+        if str(agent_id or "").startswith("@"):
+            from agents.roles import resolve as _resolve_role
+            agent_id = _resolve_role(agent_id, workspace)
         agent_id = resolve_agent_id(agent_id)
 
         # A/B experiment arm (evals/experiments.py): open_run pinned a stored
@@ -1184,6 +1193,29 @@ class AgentFactory:
                 tools = [*tools, *_consent_tools]
                 config["system_prompt"] = (
                     config.get("system_prompt", "") + "\n\n---\n\n" + _consent_prompt
+                )
+
+        # Special models (providers/special.py): the agent is told which of
+        # its special model tools have a model in this workspace and which do
+        # not. A tool without one stays and answers that the model is not
+        # added, so the agent can say so instead of quietly doing without.
+        from providers.special import SPECIAL_MODEL_TOOLS, prompt_section as _special_prompt
+        _tool_names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+        if any(n in SPECIAL_MODEL_TOOLS for n in _tool_names):
+            _special_text = _special_prompt(_tool_names, _ws_name_of(workspace) if workspace else None)
+            if _special_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _special_text
+                )
+
+        # Workspace roles (agents/roles.py): an agent that hands work to
+        # `@coder` and the like is told which agent holds each role here.
+        if _spec is not None:
+            from agents.roles import prompt_section as _roles_prompt
+            _roles_text = _roles_prompt(_spec, _ws_name_of(workspace) if workspace else None)
+            if _roles_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _roles_text
                 )
 
         if _memory_access == "read":

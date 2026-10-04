@@ -129,13 +129,13 @@ def test_screener_is_read_only():
 
 def test_verifier_delegates_only_to_the_web_searcher():
     seed = _seed_agents()
-    assert seed["verifier"].get("delegates") == ["web_searcher"]
+    assert seed["verifier"].get("delegates") == ["@web_search"]
     assert seed["verifier"].get("capability_override") is True
 
 
 def test_analyst_delegates_only_to_the_visualizer():
     seed = _seed_agents()
-    assert seed["analyst"].get("delegates") == ["visualizer"]
+    assert seed["analyst"].get("delegates") == ["@visualizer"]
     assert not seed["analyst"].get("capability_override")
 
 
@@ -144,14 +144,14 @@ def test_writer_hands_off_to_the_verifier_rather_than_delegating():
     ``run_agent_tool``): the Writer gives the conversation away instead of
     reading the Verifier's capabilities into its own effective set."""
     seed = _seed_agents()
-    assert seed["writer"].get("handoffs") == ["verifier"]
+    assert seed["writer"].get("handoffs") == ["@verifier"]
     assert not seed["writer"].get("delegates")
     assert "run_agent_tool" not in seed["writer"]["tools"]
 
 
 def test_sourcer_delegates_to_the_web_searcher_and_hands_off_to_the_screener():
     seed = _seed_agents()
-    assert seed["sourcer"].get("delegates") == ["web_searcher"]
+    assert seed["sourcer"].get("delegates") == ["@web_search"]
     assert seed["sourcer"].get("handoffs") == ["screener"]
     assert not seed["sourcer"].get("capability_override")
 

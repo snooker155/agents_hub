@@ -79,6 +79,10 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
             and not same_workspace(parent.workspace, req_ws)):
         return _err("The current task no longer exists", "not_found", task_id=parent_task_id)
 
+    # `@coder` and the like name whoever holds the role in the workspace the
+    # work happens in (agents/roles.py); the subtask records that agent.
+    from agents.roles import resolve as resolve_role
+    agent_id = resolve_role(agent_id, req_ws or parent.workspace)
     spec = get_agent(agent_id)
     if not spec:
         return _err("Agent not found", "not_found", agent_id=agent_id)
@@ -90,9 +94,14 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     # from the context variable; on the backend that is the request's caller.
     caller = str(request.get("caller_agent_id") or "") or None
     token = current_agent_id.set(caller) if caller else None
+    # A role in the caller's allowlist resolves in the delegation's workspace.
+    from common.workspace_context import _workspace_ctx
+    ws_token = _workspace_ctx.set(ws) if ws else None
     try:
         blocked = _delegation_blocked(agent_id)
     finally:
+        if ws_token is not None:
+            _workspace_ctx.reset(ws_token)
         if token is not None:
             current_agent_id.reset(token)
     if blocked:

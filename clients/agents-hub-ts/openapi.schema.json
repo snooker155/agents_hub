@@ -13680,6 +13680,23 @@
         "title": "WorkspacePersonalMemoryUpdate",
         "type": "object"
       },
+      "WorkspaceRoleUpdate": {
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          }
+        },
+        "title": "WorkspaceRoleUpdate",
+        "type": "object"
+      },
       "WorldGenerateIn": {
         "properties": {
           "base_url": {
@@ -54111,6 +54128,105 @@
         ]
       }
     },
+    "/api/workspaces/{name}/roles": {
+      "get": {
+        "description": "Which agent holds each role in this workspace (agents/roles.py): the\nbound one or the role's default, and the agents that call the role.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Roles",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/roles/{role}": {
+      "put": {
+        "description": "Give a role to one of the workspace's agents, or back to its default\n(empty ``agent_id``). Refused when the agent is not in the workspace, or\nwhen an agent that calls the role would then reach a capability\ncombination the guard blocks.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Workspace Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/api/workspaces/{name}/secrets": {
       "get": {
         "parameters": [
@@ -54437,6 +54553,96 @@
           }
         },
         "summary": "Update Workspace Settings Overrides",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/special-models": {
+      "get": {
+        "description": "The special models of this workspace (providers/special.py): its own\nchoices, what it uses after the ``default`` workspace fills the gaps, and\nthe purposes, providers and model suggestions for the form.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Special Models",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "description": "Replace this workspace's own special model choices. A purpose left\nout uses the ``default`` workspace's choice.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Workspace Special Models",
         "tags": [
           "workspaces"
         ]

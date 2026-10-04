@@ -1,11 +1,12 @@
 import { capabilityLabel, localizeViolation } from '../../lib/capabilities';
 import SystemAgentWarning from './SystemAgentWarning';
 import { AlertTriangle, ChevronDown, ChevronRight, Loader, Lock, Save, Share2, ShieldCheck, Wrench } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import useToolPolicy, { TOOL_POLICY_INHERIT } from './useToolPolicy';
 import useWorkspaceIsolation from '../workspace/useWorkspaceIsolation';
 import { useAgentPage } from './context';
 import { Link } from 'react-router-dom';
+import { getWorkspaceRoles } from '../../api';
 
 // The tools the delegates allowlist applies to (tools/langchain_tools.py,
 // _delegation_blocked, and tools/delegation.py): with none of them on, the
@@ -68,6 +69,18 @@ export default function ToolsTab() {
     toggleDelegate, toggleTool, toolCategories, toolsDirty, toolsMessage, toolsMeta, toolsSaving,
     fetchData, selectedWorkspace,
   } = useAgentPage();
+
+  // Workspace roles (agents/roles.py): `@coder` and the like may be allowed
+  // like an agent, and reach whichever agent holds the role in the workspace.
+  const [roleRows, setRoleRows] = useState([]);
+  const rolesWorkspace = selectedWorkspace || agent?.owner_workspace || 'default';
+  useEffect(() => {
+    let cancelled = false;
+    getWorkspaceRoles(rolesWorkspace)
+      .then(({ data }) => { if (!cancelled) setRoleRows(data.roles || []); })
+      .catch(() => { if (!cancelled) setRoleRows([]); });
+    return () => { cancelled = true; };
+  }, [rolesWorkspace]);
 
   // The per-tool permission policy, edited inside each tool's card, with its
   // default in the card header. Saved together with the tool list.
@@ -467,6 +480,40 @@ export default function ToolsTab() {
                   </button>
                 )}
               </div>
+
+              {roleRows.length > 0 && (
+                <div className="mb-4" data-testid="delegation-roles">
+                  <p className="text-xs font-semibold text-gray-500 mb-1">{t('agentDetails.delegationRoles')}</p>
+                  <p className="text-xs text-gray-500 mb-2">{t('agentDetails.delegationRolesHint')}</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {roleRows.map((r) => {
+                      const enabled = delegates.includes(r.ref);
+                      return (
+                        <div key={r.ref} className="p-3 border border-indigo-100 rounded-lg bg-indigo-50/40 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-gray-800 truncate">
+                              {t(`workspaceDetails.roles.names.${r.role}`)} <code className="text-[11px] text-gray-500">{r.ref}</code>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1 truncate">
+                              {t('agentDetails.delegationRoleHolder', { agent: r.agent_name || r.agent || r.default })}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!delegationActive}
+                            onClick={() => toggleDelegate(r.ref)}
+                            className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 disabled:cursor-not-allowed ${
+                              enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
+                            }`}
+                          >
+                            {enabled ? 'Allowed' : 'Off'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {allAgents.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

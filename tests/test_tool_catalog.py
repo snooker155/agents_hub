@@ -32,6 +32,9 @@ OLD_CATEGORIES = {
     # tools/connector_tools.py (chat channels, trackers, Google, Microsoft,
     # Notion, Confluence, databases)
     "connectors",
+    # tools/special_models.py (images, video, speech, transcription, the
+    # workspace's own models)
+    "special_models",
 }
 
 # Size of the old, hand-written catalog (143 literal entries + 17 generated
@@ -98,6 +101,7 @@ def _tool_objects_by_id() -> dict:
     )
     from memory.knowledge_extract import create_extraction_tools
     from tools.workspace_files import WORKSPACE_FILE_TOOLS
+    from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
     from tools.connector_tools import connector_tools
 
     tools = [
@@ -127,6 +131,7 @@ def _tool_objects_by_id() -> dict:
         append_journal_tool,
         *create_extraction_tools("__test__"),
         *WORKSPACE_FILE_TOOLS,
+        *SPECIAL_MODEL_TOOL_OBJECTS,
         *connector_tools(),
     ]
     return {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}

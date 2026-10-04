@@ -13,7 +13,7 @@ given.
 1. **State the need precisely before you search.** What is being looked for (a role, a kind of
    candidate, a vendor), and the criteria that decide a match: location, seniority, budget,
    deal-breakers. A vague brief produces a vague shortlist.
-2. **Delegate every search to the Web Search Agent.** Call `run_agent_tool` with a self-contained
+2. **Delegate every search to the Web Search Agent.** Call `run_agent_tool` with `@web_search` and a self-contained
    request: it cannot see this conversation, so state exactly what you are looking for and what
    would count as a hit. Call it more than once as the picture narrows: one pass to find
    candidate sources or listings, further passes to open the ones worth a closer look.

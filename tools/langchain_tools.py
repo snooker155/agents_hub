@@ -79,9 +79,12 @@ def _caller_delegates() -> Optional[set]:
     caller = reg_get_agent(caller_id)
     if not caller or not caller.delegates:
         return None
-    # A list saved before an agent was renamed still names its old id.
+    # A list saved before an agent was renamed still names its old id, and a
+    # role reference (``@coder``) names whoever holds the role in this
+    # run's workspace (agents/roles.py).
     from agents.registry import LEGACY_AGENT_IDS
-    return {LEGACY_AGENT_IDS.get(d, d) for d in caller.delegates}
+    from agents.roles import expand
+    return {LEGACY_AGENT_IDS.get(d, d) for d in expand(caller.delegates, _active_workspace())}
 
 
 def _filter_delegatable(specs: List[Any]) -> List[Any]:
@@ -181,9 +184,15 @@ def list_agents_tool() -> str:
         ws = _active_workspace()
         specs = filter_agents_for_workspace(reg_list_agents(), ws)
         specs = _filter_delegatable(specs)
+        from agents import roles as _roles
         agents = []
         for s in specs:
             entry = {"id": s.id, "name": s.name, "description": s.description}
+            held = _roles.roles_held(s.id, ws)
+            if held:
+                # The workspace's choice for this kind of work (agents/roles.py):
+                # `@<role>` reaches the same agent.
+                entry["roles"] = [f"@{r}" for r in held]
             if caller_id and s.id == caller_id:
                 entry["is_self"] = True
                 # Only advertise self-delegation when it is actually enabled, so the
@@ -232,6 +241,10 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
         if getattr(task, "status", None) == TaskStatus.stopped:
             return _json_err("Task is stopped and cannot be assigned", code="invalid_task")
+        # `@coder` and the like: the task is assigned to the holder itself,
+        # so the record names a real agent (agents/roles.py).
+        from agents.roles import resolve as _resolve_role
+        agent_id = _resolve_role(agent_id, ws)
         existing_agent = getattr(task, "assigned_agent_type", None)
         existing_run_id = getattr(task, "assigned_agent_run_id", None)
         if existing_run_id:
@@ -445,6 +458,9 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 code="task_context",
                 extra={"task_id": active_task},
             )
+        # `@coder` and the like name whoever holds the role here (agents/roles.py).
+        from agents.roles import resolve as _resolve_role
+        agent_id = _resolve_role(agent_id, _active_workspace() or workspace)
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})

@@ -22,7 +22,7 @@ short: a few sentences of reasoning, then the next tool call.
      compare, not just a count of rows returned but the actual value. `db_list_connections`
      names the connection when the work does not; check the shape first with `db_schema`
      when you are not sure of the columns.
-   - A claim about the outside world: delegate to the Web Search Agent with `run_agent_tool`.
+   - A claim about the outside world: delegate to the Web Search Agent (`@web_search`) with `run_agent_tool`.
      State the specific fact to check and why it matters; it cannot see this task, so give it
      everything it needs in the request. Ask for evidence, not a verdict: the verdict is yours.
 5. Verdict, exactly one of:

@@ -273,6 +273,16 @@ def _workspace_files_specs() -> List[ToolSpec]:
             for t in WORKSPACE_FILE_TOOLS]
 
 
+def _special_model_specs() -> List[ToolSpec]:
+    # The workspace's special models (tools/special_models.py): images,
+    # video, speech, transcription and the workspace's own models. The
+    # workspace comes from the run, and a tool whose purpose has no model
+    # there is taken off the agent at build time.
+    from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
+    return [spec_from_tool(t, category="special_models", requires_workspace=True)
+            for t in SPECIAL_MODEL_TOOL_OBJECTS]
+
+
 def _memory_specs() -> List[ToolSpec]:
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
@@ -541,6 +551,7 @@ def _geometry_specs() -> List[ToolSpec]:
 _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _filesystem_specs,
     _workspace_files_specs,
+    _special_model_specs,
     _memory_specs,
     _coordination_specs,
     _task_management_specs,

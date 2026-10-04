@@ -9,9 +9,11 @@ const api = vi.hoisted(() => ({
   getToolPolicyDecisions: vi.fn(),
 }));
 vi.mock('../../api/toolPolicy', () => api);
+const rolesApi = vi.hoisted(() => ({ getWorkspaceRoles: vi.fn() }));
 vi.mock('../../api', () => ({
   updateAgentClarifyGate: vi.fn(), updateAgentReasoning: vi.fn(),
   updateAgentResponseFormat: vi.fn(), updateAgentSelfDelegation: vi.fn(),
+  getWorkspaceRoles: rolesApi.getWorkspaceRoles,
 }));
 vi.mock('../agent/AgentSecretsCard', () => ({ default: () => null }));
 vi.mock('../agent/SystemAgentWarning', () => ({ default: () => null }));
@@ -86,6 +88,8 @@ const renderTab = (overrides) => {
 describe('ToolsTab', () => {
   beforeEach(() => {
     isolation.current = { data: null, loading: false, error: '' };
+    rolesApi.getWorkspaceRoles.mockReset();
+    rolesApi.getWorkspaceRoles.mockResolvedValue({ data: { roles: [] } });
     api.getAgentToolPolicy.mockReset();
     api.updateAgentToolPolicy.mockReset();
     api.getToolPolicyDecisions.mockReset();
@@ -204,6 +208,18 @@ describe('ToolsTab', () => {
     expect(within(card).queryByTestId('delegation-inactive')).toBeNull();
     fireEvent.click(within(card).getByRole('button', { name: 'Off' }));
     expect(page.current.toggleDelegate).toHaveBeenCalledWith('b');
+  });
+
+  it('offers the workspace roles as delegation targets', async () => {
+    rolesApi.getWorkspaceRoles.mockResolvedValue({ data: { roles: [
+      { role: 'coder', ref: '@coder', default: 'swe_agent', agent: 'claude-code', agent_name: 'Claude Code' },
+    ] } });
+    renderTab({ selectedTools: ['read_file', 'run_agent_tool'], allAgents: [] });
+    const roles = await screen.findByTestId('delegation-roles');
+    expect(within(roles).getByText('@coder')).toBeTruthy();
+    expect(within(roles).getByText(/agentDetails.delegationRoleHolder/)).toBeTruthy();
+    fireEvent.click(within(roles).getByRole('button', { name: 'Off' }));
+    expect(page.current.toggleDelegate).toHaveBeenCalledWith('@coder');
   });
 
   it('shows which MCP group a tool came from', async () => {

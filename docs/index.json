@@ -660,7 +660,8 @@
         "costs",
         "hub-as-provider",
         "local-models",
-        "settings"
+        "settings",
+        "special-models"
       ],
       "headings": [
         "Catalog vs. enabled",
@@ -668,7 +669,8 @@
         "Pricing",
         "Context window",
         "Providers",
-        "Local models"
+        "Local models",
+        "Special models"
       ]
     },
     {
@@ -1028,12 +1030,14 @@
         "service-health",
         "tools-and-capabilities",
         "workspaces",
-        "agent-inheritance"
+        "agent-inheritance",
+        "workspace-roles"
       ],
       "headings": [
         "What being a system agent means",
         "The roster",
-        "Why the last two are separate"
+        "Why the last two are separate",
+        "Swapping one of them out"
       ]
     },
     {
@@ -1229,6 +1233,53 @@
         "Managing workspaces from the chat",
         "The default workspace",
         "The system workspace",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "workspace-roles",
+      "title": "Workspace roles",
+      "summary": "A role is a kind of work (coder, reviewer, web search, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in Claude Code, Codex or Aider is one setting.",
+      "surface": "Workspace settings, Agent roles section",
+      "related": [
+        "agents",
+        "imported-agents",
+        "system-agents",
+        "handoffs",
+        "tools-and-capabilities",
+        "workspaces",
+        "special-models"
+      ],
+      "headings": [
+        "The roles",
+        "Choosing who holds a role",
+        "Where a reference works",
+        "The capability guard",
+        "Upgrading",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "special-models",
+      "title": "Special models",
+      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
+      "surface": "Models, Special models tab; Workspace settings, Special models section",
+      "related": [
+        "workspace-roles",
+        "models",
+        "files",
+        "costs",
+        "tools-and-capabilities",
+        "isolation",
+        "settings"
+      ],
+      "headings": [
+        "Purposes and tools",
+        "How an agent knows",
+        "Configuring",
+        "What a call produces",
+        "Money",
+        "Capabilities",
         "Gotchas"
       ]
     },

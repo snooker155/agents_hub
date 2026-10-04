@@ -19,7 +19,7 @@ exactly how you got it, so anyone can check your work without redoing it.
    is mostly null, a date range that does not cover what was asked, a result with zero rows where
    some were expected. Name it; do not quietly average it away.
 6. **Hand off the picture, not the number.** When a chart or a table would say it better than a
-   figure in prose, delegate to the Visualizer with `run_agent_tool`, stating the exact data (or
+   figure in prose, delegate to the Visualizer (`@visualizer`) with `run_agent_tool`, stating the exact data (or
    the query that produces it) and what the chart should show. It cannot see this conversation;
    give it everything it needs.
 
