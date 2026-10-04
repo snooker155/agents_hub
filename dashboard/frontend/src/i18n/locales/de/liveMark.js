@@ -6,6 +6,7 @@ export default {
     read: 'Schlägt nach',
     code: 'Führt Code aus',
     speak: 'Antwortet',
+    listen: 'Hört zu',
     wait: 'Wartet auf Sie',
     'search-web': 'Sucht im Web',
     'search-memory': 'Sucht im Speicher',

@@ -115,7 +115,7 @@ export const navigateWithAuthTicket = async (url) => {
 // Every streaming endpoint below opens its own fetch (a long-lived response
 // body axios cannot hand back incrementally), so each has to attach this
 // itself rather than riding the interceptor below.
-const authFetchHeaders = () => {
+export const authFetchHeaders = () => {
   const token = activeToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
@@ -295,7 +295,7 @@ export const getDoc = (id) => api.get(`/docs/${id}`);
  * dropped: a stream is a best-effort narration and one malformed chunk must
  * not end the turn.
  */
-const consumeSSE = async (response, onEvent) => {
+export const consumeSSE = async (response, onEvent) => {
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   let buffer = '';

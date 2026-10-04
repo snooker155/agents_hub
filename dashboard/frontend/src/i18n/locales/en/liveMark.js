@@ -6,6 +6,7 @@ export default {
     read: 'Looking up',
     code: 'Running code',
     speak: 'Answering',
+    listen: 'Listening',
     wait: 'Waiting for you',
     'search-web': 'Searching the web',
     'search-memory': 'Searching memory',

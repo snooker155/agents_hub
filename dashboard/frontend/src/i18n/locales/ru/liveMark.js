@@ -6,6 +6,7 @@ export default {
     read: 'Смотрит',
     code: 'Выполняет код',
     speak: 'Отвечает',
+    listen: 'Слушаю',
     wait: 'Ждёт вас',
     'search-web': 'Поиск в интернете',
     'search-memory': 'Поиск по памяти',

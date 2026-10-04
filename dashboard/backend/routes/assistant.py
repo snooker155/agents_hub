@@ -388,8 +388,36 @@ def _context_setup(ctx: SimpleNamespace) -> None:
     _workspace_ctx.set(ctx.workspace)
 
 
+def voice_status(home: str) -> Dict[str, Any]:
+    """What the page needs to know about voice in this thread's home: the
+    transcription and speech models it would use (None when there is none,
+    and the page falls back to the browser's own), the speech model's default
+    voice and the voices it is known to have."""
+    from providers import special
+    config = special.effective(home)
+
+    def model(purpose: str) -> Optional[Dict[str, Any]]:
+        entry = config.get(purpose)
+        if not entry:
+            return None
+        return {"provider": entry.get("provider"), "model": entry.get("model"),
+                "inherited_from": entry.get(special.INHERITED_KEY)}
+
+    speech = model("speech")
+    if speech is not None:
+        entry = config["speech"]
+        kind = special.provider_kind(str(entry.get("provider") or ""))
+        purpose = special.get_purpose("speech")
+        speech["voice"] = (entry.get("options") or {}).get("voice") or ""
+        speech["voices"] = list(purpose.voices.get(kind, ())) if (purpose and kind) else []
+    return {"transcription": model("transcription"), "speech": speech,
+            "max_seconds": MAX_AUDIO_SECONDS, "max_bytes": MAX_AUDIO_BYTES,
+            "max_speak_chars": MAX_SPEAK_CHARS}
+
+
 def _meta(ctx: SimpleNamespace) -> Dict[str, Any]:
     return {
+        "voice": voice_status(ctx.home),
         "agent_id": ASSISTANT_AGENT_ID,
         "mode": MODE_SERVICE if (ctx.service and _multi()) else MODE_PERSONAL,
         "home": ctx.home,

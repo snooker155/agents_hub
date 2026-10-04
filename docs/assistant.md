@@ -10,6 +10,44 @@ ordinary chat turn: tool policies, budgets, approvals and the audit trail all
 apply. Voice (speech in, speech out) is built on top of the same turn, see
 [Voice](#voice).
 
+## The page
+
+**Assistant** is the first item of the sidebar (`/assistant`). In the middle is
+the live mark, which shows what is going on: listening while you speak,
+thinking, the step a turn is on (searching, delegating, writing a file),
+waiting for an approval card, speaking. Under it is the first paragraph of the
+latest answer, large, and below that the talk button.
+
+- **Talk.** Hold the button, or hold Space anywhere on the page outside a text
+  field, and speak; let go to send. What was heard is put into the text field
+  so a misheard word can be fixed, and Enter sends it as a spoken turn. A
+  recording ends by itself after a minute.
+- **Listen.** The first paragraph of the answer to a spoken question is read
+  aloud while it streams. When a turn has been quiet for a while, the hub says
+  which step it is on; a waiting card is announced in one sentence.
+- **Answer a card by voice.** While a card waits, hold the button and say yes
+  or no. A connection card is only ever filled in on the screen.
+- **Show on screen.** A link in an answer opens the page in a panel beside the
+  conversation, with the transcript as the other tab. **Open this page** leaves
+  the assistant for it.
+- **Settings** (the gear): *Voice only* sends what you say at once and reads
+  every answer aloud, with no text field; *No sound* never reads aloud; *Voice*
+  picks one of the voices of the speech model chosen on the
+  [Models page](special-models.md) (the same list the Special models tab
+  suggests). The page remembers them in this browser.
+- **Thread and workspace.** The workspace picker sets where the next turn
+  runs. An administrator in `multi` mode also has **Personal / Service**; in
+  `single` mode there is one thread and no switch.
+
+On a phone the page is the mark, the button and the last answer; links open
+the page itself.
+
+Without speech models the page still works: with no transcription model it
+uses the browser's own speech recognition (the page says that the audio then
+goes to the browser's vendor), and with no speech model the browser's own
+voice. Where the browser has neither, it is a text chat. The
+[demo](demo.md) runs this way.
+
 ## One thread per person
 
 `GET`, `DELETE` and `POST /api/assistant`, and `POST /api/assistant/stop`:

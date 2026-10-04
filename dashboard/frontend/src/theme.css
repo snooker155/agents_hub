@@ -335,6 +335,7 @@ html.dark {
 :where(html) .bg-indigo-950,
 :where(html) .bg-purple-950,
 :where(html) .bg-violet-950 { background-color: var(--brand-950); }
+:where(html) .bg-indigo-400\/30 { background-color: rgba(99, 137, 234, 0.30); }
 :where(html) .bg-indigo-50\/30,
 :where(html) .bg-purple-50\/30 { background-color: rgba(238, 243, 255, 0.30); }
 :where(html) .bg-indigo-50\/40,
@@ -456,6 +457,12 @@ html.dark {
 :where(html) .ring-indigo-300,
 :where(html) .ring-purple-300,
 :where(html) .ring-violet-300 { --tw-ring-color: var(--brand-300); }
+:where(html) .focus-visible\:ring-indigo-400:focus-visible,
+:where(html) .focus\:ring-indigo-400:focus,
+:where(html) .ring-fuchsia-400,
+:where(html) .ring-indigo-400,
+:where(html) .ring-purple-400,
+:where(html) .ring-violet-400 { --tw-ring-color: var(--brand-400); }
 :where(html) .focus-visible\:ring-indigo-500:focus-visible,
 :where(html) .focus\:ring-indigo-500:focus,
 :where(html) .focus\:ring-purple-500:focus,
@@ -470,11 +477,6 @@ html.dark {
 :where(html) .ring-indigo-100,
 :where(html) .ring-purple-100,
 :where(html) .ring-violet-100 { --tw-ring-color: var(--brand-100); }
-:where(html) .focus\:ring-indigo-400:focus,
-:where(html) .ring-fuchsia-400,
-:where(html) .ring-indigo-400,
-:where(html) .ring-purple-400,
-:where(html) .ring-violet-400 { --tw-ring-color: var(--brand-400); }
 :where(html) .from-indigo-50 { --tw-gradient-from: #eef3ff var(--tw-gradient-from-position); --tw-gradient-to: rgba(238, 243, 255, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .from-indigo-600 { --tw-gradient-from: #2a4fbd var(--tw-gradient-from-position); --tw-gradient-to: rgba(42, 79, 189, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .group:hover .group-hover\:text-indigo-400,
@@ -732,6 +734,7 @@ html.dark {
 :where(html.dark) .bg-green-50,
 :where(html.dark) .hover\:bg-green-50:hover { background-color: rgba(var(--hue-green-rgb), 0.14); }
 :where(html.dark) .bg-green-50\/50 { background-color: rgba(34, 197, 94, 0.070); }
+:where(html.dark) .bg-indigo-400\/30 { background-color: rgba(58, 92, 196, 0.30); }
 :where(html.dark) .bg-indigo-50\/30,
 :where(html.dark) .bg-purple-50\/30 { background-color: rgba(63, 102, 216, 0.048); }
 :where(html.dark) .bg-indigo-50\/40,
@@ -1169,6 +1172,12 @@ html.dark {
 :where(html.dark) .ring-indigo-300,
 :where(html.dark) .ring-purple-300,
 :where(html.dark) .ring-violet-300 { --tw-ring-color: var(--brand-border-300); }
+:where(html.dark) .focus-visible\:ring-indigo-400:focus-visible,
+:where(html.dark) .focus\:ring-indigo-400:focus,
+:where(html.dark) .ring-fuchsia-400,
+:where(html.dark) .ring-indigo-400,
+:where(html.dark) .ring-purple-400,
+:where(html.dark) .ring-violet-400 { --tw-ring-color: var(--brand-border-400); }
 :where(html.dark) .focus-visible\:ring-indigo-500:focus-visible,
 :where(html.dark) .focus\:ring-indigo-500:focus,
 :where(html.dark) .focus\:ring-purple-500:focus,
@@ -1187,11 +1196,6 @@ html.dark {
 :where(html.dark) .ring-violet-100 { --tw-ring-color: var(--brand-border-100); }
 :where(html.dark) .focus\:ring-amber-300:focus,
 :where(html.dark) .ring-amber-300 { --tw-ring-color: rgba(var(--hue-amber-rgb), 0.46); }
-:where(html.dark) .focus\:ring-indigo-400:focus,
-:where(html.dark) .ring-fuchsia-400,
-:where(html.dark) .ring-indigo-400,
-:where(html.dark) .ring-purple-400,
-:where(html.dark) .ring-violet-400 { --tw-ring-color: var(--brand-border-400); }
 :where(html.dark) .from-indigo-50 { --tw-gradient-from: rgba(63, 102, 216, 0.16) var(--tw-gradient-from-position); --tw-gradient-to: transparent var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .from-indigo-600 { --tw-gradient-from: #3159cc var(--tw-gradient-from-position); --tw-gradient-to: rgba(49, 89, 204, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .group:hover .group-hover\:text-indigo-500,

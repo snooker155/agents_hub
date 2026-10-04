@@ -55,6 +55,7 @@ const PAGE = 'main header';
  * today, the flag is left for a page whose recording lags its caption.
  */
 const LANDING = [
+  { id: 'assistant', path: '/assistant', waitFor: '[data-tour="assistant-talk"]' },
   { id: 'agents', path: '/agents', waitFor: 'main .grid' },
   // A recorded conversation of the demo workspace, not the empty composer.
   { id: 'chat', path: '/chat/demo_chat_2', waitFor: 'main textarea' },

@@ -71,6 +71,9 @@ class Purpose:
     suggestions: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     #: Options the purpose accepts, with a short hint each.
     options: Dict[str, str] = field(default_factory=dict)
+    #: Known values of the ``voice`` option per API shape (the field stays free
+    #: text): the Models page and the assistant's voice picker offer them.
+    voices: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
 
 
 PURPOSES: Tuple[Purpose, ...] = (
@@ -100,6 +103,9 @@ PURPOSES: Tuple[Purpose, ...] = (
          GOOGLE: ("gemini-2.5-flash-preview-tts",)},
         {"voice": "for example alloy, nova (OpenAI) or Kore, Puck (Google)",
          "format": "mp3, wav, opus (OpenAI)"},
+        {OPENAI: ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage",
+                  "shimmer", "verse"),
+         GOOGLE: ("Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")},
     ),
     Purpose(
         "transcription", "transcribe_audio", "call",
@@ -475,7 +481,7 @@ def options_payload() -> Dict[str, Any]:
         "purposes": [
             {"id": p.id, "tool": p.tool, "unit": p.unit, "summary": p.summary,
              "kinds": list(p.kinds), "suggestions": {k: list(v) for k, v in p.suggestions.items()},
-             "options": dict(p.options)}
+             "options": dict(p.options), "voices": {k: list(v) for k, v in p.voices.items()}}
             for p in PURPOSES
         ],
         "custom": {"tool": CUSTOM_TOOL, "kinds": list(CUSTOM_KINDS)},

@@ -6,7 +6,7 @@ import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
-import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye } from 'lucide-react';
+import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -16,6 +16,7 @@ import OnboardingModal from './docs/OnboardingModal';
 import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
 import HelpPanel from './help/HelpPanel';
+import { isEmbedded } from './embed';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -36,6 +37,21 @@ const THEME_OPTIONS = [
 ];
 
 const BUILTIN_PROVIDER_ORDER = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
+
+const NARROW_QUERY = '(max-width: 639px)';
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => (typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia(NARROW_QUERY).matches : false));
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia(NARROW_QUERY);
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return narrow;
+}
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -63,16 +79,22 @@ const Layout = ({ children }) => {
   const [providerStatuses, setProviderStatuses] = useState({});
   const [providersTesting, setProvidersTesting] = useState({});
   const [backendOnline, setBackendOnline] = useState(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+  const [sidebarPref, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
     } catch {
       return false;
     }
   });
+  // On a phone the full sidebar would take most of the screen: it starts
+  // folded there, and unfolding it is for this visit only.
+  const narrow = useNarrow();
+  const [narrowExpanded, setNarrowExpanded] = useState(false);
+  const sidebarCollapsed = narrow ? !narrowExpanded : sidebarPref;
   const modelPickerRef = useRef(null);
 
   const toggleSidebar = () => {
+    if (narrow) { setNarrowExpanded((v) => !v); return; }
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
@@ -254,6 +276,8 @@ const Layout = ({ children }) => {
     {
       label: t('nav.groups.main'),
       items: [
+        // One agent for the whole service, by voice or text (docs/assistant.md).
+        { name: t('nav.assistant'), path: '/assistant', icon: AudioLines },
         { name: t('nav.chat'), path: '/chat', icon: MessageCircle },
         { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard },
       ],
@@ -379,6 +403,12 @@ const Layout = ({ children }) => {
 
   const currentThemeOption = THEME_OPTIONS.find(o => o.value === theme) || THEME_OPTIONS[2];
   const ThemeIcon = currentThemeOption.icon;
+
+  // A page the assistant opened beside itself ("show on screen"): the page
+  // alone, without the sidebar, the header and the panels around it.
+  if (isEmbedded()) {
+    return <main className="app-shell h-screen overflow-y-auto">{children}</main>;
+  }
 
   return (
     <div className="app-shell flex h-screen overflow-hidden">

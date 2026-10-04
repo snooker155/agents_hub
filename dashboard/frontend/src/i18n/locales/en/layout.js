@@ -38,6 +38,7 @@ export default {
   },
   titles: {
     health: 'Status',
+    assistant: 'Assistant',
     chat: 'Chat',
     dashboard: 'Dashboard',
     orchestrator: 'Orchestrator',

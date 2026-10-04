@@ -4,6 +4,10 @@ export default {
   done: 'Finish',
   progress: '{{current}} of {{total}}',
   steps: {
+    assistant: {
+      title: 'Assistant',
+      description: 'The whole service through one agent, by voice or by text. Hold the button or Space to speak; the answer is read aloud and its links open beside the conversation.',
+    },
     chat: {
       title: 'Chat',
       description: 'Talk to any agent, flow or team from here. The header shows the workspace, the project and the model your next message will use.',

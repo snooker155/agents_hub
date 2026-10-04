@@ -7,6 +7,7 @@ export default {
     system: 'Система',
     connect: 'Подключение',
   },
+  assistant: 'Ассистент',
   chat: 'Чат',
   dashboard: 'Дашборд',
   workspaces: 'Пространства',

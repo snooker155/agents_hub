@@ -199,9 +199,17 @@ export default function WorkspaceSpecialModels({ workspace }) {
                     <input
                       value={entry.options[key] || ''}
                       placeholder={hint}
+                      list={key === 'voice' && kind && p.voices?.[kind]?.length ? `special-${p.id}-voices` : undefined}
                       onChange={(e) => setPurpose(p.id, { options: { ...entry.options, [key]: e.target.value } })}
                       className={`${inputCls} mt-1`}
                     />
+                    {/* The voices the model is known to have; the assistant's
+                        voice picker offers the same list. */}
+                    {key === 'voice' && kind && p.voices?.[kind]?.length > 0 && (
+                      <datalist id={`special-${p.id}-voices`}>
+                        {p.voices[kind].map((v) => <option key={v} value={v} />)}
+                      </datalist>
+                    )}
                   </label>
                 ))}
               </div>

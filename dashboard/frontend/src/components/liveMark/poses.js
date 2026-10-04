@@ -155,6 +155,21 @@ function speak(t) {
   });
 }
 
+// Listening: the mirror of speaking. The core moves right and the satellites
+// come in to it from the left one after another, growing as they arrive.
+function listen(t) {
+  const core = { x: 33, y: CY, r: 6 + 0.6 * Math.abs(Math.sin((t / 1.1) * TAU)), o: 1 };
+  return pose({
+    core,
+    sats: [0, 1, 2].map((i) => {
+      const p = frac(t / 1.6 + i / 3);
+      const x = core.x - 9 - 20 * (1 - p);
+      const y = CY + 2.2 * Math.sin(p * TAU);
+      return at(x, y, 2.2 + 1.4 * p, 0.95 * Math.sin(Math.PI * p) ** 0.7);
+    }),
+  });
+}
+
 // Waiting for a person: the mark, slowed right down and breathing.
 function wait(t) {
   const breathe = 0.5 + 0.5 * Math.sin((t / 2.4) * TAU);
@@ -166,7 +181,7 @@ function wait(t) {
   });
 }
 
-export const POSES = { idle, working, think, read, code, speak, wait };
+export const POSES = { idle, working, think, read, code, speak, listen, wait };
 export const STATES = Object.keys(POSES);
 /** States whose pose does not change with time: the loop can stop on them. */
 export const STATIC_STATES = new Set(['idle']);

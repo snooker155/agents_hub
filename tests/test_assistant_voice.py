@@ -421,3 +421,29 @@ def test_a_connection_card_is_never_answered_by_voice(multi, client, speech_mode
     assert answer["status"] == "on_screen"
     row = tool_approvals.get(card["approval_id"])
     assert row["status"] == "pending" and row["input"]["password"] == ""
+
+
+# ── what the page is told ────────────────────────────────────────────────────
+
+def test_the_page_learns_which_voice_models_the_home_has(multi, client, speech_models):
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    meta = client.get("/api/assistant", headers=bob).json()["voice"]
+    assert meta["transcription"]["model"] == TRANSCRIPTION["model"]
+    assert meta["transcription"]["inherited_from"] == "default"
+    assert meta["speech"]["provider"] == "openai" and "nova" in meta["speech"]["voices"]
+    assert meta["max_speak_chars"] == 1000
+
+
+def test_without_speech_models_the_page_is_told_to_use_the_browser(multi, client, seeded):
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    meta = client.get("/api/assistant", headers=bob).json()["voice"]
+    assert meta["transcription"] is None and meta["speech"] is None
+
+
+def test_the_models_page_offers_the_speech_voices():
+    purposes = {p["id"]: p for p in special.options_payload()["purposes"]}
+    assert "alloy" in purposes["speech"]["voices"]["openai_compat"]
+    assert "Kore" in purposes["speech"]["voices"]["google"]
+    assert purposes["image"]["voices"] == {}
