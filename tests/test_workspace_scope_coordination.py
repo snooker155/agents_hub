@@ -382,9 +382,13 @@ def test_delete_agent_only_for_an_agent_this_workspace_owns(two_ws):
         assert call(delete_agent_tool, agent_id="agent_b")["ok"] is True
 
 
-def test_create_agent_cannot_extend_another_workspaces_agent(two_ws):
+def test_create_agent_cannot_extend_another_workspaces_agent(two_ws, tmp_path, monkeypatch):
+    from agents import prompt_assembly
     from agents.registry import get_agent
     from tools.langchain_tools import create_agent_tool
+    # The new agent's definition is written into a scratch folder, not into
+    # the repository's agents/definitions.
+    monkeypatch.setattr(prompt_assembly, "DEFINITIONS_DIR", tmp_path / "definitions")
     with run_in("ws_a"):
         out = call(create_agent_tool, agent_id="copycat", name="Copycat", extends="agent_b")
         assert out["code"] == "not_found"
