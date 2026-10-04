@@ -25,6 +25,8 @@ import ToolApprovals from './ToolApprovalCard';
 import { pendingApproval } from './toolApprovals';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
+import LiveMark from '../liveMark/LiveMark';
+import { stateForTurn } from '../liveMark/activity';
 import { Bot, User } from 'lucide-react';
 
 function WorkingDots({ label }) {
@@ -104,6 +106,15 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
   const workingLabel = waitingOn
     ? t('toolApproval.waiting', { tool: waitingOn.tool })
     : runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel');
+  // While the turn is live the avatar is the live mark, showing the step.
+  const markState = isStreaming
+    ? stateForTurn({
+      waiting: !!waitingOn,
+      thinking: !!liveThought,
+      tool: runningTool,
+      text: !!text,
+    })
+    : null;
   const done = !isStreaming;
   const views = done ? messageViews(msg) : [];
   const shownViewIds = new Set(views.map((v) => v.view_id));
@@ -112,9 +123,13 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
     <div className="flex gap-3 mb-6 mx-2 flex-row">
       {/* Avatar */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
-        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
-          <Bot className="w-4 h-4" />
-        </div>
+        {markState ? (
+          <LiveMark state={markState} initial="working" size={32} className="w-8 h-8" />
+        ) : (
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
+            <Bot className="w-4 h-4" />
+          </div>
+        )}
         {agentName && (
           <span className="text-[9px] text-gray-400 font-medium text-center leading-tight max-w-[56px] break-words">
             {agentName}
@@ -171,9 +186,7 @@ function TypingIndicator({ agentName }) {
   const { t } = useI18n();
   return (
     <div className="flex gap-3 mb-6">
-      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center">
-        <Bot className="w-4 h-4 text-white" />
-      </div>
+      <LiveMark state="working" size={32} className="flex-shrink-0 w-8 h-8" />
       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 flex items-center gap-2">
         <span className="text-xs text-gray-400">{t('chat.agentIsWorking', { agent: agentName })}</span>
         <span className="flex gap-1">

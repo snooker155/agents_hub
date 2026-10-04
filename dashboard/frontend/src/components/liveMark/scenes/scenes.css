@@ -1,0 +1,55 @@
+/*
+ * Styles of the live mark's scenes (search.js, work.js), from the "Orbit
+ * Loader" artifact, scoped to the mark and fed by the theme's tokens, so
+ * they follow light and dark. Two departures: the core is brand-500 like the
+ * logo (the artifact used brand-600), so a scene takes over from the plain
+ * mark without a change of colour, and the fields are a step darker than in
+ * the artifact, and paper and bars are solid rather than see-through, so
+ * nothing reads as grey. The glass has no fill and no filter: what the lens
+ * shows is the field itself, magnified, in its own colours.
+ */
+.ah-live-mark { --ah-err: var(--danger, #d1453b); }
+.ah-live-mark .srch-core { fill: var(--brand-500); }
+.ah-live-mark .srch-sat { fill: var(--brand-500); }
+.ah-live-mark .srch-handle { stroke: var(--brand-500); stroke-linecap: round; fill: none; }
+.ah-live-mark .srch-ring { fill: none; stroke: var(--brand-600); }
+.ah-live-mark .srch-line { fill: none; stroke: var(--brand-400); stroke-width: 0.7; stroke-linecap: round; stroke-linejoin: round; }
+.ah-live-mark .srch-dot { fill: var(--brand-500); }
+.ah-live-mark .srch-hit { fill: var(--brand-600); }
+.ah-live-mark .srch-hot { fill: none; stroke: var(--brand-500); stroke-linecap: round; }
+.ah-live-mark .srch-file { fill: var(--brand-100); stroke: var(--brand-400); stroke-width: 0.6; stroke-linejoin: round; }
+.ah-live-mark .srch-sheet { fill-opacity: 0.9; }
+.ah-live-mark .srch-file--hit { fill: var(--brand-500); fill-opacity: 1; stroke: var(--brand-600); }
+.ah-live-mark .srch-fline { stroke: var(--brand-400); stroke-width: 0.7; stroke-linecap: round; }
+.ah-live-mark .srch-fline--hit { stroke: #ffffff; stroke-opacity: 0.9; }
+.ah-live-mark .srch-word { stroke: var(--brand-400); stroke-width: 1.1; stroke-linecap: round; }
+.ah-live-mark .srch-word--hit { stroke: var(--brand-700); }
+.ah-live-mark .srch-mark { fill: var(--brand-300); }
+.ah-live-mark .srch-band { fill: var(--brand-200); }
+.ah-live-mark .srch-tok { stroke-width: 1.1; stroke-linecap: round; }
+.ah-live-mark .srch-tok--kw { stroke: var(--brand-600); }
+.ah-live-mark .srch-tok--id { stroke: var(--brand-400); }
+.ah-live-mark .srch-tok--str { stroke: var(--brand-300); }
+.ah-live-mark .srch-tok--hit { stroke: var(--brand-700); stroke-width: 1.5; }
+.ah-live-mark .srch-brace { fill: var(--brand-500); font: 700 3.2px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ah-live-mark .srch-glyph { fill: none; stroke: var(--brand-500); stroke-width: 0.6; stroke-linecap: round; stroke-linejoin: round; }
+.ah-live-mark .srch-glyph--hit { stroke: #ffffff; }
+.ah-live-mark .srch-letter { fill: var(--brand-100); stroke: var(--brand-500); stroke-width: 0.4; }
+.ah-live-mark .srch-cap { fill: var(--brand-400); }
+.ah-live-mark .srch-bar { fill: var(--brand-400); }
+.ah-live-mark .srch-err { fill: var(--ah-err); }
+.ah-live-mark .srch-errline { fill: none; stroke: var(--ah-err); stroke-width: 0.6; }
+.ah-live-mark .wk-frame { fill: var(--brand-100); fill-opacity: 0.9; stroke: var(--brand-400); stroke-width: 0.7; }
+.ah-live-mark .wk-track { fill: none; stroke: var(--brand-200); stroke-width: 2.4; }
+.ah-live-mark .wk-arc { fill: none; stroke: var(--brand-600); stroke-width: 2.4; }
+.ah-live-mark .wk-hero { fill: var(--brand-500); fill-opacity: 0.85; }
+.ah-live-mark .wk-accent { fill: var(--brand-500); }
+.ah-live-mark .wk-check { fill: none; stroke: #ffffff; stroke-width: 0.9; stroke-linecap: round; stroke-linejoin: round; }
+.ah-live-mark .wk-tag { fill: var(--brand-600); font: 700 2.2px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ah-live-mark .wk-face { fill: var(--brand-400); stroke: none; }
+.ah-live-mark .wk-edge { stroke: var(--brand-600); stroke-width: 0.6; stroke-linecap: round; }
+.ah-live-mark .wk-dash { fill: none; stroke: var(--brand-400); stroke-width: 0.6; }
+.ah-live-mark .wk-edge-path { fill: none; stroke: var(--brand-400); stroke-width: 0.8; stroke-linejoin: round; }
+.ah-live-mark .wk-arrow { fill: var(--brand-400); }
+.ah-live-mark .wk-ring { fill: none; stroke: var(--brand-600); stroke-width: 0.8; stroke-linecap: round; }
+.ah-live-mark .wk-end { fill: none; stroke: var(--brand-600); stroke-width: 1.2; }

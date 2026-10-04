@@ -85,6 +85,7 @@ const ArtifactsRedirect = lazy(() => import('./pages/Artifacts').then((m) => ({ 
 const ViewDetail = lazy(() => import('./pages/ViewDetail'));
 const Studio = lazy(() => import('./pages/Studio'));
 const Docs = lazy(() => import('./pages/Docs'));
+const MarkLab = lazy(() => import('./pages/MarkLab'));
 // Identity pages. Both are inert outside AUTH_MODE=multi: the login screen is
 // never reached and the users route is not registered. See docs/identity.md.
 const Login = lazy(() => import('./pages/Login'));
@@ -256,6 +257,7 @@ function AppRoutes() {
         )}
         <Route path="/docs" element={guard(<Docs />)} />
         <Route path="/docs/:section" element={guard(<Docs />)} />
+        <Route path="/mark-lab" element={guard(<MarkLab />)} />
         {/* The api client sends a browser whose session died to /login; once
             AuthGate has let it back in there is nothing to show at that path. */}
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
