@@ -101,6 +101,39 @@ the service thread gets 403.
 In `single` and `token` mode there is one operator and one thread, in
 `default`, and it is the service thread.
 
+## What it can look up
+
+The assistant answers questions about any page with one read-only tool,
+`hub_lookup` (`chat/lookup.py`), instead of a tool per page. A lookup names a
+kind and either lists (with an optional search text) or describes one record
+by id. Every row and card carries `url`, the page that shows it, which the
+assistant links as "show on screen".
+
+| Kind | Lists | One record (`id`) | Page |
+|---|---|---|---|
+| `run` (alias `message`) | runs, newest first, by title, agent or status | status, timing, model, tokens, cost, tool calls, the error's first line | `/messages/<id>` |
+| `session` | sessions | agent, dates, how many runs, the latest ones | `/sessions/<id>` |
+| `cost` | today, week, month | spend for the period (the Costs page's numbers), top agents and models, the person's own spend and monthly limit | `/costs` |
+| `budget` | each workspace's spend against its cap | the cap, period, flags and the person's limit | `/costs` |
+| `model` | enabled models with prices | prices, context window, whether it is the default here, the special models | `/models/<provider>/<model>` |
+| `agent` | agents of the workspace | description, tools, whom it delegates to, what it extends | `/agents/<id>` |
+| `notification` | unread notifications | title, text, severity | |
+| `approval` | tool calls and tasks waiting for approval that the person may answer | tool, reason, run, expiry | the run or the task |
+| `task`, `view`, `project`, `scenario`, `loop`, `flow`, `team`, `job` | as the chat's reference picker lists them | as the picker renders them | their page |
+
+`workspace` is the turn's workspace when empty, any workspace the person can
+reach, or `all`. Reach is the person's: a member reads their workspaces,
+never `default` or another person's personal workspace, and a record from
+elsewhere answers "not found". Another agent granted `hub_lookup` reads only
+its own workspace.
+
+It returns metadata, never a run's answer, a log or a chat's messages: those
+hold whatever the run handled, web pages included, and an agent that both
+reads such text and can send messages is what the capability guard refuses
+([tool policy](tool-policy.md)). The answer is a click away on the linked
+page. `tests/test_hub_lookup.py` prints which dashboard pages no kind or
+tool covers yet; the rest come in later waves.
+
 ## Answers
 
 The assistant opens every answer with one or two sentences that work read

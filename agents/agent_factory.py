@@ -628,6 +628,10 @@ class AgentFactory:
         # like the web tools; each works only when its connector is set up.
         from tools.connector_tools import connector_tools
         available.extend(connector_tools())
+        # The assistant's read-only view of the hub's records as the person
+        # sees them (tools/hub_lookup.py): a plain per-tool grant.
+        from tools.hub_lookup import HUB_LOOKUP_TOOLS
+        available.extend(HUB_LOOKUP_TOOLS)
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly

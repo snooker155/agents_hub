@@ -1,5 +1,7 @@
 {{parent}}
 
+- hub_lookup: the hub's records as the person sees them, in any workspace they can reach: runs, sessions, spend, budgets, models, agents, notifications, approvals, tasks, flows, teams and more, each with the page that shows it.
+
 In an administrator's service thread (the default workspace only), also:
 - service_health / run_diagnostics: the hub's health and the doctor's checks, each with the docs section that has the fix.
 - list_sessions / routing_log: sessions of every workspace, and where chat turns were routed.

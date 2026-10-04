@@ -17,42 +17,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from managers import run_manager
-from agents import registry
-from tasks import service as tasks_service
-from common.pricing import (EVALUATION_CHANNELS, load_price_map, run_cached_tokens,
-                            run_cost_usd, run_tokens, container_cost_usd)
+from common.costs_report import _run_cost, costs_breakdown  # noqa: F401 - _run_cost re-exported for tests
 from common import budget as budget_mod
 from common import audit, identity
 from common.workspace_context import normalize_workspace_name
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
-
-
-def _in_range(ts: str, since: Optional[str], until: Optional[str]) -> bool:
-    if since and ts and ts < since:
-        return False
-    if until and ts and ts > until:
-        return False
-    return True
-
-
-def _run_cost(run: dict, prices) -> float:
-    """A run's spend: its own reported cost when it has one, catalog pricing
-    otherwise.
-
-    A remote agent (``agents.remote_agent``) may credit ``reported_cost_usd``
-    onto the run record when the service it wraps prices its own call: a CLI
-    such as Claude Code prints ``total_cost_usd`` and that figure is exact,
-    where pricing token counts against this hub's catalog is an estimate and
-    reads as zero for a model the catalog does not list at all.
-    """
-    reported = run.get("reported_cost_usd")
-    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
-        # The wrapped service prices its own model calls, not the container
-        # the hub ran it in, so the container hours are still added.
-        return float(reported) + container_cost_usd(run)
-    return run_cost_usd(run, prices)
 
 
 @router.get("")
@@ -62,106 +32,12 @@ async def get_costs(
     until: Optional[str] = None,
 ):
     """Token + estimated-cost breakdowns grouped by workspace, agent, model and
-    project, plus overall totals.
+    project, plus overall totals (common/costs_report.py).
 
     ``since`` / ``until`` are ISO date/datetime strings compared against each
     run's ``started_at``. ``workspace`` restricts to a single workspace.
     """
-    runs = run_manager.load_runs()
-    prices = load_price_map()
-
-    # task_id -> project_id, to attribute spend to projects. Best-effort: a run
-    # with no task or an unmapped task lands in the "(none)" bucket.
-    task_project: dict = {}
-    try:
-        for t in tasks_service.list_tasks():
-            task_project[str(getattr(t, "id", ""))] = getattr(t, "project_id", None) or ""
-    except Exception:
-        pass
-
-    agent_names = {}
-    try:
-        agent_names = {a.id: getattr(a, "name", a.id) for a in registry.list_agents()}
-    except Exception:
-        pass
-
-    by_workspace: dict = {}
-    by_agent: dict = {}
-    by_model: dict = {}
-    by_project: dict = {}
-    totals = {"runs": 0, "inbound_tokens": 0, "cached_tokens": 0,
-              "outbound_tokens": 0, "total_tokens": 0, "cost": 0.0, "container_cost": 0.0}
-
-    def _bump(bucket: dict, key: str, label: str, run: dict,
-              inbound: int, outbound: int, cached: int, cost: float):
-        b = bucket.get(key)
-        if b is None:
-            b = bucket[key] = {
-                "key": key, "label": label,
-                "runs": 0, "inbound_tokens": 0, "cached_tokens": 0,
-                "outbound_tokens": 0, "total_tokens": 0, "cost": 0.0,
-            }
-        b["runs"] += 1
-        b["inbound_tokens"] += inbound
-        # Reported alongside, not on top of, inbound: these are the inbound
-        # tokens the provider served from its cache at the cheaper rate.
-        b["cached_tokens"] += cached
-        b["outbound_tokens"] += outbound
-        b["total_tokens"] += inbound + outbound
-        b["cost"] += cost
-
-    for r in runs:
-        # Replay and eval runs are evaluation, not production spend — never
-        # count them. Both channels are tagged at run creation for exactly this.
-        if (r.get("channel") or "") in EVALUATION_CHANNELS:
-            continue
-        ws = (r.get("workspace") or "").strip()
-        if workspace and ws != workspace:
-            continue
-        ts = r.get("started_at") or r.get("created_at") or ""
-        if not _in_range(ts, since, until):
-            continue
-
-        inbound, outbound = run_tokens(r)
-        cached = max(0, min(run_cached_tokens(r), inbound))
-        cost = _run_cost(r, prices)
-
-        agent_id = (r.get("agent_id") or "").strip() or "(unknown)"
-        model = (r.get("model") or "").strip() or "(untracked)"
-        provider = (r.get("provider") or "").strip() or "unknown"
-        project = task_project.get(str(r.get("task_id") or ""), "") or "(none)"
-
-        _bump(by_workspace, ws or "(none)", ws or "(none)", r, inbound, outbound, cached, cost)
-        _bump(by_agent, agent_id, agent_names.get(agent_id, agent_id), r, inbound, outbound, cached, cost)
-        _bump(by_model, f"{provider}/{model}", f"{provider}/{model}", r, inbound, outbound, cached, cost)
-        _bump(by_project, project, project, r, inbound, outbound, cached, cost)
-
-        totals["runs"] += 1
-        totals["inbound_tokens"] += inbound
-        totals["cached_tokens"] += cached
-        totals["outbound_tokens"] += outbound
-        totals["total_tokens"] += inbound + outbound
-        totals["cost"] += cost
-        # The part of ``cost`` that is container hours (common/pricing.py
-        # container_cost_usd), so the page can say how much is not tokens.
-        totals["container_cost"] += container_cost_usd(r)
-
-    def _rows(bucket: dict) -> list:
-        rows = list(bucket.values())
-        for row in rows:
-            row["cost"] = round(row["cost"], 4)
-        rows.sort(key=lambda x: x["cost"], reverse=True)
-        return rows
-
-    totals["cost"] = round(totals["cost"], 4)
-    totals["container_cost"] = round(totals["container_cost"], 4)
-    return {
-        "totals": totals,
-        "by_workspace": _rows(by_workspace),
-        "by_agent": _rows(by_agent),
-        "by_model": _rows(by_model),
-        "by_project": _rows(by_project),
-    }
+    return costs_breakdown(workspace, since, until)
 
 
 class BudgetSettings(BaseModel):

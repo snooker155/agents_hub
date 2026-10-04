@@ -1382,6 +1382,7 @@
       "list_deltas": {
         "tools": {
           "add": [
+            "hub_lookup",
             "service_health",
             "run_diagnostics",
             "list_sessions",

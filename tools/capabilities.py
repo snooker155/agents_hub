@@ -204,6 +204,11 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "web_log_recent": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "list_instances": frozenset({READS_PRIVATE}),
     "list_sessions": frozenset({READS_PRIVATE}),
+    # The assistant's lookup over the hub's records (chat/lookup.py): runs,
+    # sessions, spend, tasks and the rest as metadata, never a run's answer,
+    # a log or a chat's messages, so it reads private data without ingesting
+    # untrusted text and can sit beside notify_user.
+    "hub_lookup": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
 
     # ── system workspace (tools/system_ops.py) ───────────────────────────────

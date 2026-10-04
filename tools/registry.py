@@ -500,6 +500,12 @@ def _service_ops_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="service_ops") for t in SERVICE_OPS_TOOLS]
 
 
+def _hub_lookup_specs() -> List[ToolSpec]:
+    # The assistant's read-only view of the hub's records (chat/lookup.py).
+    from tools.hub_lookup import HUB_LOOKUP_TOOLS
+    return [spec_from_tool(t, category="service_ops") for t in HUB_LOOKUP_TOOLS]
+
+
 def _system_ops_specs() -> List[ToolSpec]:
     # The system workspace's repository copy (tools/system_ops.py,
     # common/system_workspace.py): its own category, because these tools only
@@ -575,6 +581,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _web_specs,
     _browser_specs,
     _service_ops_specs,
+    _hub_lookup_specs,
     _system_ops_specs,
     _evals_specs,
     _documentation_specs,

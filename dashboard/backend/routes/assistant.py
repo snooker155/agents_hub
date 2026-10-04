@@ -163,21 +163,10 @@ def own_thread_ids() -> List[str]:
 
 def reachable_workspaces(principal: Any) -> List[str]:
     """The workspaces this person can work in through the assistant: what
-    they can see, without other people's personal workspaces."""
-    from common import personal_workspace
-    from workspace import list_workspace_folders
-    own = None
-    if _multi() and principal is not None and getattr(principal, "kind", "") == "user":
-        own = personal_workspace.name_for(principal.id)
-    out: List[str] = []
-    for folder in list_workspace_folders():
-        name = folder.name
-        if not access.can_see_workspace(principal, name):
-            continue
-        if personal_workspace.is_reserved_name(name) and name != own:
-            continue
-        out.append(name)
-    return sorted(out, key=lambda n: (n != own, n != "default", n))
+    they can see, without other people's personal workspaces
+    (chat/lookup.py, which the assistant's lookups use too)."""
+    from chat.lookup import reachable_workspaces as reachable
+    return reachable(principal)
 
 
 def _target(ctx: SimpleNamespace, requested: Optional[str]) -> str:

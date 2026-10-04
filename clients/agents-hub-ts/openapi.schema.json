@@ -23774,7 +23774,7 @@
     },
     "/api/costs": {
       "get": {
-        "description": "Token + estimated-cost breakdowns grouped by workspace, agent, model and\nproject, plus overall totals.\n\n``since`` / ``until`` are ISO date/datetime strings compared against each\nrun's ``started_at``. ``workspace`` restricts to a single workspace.",
+        "description": "Token + estimated-cost breakdowns grouped by workspace, agent, model and\nproject, plus overall totals (common/costs_report.py).\n\n``since`` / ``until`` are ISO date/datetime strings compared against each\nrun's ``started_at``. ``workspace`` restricts to a single workspace.",
         "parameters": [
           {
             "in": "query",
