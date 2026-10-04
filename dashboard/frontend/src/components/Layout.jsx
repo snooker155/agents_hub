@@ -174,6 +174,15 @@ const Layout = ({ children }) => {
     wsDefault.provider === globalDefault.provider &&
     (wsDefault.model || '') === (globalDefault.model || '')
   );
+  // A personal workspace (common/personal_workspace.py) reads as the
+  // person's own, never by its generated name.
+  const workspaceLabel = (ws) => {
+    if (ws.name === 'default') return t('layout.workspaceDefaultAll');
+    if (ws.own_personal) return t('layout.workspacePersonal');
+    if (ws.personal) return t('layout.workspacePersonalOf', { name: ws.personal_label || ws.personal_of });
+    return ws.name;
+  };
+
   const displayModel = (() => {
     const op = workspaceModel.override?.provider || '';
     if (op && op !== 'workspace_default') {
@@ -466,7 +475,7 @@ const Layout = ({ children }) => {
             >
               {workspaces.map(ws => (
                 <option key={ws.name} value={ws.name}>
-                  {ws.name === 'default' ? t('layout.workspaceDefaultAll') : ws.name}
+                  {workspaceLabel(ws)}
                 </option>
               ))}
             </select>
@@ -485,7 +494,7 @@ const Layout = ({ children }) => {
                 <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
                 {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
                 {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
-                {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.defaultSuffix')}</span>}
+                {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
               {showModelPicker && (

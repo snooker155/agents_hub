@@ -2,6 +2,8 @@ export default {
   serviceName: 'Agents Hub',
   workspaceLabel: 'Пространство:',
   workspaceDefaultAll: 'default (Все)',
+  workspacePersonal: 'Личное',
+  workspacePersonalOf: '{{name}} (личное)',
   expandSidebar: 'Развернуть меню',
   collapseSidebar: 'Свернуть меню',
   theme: {
@@ -26,6 +28,7 @@ export default {
     global: 'Глобально',
     globalSuffix: '(глобально)',
     defaultSuffix: '(по умолчанию)',
+    inheritedSuffix: '(из {{workspace}})',
     defaultBadge: 'по умолчанию',
     globalBadge: 'глобально',
     legend: 'Индикаторы:',

@@ -186,7 +186,12 @@ async def get_budget(workspace: Optional[str] = None):
 
 @router.post("/budget")
 async def set_budget(request: Request, settings: BudgetSettings, workspace: Optional[str] = None):
-    """Persist a workspace's budget caps and return the fresh status."""
+    """Persist a workspace's budget caps and return the fresh status.
+
+    In ``multi`` mode only an administrator sets them: a cap is how the
+    service limits spend, so a workspace owner (a personal workspace's
+    person included) does not get to lift their own."""
+    identity.require_role(identity.request_principal(request), admin=True)
     ws = normalize_workspace_name(workspace) or "default"
     try:
         budget_mod.set_budget(ws, settings.model_dump())

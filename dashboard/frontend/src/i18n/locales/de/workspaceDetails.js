@@ -186,6 +186,7 @@ export default {
     saved: 'Spezialmodelle gespeichert',
     loadFailed: 'Spezialmodelle konnten nicht geladen werden',
     saveFailed: 'Spezialmodelle konnten nicht gespeichert werden',
+    inherited: 'Aus {{workspace}}: {{model}}. Wählen Sie hier ein Modell, um ein eigenes zu nutzen.',
     notAdded: 'Nicht hinzugefügt. Ein Aufruf von {{tool}} meldet, dass das Modell in diesem Arbeitsbereich nicht hinzugefügt ist.',
     provider: 'Anbieter',
     model: 'Modell',

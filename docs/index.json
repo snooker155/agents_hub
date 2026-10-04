@@ -275,7 +275,8 @@
         "Budgets",
         "Per-run limit",
         "What actually costs money",
-        "Reducing it"
+        "Reducing it",
+        "Limit per person"
       ]
     },
     {
@@ -1262,7 +1263,7 @@
     {
       "id": "special-models",
       "title": "Special models",
-      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
+      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback except a personal workspace, which uses default's. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
       "surface": "Models, Special models tab; Workspace settings, Special models section",
       "related": [
         "workspace-roles",
@@ -1349,6 +1350,7 @@
         "The three modes",
         "First run in multi mode",
         "Roles and what each may do",
+        "Personal workspace",
         "What a record remembers",
         "The service credential",
         "How passwords and sessions are stored",

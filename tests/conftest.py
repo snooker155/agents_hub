@@ -215,6 +215,11 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(sb, "_relay_notify", lambda *a, **k: None)
     monkeypatch.setattr(sb, "_relay_publish", lambda *a, **k: None)
 
+    # Personal workspaces this process made sure of live in the database
+    # just emptied (their membership rows), so forget them too.
+    from common import personal_workspace
+    personal_workspace.forget_cache()
+
     yield
 
     # A heartbeat thread a test left behind (a run killed mid-flight) would

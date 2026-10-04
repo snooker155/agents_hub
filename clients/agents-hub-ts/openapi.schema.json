@@ -3506,6 +3506,20 @@
         "title": "DefaultOutcomeUpdate",
         "type": "object"
       },
+      "DefaultSpendLimit": {
+        "properties": {
+          "limit_usd": {
+            "minimum": 0.0,
+            "title": "Limit Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "limit_usd"
+        ],
+        "title": "DefaultSpendLimit",
+        "type": "object"
+      },
       "DelegateBody": {
         "additionalProperties": true,
         "properties": {
@@ -13105,6 +13119,17 @@
               }
             ],
             "title": "Role"
+          },
+          "spend_limit_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spend Limit Usd"
           }
         },
         "title": "UserPatch",
@@ -19563,6 +19588,83 @@
         ]
       }
     },
+    "/api/auth/spend": {
+      "get": {
+        "description": "The caller's monthly spend limit, where it comes from and what they\nspent this month (common/user_budget.py).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Own Spend",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/auth/spend-limits": {
+      "get": {
+        "description": "The hub default limit and, per person, their limit, its source and\nthis month's spend (common/user_budget.py).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Spend Limits",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/spend-limits/default": {
+      "put": {
+        "description": "Set the monthly limit of every person without one of their own.\nWritten to ``.env`` for the next start and applied to this process now.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefaultSpendLimit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Default Spend Limit",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/ticket": {
       "post": {
         "description": "A one-time, minute-long ticket for a connection that cannot set a\nheader: the dashboard's EventSource on ``/api/stream``, the browser\nframe WebSocket, a navigation such as the GitHub connect link.\n\nPresented as ``?ticket=`` it stands for whoever minted it (a user, with\nan API key's workspace scope kept; the shared token; the service\ncredential), so the long-lived credential never has to ride a URL. In\n``multi`` mode it is the only query credential accepted. See\ndocs/identity.md, \"Tickets for streams\".",
@@ -23627,7 +23729,7 @@
         ]
       },
       "post": {
-        "description": "Persist a workspace's budget caps and return the fresh status.",
+        "description": "Persist a workspace's budget caps and return the fresh status.\n\nIn ``multi`` mode only an administrator sets them: a cap is how the\nservice limits spend, so a workspace owner (a personal workspace's\nperson included) does not get to lift their own.",
         "parameters": [
           {
             "in": "query",

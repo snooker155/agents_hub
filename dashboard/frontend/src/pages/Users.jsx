@@ -5,8 +5,8 @@ import {
 } from 'lucide-react';
 import {
   createGroup, createGroupMapping, createUser, deleteGroup, deleteGroupMapping, deleteUser,
-  getGroupMappings, getGroupMembers, getGroups, getUsers, getWorkspaces, resetUserPassword,
-  setGroupMembers, updateUser,
+  getGroupMappings, getGroupMembers, getGroups, getSpendLimits, getUsers, getWorkspaces,
+  resetUserPassword, setDefaultSpendLimit, setGroupMembers, updateUser,
 } from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useAuth } from '../components/auth';
@@ -38,12 +38,21 @@ export default function Users() {
   const [error, setError] = useState('');
   const [draft, setDraft] = useState({ username: '', password: '', role: 'member' });
   const [busy, setBusy] = useState(false);
+  const [limits, setLimits] = useState(null);
+  const [defaultDraft, setDefaultDraft] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await getUsers();
       setUsers(Array.isArray(data) ? data : []);
+      try {
+        const { data: spend } = await getSpendLimits();
+        setLimits(spend);
+        setDefaultDraft(String(spend?.default_limit_usd ?? 0));
+      } catch {
+        setLimits(null);
+      }
       setError('');
     } catch (err) {
       setError(err?.response?.data?.detail || t('auth.users.loadFailed'));
@@ -92,6 +101,51 @@ export default function Users() {
     } catch (err) {
       fail(err, 'auth.users.deleteFailed');
     }
+  };
+
+  // A person's own monthly limit: a number, 0 for unlimited, empty to
+  // follow the hub default.
+  const changeLimit = async (user) => {
+    const current = user.spend_limit_usd ?? '';
+    const answer = window.prompt(t('auth.users.limitPrompt', { name: user.username }), String(current));
+    if (answer === null) return;
+    const trimmed = answer.trim();
+    const value = trimmed === '' ? null : Number(trimmed.replace(',', '.'));
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      setError(t('auth.users.limitInvalid'));
+      return;
+    }
+    try {
+      await updateUser(user.id, { spend_limit_usd: value });
+      setError('');
+      await load();
+    } catch (err) {
+      fail(err, 'auth.users.updateFailed');
+    }
+  };
+
+  const saveDefaultLimit = async (event) => {
+    event.preventDefault();
+    const value = Number(String(defaultDraft).trim().replace(',', '.') || 0);
+    if (!Number.isFinite(value) || value < 0) {
+      setError(t('auth.users.limitInvalid'));
+      return;
+    }
+    try {
+      await setDefaultSpendLimit(value);
+      setError('');
+      await load();
+    } catch (err) {
+      fail(err, 'auth.users.updateFailed');
+    }
+  };
+
+  const limitText = (user) => {
+    const status = limits?.users?.[user.id];
+    if (!status) return '';
+    const spent = `$${Number(status.spend || 0).toFixed(2)}`;
+    if (!status.limit_usd) return t('auth.users.limitNone', { spent });
+    return t('auth.users.limitOf', { spent, limit: `$${Number(status.limit_usd).toFixed(2)}` });
   };
 
   const resetPassword = async (user) => {
@@ -157,6 +211,24 @@ export default function Users() {
         </button>
       </form>
 
+      {limits && (
+        <form onSubmit={saveDefaultLimit}
+          className="mb-6 bg-white border border-gray-200 rounded-xl p-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="default-limit" className="block text-xs font-medium text-gray-500 mb-1">
+              {t('auth.users.defaultLimit')}
+            </label>
+            <input id="default-limit" type="number" min="0" step="0.01" value={defaultDraft}
+              onChange={(e) => setDefaultDraft(e.target.value)} className={`${inputCls} w-32`} />
+          </div>
+          <button type="submit"
+            className="border border-gray-200 hover:bg-gray-50 px-3 py-2 rounded-lg text-sm font-medium text-gray-700">
+            {t('common.save')}
+          </button>
+          <p className="text-xs text-gray-500 max-w-md">{t('auth.users.defaultLimitHint')}</p>
+        </form>
+      )}
+
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {loading ? (
           <PageLoader />
@@ -170,6 +242,7 @@ export default function Users() {
                 <th className="text-left px-4 py-2 font-semibold">{t('auth.sso.email')}</th>
                 <th className="text-left px-4 py-2 font-semibold">{t('auth.sso.sourceLabel')}</th>
                 <th className="text-left px-4 py-2 font-semibold">{t('auth.fields.role')}</th>
+                {limits && <th className="text-left px-4 py-2 font-semibold">{t('auth.users.limit')}</th>}
                 <th className="px-4 py-2" />
               </tr>
             </thead>
@@ -202,6 +275,17 @@ export default function Users() {
                       <ShieldCheck className="inline w-3.5 h-3.5 ml-1.5 text-indigo-500" />
                     )}
                   </td>
+                  {limits && (
+                    <td className="px-4 py-2 text-xs text-gray-600 whitespace-nowrap" data-testid={`limit-${user.username}`}>
+                      <button type="button" onClick={() => changeLimit(user)}
+                        className={`hover:text-indigo-700 ${limits.users?.[user.id]?.exceeded ? 'text-red-600 font-medium' : ''}`}>
+                        {limitText(user)}
+                      </button>
+                      {user.spend_limit_usd == null && (
+                        <span className="ml-1.5 text-[11px] text-gray-400">{t('auth.users.limitFromDefault')}</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right whitespace-nowrap">
                     {canUsePassword(user) && (
                       <button type="button" onClick={() => resetPassword(user)}

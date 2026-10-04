@@ -5,6 +5,15 @@ export default {
   title: 'Konto',
   description: 'Ihr Profil, Ihre Sitzungen und Ihre persönlichen API-Schlüssel.',
 
+  spend: {
+    title: 'Ausgaben in diesem Monat',
+    spent: 'Ausgegeben',
+    limit: 'Limit',
+    none: 'Kein Limit',
+    sources: { user: 'Ihr eigenes', default: 'Standard für alle' },
+    hint: 'Es zählen Ihre Läufe, Chat-Züge und Aufrufe mit Ihren API-Schlüsseln. Das Limit legt ein Administrator fest.',
+    exceeded: 'Ihr Limit für diesen Monat ist erreicht: neue Läufe und Chat-Züge werden abgelehnt. Bitten Sie einen Administrator, es anzuheben.',
+  },
   profile: {
     title: 'Profil',
     username: 'Benutzername',

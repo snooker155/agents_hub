@@ -201,6 +201,11 @@ export const getMe = () => api.get('/auth/me');
 export const getUsers = () => api.get('/auth/users');
 export const createUser = (data) => api.post('/auth/users', data);
 export const updateUser = (id, data) => api.patch(`/auth/users/${id}`, data);
+// Spend limit per person (common/user_budget.py): every person's limit and
+// month spend plus the hub default (admin), and the caller's own.
+export const getSpendLimits = () => api.get('/auth/spend-limits');
+export const setDefaultSpendLimit = (limitUsd) => api.put('/auth/spend-limits/default', { limit_usd: limitUsd });
+export const getOwnSpend = () => api.get('/auth/spend');
 export const deleteUser = (id) => api.delete(`/auth/users/${id}`);
 export const resetUserPassword = (id, password) =>
   api.post(`/auth/users/${id}/password`, { password });

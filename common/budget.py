@@ -224,7 +224,13 @@ def check_budget(workspace: Optional[str]) -> None:
     reading as "under the cap". ``get_budget`` itself still fails open (see its
     docstring): if the config cannot even be read, ``fail_closed`` is unknown,
     so there is nothing to fail closed to.
+
+    The person the run is charged to is checked first, against their own
+    monthly limit (``common.user_budget``, ``multi`` mode only), so every
+    caller of this gate also honours it.
     """
+    from common.user_budget import check_user_budget
+    check_user_budget()
     if not workspace:
         return
     try:

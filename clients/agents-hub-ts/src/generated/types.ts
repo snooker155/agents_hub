@@ -603,6 +603,10 @@ export type DefaultOutcomeUpdate = {
   "threshold"?: number | null;
 };
 
+export type DefaultSpendLimit = {
+  "limit_usd": number;
+};
+
 export type DelegateBody = {
   "agent_id": string;
   "input": string;
@@ -2095,6 +2099,7 @@ export type UserPatch = {
   "display_name"?: string | null;
   "disabled"?: boolean | null;
   "email"?: string | null;
+  "spend_limit_usd"?: number | null;
 };
 
 export type ValidationError = {
@@ -2580,6 +2585,15 @@ export interface ApiPaths {
   };
   "/api/auth/sessions/{session_id}": {
     delete: { response: unknown };
+  };
+  "/api/auth/spend": {
+    get: { response: unknown };
+  };
+  "/api/auth/spend-limits": {
+    get: { response: unknown };
+  };
+  "/api/auth/spend-limits/default": {
+    put: { body: DefaultSpendLimit; response: unknown };
   };
   "/api/auth/ticket": {
     post: { response: unknown };

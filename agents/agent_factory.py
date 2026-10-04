@@ -347,9 +347,13 @@ class AgentFactory:
         if ws_name:
             try:
                 from workspace import get_effective_settings as _get_eff, get_workspace_metadata as _get_meta
-                _ws_raw_overrides = (_get_meta(ws_name) or {}).get("settings") or {}
+                from common.personal_workspace import model_source
+                # A personal workspace with no settings of its own runs with
+                # default's keys and base URLs (common/personal_workspace.py).
+                settings_ws = model_source(ws_name) or ws_name
+                _ws_raw_overrides = (_get_meta(settings_ws) or {}).get("settings") or {}
                 if _ws_raw_overrides:
-                    _eff = _get_eff(ws_name)
+                    _eff = _get_eff(settings_ws)
                     if not resolved_provider and "default_provider" in _ws_raw_overrides:
                         resolved_provider = _eff.get("default_provider") or resolved_provider
                     if "temperature" in _ws_raw_overrides and config.get("temperature") is None:

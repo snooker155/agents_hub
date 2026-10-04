@@ -4,8 +4,14 @@ Special models: the models a workspace uses for work a chat model does not do.
 A chat model answers in text. Pictures, video, speech and transcripts come
 from other models with other APIs, and a team may also run a model of its own
 for one narrow job. Each of those is a *purpose*; a workspace picks the model
-for each purpose it wants (``special_models`` in the workspace metadata). There
-is no fallback: a workspace uses only the models it added itself.
+for each purpose it wants (``special_models`` in the workspace metadata). A
+workspace uses only the models it added itself, with one exception: a
+personal workspace (common/personal_workspace.py) takes ``default``'s model
+for each purpose it left empty, so a person's assistant can listen and speak
+without anyone configuring their workspace. Such an entry carries
+``inherited_from: "default"`` and is called with default's connection
+settings (:func:`entry_endpoint`); its price is still charged to the run, so
+to the personal workspace. Custom models are never inherited.
 
 Agents never choose the model. They call the purpose's tool
 (tools/special_models.py: ``generate_image``, ``generate_video``,
@@ -424,12 +430,34 @@ def save(workspace: str, raw: Any) -> Dict[str, Any]:
     return config
 
 
+#: Key on an effective entry that a personal workspace took from another.
+INHERITED_KEY = "inherited_from"
+
+
 def effective(workspace: Optional[str]) -> Dict[str, Any]:
-    """What ``workspace`` uses: the models it added itself, nothing more. A
-    purpose it left empty has no model, whatever another workspace has."""
+    """What ``workspace`` uses: the models it added itself. A purpose it left
+    empty has no model, whatever another workspace has, except in a personal
+    workspace, where ``default``'s model for that purpose fills the gap (marked
+    with :data:`INHERITED_KEY`)."""
     from common.workspace_context import workspace_name_from_path
     ws = (workspace_name_from_path(workspace) or workspace) if workspace else None
-    return stored(ws)
+    own = stored(ws)
+    from common import personal_workspace
+    if not ws or not personal_workspace.is_personal(ws):
+        return own
+    fallback = personal_workspace.FALLBACK
+    out = dict(own)
+    for purpose_id, entry in stored(fallback).items():
+        if purpose_id == "custom" or purpose_id in out:
+            continue
+        out[purpose_id] = {**entry, INHERITED_KEY: fallback}
+    return out
+
+
+def entry_endpoint(entry: Dict[str, Any], workspace: Optional[str]) -> Endpoint:
+    """:func:`endpoint` for an :func:`effective` entry: an inherited one is
+    called with the connection settings of the workspace it came from."""
+    return endpoint(entry["provider"], entry.get(INHERITED_KEY) or workspace)
 
 
 def configured_tools(workspace: Optional[str]) -> List[str]:
@@ -503,6 +531,6 @@ __all__ = [
     "PURPOSES", "Purpose", "META_KEY", "OPENAI", "GOOGLE",
     "CUSTOM_TOOL", "CUSTOM_KINDS", "SPECIAL_MODEL_TOOLS", "SpecialModelError", "Endpoint",
     "get_purpose", "purpose_of_tool", "provider_kind", "provider_choices", "endpoint",
-    "normalize", "stored", "save", "effective", "masked", "MASK", "configured_tools", "options_payload",
+    "normalize", "stored", "save", "effective", "entry_endpoint", "INHERITED_KEY", "masked", "MASK", "configured_tools", "options_payload",
     "prompt_section",
 ]

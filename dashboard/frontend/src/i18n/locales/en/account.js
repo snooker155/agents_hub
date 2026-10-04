@@ -5,6 +5,15 @@ export default {
   title: 'Account',
   description: 'Your own profile, sessions and personal API keys.',
 
+  spend: {
+    title: 'Spend this month',
+    spent: 'Spent',
+    limit: 'Limit',
+    none: 'No limit',
+    sources: { user: 'your own', default: 'the default for everyone' },
+    hint: 'Runs you start, chat turns and calls with your API keys count toward it. An administrator sets the limit.',
+    exceeded: 'You have reached your limit for this month: new runs and chat turns are refused. Ask an administrator to raise it.',
+  },
   profile: {
     title: 'Profile',
     username: 'User name',

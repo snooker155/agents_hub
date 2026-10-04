@@ -225,6 +225,10 @@ def _row_to_user(row) -> Dict[str, Any]:
         # Whether a password login is possible at all: an account provisioned
         # by SSO or SCIM has no password until an admin sets one.
         "has_password": bool(col("password_hash")),
+        # Own monthly spend limit (common/user_budget.py); None follows the
+        # hub default, 0 is unlimited.
+        "spend_limit_usd": (float(col("spend_limit_usd"))
+                            if col("spend_limit_usd") is not None else None),
     }
 
 
@@ -439,6 +443,22 @@ def upsert_external_user(issuer: str, subject: str, *, username: str = "",
     if changes:
         user = update_user(user["id"], **changes) or user
     return user
+
+
+def set_spend_limit(user_id: str, limit_usd: Optional[float]) -> Optional[Dict[str, Any]]:
+    """Set a person's own monthly spend limit (``None`` = follow the hub
+    default, ``0`` = unlimited). Returns the updated user, None when unknown."""
+    if limit_usd is not None:
+        limit_usd = float(limit_usd)
+        if limit_usd < 0:
+            raise ValueError("a spend limit cannot be negative")
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET spend_limit_usd = ?, updated_at = ? WHERE user_id = ?",
+            (limit_usd, _iso(_now()), str(user_id)))
+        if not cursor.rowcount:
+            return None
+    return get_user(user_id)
 
 
 def set_password(user_id: str, password: str) -> bool:
@@ -1148,7 +1168,7 @@ __all__ = [
     "remove_member", "request_principal", "require_role", "reset_current_user",
     "revoke_other_sessions", "revoke_session",
     "service_token", "session_for_token", "set_current_user", "set_member",
-    "set_password", "set_preferences",
+    "set_password", "set_preferences", "set_spend_limit",
     "update_user", "upsert_external_user", "user_count", "user_for_session",
     "verify_password", "workspace_roles_for_user", "workspaces_for_user",
     "required_workspace_role",

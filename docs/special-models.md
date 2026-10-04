@@ -55,7 +55,12 @@ field suggests known ids and accepts any), a price and the purpose's options
 (size and quality for images, default length for video, voice and format for
 speech, language for transcription). A workspace uses only the models it
 added itself: nothing comes from `default` or any other workspace, and a
-purpose left empty is shown as not added. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
+purpose left empty is shown as not added. The one exception is a
+[personal workspace](identity.md#personal-workspace): for a purpose it left
+empty it uses `default`'s model, called with `default`'s connection settings,
+and the form shows that purpose as "From default". Custom models are never
+inherited. The price of an inherited call is charged to the run, so to the
+personal workspace and the person, not to `default`. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
 
 Keys are the provider keys from Settings, or the workspace's own key override
 where it sets one. An HTTP model takes headers; put a token in a workspace

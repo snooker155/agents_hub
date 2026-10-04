@@ -186,6 +186,7 @@ export default {
     saved: 'Special models saved',
     loadFailed: 'Could not load the special models',
     saveFailed: 'Could not save the special models',
+    inherited: 'From {{workspace}}: {{model}}. Pick a model here to use your own.',
     notAdded: 'Not added. A call to {{tool}} answers that the model is not added in this workspace.',
     provider: 'Provider',
     model: 'Model',

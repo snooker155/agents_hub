@@ -2,6 +2,8 @@ export default {
   serviceName: 'Agents Hub',
   workspaceLabel: 'Workspace:',
   workspaceDefaultAll: 'default (All)',
+  workspacePersonal: 'Personal',
+  workspacePersonalOf: '{{name}} (personal)',
   expandSidebar: 'Expand sidebar',
   collapseSidebar: 'Collapse sidebar',
   theme: {
@@ -26,6 +28,7 @@ export default {
     global: 'Global',
     globalSuffix: '(global)',
     defaultSuffix: '(default)',
+    inheritedSuffix: '(from {{workspace}})',
     defaultBadge: 'default',
     globalBadge: 'global',
     legend: 'Dots:',

@@ -24,7 +24,8 @@ const priceOrNull = (value) => (value === '' || value === null || value === unde
  * of its own. Agents call a tool per purpose (generate_image and so on) and
  * the workspace decides which model answers it; a purpose left empty has no
  * model, and its tool answers that the model is not added. Nothing comes
- * from another workspace. Saved with its own button.
+ * from another workspace, except in a personal workspace, which uses
+ * default's model for a purpose it left empty. Saved with its own button.
  */
 export default function WorkspaceSpecialModels({ workspace }) {
   const { t } = useI18n();
@@ -65,6 +66,11 @@ export default function WorkspaceSpecialModels({ workspace }) {
     );
   }
 
+  // A personal workspace takes default's model for a purpose it left empty.
+  const inherited = (id) => {
+    const entry = payload.effective?.[id];
+    return entry?.inherited_from ? entry : null;
+  };
   const setPurpose = (id, patch) => setDraft((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
   const setCustom = (index, patch) => setDraft((d) => ({
     ...d, custom: d.custom.map((c, i) => (i === index ? { ...c, ...patch } : c)),
@@ -134,7 +140,15 @@ export default function WorkspaceSpecialModels({ workspace }) {
             actions={<code className="text-[11px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{p.tool}</code>}
           >
             <p className="text-xs text-gray-500 -mt-2">{t(`workspaceDetails.specialModels.purposeHints.${p.id}`)}</p>
-            {!entry.provider && (
+            {!entry.provider && inherited(p.id) && (
+              <p className="text-xs text-indigo-600" data-testid={`special-${p.id}-inherited`}>
+                {t('workspaceDetails.specialModels.inherited', {
+                  workspace: inherited(p.id).inherited_from,
+                  model: `${inherited(p.id).provider}/${inherited(p.id).model}`,
+                })}
+              </p>
+            )}
+            {!entry.provider && !inherited(p.id) && (
               <p className="text-xs text-gray-500" data-testid={`special-${p.id}-missing`}>
                 {t('workspaceDetails.specialModels.notAdded', { tool: p.tool })}
               </p>

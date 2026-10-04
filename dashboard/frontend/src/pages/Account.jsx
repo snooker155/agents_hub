@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   changeMyPassword, createMyApiKey, disconnectMyGitHub, getMyApiKeys, getMyGitHub,
-  getMySessions, getWorkspaces, connectGitHub, revokeMyApiKey, revokeMySession,
+  getMySessions, getOwnSpend, getWorkspaces, connectGitHub, revokeMyApiKey, revokeMySession,
   revokeOtherSessions,
 } from '../api';
 import { getMyPreferences, putMyPreferences } from '../api/palette';
@@ -53,6 +53,7 @@ export default function Account() {
       <PageHeader icon={UserIcon} title={t('account.title')} description={t('account.description')} />
       <div className="space-y-6">
         <ProfileSection user={user} t={t} />
+        <SpendSection t={t} />
         <PaletteSection t={t} />
         <SessionsSection t={t} />
         {user?.has_password && features?.local_passwords && (
@@ -93,6 +94,44 @@ function ProfileSection({ user, t }) {
           </dd>
         </div>
       </dl>
+    </SectionCard>
+  );
+}
+
+// ── spend ────────────────────────────────────────────────────────────────────
+
+/**
+ * What the person spent this month against their limit
+ * (GET /api/auth/spend, common/user_budget.py). The limit is set by an
+ * administrator on the Users page; nothing here changes it.
+ */
+function SpendSection({ t }) {
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    getOwnSpend().then(({ data }) => setStatus(data)).catch(() => setStatus(null));
+  }, []);
+
+  if (!status) return null;
+  const money = (value) => `$${Number(value || 0).toFixed(2)}`;
+  const share = status.limit_usd ? Math.min(100, (status.spend / status.limit_usd) * 100) : 0;
+  return (
+    <SectionCard title={t('account.spend.title')}>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <Field label={t('account.spend.spent')} value={money(status.spend)} />
+        <Field label={t('account.spend.limit')}
+          value={status.limit_usd
+            ? `${money(status.limit_usd)} (${t(`account.spend.sources.${status.source}`)})`
+            : t('account.spend.none')} />
+      </dl>
+      {status.limit_usd > 0 && (
+        <div className="mt-3 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">
+          <div className={`h-full ${status.exceeded ? 'bg-red-500' : 'bg-indigo-500'}`} style={{ width: `${share}%` }} />
+        </div>
+      )}
+      <p className={`mt-2 text-xs ${status.exceeded ? 'text-red-600' : 'text-gray-500'}`}>
+        {status.exceeded ? t('account.spend.exceeded') : t('account.spend.hint')}
+      </p>
     </SectionCard>
   );
 }

@@ -100,11 +100,22 @@ const WorkspaceManager = () => {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/workspaces/${encodeURIComponent(ws.name)}`); }}
                   >
-                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.name}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-800">
+                      {ws.name}
+                      {ws.personal && (
+                        <span className="ml-2 text-[11px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                          {ws.own_personal
+                            ? t('workspaceManager.personal')
+                            : t('workspaceManager.personalOf', { name: ws.personal_label || ws.personal_of })}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-gray-600 text-xs truncate max-w-xs">{ws.path}</td>
                     <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.tasks_count}</td>
                     <td className="px-6 py-4 text-right">
-                      {ws.name !== 'default' ? (
+                      {ws.personal ? (
+                        <span className="text-xs text-gray-400 italic">{t('workspaceManager.personalKept')}</span>
+                      ) : ws.name !== 'default' ? (
                         <button
                           onClick={(e) => handleDelete(ws.name, e)}
                           className="text-gray-400 hover:text-red-600 transition-colors"

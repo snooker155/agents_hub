@@ -2,6 +2,8 @@ export default {
   serviceName: 'Agents Hub',
   workspaceLabel: 'Workspace:',
   workspaceDefaultAll: 'default (Alle)',
+  workspacePersonal: 'Persönlich',
+  workspacePersonalOf: '{{name}} (persönlich)',
   expandSidebar: 'Seitenleiste ausklappen',
   collapseSidebar: 'Seitenleiste einklappen',
   theme: {
@@ -26,6 +28,7 @@ export default {
     global: 'Global',
     globalSuffix: '(global)',
     defaultSuffix: '(Standard)',
+    inheritedSuffix: '(aus {{workspace}})',
     defaultBadge: 'Standard',
     globalBadge: 'global',
     legend: 'Punkte:',

@@ -224,6 +224,12 @@ class Settings(BaseSettings):
         default=0,
         validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
                                       "rate_limit_tokens_per_day"))
+    # Default monthly spend limit of every person in multi mode, in USD
+    # (common/user_budget.py, docs/costs.md "Limit per person"). 0 = none. A
+    # person's own limit, set on the Users page, wins over it.
+    user_spend_limit_usd: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("AGENTS_HUB_USER_SPEND_LIMIT_USD", "user_spend_limit_usd"))
     # Requests per minute per client address on the public instance routes
     # (/api/external/{token}/messages and /run),
     # known and unknown tokens alike, so token guessing is slow. 0 disables.

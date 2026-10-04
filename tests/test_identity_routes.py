@@ -183,13 +183,15 @@ def test_a_workspace_route_refuses_a_non_member_and_serves_an_editor(multi, clie
     # Not a member: 403, not 401. An authenticated caller who is simply not
     # a member has a live session, and a 401 would make the browser drop it.
     assert client.get("/api/workspaces/alpha", headers=bob).status_code == 403
-    assert [w["name"] for w in client.get("/api/workspaces", headers=bob).json()] == []
+    # Only their own personal workspace (common/personal_workspace.py).
+    personal = f"personal-{bob_id}"
+    assert [w["name"] for w in client.get("/api/workspaces", headers=bob).json()] == [personal]
 
     added = client.put("/api/workspaces/alpha/members",
                        json={"user_id": bob_id, "role": "editor"}, headers=admin)
     assert added.status_code == 200
     assert client.get("/api/workspaces/alpha", headers=bob).status_code == 200
-    assert [w["name"] for w in client.get("/api/workspaces", headers=bob).json()] == ["alpha"]
+    assert [w["name"] for w in client.get("/api/workspaces", headers=bob).json()] == [personal, "alpha"]
 
 
 def test_an_editor_may_not_delete_the_workspace_or_read_its_env(multi, client):

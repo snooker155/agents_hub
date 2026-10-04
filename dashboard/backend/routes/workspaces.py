@@ -143,6 +143,12 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
+def _person_label(user_id: str) -> str:
+    """Whose personal workspace this is, for the picker."""
+    user = identity.get_user(user_id) if identity.current_mode() == "multi" else None
+    return (user or {}).get("display_name") or (user or {}).get("username") or user_id
+
+
 @router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces(request: Request):
     roots = list_workspace_folders()
@@ -153,6 +159,13 @@ async def list_workspaces(request: Request):
             roots = [p]
         except Exception:
             pass
+
+    # A person in multi mode gets their personal workspace the first time they
+    # look (common/personal_workspace.py); listed first, as theirs.
+    from common import personal_workspace
+    own_personal = personal_workspace.ensure_for_principal(identity.request_principal(request))
+    if own_personal and all(p.name != own_personal for p in roots):
+        roots = list_workspace_folders()
 
     # Under AUTH_MODE=multi a user sees the workspaces they are a member of and
     # nothing else; an admin sees all of them. A no-op in the single-operator
@@ -167,20 +180,47 @@ async def list_workspaces(request: Request):
         # `path` stays the entry under the workspaces root so it keeps naming the
         # workspace; `target` is where an attached one actually lives.
         attached = p.is_symlink()
+        personal_of = personal_workspace.owner_of(name)
         items.append({
             "name": name,
             "path": str(p),
             "tasks_count": len(ws_tasks),
             "attached": attached,
             "target": str(p.resolve()) if attached else None,
+            "personal": bool(personal_of),
+            "personal_of": personal_of,
+            "personal_label": _person_label(personal_of) if personal_of else None,
+            "own_personal": bool(own_personal) and name == own_personal,
         })
+
+    def _order(item):
+        # The caller's own personal workspace, then default, then the rest by
+        # name, other people's personal ones (an admin sees them) last.
+        if item["own_personal"]:
+            return (0, "")
+        if item["name"] == "default":
+            return (1, "")
+        return (3 if item["personal"] else 2, item["name"])
+
+    items.sort(key=_order)
     return items
+
+
+def _refuse_personal_name(name: Optional[str]) -> None:
+    """Names under ``personal-`` belong to personal workspaces, which only
+    common/personal_workspace.py creates."""
+    from common import personal_workspace
+    if name and personal_workspace.is_reserved_name(name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{personal_workspace.PREFIX}' is reserved for personal workspaces")
 
 
 @router.post("")
 async def create_workspace(payload: WorkspaceCreate):
     if payload.name and not _is_safe_workspace_name(payload.name):
         raise HTTPException(status_code=400, detail=f"'{payload.name}' is not a valid workspace name")
+    _refuse_personal_name(payload.name)
     try:
         p = create_workspace_folder(payload.name)
         # Let live listeners (e.g. the header workspace picker) refresh their list.
@@ -201,6 +241,8 @@ async def attach_workspace(payload: WorkspaceAttach):
     the backend runs in a container that means a path inside the container — bind
     mount the host directory first, and pass the in-container path.
     """
+    # The workspace takes the target folder's own name (workspace/storage.py).
+    _refuse_personal_name(Path(str(payload.path or "")).name)
     try:
         link = attach_workspace_folder(payload.path, payload.name)
     except ValueError as e:
@@ -243,6 +285,9 @@ async def get_workspace(name: str):
 async def delete_workspace(name: str):
     if name == "default":
         raise HTTPException(status_code=403, detail="The default workspace cannot be deleted")
+    from common import personal_workspace
+    if personal_workspace.is_personal(name):
+        raise HTTPException(status_code=403, detail="A personal workspace cannot be deleted")
     # Detaching only drops the link; the directory behind an attached workspace
     # is the user's and is never deleted from here.
     was_attached = is_attached_workspace(name)
@@ -543,6 +588,8 @@ async def get_workspace_model(name: str):
     metadata = get_workspace_metadata(name)
     override = metadata.get("model_override") or {}
     ws_default = get_workspace_default_model_config(metadata)
+    from common.personal_workspace import model_source
+    source = model_source(name)
     return {
         "global_default": {
             "provider": global_provider,
@@ -551,6 +598,8 @@ async def get_workspace_model(name: str):
         "workspace_default": {
             "provider": ws_default.get("provider", ""),
             "model": ws_default.get("model", ""),
+            # Set when a personal workspace runs with default's model.
+            "inherited_from": source if source != name else None,
         },
         "override": {
             "provider": override.get("provider", ""),

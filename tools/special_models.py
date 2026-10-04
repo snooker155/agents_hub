@@ -9,8 +9,8 @@ Agent tools over the workspace's special models (providers/special.py).
 * ``ask_special_model`` calls one of the workspace's own models by id.
 
 The agent never names a provider or a model: the workspace decides
-(``special_models`` in its metadata; there is no fallback to another
-workspace). A tool whose purpose has no model in the run's workspace answers
+(``special_models`` in its metadata; only a personal workspace falls back to
+``default``'s, see providers/special.py). A tool whose purpose has no model in the run's workspace answers
 with a ``model_not_added`` error naming where to add one. What a tool makes is saved as a workspace file
 (source ``agent``) and recorded on the run's entity sink, so the chat reply
 links it like a file the agent wrote.
@@ -57,6 +57,11 @@ def _entry(purpose: str, workspace: str) -> Tuple[Optional[Dict[str, Any]], Opti
     from providers import special
     entry = special.effective(workspace).get(purpose)
     if not entry:
+        from common import personal_workspace
+        if personal_workspace.is_personal(workspace):
+            return None, _not_added(f"No {purpose} model is added in this personal workspace, "
+                                    f"and the '{personal_workspace.FALLBACK}' workspace it falls "
+                                    "back to has none either.")
         return None, _not_added(f"No {purpose} model is added in workspace '{workspace}'.")
     return entry, None
 
@@ -181,7 +186,7 @@ def generate_image(prompt: str, image_file_id: Optional[str] = None, size: Optio
         options["size"] = size.strip()
     try:
         from providers import media, special
-        ep = special.endpoint(entry["provider"], workspace)
+        ep = special.entry_endpoint(entry, workspace)
         result = media.generate_image(ep, entry["model"], prompt.strip(), options=options, image=image)
     except Exception as exc:  # noqa: BLE001 - the agent gets the provider's reason
         return _fail("Image generation", exc)
@@ -225,7 +230,7 @@ def generate_video(prompt: str = "", seconds: Optional[int] = None, job_id: Opti
     options = dict(entry.get("options") or {})
     try:
         from providers import media, special
-        ep = special.endpoint(entry["provider"], workspace)
+        ep = special.entry_endpoint(entry, workspace)
         if not job_id:
             if not str(prompt or "").strip():
                 return json_err("Describe the clip in `prompt`.", code="bad_request")
@@ -279,7 +284,7 @@ def synthesize_speech(text: str, voice: Optional[str] = None, instructions: Opti
         return refused
     try:
         from providers import media, special
-        ep = special.endpoint(entry["provider"], workspace)
+        ep = special.entry_endpoint(entry, workspace)
         result = media.synthesize_speech(ep, entry["model"], text, voice=voice, instructions=instructions,
                                          options=dict(entry.get("options") or {}))
     except Exception as exc:  # noqa: BLE001 - the agent gets the provider's reason
@@ -325,7 +330,7 @@ def transcribe_audio(file_id: str, language: Optional[str] = None, prompt: Optio
         return err
     try:
         from providers import media, special
-        ep = special.endpoint(entry["provider"], workspace)
+        ep = special.entry_endpoint(entry, workspace)
         language = language or (entry.get("options") or {}).get("language")
         text = media.transcribe(ep, entry["model"], (record["name"], data, mime),
                                 language=language, prompt=prompt)
