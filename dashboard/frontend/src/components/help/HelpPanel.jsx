@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Compass, LifeBuoy, X } from 'lucide-react';
+import { CircleQuestionMark, ChevronsLeft, ChevronsRight, X } from 'lucide-react';
 import EntityChat from '../EntityChat';
 import { useWorkspace } from '../workspace';
 import { routeTitleKey } from '../routeTitles';
@@ -13,6 +13,22 @@ import { linkSegment } from './helpLinks';
 import ChatMarkdown from '../chat/ChatMarkdown';
 
 const PANEL_ID = 'help-panel';
+const WIDE_KEY = 'agents_hub_help_wide';
+
+function readWide() {
+  try {
+    return localStorage.getItem(WIDE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeWide(value) {
+  try {
+    localStorage.setItem(WIDE_KEY, value ? '1' : '0');
+  } catch { /* storage unavailable, the panel just forgets between reloads */ }
+}
+
 
 function tourDone() {
   try {
@@ -72,6 +88,7 @@ export default function HelpPanel() {
   const pageChat = usePageChatPanel();
   const tour = useWelcomeTour();
   const [open, setOpen] = useState(false);
+  const [wide, setWideState] = useState(readWide);
   const [clearSlot, setClearSlot] = useState(null);
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
@@ -80,6 +97,13 @@ export default function HelpPanel() {
     setOpen(false);
     buttonRef.current?.focus();
   }, []);
+
+  const toggleWide = () => {
+    setWideState((w) => {
+      writeWide(!w);
+      return !w;
+    });
+  };
 
   const toggle = () => {
     if (!open) pageChat.setOpen(false);
@@ -127,13 +151,9 @@ export default function HelpPanel() {
         aria-label={t('help.open')}
         aria-expanded={open}
         aria-controls={PANEL_ID}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-          open
-            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-            : 'border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-        }`}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
       >
-        <LifeBuoy className="w-4 h-4" />
+        <CircleQuestionMark className="w-4 h-4" strokeWidth={2.25} />
         <span>{t('help.button')}</span>
       </button>
 
@@ -144,32 +164,32 @@ export default function HelpPanel() {
           role="dialog"
           aria-modal="false"
           aria-labelledby={`${PANEL_ID}-title`}
-          className="fixed inset-y-0 right-0 z-50 flex flex-col bg-white border-l border-gray-200 shadow-2xl w-full sm:w-[26rem]"
+          className={`fixed inset-y-0 right-0 z-50 flex flex-col bg-white border-l border-gray-200 shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
         >
           <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
-            <LifeBuoy className="w-4 h-4 text-indigo-600 shrink-0" />
+            <CircleQuestionMark className="w-5 h-5 text-indigo-600 shrink-0" strokeWidth={2.25} />
             <div className="min-w-0 flex-1">
               <div id={`${PANEL_ID}-title`} className="text-sm font-semibold text-gray-900 truncate">
                 {t('help.title')}
               </div>
               <div className="text-[11px] text-gray-500 truncate">{t('help.subtitle')}</div>
             </div>
+            <span ref={setClearSlot} className="flex items-center shrink-0" />
             <button
               type="button"
-              onClick={startTour}
-              title={t('help.tourHint')}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              onClick={toggleWide}
+              title={wide ? t('help.narrow') : t('help.widen')}
+              aria-label={wide ? t('help.narrow') : t('help.widen')}
+              className="hidden sm:inline-flex p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
             >
-              <Compass className="w-3.5 h-3.5" />
-              {t('help.tour')}
+              {wide ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-4 h-4" />}
             </button>
-            <span ref={setClearSlot} className="flex items-center shrink-0" />
             <button
               type="button"
               onClick={close}
               title={t('help.close')}
               aria-label={t('help.close')}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
             >
               <X className="w-4 h-4" />
             </button>

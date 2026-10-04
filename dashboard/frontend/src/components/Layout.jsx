@@ -557,8 +557,6 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
-            {/* Help (docs/help.md): the Support agent, for a user who is lost */}
-            <HelpPanel />
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}
@@ -614,6 +612,8 @@ const Layout = ({ children }) => {
                 </button>
               </div>
             )}
+            {/* Help (docs/help.md): the Support agent, for a user who is lost */}
+            <HelpPanel />
           </div>
         </header>
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>

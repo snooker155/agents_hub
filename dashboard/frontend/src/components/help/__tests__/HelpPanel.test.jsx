@@ -76,12 +76,16 @@ describe('the Help button and panel', () => {
     expect(helpButton()).toHaveFocus();
   });
 
-  it('starts the welcome tour from its own button', () => {
+  it('has no tour button and widens like the page chat', () => {
     show();
     fireEvent.click(helpButton());
-    fireEvent.click(screen.getByRole('button', { name: /take the tour/i }));
-    expect(tourStart).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /take the tour/i })).not.toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Help' });
+    expect(dialog.className).toContain('sm:w-[26rem]');
+    fireEvent.click(screen.getByRole('button', { name: 'Wider' }));
+    expect(dialog.className).toContain('sm:w-[40rem]');
+    fireEvent.click(screen.getByRole('button', { name: 'Narrower' }));
+    expect(dialog.className).toContain('sm:w-[26rem]');
   });
 
   it('turns a link in a reply into navigation and keeps the panel open', async () => {
