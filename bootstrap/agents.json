@@ -1368,6 +1368,42 @@
       "shared": true,
       "temperature": 0.1,
       "skills_enabled": false
+    },
+    {
+      "id": "assistant",
+      "name": "Assistant",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "The person's own assistant behind the Assistant page: the Main Agent acting with the person's identity in any workspace they belong to, with their personal memory, a short first paragraph that reads well aloud, a cost question before paid work and secrets only through the connection card. In an administrator's service thread it also checks the hub's health with the doctor, lists sessions, instances and containers and stops or restarts them.",
+      "domain": "general",
+      "system": true,
+      "extends": "main-agent",
+      "overrides": [],
+      "list_deltas": {
+        "tools": {
+          "add": [
+            "service_health",
+            "run_diagnostics",
+            "list_sessions",
+            "routing_log",
+            "costs_summary",
+            "stop_run",
+            "list_containers",
+            "stop_container",
+            "list_instances",
+            "stop_instance",
+            "restart_instance"
+          ],
+          "remove": []
+        }
+      },
+      "commands": [],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "shared": false,
+      "skills_enabled": false
     }
   ]
 }

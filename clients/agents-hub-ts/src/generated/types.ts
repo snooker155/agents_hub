@@ -2507,6 +2507,14 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/workspace-capacities": {
     get: { response: unknown };
   };
+  "/api/assistant": {
+    get: { response: unknown };
+    post: { response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/assistant/stop": {
+    post: { response: unknown };
+  };
   "/api/audit": {
     get: { response: unknown };
   };

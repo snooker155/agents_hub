@@ -31,6 +31,11 @@ That is the escape hatch, and it is one-way.
 - **Support**: the Help button in the header. Explains the product, reads what
   is set up and what is missing, and suggests the next steps with links. Reads
   only; changes nothing. See [help](help.md).
+- **Assistant**: a person's own assistant. The Main Agent (it `extends` it)
+  acting with the person's identity in any workspace they belong to, with
+  their personal memory on and answers that open with a short spoken part. An
+  administrator's service thread also checks the hub's health. See
+  [assistant](assistant.md).
 
 **Coordinating**
 - **Orchestrator** — drives the task lifecycle and picks the agent for each task.

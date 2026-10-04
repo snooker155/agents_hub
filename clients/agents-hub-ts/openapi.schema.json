@@ -18251,6 +18251,74 @@
         ]
       }
     },
+    "/api/assistant": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Clear Chat",
+        "tags": [
+          "assistant"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Get Chat",
+        "tags": [
+          "assistant"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Send Chat",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/stop": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": " Stop Chat",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
     "/api/audit": {
       "get": {
         "description": "A page of audit rows this caller may read, newest first.",

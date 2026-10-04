@@ -128,6 +128,13 @@ def _granted_tools(ad: dict) -> set[str]:
     from reasoning.config import resolve_reasoning
 
     tools = set(ad.get("tools") or [])
+    if ad.get("extends"):
+        # A shipped child (the assistant): its parent's tools and its deltas.
+        from agents.inheritance import merge_list
+        parent = next(a for a in _seed_system_agents() if a["id"] == ad["extends"])
+        tools = set(merge_list(sorted(_granted_tools(parent)),
+                               (ad.get("list_deltas") or {}).get("tools")))
+        ad = {**parent, **{k: v for k, v in ad.items() if k == "reasoning"}}
     resolved = resolve_reasoning(ad.get("reasoning") or {}, sorted(tools))
     if resolved.get("think_enabled"):
         tools.add("think")

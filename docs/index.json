@@ -41,6 +41,27 @@
       ]
     },
     {
+      "id": "assistant",
+      "title": "Assistant",
+      "summary": "A person's own assistant: the assistant system agent, which extends the Main Agent, one thread per person at /api/assistant, turns in any workspace the person belongs to, memory and thread in their home workspace, a service thread with health tools for administrators, and turns refused with code budget once a limit is used up.",
+      "surface": "Assistant",
+      "related": [
+        "system-agents",
+        "identity",
+        "costs",
+        "agent-inheritance",
+        "workspaces",
+        "help"
+      ],
+      "headings": [
+        "One thread per person",
+        "Where a turn runs",
+        "The service thread",
+        "Answers",
+        "Limits"
+      ]
+    },
+    {
       "id": "agent-inheritance",
       "title": "Agent inheritance",
       "summary": "An agent can extend another: start from its prompt, tools, model and the rest, and declare only what is different. A system agent can be a parent, never a child.",
@@ -1032,7 +1053,8 @@
         "tools-and-capabilities",
         "workspaces",
         "agent-inheritance",
-        "workspace-roles"
+        "workspace-roles",
+        "assistant"
       ],
       "headings": [
         "What being a system agent means",

@@ -64,9 +64,10 @@ POLL_SECONDS = 0.5
 HEARTBEAT_SECONDS = 20.0
 
 #: Message origins of a run whose chat can show the card: the dashboard's Chat
-#: page (``source`` None, recorded as ``chat``). Telegram, the widget, channels,
-#: ``/v1`` and an instance's page have nobody in front of the card.
-INTERACTIVE_ORIGINS = frozenset({"chat"})
+#: page (``source`` None, recorded as ``chat``) and the assistant's thread
+#: (routes/assistant.py). Telegram, the widget, channels, ``/v1`` and an
+#: instance's page have nobody in front of the card.
+INTERACTIVE_ORIGINS = frozenset({"chat", "assistant-chat"})
 
 #: Longest note kept, in characters.
 MAX_NOTE_CHARS = 2000
@@ -284,6 +285,12 @@ def _owner_of(run: Dict[str, Any]) -> Optional[str]:
                 return owner
         except Exception:  # noqa: BLE001 - an unreadable chat leaves the turn's own user
             log.debug("tool approvals: chat owner lookup failed for %s", conv_id, exc_info=True)
+    # The person the run is charged to (common/attribution.py): right on a
+    # runner replica too, where no request carries the user.
+    from common.auth import LOCAL_OPERATOR_ID
+    launched_by = str(run.get("launched_by") or "")
+    if launched_by and launched_by not in (LOCAL_OPERATOR_ID, "service"):
+        return launched_by
     try:
         from common import identity
         return identity.current_user_id() or None

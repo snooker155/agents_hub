@@ -256,6 +256,10 @@ class EntityChatSpec:
     workspace: Optional[str] = None
     #: Where the agent's filesystem tools are rooted, when it has any.
     workspace_path: Optional[str] = None
+    #: The workspace the conversation's session is filed under, when it is not
+    #: the one each turn runs in: the assistant keeps one thread in the
+    #: person's home workspace while its turns run where they choose.
+    session_workspace: Optional[str] = None
     #: Building a whole entity can mean dozens of tool calls in one run, so the
     #: ceilings are generous by default — a build cut off half-way is worse than
     #: a slow one. There is no repetition ceiling at all: writing twenty files or
@@ -323,7 +327,7 @@ async def run_entity_chat_turn(
         session_id = get_or_create_chat_session(
             conversation_id=conv_id,
             title=spec.title + (f" #{epoch + 1}" if epoch else ""),
-            workspace=spec.workspace,
+            workspace=spec.session_workspace or spec.workspace,
             agent_id=spec.agent_id,
         )
     except Exception:
@@ -430,7 +434,16 @@ async def run_entity_chat_turn(
                 await emit({"type": "agent", "agent_id": spec.agent_id,
                             "provider": agent.provider or "", "model": agent.model or ""})
 
-                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                # The stream emitter on the context the task copies, as the
+                # main chat does (chat/pipelines.py): a delegated agent's
+                # events and an approval or connection card reach this stream
+                # (common/tool_approvals.py chat_context).
+                from common import stream_sink
+                _stream_token = stream_sink.set_emitter(getattr(callback, "emit_external", None))
+                try:
+                    task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                finally:
+                    stream_sink.reset_emitter(_stream_token)
             register_entity_run(spec.kind, entity_id, task)
 
             # The callback pushes token/tool events straight onto `queue` and the

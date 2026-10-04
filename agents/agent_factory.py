@@ -830,6 +830,10 @@ class AgentFactory:
         # memory tool has been added, so the run can recall but never change
         # the pool. Popped like memory_pool; it reached the cache key already.
         _memory_access = str(override_params.pop("memory_access", None) or "write").strip().lower()
+        # The assistant in an administrator's service thread (routes/assistant.py,
+        # common/workspace_scope.py ASSISTANT_SERVICE_TOOLS). Popped like
+        # memory_pool; it reached the cache key already.
+        _service_mode = bool(override_params.pop("service_mode", False))
 
         # Imported agents run outside this process: there is no prompt to
         # assemble, no tool set to grant and no model to build here, because all
@@ -1265,7 +1269,8 @@ class AgentFactory:
         from common import workspace_scope as _scope
         _run_ws = _ws_name_of(workspace) if workspace else None
         _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
-        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or ""))
+        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or "",
+                                             service_mode=_service_mode))
         if _out_of_scope:
             tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
             log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
