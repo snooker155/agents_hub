@@ -117,7 +117,7 @@ export default function OverviewTab() {
                   <textarea value={descDraft} rows={3}
                     onChange={e => setDescDraft(e.target.value)}
                     placeholder={t('agentDetails.whatDoesThisAgentDo')}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                   />
                   <div className="flex items-center gap-2">
                     <button onClick={handleSaveDescription} disabled={descSaving}
@@ -147,7 +147,7 @@ export default function OverviewTab() {
                       <div className="flex items-center gap-2">
                         <input type="number" min="1" value={editVal}
                           onChange={e => setWsCapacityEdits(prev => ({ ...prev, [selectedWorkspace]: e.target.value }))}
-                          className="w-24 border border-gray-300 rounded px-2 py-0.5 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          className="w-24 border border-gray-300 rounded px-2 py-0.5 text-sm"
                         />
                         <button onClick={() => handleSaveWsCapacity(selectedWorkspace)} disabled={isSaving}
                           className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded disabled:opacity-50">

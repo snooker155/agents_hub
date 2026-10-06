@@ -21,6 +21,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from common.config import settings
 from common.pricing import default_cached_price
 from managers import run_manager
 
@@ -36,6 +37,7 @@ from routes.settings import (
 from providers import all_provider_ids as _all_provider_ids, list_backends as _list_backends
 from providers.catalog import load_catalog_raw as _load_catalog_raw, save_catalog_raw as _save_catalog_raw
 from providers.context_windows import fallback_context_window as _fallback_ctx
+from providers.reasoning_profile import reasoning_profile
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -284,6 +286,37 @@ def _norm_model(m: dict) -> dict:
         # in the Catalog tab and never overwritten. Records written before this
         # field existed normalise to "auto" (they were all table-derived).
         "price_source": "manual" if m.get("price_source") == "manual" else "auto",
+        # This model's own temperature; None = the global default
+        # (LLM_TEMPERATURE). An agent's own value still wins over it.
+        "temperature": _norm_temperature(m.get("temperature")),
+    }
+
+
+def _norm_temperature(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return min(2.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _with_reasoning(provider: str, models: list) -> list:
+    """Copies of ``models`` carrying their reasoning profile for the page:
+    the effort the provider applies when none is asked for, and what thinking
+    level off sends (providers/reasoning_profile.py). Derived on every read,
+    never stored, so a corrected table reaches every catalog at once."""
+    return [{**m, "reasoning": reasoning_profile(provider, m.get("id"))} for m in models]
+
+
+def _catalog_response(catalog: dict) -> dict:
+    return {
+        "providers": {
+            p: {**e, "models": _with_reasoning(p, e.get("models", []))}
+            for p, e in catalog.items()
+        },
+        "global_default": _global_default(),
+        "global_temperature": settings.temperature,
     }
 
 
@@ -346,7 +379,7 @@ async def get_catalog():
         # Nothing saved yet: persist the freshly-seeded catalog so later reads
         # (and a run container's snapshot) see it too, not just this response.
         _save_catalog(catalog)
-    return {"providers": catalog, "global_default": _global_default()}
+    return _catalog_response(catalog)
 
 
 class ProviderEntry(BaseModel):
@@ -447,7 +480,7 @@ async def save_catalog(data: CatalogUpdate):
         catalog[provider] = {"default": default, "models": models}
     _save_catalog(catalog)
     _prune_workspace_models(catalog)
-    return {"providers": catalog, "global_default": _global_default()}
+    return _catalog_response(catalog)
 
 
 @router.post("/discover/{provider}")
@@ -541,7 +574,7 @@ async def discover_models(provider: str):
         "kept_manual": kept_manual,
         "context_filled": ctx_filled,
         "dated": dated,
-        "entry": entry,
+        "entry": {**entry, "models": _with_reasoning(provider, entry["models"])},
         "latency_ms": probe.get("latency_ms"),
     }
 

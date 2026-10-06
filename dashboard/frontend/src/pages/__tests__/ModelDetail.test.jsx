@@ -67,8 +67,9 @@ vi.mock('../../api/palette', () => ({
 }));
 
 vi.mock('reactflow', () => {
-  const ReactFlow = ({ nodes, nodeTypes, onNodeClick }) => (
+  const ReactFlow = ({ nodes, nodeTypes, onNodeClick, onPaneClick }) => (
     <div data-testid="reactflow">
+      <div data-testid="reactflow-pane" onClick={(e) => onPaneClick?.(e)} />
       {nodes.map((node) => {
         const Node = nodeTypes[node.type];
         return (
@@ -90,7 +91,12 @@ vi.mock('reactflow', () => {
 vi.mock('reactflow/dist/style.css', () => ({}));
 
 vi.mock('@react-three/fiber', () => ({
-  Canvas: ({ children }) => <div data-testid="r3f-canvas">{children}</div>,
+  Canvas: ({ children, onPointerMissed }) => (
+    <div data-testid="r3f-canvas">
+      <div data-testid="r3f-miss" onClick={(e) => onPointerMissed?.(e)} />
+      {children}
+    </div>
+  ),
 }));
 vi.mock('@react-three/drei', () => ({
   OrbitControls: () => null,
@@ -152,6 +158,31 @@ describe('ModelDetail', () => {
     expect(within(table).getByText('1 of 3 tensors')).toBeInTheDocument();
 
     expect(screen.getByTestId('dtype-legend')).toBeInTheDocument();
+  });
+
+  it('a click outside every block clears the selection, in 2D and in 3D', async () => {
+    getModelStructure.mockImplementation(() => ok(STRUCTURE));
+    show();
+    await screen.findByTestId('block-node-blk.1');
+    fireEvent.click(screen.getByTestId('block-node-blk.1'));
+    expect(screen.getByTestId('tensor-table')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('reactflow-pane'));
+    expect(screen.getByTestId('block-node-blk.1')).toHaveAttribute('data-selected', 'false');
+    expect(screen.getByTestId('block-node-emb')).toHaveAttribute('data-selected', 'false');
+    expect(screen.queryByTestId('tensor-table')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('block-node-head'));
+    fireEvent.click(screen.getByRole('button', { name: '3D' }));
+    const miss = await screen.findByTestId('r3f-miss');
+    expect(screen.getByText('Tensors in Output')).toBeInTheDocument();
+    // The end of an orbit drag keeps the selection; a still click clears it.
+    fireEvent.pointerDown(miss, { clientX: 10, clientY: 10 });
+    fireEvent.click(miss, { clientX: 60, clientY: 10 });
+    expect(screen.getByText('Tensors in Output')).toBeInTheDocument();
+    fireEvent.pointerDown(miss, { clientX: 10, clientY: 10 });
+    fireEvent.click(miss, { clientX: 11, clientY: 10 });
+    expect(screen.queryByText('Tensors in Output')).not.toBeInTheDocument();
   });
 
   it('keeps the selection when switching to 3D and stores the choice', async () => {

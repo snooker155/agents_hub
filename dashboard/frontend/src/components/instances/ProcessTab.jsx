@@ -134,7 +134,7 @@ export default function ProcessTab({ instance, onInstanceUpdated }) {
               type="number"
               min="1"
               max="32"
-              className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
               placeholder={t('startInstance.concurrencyDefault')}
               value={concurrency}
               onChange={(e) => setConcurrency(e.target.value)}

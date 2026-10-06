@@ -193,17 +193,19 @@ export const sseFrame = (ev) => `data: ${JSON.stringify(ev)}\n\n`;
 export const frameDelay = () => 60 + Math.floor(Math.random() * 91);
 
 /**
- * A ReadableStream replaying `frames` as SSE, `delay()` ms apart. `wait` is
- * injectable so a test can run the replay without real timers.
+ * A ReadableStream replaying `frames` as SSE, `delay()` ms apart; a frame
+ * with `demo_pause` waits that long instead, so a scripted step can last as
+ * long as a real one would. `wait` is injectable so a test can run the
+ * replay without real timers.
  */
 export function replayStream(frames, { delay = frameDelay, wait = (ms) => new Promise((r) => setTimeout(r, ms)), keepOpen = false } = {}) {
   const encoder = new TextEncoder();
   let cancelled = false;
   return new ReadableStream({
     async start(controller) {
-      for (const ev of frames) {
+      for (const { demo_pause: pause, ...ev } of frames) {
         if (cancelled) return;
-        await wait(delay());
+        await wait(pause ?? delay());
         if (cancelled) return;
         controller.enqueue(encoder.encode(sseFrame(ev)));
       }

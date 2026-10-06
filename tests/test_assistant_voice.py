@@ -225,6 +225,19 @@ def test_a_transcript_is_charged_to_the_person_and_their_home(multi, client, spe
     assert files_service.list_files(run["workspace"]) == []  # the recording is not kept
 
 
+def test_hands_free_listening_names_its_cost_run(multi, client, speech_models, http):
+    from managers import run_manager
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    titles = {}
+    for purpose in ("wake", "monitor", "anything else", None):
+        params = {"purpose": purpose} if purpose else {}
+        body = _wav_post(client, bob, **params).json()
+        titles[purpose] = run_manager.get_run_by_id(body["run_id"])["title"]
+    assert titles == {"wake": "Voice input (wake phrase)", "monitor": "Voice input (stop)",
+                      "anything else": "Voice input", None: "Voice input"}
+
+
 def test_a_recording_is_checked_before_any_model_is_called(multi, client, speech_models, http):
     _, admin = _admin(client)
     _, bob = _member(client, admin)
@@ -442,8 +455,134 @@ def test_without_speech_models_the_page_is_told_to_use_the_browser(multi, client
     assert meta["transcription"] is None and meta["speech"] is None
 
 
+def test_voice_follows_the_workspace_the_turn_runs_in(client, seeded, http, fake_agent):
+    """Single mode: the home is ``default``, which added no voice models, and
+    the header's workspace did: the page, the transcript and the speech use
+    that workspace's models."""
+    from managers import run_manager
+    from workspace import create_workspace_folder
+    create_workspace_folder("dev")
+    special.save("dev", {"speech": SPEECH, "transcription": TRANSCRIPTION})
+
+    assert client.get("/api/assistant").json()["voice"]["speech"] is None
+    meta = client.get("/api/assistant", params={"workspace": "dev"}).json()["voice"]
+    assert meta["transcription"]["model"] == TRANSCRIPTION["model"] and meta["speech"]["workspace"] == "dev"
+    # A workspace that does not exist is not an error here: the home decides.
+    assert client.get("/api/assistant", params={"workspace": "nope"}).json()["voice"]["speech"] is None
+
+    assert _wav_post(client, {}).status_code == 409
+    heard = _wav_post(client, {}, workspace="dev")
+    assert heard.status_code == 200, heard.text
+    assert run_manager.get_run_by_id(heard.json()["run_id"])["workspace"] == "dev"
+
+    run_id, _ = _turn(client, {}, heard.json()["text"], voice=True, workspace="dev")
+    spoken = client.post("/api/assistant/speak", json={"run_id": run_id, "text": "Done, the task is created."})
+    assert spoken.status_code == 200, spoken.text
+    assert run_manager.get_run_by_id(run_id)["voice_calls"][0]["model"] == SPEECH["model"]
+
+
+def test_a_workspace_without_voice_models_keeps_the_homes(multi, client, speech_models):
+    """The turn's workspace added no voice models: the home's (here the
+    personal workspace, falling back to default) still speak."""
+    _, admin = _admin(client)
+    from workspace import create_workspace_folder
+    create_workspace_folder("team")
+    meta = client.get("/api/assistant", params={"workspace": "team"}, headers=admin).json()["voice"]
+    assert meta["speech"]["model"] == SPEECH["model"] and meta["speech"]["inherited_from"] == "default"
+
+
 def test_the_models_page_offers_the_speech_voices():
     purposes = {p["id"]: p for p in special.options_payload()["purposes"]}
     assert "alloy" in purposes["speech"]["voices"]["openai_compat"]
     assert "Kore" in purposes["speech"]["voices"]["google"]
     assert purposes["image"]["voices"] == {}
+
+
+# ── the threads on the Chat page ─────────────────────────────────────────────
+
+def test_assistant_threads_are_read_only_text_on_the_chat_page(multi, client, seeded, fake_agent):
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    _, alice = _member(client, admin, "alice")
+    _turn(client, bob, "what failed today", voice=True)
+    _turn(client, bob, "and yesterday?")
+
+    [entry] = [c for c in client.get("/api/chats", headers=bob).json()["items"] if c.get("origin") == "assistant"]
+    assert entry["read_only"] is True and entry["title"] == "what failed today"
+    assert entry["message_count"] == 4 and entry["messages"] == []
+    assert entry["assistant_thread"] == {"mode": "personal", "session_id": entry["id"].rsplit("~", 1)[1],
+                                         "active": True}
+
+    chat = client.get(f"/api/chats/{entry['id']}", headers=bob).json()
+    said = [(m["role"], m["content"], m.get("voice", False)) for m in chat["messages"]]
+    assert said[0] == ("user", "what failed today", True)
+    assert said[2] == ("user", "and yesterday?", False)
+    assert said[1][0] == "assistant" and said[1][1].startswith("Done, the task")
+
+    # Written and cleared only on the Assistant page; nobody else's to read.
+    assert client.put(f"/api/chats/{entry['id']}", json={"id": entry["id"], "messages": []},
+                      headers=bob).status_code == 409
+    assert client.delete(f"/api/chats/{entry['id']}", headers=bob).status_code == 409
+    assert client.get(f"/api/chats/{entry['id']}", headers=alice).status_code == 404
+    assert not [c for c in client.get("/api/chats", headers=alice).json()["items"] if c.get("origin") == "assistant"]
+
+    # A new conversation on the Assistant page keeps the old one in the list.
+    assert client.delete("/api/assistant", headers=bob).status_code == 200
+    _turn(client, bob, "new topic")
+    threads = [c for c in client.get("/api/chats", headers=bob).json()["items"] if c.get("origin") == "assistant"]
+    assert [c["title"] for c in threads] == ["new topic", "what failed today"]
+    assert [c["assistant_thread"]["active"] for c in threads] == [True, False]
+
+
+def test_a_conversation_stays_in_its_workspace(client, seeded, fake_agent):
+    """Conversations do not move between workspaces: a turn in another
+    workspace files the live one and continues that workspace's latest, and
+    the page shows the conversation of the workspace it is in."""
+    from workspace import create_workspace_folder
+    create_workspace_folder("sales")
+    _turn(client, {}, "a default question")
+    _turn(client, {}, "a sales question", workspace="sales")
+    _turn(client, {}, "more on sales", workspace="sales")
+
+    def said(**params):
+        return [m["content"] for m in client.get("/api/assistant", params=params).json()["messages"]
+                if m["role"] == "user"]
+
+    assert said(workspace="sales") == ["a sales question", "more on sales"]
+    assert said(workspace="default") == ["a default question"]
+    assert said(workspace="sales") == ["a sales question", "more on sales"]
+    # A new conversation started in a workspace stays blank there.
+    assert client.delete("/api/assistant").status_code == 200
+    assert said(workspace="sales") == []
+    assert said(workspace="default") == ["a default question"]
+
+    def threads(**params):
+        items = client.get("/api/chats", params=params).json()["items"]
+        return {c["title"]: c["workspace"] for c in items if c.get("origin") == "assistant"}
+
+    assert threads(workspace="sales") == {"a sales question": "sales"}
+    everywhere = {"a sales question": "sales", "a default question": "default"}
+    assert threads(workspace="default") == everywhere
+    assert threads() == everywhere
+
+
+def test_the_settings_play_a_voice_sample_charged_as_a_voice_run(multi, client, speech_models, http):
+    from urllib.parse import unquote
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    resp = client.post("/api/assistant/voice-sample", json={"voice": "nova", "language": "de"}, headers=bob)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["X-Sample-Language"] == "de"
+    assert unquote(resp.headers["X-Sample-Text"]) == special.SAMPLE_TEXTS["de"]
+    [call] = [c for c in http if c.url.path.endswith("/audio/speech")]
+    assert json.loads(call.content)["voice"] == "nova"
+    assert user_budget.user_month_spend_usd(bob_id) == pytest.approx(0.015 * len(special.SAMPLE_TEXTS["de"]) / 1000)
+    bad = client.post("/api/assistant/voice-sample", json={"voice": "a b"}, headers=bob)
+    assert bad.status_code == 400
+
+
+def test_a_sample_without_a_speech_model_answers_model_not_added(multi, client, seeded, http):
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    resp = client.post("/api/assistant/voice-sample", json={}, headers=bob)
+    assert resp.status_code == 409 and resp.json()["detail"]["code"] == "model_not_added"

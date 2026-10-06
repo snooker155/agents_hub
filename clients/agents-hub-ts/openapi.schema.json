@@ -1548,6 +1548,50 @@
         "title": "BlenderTestRequest",
         "type": "object"
       },
+      "Body_runtime_add_voice_api_models_local_runtime_voices_post": {
+        "properties": {
+          "consent": {
+            "default": false,
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "gender": {
+            "default": "",
+            "title": "Gender",
+            "type": "string"
+          },
+          "language": {
+            "default": "",
+            "title": "Language",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "shared": {
+            "default": false,
+            "title": "Shared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "file"
+        ],
+        "title": "Body_runtime_add_voice_api_models_local_runtime_voices_post",
+        "type": "object"
+      },
       "Body_upload_file_api_files_post": {
         "properties": {
           "file": {
@@ -3737,9 +3781,15 @@
       "DownloadBody": {
         "properties": {
           "file": {
+            "default": "",
             "maxLength": 300,
-            "minLength": 1,
             "title": "File",
+            "type": "string"
+          },
+          "package": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Package",
             "type": "string"
           },
           "repo": {
@@ -3755,8 +3805,7 @@
           }
         },
         "required": [
-          "repo",
-          "file"
+          "repo"
         ],
         "title": "DownloadBody",
         "type": "object"
@@ -7262,6 +7311,21 @@
         "title": "NotifyChange",
         "type": "object"
       },
+      "OllamaImportBody": {
+        "properties": {
+          "name": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OllamaImportBody",
+        "type": "object"
+      },
       "OpenBody": {
         "properties": {
           "agent_id": {
@@ -8815,6 +8879,32 @@
           }
         },
         "title": "RunEvalIn",
+        "type": "object"
+      },
+      "SampleIn": {
+        "properties": {
+          "language": {
+            "default": "",
+            "title": "Language",
+            "type": "string"
+          },
+          "mode": {
+            "default": "",
+            "title": "Mode",
+            "type": "string"
+          },
+          "voice": {
+            "default": "",
+            "title": "Voice",
+            "type": "string"
+          },
+          "workspace": {
+            "default": "",
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "title": "SampleIn",
         "type": "object"
       },
       "ScenarioGenerateIn": {
@@ -13241,6 +13331,98 @@
           "visibility"
         ],
         "title": "VisibilityBody",
+        "type": "object"
+      },
+      "VoicePatch": {
+        "properties": {
+          "base_model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Model"
+          },
+          "base_voice": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Voice"
+          },
+          "gender": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gender"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "shared": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared"
+          }
+        },
+        "title": "VoicePatch",
+        "type": "object"
+      },
+      "VoiceTryBody": {
+        "properties": {
+          "language": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Language",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "VoiceTryBody",
         "type": "object"
       },
       "WatcherCreate": {
@@ -18344,6 +18526,25 @@
         ]
       }
     },
+    "/api/assistant/conversation": {
+      "delete": {
+        "description": "Clear the transcript: the conversation in progress is dropped, not\nfiled among the past ones as ``DELETE /api/assistant`` (a new\nconversation) files it. Its turns stay in Messages and in the costs.\n409 while a turn runs.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Forget Conversation",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
     "/api/assistant/speak": {
       "post": {
         "description": "One stretch of speech for an assistant turn, as audio (audio/mpeg or\naudio/wav, whatever the model returns). Reads only the turn's own words\n(Markdown cleaned: links by their anchor, code and tables left to the\nscreen) or the hub's phrase for a waiting card or a long step; any other\ntext is refused. The price goes on the turn's run. 204 when nothing is\nleft to say once the Markdown is cleaned.",
@@ -18403,7 +18604,7 @@
     },
     "/api/assistant/transcribe": {
       "post": {
-        "description": "A recording (the request body, ``Content-Type`` audio/webm, audio/ogg,\naudio/wav, audio/mp4 or audio/mpeg) as text, with the home workspace's\ntranscription model. Nothing is kept but the cost: a ``voice`` run with\nthe call's price, charged to the person and their home workspace.\n``?language=`` (``en``, ``ru``, ``de``) helps the model; ``?mode=service``\nfor an administrator's service thread.",
+        "description": "A recording (the request body, ``Content-Type`` audio/webm, audio/ogg,\naudio/wav, audio/mp4 or audio/mpeg) as text, with the transcription model\nof ``?workspace=`` (where the turn will run), else the home's. Nothing is\nkept but the cost: a ``voice`` run with the call's price, charged to the\nperson and the workspace whose model answered. ``?language=`` (``en``,\n``ru``, ``de``) helps the model; ``?mode=service`` for an administrator's\nservice thread; ``?purpose=wake`` or ``monitor`` (the hands-free page\nlistening for its name or for a stop) only names the cost run.",
         "responses": {
           "200": {
             "content": {
@@ -18415,6 +18616,45 @@
           }
         },
         "summary": "Transcribe",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/voice-sample": {
+      "post": {
+        "description": "A short line read with the speech model the turns use and ``voice``,\nso the settings can play a voice before it is picked: in the voice's own\nlanguage, else the page's (:func:`providers.special.sample_text`). Charged\nlike a transcription, as a ``voice`` run of its own. The line and its\nlanguage come in ``X-Sample-Text`` (URL-encoded) and ``X-Sample-Language``.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SampleIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Voice Sample",
         "tags": [
           "assistant"
         ]
@@ -29277,7 +29517,7 @@
     },
     "/api/instances": {
       "get": {
-        "description": "A page of instances plus the per-state counts for the header strip.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\ninstances whose own workspace the caller can see, a no-op outside\n``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still\ncounts the unfiltered page (common/access.py). The header counts are not\nnarrowed the same way: ``counts_by_state`` aggregates in SQL and does not\ntake a set of workspaces, so under ``multi`` mode without a single\n``workspace`` given they may count instances outside what the items list\nshows. Left as-is: recomputing the tally in Python for every restricted\ncaller would be the full-table scan this route exists to avoid, and the\nheader strip is not itself the leak (no record is returned, only a count).",
+        "description": "A page of instances plus the per-state counts for the header strip.\n\n``sort`` is ``live`` (the default: live copies first, newest activity\nfirst) or a key of ``store.INSTANCE_SORTS``; ``order`` is ``asc``/``desc``;\nthe list pages load rows in batches and refetch the whole loaded window\nfrom the top, so ``limit`` goes up to 2000.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\ninstances whose own workspace the caller can see, a no-op outside\n``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still\ncounts the unfiltered page (common/access.py). The header counts are not\nnarrowed the same way: ``counts_by_state`` aggregates in SQL and does not\ntake a set of workspaces, so under ``multi`` mode without a single\n``workspace`` given they may count instances outside what the items list\nshows. Left as-is: recomputing the tally in Python for every restricted\ncaller would be the full-table scan this route exists to avoid, and the\nheader strip is not itself the leak (no record is returned, only a count).",
         "parameters": [
           {
             "in": "query",
@@ -29435,6 +29675,38 @@
               "default": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
             }
           }
         ],
@@ -32416,7 +32688,7 @@
     },
     "/api/messages": {
       "get": {
-        "description": "A page of agent run messages, filtered and ordered in SQL.\n\nReturns ``{items, total, limit, offset}``. Filtering used to happen in\nPython over every run ever recorded, which a workspace running a thousand\nagents in parallel turns into a full-table scan on every refresh.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\nruns whose own workspace the caller can see, a no-op outside ``multi``\nmode. Filtered after the SQL page is fetched, so ``total`` still counts\nthe unfiltered page \u2014 see common/access.py's filter_by_workspace.",
+        "description": "A page of agent run messages, filtered and ordered in SQL.\n\n``sort`` is a key of ``managers.runs.store.RUN_SORTS`` (default ``started``) and\n``order`` is ``asc`` or ``desc``; the list pages load rows in batches and refetch the whole loaded window\nfrom the top, so ``limit`` goes up to 2000.\n\nReturns ``{items, total, limit, offset}``. Filtering used to happen in\nPython over every run ever recorded, which a workspace running a thousand\nagents in parallel turns into a full-table scan on every refresh.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\nruns whose own workspace the caller can see, a no-op outside ``multi``\nmode. Filtered after the SQL page is fetched, so ``total`` still counts\nthe unfiltered page \u2014 see common/access.py's filter_by_workspace.",
         "parameters": [
           {
             "in": "query",
@@ -32596,6 +32868,38 @@
               "default": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
             }
           }
         ],
@@ -33187,6 +33491,7 @@
     },
     "/api/models/local/runtime": {
       "get": {
+        "description": "The runtime's models, engines, memory and call counts. For the runtime\nthe hub runs itself, also its state (``managed``), and reading it starts\nthe runtime when it is not running and nobody stopped it.\n\n``usage`` is every call through the runtime, whoever made it: the hub's\nagents, its /v1 endpoint, the assistant's voice, or a caller with the\nruntime's own token. A runtime older than this count leaves it None with\n``usage_outdated``, which asks for a restart.",
         "responses": {
           "200": {
             "content": {
@@ -33202,6 +33507,186 @@
           }
         },
         "summary": "Runtime Status",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/cache": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Cache Clear Api Models Local Runtime Cache Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Cache Clear",
+        "tags": [
+          "local-models"
+        ]
+      },
+      "get": {
+        "description": "The prompt cache's settings, loaded models, disk and memory. Like\n``GET /runtime`` it never fails because the runtime is down: ``ok``\nfalse with ``error``, and ``outdated`` for a runtime older than the cache.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Cache Api Models Local Runtime Cache Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Cache",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/cache/apply": {
+      "post": {
+        "description": "Reload the models that run with older cache settings. They keep their\nnames, so the chat catalog stays as it is.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Cache Apply Api Models Local Runtime Cache Apply Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Cache Apply",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/cache/settings": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Cache Settings Api Models Local Runtime Cache Settings Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Cache Settings",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/cache/warmup": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnloadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Cache Warmup Api Models Local Runtime Cache Warmup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Cache Warmup",
         "tags": [
           "local-models"
         ]
@@ -33244,6 +33729,94 @@
           }
         },
         "summary": "Runtime Download",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/engines": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Engines Api Models Local Runtime Engines Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Engines",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/engines/{engine}/install": {
+      "post": {
+        "description": "Installs a speech engine into the runtime's Python, as a job on the\nshared list.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "engine",
+            "required": true,
+            "schema": {
+              "title": "Engine",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Install Engine Api Models Local Runtime Engines  Engine  Install Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Install Engine",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/hardware": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Hardware Api Models Local Runtime Hardware Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Hardware",
         "tags": [
           "local-models"
         ]
@@ -33297,6 +33870,91 @@
           }
         },
         "summary": "Runtime Hf Files",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/hf/search": {
+      "get": {
+        "description": "Models on Hugging Face by text, purpose and license: GGUF models\n(chat, code, embeddings), each with whether it fits this machine and how\nfast it would write per quantization; or speech models (speech,\ntranscription) that the runtime's engines run, with their packages.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "purpose",
+            "required": false,
+            "schema": {
+              "default": "chat",
+              "title": "Purpose",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "license",
+            "required": false,
+            "schema": {
+              "default": "any",
+              "title": "License",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "downloads",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Hf Search Api Models Local Runtime Hf Search Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Hf Search",
         "tags": [
           "local-models"
         ]
@@ -33362,6 +34020,71 @@
           }
         },
         "summary": "Runtime Job",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/lmstudio": {
+      "get": {
+        "description": "What LM Studio has on the runtime's machine that the runtime can take\nover: GGUF files, and MLX folders it runs with mlx-lm on Apple silicon.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Lmstudio Models Api Models Local Runtime Lmstudio Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Lmstudio Models",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/lmstudio/import": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaImportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Lmstudio Import Api Models Local Runtime Lmstudio Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Lmstudio Import",
         "tags": [
           "local-models"
         ]
@@ -33495,6 +34218,141 @@
         ]
       }
     },
+    "/api/models/local/runtime/ollama": {
+      "get": {
+        "description": "What Ollama has on the runtime's machine that the runtime can take\nover without downloading it again.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Ollama Models Api Models Local Runtime Ollama Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Ollama Models",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/ollama/import": {
+      "post": {
+        "description": "An Ollama model as a runtime file (a hard link, or a copy as a job);\nit is then loaded like any other GGUF.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaImportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Ollama Import Api Models Local Runtime Ollama Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Ollama Import",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/restart": {
+      "post": {
+        "description": "Restart it: what was loaded is unloaded, new runtime code takes effect.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Restart Api Models Local Runtime Restart Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Restart",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/start": {
+      "post": {
+        "description": "Start the runtime the hub runs (the first start also makes its Python\nenvironment, which takes a minute); answers at once with its state.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Start Api Models Local Runtime Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Start",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/stop": {
+      "post": {
+        "description": "Stop it, with every loaded model, and keep it stopped across restarts\nof the hub until it is started again.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Stop Api Models Local Runtime Stop Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Stop",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
     "/api/models/local/runtime/unload": {
       "post": {
         "requestBody": {
@@ -33532,6 +34390,299 @@
           }
         },
         "summary": "Runtime Unload",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/usage": {
+      "delete": {
+        "description": "Resets the counts ``GET /runtime`` reports as ``usage``.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Clear Usage Api Models Local Runtime Usage Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Clear Usage",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/voices": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Voices Api Models Local Runtime Voices Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Voices",
+        "tags": [
+          "local-models"
+        ]
+      },
+      "post": {
+        "description": "A recording for the cloning engines. ``consent``: the person confirms\nthe voice is theirs or its owner allowed it; without it nothing is\nkept. ``replace`` gives a voice of theirs a new sample.",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_runtime_add_voice_api_models_local_runtime_voices_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Add Voice Api Models Local Runtime Voices Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Add Voice",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/voices/{name}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Delete Voice Api Models Local Runtime Voices  Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Delete Voice",
+        "tags": [
+          "local-models"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoicePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Update Voice Api Models Local Runtime Voices  Name  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Update Voice",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/voices/{name}/audio": {
+      "get": {
+        "description": "The recording as it is kept (cleaned up: trimmed, levelled, WAV).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Voice Audio",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/voices/{name}/try": {
+      "post": {
+        "description": "A line read in the recorded voice by a cloning model, to hear how\nclose it comes: ``text``, else the voice sample line in the recording's\nlanguage. Its time is in ``X-Synthesis-Seconds``.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceTryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Try Voice",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/servers": {
+      "get": {
+        "description": "Which local model servers answer right now (Ollama, LM Studio, the\nhub runtime), for the markers in the model catalog. Never an error: a\nserver that is down is ``ok: false``.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Servers Api Models Local Servers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Servers",
         "tags": [
           "local-models"
         ]
@@ -41048,7 +42199,7 @@
     },
     "/api/runs/groups": {
       "get": {
-        "description": "List run groups, newest first. Without ``kind`` all four are returned,\neach capped at ``limit`` so one busy kind cannot crowd out the others.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the list is additionally narrowed here to\ngroups whose own workspace the caller can see, a no-op outside ``multi``\nmode. See common/access.py.",
+        "description": "A window of run groups (``limit`` up to 2000, as for the runs list),\nnewest first unless ``sort`` names another key\nof ``managers.runs.groups.GROUP_SORTS`` (``order`` is ``asc``/``desc``).\n\nReturns ``{groups, total, limit, offset, kinds}``. Up to\n:data:`GROUP_SCAN` groups of each kind are read, merged, sorted and then\npaged, so one busy kind cannot crowd out the others.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the list is additionally narrowed here to\ngroups whose own workspace the caller can see, a no-op outside ``multi``\nmode. See common/access.py.",
         "parameters": [
           {
             "in": "query",
@@ -41090,6 +42241,48 @@
               "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
             }
           }
         ],
@@ -42447,7 +43640,7 @@
     },
     "/api/sessions": {
       "get": {
-        "description": "A page of session contexts, filtered and ordered in SQL.\n\nReturns ``{items, total, limit, offset}``. Only the returned page is\nenriched, and its status/participants come from one grouped query over the\nruns table \u2014 the list used to parse every session document and every run\nrecord in the database on each refresh.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\nthe sessions whose own workspace the caller can see, a no-op outside\n``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still\ncounts the unfiltered page \u2014 see common/access.py's filter_by_workspace.",
+        "description": "A page of session contexts, filtered and ordered in SQL.\n\n``sort`` is ``created`` (default), ``title``, ``workspace`` or\n``messages``; ``order`` is ``asc`` or ``desc``; the list pages load rows in batches and refetch the whole loaded window\nfrom the top, so ``limit`` goes up to 2000.\n\nReturns ``{items, total, limit, offset}``. Only the returned page is\nenriched, and its status/participants come from one grouped query over the\nruns table \u2014 the list used to parse every session document and every run\nrecord in the database on each refresh.\n\nA request naming no workspace is otherwise open to any signed-in account\n(common/auth.py authorize()); the page is additionally narrowed here to\nthe sessions whose own workspace the caller can see, a no-op outside\n``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still\ncounts the unfiltered page \u2014 see common/access.py's filter_by_workspace.",
         "parameters": [
           {
             "in": "query",
@@ -42579,6 +43772,38 @@
               "default": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
             }
           }
         ],
@@ -45800,6 +47025,63 @@
           }
         },
         "summary": "Get Stats",
+        "tags": [
+          "stats"
+        ]
+      }
+    },
+    "/api/stats/overview": {
+      "get": {
+        "description": "The Dashboard's load and spend widgets (common/dashboard_overview.py).\nSync on purpose: it asks the model runtime over HTTP, so FastAPI runs it\nin a worker thread. ``/v1`` calls are narrowed to the viewer's own the\nway the Models page's Endpoint tab narrows them.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Overview",
         "tags": [
           "stats"
         ]
@@ -54914,6 +56196,277 @@
           }
         },
         "summary": "Update Workspace Special Models",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/special-models/check": {
+      "post": {
+        "description": "Whether one model the form holds (saved or not) can be reached with\nthis workspace's connection settings, without running it. Writers only:\nit sends requests to the address typed in, with the stored headers.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Workspace Special Model",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/special-models/discover": {
+      "get": {
+        "description": "The models ``provider`` has that fit ``purpose``, asked with this\nworkspace's connection settings. Nothing is stored: the form offers them.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "title": "Purpose",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Workspace Special Models",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/special-models/sample": {
+      "post": {
+        "description": "A short line read by a speech model the form holds (saved or not),\nas audio: in the voice's own language, else in ``language`` (the\npage's). Writers only, like the check: it runs the model, and a cloud\nmodel charges for it (a fraction of a cent, not counted on a run). The\nline and its language come in ``X-Sample-Text`` (URL-encoded) and\n``X-Sample-Language``.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Special Model Sample",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/special-models/voices": {
+      "get": {
+        "description": "The voices of one model the form holds, so picking a model offers\nthem: the model's own (the hub runtime reads them from its files; of a\ncloning model's recorded voices, the person's own and the shared\nones), else the ones known for the provider's API shape, with their\nlanguages.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Model",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "purpose",
+            "required": false,
+            "schema": {
+              "default": "speech",
+              "title": "Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Special Model Voices",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/summary": {
+      "get": {
+        "description": "What every page shows about the selected workspace, in one answer.\n\nThe header (model picker, \"Isolated\" badge), the palette and the chat\npage each used to ask on their own: ``/{name}`` (which also builds the\ntask list), ``/{name}/model``, ``/{name}/isolation`` and\n``/{name}/settings-overrides``. Readable by any member: it carries only\nthe isolation switch and the palette, not the owner scoped settings\naround them.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Summary",
         "tags": [
           "workspaces"
         ]

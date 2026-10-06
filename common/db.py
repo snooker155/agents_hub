@@ -64,7 +64,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
 
@@ -777,6 +777,31 @@ def json_truthy(column: str, key: str) -> str:
     if dialect() == "postgres":
         return f"(COALESCE(({column})::jsonb ->> '{key}', '') IN ('true', '1'))"
     return f"(COALESCE(json_extract({column}, '$.{key}'), 0) IN (1, 'true'))"
+
+
+def json_array_len(column: str, key: str) -> str:
+    """Length of the JSON array at top-level ``key`` of ``column``; 0 when the
+    key is absent or not an array."""
+    if dialect() == "postgres":
+        return (f"(CASE WHEN jsonb_typeof(({column})::jsonb -> '{key}') = 'array' "
+                f"THEN jsonb_array_length(({column})::jsonb -> '{key}') ELSE 0 END)")
+    return f"COALESCE(json_array_length({column}, '$.{key}'), 0)"
+
+
+def order_by(sorts: Dict[str, str], sort: Optional[str], order: Optional[str],
+             default: str, tiebreak: str = "") -> str:
+    """An ``ORDER BY`` body from a whitelist of named sort expressions.
+
+    ``sort`` is a key of ``sorts`` (falls back to ``default``), ``order`` is
+    ``asc`` or ``desc`` (anything else reads as ``desc``). ``tiebreak`` is
+    appended so pages stay stable when many rows share the sort value.
+    Raises ``ValueError`` on an unknown key, so a route can answer 400."""
+    key = sort or default
+    if key not in sorts:
+        raise ValueError(f"Unknown sort {key!r} (expected one of {', '.join(sorts)})")
+    direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
+    body = f"{sorts[key]} {direction}"
+    return f"{body}, {tiebreak}" if tiebreak else body
 
 
 def group_concat(expr: str, separator: str = ",") -> str:

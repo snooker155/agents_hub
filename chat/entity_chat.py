@@ -29,7 +29,10 @@ Three properties are deliberate and worth keeping if this is ever changed:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
+import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -37,6 +40,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from chat.errors import error_event
 from chat import remote_agent
+
+log = logging.getLogger(__name__)
 
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -205,6 +210,29 @@ async def guarded(run_turn, queue: asyncio.Queue):
             pass
 
 
+def settle_tool_step(items: List[Dict[str, Any]], ev: dict) -> bool:
+    """Close the latest tool step of a stored trace on its ``tool_end`` or
+    ``tool_error``: ``done``, or ``error`` with what went wrong. True when the
+    event was a tool ending and a step took it, so no item of its own is added.
+    """
+    t = ev.get("type")
+    if t not in ("tool_end", "tool_error"):
+        return False
+    # The step of the same tool: a call the trace leaves out (the project
+    # graph's own tools) must not settle the step before it.
+    tool = ev.get("tool")
+    step = next((it for it in reversed(items) if it.get("k") == "tool"), None)
+    if step is None or (tool and step.get("tool") != tool):
+        return False
+    if t == "tool_error" or ev.get("status") == "error":
+        step["status"] = "error"
+        if t == "tool_error" and ev.get("error"):
+            step["error"] = str(ev["error"])
+    elif step.get("status") == "running":
+        step["status"] = "done"
+    return True
+
+
 def trace_item_for(ev: dict) -> Optional[Dict[str, Any]]:
     """Map one streamed event to a chat feed item, or None to drop it.
 
@@ -275,6 +303,16 @@ class EntityChatSpec:
     #: question about it is answered from it. They reach the agent cache key, so
     #: two different values are two cached agents rather than one stale one.
     agent_overrides: Dict[str, Any] = field(default_factory=dict)
+    #: Kept beside the user's message in the transcript and in its trace item:
+    #: the assistant marks a spoken turn (``{"voice": True}``), so the text
+    #: version of the thread on the Chat page says which lines were said.
+    user_meta: Dict[str, Any] = field(default_factory=dict)
+    #: Whether the thread is the substance rather than context around an entity.
+    #: Off, the prompt sees the last turns only (``transcript_block``). On, the
+    #: older turns are folded into the session's summary after each reply and
+    #: the prompt gets that summary plus every turn since: the assistant's thread
+    #: is the person's short-term memory, so turn 7 must not simply vanish.
+    fold_history: bool = False
 
 
 async def run_entity_chat_turn(
@@ -310,9 +348,8 @@ async def run_entity_chat_turn(
 
     # Record the user turn first, then build the prompt from the live entity +
     # the transcript that now includes it.
-    store.append_message(spec.kind, entity_id, "user", user_message)
+    store.append_message(spec.kind, entity_id, "user", user_message, meta=spec.user_meta)
     history = store.get_messages(spec.kind, entity_id)
-    prompt = build_prompt(history)
 
     # Open a run record so the turn appears in Messages, grouped per
     # entity + session epoch. The epoch lets "Clear chat" start a fresh thread
@@ -332,6 +369,7 @@ async def run_entity_chat_turn(
         )
     except Exception:
         session_id = None
+    prompt = build_prompt(folded_history(history, session_id) if spec.fold_history else history)
     _open_run(run_id, spec.agent_id, task_id=conv_id, session_id=session_id,
               session_type="chat", message_origin=f"{spec.kind}-chat", channel="chat",
               workspace=spec.workspace, title=user_message[:60], log_file=str(log_file))
@@ -539,6 +577,18 @@ async def run_entity_chat_turn(
     })
 
     store.append_message(spec.kind, entity_id, "assistant", reply)
+    thread = list(history) + [{"role": "assistant", "content": reply}]
+    if spec.fold_history and session_id and fold_due(session_id, thread):
+        # After the reply, off the turn's path: a spoken answer must not wait
+        # for a summary, and the next turn reads whatever this one stored.
+        provider = (remote.provider if remote is not None
+                    else getattr(callback, "bound_provider", "")) or ""
+        model = (remote.model if remote is not None
+                 else getattr(callback, "bound_model", "")) or ""
+        ctx = contextvars.copy_context()
+        threading.Thread(target=ctx.run, args=(fold_session_history, session_id, thread,
+                                               provider, model),
+                         name=f"fold-{session_id[:8]}", daemon=True).start()
     await emit({"type": "message", "role": "assistant", "content": reply, "run_id": run_id})
     # The turn's context fill travels with the terminal event so the panel can
     # show how much room is left before the next turn, not after it fails.
@@ -546,9 +596,16 @@ async def run_entity_chat_turn(
 
     # Persist this turn's display trace from the recording queue, so it is
     # captured even when the client disconnected mid-run.
-    turn_items: List[Dict[str, Any]] = [{"k": "user", "text": user_message}]
+    turn_items: List[Dict[str, Any]] = [{"k": "user", "text": user_message, **(spec.user_meta or {})}]
     for ev in list(getattr(queue, "recorded", [])):
         if not isinstance(ev, dict):
+            continue
+        if ev.get("type") == "tool_end" and ev.get("memory"):
+            # Where a remember or forget call wrote, on the step it closes.
+            step = next((it for it in reversed(turn_items) if it.get("k") == "tool"), None)
+            if step is not None:
+                step["memory"] = ev["memory"]
+        if settle_tool_step(turn_items, ev):
             continue
         item = trace_item_for(ev)
         if item:
@@ -559,21 +616,125 @@ async def run_entity_chat_turn(
         pass
 
 
-def transcript_block(history: List[dict], limit: int = 12) -> str:
+def transcript_block(history: List[dict], limit: Optional[int] = 12) -> str:
     """The recent conversation, rendered for a prompt.
 
     Bounded on purpose: the entity's own state is re-rendered in full every
     turn, so old turns are context, not the source of truth, and an unbounded
-    transcript is the thing that makes turn 30 cost ten times turn 3.
+    transcript is the thing that makes turn 30 cost ten times turn 3. A thread
+    that folds its history (``folded_history``) is already bounded and passes
+    ``limit=None``; its summary entry comes first.
     """
-    recent = [m for m in history if m.get("role") in ("user", "assistant")][-limit:]
-    if not recent:
+    recent = [m for m in history if m.get("role") in ("user", "assistant")]
+    if limit:
+        recent = recent[-limit:]
+    summaries = [m for m in history if m.get("role") == "summary" and m.get("content")]
+    if not recent and not summaries:
         return ""
-    lines = []
+    lines = [f"(Earlier in this conversation, summarised: {m['content']})" for m in summaries]
     for m in recent:
         who = "User" if m.get("role") == "user" else "You"
         lines.append(f"{who}: {m.get('content') or ''}")
     return "\n".join(lines)
+
+
+# ── a thread that is the person's short-term memory ──────────────────────────
+# The assistant's thread folds instead of forgetting: after a reply, the turns
+# past FOLD_BUDGET_CHARS are summarised into the session (the same summary
+# record the main chat's compaction keeps), and the next prompt is that summary
+# plus every turn since it. The budget is far below the model's window on
+# purpose: the whole tail is re-sent on every turn, voice included.
+
+#: Verbatim conversation a turn may carry before the next reply folds it.
+FOLD_BUDGET_CHARS = 24_000
+#: What a fold leaves verbatim, so one is not due again on the next turn.
+FOLD_TARGET_CHARS = 10_000
+#: Ceiling on the verbatim tail when no fold has caught up yet (a long thread
+#: from before folding, a summary call that failed): the newest turns win.
+FOLD_HARD_TAIL_CHARS = 48_000
+
+
+def _thread_talk(history: List[dict]) -> List[dict]:
+    return [m for m in history if m.get("role") in ("user", "assistant")]
+
+
+def _as_messages(talk: List[dict]) -> list:
+    from langchain_core.messages import AIMessage, HumanMessage
+    return [HumanMessage(content=str(m.get("content") or "")) if m.get("role") == "user"
+            else AIMessage(content=str(m.get("content") or "")) for m in talk]
+
+
+def _stored_fold(session_id: Optional[str], talk: List[dict]) -> tuple:
+    """The session's summary and where, in *talk*, the turns after it start."""
+    from chat.compaction import realign_covers_until
+    from common.session_service import get_session_summary
+    try:
+        stored = get_session_summary(session_id) if session_id else {}
+    except Exception:  # noqa: BLE001 - no summary reads as nothing folded yet
+        stored = {}
+    text = str(stored.get("text") or "")
+    if not text:
+        return "", 0
+    start = realign_covers_until(_as_messages(talk), stored.get("covers_until") or 0,
+                                 str(stored.get("anchor") or ""))
+    return text, start
+
+
+def folded_history(history: List[dict], session_id: Optional[str]) -> List[dict]:
+    """The transcript a folding thread's prompt is built from.
+
+    *history* ends with the person's new message. Returns the stored summary as
+    a ``summary`` entry, then every turn after it (the newest ones up to
+    ``FOLD_HARD_TAIL_CHARS``), then the new message.
+    """
+    talk, latest = _thread_talk(history[:-1]), history[-1:]
+    text, start = _stored_fold(session_id, talk)
+    tail, used = [], 0
+    for m in reversed(talk[start:]):
+        cost = len(str(m.get("content") or ""))
+        if tail and used + cost > FOLD_HARD_TAIL_CHARS:
+            break
+        tail.insert(0, m)
+        used += cost
+    return ([{"role": "summary", "content": text}] if text else []) + tail + latest
+
+
+def fold_due(session_id: Optional[str], history: List[dict]) -> bool:
+    """Whether the turns after the session's summary have passed the budget."""
+    talk = _thread_talk(history)
+    _text, start = _stored_fold(session_id, talk)
+    return sum(len(str(m.get("content") or "")) for m in talk[start:]) > FOLD_BUDGET_CHARS
+
+
+def fold_session_history(session_id: str, history: List[dict],
+                         provider: str = "", model: str = "") -> None:
+    """Fold a thread's older turns into its session summary once the turns
+    after the summary pass ``FOLD_BUDGET_CHARS``. Written by the model the turn
+    ran on; a lossy heuristic stands in when that call fails. Never raises."""
+    try:
+        from chat.compaction import SUMMARY_MAX_TOKENS, compact_history
+        from common.session_service import set_session_summary
+        if not fold_due(session_id, history):
+            return
+        talk = _thread_talk(history)
+        text, start = _stored_fold(session_id, talk)
+        messages = _as_messages(talk)
+        llm = None
+        try:
+            from agents.agent_utils import build_chat_model
+            llm = build_chat_model(provider=provider or None, model=model or None,
+                                   temperature=0.0, max_tokens=SUMMARY_MAX_TOKENS,
+                                   streaming=False)
+        except Exception:  # noqa: BLE001 - the heuristic summary stands in
+            log.debug("fold: no summarizer model for %s/%s", provider, model, exc_info=True)
+        result = compact_history(messages, budget_chars=FOLD_BUDGET_CHARS, summary=text,
+                                 covers_until=start, llm=llm, provider=provider,
+                                 target_chars=FOLD_TARGET_CHARS)
+        if result.changed:
+            set_session_summary(session_id, result.summary, result.covers_until,
+                                anchor=result.anchor)
+    except Exception:  # noqa: BLE001 - a fold that fails leaves the thread as it was
+        log.warning("fold of session %s failed", session_id, exc_info=True)
 
 
 __all__ = [
@@ -582,12 +743,16 @@ __all__ = [
     "SSE_HEADERS",
     "cancel_entity_runs",
     "entity_run_active",
+    "fold_due",
+    "fold_session_history",
+    "folded_history",
     "clean_agent_reply",
     "guarded",
     "relay_queue",
     "run_entity_chat_turn",
     "spawn_detached",
     "sse",
+    "settle_tool_step",
     "trace_item_for",
     "transcript_block",
 ]

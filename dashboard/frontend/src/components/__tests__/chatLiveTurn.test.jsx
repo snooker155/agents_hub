@@ -58,7 +58,7 @@ describe('reduceLiveTurn', () => {
     expect(turn.thinking).toEqual([{ kind: 'think', step: 1, content: 'read the file' }]);
     // The completed thought replaces the ticker that was showing it arrive.
     expect(turn.thinkingLive).toBe('');
-    expect(turn.tools).toEqual([{ step: 1, tool: 'shell', input: 'ls', output: 'a.txt', error: null }]);
+    expect(turn.tools).toEqual([{ step: 1, tool: 'shell', input: 'ls', output: 'a.txt', error: null, running: false }]);
   });
 
   it('mirrors the path an imported agent took through its own graph', () => {

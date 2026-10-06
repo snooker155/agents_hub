@@ -177,7 +177,7 @@ Fix: start `deploy/browser`, check the URL and the token.
 
 ### Check: models runtime
 
-The [model runtime](local-models.md)'s `/healthz` answers. Skip when `AGENTS_HUB_MODELS_URL` is not set; warn when it answers but `AGENTS_HUB_MODELS_TOKEN` is missing. Fix: start `deploy/models` (compose profile `models`, or host mode), check the URL and the token.
+The [model runtime](local-models.md)'s `/healthz` answers: the one `AGENTS_HUB_MODELS_URL` names, or the one the hub runs itself on the host. Skip when both are off (`AGENTS_HUB_MODELS_MANAGED=false` and no URL); warn when the hub's own runtime was stopped from the Models page, or when it answers without a token. Fix: the Models page, Local tab, shows the runtime's state and log and has Start; for a runtime run elsewhere, check the URL and the token.
 
 ### Check: docker
 

@@ -1,6 +1,7 @@
 /**
  * The assistant (dashboard/backend/routes/assistant.py, docs/assistant.md):
- * one thread per person, `mode` picks an administrator's service thread.
+ * one thread per person, `mode` picks an administrator's service thread,
+ * `workspace` is where the next turn runs (it decides the voice models).
  *
  * A turn streams like every entity chat, but goes through its own fetch so a
  * refusal keeps its status and code (402 `budget`, 409 `busy`): the page says
@@ -12,8 +13,12 @@ import api, { API_ORIGIN, authFetchHeaders, consumeSSE } from './index';
 
 const params = (mode) => (mode && mode !== 'personal' ? { mode } : {});
 
-export const getAssistant = (mode) => api.get('/assistant', { params: params(mode) });
+export const getAssistant = (mode, workspace) => api.get('/assistant', {
+  params: { ...params(mode), ...(workspace ? { workspace } : {}) },
+});
 export const clearAssistant = (mode) => api.delete('/assistant', { params: params(mode) });
+/** Clear the transcript: the conversation in progress is dropped, not kept among the past ones. */
+export const forgetAssistantConversation = (mode) => api.delete('/assistant/conversation', { params: params(mode) });
 export const stopAssistant = (mode) => api.post('/assistant/stop', null, { params: params(mode) });
 
 /** A refusal from the assistant's routes: `status`, and `code` when the body had one. */
@@ -50,9 +55,16 @@ export async function streamAssistantTurn({ body, onEvent, signal }) {
   await consumeSSE(response, onEvent);
 }
 
-/** A recording as text: `{text, language, run_id, cost_usd, consent}`. */
-export async function transcribeRecording(blob, { mode, language, signal } = {}) {
-  const query = new URLSearchParams({ ...params(mode), ...(language ? { language } : {}) });
+/**
+ * A recording as text: `{text, language, run_id, cost_usd, consent}`.
+ * `purpose` says what the open microphone was listening for (`wake`, a
+ * `monitor` for a spoken stop); it only names the cost run.
+ */
+export async function transcribeRecording(blob, { mode, workspace, language, purpose, signal } = {}) {
+  const query = new URLSearchParams({
+    ...params(mode), ...(workspace ? { workspace } : {}), ...(language ? { language } : {}),
+    ...(purpose === 'wake' || purpose === 'monitor' ? { purpose } : {}),
+  });
   const response = await fetch(`${API_ORIGIN}/api/assistant/transcribe?${query}`, {
     method: 'POST',
     headers: { 'Content-Type': blob.type || 'audio/webm', ...authFetchHeaders() },
@@ -74,4 +86,21 @@ export async function speakAssistant(body, { signal } = {}) {
   if (response.status === 204) return null;
   if (!response.ok) throw await refusal(response);
   return response.blob();
+}
+
+/**
+ * A short line read with the turns' speech model and `voice`, in the voice's
+ * own language or `language`: `{blob, language, text}`.
+ */
+export async function sampleAssistantVoice({ voice, language, workspace, mode }, { signal } = {}) {
+  const response = await fetch(`${API_ORIGIN}/api/assistant/voice-sample`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
+    signal,
+    body: JSON.stringify({ voice: voice || '', language: language || '', workspace: workspace || '', ...params(mode) }),
+  });
+  if (!response.ok) throw await refusal(response);
+  let text = '';
+  try { text = decodeURIComponent(response.headers.get('X-Sample-Text') || ''); } catch { /* left out */ }
+  return { blob: await response.blob(), language: response.headers.get('X-Sample-Language') || '', text };
 }

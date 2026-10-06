@@ -249,6 +249,24 @@ def test_a_turn_in_a_workspace_the_person_cannot_see_is_refused(multi, client, s
         personal_workspace.name_for(bob_id), "team"]
 
 
+def test_the_persons_memory_is_the_one_of_the_workspace_the_turn_runs_in(single, client, seeded, fake_agent):
+    from memory import personal
+    from workspace import create_workspace_folder
+    create_workspace_folder("dev")
+
+    assert client.post("/api/assistant", json={"message": "hi", "workspace": "dev"}).status_code == 200
+    assert fake_agent.builds[-1]["personal_pool"] == personal.pool_id("local", "dev")
+    assert "Personal memory: the person's memory in workspace dev" in fake_agent.prompts[-1]
+
+    assert client.post("/api/assistant", json={"message": "hi"}).status_code == 200
+    assert fake_agent.builds[-1]["personal_pool"] == personal.pool_id("local", "default")
+
+    personal.set_agent("assistant", "dev", False)
+    assert client.post("/api/assistant", json={"message": "hi", "workspace": "dev"}).status_code == 200
+    assert fake_agent.builds[-1]["personal_pool"] is None
+    assert "Personal memory: off in this workspace" in fake_agent.prompts[-1]
+
+
 def test_the_service_thread_is_for_administrators_and_runs_in_default(multi, client, seeded, fake_agent):
     root_id, admin = _admin(client)
     _, bob = _member(client, admin)

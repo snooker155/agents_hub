@@ -274,7 +274,7 @@ export default function DateInput({
                 placeholder="00"
                 onChange={(e) => setTimePart('hours', e.target.value)}
                 onFocus={(e) => e.target.select()}
-                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none"
               />
               <span className="text-gray-400">:</span>
               <input
@@ -284,7 +284,7 @@ export default function DateInput({
                 placeholder="00"
                 onChange={(e) => setTimePart('minutes', e.target.value)}
                 onFocus={(e) => e.target.select()}
-                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none"
               />
             </div>
           )}

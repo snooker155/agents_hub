@@ -25,7 +25,7 @@ export default {
   keySet: 'задан',
   keyMissing: 'не задан',
   apiAuth: 'Авторизация API',
-  agentCache: 'Кэш сборки агентов',
+  agentCache: 'Повторное использование сборок агентов',
   on: 'вкл',
   off: 'выкл',
   agentChat: 'Спросить сервисного агента',

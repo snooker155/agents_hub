@@ -560,6 +560,36 @@ async def get_workspace_model(name: str):
     - workspace_default: default model resolved from workspace settings
     - override: explicitly set via UI picker (provider='global' forces global over workspace_default)
     """
+    return _model_state(name, get_workspace_metadata(name))
+
+
+@router.get("/{name}/summary")
+async def get_workspace_summary(name: str):
+    """What every page shows about the selected workspace, in one answer.
+
+    The header (model picker, "Isolated" badge), the palette and the chat
+    page each used to ask on their own: ``/{name}`` (which also builds the
+    task list), ``/{name}/model``, ``/{name}/isolation`` and
+    ``/{name}/settings-overrides``. Readable by any member: it carries only
+    the isolation switch and the palette, not the owner scoped settings
+    around them.
+    """
+    from memory import personal
+    root = _require_workspace_folder(name)
+    metadata = get_workspace_metadata(root.name) or {}
+    settings = metadata.get("settings") or {}
+    palette = settings.get("palette")
+    return {
+        "name": root.name,
+        "allowed_agents": metadata.get("allowed_agents") or [],
+        "personal_memory_enabled": personal.workspace_enabled(root.name),
+        "isolated": bool(settings.get("isolated")),
+        "palette": palette if isinstance(palette, dict) else None,
+        "model": _model_state(root.name, metadata),
+    }
+
+
+def _model_state(name: str, metadata: dict) -> dict:
     from pathlib import Path as _Path
     from common.config import settings as _cfg
 
@@ -585,7 +615,6 @@ async def get_workspace_model(name: str):
     }
     global_model = provider_model_map.get(global_provider) or ""
 
-    metadata = get_workspace_metadata(name)
     override = metadata.get("model_override") or {}
     ws_default = get_workspace_default_model_config(metadata)
     from common.personal_workspace import model_source
@@ -1035,6 +1064,71 @@ async def get_workspace_special_models(name: str):
     the purposes, providers and model suggestions for the form."""
     _require_workspace_folder(name)
     return _special_models_payload(name)
+
+
+@router.get("/{name}/special-models/discover")
+async def discover_workspace_special_models(name: str, purpose: str, provider: str):
+    """The models ``provider`` has that fit ``purpose``, asked with this
+    workspace's connection settings. Nothing is stored: the form offers them."""
+    import asyncio
+    from providers import special
+    _require_workspace_folder(name)
+    try:
+        return await asyncio.to_thread(special.discover, purpose, provider, name)
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{name}/special-models/voices")
+async def workspace_special_model_voices(name: str, request: Request, provider: str, model: str = "",
+                                         purpose: str = "speech"):
+    """The voices of one model the form holds, so picking a model offers
+    them: the model's own (the hub runtime reads them from its files; of a
+    cloning model's recorded voices, the person's own and the shared
+    ones), else the ones known for the provider's API shape, with their
+    languages."""
+    import asyncio
+    from providers import special
+    _require_workspace_folder(name)
+    try:
+        return await asyncio.to_thread(special.voices_for, purpose, provider, model,
+                                       identity.request_principal(request))
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{name}/special-models/sample")
+async def workspace_special_model_sample(name: str, payload: dict):
+    """A short line read by a speech model the form holds (saved or not),
+    as audio: in the voice's own language, else in ``language`` (the
+    page's). Writers only, like the check: it runs the model, and a cloud
+    model charges for it (a fraction of a cent, not counted on a run). The
+    line and its language come in ``X-Sample-Text`` (URL-encoded) and
+    ``X-Sample-Language``."""
+    import asyncio
+    from urllib.parse import quote
+    from fastapi import Response
+    from providers import special
+    _ensure_writable_workspace(name)
+    try:
+        audio, lang, text = await asyncio.to_thread(
+            special.voice_sample, payload, name, str(payload.get("language") or "") or None)
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=audio.data, media_type=audio.mime_type,
+                    headers={"Cache-Control": "no-store", "X-Sample-Language": lang,
+                             "X-Sample-Text": quote(text)})
+
+
+@router.post("/{name}/special-models/check")
+async def check_workspace_special_model(name: str, payload: dict):
+    """Whether one model the form holds (saved or not) can be reached with
+    this workspace's connection settings, without running it. Writers only:
+    it sends requests to the address typed in, with the stored headers."""
+    import asyncio
+    from providers import special
+    _ensure_writable_workspace(name)
+    return await asyncio.to_thread(special.check, payload, name)
 
 
 @router.put("/{name}/special-models")

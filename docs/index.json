@@ -51,7 +51,8 @@
         "costs",
         "agent-inheritance",
         "workspaces",
-        "help"
+        "help",
+        "pwa"
       ],
       "headings": [
         "The page",
@@ -474,7 +475,8 @@
         "backup",
         "demo",
         "changelog",
-        "scaling"
+        "scaling",
+        "pwa"
       ],
       "headings": [
         "Prerequisites",
@@ -1480,7 +1482,8 @@
         "local-models",
         "browser",
         "project-deployments",
-        "changelog"
+        "changelog",
+        "pwa"
       ],
       "headings": [
         "The shapes",
@@ -2075,6 +2078,27 @@
         "Streaming, underneath",
         "The widget",
         "Testing",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "pwa",
+      "title": "Phone and installed app",
+      "summary": "The dashboard installs as an app on a phone or a desktop (a progressive web app), opens on the Assistant, keeps its shell offline and fits phone screens. Needs HTTPS; the quickstart compose file has an https profile with Caddy.",
+      "surface": "Install app",
+      "related": [
+        "assistant",
+        "chat",
+        "installation",
+        "deployment",
+        "identity",
+        "demo"
+      ],
+      "headings": [
+        "Install it",
+        "On a phone",
+        "What works offline",
+        "HTTPS on a server",
         "Gotchas"
       ]
     },

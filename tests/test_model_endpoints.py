@@ -51,11 +51,17 @@ def test_every_other_model_stays_on_chat_completions(model):
     assert body["tools"][0]["function"]["name"] == "ping"
 
 
-def test_thinking_level_reaches_both_endpoints():
+def test_thinking_level_reaches_both_endpoints(monkeypatch):
+    # The level rides with a summary request: OpenAI returns no reasoning
+    # text otherwise.
     _, responses_body = payload_for("gpt-5.6-sol", thinking_level="high")
-    assert responses_body["reasoning"] == {"effort": "high"}
+    assert responses_body["reasoning"] == {"effort": "high", "summary": "auto"}
 
-    _, chat_body = payload_for("gpt-5.4", thinking_level="medium")
+    # Behind a gateway a reasoning model stays on chat completions, which may
+    # be all the gateway serves.
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gw.example/v1")
+    endpoint, chat_body = payload_for("gpt-5.4", thinking_level="medium")
+    assert endpoint == "chat"
     assert chat_body["reasoning_effort"] == "medium"
 
 

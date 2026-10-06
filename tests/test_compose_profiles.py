@@ -21,12 +21,14 @@ def _load_services() -> dict:
     return doc["services"]
 
 
-def test_default_profile_is_backend_and_frontend_only():
+def test_default_profile_is_backend_frontend_and_the_model_runtime():
+    """A plain `up`: the backend, the dashboard and the model runtime local
+    models run on (no Ollama needed); everything else is behind a profile."""
     services = _load_services()
     default_services = {
         name for name, spec in services.items() if not spec.get("profiles")
     }
-    assert default_services == {"backend", "frontend"}
+    assert default_services == {"backend", "frontend", "models"}
 
 
 def test_ha_profile_contains_the_full_topology():

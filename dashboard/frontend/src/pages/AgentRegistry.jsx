@@ -435,7 +435,7 @@ export default function AgentRegistry() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden">
           <button
             onClick={() => setTab('agents')}
@@ -477,7 +477,7 @@ export default function AgentRegistry() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('agentRegistry.search')}
-            className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg w-56"
+            className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg w-full sm:w-56"
           />
         </div>
 

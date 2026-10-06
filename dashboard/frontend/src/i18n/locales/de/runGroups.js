@@ -38,5 +38,4 @@ export default {
   },
   childRuns: 'Läufe in dieser Gruppe',
   noChildRuns: 'Für diese Gruppe sind noch keine Agentenläufe erfasst.',
-  shownOfTotal: '{{shown}} von {{total}} angezeigt',
 };

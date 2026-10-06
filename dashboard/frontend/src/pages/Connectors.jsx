@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Info, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
+import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
 import ChannelConnector from '../components/connectors/ChannelConnector';
@@ -38,23 +38,17 @@ const channel = (id, icon) => ({ id, icon, Component: () => <ChannelConnector na
 // A connector lives only in the workspace that defines it: the default
 // workspace's definition works everywhere, another workspace's own
 // definition works only there (connectors/channels/store.py). Every card
-// below says which one it is (ConnectorSourceBadge); this banner says it
+// below says which one it is (ConnectorSourceBadge); the page's ⓘ says it
 // once for the page, naming the workspace these tabs are about to change.
-function WorkspaceScopeBanner() {
+function WorkspaceScopeNote() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   return (
-    <div
-      className="flex items-start gap-2 text-sm text-gray-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2"
-      data-testid="connectors-workspace-banner"
-    >
-      <Info className="w-4 h-4 mt-0.5 text-indigo-500 shrink-0" />
-      <span>
-        {t('connectors.workspaceBanner.title', { workspace })}{' '}
-        {t('connectors.workspaceBanner.rule')}
-      </span>
-    </div>
+    <span className="block mt-2" data-testid="connectors-workspace-banner">
+      {t('connectors.workspaceBanner.title', { workspace })}{' '}
+      {t('connectors.workspaceBanner.rule')}
+    </span>
   );
 }
 
@@ -117,10 +111,14 @@ export default function Connectors() {
       <PageHeader
         icon={Link2}
         title={t('connectors.title')}
-        description={t('connectors.description')}
+        description={(
+          <>
+            {t('connectors.description')}
+            <WorkspaceScopeNote />
+          </>
+        )}
       />
 
-      <WorkspaceScopeBanner />
       <ProposedConnections />
 
       <div className="flex flex-wrap gap-1 border-b border-gray-200">

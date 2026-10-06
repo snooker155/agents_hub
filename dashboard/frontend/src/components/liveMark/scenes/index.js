@@ -1,5 +1,6 @@
 import { mountSearch } from './search';
 import { mountWork } from './work';
+import { CLIP_STATES, RELAY_STATES, REBUILD_STATES, isClip, mountClip } from './clips';
 
 /*
  * The live mark's scene states: searches (search.js) and making or running
@@ -8,6 +9,10 @@ import { mountWork } from './work';
  * mark when the state changes; the mark is where LiveMark hands over to the
  * next state. One search hands over to the next without the mark: the lens
  * stays and only the field under it changes.
+ *
+ * The artifact's other animations, its rebuilds of the mark and its hub
+ * relay stories, are clips (clips.js): each is its own state and hands over
+ * through the mark like the rest.
  */
 
 const SEARCH = {
@@ -40,11 +45,13 @@ const WORK = {
 
 export const SEARCH_STATES = Object.keys(SEARCH);
 export const WORK_STATES = Object.keys(WORK);
-export const SCENE_STATES = [...SEARCH_STATES, ...WORK_STATES];
+export { RELAY_STATES, REBUILD_STATES };
+export const SCENE_STATES = [...SEARCH_STATES, ...WORK_STATES, ...CLIP_STATES];
 
 export function isScene(state) {
   return Object.prototype.hasOwnProperty.call(SEARCH, state)
-    || Object.prototype.hasOwnProperty.call(WORK, state);
+    || Object.prototype.hasOwnProperty.call(WORK, state)
+    || isClip(state);
 }
 
 /**
@@ -54,6 +61,7 @@ export function isScene(state) {
  * scene carries on into `next` (another search does) rather than folding.
  */
 export function mountScene(state, g) {
+  if (isClip(state)) return mountClip(g, state);
   const ctl = SEARCH[state] ? mountSearch(g, SEARCH[state])
     : WORK[state] ? mountWork(g, WORK[state]) : null;
   if (!ctl) return null;

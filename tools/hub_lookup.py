@@ -44,14 +44,15 @@ def _calling_agent() -> str:
 
 class HubLookupInput(BaseModel):
     kind: str = Field(..., description=(
-        "What to look up: run (alias message), session, cost, budget, model, agent, notification, "
+        "What to look up: run (alias message), session, cost, budget, model, voice (the transcription "
+        "and speech models and the voice), agent, notification, "
         "approval, task, view, project, scenario, loop, flow, team, job, instance, service, deployment, "
         "environment, browser, watcher, pulse (proactive agents), eval, guardrail, tool, connection, "
         "skill, mcp, widget, registry, account"))
     query: Optional[str] = Field(None, description="Text to filter the list by (a name, a status, an agent id)")
     id: Optional[str] = Field(None, description=(
         "Describe one record instead of listing: a run id, a session id, an agent id, 'provider/model', "
-        "a workspace name for budget, or today, week or month for cost"))
+        "a workspace name for budget, today, week or month for cost, or transcription or speech for voice"))
     workspace: Optional[str] = Field(None, description=(
         "A workspace the person can reach, or 'all'; empty for the one this turn runs in"))
     limit: int = Field(10, ge=1, le=30, description="Most rows to list")

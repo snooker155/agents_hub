@@ -69,6 +69,30 @@ def test_only_the_last_forty_messages_travel():
     assert messages[0].content == "m20" and messages[-1].content == "m59"
 
 
+def test_the_window_start_moves_in_steps_so_a_prompt_cache_keeps_its_hold():
+    """A window that slid by one turn every turn changed the start of the
+    conversation on every turn, and a local model's prompt cache recomputed
+    the whole history each time. In steps, the start stays put for several turns."""
+    from chat.context import HISTORY_WINDOW_STEP, window_start
+    starts = {build_history_messages(_history(*[("user", f"m{i}") for i in range(n)]))[0].content
+              for n in range(41, 51)}
+    assert starts == {"m10"}
+    assert build_history_messages(_history(*[("user", f"m{i}") for i in range(51)]))[0].content == "m20"
+    assert window_start(40, 40) == 0 and window_start(41, 40) == HISTORY_WINDOW_STEP
+    assert window_start(12, 10, step=5) == 5
+
+
+def test_the_budget_cut_also_moves_in_steps():
+    firsts = set()
+    for extra in range(4):
+        history = _history(*[("user", f"{i:02d}" + "y" * 3998) for i in range(18 + extra)])
+        messages = build_history_messages(history)
+        assert sum(len(m.content) for m in messages) <= HISTORY_CHAR_BUDGET
+        firsts.add(messages[0].content[:2])
+    # Four more turns, one or two starting points rather than four.
+    assert len(firsts) <= 2
+
+
 def test_one_enormous_message_is_truncated_rather_than_dropped():
     messages = build_history_messages(_history(("user", "x" * 9000)))
     assert len(messages) == 1

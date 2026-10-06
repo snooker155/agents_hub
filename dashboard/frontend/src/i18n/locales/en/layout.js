@@ -6,6 +6,12 @@ export default {
   workspacePersonalOf: '{{name}} (personal)',
   expandSidebar: 'Expand sidebar',
   collapseSidebar: 'Collapse sidebar',
+  openMenu: 'Open menu',
+  closeMenu: 'Close menu',
+  install: {
+    button: 'Install app',
+    iosHint: 'In Safari, tap Share, then Add to Home Screen. The hub opens from its own icon, full screen.',
+  },
   theme: {
     light: 'Light',
     dark: 'Dark',

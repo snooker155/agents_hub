@@ -5,8 +5,9 @@ import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
-import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
-import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines } from 'lucide-react';
+import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
+import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
+import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines, Menu, X } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -17,6 +18,8 @@ import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
 import HelpPanel from './help/HelpPanel';
 import { isEmbedded } from './embed';
+import WakeListener from './assistant/WakeListener';
+import InstallAppButton from './InstallAppButton';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -64,7 +67,7 @@ const Layout = ({ children }) => {
   const auth = useAuth();
   const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState([]);
-  // workspaceModel: full model state returned by GET /api/workspaces/{name}/model
+  // workspaceModel: the `model` part of GET /api/workspaces/{name}/summary
   // - global_default: DEFAULT_PROVIDER + its model from .env (lowest-priority fallback)
   // - workspace_default: resolved from workspace settings in .workspace.json
   // - override: explicitly set via UI picker
@@ -86,15 +89,17 @@ const Layout = ({ children }) => {
       return false;
     }
   });
-  // On a phone the full sidebar would take most of the screen: it starts
-  // folded there, and unfolding it is for this visit only.
+  // On a phone the menu is a drawer over the page, closed until the menu
+  // button opens it and closed again by any navigation. Even folded to icons
+  // it would cost a sixth of the screen there.
   const narrow = useNarrow();
-  const [narrowExpanded, setNarrowExpanded] = useState(false);
-  const sidebarCollapsed = narrow ? !narrowExpanded : sidebarPref;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const sidebarCollapsed = narrow ? false : sidebarPref;
   const modelPickerRef = useRef(null);
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
 
   const toggleSidebar = () => {
-    if (narrow) { setNarrowExpanded((v) => !v); return; }
+    if (narrow) { setDrawerOpen((v) => !v); return; }
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
@@ -104,23 +109,22 @@ const Layout = ({ children }) => {
     });
   };
 
+  // The list is fetched once (and again on a live change below), not on
+  // every switch: picking a workspace does not change what exists.
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   useEffect(() => {
-    const fetchWorkspaces = async () => {
-      try {
-        const resp = await getWorkspaces();
-        setWorkspaces(resp.data);
-        if (resp.data.length === 0) return;
-        const names = resp.data.map(w => w.name);
-        const stale = selectedWorkspace && !names.includes(selectedWorkspace);
-        if (!selectedWorkspace || stale) {
-          setSelectedWorkspace(resp.data[0].name);
-        }
-      } catch (error) {
-        console.error('Error fetching workspaces:', error);
-      }
-    };
-    fetchWorkspaces();
-  }, [selectedWorkspace, setSelectedWorkspace]);
+    getWorkspaces()
+      .then((resp) => { setWorkspaces(resp.data); setWorkspacesLoaded(true); })
+      .catch((error) => console.error('Error fetching workspaces:', error));
+  }, []);
+
+  // Fall back to the first workspace when none is picked yet or the picked
+  // one is gone.
+  useEffect(() => {
+    if (!workspacesLoaded || workspaces.length === 0) return;
+    const stale = selectedWorkspace && !workspaces.some(w => w.name === selectedWorkspace);
+    if (!selectedWorkspace || stale) setSelectedWorkspace(workspaces[0].name);
+  }, [workspacesLoaded, workspaces, selectedWorkspace, setSelectedWorkspace]);
 
   // Keep the picker in sync when workspaces are created/deleted elsewhere.
   useLiveRefetch(() => {
@@ -156,8 +160,8 @@ const Layout = ({ children }) => {
   // Re-fetch workspace model whenever workspace changes
   useEffect(() => {
     if (!selectedWorkspace) return;
-    getWorkspaceModel(selectedWorkspace)
-      .then(({ data }) => setWorkspaceModel(data))
+    loadWorkspaceSummary(selectedWorkspace)
+      .then((summary) => { if (summary?.model) setWorkspaceModel(summary.model); })
       .catch(() => setWorkspaceModel(prev => ({ ...prev, override: { provider: '', model: '' }, workspace_default: { provider: '', model: '' } })));
   }, [selectedWorkspace]);
 
@@ -225,7 +229,9 @@ const Layout = ({ children }) => {
       const newOverride = (!provider || provider === 'workspace_default')
         ? { provider: '', model: '' }
         : { provider, model };
-      setWorkspaceModel(prev => ({ ...prev, override: newOverride }));
+      const next = { ...workspaceModel, override: newOverride };
+      setWorkspaceModel(next);
+      patchWorkspaceSummary(selectedWorkspace || 'default', { model: next });
       setShowModelPicker(false);
     } catch (e) {
       console.error('Error switching workspace model:', e);
@@ -404,21 +410,61 @@ const Layout = ({ children }) => {
   const currentThemeOption = THEME_OPTIONS.find(o => o.value === theme) || THEME_OPTIONS[2];
   const ThemeIcon = currentThemeOption.icon;
 
+  // In the header on a wide screen, at the foot of the menu on a phone.
+  const themeButton = (
+    <button
+      onClick={cycleTheme}
+      title={t('layout.theme.tooltip', { theme: t(currentThemeOption.labelKey) })}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
+    >
+      <ThemeIcon className="w-4 h-4" />
+      <span>{t(currentThemeOption.labelKey)}</span>
+    </button>
+  );
+  // Who is signed in, and the way out. Only under AUTH_MODE=multi: in the
+  // single-operator modes there is nobody to be signed in as and nothing to
+  // sign out of.
+  const userControls = auth.mode === MULTI && auth.user ? (
+    <div className="flex items-center gap-2">
+      <span
+        title={auth.user.username}
+        className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase"
+      >
+        {String(auth.user.username || '?').slice(0, 2)}
+      </span>
+      <button
+        type="button"
+        onClick={auth.logout}
+        title={t('auth.logout')}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
+      >
+        <LogOut className="w-3.5 h-3.5" />
+        <span>{t('auth.logout')}</span>
+      </button>
+    </div>
+  ) : null;
+
   // A page the assistant opened beside itself ("show on screen"): the page
   // alone, without the sidebar, the header and the panels around it.
   if (isEmbedded()) {
-    return <main className="app-shell h-screen overflow-y-auto">{children}</main>;
+    return <main className="app-shell h-viewport overflow-y-auto">{children}</main>;
   }
 
   return (
-    <div className="app-shell flex h-screen overflow-hidden">
+    <div className="app-shell flex h-viewport overflow-hidden px-safe">
       {/* First-run onboarding (auto-opens once; re-openable from Docs) */}
       <OnboardingModal />
-      {/* Sidebar */}
+      {narrow && drawerOpen && (
+        <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
+      {/* Sidebar: a column beside the page, or on a phone a drawer over it */}
       <div
+        inert={narrow && !drawerOpen}
         className={`${
-          sidebarCollapsed ? 'w-16' : 'w-64'
-        } bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto overflow-x-hidden flex flex-col transition-[width] duration-200`}
+          narrow
+            ? `fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] pt-safe pb-safe transition-transform duration-200 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`
+            : `${sidebarCollapsed ? 'w-16' : 'w-64'} h-full transition-[width] duration-200`
+        } bg-white shadow-md border-r border-gray-200 overflow-y-auto overflow-x-hidden flex flex-col shrink-0`}
       >
         {/* The mark and the name, centred; folded, the mark alone. The fold
             button itself is in the top bar, left of the workspace. */}
@@ -426,6 +472,16 @@ const Layout = ({ children }) => {
           <img src={LOGO_URL} alt={sidebarCollapsed ? t('layout.serviceName') : ''} className={`${sidebarCollapsed ? 'w-9 h-9' : 'w-8 h-8'} shrink-0`} />
           {!sidebarCollapsed && (
             <h1 className="text-2xl font-bold leading-none text-indigo-600 truncate min-w-0">{t('layout.serviceName')}</h1>
+          )}
+          {narrow && (
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(false)}
+              aria-label={t('layout.closeMenu')}
+              className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
           )}
         </div>
         <nav className="mt-2 flex-1 pb-6">
@@ -482,24 +538,39 @@ const Layout = ({ children }) => {
             </div>
           ))}
         </nav>
+        <div className="border-t border-gray-100 py-2">
+          <InstallAppButton compact={sidebarCollapsed} />
+          {/* On a phone the header keeps only what is used most; the rest of
+              its controls live here, at the foot of the menu. */}
+          {narrow && (
+            <div className="px-4 pt-2 pb-1 flex flex-wrap items-center gap-2">
+              {themeButton}
+              <LanguageSwitcher up />
+              {userControls}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top Navbar */}
-        <header className="bg-white shadow-sm border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 z-30">
-          <div className="flex items-center space-x-4">
+        {/* box-content: the bar's height is its row, and the status bar of an
+            installed app on a phone (pt-safe) comes on top of it. */}
+        <header className="bg-white shadow-sm border-b border-gray-200 h-14 sm:h-16 box-content pt-safe shrink-0 flex items-center justify-between gap-2 px-3 sm:px-6 z-30">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <button
               onClick={toggleSidebar}
-              title={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-              aria-label={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              title={narrow ? t('layout.openMenu') : sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              aria-label={narrow ? t('layout.openMenu') : sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
               className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
             >
-              {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+              {narrow ? <Menu className="w-5 h-5" /> : sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
             </button>
-            <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
+            <span className="hidden sm:inline text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
             <select
-              className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              aria-label={t('layout.workspaceLabel')}
+              className="min-w-0 max-w-[9rem] sm:max-w-none truncate bg-gray-50 border border-gray-200 rounded-lg px-2 sm:px-3 py-1.5 text-sm font-semibold text-gray-700 focus:outline-none"
               value={selectedWorkspace}
               onChange={handleWorkspaceChange}
             >
@@ -509,26 +580,29 @@ const Layout = ({ children }) => {
                 </option>
               ))}
             </select>
-            <IsolationBadge workspace={selectedWorkspace} />
-            <div className="h-5 w-px bg-gray-200" />
-            {/* Global model picker */}
-            <div className="relative" ref={modelPickerRef}>
+            <span className="hidden sm:contents"><IsolationBadge workspace={selectedWorkspace} /></span>
+            <div className="hidden sm:block h-5 w-px bg-gray-200" />
+            {/* Global model picker; on a phone the chip is its icon alone */}
+            <div className="relative shrink-0" ref={modelPickerRef}>
               <button
                 onClick={openModelPicker}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                title={narrow ? `${PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}${displayModel.model ? ` · ${displayModel.model}` : ''}` : undefined}
+                className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
                   PROVIDER_CONFIG[displayModel.provider]?.color || 'bg-gray-50 border-gray-200 text-gray-700'
                 }`}
               >
                 {currentStatusDot()}
                 <Cpu className="w-3.5 h-3.5" />
-                <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
-                {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
-                {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
-                {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
+                <span className="hidden sm:contents">
+                  <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
+                  {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
+                  {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
+                  {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
+                </span>
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
               {showModelPicker && (
-                <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
+                <div className="header-sheet absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
                   {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback */}
                   <button
                     onClick={() => handleModelSwitch('global', '')}
@@ -595,7 +669,7 @@ const Layout = ({ children }) => {
               )}
             </div>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}
@@ -604,7 +678,8 @@ const Layout = ({ children }) => {
             <button
               onClick={backendOnline ? toggleLiveUpdates : undefined}
               title={!backendOnline ? t('layout.live.backendOffline') : liveUpdates ? t('layout.live.pause') : t('layout.live.resume')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              aria-label={!backendOnline ? t('layout.live.offline') : liveUpdates ? t('layout.live.online') : t('layout.live.paused')}
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
                 !backendOnline
                   ? 'bg-red-50 border-red-200 text-red-600 cursor-not-allowed'
                   : liveUpdates
@@ -613,52 +688,25 @@ const Layout = ({ children }) => {
               }`}
             >
               {!backendOnline
-                ? <><WifiOff className="w-3.5 h-3.5" />{t('layout.live.offline')}</>
+                ? <><WifiOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">{t('layout.live.offline')}</span></>
                 : liveUpdates
-                ? <><Radio className="w-3.5 h-3.5 animate-pulse" />{t('layout.live.online')}</>
-                : <><Pause className="w-3.5 h-3.5" />{t('layout.live.paused')}</>}
+                ? <><Radio className="w-3.5 h-3.5 animate-pulse" /><span className="hidden sm:inline">{t('layout.live.online')}</span></>
+                : <><Pause className="w-3.5 h-3.5" /><span className="hidden sm:inline">{t('layout.live.paused')}</span></>}
             </button>
-            {/* Theme toggle */}
-            <button
-              onClick={cycleTheme}
-              title={t('layout.theme.tooltip', { theme: t(currentThemeOption.labelKey) })}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
-            >
-              <ThemeIcon className="w-4 h-4" />
-              <span>{t(currentThemeOption.labelKey)}</span>
-            </button>
+            {!narrow && themeButton}
             {/* Interface language */}
-            <LanguageSwitcher />
-            {/* Who is signed in, and the way out. Only under AUTH_MODE=multi:
-                in the single-operator modes there is nobody to be signed in
-                as and nothing to sign out of. */}
-            {auth.mode === MULTI && auth.user && (
-              <div className="flex items-center gap-2">
-                <span
-                  title={auth.user.username}
-                  className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase"
-                >
-                  {String(auth.user.username || '?').slice(0, 2)}
-                </span>
-                <button
-                  type="button"
-                  onClick={auth.logout}
-                  title={t('auth.logout')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>{t('auth.logout')}</span>
-                </button>
-              </div>
-            )}
+            {!narrow && <LanguageSwitcher />}
+            {!narrow && userControls}
             {/* Help (docs/help.md): the Support agent, for a user who is lost */}
             <HelpPanel />
           </div>
         </header>
-        <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
+        <main className="flex-1 min-h-0 overflow-y-auto pb-safe">{children}</main>
         {/* The chat that follows the page: a button in the corner everywhere
             but on the Chat page, which is one already. */}
         <PageChatPanel />
+        {/* The assistant's wake phrase on every page, when it is chosen on the Assistant page. */}
+        <WakeListener />
       </div>
     </div>
   );

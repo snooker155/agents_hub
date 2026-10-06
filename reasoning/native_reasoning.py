@@ -10,7 +10,12 @@ using the `think` scratchpad tool — e.g. LM Studio / Ollama reasoning models
 - inline ``<think>...</think>`` tags inside the message content (LM Studio's
   default pass-through). NOTE: langchain-openai (<= 0.3.x) does NOT copy a
   separate ``reasoning_content`` response field into ``additional_kwargs``, so
-  with LM Studio the inline-tags shape is the one that reliably survives.
+  with LM Studio the inline-tags shape is the one that reliably survives;
+- an OpenAI Responses API reasoning item (o-series, gpt-5). OpenAI never
+  returns the raw reasoning, only a summary of it when one is requested, as
+  ``{"type": "reasoning", "summary": [{"type": "summary_text", "text": ...}]}``:
+  in ``additional_kwargs["reasoning"]`` (langchain's v0 output) or as a
+  content block (``responses/v1``).
 
 This module extracts that reasoning so the harness can:
 
@@ -51,6 +56,38 @@ def _message_text(content: Any) -> str:
     return ""
 
 
+def reasoning_summary_text(item: Any) -> str:
+    """The summary parts of an OpenAI reasoning item, joined, or ''."""
+    if not isinstance(item, dict):
+        return ""
+    parts = []
+    for part in item.get("summary") or []:
+        text = part.get("text") if isinstance(part, dict) else None
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+    return "\n\n".join(parts)
+
+
+def reasoning_summary_delta(item: Any) -> str:
+    """The text one streamed chunk adds to an OpenAI reasoning summary.
+
+    Each chunk carries a slice of one summary part. A new part opens with an
+    empty slice, which becomes the paragraph break between parts.
+    """
+    if not isinstance(item, dict):
+        return ""
+    out = []
+    for part in item.get("summary") or []:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            out.append(text)
+        elif text == "" and (part.get("index") or 0) > 0:
+            out.append("\n\n")
+    return "".join(out)
+
+
 def extract_reasoning_from_message(message: Any) -> str:
     """Return the native reasoning text carried by *message*, or ''."""
     if message is None:
@@ -61,7 +98,11 @@ def extract_reasoning_from_message(message: Any) -> str:
     reasoning = kwargs.get("reasoning_content") or kwargs.get("reasoning")
     if isinstance(reasoning, str) and reasoning.strip():
         return reasoning.strip()
-    # 2. Structured content blocks (Anthropic-style thinking blocks).
+    summary = reasoning_summary_text(reasoning)
+    if summary:
+        return summary
+    # 2. Structured content blocks (Anthropic-style thinking blocks, OpenAI
+    #    reasoning items in the responses/v1 output).
     content = getattr(message, "content", None)
     if isinstance(content, list):
         parts = []
@@ -70,6 +111,10 @@ def extract_reasoning_from_message(message: Any) -> str:
                 text = block.get("thinking") or block.get("reasoning_content") or block.get("text")
                 if isinstance(text, str) and text.strip():
                     parts.append(text.strip())
+            elif isinstance(block, dict) and block.get("type") == "reasoning":
+                text = reasoning_summary_text(block)
+                if text:
+                    parts.append(text)
         if parts:
             return "\n\n".join(parts)
     # 3. Inline <think> tags in the text (LM Studio default).
@@ -261,6 +306,8 @@ __all__ = [
     "NativeReasoningCallback",
     "ThinkTagStreamFilter",
     "extract_reasoning_from_message",
+    "reasoning_summary_delta",
+    "reasoning_summary_text",
     "extract_reasoning_from_llm_result",
     "strip_think_tags",
 ]

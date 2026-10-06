@@ -6,7 +6,7 @@ import {
 import { useWorkspace } from '../workspace';
 import { useI18n } from '../../i18n';
 
-const selectCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const selectCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none';
 const FILTER_KINDS = ['full', 'summary', 'last_n', 'none'];
 const DEFAULT_LAST_N = 10;
 const MAX_LAST_N = 200;

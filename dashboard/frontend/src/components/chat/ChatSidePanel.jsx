@@ -4,6 +4,10 @@ import CodePanel from './CodePanel';
 import { Code2, FileText, RefreshCw, X } from 'lucide-react';
 import { useChatPage } from './context';
 
+// On a phone there is no room beside the conversation: a panel covers the
+// whole screen instead, and its X closes it as anywhere else.
+const PHONE_SHEET = 'max-sm:fixed max-sm:inset-0 max-sm:z-40 max-sm:min-w-0 max-sm:w-auto max-sm:pt-safe max-sm:pb-safe';
+
 /**
  * The columns beside the transcript, toggled from the top bar: the files and
  * views the turns produced (Artifacts) or the code they wrote (Code), one at
@@ -12,7 +16,7 @@ import { useChatPage } from './context';
  */
 function Column({ width, title, icon: Icon, actions = null, onClose, t, children, testId }) {
   return (
-    <div className={`${width} bg-white border-l border-gray-200 flex flex-col min-h-0`} data-testid={testId}>
+    <div className={`${width} ${PHONE_SHEET} bg-white border-l border-gray-200 flex flex-col min-h-0`} data-testid={testId}>
       <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between shrink-0">
         {typeof title === 'string' ? (
           <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
@@ -152,7 +156,7 @@ export default function ChatSidePanel() {
         </Column>
       )}
       {showProcess && (
-        <div className="w-[400px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col min-h-0" data-testid="chat-process-column">
+        <div className={`w-[400px] flex-shrink-0 ${PHONE_SHEET} bg-white border-l border-gray-200 flex flex-col min-h-0`} data-testid="chat-process-column">
           {processHeader}
           <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">{processBody}</div>
         </div>

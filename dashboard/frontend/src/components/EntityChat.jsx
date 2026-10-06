@@ -248,7 +248,7 @@ export default function EntityChat({
               appendAfterLive({ k: 'tool', tool: ev.tool, input: ev.input, status: 'running' });
               break;
             case 'tool_end':
-              settleTool({ status: 'done' });
+              settleTool({ status: ev.status === 'error' ? 'error' : 'done', ...(ev.memory ? { memory: ev.memory } : {}) });
               break;
             case 'tool_error':
               settleTool({ status: 'error', error: ev.error || '' });
@@ -561,7 +561,7 @@ export default function EntityChat({
             disabled={busy}
             // One line is 40px (line 20 + padding 16 + border 2), the buttons'
             // h-10, so the row lines up until the field grows.
-            className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:bg-gray-50"
+            className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50"
           />
           {busy ? (
             <button

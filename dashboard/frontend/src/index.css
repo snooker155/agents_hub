@@ -41,6 +41,62 @@ html.dark body {
   background-color: var(--surface-page);
 }
 
+/* ── phones and the installed app (docs/pwa.md) ─────────────────────────── */
+
+@layer utilities {
+  /* The visible height: on a phone 100vh counts the space behind the browser's
+     address bar, so a full-height shell would hide its own foot under it. */
+  .h-viewport {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* The notch, the status bar and the home indicator. With viewport-fit=cover
+     (index.html) the installed app draws under them; these keep content clear.
+     Zero on a desktop and in a phone's browser tab in portrait. */
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .mb-safe { margin-bottom: env(safe-area-inset-bottom, 0px); }
+  .px-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}
+
+@media (max-width: 639px) {
+  /* iOS zooms into any field whose text is under 16px when it gets focus, and
+     does not zoom back out. 16px on a phone keeps the page where it is. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* A header dropdown (the model picker, notifications, watchers) on a phone:
+     a sheet under the header from edge to edge, rather than a popover hung
+     off its button that runs past the side of the screen. */
+  .header-sheet {
+    position: fixed !important;
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+    top: calc(3.5rem + env(safe-area-inset-top, 0px)) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    margin-top: 0.25rem !important;
+    max-height: calc(100dvh - 5rem - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+  }
+}
+
+/* Form fields keep their resting look when focused: no browser outline, and
+   the components carry no focus ring or border classes either. */
+input:focus,
+select:focus,
+textarea:focus,
+[contenteditable]:focus {
+  outline: none;
+}
+
 ::selection {
   background: rgba(var(--brand-rgb), 0.28);
   color: var(--text-primary);

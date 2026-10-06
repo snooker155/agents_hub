@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain, HardDrive, Waypoints, Sparkles,
+  Brain, HardDrive, Waypoints, Sparkles, Plug,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -15,8 +15,11 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
+import ServingSection from '../components/models/ServingSection';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import PageLoader from '../components/PageLoader';
+import ServerStatus from '../components/models/ServerStatus';
+import useLocalServers from '../components/models/useLocalServers';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -41,7 +44,7 @@ const orderProviders = (catalog) => {
   return [...builtins, ...custom];
 };
 
-const inputCls = "border border-gray-300 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none";
+const inputCls = "border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none";
 
 // Providers with more than this many models start collapsed on first load, so a
 // long list (e.g. OpenAI) doesn't dominate the page. Per-provider collapse state
@@ -60,12 +63,62 @@ const fmtCost = (n) => '$' + (n || 0).toFixed(2);
 
 // ── Catalog tab ───────────────────────────────────────────────────────────────
 
+const EFFORT_KEYS = {
+  none: 'models.effortNone', minimal: 'models.effortMinimal', low: 'models.effortLow',
+  medium: 'models.effortMedium', high: 'models.effortHigh', off: 'models.effortOff',
+};
+
+// A model's own temperature; empty = the global default. Where the model
+// rejects a temperature (OpenAI reasoning families) the field is disabled, and
+// where it takes one only with thinking off, the hint says so.
+function TemperatureInput({ model, globalTemperature, onChange }) {
+  const { t } = useI18n();
+  const mode = model.reasoning?.temperature || 'always';
+  const hint = mode === 'never'
+    ? t('models.temperatureNever')
+    : [t('models.temperatureHint', { value: globalTemperature }),
+      mode === 'when_off' ? t('models.temperatureWhenOff') : ''].filter(Boolean).join(' ');
+  return (
+    <input
+      type="number" min="0" max="2" step="0.1"
+      value={model.temperature ?? ''}
+      placeholder={String(globalTemperature)}
+      disabled={mode === 'never'}
+      onChange={(e) => onChange(e.target.value === '' ? null : Math.min(2, Math.max(0, parseFloat(e.target.value) || 0)))}
+      className={`${inputCls} w-16 disabled:opacity-40`}
+      title={hint}
+      aria-label={t('models.temperature')}
+    />
+  );
+}
+
+// The effort the provider applies when none is asked for, and what thinking
+// level off sends. Unknown for providers the hub has no table for.
+function ReasoningDefaults({ profile }) {
+  const { t } = useI18n();
+  if (!profile) return <span className="text-xs text-gray-300">—</span>;
+  const effort = (e) => (EFFORT_KEYS[e] ? t(EFFORT_KEYS[e]) : e);
+  let off = '';
+  if (profile.off) off = t('models.reasoningOff', { effort: effort(profile.off) });
+  else if (profile.default !== 'off' && profile.default !== 'none') off = t('models.reasoningOffKeeps', { effort: effort(profile.default) });
+  return (
+    <div className="text-xs leading-tight" title={t('models.reasoningHint')}>
+      <div className="text-gray-700">{effort(profile.default)}</div>
+      {off && profile.off !== profile.default && <div className="text-gray-400">{off}</div>}
+    </div>
+  );
+}
+
 function CatalogTab() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const [catalog, setCatalog] = useState(null);
+  // Whether Ollama, LM Studio and the hub runtime answer, for a marker by their names.
+  const servers = useLocalServers();
   // Read-only global default (provider + model) sourced from .env.
   const [globalDefault, setGlobalDefault] = useState({ provider: '', model: '' });
+  // Global temperature (LLM_TEMPERATURE), shown where a model has none of its own.
+  const [globalTemperature, setGlobalTemperature] = useState(0);
   // Per-workspace default model (model_override on the active workspace). '' provider = inherit global.
   const [wsModel, setWsModel] = useState(null);     // raw GET /model response
   const [wsForm, setWsForm] = useState({ provider: '', model: '' });
@@ -119,6 +172,7 @@ function CatalogTab() {
         const providers = data.providers || {};
         setCatalog(providers);
         setGlobalDefault(data.global_default || { provider: '', model: '' });
+        setGlobalTemperature(data.global_temperature ?? 0);
         setDirty(false);
         // First time we see a provider, default long lists to collapsed. Providers
         // already remembered in localStorage keep the user's last choice.
@@ -182,7 +236,7 @@ function CatalogTab() {
       ...c,
       [provider]: {
         ...c[provider],
-        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto' }],
+        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto', temperature: null }],
       },
     }));
     setNewModel((s) => ({ ...s, [provider]: '' }));
@@ -207,6 +261,7 @@ function CatalogTab() {
       .then(({ data }) => {
         setCatalog(data.providers || {});
         setGlobalDefault(data.global_default || globalDefault);
+        setGlobalTemperature(data.global_temperature ?? globalTemperature);
         setDirty(false);
       })
       .catch((e) => console.error('Error saving catalog:', e))
@@ -336,6 +391,7 @@ function CatalogTab() {
               >
                 <Chevron className="w-4 h-4 text-gray-400 shrink-0" />
                 <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+                <ServerStatus status={servers[provider]} />
                 <span className="text-xs text-gray-400 shrink-0">{t('models.enabledOfTotal', { enabled: enabledCount, total: entry.models.length })}</span>
                 {entry.default && (
                   <span className="text-xs text-gray-400 truncate hidden sm:inline">{t('models.default')} <span className="font-mono text-gray-500">{entry.default}</span></span>
@@ -420,12 +476,14 @@ function CatalogTab() {
                             <th className="px-2 py-1.5 font-medium w-28" title={t('models.cached1mHint')}>{t('models.cached1m')}</th>
                             <th className="px-2 py-1.5 font-medium w-28">{t('models.output1m')}</th>
                             <th className="px-2 py-1.5 font-medium w-28" title={t('models.contextWindowMaxInputTokens')}>{t('models.context')}</th>
+                            <th className="px-2 py-1.5 font-medium w-20" title={t('models.temperatureHint', { value: globalTemperature })}>{t('models.temperature')}</th>
+                            <th className="px-2 py-1.5 font-medium w-36" title={t('models.reasoningHint')}>{t('models.reasoning')}</th>
                             <th className="px-2 py-1.5 font-medium w-10"></th>
                           </tr>
                         </thead>
                         <tbody>
                           {visible.length === 0 ? (
-                            <tr><td colSpan={8} className="px-2 py-4 text-center text-gray-400 text-xs">{t('models.noModelsMatch', { query: q })}</td></tr>
+                            <tr><td colSpan={10} className="px-2 py-4 text-center text-gray-400 text-xs">{t('models.noModelsMatch', { query: q })}</td></tr>
                           ) : visible.map((m) => (
                             <tr key={m.id} className="border-t border-gray-50 hover:bg-gray-50">
                               <td className="px-2 py-1.5">
@@ -486,6 +544,16 @@ function CatalogTab() {
                                   className={`${inputCls} w-24`}
                                   title={t('models.contextWindowInTokensMax')}
                                 />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <TemperatureInput
+                                  model={m}
+                                  globalTemperature={globalTemperature}
+                                  onChange={(temperature) => updateModel(provider, m.id, { temperature })}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <ReasoningDefaults profile={m.reasoning} />
                               </td>
                               <td className="px-2 py-1.5">
                                 <div className="flex items-center gap-2">
@@ -683,6 +751,10 @@ function SpecialModelsTab() {
           {t('models.specialInWorkspaceSettings')}
         </Link>
       </p>
+      <p className="text-xs text-gray-500">
+        {t('models.specialLocalHint')}{' '}
+        <Link to="/models?tab=local" className="text-indigo-600 hover:text-indigo-800">{t('models.specialLocalLink')}</Link>
+      </p>
       <WorkspaceSpecialModels key={workspace} workspace={workspace} />
     </div>
   );
@@ -692,13 +764,17 @@ function SpecialModelsTab() {
 
 export default function Models() {
   const { t } = useI18n();
-  const [tab, setTab] = useState('catalog');
+  // The tab lives in the address (?tab=local), so other pages can link to it.
+  const [params, setParams] = useSearchParams();
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
     { id: 'local', label: t('localModels.tab'), icon: HardDrive },
     { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
+    { id: 'endpoint', label: t('models.tabs.endpoint'), icon: Plug },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
+  const tab = TABS.some((d) => d.id === params.get('tab')) ? params.get('tab') : 'catalog';
+  const setTab = (id) => setParams(id === 'catalog' ? {} : { tab: id }, { replace: true });
   return (
     <PageContainer>
       <PageHeader
@@ -706,7 +782,7 @@ export default function Models() {
         title={t('models.models')}
         description={t('models.theCatalogOfProvidersAnd')}
       />
-      <div className="flex items-center gap-1 border-b border-gray-200">
+      <div className="flex items-center gap-1 border-b border-gray-200 overflow-x-auto">
         {TABS.map((tabDef) => {
           const Icon = tabDef.icon;
           const active = tab === tabDef.id;
@@ -714,7 +790,7 @@ export default function Models() {
             <button
               key={tabDef.id}
               onClick={() => setTab(tabDef.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex shrink-0 items-center gap-2 px-3 sm:px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                 active ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -726,6 +802,7 @@ export default function Models() {
       {tab === 'catalog' && <CatalogTab />}
       {tab === 'local' && <LocalTab />}
       {tab === 'special' && <SpecialModelsTab />}
+      {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>
   );

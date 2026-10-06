@@ -77,7 +77,13 @@ export function colorForType(type, allTypes) {
 
 // A personal pool (memory/personal.py) is stored with an English name and
 // description for the agent's tools; the UI shows them in the viewer's
-// language. Only its owner ever sees one, so "your" is always right.
+// language. Only its owner ever sees one, so "your" is always right. The
+// default workspace lists every workspace's pools, where each personal pool
+// would read the same, so there `withWorkspace` names the one it belongs to.
 export const isPersonalPool = (m) => m?.kind === 'personal';
-export const poolName = (m, t) => (isPersonalPool(m) ? t('memoryManager.personalTitle') : m?.name);
+export const poolName = (m, t, withWorkspace = false) => {
+  if (!isPersonalPool(m)) return m?.name;
+  const title = t('memoryManager.personalTitle');
+  return withWorkspace ? `${title} · ${m.workspace || 'default'}` : title;
+};
 export const poolDescription = (m, t) => (isPersonalPool(m) ? t('memoryManager.personalHint') : m?.description);

@@ -366,7 +366,10 @@ def _visible_procedures(store: "ProcedureStore", agent_id: str) -> List[Procedur
         owners = skill_owner_ids(agent_id)
     except Exception:  # noqa: BLE001 - an unreadable registry means own skills only
         owners = [agent_id]
-    procedures = store.load()
+    # By name within each owner: the store's own order can change after an
+    # update, and this list is part of the system prompt, whose start must
+    # stay the same between calls for a prompt cache to hold it.
+    procedures = sorted(store.load(), key=lambda p: (p.name.strip().lower(), p.name))
     out: List[Procedure] = []
     names: set = set()
     for owner in owners:

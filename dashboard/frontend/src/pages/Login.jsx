@@ -9,7 +9,7 @@ import { useI18n } from '../i18n';
 import OidcCallback from './OidcCallback';
 
 const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm '
-  + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  + ' focus:outline-none';
 
 /**
  * The login screen, shown only in `multi` mode and only while nobody is

@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -138,22 +138,24 @@ describe('Connectors', () => {
     unmount();
   });
 
-  it('shows a banner naming the workspace and the default-visibility rule', async () => {
-    const { findByTestId, unmount } = show();
+  it('names the workspace and the default-visibility rule in the page info', async () => {
+    const { findByLabelText, findByTestId, unmount } = show();
+    fireEvent.click(await findByLabelText('About this page'));
     const banner = await findByTestId('connectors-workspace-banner');
     expect(banner.textContent).toMatch(/default/i);
     expect(banner.textContent).toMatch(/everywhere/i);
     unmount();
   });
 
-  it('names a non default workspace in the banner instead of "default"', async () => {
-    const { findByTestId, unmount } = render(
+  it('names a non default workspace in the page info instead of "default"', async () => {
+    const { findByLabelText, findByTestId, unmount } = render(
       <StreamContext.Provider value={silentStream}>
         <WorkspaceContext.Provider value={{ selectedWorkspace: 'acme', liveUpdates: false }}>
           <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>
         </WorkspaceContext.Provider>
       </StreamContext.Provider>,
     );
+    fireEvent.click(await findByLabelText('About this page'));
     const banner = await findByTestId('connectors-workspace-banner');
     expect(banner.textContent).toMatch(/acme/);
     unmount();

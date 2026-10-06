@@ -14,7 +14,7 @@ import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm '
-  + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  + ' focus:outline-none';
 
 /**
  * Accounts: who can log in, and what they may do globally.

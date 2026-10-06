@@ -69,7 +69,7 @@ export default function AgentParentPicker({
         value={value?.extends || ''}
         disabled={disabled}
         onChange={(e) => setParent(e.target.value)}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
       >
         <option value="">{allowClear ? t('agentInheritance.noParent') : t('agentInheritance.chooseParent')}</option>
         {systemCandidates.length > 0 && (
@@ -95,7 +95,7 @@ export default function AgentParentPicker({
             value={value.extends_version ?? ''}
             disabled={disabled || versionsLoading}
             onChange={(e) => setVersion(e.target.value)}
-            className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-indigo-500 bg-white"
+            className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white"
           >
             <option value="">{t('agentInheritance.latest')}</option>
             {versions.map((v) => (

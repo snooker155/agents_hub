@@ -13,6 +13,7 @@ import { preview } from '../components/processUtils';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { historyWindowStart } from '../components/chat/send/buildRequest';
 function fmtDurationMs(ms) {
   const n = Number(ms || 0);
   if (!n) return '0ms';
@@ -573,7 +574,7 @@ function NewMessageModal({
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-3">
             <select
-              className="w-56 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-56 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={composerAgentId}
               onChange={(e) => setComposerAgentId(e.target.value)}
               disabled={composerSending}
@@ -588,7 +589,7 @@ function NewMessageModal({
             )}
           </div>
           <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm min-h-[110px] max-h-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm min-h-[110px] max-h-64 focus:outline-none"
             placeholder={t('sessionDetails.messageToRunInThis')}
             value={composerPrompt}
             onChange={(e) => setComposerPrompt(e.target.value)}
@@ -822,7 +823,7 @@ export default function SessionDetails() {
           workspace,
           conversation_id: conversationId,
           conversation_title: session?.title || title,
-          history: history.slice(-40),
+          history: history.slice(historyWindowStart(history.length)),
           attachments: [],
         },
         onEvent: (event) => {

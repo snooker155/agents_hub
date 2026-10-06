@@ -432,6 +432,8 @@ async def update_settings(data: SettingsUpdate):
         if fallback not in CODE_RUNNER_FALLBACKS:
             raise HTTPException(status_code=400, detail="code_runner_fallback must be 'none' or 'local'")
         updates["code_runner_fallback"] = fallback
+    if "temperature" in updates and not 0 <= float(updates["temperature"]) <= 2:
+        raise HTTPException(status_code=400, detail="temperature must be between 0 and 2")
     if "web_search_provider" in updates:
         provider = str(updates["web_search_provider"]).strip().lower()
         if provider not in WEB_SEARCH_PROVIDERS:
@@ -477,6 +479,13 @@ async def update_settings(data: SettingsUpdate):
             from common.config import settings as live
             setattr(live, field, updates[field])
             os.environ[_FIELD_TO_ENV[field]] = str(updates[field])
+    if "temperature" in updates:
+        # The global temperature (agents/agent_utils.py build_chat_model) is
+        # read off the same in-process object, and the Models page shows it as
+        # the value a model without its own falls back to.
+        from common.config import settings as live
+        live.temperature = float(updates["temperature"])
+        os.environ["LLM_TEMPERATURE"] = str(updates["temperature"])
     if "orch_log_level" in updates:
         # _write_env_key only touches the file, and the cached Settings object
         # was built at import time — so without seeding os.environ the running
@@ -622,7 +631,10 @@ async def test_provider(data: TestProviderRequest):
                     headers["Authorization"] = f"Bearer {key}"
                 resp = await client.get(f"{base}/models", headers=headers)
                 resp.raise_for_status()
-                items = resp.json().get("data", [])
+                # The hub runtime lists its speech models here too, marked by
+                # kind; they are special models, not chat models.
+                items = [m for m in resp.json().get("data", [])
+                         if m.get("kind") not in ("speech", "transcription")]
                 models = [m["id"] for m in items]
                 # OpenAI-compatible gateways report the usable window under
                 # different keys: context_length (OpenRouter), max_model_len

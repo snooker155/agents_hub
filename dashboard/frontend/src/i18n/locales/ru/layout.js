@@ -6,6 +6,12 @@ export default {
   workspacePersonalOf: '{{name}} (личное)',
   expandSidebar: 'Развернуть меню',
   collapseSidebar: 'Свернуть меню',
+  openMenu: 'Открыть меню',
+  closeMenu: 'Закрыть меню',
+  install: {
+    button: 'Установить приложение',
+    iosHint: 'В Safari нажмите «Поделиться», затем «На экран Домой». Хаб будет открываться со своей иконки, на весь экран.',
+  },
   theme: {
     light: 'Светлая',
     dark: 'Тёмная',

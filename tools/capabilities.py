@@ -213,6 +213,10 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # The administrator's service-wide lookup: users, the audit trail, health,
     # containers, settings without secrets, web log hosts. Metadata as well.
     "service_lookup": frozenset({READS_PRIVATE}),
+    # The assistant's past conversations with the person
+    # (tools/assistant_conversations.py): titles and the person's own
+    # messages in their own thread, never an answer or a tool's output.
+    "assistant_conversations": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
 
     # ── system workspace (tools/system_ops.py) ───────────────────────────────

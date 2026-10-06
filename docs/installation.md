@@ -198,17 +198,29 @@ run does, and writes nothing until you confirm a review of every value:
    (balanced, strongest, fastest), from the whole list, or typed. On this
    machine the presets are also enabled in the [Models](models.md) catalog
    with the default starred.
-5. **Features**: the demo workspace; in Advanced the dashboard port, where
-   agents run, web search, RAG, and for Compose the browser, Redis and the
-   local model runtime.
-6. **Review** of every setting it will write (secrets masked) and every
+5. **Assistant voice**: what the [assistant](assistant.md#voice) hears you
+   with and reads its answers aloud with, saved as the `default` workspace's
+   transcription and speech models (every personal workspace falls back to
+   them). A cloud provider chosen in step 4 (OpenAI: `gpt-4o-mini-tts` and
+   `gpt-4o-mini-transcribe` with their prices; Google: Gemini TTS and Gemini
+   Flash) with one of its voices; the hub's own model runtime (Whisper small
+   or large-v3 turbo to hear, Piper in Russian, English or German, Kokoro,
+   Supertonic in 31 languages or Kitten in English to speak; free, 0.5 to 2 GB to download); the browser only (its own
+   recognition and voice, nothing on the server); or not now.
+6. **Features**: the demo workspace; in Advanced the dashboard port, where
+   agents run, web search, RAG, and for Compose the browser and Redis.
+7. **Review** of every setting it will write (secrets masked) and every
    action it will take.
-7. **Apply**: installs missing Python extras, starts Postgres, writes
+8. **Apply**: installs missing Python extras, starts Postgres, writes
    `.env` (the previous one is kept as `.env.bak-<time>`), creates the
-   accounts, fills the catalog, and offers to start the hub (`ah up`, or
-   `docker compose up -d` followed by creating the accounts through the
-   API). After a Docker setup it can point `ah` at the stack with a personal
-   API key of the new administrator.
+   accounts, fills the catalog, sets the assistant's voice, and offers to
+   start the hub (`ah up`, or `docker compose up -d` followed by creating the
+   accounts and setting the voice through the API). For a voice on the hub's
+   runtime it starts the runtime, installs the engines it lacks and
+   downloads the models it does not have, following each job to the end; in
+   Docker that waits for the stack, so without starting it the voice is left
+   for a later run or the Models page. After a Docker setup it can point
+   `ah` at the stack with a personal API key of the new administrator.
 
 `./install.sh` runs it by itself on a first install from a terminal
 (`--no-setup` skips it, `--setup` runs it on a re-install). Run it again
@@ -236,12 +248,16 @@ default, and a missing required answer stops with its name:
   "admin": {"username": "admin", "password": "change-me-now"},
   "users": [{"username": "dana", "role": "member"}],
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
+  "voice": {"mode": "local", "speech": "piper-en", "transcription": "whisper-small"},
   "demo": false,
   "start": true
 }
 ```
 
-Passwords left out are generated and printed once at the end. The remote
+`voice.mode` is `cloud` (with `voice.provider` when two fit and
+`voice.voice`), `local` (`voice.speech`: `piper-ru`, `piper-en`, `piper-de`,
+`kokoro`, `supertonic` or `kitten`; `voice.transcription`: `whisper-small` or `whisper-turbo`),
+`browser` or `skip`. Passwords left out are generated and printed once at the end. The remote
 shape saves the hub's address and a credential in the CLI's own state file
 (`~/.config/agents-hub/cli.json`); `AGENTS_HUB_URL` in the environment still
 wins over it.

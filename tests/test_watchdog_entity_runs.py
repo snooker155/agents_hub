@@ -170,3 +170,50 @@ def test_a_pending_run_with_a_live_queue_row_is_left_alone():
 
     assert run_watchdog._sweep_entity_runs(kinds=("scenario",)) == 0
     assert entity_runs.get("sim-run-4")["status"] == "pending"
+
+
+# ── orphans and unfinished stop requests ──────────────────────────────────
+
+def test_an_orphan_without_pid_heartbeat_or_host_is_failed_not_resumed(monkeypatch):
+    resumed = []
+    monkeypatch.setattr(run_watchdog, "_resume_or_fail_entity_run", lambda rec: resumed.append(rec) or 1)
+    _write_run("scenario", "orphan-1", pid=None, heartbeat_at=None, task_id=None,
+               started_at=_stale_iso(hours=24 * 20), checkpoint={"tick": 3})
+    assert run_watchdog._sweep_entity_runs() == 1
+    assert entity_runs.get("orphan-1")["status"] == "failed"
+    assert entity_runs.get("orphan-1")["stop_reason"] == "orphan"
+    assert resumed == []
+
+
+def test_a_fresh_record_without_a_heartbeat_yet_is_left_alone():
+    _write_run("scenario", "young-1", pid=None, heartbeat_at=None, task_id=None,
+               started_at=_stale_iso(hours=0.01))
+    run_watchdog._sweep_entity_runs()
+    assert entity_runs.get("young-1")["status"] == "running"
+
+
+def test_another_hosts_orphan_is_not_judged_here():
+    _write_run("scenario", "far-1", pid=None, heartbeat_at=None, task_id=None,
+               host="some-other-host", started_at=_stale_iso(hours=48))
+    run_watchdog._sweep_entity_runs()
+    assert entity_runs.get("far-1")["status"] == "running"
+
+
+def test_a_stop_request_whose_process_died_is_settled_as_stopped(monkeypatch):
+    from managers import run_manager as rm
+    rm.upsert_run({"run_id": "s-dead", "agent_id": "a1", "status": "stop", "pid": 999999,
+                   "started_at": _stale_iso(hours=24)})
+    rm.upsert_run({"run_id": "s-inproc", "agent_id": "a1", "status": "stop", "pid": 1,
+                   "started_at": _stale_iso(hours=2), "finished_at": _stale_iso(hours=1)})
+    rm.upsert_run({"run_id": "s-fresh", "agent_id": "a1", "status": "stop", "pid": 1,
+                   "started_at": _stale_iso(hours=0.1), "finished_at": _stale_iso(hours=0.01)})
+    monkeypatch.setattr(rm, "_pid_exists", lambda pid: pid == 1)
+    run_watchdog.sweep_once()
+    assert rm.get_run_by_id("s-dead")["status"] == "stopped"
+    assert rm.get_run_by_id("s-dead")["finished_at"]
+    assert rm.get_run_by_id("s-dead")["settled_by"] == "watchdog"
+    assert rm.get_run_by_id("s-inproc").get("settled_by") is None
+    # Stopped in process an hour ago: over, although the server's pid lives.
+    assert rm.get_run_by_id("s-inproc")["status"] == "stopped"
+    # Just asked to stop: its turn may still be reaching a boundary.
+    assert rm.get_run_by_id("s-fresh")["status"] == "stop"

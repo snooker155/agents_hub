@@ -189,7 +189,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.name')}</label>
           <input
             type="text"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('environments.namePlaceholder')}
@@ -200,7 +200,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.description')}</label>
           <textarea
             rows={2}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -210,7 +210,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <div className="flex-1">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.scope')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={scope}
               onChange={(e) => setScope(e.target.value)}
               disabled={!workspace}
@@ -222,7 +222,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <div className="flex-1">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.mode.label')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={mode}
               onChange={(e) => setMode(e.target.value)}
             >
@@ -237,7 +237,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.image')}</label>
               <input
                 type="text"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                 value={image}
                 onChange={(e) => setImage(e.target.value)}
                 placeholder={t('environments.imagePlaceholder')}
@@ -247,7 +247,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.packages')}</label>
               <textarea
                 rows={3}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                 value={packagesText}
                 onChange={(e) => setPackagesText(e.target.value)}
                 placeholder={'numpy\npandas'}
@@ -260,7 +260,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.network.label')}</label>
           <select
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={networkType}
             onChange={(e) => setNetworkType(e.target.value)}
           >
@@ -269,7 +269,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           {networkType === 'limited' && (
             <textarea
               rows={2}
-              className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
               value={allowedHostsText}
               onChange={(e) => setAllowedHostsText(e.target.value)}
               placeholder={'api.example.com\ngithub.com'}
@@ -280,7 +280,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
               type="checkbox"
               checked={allowPkgMgrs}
               onChange={(e) => setAllowPkgMgrs(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600"
             />
             {t('environments.network.allowPackageManagers')}
           </label>
@@ -290,7 +290,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.sandbox.label')}</label>
           <select
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={sandboxProvider}
             onChange={(e) => setSandboxProvider(e.target.value)}
           >
@@ -315,7 +315,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.size.label')}</label>
           <select
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={size}
             onChange={(e) => setSize(e.target.value)}
             aria-label={t('environments.size.label')}
@@ -334,14 +334,14 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <div className="flex gap-3">
             <input
               type="text"
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={memory}
               onChange={(e) => setMemory(e.target.value)}
               placeholder={t('environments.limits.memoryPlaceholder')}
             />
             <input
               type="text"
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={cpus}
               onChange={(e) => setCpus(e.target.value)}
               placeholder={t('environments.limits.cpusPlaceholder')}
@@ -349,7 +349,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             <input
               type="number"
               min="0"
-              className="w-28 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-28 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={pidsLimit}
               onChange={(e) => setPidsLimit(e.target.value)}
               placeholder={t('environments.limits.pidsPlaceholder')}
@@ -361,7 +361,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.envVars')}</label>
           <textarea
             rows={2}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
             value={envText}
             onChange={(e) => setEnvText(e.target.value)}
             placeholder={'KEY=value'}
@@ -373,7 +373,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             type="checkbox"
             checked={isDefault}
             onChange={(e) => setIsDefault(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            className="h-4 w-4 rounded border-gray-300 text-indigo-600"
           />
           {/* The default is per scope: name the workspace, or say global, so the
               label matches what the switch above selected. */}
@@ -549,7 +549,7 @@ export default function Environments() {
               type="checkbox"
               checked={includeArchived}
               onChange={(e) => setIncludeArchived(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600"
             />
             {t('environments.showArchived')}
           </label>

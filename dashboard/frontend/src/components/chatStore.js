@@ -312,6 +312,9 @@ export function useConversationStore(currentConvId, { paused = false } = {}) {
     let dirty = false;
     for (const conv of conversations) {
       if (!conv?.id || conv._hydrated === false) continue;
+      // The Assistant's threads are its own records, shown here as text:
+      // never written back (routes/chats.py refuses it).
+      if (conv.origin === 'assistant') continue;
       if (seenRef.current.get(conv.id) === conv) continue;
       seenRef.current.set(conv.id, conv);
       dirtyRef.current.add(conv.id);

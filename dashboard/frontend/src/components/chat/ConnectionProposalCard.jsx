@@ -24,7 +24,7 @@ const STATUS_CLASSES = {
 // The field input style: the same compact classes ToolApprovalCard's own
 // note textarea uses, not the larger Settings-page inputs: this card lives
 // under a chat bubble, not on a form page.
-const fieldInputCls = 'mt-1 w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:border-indigo-300 focus:outline-none';
+const fieldInputCls = 'mt-1 w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:outline-none';
 
 function clockTime(iso) {
   if (!iso) return '';
@@ -280,7 +280,7 @@ export function ConnectionProposalCard({ approval, live = true, onSettled }) {
             maxLength={2000}
             placeholder={t('toolApproval.notePlaceholder')}
             aria-label={t('toolApproval.noteLabel')}
-            className="mt-2 w-full resize-y rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:border-indigo-300 focus:outline-none"
+            className="mt-2 w-full resize-y rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:outline-none"
           />
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button

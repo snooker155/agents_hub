@@ -68,14 +68,14 @@ export default function SkillImportModal({ workspace, targets = [], onClose, onI
             rows={14}
             aria-label={t('skillsCatalog.import.content')}
             placeholder={'---\nname: release-notes\ndescription: Use when writing release notes.\n---\n\n# Release notes\n...'}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none"
           />
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">{t('skillsCatalog.attachToAgent')}</label>
             <select
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
             >
               <option value="">{t('skillsCatalog.catalogEntryNoAgent')}</option>
               {targets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}

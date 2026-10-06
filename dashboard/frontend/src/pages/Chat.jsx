@@ -3,7 +3,8 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
-import { addPersonalMemoryNote, getAgents, getWorkspace, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
+import { addPersonalMemoryNote, getAgents, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
+import { loadWorkspaceSummary } from '../api/workspaceSummary';
 import ContextMeter from '../components/ContextMeter';
 import {
   PlusCircle,
@@ -133,6 +134,10 @@ export default function Chat() {
   const [selectedProject, setSelectedProject] = useState('');
 
   const [currentConvId, setCurrentConvId] = useState(urlConvId || null);
+  // On a phone the conversation list is a drawer (ChatSidebar), open from the
+  // top bar and closed again by picking or starting a conversation.
+  const [listOpen, setListOpen] = useState(false);
+  useEffect(() => { setListOpen(false); }, [urlConvId]);
   // Whether a turn is being sent from this tab. Declared here because both the
   // conversation store and the live-turn mirror below are steered by it.
   const [loading, setLoading] = useState(false);
@@ -234,6 +239,8 @@ export default function Chat() {
   // ---- derived state ----
   // Top (normal) chat list: never show telegram-origin convs here — they live
   // in the dedicated Telegram panel below.
+  // A conversation with the Assistant stays in the workspace it started in,
+  // like any other (routes/chats.py lists them the same way).
   const visibleConversations = useMemo(() => {
     const noTelegram = conversations.filter((c) => c.origin !== 'telegram');
     if (!selectedWorkspace || selectedWorkspace === 'default') return noTelegram;
@@ -337,7 +344,7 @@ export default function Chat() {
       if (!rid) continue;
       const merged = [
         ...((mr.reasoning || []).map((r) => ({ step: r.step, entry: { type: 'reasoning', kind: r.kind || 'think', step: r.step, content: r.content } }))),
-        ...((mr.tools || []).map((t) => ({ step: t.step, entry: { type: 'tool', step: t.step, tool: t.tool, input: t.input, output: t.output } }))),
+        ...((mr.tools || []).map((t) => ({ step: t.step, entry: { type: 'tool', step: t.step, tool: t.tool, input: t.input, output: t.output, status: t.status } }))),
       ].sort((a, b) => (a.step ?? Infinity) - (b.step ?? Infinity));
       const timeline = merged.map((m) => m.entry);
       // The final response text follows the tool/thought steps.
@@ -420,11 +427,10 @@ export default function Chat() {
     }
     const conv = conversations.find((c) => c.id === currentConvId);
     if (!conv) return;
-    const convWs = conv.workspace || null;
     // For non-Telegram conversations, the `default` selection means "no filter",
     // matching the current visibleConversations behaviour.
     if (selectedWorkspace === 'default') return;
-    if (convWs !== selectedWorkspace) {
+    if ((conv.workspace || null) !== selectedWorkspace) {
       navigate('/chat');
     }
   }, [selectedWorkspace, currentConvId, telegramBindings, conversations, navigate]);
@@ -471,9 +477,11 @@ export default function Chat() {
       setWorkspaceAllowedAgentIds(null);
       return;
     }
-    getWorkspace(selectedWorkspace)
-      .then((r) => {
-        setWorkspaceAllowedAgentIds(r.data?.metadata?.allowed_agents || []);
+    // One summary request shared with the header and the palette
+    // (api/workspaceSummary.js), not the full record with its task list.
+    loadWorkspaceSummary(selectedWorkspace)
+      .then((summary) => {
+        setWorkspaceAllowedAgentIds(summary?.allowed_agents || []);
       })
       .catch(() => {
         setWorkspaceAllowedAgentIds([]);
@@ -573,6 +581,7 @@ export default function Chat() {
   const newConversation = useCallback(() => {
     setCurrentConvId(null);
     setInput('');
+    setListOpen(false);
     navigate('/chat');
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [navigate]);
@@ -769,8 +778,8 @@ export default function Chat() {
   const mathWorkspace = currentConv?.workspace || selectedWorkspace || 'default';
   useEffect(() => {
     let alive = true;
-    getWorkspace(mathWorkspace)
-      .then((r) => { if (alive) setPersonalMemoryOn(r.data?.metadata?.personal_memory?.enabled !== false); })
+    loadWorkspaceSummary(mathWorkspace)
+      .then((summary) => { if (alive) setPersonalMemoryOn(summary?.personal_memory_enabled !== false); })
       .catch(() => { if (alive) setPersonalMemoryOn(false); });
     return () => { alive = false; };
   }, [mathWorkspace]);
@@ -791,7 +800,7 @@ export default function Chat() {
   const page = {
     activeRunId, addReferences, addWorkspaceFiles, agentModel, agentName, agentProvider, agentTopology, agents,
     artifactCount, artifactViews, artifacts, artifactsOpen, setArtifactsOpen, attachMenuOpen, attachmentError,
-    codeCount, codeFocus, codeListError, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
+    codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
     markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
     conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
@@ -819,7 +828,8 @@ export default function Chat() {
             scrolls behind it (see ChatComposer). */}
         <div className="relative flex-1 min-h-0 flex flex-col">
           <ChatMessageList />
-          <ChatComposer />
+          {/* A conversation with the Assistant is read here and continued there. */}
+          {currentConv?.origin !== 'assistant' && <ChatComposer />}
         </div>
       </div>
       <ChatSidePanel />

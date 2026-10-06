@@ -64,6 +64,7 @@ from agents.callbacks.run_statistics import (
     to_json_safe,
     build_prompt_struct,
     message_to_role_content,
+    tool_status,
 )
 
 
@@ -161,9 +162,16 @@ def _chunk_reasoning_blocks(content) -> str:
     """
     if not isinstance(content, list):
         return ""
+    from reasoning.native_reasoning import reasoning_summary_delta
     parts = []
     for block in content:
-        if not isinstance(block, dict) or block.get("type") not in ("thinking", "reasoning_content"):
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "reasoning":
+            # OpenAI Responses API (responses/v1 output): a reasoning summary slice.
+            parts.append(reasoning_summary_delta(block))
+            continue
+        if block.get("type") not in ("thinking", "reasoning_content"):
             continue
         text = block.get("thinking") or block.get("reasoning_content") or block.get("text")
         if isinstance(text, str) and text:
@@ -228,6 +236,24 @@ def build_artifact(op: str, path: str, before: str | None, after: str | None) ->
 
 
 # ── the callback ───────────────────────────────────────────────────────────────
+
+#: The memory tools whose result names the memory they changed (memory/tool.py).
+MEMORY_WRITE_STEPS = frozenset({"remember", "forget"})
+
+
+def memory_target(tool: Any, output: Any) -> dict:
+    """``{"memory": {...}}`` when a remember or forget call changed a pool, so
+    the step in the chat can say where the note went; ``{}`` otherwise."""
+    if tool not in MEMORY_WRITE_STEPS:
+        return {}
+    content = getattr(output, "content", output)
+    try:
+        data = json.loads(content) if isinstance(content, str) else None
+    except ValueError:
+        return {}
+    where = data.get("memory") if isinstance(data, dict) and data.get("ok") else None
+    return {"memory": where} if isinstance(where, dict) else {}
+
 
 def _verdict(tool: Any, consumer: Any, inputs: Any = None) -> dict:
     """``{evaluated_permission, reason_code}`` for a call that just ended, from
@@ -460,6 +486,10 @@ class ChatStreamCallback(BaseCallbackHandler):
             message = getattr(chunk, "message", None)
             ak = getattr(message, "additional_kwargs", None) or {}
             delta = ak.get("reasoning_content") or ak.get("reasoning")
+            if isinstance(delta, dict):
+                # OpenAI Responses API (v0 output): a reasoning summary slice.
+                from reasoning.native_reasoning import reasoning_summary_delta
+                delta = reasoning_summary_delta(delta)
             if not isinstance(delta, str) or not delta:
                 # Anthropic-style: the reasoning arrives as content blocks on the
                 # chunk rather than a scalar field, with no visible token text.
@@ -750,16 +780,19 @@ class ChatStreamCallback(BaseCallbackHandler):
         append_log(self.log_lines, line, self.log_file)
         pending = self._pending_tool
         verdict: dict = {}
+        status = tool_status(output)
         if pending is not None:
             entry = dict(pending)
             entry["output"] = output_full
+            entry["status"] = status
             dur = int((time.perf_counter() - entry.pop("_started", time.perf_counter())) * 1000)
             verdict = _verdict(entry.get("tool"), self, entry.pop("_inputs", None))
             entry.update(verdict)
-            # One consolidated marker per tool call: step, name, duration and
-            # what the tool gate made of the call.
+            # One consolidated marker per tool call: step, name, duration, how
+            # it ended and what the tool gate made of the call.
+            failed = " status=error" if status == "error" else ""
             mark = (f"[tool_call] {_now()} step={entry.get('step')} tool={entry.get('tool')} "
-                    f"duration_ms={dur}{_trail_marker(verdict)}")
+                    f"duration_ms={dur}{failed}{_trail_marker(verdict)}")
             append_log(self.log_lines, mark, self.log_file)
             self.thinking_history.append(mark)
             self.tool_history.append(entry)
@@ -768,7 +801,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         if pending is not None and pending.get("tool") in ("think", "plan"):
             return
         ids = {"step": pending.get("step"), "tool": pending.get("tool")} if pending else {}
-        self._emit({"type": "tool_end", "output": output_full, **ids, **verdict})
+        self._emit({"type": "tool_end", "output": output_full, "status": status, **ids, **verdict,
+                    **memory_target(ids.get("tool"), output)})
 
     def on_llm_error(self, error, **kwargs):
         line = f"[llm_error] {type(error).__name__}: {error}"
@@ -783,6 +817,7 @@ class ChatStreamCallback(BaseCallbackHandler):
         if self._pending_tool is not None:
             entry = dict(self._pending_tool)
             entry["output"] = f"ERROR: {error}"
+            entry["status"] = "error"
             dur = int((time.perf_counter() - entry.pop("_started", time.perf_counter())) * 1000)
             verdict = _verdict(entry.get("tool"), self, entry.pop("_inputs", None))
             entry.update(verdict)
@@ -794,7 +829,7 @@ class ChatStreamCallback(BaseCallbackHandler):
             self.thinking_history.append(mark)
             self.tool_history.append(entry)
             self._pending_tool = None
-        self._emit({"type": "tool_error", "tool": tool_name, "error": str(error), **verdict})
+        self._emit({"type": "tool_error", "tool": tool_name, "error": str(error), "status": "error", **verdict})
 
     def on_chain_error(self, error, **kwargs):
         line = f"[chain_error] {type(error).__name__}: {error}"
@@ -943,14 +978,15 @@ class DelegationStreamCallback(BaseCallbackHandler):
         verdict = _verdict(pending.get("tool"), self, pending.get("inputs")) if pending else {}
         if pending is not None and pending.get("tool") in ("think", "plan"):
             return
-        self._send({"type": "tool_end", "output": str(output), **verdict})
+        self._send({"type": "tool_end", "output": str(output), "status": tool_status(output), **verdict,
+                    **memory_target((pending or {}).get("tool"), output)})
 
     def on_tool_error(self, error, **kwargs):
         pending = self._pending_tool or {}
         tool = pending.get("tool", "unknown")
         self._pending_tool = None
         verdict = _verdict(tool, self, pending.get("inputs")) if pending else {}
-        self._send({"type": "tool_error", "tool": tool, "error": str(error), **verdict})
+        self._send({"type": "tool_error", "tool": tool, "error": str(error), "status": "error", **verdict})
 
     def on_llm_end(self, response, **kwargs):
         # What the child's model said at this step: its own reasoning, then the

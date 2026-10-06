@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from agents.callbacks import guards
+from common import code_version
 from instances import inbox, registry, store as istore
 from managers import run_manager as rm
 from services import jobs, store
@@ -61,7 +62,8 @@ def _runner(workspace="ws"):
     svc = store.ensure_runner(workspace)
     inst = registry.ensure_instance("", kind="runner", workspace=workspace, state="standby",
                                     service_id=svc["service_id"])
-    return svc, istore.update(inst["instance_id"], carrier_status="running", carrier_mode="local", pid=1)
+    return svc, istore.update(inst["instance_id"], carrier_status="running", carrier_mode="local", pid=1,
+                              carrier_code=code_version.current())
 
 
 # ── The cap of one turn ──────────────────────────────────────────────────────

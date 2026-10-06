@@ -1,5 +1,5 @@
 /*
- * Styles of the live mark's scenes (search.js, work.js), from the "Orbit
+ * Styles of the live mark's scenes (search.js, work.js, clips.js), from the "Orbit
  * Loader" artifact, scoped to the mark and fed by the theme's tokens, so
  * they follow light and dark. Two departures: the core is brand-500 like the
  * logo (the artifact used brand-600), so a scene takes over from the plain
@@ -53,3 +53,39 @@
 .ah-live-mark .wk-arrow { fill: var(--brand-400); }
 .ah-live-mark .wk-ring { fill: none; stroke: var(--brand-600); stroke-width: 0.8; stroke-linecap: round; }
 .ah-live-mark .wk-end { fill: none; stroke: var(--brand-600); stroke-width: 1.2; }
+/*
+ * Clips (clips.js): the artifact's rebuilds of the mark (.v2) and its hub
+ * relay stories (.ex-morph, .ex-relay), with the artifact's classes. As in
+ * the scenes above, the core is brand-500 like the logo, so the cross-fade
+ * from the mark into a clip changes no colour.
+ */
+.ah-live-mark .clip .mark-core { fill: var(--brand-500); }
+.ah-live-mark .clip .mark-sat { fill: var(--brand-500); fill-opacity: 0.75; }
+.ah-live-mark .clip .mark-spoke { stroke: var(--brand-500); stroke-width: 2.5; stroke-linecap: round; stroke-opacity: 0.55; fill: none; }
+.ah-live-mark .clip.v2 .mark-core { fill: var(--brand-500); stroke: var(--brand-500); }
+.ah-live-mark .clip .ex-morph__wave { fill: none; stroke: var(--brand-300); stroke-width: 1.2; }
+.ah-live-mark .clip .ex-relay__spoke { stroke: var(--brand-500); stroke-width: 2.5; stroke-linecap: round; stroke-opacity: 0.35; fill: none; }
+.ah-live-mark .clip .ex-relay__pkt { fill: var(--brand-400); filter: drop-shadow(0 0 1.5px var(--brand-400)); }
+.ah-live-mark .clip .ex-relay__sat { fill: var(--brand-500); }
+.ah-live-mark .clip .ex-relay__core { fill: var(--brand-500); }
+.ah-live-mark .clip .ex-relay__ring { fill: none; stroke: var(--brand-400); stroke-width: 1.4; stroke-linecap: round; }
+.ah-live-mark .clip .ex-relay__tok { fill: var(--brand-400); }
+.ah-live-mark .clip .ex-relay__link { stroke: var(--brand-300); stroke-width: 1; stroke-opacity: 0.35; stroke-dasharray: 1.5 2; fill: none; }
+.ah-live-mark .clip .ex-relay__link-lit { stroke: var(--brand-500); stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.ah-live-mark .clip .v2-edge { stroke: var(--brand-500); stroke-width: 2.5; stroke-linecap: round; }
+.ah-live-mark .clip .v2-wave { fill: none; stroke: var(--brand-300); stroke-width: 1.5; }
+.ah-live-mark .clip.v2 .ex-relay__ring { fill: none; stroke: var(--brand-400); stroke-width: 1.4; stroke-linecap: round; }
+.ah-live-mark .clip .v2-venn__white { fill: #ffffff; }
+.ah-live-mark .clip .v2-gear { fill: none; stroke: var(--brand-600); }
+.ah-live-mark .clip .v2-gear:not(.v2-gear--core) { stroke: var(--brand-500); stroke-opacity: 0.75; }
+.ah-live-mark .clip .v2-goo__drop { fill: var(--brand-500); }
+.ah-live-mark .clip .v2-goo__core { fill: var(--brand-500); }
+.ah-live-mark .clip .v2-string { stroke: var(--brand-500); stroke-width: 2.5; stroke-linecap: round; stroke-opacity: 0.55; }
+.ah-live-mark .clip .v2-trail { stroke: var(--brand-300); stroke-width: 1.6; stroke-linecap: round; }
+.ah-live-mark .clip .v2-gear--ring { stroke: var(--brand-300); fill: none; }
+.ah-live-mark .clip .v2-chain { stroke: var(--brand-600); stroke-width: 1.8; stroke-linecap: round; }
+.ah-live-mark .clip .v2-cstring { stroke: none; }
+.ah-live-mark .clip .v2-pivot { fill: var(--brand-100); }
+.ah-live-mark .clip .v2-dial { stroke: var(--brand-300); stroke-width: 1.2; }
+.ah-live-mark .clip .v2-hand { stroke-linecap: round; }
+.ah-live-mark .clip .v2-arc { fill: none; stroke: var(--brand-500); stroke-width: 9; stroke-linecap: round; }

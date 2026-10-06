@@ -12,6 +12,9 @@ One tick (:func:`reconcile_once`) walks every service:
   :data:`CRASH_WINDOW_SECONDS`) is paused with the reason ``crash loop``
   rather than restarted forever; the operator resumes it once the cause is
   fixed;
+- a replica started from other code than the backend runs (a release, or a
+  reload while editing; common/code_version.py) is stopped once idle and
+  replaced by the minimum;
 - replicas of a service that no longer exists are stopped.
 
 With chat execution on ``instances`` the tick also makes sure the default
@@ -96,6 +99,21 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
                 counts["stopped"] += 1
         return counts
 
+    # Replicas started from other code than this backend runs: replaced once
+    # idle, by the minimum below, so a turn never builds its agent from old
+    # modules (common/code_version.py). A busy one finishes first.
+    # Counted apart: they leave ``live`` here, and the maximum check below
+    # subtracts only the stops that did not.
+    recycled = 0
+    stale = [r for r in live if replicas.is_stale(r)]
+    if stale:
+        load = replicas.loads(live)
+        for rep in stale:
+            if load.get(str(rep["instance_id"]), 0) == 0 and replicas.stop_replica(
+                    service, rep, reason="code changed"):
+                live.remove(rep)
+                recycled += 1
+
     want_min = int(service.get("replicas_min") or 0)
     want_max = max(want_min, int(service.get("replicas_max") or 0))
     while len(live) < want_min:
@@ -127,6 +145,7 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
         for rep in spare[:over]:
             if replicas.stop_replica(service, rep, reason="above maximum"):
                 counts["stopped"] += 1
+    counts["stopped"] += recycled
     return counts
 
 
@@ -196,6 +215,10 @@ class ServiceSupervisor:
     async def start(self) -> None:
         if self.is_running():
             return
+        # The code stamp is taken now, while the files on disk are the ones
+        # this process loaded (common/code_version.py).
+        from common import code_version
+        await asyncio.to_thread(code_version.current)
         self._stop = asyncio.Event()
         self._task = asyncio.create_task(self._loop(), name="service-supervisor")
 

@@ -194,7 +194,7 @@ def write_safetensors(path: Path, tensors: dict) -> Path:
         n = 1
         for d in shape:
             n *= d
-        size = n * {"F32": 4, "BF16": 2, "F16": 2}[dtype]
+        size = n * {"F32": 4, "BF16": 2, "F16": 2, "U32": 4}[dtype]
         header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [offset, offset + size]}
         offset += size
     raw = json.dumps(header).encode()
@@ -227,6 +227,31 @@ def test_single_safetensors_file(tmp_path):
                      "input_layernorm": "norm"}
     assert s["blocks"][4]["bytes"] == 1000 * 64 * 2
     assert s["memory"]["by_dtype"]["F32"] == 8 * 8 * 4
+
+
+def test_mlx_quantized_weights_are_unpacked(tmp_path):
+    """An MLX 4-bit checkpoint packs 8 weights per uint32; the count comes
+    from the scales (one per group), a per-module override changes the group,
+    and scales and biases are storage, not parameters."""
+    d = tmp_path / "mlx"
+    d.mkdir()
+    write_safetensors(d / "model.safetensors", {
+        "model.layers.0.mlp.down_proj.weight": ("U32", [64, 16]),   # 64 x 128 at 4 bits
+        "model.layers.0.mlp.down_proj.scales": ("BF16", [64, 2]),
+        "model.layers.0.mlp.down_proj.biases": ("BF16", [64, 2]),
+        "model.layers.0.mlp.gate.weight": ("U32", [8, 16]),         # 8 x 64 at 8 bits, group 32
+        "model.layers.0.mlp.gate.scales": ("BF16", [8, 2]),
+        "model.layers.0.input_layernorm.weight": ("BF16", [64]),
+    })
+    (d / "config.json").write_text(json.dumps({
+        "num_hidden_layers": 1, "hidden_size": 64,
+        "quantization": {"group_size": 64, "bits": 4,
+                         "model.layers.0.mlp.gate": {"group_size": 32, "bits": 8}}}))
+    s = ms.structure_from_file(d)
+    assert s["model"]["parameters"] == 64 * 128 + 8 * 64 + 64
+    assert s["model"]["quantization"] == "MLX 4-bit"
+    weights = sum(t["bytes"] for b in s["blocks"] for t in b["tensors"])
+    assert weights == (64 * 16 * 4) + 2 * (64 * 2 * 2) + (8 * 16 * 4) + (8 * 2 * 2) + 64 * 2
 
 
 def test_sharded_safetensors_directory(tmp_path):
@@ -321,6 +346,31 @@ def test_route_ollama(client, monkeypatch):
     monkeypatch.setattr(local_models, "ollama_show", missing)
     r = client.get("/api/models/structure", params={"provider": "ollama", "model": "nope"})
     assert r.status_code == 404
+
+
+def test_hub_local_uses_the_managed_runtime(monkeypatch):
+    """With AGENTS_HUB_MODELS_URL empty, the runtime the hub runs itself
+    answers, through the same lookup the rest of the hub uses."""
+    import httpx
+    from providers import local_models
+    monkeypatch.setattr(local_models, "runtime_settings", lambda: {
+        "url": "http://127.0.0.1:8200", "token": "t0k", "timeout": 5.0, "managed": True})
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        seen.update(url=url, headers=headers)
+        return httpx.Response(200, json={"kind": "structure", "model": {"id": "a/b.gguf"}})
+    monkeypatch.setattr(httpx, "get", fake_get)
+    out = ms.structure_for("hub-local", "a/b.gguf")
+    assert out["kind"] == "structure"
+    assert seen["url"] == "http://127.0.0.1:8200/models/a%2Fb.gguf/structure"
+    assert seen["headers"] == {"Authorization": "Bearer t0k"}
+
+    monkeypatch.setattr(local_models, "runtime_settings", lambda: {
+        "url": "", "token": "", "timeout": 5.0, "managed": False})
+    with pytest.raises(ms.ModelStructureError) as exc:
+        ms.structure_for("hub-local", "a/b.gguf")
+    assert exc.value.status == 503
 
 
 def test_route_card_for_catalog_model(client):

@@ -81,3 +81,19 @@ def export_snapshot() -> dict:
 
 
 __all__ = ["load_catalog_raw", "save_catalog_raw", "export_snapshot"]
+
+
+def model_temperature(provider: Optional[str], model: Optional[str]) -> Optional[float]:
+    """The temperature set for ``model`` on the Models page, or None when it
+    has none of its own (the global default applies). Safe to call from the
+    agent runtime: never raises."""
+    try:
+        catalog = load_catalog_raw()
+        entry = (catalog or {}).get(provider or "") or {}
+        for m in entry.get("models", []):
+            if m.get("id") == model:
+                value = m.get("temperature")
+                return None if value is None else float(value)
+    except Exception:
+        pass
+    return None

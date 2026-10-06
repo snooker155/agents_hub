@@ -173,6 +173,14 @@ flow, loop, scenario or team will show the estimate and wait for a clear yes.
 "Sounds good" is not approval, and agents are instructed to treat it as
 ambiguous.
 
+## Conversations with the Assistant
+
+The [Assistant](assistant.md)'s conversations, by voice or text, are listed
+here too, as text, with an **Assistant** badge and in every workspace (they
+are the person's own, not a workspace's). They are read only: they are
+continued, or started afresh, on the Assistant page, and a line that was
+spoken is marked *spoken*. See [Assistant, in the Chat page](assistant.md#the-page).
+
 ## Telegram
 
 A chat can be bridged to a Telegram chat, so the same conversation continues

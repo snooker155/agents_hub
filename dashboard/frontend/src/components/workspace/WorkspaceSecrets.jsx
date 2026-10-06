@@ -7,7 +7,7 @@ import { MULTI, useAuth } from '../auth';
 import { useI18n } from '../../i18n';
 
 const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-xs '
-  + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  + ' focus:outline-none';
 
 // Mirrors common/secrets.NAME_RE: a secret becomes an environment variable.
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;

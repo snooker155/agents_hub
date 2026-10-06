@@ -113,7 +113,7 @@ function toPayload(form) {
 }
 
 const LABEL = 'block text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1';
-const INPUT = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500';
+const INPUT = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm';
 const HINT = 'text-[11px] text-gray-400 mt-1 mb-3';
 
 function Field({ label, hint, children }) {

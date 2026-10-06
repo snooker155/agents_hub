@@ -3,12 +3,7 @@ export default {
   description: 'Все живые копии агентов — включая те, что стоят в режиме ожидания.',
   descriptionInWorkspace: 'Живые копии агентов в воркспейсе «{{workspace}}».',
   loading: 'Загрузка инстансов…',
-  showing: '{{shown}} из {{total}}',
   groupCount: '{{live}} живых · {{total}} всего',
-  loadMore_one: 'Показать ещё 1',
-  loadMore_few: 'Показать ещё {{count}}',
-  loadMore_many: 'Показать ещё {{count}}',
-  loadMore_other: 'Показать ещё {{count}}',
   empty: {
     title: 'Инстансов пока нет',
     hint: 'Копия появляется здесь, как только агент начинает работу: из задачи, чата, инстанса или флоу.',

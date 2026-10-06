@@ -9,7 +9,7 @@ import PageLoader from './PageLoader';
 const PROVIDERS = ['github', 'gitlab', 'bitbucket', 'gitea'];
 const PROVIDER_LABELS = { github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket', gitea: 'Gitea' };
 
-const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none";
+const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none";
 
 /**
  * Repo picker modal with two modes:

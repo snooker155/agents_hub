@@ -10,6 +10,7 @@ import { BrainCircuit, CheckCircle2, MessageSquareText, Repeat, Terminal, Workfl
 import { useI18n } from '../../i18n';
 import { SKILL_TOOL, shortText } from '../processUtils';
 import { foldDelegationTools } from './trail';
+import ToolStatusMark from '../ToolStatusMark';
 
 function Dots({ tone = 'bg-indigo-400' }) {
   return (
@@ -66,12 +67,12 @@ function Step({ step }) {
     const isSkill = step.tool === SKILL_TOOL;
     return (
       <span className="flex items-center gap-1.5 min-w-0 text-[11px]" data-testid="live-delegation-tool">
+        <ToolStatusMark entry={step} />
         {isSkill
           ? <Zap className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
           : <Terminal className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />}
         <span className={`font-semibold flex-shrink-0 ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{step.tool || 'tool'}</span>
         {step.input ? <span className="text-gray-400 truncate">{shortText(step.input, 80)}</span> : null}
-        {step.running ? <Dots tone="bg-amber-400" /> : <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />}
       </span>
     );
   }

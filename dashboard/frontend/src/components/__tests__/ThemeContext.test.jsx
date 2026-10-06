@@ -3,7 +3,7 @@ import { render, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '../ThemeContext';
 import { useTheme } from '../theme';
 import * as paletteApi from '../../api/palette';
-import * as api from '../../api';
+import * as summaryApi from '../../api/workspaceSummary';
 import { rampFromColor } from '../../lib/palette';
 
 function Probe() {
@@ -18,7 +18,7 @@ describe('ThemeProvider palette resolution', () => {
     document.documentElement.classList.remove('dark');
     // 404: no account preference to ask for (mirrors AUTH_MODE outside multi).
     vi.spyOn(paletteApi, 'getMyPreferences').mockRejectedValue({ response: { status: 404 } });
-    vi.spyOn(api, 'getWorkspaceSettingsOverrides').mockRejectedValue({ response: { status: 404 } });
+    vi.spyOn(summaryApi, 'loadWorkspaceSummary').mockRejectedValue({ response: { status: 404 } });
   });
 
   afterEach(() => {
@@ -65,7 +65,22 @@ describe('ThemeProvider palette resolution', () => {
     render(<ThemeProvider><Probe /></ThemeProvider>);
 
     await waitFor(() => expect(paletteApi.getMyPreferences).toHaveBeenCalled());
-    await waitFor(() => expect(api.getWorkspaceSettingsOverrides).not.toHaveBeenCalled());
+    await waitFor(() => expect(summaryApi.loadWorkspaceSummary).not.toHaveBeenCalled());
     expect(document.documentElement.style.getPropertyValue('--brand-600')).toBe('');
+  });
+
+  it("applies the selected workspace's palette from its summary", async () => {
+    localStorage.setItem('theme', 'light');
+    localStorage.setItem('selectedWorkspace', 'jobs');
+    summaryApi.loadWorkspaceSummary.mockResolvedValue({ name: 'jobs', palette: { brand: '#166534' } });
+
+    render(<ThemeProvider><Probe /></ThemeProvider>);
+
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue('--brand-600')).not.toBe('');
+    });
+    expect(summaryApi.loadWorkspaceSummary).toHaveBeenCalledWith('jobs');
+    expect(document.documentElement.style.getPropertyValue('--brand-600'))
+      .toBe(rampFromColor('#166534', { mode: 'light' })[600]);
   });
 });

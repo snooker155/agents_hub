@@ -15,7 +15,11 @@ the agent should use them. Shape::
 ``think_enabled`` toggles the ``think`` scratchpad *tool*; ``thinking_level`` is
 a separate **model parameter** that turns on the provider's native reasoning
 (Anthropic thinking budget, OpenAI/LM Studio ``reasoning_effort``, Ollama think
-mode). The two are independent — an agent can use native model thinking without
+mode; for OpenAI reasoning models the Responses API ``reasoning`` parameter with
+a summary requested, the only reasoning text OpenAI returns). ``off`` is passed
+on as off: OpenAI reasoning models are held to their lowest effort then, since
+they reason at their own default when no effort is sent
+(``providers/reasoning_profile.py``). The two are independent — an agent can use native model thinking without
 the scratchpad tool, or vice-versa.
 
 Older configs only carried ``think_mode`` / ``plan_format`` and relied on the

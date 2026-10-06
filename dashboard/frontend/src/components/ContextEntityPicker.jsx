@@ -138,7 +138,7 @@ export default function ContextEntityPicker({
           {/* Candidates */}
           <div className="flex-1 flex flex-col min-w-0">
             <div className="px-3 py-2 border-b border-gray-100">
-              <div className="flex items-center gap-2 w-full bg-gray-100 border border-gray-200 rounded-lg px-2 py-1.5 focus-within:border-indigo-400 transition-colors">
+              <div className="flex items-center gap-2 w-full bg-gray-100 border border-gray-200 rounded-lg px-2 py-1.5 transition-colors">
                 <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
                 <input
                   ref={searchRef}

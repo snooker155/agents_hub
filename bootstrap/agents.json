@@ -29,6 +29,8 @@
         "stop_loop_run_tool",
         "list_flows_tool",
         "run_agent_tool",
+        "delegate_task_tool",
+        "list_models_tool",
         "run_flow_tool",
         "search_docs",
         "read_doc",
@@ -576,6 +578,7 @@
         "search_memory",
         "calculator",
         "run_agent_tool",
+        "list_models_tool",
         "search_docs",
         "read_doc"
       ],
@@ -658,6 +661,8 @@
         "delete_file",
         "run_flow_tool",
         "run_agent_tool",
+        "delegate_task_tool",
+        "list_models_tool",
         "list_flows_tool",
         "list_agents_tool",
         "get_flow_tool",
@@ -1384,6 +1389,7 @@
           "add": [
             "hub_lookup",
             "hub_action",
+            "assistant_conversations",
             "service_lookup",
             "service_health",
             "run_diagnostics",

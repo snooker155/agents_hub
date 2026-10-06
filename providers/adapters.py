@@ -29,10 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-# thinking_level → OpenAI-style reasoning_effort. Kept local (not imported from
-# agent_utils) so this module has no import-time dependency on the agent stack.
-_LEVEL_EFFORT: Dict[str, str] = {"low": "low", "medium": "medium", "high": "high"}
-
 
 @dataclass
 class Adapter:
@@ -116,7 +112,7 @@ def _build_openai_compatible(
     # ReasoningChatOpenAI preserves servers' separate ``reasoning_content`` field
     # (gpt-oss et al.). Imported lazily so this module stays import-cheap and free
     # of an agent-stack dependency at load time.
-    from agents.agent_utils import ReasoningChatOpenAI, needs_responses_api
+    from agents.agent_utils import ReasoningChatOpenAI, openai_reasoning_kwargs
     from common.config import settings
     from common.hostnet import host_service_url
 
@@ -130,8 +126,12 @@ def _build_openai_compatible(
     base_url = host_service_url(base_url)
     temp = temperature if temperature is not None else settings.temperature
     tok = max_tokens if max_tokens is not None else settings.max_tokens
-    effort = _LEVEL_EFFORT.get((thinking_level or "").lower())
-    headers = backend.get("headers") or {}
+    headers = dict(backend.get("headers") or {})
+    from providers.local_models import HUB_LOCAL_ID, source_headers
+    if backend.get("id") == HUB_LOCAL_ID:
+        # The runtime counts its calls by caller; the model is built where
+        # the caller is known (an agent's run, the hub's /v1 route).
+        headers.update(source_headers())
 
     kwargs: Dict[str, Any] = dict(
         model=model,
@@ -143,16 +143,13 @@ def _build_openai_compatible(
     )
     if headers:
         kwargs["default_headers"] = {str(k): str(v) for k, v in headers.items()}
-    if effort:
-        # Reasoning models reject a custom temperature; OpenAI-compatible servers
-        # ignore reasoning_effort when unsupported.
-        kwargs["reasoning_effort"] = effort
-    else:
-        kwargs["temperature"] = temp
-    if needs_responses_api(model):
-        # Models that only do tool calls on /v1/responses; a gateway serving one
-        # proxies that endpoint too.
-        kwargs["use_responses_api"] = True
+    # The level reaches any model here (the server ignores reasoning_effort
+    # where unsupported); level off holds a known OpenAI reasoning model to its
+    # lowest effort; a model that only does tool calls on /v1/responses goes
+    # there, the gateway serving one proxies that endpoint too.
+    kwargs.update(openai_reasoning_kwargs(
+        model, thinking_level, temp,
+        api_key=kwargs["api_key"], base_url=base_url, lenient=True))
     return ReasoningChatOpenAI(**kwargs)
 
 

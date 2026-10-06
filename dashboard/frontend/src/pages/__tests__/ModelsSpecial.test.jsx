@@ -29,9 +29,11 @@ vi.mock('../../api', () => ({
   getModelsUsage: () => ok({ rows: [] }),
   getWorkspaceModel: () => ok({}), updateWorkspaceDefaultModel: vi.fn(),
   getWorkspaceSpecialModels: (...a) => getWorkspaceSpecialModels(...a),
-  updateWorkspaceSpecialModels: vi.fn(),
+  updateWorkspaceSpecialModels: vi.fn(), discoverWorkspaceSpecialModels: vi.fn(),
 }));
 vi.mock('../../components/models/LocalTab', () => ({ default: () => null }));
+// The catalog asks whether the local model servers run; nothing does here.
+vi.mock('../../api/localModels', () => ({ getLocalServers: () => ok({ servers: {} }) }));
 
 import Models from '../Models';
 

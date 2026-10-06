@@ -7,6 +7,14 @@
 #   docker build -f deploy/models/Dockerfile -t agents-hub-models .
 # docker-compose.yml builds it that way under the `models` profile.
 #
+# Speech models (faster-whisper, Piper, Kokoro, Kitten, Supertonic;
+# deploy/models/speech_worker.py)
+# come with it. Leave their engines out with --build-arg SPEECH=0 for a
+# smaller image; the Models page can still install one later. The voice
+# cloning engines (Chatterbox, OpenVoice) are not in the image: they run on
+# torch, which the Models page installs into an environment of its own under
+# /models/.engines/torch (CPU-only wheels when the machine has no NVIDIA GPU).
+#
 # CPU only. For NVIDIA use the :server-cuda tag of the llama.cpp image as the
 # base and reserve the GPU in compose (docs/local-models.md).
 # The final stage is the llama.cpp server image itself, not a python image
@@ -31,13 +39,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-COPY deploy/models/requirements.txt /srv/requirements.txt
-RUN python3 -m venv /srv/venv && pip install --no-cache-dir -r /srv/requirements.txt
+ARG SPEECH=1
+
+COPY deploy/models/requirements.txt deploy/models/requirements-speech.txt /srv/
+RUN python3 -m venv /srv/venv && pip install --no-cache-dir -r /srv/requirements.txt \
+    && if [ "$SPEECH" = "1" ]; then pip install --no-cache-dir -r /srv/requirements-speech.txt; fi
 
 # The hub's GGUF reader, vendored at build time under a name that cannot clash
 # with anything on the image's path. app.py imports it as hub_model_structure.
 COPY providers/model_structure.py /srv/hub_model_structure.py
-COPY deploy/models/app.py /srv/
+COPY deploy/models/app.py deploy/models/speech_worker.py deploy/models/openvoice_vc.py /srv/
 
 RUN useradd --create-home --uid 10001 models \
     && mkdir -p /models \

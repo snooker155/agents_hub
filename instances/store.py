@@ -180,22 +180,46 @@ def _where(
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
 
-def list_instances(limit: int = 100, offset: int = 0, **filters) -> Dict[str, Any]:
+# Named sort orders for the instances list (``list_instances(sort=...)``).
+INSTANCE_SORTS = {
+    "activity": "COALESCE(last_activity_at, started_at, created_at, '')",
+    "started": "COALESCE(started_at, created_at, '')",
+    "label": "LOWER(COALESCE(NULLIF(label, ''), instance_id))",
+    "agent": "COALESCE(agent_id, '')",
+    "state": "COALESCE(state, '')",
+    "runs": "COALESCE(runs_count, 0)",
+    "tokens": "COALESCE(total_tokens, 0)",
+    "duration": "COALESCE(total_duration_ms, 0)",
+}
+
+
+def list_instances(limit: int = 100, offset: int = 0, sort: Optional[str] = None,
+                   order: Optional[str] = None, **filters) -> Dict[str, Any]:
     """A page of instances, newest activity first, plus the total match count.
 
-    Returns ``{items, total, limit, offset}``. Live instances sort ahead of
-    terminal ones so an operator watching 1000 copies sees the working ones
-    without paging.
+    Returns ``{items, total, limit, offset}``. Without ``sort`` (or with
+    ``live``), live instances sort ahead of terminal ones so an operator
+    watching 1000 copies sees the working ones without paging. Any other
+    ``sort`` names a key of :data:`INSTANCE_SORTS` and orders by it alone
+    (``order`` is ``asc`` or ``desc``; an unknown key raises ``ValueError``).
     """
     where, params = _where(**filters)
     conn = db.get_conn()
     total = conn.execute(f"SELECT COUNT(*) FROM instances{where}", params).fetchone()[0]
-    live_rank = f"CASE WHEN state IN ({', '.join('?' * len(LIVE_STATES))}) THEN 0 ELSE 1 END"
+    if sort and sort != "live":
+        order_sql = db.order_by(INSTANCE_SORTS, sort, order, "activity", tiebreak="instance_id DESC")
+        order_params: List[Any] = []
+    else:
+        # ``live`` (the default): live copies first, or last with ``order=asc``,
+        # newest activity first within each half.
+        live_rank = f"CASE WHEN state IN ({', '.join('?' * len(LIVE_STATES))}) THEN 0 ELSE 1 END"
+        direction = "DESC" if str(order or "").lower() == "asc" else "ASC"
+        order_sql = (f"{live_rank} {direction}, "
+                     "COALESCE(last_activity_at, started_at, created_at) DESC, instance_id DESC")
+        order_params = list(LIVE_STATES)
     rows = conn.execute(
-        f"SELECT * FROM instances{where} "
-        f"ORDER BY {live_rank}, COALESCE(last_activity_at, started_at, created_at) DESC "
-        "LIMIT ? OFFSET ?",
-        list(params) + list(LIVE_STATES) + [int(limit), int(offset)],
+        f"SELECT * FROM instances{where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+        list(params) + order_params + [int(limit), int(offset)],
     ).fetchall()
     return {
         "items": [_row_to_dict(r) for r in rows],

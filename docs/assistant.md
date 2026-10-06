@@ -14,19 +14,56 @@ apply. Voice (speech in, speech out) is built on top of the same turn, see
 
 **Assistant** is the first item of the sidebar (`/assistant`). In the middle is
 the live mark, which shows what is going on: listening while you speak,
-thinking, the step a turn is on (searching, delegating, writing a file),
-waiting for an approval card, speaking. Under it is the first paragraph of the
+thinking, the step a turn is on, waiting for an approval card, speaking. A step
+plays the same scene the chat avatar and the `/mark-lab` bench show: a lookup
+goes by what it reads (runs and sessions as a search of the history, costs and
+records as a database query, models and skills as a search of the tools,
+notifications as a search of the mail), and writing a file, delegating or
+starting a flow or a team each have their own. The hub relay stories and the
+rebuilds of the mark from the same artifact cover the rest: asking a model or
+the person, handing a task on, a deploy, planning (a graph that grows and is
+pruned), schedules (a clock), calendars, sums (gears), messages going out (an
+antenna), syncing, imports, memory writes and more. A tool no rule knows gets
+one of a few rebuilds that stand for no step in particular. While a tool runs its scene
+stays on show even when the voice says what it is doing. Under it is the first paragraph of the
 latest answer, large, and below that the talk button.
 
-- **Talk.** Hold the button, or hold Space anywhere on the page outside a text
-  field, and speak; let go to send. What was heard is put into the text field
-  so a misheard word can be fixed, and Enter sends it as a spoken turn. A
-  recording ends by itself after a minute.
+- **Talk.** Under the button, three ways of listening (the page remembers
+  the choice in this browser):
+  - *Hold to talk* (the default). Hold the button, or hold Space anywhere on
+    the page outside a text field, and speak; let go to send. What was heard
+    is put into the text field so a misheard word can be fixed, and Enter
+    sends it as a spoken turn. A recording ends by itself after a minute.
+  - *Conversation.* Tap the button (or Space) to start; from then on the
+    microphone stays open and the assistant waits for your answer after each
+    of its own, with no button. A pause of about a second ends what you say,
+    and it is sent at once as a spoken turn. Say "goodbye" ("пока",
+    "tschüss", "конец разговора") or tap the button to end the conversation.
+  - *Wake phrase.* The microphone stays open and the assistant waits for its
+    name, as a phone or a smart speaker does: "Assistant, what failed today?"
+    is a turn; "Assistant" alone plays a short chime and it listens for the
+    request for a few seconds. After an answer it listens a few seconds more
+    for a follow-up without the name. The name has to open what is said,
+    so the word in the middle of a sentence is not a call. The default name is
+    "assistant" in any interface language ("ассистент", "Assistent"); the
+    settings take another phrase. This works on every page of the hub, not
+    only here: on another page a pill at the bottom says the microphone is on
+    (its × turns the mode off), and the request opens the Assistant with it
+    as the first turn.
+- **Stop by voice.** While the assistant works or speaks, in every mode, say
+  "stop" ("стоп", "хватит", "hör auf", "Assistant, stop") to stop the turn
+  and the voice, as the Stop button does. Only a short phrase counts: "stop
+  the nightly job" is a request. Hands-free, the microphone is open anyway;
+  in hold mode it is opened for the length of the turn, and only once the
+  microphone has been allowed for the site, so a typed question never brings
+  up the browser's prompt. *Stop by voice* in the settings turns it off.
 - **Listen.** The first paragraph of the answer to a spoken question is read
   aloud while it streams. When a turn has been quiet for a while, the hub says
   which step it is on; a waiting card is announced in one sentence.
 - **Answer a card by voice.** While a card waits, hold the button and say yes
-  or no. A connection card is only ever filled in on the screen.
+  or no; in a conversation or in wake mode just say it. "Stop" stops the
+  whole turn rather than denying the card. A connection card is only ever
+  filled in on the screen.
 - **Show on screen.** A link in an answer opens the page in a panel beside the
   conversation, with the transcript as the other tab. **Open this page** leaves
   the assistant for it.
@@ -34,19 +71,48 @@ latest answer, large, and below that the talk button.
   every answer aloud, with no text field; *No sound* never reads aloud; *Voice*
   picks one of the voices of the speech model chosen on the
   [Models page](special-models.md) (the same list the Special models tab
-  suggests). The page remembers them in this browser.
-- **Thread and workspace.** The workspace picker sets where the next turn
-  runs. An administrator in `multi` mode also has **Personal / Service**; in
+  suggests, with each voice's language), and *Listen* next to it plays a short
+  line with it, in the voice's language or the page's (`POST
+  /api/assistant/voice-sample`, charged as a `voice` run); *Stop by voice* (above); *Wake phrase*. The page remembers them
+  in this browser.
+- **Thread and workspace.** The next turn runs in the workspace picked in
+  the header; the page has no picker and does not name it. A workspace the
+  assistant cannot reach (another person's personal one) falls back to the
+  thread's home. An administrator in `multi` mode also has **Personal / Service**; in
   `single` mode there is one thread and no switch.
 
 On a phone the page is the mark, the button and the last answer; links open
 the page itself.
+
+**In the Chat page.** Every conversation with the assistant, spoken or typed,
+is also listed among the [Chat page](chat.md)'s conversations as text, with
+an **Assistant** badge, whichever workspace is picked: the current one and
+the earlier ones that **New conversation** filed away (up to 30). A spoken
+line is marked *spoken*. They are read only there: no text field, no delete,
+and the current one has **Continue on the Assistant page**. `GET /api/chats`
+lists them as `origin: "assistant"`, `read_only: true`, with id
+`assistant~<thread>~<session>` and `assistant_thread` (`mode`, `session_id`,
+`active`); `GET /api/chats/{id}` gives the transcript; a write or a delete is
+409 `read_only`. Only the person's own threads (and an administrator's
+service thread) are listed.
 
 Without speech models the page still works: with no transcription model it
 uses the browser's own speech recognition (the page says that the audio then
 goes to the browser's vendor), and with no speech model the browser's own
 voice. Where the browser has neither, it is a text chat. The
 [demo](demo.md) runs this way.
+
+**How the open microphone hears.** With a transcription model, the page cuts
+the audio into stretches of speech itself (a level above the room's noise
+floor; a stretch ends after a pause) and sends each one to `/transcribe` as
+WAV. While the assistant works or speaks only a short stretch is sent (a
+stop is short; a longer one is dropped untranscribed), and the voice has to
+be louder than usual, so its own voice from the speakers is rarely taken for
+yours: headphones help. In wake mode every short phrase said near the
+microphone is transcribed and billed, and the page says so; without a
+transcription model the browser's own recognition listens, continuously,
+and the audio goes to its vendor. Everything heard is matched on the whole
+phrase in the page: a stop, the end of a conversation, the name.
 
 ## One thread per person
 
@@ -63,11 +129,45 @@ workspace**: their [personal workspace](identity.md#personal-workspace) in
 default in every workspace, like for the Main Agent, and the assistant always
 uses the pool of the home workspace, wherever a turn runs.
 
+**The thread is the short-term memory.** Every turn of the current
+conversation reaches the model, not only the last few. Once the turns after
+the session's summary pass about 24,000 characters, the reply that crossed
+the line folds the older ones into the summary (the same record the
+[Chat page's compaction](chat.md#compaction) keeps on the session), leaving
+about 10,000 characters word for word. The fold runs after the answer, so a
+spoken reply never waits for it, and it is written by the model the turn ran
+on, with a rough excerpt in its place when that call fails. The next prompt is
+the summary followed by every turn since. Other page chats keep their last
+twelve messages only, because the record they are about is shown to the
+model in full every turn.
+
 A turn's body: `message`, `workspace` (where the turn runs; the home when
 empty), `mode` (`personal` or `service`), `references` (hub records to attach,
 as in the page chat; a record of another workspace is dropped) and `voice`
 (whether the message was spoken). The `GET` answer adds `home`, `mode`,
 `workspaces` (where this person can run a turn) and `service_available`.
+
+## Past conversations
+
+A new conversation (`DELETE /api/assistant`, the button beside the settings)
+files the one in progress among the past ones. **History**, the tab beside
+the transcript, lists them; picking one makes it the live conversation, and
+the next message continues it under the conversation id it already had in
+Messages. **Clear** (the eraser over the transcript, `DELETE
+/api/assistant/conversation`) drops the conversation in progress instead of
+filing it; its runs stay on the Runs page and in the costs. Both are refused
+with 409 `busy` while a turn runs.
+
+The assistant reaches them too, with `assistant_conversations`: "what did we
+talk about" lists the latest ten, newest first, from the workspace the turn
+runs in (each person's message is stamped with the workspace its turn ran
+in; "in every workspace" lists all), "the next ten" pages on, and "go back to
+the conversation about X" finds it and opens it. A turn cannot swap the
+thread it is writing into, so the swap happens when the turn ends: the stream
+ends with `{"type": "conversation", "session_id"}` and the page reloads the
+thread. A conversation that was nothing but that request is not kept. The
+tool reads only the running turn's own thread, and returns titles and the
+person's own messages, never an answer.
 
 ## Where a turn runs
 
@@ -116,7 +216,8 @@ assistant links as "show on screen".
 | `session` | sessions | agent, dates, how many runs, the latest ones | `/sessions/<id>` |
 | `cost` | today, week, month | spend for the period (the Costs page's numbers), top agents and models, the person's own spend and monthly limit | `/costs` |
 | `budget` | each workspace's spend against its cap | the cap, period, flags and the person's limit | `/costs` |
-| `model` | enabled models with prices | prices, context window, whether it is the default here, the special models | `/models/<provider>/<model>` |
+| `model` | enabled models with prices, and the special models the workspace uses | prices, context window, whether it is the default here, the special models | `/models/<provider>/<model>` |
+| `voice` (`speech`, `transcription`) | the transcription and speech models the Assistant page uses in this workspace, or the browser's own when there are none | the model, the workspace it comes from, the speech voice | `/models` |
 | `agent` | agents of the workspace | description, tools, whom it delegates to, what it extends | `/agents/<id>` |
 | `notification` | unread notifications | title, text, severity | |
 | `approval` | tool calls and tasks waiting for approval that the person may answer | tool, reason, run, expiry | the run or the task |
@@ -222,15 +323,19 @@ them.
 
 Voice is a way in and a way out of the same turn, not another loop: no
 speech-to-speech model, so policies, budgets, approvals and the audit trail
-stay on the path. Both directions use the special models of the person's home
-workspace ([special models](special-models.md); a personal workspace takes
-`default`'s when it has none) and are called by the hub directly, not as agent
+stay on the path. Both directions use the special models of the workspace
+the turn runs in (`?workspace=` on `GET /api/assistant` and on
+`/transcribe`; for `/speak`, the turn's run), and where that workspace added
+none, those of the person's home workspace ([special models](special-models.md);
+a personal workspace takes `default`'s when it has none). They are called by the hub directly, not as agent
 tools: whether to speak is the person's choice, not the model's.
 
 **Speech in.** `POST /api/assistant/transcribe` with the recording as the body
 and its `Content-Type` (`audio/webm`, `audio/ogg`, `audio/wav`, `audio/mp4` or
 `audio/mpeg`), `?language=` (`en`, `ru`, `de`) and `?mode=service` for the
-service thread. It answers `{text, language, run_id, cost_usd, consent}`; the
+service thread. `?purpose=wake` or `?purpose=monitor` (the open microphone
+listening for the name or for a stop) only names the cost run: "Voice input
+(wake phrase)", "Voice input (stop)". It answers `{text, language, run_id, cost_usd, consent}`; the
 page shows the text, the person may correct it, and it is sent as an ordinary
 turn with `voice: true`. Two requests instead of one so a misheard word is
 fixed before it becomes an instruction. The recording is not kept: only its

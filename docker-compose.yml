@@ -27,6 +27,9 @@ x-backend: &backend
     # long as its AGENTS_HUB_WORKER_MODES is "local" (docs/workers.md), so it
     # never claims a launch that wants a container.
     - /var/run/docker.sock:/var/run/docker.sock
+    # The model runtime's volume, read only: the backend reads the token the
+    # runtime wrote there (AGENTS_HUB_MODELS_TOKEN_FILE below).
+    - models_data:/models-data:ro
     # ---- Named volume for .agents_hub: opt-in only, read this first ----
     # It is tempting to replace the whole-repo bind mount above with a named
     # volume for just the state directory, so state does not sit inside the
@@ -113,6 +116,10 @@ services:
       # (postgresql://agents_hub:agents_hub@postgres:5432/agents_hub) and start
       # it with `--profile postgres`, or point it at a Postgres of your own.
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-}
+      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
+      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
+      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
+      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     # Wait for the bundled Postgres when its profile is on; skipped otherwise.
@@ -120,6 +127,10 @@ services:
       postgres:
         condition: service_healthy
         required: false
+      # First, so the shared volume is made by the runtime, owned by its user
+      # and holding its token, before the backend mounts it.
+      models:
+        condition: service_started
 
   # Dashboard: the built bundle behind nginx, which also proxies /api and
   # balances it over however many backend replicas are up.
@@ -333,6 +344,10 @@ services:
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
       AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
       AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
+      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
+      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
+      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
+      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
     depends_on:
       postgres:
         condition: service_healthy
@@ -372,6 +387,10 @@ services:
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
       AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
       AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
+      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
+      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
+      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
+      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
     depends_on:
       postgres:
         condition: service_healthy
@@ -420,15 +439,15 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
-  # The hub's own model runtime (deploy/models/): llama.cpp's llama-server
-  # behind a token-protected API and an OpenAI-compatible gateway that the hub
-  # registers as the provider `hub-local`. Under the `models` profile, so a
-  # plain `docker compose up` never builds or starts it:
-  #   docker compose --profile models up --build
-  # .env needs:
-  #   AGENTS_HUB_MODELS_TOKEN=<a long random string>
-  #   AGENTS_HUB_MODELS_URL=http://models:8200        (backend in compose)
-  #   AGENTS_HUB_MODELS_URL=http://127.0.0.1:8200     (backend on the host)
+  # The hub's own model runtime (deploy/models/): downloads models from
+  # Hugging Face and serves them, llama.cpp for chat models and Whisper,
+  # Piper and Kokoro for transcription and speech, behind a token-protected
+  # API and an OpenAI-compatible gateway that the hub registers as the
+  # provider `hub-local`. Part of a plain `docker compose up`; nothing to set:
+  # it writes a token to its volume (/models/.token) and the backends read it
+  # from there. A backend run on the host starts a runtime of its own instead
+  # (providers/model_runtime_host.py); set AGENTS_HUB_MODELS_URL to use this
+  # one from the host, http://127.0.0.1:8200.
   # Unlike the browser service, the port is published, on loopback only: a
   # backend run on the host (the usual dev setup) has to reach it, and it
   # serves no untrusted content, so it needs no network of its own. Every
@@ -449,10 +468,9 @@ services:
     build:
       context: .
       dockerfile: deploy/models/Dockerfile
-    profiles:
-      - models
     environment:
       MODELS_TOKEN: ${AGENTS_HUB_MODELS_TOKEN:-}
+      MODELS_TOKEN_FILE: /models/.token
       MODELS_MAX_LOADED: ${MODELS_MAX_LOADED:-2}
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
@@ -460,6 +478,8 @@ services:
     ports:
       - "127.0.0.1:${MODELS_PORT:-8200}:8200"
     init: true
+    # Time to save the models' prompt cache slots to the volume on a stop.
+    stop_grace_period: 60s
     mem_limit: ${MODELS_MEM_LIMIT:-8g}
     security_opt:
       - no-new-privileges:true
@@ -473,7 +493,7 @@ volumes:
   postgres_data:
   # MinIO's object data, used only under the `ha` profile.
   minio_data:
-  # GGUF files of the model runtime, used only under the `models` profile.
+  # The model runtime's models, installed engines and token.
   models_data:
 # Uncomment together with the redis volume above to persist Redis too.
 #   redis_data:

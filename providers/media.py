@@ -25,7 +25,7 @@ import wave
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from providers.special import GOOGLE, Endpoint, SpecialModelError
+from providers.special import ANTHROPIC, GOOGLE, Endpoint, SpecialModelError
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,55 @@ def _inline(part: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     if isinstance(data, dict) and data.get("data"):
         return str(data.get("mimeType") or data.get("mime_type") or ""), str(data["data"])
     return None
+
+
+# ── model lists ──────────────────────────────────────────────────────────────
+
+def list_models(ep: Endpoint, *, timeout: Optional[float] = None) -> list:
+    """Every model ``ep`` lists, as ``{"id", "methods"}`` (``methods`` are
+    Gemini's supportedGenerationMethods, empty for the OpenAI and Anthropic
+    shapes), for :func:`providers.special.discover` and
+    :func:`providers.special.check`. ``timeout`` caps each request."""
+    out: list = []
+    with _client() as client:
+        if timeout:
+            client.timeout = timeout
+        if ep.kind == ANTHROPIC:
+            _need_key(ep, "Anthropic")
+            headers = {"x-api-key": ep.api_key, "anthropic-version": "2023-06-01"}
+            after = ""
+            for _ in range(10):
+                params = {"limit": 1000, **({"after_id": after} if after else {})}
+                body = _check(client.get(f"{ep.base_url}/models", headers=headers, params=params),
+                              "Listing models").json()
+                out.extend({"id": str(m["id"]), "methods": []} for m in body.get("data") or [] if m.get("id"))
+                after = str(body.get("last_id") or "")
+                if not body.get("has_more") or not after:
+                    break
+            return out
+        if ep.kind == GOOGLE:
+            _need_key(ep, "Google")
+            page = ""
+            for _ in range(10):
+                params = {"pageSize": 1000, **({"pageToken": page} if page else {})}
+                body = _check(client.get(f"{ep.base_url}/models", headers=_headers(ep, json_body=False),
+                                         params=params), "Listing models").json()
+                for m in body.get("models") or []:
+                    name = str(m.get("name") or "").removeprefix("models/")
+                    if name:
+                        out.append({"id": name, "methods": list(m.get("supportedGenerationMethods") or [])})
+                page = str(body.get("nextPageToken") or "")
+                if not page:
+                    break
+            return out
+        body = _check(client.get(f"{ep.base_url}/models", headers=_headers(ep, json_body=False)),
+                      "Listing models").json()
+    items = body.get("data") if isinstance(body, dict) else None
+    for m in items or []:
+        mid = str((m or {}).get("id") or "").strip() if isinstance(m, dict) else ""
+        if mid:
+            out.append({"id": mid, "methods": []})
+    return out
 
 
 # ── images ───────────────────────────────────────────────────────────────────

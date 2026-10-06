@@ -16,6 +16,8 @@ const getWorkspaceRoles = vi.fn();
 const updateWorkspaceRole = vi.fn();
 const getWorkspaceSpecialModels = vi.fn();
 const updateWorkspaceSpecialModels = vi.fn();
+const discoverWorkspaceSpecialModels = vi.fn();
+const checkWorkspaceSpecialModel = vi.fn();
 const getAgents = vi.fn(() => ok([
   { id: 'swe_agent', name: 'SWE Agent' }, { id: 'claude-code', name: 'Claude Code' },
 ]));
@@ -25,6 +27,8 @@ vi.mock('../../api', () => ({
   updateWorkspaceRole: (...a) => updateWorkspaceRole(...a),
   getWorkspaceSpecialModels: (...a) => getWorkspaceSpecialModels(...a),
   updateWorkspaceSpecialModels: (...a) => updateWorkspaceSpecialModels(...a),
+  discoverWorkspaceSpecialModels: (...a) => discoverWorkspaceSpecialModels(...a),
+  checkWorkspaceSpecialModel: (...a) => checkWorkspaceSpecialModel(...a),
   getAgents: (...a) => getAgents(...a),
 }));
 
@@ -118,6 +122,67 @@ describe('WorkspaceSpecialModels', () => {
     expect(body.custom).toEqual([expect.objectContaining({
       id: 'jev', kind: 'chat', provider: 'my-vllm', model: 'jev-7b', description: 'Predicts video frames',
     })]);
+  });
+
+  it('finds the models of the provider that fit the purpose and picks one', async () => {
+    getWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'alpha', own: {}, effective: {}, options }));
+    discoverWorkspaceSpecialModels.mockReturnValue(ok({
+      purpose: 'speech', provider: 'openai', models: ['gpt-4o-mini-tts', 'tts-1'], total: 90,
+    }));
+    wrap(<WorkspaceSpecialModels workspace="alpha" />);
+    await screen.findByTestId('special-image-missing');
+    // No provider yet: nothing to ask.
+    expect(screen.queryByTestId('special-speech-discover')).toBeNull();
+
+    const [, speechProvider] = screen.getAllByLabelText('Provider');
+    fireEvent.change(speechProvider, { target: { value: 'openai' } });
+    fireEvent.click(screen.getByTestId('special-speech-discover'));
+    await waitFor(() => expect(discoverWorkspaceSpecialModels).toHaveBeenCalledWith('alpha', 'speech', 'openai'));
+
+    const found = await screen.findByTestId('special-speech-found');
+    expect(found.textContent).toMatch(/2 of the provider's 90 models fit/);
+    fireEvent.click(within(found).getByRole('button', { name: 'tts-1' }));
+    const [, speechModel] = screen.getAllByLabelText('Model');
+    expect(speechModel).toHaveValue('tts-1');
+
+    // Another provider: the list was for the first one.
+    fireEvent.change(speechProvider, { target: { value: '' } });
+    expect(screen.queryByTestId('special-speech-found')).toBeNull();
+  });
+
+  it('checks the connection of the model the form holds, saved or not', async () => {
+    getWorkspaceSpecialModels.mockReturnValue(ok({
+      workspace: 'alpha', effective: {}, options,
+      own: { custom: [{ id: 'seg', description: 'Segments', kind: 'http', url: 'https://x/seg',
+                        headers: { Authorization: '********' } }] },
+    }));
+    checkWorkspaceSpecialModel.mockReturnValueOnce(ok({ status: 'warn', message: 'not among them' }))
+      .mockReturnValueOnce(ok({ status: 'ok', message: 'The URL answered 405' }));
+    wrap(<WorkspaceSpecialModels workspace="alpha" />);
+    await screen.findByTestId('special-image-missing');
+    // No model yet: nothing to check.
+    expect(screen.queryByTestId('special-speech-check')).toBeNull();
+
+    const [, speechProvider] = screen.getAllByLabelText('Provider');
+    fireEvent.change(speechProvider, { target: { value: 'openai' } });
+    expect(screen.queryByTestId('special-speech-check')).toBeNull();
+    const [, speechModel] = screen.getAllByLabelText('Model');
+    fireEvent.change(speechModel, { target: { value: 'tts-9' } });
+    fireEvent.click(screen.getByTestId('special-speech-check'));
+    await waitFor(() => expect(checkWorkspaceSpecialModel).toHaveBeenCalledWith(
+      'alpha', { purpose: 'speech', provider: 'openai', model: 'tts-9' }));
+    expect((await screen.findByTestId('special-speech-check-result')).textContent).toMatch(/not among them/);
+
+    // Another model: the result was for the first one.
+    fireEvent.change(speechModel, { target: { value: 'tts-1' } });
+    expect(screen.queryByTestId('special-speech-check-result')).toBeNull();
+
+    // A custom HTTP model sends its headers, the mask included, for the server to fill in.
+    fireEvent.click(screen.getByTestId('special-custom-0-check'));
+    await waitFor(() => expect(checkWorkspaceSpecialModel).toHaveBeenLastCalledWith('alpha', {
+      custom: { id: 'seg', kind: 'http', url: 'https://x/seg', headers: { Authorization: '********' } },
+    }));
+    expect((await screen.findByTestId('special-custom-0-check-result')).textContent).toMatch(/405/);
   });
 
   it('sends http headers as an object', async () => {

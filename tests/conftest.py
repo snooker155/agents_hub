@@ -29,6 +29,11 @@ from typing import List
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="agents_hub_tests_"))
 os.environ["AGENTS_HUB_ROOT"] = str(_TEST_ROOT)
 
+# The hub runs its own model runtime when no URL names one
+# (providers/model_runtime_host.py): a process and a venv the suite must not
+# make. Tests of that module turn it back on with a fake spawn.
+os.environ["AGENTS_HUB_MODELS_MANAGED"] = "false"
+
 TEST_DATABASE_URL = os.environ.get("AGENTS_HUB_TEST_DATABASE_URL", "").strip()
 os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
 

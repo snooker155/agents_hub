@@ -265,6 +265,16 @@ export type BlenderTestRequest = {
   "binary_path"?: string | null;
 };
 
+export type Body_runtime_add_voice_api_models_local_runtime_voices_post = {
+  "name": string;
+  "file": string;
+  "language"?: string;
+  "gender"?: string;
+  "shared"?: boolean;
+  "consent"?: boolean;
+  "replace"?: boolean;
+};
+
 export type Body_upload_file_api_files_post = {
   "file": string;
   "workspace"?: string | null;
@@ -641,7 +651,8 @@ export type DiscardRequest = {
 
 export type DownloadBody = {
   "repo": string;
-  "file": string;
+  "file"?: string;
+  "package"?: string;
   "revision"?: string;
 };
 
@@ -1199,6 +1210,10 @@ export type NotifyChange = {
   "delta"?: boolean;
 };
 
+export type OllamaImportBody = {
+  "name": string;
+};
+
 export type OpenBody = {
   "tool": string;
   "tool_input"?: unknown;
@@ -1465,6 +1480,13 @@ export type RunEvalIn = {
   "configs"?: ConfigIn[];
   "workspace"?: string | null;
   "cost_ceiling"?: number | null;
+  "mode"?: string;
+};
+
+export type SampleIn = {
+  "voice"?: string;
+  "language"?: string;
+  "workspace"?: string;
   "mode"?: string;
 };
 
@@ -2128,6 +2150,20 @@ export type VisibilityBody = {
   "visibility": string;
 };
 
+export type VoicePatch = {
+  "language"?: string | null;
+  "gender"?: string | null;
+  "shared"?: boolean | null;
+  "base_model"?: string | null;
+  "base_voice"?: string | null;
+};
+
+export type VoiceTryBody = {
+  "model": string;
+  "text"?: string;
+  "language"?: string;
+};
+
 export type WatcherCreate = {
   "workspace": string;
   "name": string;
@@ -2522,6 +2558,9 @@ export interface ApiPaths {
     post: { response: unknown };
     delete: { response: unknown };
   };
+  "/api/assistant/conversation": {
+    delete: { response: unknown };
+  };
   "/api/assistant/speak": {
     post: { body: SpeakIn; response: unknown };
   };
@@ -2530,6 +2569,9 @@ export interface ApiPaths {
   };
   "/api/assistant/transcribe": {
     post: { response: unknown };
+  };
+  "/api/assistant/voice-sample": {
+    post: { body: SampleIn; response: unknown };
   };
   "/api/audit": {
     get: { response: unknown };
@@ -3393,10 +3435,35 @@ export interface ApiPaths {
   "/api/models/local/runtime": {
     get: { response: Record<string, unknown> };
   };
+  "/api/models/local/runtime/cache": {
+    get: { response: Record<string, unknown> };
+    delete: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/cache/apply": {
+    post: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/cache/settings": {
+    put: { body: Record<string, unknown>; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/cache/warmup": {
+    post: { body: UnloadBody; response: Record<string, unknown> };
+  };
   "/api/models/local/runtime/download": {
     post: { body: DownloadBody; response: Record<string, unknown> };
   };
+  "/api/models/local/runtime/engines": {
+    get: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/engines/{engine}/install": {
+    post: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/hardware": {
+    get: { response: Record<string, unknown> };
+  };
   "/api/models/local/runtime/hf/files": {
+    get: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/hf/search": {
     get: { response: Record<string, unknown> };
   };
   "/api/models/local/runtime/jobs": {
@@ -3404,6 +3471,12 @@ export interface ApiPaths {
   };
   "/api/models/local/runtime/jobs/{job_id}": {
     get: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/lmstudio": {
+    get: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/lmstudio/import": {
+    post: { body: OllamaImportBody; response: Record<string, unknown> };
   };
   "/api/models/local/runtime/load": {
     post: { body: LoadBody; response: Record<string, unknown> };
@@ -3414,8 +3487,43 @@ export interface ApiPaths {
   "/api/models/local/runtime/models/{file}/structure": {
     get: { response: Record<string, unknown> };
   };
+  "/api/models/local/runtime/ollama": {
+    get: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/ollama/import": {
+    post: { body: OllamaImportBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/restart": {
+    post: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/start": {
+    post: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/stop": {
+    post: { response: Record<string, unknown> };
+  };
   "/api/models/local/runtime/unload": {
     post: { body: UnloadBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/usage": {
+    delete: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/voices": {
+    get: { response: Record<string, unknown> };
+    post: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/voices/{name}": {
+    patch: { body: VoicePatch; response: Record<string, unknown> };
+    delete: { response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/voices/{name}/audio": {
+    get: { response: unknown };
+  };
+  "/api/models/local/runtime/voices/{name}/try": {
+    post: { body: VoiceTryBody; response: unknown };
+  };
+  "/api/models/local/servers": {
+    get: { response: Record<string, unknown> };
   };
   "/api/models/serving/info": {
     get: { response: unknown };
@@ -4118,6 +4226,9 @@ export interface ApiPaths {
   "/api/stats": {
     get: { response: unknown };
   };
+  "/api/stats/overview": {
+    get: { response: unknown };
+  };
   "/api/stream": {
     get: { response: unknown };
   };
@@ -4613,6 +4724,21 @@ export interface ApiPaths {
   "/api/workspaces/{name}/special-models": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/special-models/check": {
+    post: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/special-models/discover": {
+    get: { response: unknown };
+  };
+  "/api/workspaces/{name}/special-models/sample": {
+    post: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/special-models/voices": {
+    get: { response: unknown };
+  };
+  "/api/workspaces/{name}/summary": {
+    get: { response: unknown };
   };
   "/api/workspaces/{name}/web-policy": {
     get: { response: unknown };

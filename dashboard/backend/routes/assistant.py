@@ -14,10 +14,11 @@ same four routes as the Help panel (``routes/help_chat.py``) under
   (common/workspace_scope.py ``ASSISTANT_SERVICE_TOOLS``). In ``single`` and
   ``token`` mode there is one operator, one thread in ``default``, and it is
   the service thread.
-* **Its home.** The thread's session, and the person's memory, live in their
-  home workspace: their personal one in ``multi``
-  (common/personal_workspace.py), ``default`` otherwise and in the service
-  thread.
+* **Its home.** The thread's session lives in the person's home workspace:
+  their personal one in ``multi`` (common/personal_workspace.py), ``default``
+  otherwise and in the service thread. Their memory does not: it is their
+  personal pool in the workspace the turn runs in (memory/personal.py), since
+  a person uses each workspace for something else.
 * **Where a turn runs.** ``workspace`` in the body names it, defaulting to
   the home. It must be one the person can see (``require_visible``); the
   turn's run, its tools and its files are there, pinned like any agent's. So
@@ -33,9 +34,10 @@ Voice (chat/voice.py) is two more routes around the same turn, not another
 loop: ``POST /transcribe`` turns a recording into text, which the browser
 shows and sends as a turn with ``voice: true``; ``POST /speak`` reads aloud a
 sentence of a turn's answer (or the hub's own phrase for a waiting card or a
-long step). Both call the speech models directly (providers/media.py), from
-the home workspace's special models with the personal fallback to
-``default``, and both are charged: a transcription as a ``voice`` run of its
+long step). Both call the speech models directly (providers/media.py): the
+model of the workspace the turn runs in (``?workspace=``, the header's
+workspace on the page), else the home workspace's, with the personal
+fallback to ``default`` (:func:`voice_entry`), and both are charged: a transcription as a ``voice`` run of its
 own, speech on the turn's run. A short spoken yes or no while a card waits in
 the thread answers that card (audited with ``via: voice``), except a
 connection card, whose secret is only ever typed.
@@ -46,7 +48,7 @@ import logging
 import os
 import re
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -54,6 +56,7 @@ from pydantic import BaseModel
 from chat import voice
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+from tools.assistant_conversations import thread_home
 from common import access, identity
 from common.auth import MULTI
 
@@ -161,6 +164,85 @@ def own_thread_ids() -> List[str]:
     return ids
 
 
+# ── the threads on the Chat page ─────────────────────────────────────────────
+
+#: The person's assistant threads are listed among the Chat page's
+#: conversations as text, read only: ``assistant~<thread key>~<session id>``.
+CHAT_ID_PREFIX = "assistant~"
+CHAT_ORIGIN = "assistant"
+
+
+def thread_workspace(thread: Dict[str, Any], home: str) -> str:
+    """The workspace a conversation belongs to (entity_chat_store
+    ``_thread_workspace``); one from before turns were stamped is the home's,
+    where a turn ran when it named none."""
+    return thread.get("workspace") or home
+
+
+def enter_workspace(ctx: SimpleNamespace, workspace: str) -> bool:
+    """Conversations do not move between workspaces: the live one becomes
+    ``workspace``'s, the one of another workspace filed among the past ones
+    and this workspace's latest reopened (or a new one started)."""
+    from common.entity_chat_store import entity_chat_store
+    return entity_chat_store().enter_workspace(ASSISTANT_CHAT_KIND, ctx.entity_id, workspace,
+                                               unstamped=ctx.home)
+
+
+def _chat_record(key: str, thread: Dict[str, Any], *, with_messages: bool) -> Dict[str, Any]:
+    transcript = thread.get("transcript") or []
+    service = key.startswith("service-")
+    record: Dict[str, Any] = {
+        "id": f"{CHAT_ID_PREFIX}{key}~{thread['id']}",
+        "title": thread.get("title") or "Assistant",
+        "origin": CHAT_ORIGIN,
+        "read_only": True,
+        # A conversation stays in the workspace it started in.
+        "workspace": thread_workspace(thread, thread_home(key, identity.current_user_id())),
+        "agent_id": ASSISTANT_AGENT_ID,
+        "assistant_thread": {"mode": MODE_SERVICE if service else MODE_PERSONAL,
+                             "session_id": thread["id"], "active": bool(thread.get("active"))},
+        "created_at": thread.get("started_at"),
+        "updated_at": thread.get("updated_at"),
+        "message_count": len(transcript),
+        "preview": str((transcript[-1] if transcript else {}).get("content") or "")[:200],
+        "messages": [],
+    }
+    if with_messages:
+        record["messages"] = [
+            {"id": f"{thread['id']}-{i}", "role": m.get("role") or "assistant",
+             "content": str(m.get("content") or ""), "at": m.get("at"),
+             **({"voice": True} if m.get("voice") else {})}
+            for i, m in enumerate(transcript)
+            if m.get("role") in ("user", "assistant")
+        ]
+    return record
+
+
+def chat_threads() -> List[Dict[str, Any]]:
+    """The caller's assistant threads as Chat page conversations, without
+    their messages (the list draws a title and a time per row)."""
+    from common.entity_chat_store import entity_chat_store
+    store = entity_chat_store()
+    return [_chat_record(key, thread, with_messages=False)
+            for key in own_thread_ids()
+            for thread in store.threads(ASSISTANT_CHAT_KIND, key)]
+
+
+def chat_thread(chat_id: str) -> Optional[Dict[str, Any]]:
+    """One of the caller's assistant threads with its text, or None when the
+    id is not one of theirs (another person's thread is never found)."""
+    if not str(chat_id).startswith(CHAT_ID_PREFIX):
+        return None
+    key, _, session_id = str(chat_id)[len(CHAT_ID_PREFIX):].rpartition("~")
+    if not key or key not in own_thread_ids():
+        return None
+    from common.entity_chat_store import entity_chat_store
+    for thread in entity_chat_store().threads(ASSISTANT_CHAT_KIND, key):
+        if thread["id"] == session_id:
+            return _chat_record(key, thread, with_messages=True)
+    return None
+
+
 def reachable_workspaces(principal: Any) -> List[str]:
     """The workspaces this person can work in through the assistant: what
     they can see, without other people's personal workspaces
@@ -198,12 +280,12 @@ def _check_budget(workspace: str) -> None:
         raise HTTPException(status_code=402, detail={"code": "budget", "message": str(exc)})
 
 
-def _personal_pool(home: str) -> Optional[str]:
-    """The person's memory pool in their home workspace, whatever workspace
-    the turn runs in; None when personal memory is off for the assistant there."""
+def _personal_pool(workspace: str) -> Optional[str]:
+    """The person's memory pool in the workspace the turn runs in; None when
+    personal memory is off for the assistant there."""
     from agents.registry import get_agent
     from memory import personal
-    return personal.resolve(get_agent(ASSISTANT_AGENT_ID), home)
+    return personal.resolve(get_agent(ASSISTANT_AGENT_ID), workspace)
 
 
 def _reference_lines(refs: List[AssistantRef], workspace: str) -> List[str]:
@@ -236,7 +318,9 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
         *(["Service tools this turn: yes (service_health, run_diagnostics, service_lookup and the "
            "lists; call them yourself)"] if (ctx.service and ctx.workspace == "default") else []),
         f"This turn runs in workspace: {ctx.workspace}",
-        f"Home workspace (thread and memory): {ctx.home}",
+        f"Home workspace (thread): {ctx.home}",
+        "Personal memory: " + (f"the person's memory in workspace {ctx.workspace}"
+                               if getattr(ctx, "personal_pool", None) else "off in this workspace"),
         "Workspaces this person can reach: " + (", ".join(ctx.reachable) or ctx.home),
         f"Input: {'spoken, transcribed' if ctx.payload.voice else 'typed'}",
     ]
@@ -248,7 +332,8 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
     refs = _reference_lines(ctx.payload.references, ctx.workspace)
     if refs:
         parts += ["", *refs]
-    talk = transcript_block(history[:-1])
+    # Already bounded by the fold (EntityChatSpec.fold_history), summary first.
+    talk = transcript_block(history[:-1], limit=None)
     if talk:
         parts += ["", "=== Conversation so far ===", talk]
     parts += ["", "=== The person's latest message ===", user_message]
@@ -257,8 +342,26 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
 
 def _load(request: Request) -> SimpleNamespace:
     """GET / DELETE / stop: the caller's thread, ``?mode=service`` for an
-    administrator's service thread."""
-    return resolve_thread(request, request.query_params.get("mode"))
+    administrator's service thread; ``?workspace=`` is where the page's next
+    turn runs, which decides the voice models it is told about."""
+    from chat.entity_chat import entity_run_active
+    ctx = resolve_thread(request, request.query_params.get("mode"))
+    ctx.voice_workspace = _voice_workspace(ctx, request.query_params.get("workspace"))
+    # The page shows the conversation of the workspace its next turn runs in;
+    # never swapped under a running turn.
+    if request.method == "GET" and not entity_run_active(ASSISTANT_CHAT_KIND, ctx.entity_id):
+        enter_workspace(ctx, ctx.voice_workspace)
+    return ctx
+
+
+def _voice_workspace(ctx: SimpleNamespace, requested: Optional[str]) -> str:
+    """The workspace voice is for: the requested one when the person may run
+    a turn there, the home otherwise (the page sends the header's workspace
+    as it is, and the turn itself falls back the same way)."""
+    try:
+        return _target(ctx, requested)
+    except HTTPException:
+        return ctx.home
 
 
 def _conversation_id(entity_id: str) -> str:
@@ -351,16 +454,17 @@ def _load_send(request: Request, body: Dict[str, Any]) -> SimpleNamespace:
         raise HTTPException(status_code=503,
                             detail=f"The '{ASSISTANT_AGENT_ID}' agent is not registered")
     ctx.workspace = _target(ctx, payload.workspace)
+    enter_workspace(ctx, ctx.workspace)
     ctx.reachable = reachable_workspaces(ctx.principal)
     _check_budget(ctx.workspace)
-    ctx.personal_pool = _personal_pool(ctx.home)
+    ctx.personal_pool = _personal_pool(ctx.workspace)
     return ctx
 
 
 def _spec(ctx: SimpleNamespace) -> EntityChatSpec:
     overrides: Dict[str, Any] = {
-        # Always set, so the build never falls back to a pool in the turn's
-        # workspace: the person's memory is the home one.
+        # Always set, so a personal memory switched off in the turn's
+        # workspace stays off instead of the build resolving it again.
         "personal_pool": ctx.personal_pool,
         "service_mode": bool(ctx.service and ctx.workspace == "default"),
     }
@@ -369,6 +473,13 @@ def _spec(ctx: SimpleNamespace) -> EntityChatSpec:
         title="Assistant" + (" · service" if ctx.service and _multi() else ""),
         workspace=ctx.workspace, session_workspace=ctx.home,
         max_iterations=40, agent_overrides=overrides,
+        # The thread is the person's short-term memory: older turns fold
+        # into the session's summary instead of dropping off after twelve.
+        fold_history=True,
+        # Where the turn ran rides on the person's message, so a past
+        # conversation can be found by workspace (tools/assistant_conversations.py).
+        user_meta={"workspace": ctx.workspace,
+                   **({"voice": True} if getattr(getattr(ctx, "payload", None), "voice", False) else {})},
     )
 
 
@@ -377,28 +488,39 @@ def _context_setup(ctx: SimpleNamespace) -> None:
     _workspace_ctx.set(ctx.workspace)
 
 
-def voice_status(home: str) -> Dict[str, Any]:
-    """What the page needs to know about voice in this thread's home: the
-    transcription and speech models it would use (None when there is none,
-    and the page falls back to the browser's own), the speech model's default
-    voice and the voices it is known to have."""
+def voice_entry(purpose: str, workspace: str, home: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """The model voice uses for ``purpose``: :func:`providers.special.voice_entry`
+    (the assistant's lookup reads the same, so it names the models the page uses)."""
     from providers import special
-    config = special.effective(home)
+    return special.voice_entry(purpose, workspace, home)
+
+
+def voice_status(workspace: str, home: Optional[str] = None, viewer: Any = None) -> Dict[str, Any]:
+    """What the page needs to know about voice for a turn in ``workspace``:
+    the transcription and speech models it would use (None when there is
+    none, and the page falls back to the browser's own), the speech model's
+    default voice and the voices it is known to have."""
+    from providers import special
+    home = home or workspace
 
     def model(purpose: str) -> Optional[Dict[str, Any]]:
-        entry = config.get(purpose)
+        entry, where = voice_entry(purpose, workspace, home)
         if not entry:
             return None
-        return {"provider": entry.get("provider"), "model": entry.get("model"),
+        return {"provider": entry.get("provider"), "model": entry.get("model"), "workspace": where,
                 "inherited_from": entry.get(special.INHERITED_KEY)}
 
     speech = model("speech")
     if speech is not None:
-        entry = config["speech"]
+        entry, _ = voice_entry("speech", workspace, home)
         kind = special.provider_kind(str(entry.get("provider") or ""))
         purpose = special.get_purpose("speech")
         speech["voice"] = (entry.get("options") or {}).get("voice") or ""
-        speech["voices"] = list(purpose.voices.get(kind, ())) if (purpose and kind) else []
+        own = special.model_voices(str(entry.get("provider") or ""), str(entry.get("model") or ""), viewer)
+        speech["voices"] = own if own is not None else (
+            list(purpose.voices.get(kind, ())) if (purpose and kind) else [])
+        speech["languages"] = {v: lang for v in speech["voices"]
+                               if (lang := special.voice_language(str(entry.get("model") or ""), v))}
     return {"transcription": model("transcription"), "speech": speech,
             "max_seconds": MAX_AUDIO_SECONDS, "max_bytes": MAX_AUDIO_BYTES,
             "max_speak_chars": MAX_SPEAK_CHARS}
@@ -406,7 +528,8 @@ def voice_status(home: str) -> Dict[str, Any]:
 
 def _meta(ctx: SimpleNamespace) -> Dict[str, Any]:
     return {
-        "voice": voice_status(ctx.home),
+        "voice": voice_status(getattr(ctx, "voice_workspace", None) or ctx.home, ctx.home,
+                              getattr(ctx, "principal", None)),
         "agent_id": ASSISTANT_AGENT_ID,
         "mode": MODE_SERVICE if (ctx.service and _multi()) else MODE_PERSONAL,
         "home": ctx.home,
@@ -430,12 +553,11 @@ def _model_not_added(purpose: str, home: str) -> HTTPException:
     })
 
 
-def _speech_entry(purpose: str, home: str) -> Dict[str, Any]:
-    from providers import special
-    entry = special.effective(home).get(purpose)
+def _speech_entry(purpose: str, workspace: str, home: str) -> Tuple[Dict[str, Any], str]:
+    entry, where = voice_entry(purpose, workspace, home)
     if not entry:
-        raise _model_not_added(purpose, home)
-    return entry
+        raise _model_not_added(purpose, workspace)
+    return entry, where
 
 
 def _provider_failed(what: str, exc: Exception) -> HTTPException:
@@ -452,12 +574,15 @@ def _price(entry: Dict[str, Any]) -> Optional[float]:
 @router.post("/api/assistant/transcribe")
 async def transcribe(request: Request):
     """A recording (the request body, ``Content-Type`` audio/webm, audio/ogg,
-    audio/wav, audio/mp4 or audio/mpeg) as text, with the home workspace's
-    transcription model. Nothing is kept but the cost: a ``voice`` run with
-    the call's price, charged to the person and their home workspace.
-    ``?language=`` (``en``, ``ru``, ``de``) helps the model; ``?mode=service``
-    for an administrator's service thread."""
+    audio/wav, audio/mp4 or audio/mpeg) as text, with the transcription model
+    of ``?workspace=`` (where the turn will run), else the home's. Nothing is
+    kept but the cost: a ``voice`` run with the call's price, charged to the
+    person and the workspace whose model answered. ``?language=`` (``en``,
+    ``ru``, ``de``) helps the model; ``?mode=service`` for an administrator's
+    service thread; ``?purpose=wake`` or ``monitor`` (the hands-free page
+    listening for its name or for a stop) only names the cost run."""
     ctx = resolve_thread(request, request.query_params.get("mode"))
+    workspace = _voice_workspace(ctx, request.query_params.get("workspace"))
     mime = str(request.headers.get("content-type") or "").split(";")[0].strip().lower()
     ext = voice.audio_extension(mime)
     if ext is None:
@@ -479,14 +604,16 @@ async def transcribe(request: Request):
         raise HTTPException(status_code=413, detail={
             "code": "too_long", "message": f"The recording is longer than {int(MAX_AUDIO_SECONDS)} seconds."})
 
-    entry = _speech_entry("transcription", ctx.home)
-    _check_budget(ctx.home)
+    entry, where = _speech_entry("transcription", workspace, ctx.home)
+    _check_budget(where)
     language = str(request.query_params.get("language") or "").strip().lower()[:5] or None
     language = language or (entry.get("options") or {}).get("language")
     import asyncio
     from providers import media, special
+    from providers.local_models import runtime_source
     try:
-        ep = special.entry_endpoint(entry, ctx.home)
+        with runtime_source("voice"):
+            ep = special.entry_endpoint(entry, where)
         text = await asyncio.to_thread(media.transcribe, ep, entry["model"],
                                        (f"recording.{ext}", data, mime), language=language, prompt=None)
     except Exception as exc:  # noqa: BLE001 - the page shows the provider's reason
@@ -494,8 +621,9 @@ async def transcribe(request: Request):
     item = voice.call_entry("transcription", entry, _price(entry), 1)
     principal = ctx.principal
     user_id = str(principal.id) if (_multi() and principal is not None) else None
-    run_id = voice.record_input_run(workspace=ctx.home, user_id=user_id, item=item,
-                                    agent_id=ASSISTANT_AGENT_ID, chars=len(text))
+    run_id = voice.record_input_run(workspace=where, user_id=user_id, item=item,
+                                    agent_id=ASSISTANT_AGENT_ID, chars=len(text),
+                                    purpose=request.query_params.get("purpose"))
     return {"text": text, "language": language, "run_id": run_id, "cost_usd": item["cost_usd"],
             "seconds": seconds,
             # Whether sending it would answer a waiting card rather than start a turn.
@@ -598,14 +726,17 @@ async def speak(body: SpeakIn, request: Request):
         return Response(status_code=204)
     if body.voice and not _VOICE_NAME_RE.match(body.voice):
         raise HTTPException(status_code=400, detail="voice must be a voice name")
-    entry = _speech_entry("speech", home)
-    _check_budget(str(run.get("workspace") or home))
+    turn_workspace = str(run.get("workspace") or home)
+    entry, where = _speech_entry("speech", turn_workspace, home)
+    _check_budget(turn_workspace)
     price = _price(entry)
     cost = None if price is None else price * len(spoken) / 1000.0
     import asyncio
     from providers import media, special
+    from providers.local_models import runtime_source
     try:
-        ep = special.entry_endpoint(entry, home)
+        with runtime_source("voice"):
+            ep = special.entry_endpoint(entry, where)
         audio = await asyncio.to_thread(media.synthesize_speech, ep, entry["model"], spoken,
                                         voice=body.voice or None, instructions=None,
                                         options=dict(entry.get("options") or {}))
@@ -616,6 +747,87 @@ async def speak(body: SpeakIn, request: Request):
     return Response(content=audio.data, media_type=audio.mime_type,
                     headers={"Cache-Control": "no-store", "X-Voice-Chars": str(len(spoken)),
                              "X-Voice-Cost-Usd": f"{item['cost_usd']:.6f}"})
+
+
+class SampleIn(BaseModel):
+    #: A voice of the speech model; the model's default when empty.
+    voice: str = ""
+    #: The page's language, for a voice that speaks any.
+    language: str = ""
+    #: Where the next turn runs (it decides the speech model), and the thread.
+    workspace: str = ""
+    mode: str = ""
+
+
+@router.post("/api/assistant/voice-sample")
+async def voice_sample(body: SampleIn, request: Request):
+    """A short line read with the speech model the turns use and ``voice``,
+    so the settings can play a voice before it is picked: in the voice's own
+    language, else the page's (:func:`providers.special.sample_text`). Charged
+    like a transcription, as a ``voice`` run of its own. The line and its
+    language come in ``X-Sample-Text`` (URL-encoded) and ``X-Sample-Language``."""
+    ctx = resolve_thread(request, body.mode or None)
+    workspace = _voice_workspace(ctx, body.workspace or None)
+    if body.voice and not _VOICE_NAME_RE.match(body.voice):
+        raise HTTPException(status_code=400, detail="voice must be a voice name")
+    entry, where = _speech_entry("speech", workspace, ctx.home)
+    _check_budget(where)
+    import asyncio
+    from urllib.parse import quote
+    from providers import special
+    try:
+        audio, lang, text = await asyncio.to_thread(
+            special.voice_sample,
+            {"provider": entry["provider"], "model": entry["model"], "voice": body.voice,
+             "options": dict(entry.get("options") or {})},
+            entry.get(special.INHERITED_KEY) or where, body.language or None)
+    except special.SpecialModelError as exc:
+        raise _provider_failed("Speech synthesis", exc)
+    price = _price(entry)
+    item = voice.call_entry("speech", entry, None if price is None else price * len(text) / 1000.0,
+                            round(len(text) / 1000.0, 3))
+    principal = ctx.principal
+    user_id = str(principal.id) if (_multi() and principal is not None) else None
+    voice.record_input_run(workspace=where, user_id=user_id, item=item, agent_id=ASSISTANT_AGENT_ID,
+                           chars=len(text), purpose="sample", output=f"Read a {len(text)}-character sample.")
+    return Response(content=audio.data, media_type=audio.mime_type,
+                    headers={"Cache-Control": "no-store", "X-Sample-Language": lang, "X-Sample-Text": quote(text)})
+
+
+# ── past conversations ───────────────────────────────────────────────────────
+
+@router.delete("/api/assistant/conversation")
+async def forget_conversation(request: Request):
+    """Clear the transcript: the conversation in progress is dropped, not
+    filed among the past ones as ``DELETE /api/assistant`` (a new
+    conversation) files it. Its turns stay in Messages and in the costs.
+    409 while a turn runs."""
+    from chat.entity_chat import entity_run_active
+    from common.entity_chat_store import entity_chat_store
+    ctx = resolve_thread(request, request.query_params.get("mode"))
+    if entity_run_active(ASSISTANT_CHAT_KIND, ctx.entity_id):
+        raise HTTPException(status_code=409, detail={
+            "code": "busy", "message": "A turn is still running in this thread: wait for it or stop it."})
+    epoch = entity_chat_store().clear(ASSISTANT_CHAT_KIND, ctx.entity_id, new_session=True, archive=False)
+    return {"cleared": True, "session_epoch": epoch}
+
+
+async def _switch_after_turn(queue, ctx: SimpleNamespace) -> None:
+    """The conversation the turn asked to go back to (``assistant_conversations``
+    ``open``), made the live one now that the turn has written its answer.
+    The conversation being left is filed among the past ones, unless it was
+    nothing but this request."""
+    from common.entity_chat_store import entity_chat_store
+    store = entity_chat_store()
+    switch = store.take_switch(ASSISTANT_CHAT_KIND, ctx.entity_id)
+    if not switch:
+        return
+    only_this = len(store.get_messages(ASSISTANT_CHAT_KIND, ctx.entity_id)) <= 2
+    restored = store.activate_session(ASSISTANT_CHAT_KIND, ctx.entity_id, switch["session_id"],
+                                      drop_active=only_this)
+    if restored is None:
+        return
+    await queue.put({"type": "conversation", "session_id": switch["session_id"]})
 
 
 router.include_router(build_entity_chat_router(EntityChatRoute(
@@ -629,8 +841,9 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
     meta_extra=_meta,
     tap=lambda ctx: voice.turn_tap(SimpleNamespace(run_id=None)),
     respond=lambda ctx, msg: ctx.voice_answer,
+    post_turn=_switch_after_turn,
 )), prefix="/api/assistant")
 
 
 __all__ = ["router", "resolve_thread", "own_thread_ids", "reachable_workspaces", "assistant_prompt",
-           "ASSISTANT_AGENT_ID", "ASSISTANT_CHAT_KIND"]
+           "chat_thread", "chat_threads", "ASSISTANT_AGENT_ID", "ASSISTANT_CHAT_KIND", "CHAT_ID_PREFIX"]

@@ -19,6 +19,10 @@
  *  - then either the next search takes over (the field fades into the next
  *    one and the lens leaves the find to scan it, the mark never comes back)
  *    or the lens returns to the centre and folds back into the mark.
+ * A search that ends for good (the answer is being written, another step
+ * runs) ends quickly: a short find, and the lens folds while it goes back
+ * to the centre, so the mark is not still searching seconds after the run
+ * has moved on.
  *
  * Each field: build(g, defs, id) → st; scan(st, c) → lens position at scan
  * time c; target(st, k) → where the find is; draw(st, k); optional
@@ -571,7 +575,11 @@ var MIN_SCAN = 0.5;     // a search shows at least this much scanning before it 
 var GLIDE = 0.55;       // the lens on its way to the find
 var FIND = 1.5;         // the find, from the moment the lens sets off to it
 var SWAP = 0.9;         // one field fading into the next while the lens sets off again
-var FOLD = 1.2;         // back to the centre and into the mark
+// when no search follows
+var OUT_GLIDE = 0.4;
+var OUT_FIND = 0.85;
+var FOLD = 0.7;         // back to the centre and into the mark, both at once
+var LEAVE = 1.8;        // how much faster the scene goes once no search follows
 
 /**
  * Mount the search scene into `g`, starting on field `kind`. update(dt,
@@ -603,7 +611,7 @@ export function mountSearch(g, kind) {
   function addField(name) {
     var fid = id + 'f' + (++uid);
     var def = F[name];
-    var f = { kind: name, def: def, g: mk(wrap, 'g', { opacity: 0 }), zg: mk(zoom, 'g', { opacity: 0 }), c: 0, fo: 0, findC: null };
+    var f = { kind: name, def: def, g: mk(wrap, 'g', { opacity: 0 }), zg: mk(zoom, 'g', { opacity: 0 }), c: 0, fo: 0, findC: null, glide: GLIDE };
     f.st = def.build(f.g, defs, fid);
     f.zst = def.build(f.zg, defs, fid + 'z');
     fields.push(f);
@@ -619,22 +627,29 @@ export function mountSearch(g, kind) {
   var old = null;
 
   function k(f, extra) {
-    var since = f.findC == null ? -1e9 : f.c - f.findC - GLIDE;
+    var since = f.findC == null ? -1e9 : f.c - f.findC - f.glide;
     var o = { c: f.c, L: s.L, m: s.m, fnd: f.findC == null ? 0 : smooth(ph(since, -0.15, 0.1)), since: since, findC: f.findC };
     if (extra) for (var key in extra) o[key] = extra[key];
     return o;
   }
-  function startFind() {
+  function startFind(more) {
     s.phase = 'find'; s.t = 0; s.from = s.L;
     cur.findC = cur.c;
+    cur.glide = more ? GLIDE : OUT_GLIDE;
     if (cur.def.onFind) { cur.def.onFind(cur.st, k(cur)); cur.def.onFind(cur.zst, k(cur)); }
   }
 
-  function update(dt, next) {
+  function update(step, next) {
+    var leaving = next !== cur.kind;
+    var more = !!(next && F[next]);   // another search follows this one
+    // once the step is over and nothing else is searched, the find and the
+    // fold hurry, so whatever comes next is not kept waiting
+    var dt = leaving && !more ? step * LEAVE : step;
     s.t += dt;
     fields.forEach(function (f) { f.c += dt; });
-    var leaving = next !== cur.kind;
     if (s.phase === 'intro') {
+      // a step that ends before the lens has formed hurries it along
+      if (leaving) s.t += dt;
       s.m = ease(ph(s.t, 0.05, 0.85));
       cur.fo = smooth(ph(s.t, 0.3, 0.9));
       cur.c = Math.max(0, s.t - 0.5);
@@ -642,23 +657,23 @@ export function mountSearch(g, kind) {
       if (s.t >= INTRO) { s.phase = 'scan'; s.t = 0; }
     } else if (s.phase === 'scan') {
       s.L = cur.def.scan(cur.st, cur.c);
-      if (leaving && s.t >= MIN_SCAN) startFind();
+      if (leaving && s.t >= MIN_SCAN) startFind(more);
     } else if (s.phase === 'swap') {
       old.fo = 1 - smooth(ph(s.t, 0, 0.5));
       cur.fo = smooth(ph(s.t, 0.15, 0.65));
       s.L = lerp2(s.from, cur.def.scan(cur.st, cur.c), ease(ph(s.t, 0.1, SWAP)));
       if (s.t >= SWAP) { dropField(old); old = null; s.phase = 'scan'; s.t = 0; }
     } else if (s.phase === 'fold') {
-      cur.fo = 1 - smooth(ph(s.t, 0, 0.45));
-      s.L = lerp2(s.from, [C, C], ease(ph(s.t, 0, 0.55)));
-      s.m = 1 - ease(ph(s.t, 0.45, FOLD));
+      cur.fo = 1 - smooth(ph(s.t, 0, 0.3));
+      s.L = lerp2(s.from, [C, C], ease(ph(s.t, 0, 0.45)));
+      s.m = 1 - ease(ph(s.t, 0.15, FOLD));
       if (s.t >= FOLD) { s.m = 0; draw(); return 'done'; }
     }
     if (s.phase === 'find') {
-      s.L = lerp2(s.from, cur.def.target(cur.st, k(cur)), ease(ph(s.t, 0, GLIDE)));
-      if (s.t >= FIND) {
+      s.L = lerp2(s.from, cur.def.target(cur.st, k(cur)), ease(ph(s.t, 0, cur.glide)));
+      if (s.t >= (more ? FIND : OUT_FIND)) {
         s.from = s.L; s.t = 0;
-        if (next && F[next]) {
+        if (more) {
           // the next search (another one of the same kind too): its field
           // fades in under the lens, which sets off from the find
           old = cur; cur = addField(next); s.phase = 'swap';

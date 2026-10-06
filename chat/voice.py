@@ -383,8 +383,16 @@ def charge_run(run_id: str, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return update_run(run_id, {VOICE_CALLS_KEY: calls})
 
 
+#: Titles of the transcription runs, by what the page was listening for:
+#: a question, its name (wake mode) or a stop while it worked; and of a
+#: sample of a voice, played from the settings.
+INPUT_TITLES = {"": "Voice input", "wake": "Voice input (wake phrase)", "monitor": "Voice input (stop)",
+                "sample": "Voice sample"}
+
+
 def record_input_run(*, workspace: str, user_id: Optional[str], item: Dict[str, Any],
-                     agent_id: str, chars: int) -> Optional[str]:
+                     agent_id: str, chars: int, purpose: Optional[str] = None,
+                     output: Optional[str] = None) -> Optional[str]:
     """A transcription happens before its turn exists, and a recording may
     never become one, so it is a run of its own: channel ``voice``, the
     person who spoke, their home workspace, the call's price in
@@ -399,9 +407,9 @@ def record_input_run(*, workspace: str, user_id: Optional[str], item: Dict[str, 
             "run_id": run_id, "agent_id": agent_id, "channel": INPUT_CHANNEL,
             "session_type": "voice", "message_origin": "assistant-voice",
             "workspace": workspace, "status": "completed", "exit_code": 0,
-            "title": "Voice input", "provider": item.get("provider") or "",
+            "title": INPUT_TITLES.get(str(purpose or ""), INPUT_TITLES[""]), "provider": item.get("provider") or "",
             "model": item.get("model") or "", "created_at": now, "started_at": now,
-            "finished_at": now, "output": f"Transcribed {chars} characters.",
+            "finished_at": now, "output": output or f"Transcribed {chars} characters.",
             VOICE_CALLS_KEY: [dict(item)],
         }
         if user_id:
@@ -414,7 +422,7 @@ def record_input_run(*, workspace: str, user_id: Optional[str], item: Dict[str, 
 
 
 __all__ = [
-    "AUDIO_TYPES", "CONNECTION_TOOL", "CONSENT", "INPUT_CHANNEL", "LANGUAGES", "LiveText",
+    "AUDIO_TYPES", "CONNECTION_TOOL", "CONSENT", "INPUT_CHANNEL", "INPUT_TITLES", "LANGUAGES", "LiveText",
     "VOICE_CALLS_KEY", "approval_phrase", "audio_extension", "call_entry", "charge_run",
     "consent", "live_text", "normalize", "progress_phrase", "record_input_run",
     "speakable", "spoken_from_turn", "tool_label", "turn_tap", "wav_seconds",

@@ -14,6 +14,7 @@ there.
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -849,3 +850,14 @@ def test_a_world_turn_streams_its_steps_and_its_edits(api_client, monkeypatch):
     # The turn still ends with the world as it finally stands — the live updates
     # are extra, not a replacement for the authoritative last word.
     assert kinds[-1] == "world"
+
+
+def test_a_remember_step_carries_the_memory_it_wrote_to():
+    from agents.callbacks.chat_stream import memory_target
+    where = {"pool": "Personal memory: you", "workspace": "dev", "personal": True}
+    out = json.dumps({"ok": True, "saved": [], "memory": where})
+    assert memory_target("remember", out) == {"memory": where}
+    assert memory_target("forget", SimpleNamespace(content=out)) == {"memory": where}
+    assert memory_target("recall", out) == {}
+    assert memory_target("remember", json.dumps({"ok": False, "memory": where})) == {}
+    assert memory_target("remember", "not json") == {}

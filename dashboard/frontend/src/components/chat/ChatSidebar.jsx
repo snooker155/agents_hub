@@ -1,4 +1,4 @@
-import { AlertCircle, FolderGit2, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
+import { AlertCircle, AudioLines, FolderGit2, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
@@ -8,15 +8,23 @@ import { useChatPage } from './context';
  */
 export default function ChatSidebar() {
   const {
-    currentConvId, deleteConversation, flows, navigate, newConversation, projects,
+    currentConvId, deleteConversation, flows, listOpen, navigate, newConversation, projects,
+    setListOpen,
     selectableAgents, selectedWorkspace, setConversations, setSelectedAgent,
     setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode, syncError, t,
     teams, visibleConversations, visibleTelegramBindings,
   } = useChatPage();
   return (
     <>
-      {/* ── Sidebar ── */}
-      <div className="w-60 flex-shrink-0 border-r border-gray-200 flex flex-col">
+      {/* ── Sidebar: a column on a wide screen, a drawer on a phone ── */}
+      {listOpen && (
+        <div className="sm:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setListOpen(false)} aria-hidden="true" />
+      )}
+      <div className={`w-60 flex-shrink-0 border-r border-gray-200 flex-col ${
+        listOpen
+          ? 'flex bg-gray-50 max-sm:fixed max-sm:inset-y-0 max-sm:left-0 max-sm:z-50 max-sm:w-72 max-sm:max-w-[85vw] max-sm:shadow-xl max-sm:pt-safe max-sm:pb-safe'
+          : 'hidden sm:flex'
+      }`}>
         <div className="p-3">
           <button
             onClick={newConversation}
@@ -66,7 +74,10 @@ export default function ChatSidebar() {
                 }
               }}
               onClick={() => {
+                setListOpen(false);
                 navigate(`/chat/${conv.id}`);
+                // Read only: it does not change what the next chat talks to.
+                if (conv.origin === 'assistant') return;
                 if (conv.target_mode === 'flow' && conv.flow_id) {
                   setTargetMode('flow');
                   setSelectedFlow(conv.flow_id);
@@ -91,7 +102,8 @@ export default function ChatSidebar() {
               <div className="flex-1 min-w-0">
                 <div className="truncate leading-5">{conv.title}</div>
                 <div className="mt-0.5 flex flex-wrap gap-1">
-                  {(!selectedWorkspace || selectedWorkspace === 'default') && (
+                  {/* A conversation with the Assistant is no workspace's and talks to the Assistant only: its own badge says both. */}
+                  {conv.origin !== 'assistant' && (!selectedWorkspace || selectedWorkspace === 'default') && (
                     (!conv.workspace || conv.workspace === 'default') ? (
                       <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 font-medium">
                         {t('chat.default')}
@@ -118,7 +130,7 @@ export default function ChatSidebar() {
                         {flow ? flow.name : 'flow'}
                       </span>
                     );
-                  })() : conv.agent_id && (() => {
+                  })() : conv.agent_id && conv.origin !== 'assistant' && (() => {
                     const agent = selectableAgents.find(a => a.id === conv.agent_id);
                     return (
                       <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-medium truncate max-w-full">
@@ -126,6 +138,16 @@ export default function ChatSidebar() {
                       </span>
                     );
                   })()}
+                  {conv.origin === 'assistant' && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium"
+                      data-testid="assistant-thread-badge">
+                      <AudioLines className="w-2.5 h-2.5 flex-shrink-0" />
+                      {t('chat.assistantThread.badge')}
+                      {conv.assistant_thread?.mode === 'service' && <> · {t('chat.assistantThread.service')}</>}
+                      {/* A conversation stays in its workspace: named where all are listed. */}
+                      {(!selectedWorkspace || selectedWorkspace === 'default') && conv.workspace && <> · {conv.workspace}</>}
+                    </span>
+                  )}
                   {conv.origin === 'telegram' && (
                     <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
                       <SendIcon className="w-2.5 h-2.5 flex-shrink-0" />
@@ -143,13 +165,15 @@ export default function ChatSidebar() {
                   })()}
                 </div>
               </div>
-              <button
-                onClick={(e) => deleteConversation(conv.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 flex-shrink-0 transition-opacity"
-                title={t('chat.delete')}
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+              {conv.origin !== 'assistant' && (
+                <button
+                  onClick={(e) => deleteConversation(conv.id, e)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 flex-shrink-0 transition-opacity"
+                  title={t('chat.delete')}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
             </div>
           ))}
           </div>
@@ -175,6 +199,7 @@ export default function ChatSidebar() {
                     key={`tg-${b.chat_id}`}
                     onClick={() => {
                       if (!convId) return;
+                      setListOpen(false);
                       // Ensure a local conversation entry exists so the main pane renders.
                       setConversations((prev) => {
                         if (prev.some((c) => c.id === convId)) return prev;

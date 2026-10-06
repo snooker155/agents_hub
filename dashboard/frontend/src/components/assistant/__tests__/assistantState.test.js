@@ -54,7 +54,10 @@ describe('the live mark', () => {
     expect(markState({ recording: true, busy: true })).toBe('listen');
     expect(markState({ transcribing: true })).toBe('think');
     expect(markState({ busy: true, waiting: true, speaking: true })).toBe('wait');
-    expect(markState({ busy: true, speaking: true, tool: 'list_tasks' })).toBe('speak');
+    // a running tool keeps its scene while the voice says what it is doing
+    expect(markState({ busy: true, speaking: true, tool: 'list_tasks' })).toBe('read');
+    expect(markState({ busy: true, speaking: true, tool: 'hub_lookup', input: { kind: 'run' } })).toBe('search-history');
+    expect(markState({ busy: true, speaking: true, thinking: true })).toBe('speak');
     expect(markState({ busy: true, tool: 'web_search' })).toBe('search-web');
     expect(markState({ busy: true })).toBe('working');
     expect(markState({})).toBe('idle');

@@ -12,7 +12,7 @@ export default {
     done: 'At least one provider is configured.',
     doneWithLabel: 'At least one provider is configured (default: {{provider}}).',
     warn: 'A provider is configured but the connection test failed — check the API key / base URL in Settings.',
-    todo: 'Add an API key (OpenAI / Anthropic / Google) or point at a local model (Ollama / LM Studio) in Settings.',
+    todo: 'Add an API key (OpenAI / Anthropic / Google) in Settings, or download a local model on Models, Local tab: the hub runs it itself.',
     openSettings: 'Open Settings',
     testConnection: 'Test connection',
   },

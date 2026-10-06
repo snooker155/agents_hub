@@ -702,7 +702,7 @@ export default function TeamDetails() {
             <div className="flex items-end gap-2">
               <div
                 className={`flex-1 min-w-0 flex items-center border rounded-xl px-3 transition-all
-                  focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
+                 
                   ${live ? 'border-gray-200 bg-gray-50' : 'border-gray-400 bg-white'}`}
               >
                 <textarea

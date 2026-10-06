@@ -128,7 +128,7 @@ export default function ChatComposer() {
   return (
     <>
         {/* Input area: over the foot of the conversation, no rule above it */}
-        <div ref={frameRef} className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-2 pointer-events-none">
+        <div ref={frameRef} className="absolute inset-x-0 bottom-0 z-10 px-3 sm:px-4 pb-3 sm:pb-4 pt-2 pointer-events-none">
           <div className="max-w-3xl mx-auto pointer-events-auto">
             <input
               ref={fileInputRef}
@@ -255,7 +255,7 @@ export default function ChatComposer() {
 
             <div
               className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3 bg-white
-                focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
+               
                 shadow-lg transition-all"
             >
               {/* Attach: a file from the computer, or a record the hub already

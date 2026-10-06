@@ -15,6 +15,15 @@ function applyTheme(theme) {
   }
 }
 
+// The phone's status bar and the installed app's title bar take this color
+// (docs/pwa.md): the header's own surface, so the bar and the header read as one.
+function syncThemeColor() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--surface-card').trim();
+  if (color) meta.setAttribute('content', color);
+}
+
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(() => localStorage.getItem('theme') || 'system');
 
@@ -26,7 +35,7 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     if (theme !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => applyTheme('system');
+    const handler = () => { applyTheme('system'); syncThemeColor(); };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, [theme]);
@@ -37,7 +46,8 @@ export function ThemeProvider({ children }) {
   // (theme.js) is the same function Account.jsx and WorkspaceDetails.jsx call
   // again right after they save or reset a palette.
   useEffect(() => {
-    resolvePalette(theme);
+    // The palette may repaint the surfaces, so the color is read after it.
+    Promise.resolve(resolvePalette(theme)).catch(() => {}).finally(syncThemeColor);
   }, [theme]);
 
   // ThemeProvider sits above WorkspaceProvider in main.jsx, so it cannot read

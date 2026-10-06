@@ -189,6 +189,25 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
+  // The global temperature (LLM_TEMPERATURE): what a model without its own on
+  // the Models page runs at, unless the agent sets one. Machine-wide, written
+  // to .env and applied in the running backend at once.
+  const [temperatureSaving, setTemperatureSaving] = useState(false);
+  const saveGlobalTemperature = async (value) => {
+    setTemperatureSaving(true);
+    setError('');
+    try {
+      await updateSettings({ temperature: value });
+      setGlobalSettings(s => ({ ...s, temperature: value }));
+      return true;
+    } catch (e) {
+      setError(`${t('settings.errors.temperatureSave')}: ` + (e.response?.data?.detail || e.message));
+      return false;
+    } finally {
+      setTemperatureSaving(false);
+    }
+  };
+
   const toggleStreaming = async (next) => {
     setStreamingSaving(true);
     setError('');
@@ -323,6 +342,7 @@ export function useWorkspaceSettings(workspace) {
     policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks, importHooksFile,
     savePolicy,
     streamingSaving, toggleStreaming,
+    temperatureSaving, saveGlobalTemperature,
     capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
     codeRunnerSaving, setCodeRunnerProvider, toggleCodeRunnerFallback,
     webSearchSaving, saveWebSearch,

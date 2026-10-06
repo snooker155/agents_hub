@@ -1,5 +1,5 @@
 import { AgentDropdown, FlowDropdown, ProjectDropdown, TeamDropdown } from './targetPickers';
-import { Activity, AlertCircle, AlertTriangle, Bot, Code2, FileText, MessageSquare, Terminal, UsersRound, Workflow } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, Code2, FileText, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
@@ -16,7 +16,9 @@ import { useLiveRefetch } from '../stream';
  * panel beside the conversation (Artifacts or Code, one at a time, each with
  * how many the conversation has produced; pressed is open).
  *
- * Every control is one height, so the bar reads as one row.
+ * Every control is one height, so the bar reads as one row. On a phone it
+ * wraps to two, the buttons drop their labels, and a first button opens the
+ * conversation list, which is a drawer there.
  */
 
 /** One segmented switch: a row of buttons in a shared border. */
@@ -60,7 +62,7 @@ function Segment({ active, onClick, icon: Icon, label, title, tone = 'indigo', f
       } ${active ? TONES[tone] : 'text-gray-500 hover:bg-gray-50'}`}
     >
       <Icon className="w-3.5 h-3.5" />
-      {label}
+      <span className="hidden sm:inline">{label}</span>
       {children}
     </button>
   );
@@ -72,7 +74,7 @@ export default function ChatTopBar() {
     currentConvId, flows, graphRun, messages, processOpen, projects, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen, setCodeOpen,
     setConversations, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
-    setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode,
+    setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode, setListOpen,
   } = useChatPage();
   const isBuild = viewMode === 'build';
   // Artifacts and Code share the one slot: opening one closes the other.
@@ -100,7 +102,16 @@ export default function ChatTopBar() {
   };
 
   return (
-    <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-3">
+    <div className="flex-shrink-0 bg-white border-b border-gray-200 px-3 sm:px-5 py-2 sm:py-0 sm:h-[60px] flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+      <button
+        type="button"
+        onClick={() => setListOpen(true)}
+        aria-label={t('chat.chats')}
+        title={t('chat.chats')}
+        className="sm:hidden h-8 w-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+      >
+        <PanelLeftOpen className="w-4 h-4" />
+      </button>
       {/* Mode: who answers */}
       <Segmented>
         <Segment first active={targetMode === 'agent'} onClick={() => setTargetMode('agent')}
@@ -147,7 +158,7 @@ export default function ChatTopBar() {
       {/* The active chat's workspace is redundant when a specific workspace is
           selected in the header — only surface it in the default (all) view. */}
       {(!selectedWorkspace || selectedWorkspace === 'default') && (currentConv?.workspace || selectedWorkspace) && (
-        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+        <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-500">
           <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.ws')}</span>
           <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
             {currentConv?.workspace || selectedWorkspace}
@@ -158,7 +169,7 @@ export default function ChatTopBar() {
       {/* The model, only when the agent names one of its own: an inherited
           setting says nothing about this agent in particular. */}
       {targetMode === 'agent' && selectedAgent && agentModel && (
-        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+        <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-500">
           <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.model')}</span>
           <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
             {agentProvider && agentProvider !== 'inherit' ? `${agentProvider} · ${agentModel}` : agentModel}
@@ -174,13 +185,13 @@ export default function ChatTopBar() {
       )}
 
       {/* View: the messages, or the whole transcript */}
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2 sm:gap-3">
         {/* What the person wrote, not every bubble: a turn's tool calls and
             steering notes are part of one message's answer. */}
         {(() => {
           const sent = messages.filter((m) => m.role === 'user' && !m.steer).length;
           return sent > 0 ? (
-            <div className="text-xs text-gray-400 tabular-nums">
+            <div className="hidden sm:block text-xs text-gray-400 tabular-nums">
               {t('chat.messageCount', { count: sent })}
             </div>
           ) : null;

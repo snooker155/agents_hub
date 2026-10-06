@@ -488,12 +488,22 @@ class Settings(BaseSettings):
         default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
 
     # ── Model runtime (providers/local_models.py, deploy/models/) ──────────────
-    # Base URL of the hub's own model runtime, e.g. http://models:8200 under
-    # the compose `models` profile or http://127.0.0.1:8200 in host mode.
-    # Empty (default) hides the runtime: the Local models card says it is not
-    # configured and the provider hub-local is never registered.
+    # Base URL of a model runtime run elsewhere, e.g. http://models:8200 for
+    # the compose service. Empty (default): the hub runs its own on this host
+    # (providers/model_runtime_host.py), unless models_managed is off.
     models_url: str = Field(
         default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_URL", "models_url"))
+    # Whether the hub starts and keeps its own runtime when models_url is
+    # empty: a process of its own on 127.0.0.1:models_port, with its own
+    # Python environment and token under AGENTS_HUB_ROOT/models-runtime.
+    models_managed: bool = Field(
+        default=True, validation_alias=AliasChoices("AGENTS_HUB_MODELS_MANAGED", "models_managed"))
+    models_port: int = Field(
+        default=8200, validation_alias=AliasChoices("AGENTS_HUB_MODELS_PORT", "models_port"))
+    # A file holding the token, for a runtime that wrote its own (compose
+    # shares it over the models volume). models_token wins when both are set.
+    models_token_file: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN_FILE", "models_token_file"))
     # Shared token the runtime requires on every call (its MODELS_TOKEN). It
     # is also the api_key of the hub-local backend. The _TOKEN suffix keeps it
     # out of run_shell's environment (scrubbed_env).

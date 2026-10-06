@@ -103,7 +103,7 @@ export default function SkillsTab() {
                         value={skillForm.name}
                         onChange={e => setSkillForm(f => ({ ...f, name: e.target.value }))}
                         placeholder={t('agentDetails.eGFixPythonImport')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                       />
                     </div>
                     <div>
@@ -113,7 +113,7 @@ export default function SkillsTab() {
                         value={skillForm.tags}
                         onChange={e => setSkillForm(f => ({ ...f, tags: e.target.value }))}
                         placeholder={t('agentDetails.eGDebuggingPythonApi')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                       />
                     </div>
                   </div>
@@ -124,7 +124,7 @@ export default function SkillsTab() {
                       value={skillForm.description}
                       onChange={e => setSkillForm(f => ({ ...f, description: e.target.value }))}
                       placeholder={t('agentDetails.eGWhenAPython')}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     />
                   </div>
                   <div>
@@ -134,7 +134,7 @@ export default function SkillsTab() {
                       onChange={e => setSkillForm(f => ({ ...f, steps: e.target.value }))}
                       rows={5}
                       placeholder={t('agentDetails.stepsPlaceholder')}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none resize-none"
                     />
                   </div>
                   <div className="flex justify-end">

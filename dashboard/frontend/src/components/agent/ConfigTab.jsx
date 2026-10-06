@@ -78,7 +78,7 @@ export default function ConfigTab() {
                   value={draft}
                   onChange={e => handleDefinitionDraftChange(key, e.target.value)}
                   spellCheck={false}
-                  className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none"
                   placeholder={required ? t('agentDetails.definitionRequired') : t('agentDetails.definitionOptional')}
                 />
                 {error && (

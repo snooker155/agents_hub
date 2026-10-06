@@ -6,6 +6,12 @@ export default {
   workspacePersonalOf: '{{name}} (persönlich)',
   expandSidebar: 'Seitenleiste ausklappen',
   collapseSidebar: 'Seitenleiste einklappen',
+  openMenu: 'Menü öffnen',
+  closeMenu: 'Menü schließen',
+  install: {
+    button: 'App installieren',
+    iosHint: 'In Safari auf Teilen tippen, dann Zum Home-Bildschirm. Der Hub öffnet sich dann über sein eigenes Symbol im Vollbild.',
+  },
   theme: {
     light: 'Hell',
     dark: 'Dunkel',

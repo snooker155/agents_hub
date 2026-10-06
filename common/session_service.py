@@ -62,6 +62,17 @@ def load_contexts(timeout: float = 10.0) -> List[Dict[str, Any]]:
     return [c for c in (_row_to_ctx(r) for r in rows) if c is not None]
 
 
+def _session_sorts() -> Dict[str, str]:
+    """Named sort orders for the sessions list; built per call because the
+    JSON expressions depend on the dialect."""
+    return {
+        "created": "COALESCE(created_at, '')",
+        "title": f"LOWER(COALESCE({db.json_text('doc', 'title')}, ''))",
+        "workspace": "COALESCE(workspace, '')",
+        "messages": db.json_array_len("doc", "message_ids"),
+    }
+
+
 def query_contexts(
     *,
     workspace: Optional[str] = None,
@@ -74,10 +85,14 @@ def query_contexts(
     to_date: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A filtered, ordered page of session contexts plus the total match count.
 
-    Returns ``{items, total, limit, offset}``, newest first. Everything here is
+    Returns ``{items, total, limit, offset}``, newest first unless ``sort``
+    names another key of :func:`_session_sorts` (``order`` is ``asc``/``desc``;
+    an unknown key raises ``ValueError``). Everything here is
     done in SQL on the lookup columns: the sessions list used to parse every
     session document in the database on each request, which a workspace with
     thousands of sessions turns into a full scan per open tab.
@@ -120,10 +135,11 @@ def query_contexts(
         params.extend([str(s) for s in session_ids])
 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    order_sql = db.order_by(_session_sorts(), sort, order, "created", tiebreak="session_id DESC")
     conn = db.get_conn()
     total = conn.execute(f"SELECT COUNT(*) FROM sessions{where}", params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT doc FROM sessions{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        f"SELECT doc FROM sessions{where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
         list(params) + [int(limit), int(offset)],
     ).fetchall()
     items = [c for c in (_row_to_ctx(r) for r in rows) if c is not None]

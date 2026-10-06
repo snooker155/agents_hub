@@ -97,6 +97,18 @@ describe('useConversationStore', () => {
     vi.useRealTimers();
   });
 
+  it('never writes a conversation with the Assistant: it is that page\'s record', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useConversationStore(null));
+    await act(async () => {});
+
+    act(() => { result.current.setConversations([{ ...CONV, id: 'assistant~user-local~s0', origin: 'assistant' }]); });
+    await settle();
+
+    expect(saveChat).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it('strips the live-turn fields and keeps the trail, clipped', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useConversationStore(null));

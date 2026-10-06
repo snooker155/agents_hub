@@ -163,6 +163,33 @@ def test_budget_model_and_agent_cards(single, hub):
         assert card["url"].startswith("/models/") and "special_models_here" in card["fields"]
 
 
+def test_voice_names_the_models_the_page_uses_and_the_browser_without_them(multi, hub):
+    from providers import special
+    bob = _user("bob")
+    _member_of(bob, "team")
+    home = personal_workspace.ensure_personal_workspace(bob)
+    # nothing added anywhere: the page uses the browser's own
+    card = lookup.lookup("voice", entity_id="speech", workspace="team", user_id=bob)
+    assert card["fields"]["model"] is None and "browser" in card["fields"]["used_instead"]
+    # added in default: the person's home inherits it, a turn in team falls back to the home
+    special.save("default", {
+        "speech": {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "alloy"}},
+        "transcription": {"provider": "openai", "model": "gpt-4o-mini-transcribe"},
+    })
+    listed = lookup.lookup("voice", workspace="team", user_id=bob)["items"]
+    assert [r["label"] for r in listed] == ["transcription: openai/gpt-4o-mini-transcribe",
+                                           "speech: openai/gpt-4o-mini-tts"]
+    speech = lookup.lookup("speech", entity_id="speech", workspace="team", user_id=bob)["fields"]
+    assert speech["voice"] == "alloy" and speech["from_workspace"] == "default"
+    # a model the workspace added itself wins
+    special.save("team", {"transcription": {"provider": "openai", "model": "whisper-1"}})
+    heard = lookup.lookup("voice", entity_id="transcription", workspace="team", user_id=bob)["fields"]
+    assert heard["model"] == "openai/whisper-1" and heard["from_workspace"] == "team"
+    # and the model list shows the special models as well
+    models = lookup.lookup("model", query="transcription", workspace=home, user_id=bob)["items"]
+    assert models and models[0]["label"] == "transcription: openai/gpt-4o-mini-transcribe"
+
+
 def test_whats_new_lists_unread_notifications_and_waiting_approvals(multi, hub):
     from common import tool_approvals
     from plans import service as plans

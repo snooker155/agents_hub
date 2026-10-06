@@ -67,7 +67,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false }) {
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
           <User className="w-4 h-4" />
         </div>
-        <div data-prompt-bubble className="chat-prompt-bubble max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base leading-relaxed whitespace-pre-wrap">
+        <div data-prompt-bubble className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base leading-relaxed whitespace-pre-wrap">
           {trimBubbleText(msg.content)}
         </div>
       </div>
@@ -97,7 +97,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false }) {
       </div>
       {/* As wide as a Chat view bubble at most: switching views keeps the
           transcript's shape, the steps just appear between the answers. */}
-      <div className={`max-w-[72%] min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
+      <div className={`max-w-[88%] sm:max-w-[72%] min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
         {timeline ? (
           timeline.map((entry, i) => {
             if (entry.type === 'text') {

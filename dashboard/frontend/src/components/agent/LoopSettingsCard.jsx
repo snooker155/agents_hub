@@ -5,7 +5,7 @@ import {
 } from '../../api/agentLoop';
 import { useI18n } from '../../i18n';
 
-const selectCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const selectCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none';
 const iconBtnCls = 'p-1 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed';
 
 const triState = (value) => (value === null || value === undefined ? '' : (value ? 'on' : 'off'));
@@ -262,7 +262,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
                   markDirty();
                 }}
                 aria-label={t('agentLoop.concurrency.label')}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-sm w-24 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                className="border border-gray-200 rounded-lg px-2 py-1 text-sm w-24 focus:outline-none"
               />
               <span className="text-xs text-gray-500">{t('agentLoop.concurrency.hint')}</span>
             </label>
@@ -291,7 +291,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
                 rows={8}
                 aria-label={t('agentLoop.schema.title')}
                 placeholder={t('agentLoop.schema.placeholder')}
-                className="w-full font-mono text-xs border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                className="w-full font-mono text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none"
               />
             )}
           </div>

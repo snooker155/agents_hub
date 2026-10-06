@@ -393,6 +393,168 @@ def test_the_api_masks_a_literal_token_and_keeps_it_on_save(ws, client):
     assert bad.status_code == 400
 
 
+# ── discovery ────────────────────────────────────────────────────────────────
+
+OPENAI_LIST = {"data": [{"id": m} for m in (
+    "gpt-5", "gpt-4o-mini", "gpt-image-1", "dall-e-3", "sora-2", "tts-1", "gpt-4o-mini-tts",
+    "whisper-1", "gpt-4o-transcribe", "gpt-4o-realtime-preview", "gpt-4o-audio-preview",
+    "text-embedding-3-small", "omni-moderation-latest")]}
+
+GOOGLE_LIST = {"models": [
+    {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+    {"name": "models/gemini-2.5-flash-image", "supportedGenerationMethods": ["generateContent"]},
+    {"name": "models/gemini-2.5-flash-preview-tts", "supportedGenerationMethods": ["generateContent"]},
+    {"name": "models/gemini-embedding-001", "supportedGenerationMethods": ["embedContent"]},
+    {"name": "models/gemma-3-27b-it", "supportedGenerationMethods": ["generateContent"]},
+    {"name": "models/imagen-4.0-generate-001", "supportedGenerationMethods": ["predict"]},
+    {"name": "models/veo-3.0-generate-001", "supportedGenerationMethods": ["predictLongRunning"]},
+], "nextPageToken": ""}
+
+
+@pytest.mark.parametrize("purpose,expected", [
+    ("image", ["gpt-image-1", "dall-e-3"]),
+    ("video", ["sora-2"]),
+    ("speech", ["gpt-4o-mini-tts", "tts-1"]),
+    ("transcription", ["gpt-4o-transcribe", "whisper-1"]),
+])
+def test_discovery_keeps_only_the_models_that_fit_the_purpose(ws, http, purpose, expected):
+    calls = http(lambda request: httpx.Response(200, json=OPENAI_LIST))
+    got = special.discover(purpose, "openai", WS)
+    assert got["models"] == expected
+    assert got["total"] == len(OPENAI_LIST["data"])
+    assert calls[0].url.path.endswith("/models")
+    assert calls[0].headers["Authorization"] == "Bearer sk-test"
+
+
+@pytest.mark.parametrize("purpose,expected", [
+    ("image", ["gemini-2.5-flash-image", "imagen-4.0-generate-001"]),
+    ("video", ["veo-3.0-generate-001"]),
+    ("speech", ["gemini-2.5-flash-preview-tts"]),
+    ("transcription", ["gemini-2.5-flash"]),
+])
+def test_discovery_reads_gemini_methods(ws, http, purpose, expected):
+    calls = http(lambda request: httpx.Response(200, json=GOOGLE_LIST))
+    assert special.discover(purpose, "google", WS)["models"] == expected
+    assert calls[0].headers["x-goog-api-key"] == "g-test"
+
+
+def test_discovery_on_a_local_server_goes_by_the_model_name(ws, http):
+    http(lambda request: httpx.Response(200, json={"data": [
+        {"id": "llama3.1:8b"}, {"id": "whisper-large-v3"}, {"id": "kokoro-82m"}, {"id": "llava:13b"},
+        {"id": "flux.1-schnell"}, {"id": "qwen2.5-vl:7b"}, {"id": "nomic-embed-text"}]}))
+    assert special.discover("transcription", "ollama", WS)["models"] == ["whisper-large-v3"]
+    assert special.discover("speech", "ollama", WS)["models"] == ["kokoro-82m"]
+    assert special.discover("image", "ollama", WS)["models"] == ["flux.1-schnell"]
+    assert special.discover("video", "ollama", WS)["models"] == []
+
+
+def test_discovery_refuses_what_it_cannot_ask(ws, http, monkeypatch):
+    http(lambda request: httpx.Response(401, json={"error": {"message": "bad key"}}))
+    with pytest.raises(special.SpecialModelError, match="bad key"):
+        special.discover("image", "openai", WS)
+    with pytest.raises(special.SpecialModelError, match="cannot serve"):
+        special.discover("image", "anthropic", WS)
+    with pytest.raises(special.SpecialModelError, match="unknown purpose"):
+        special.discover("music", "openai", WS)
+    monkeypatch.delenv("OPENAI_API_KEY")
+    from common.config import settings as cfg
+    monkeypatch.setattr(cfg, "openai_api_key", "", raising=False)
+    with pytest.raises(special.SpecialModelError, match="No API key"):
+        special.discover("image", "openai", WS)
+
+
+def test_the_discover_route(ws, http, client):
+    http(lambda request: httpx.Response(200, json=OPENAI_LIST))
+    resp = client.get(f"/api/workspaces/{WS}/special-models/discover",
+                      params={"purpose": "speech", "provider": "openai"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["models"] == ["gpt-4o-mini-tts", "tts-1"]
+    bad = client.get(f"/api/workspaces/{WS}/special-models/discover",
+                     params={"purpose": "speech", "provider": "anthropic"})
+    assert bad.status_code == 400
+    # Nothing is stored by a search.
+    assert special.stored(WS) == {}
+
+
+# ── connection check ─────────────────────────────────────────────────────────
+
+def test_check_finds_the_model_on_the_providers_list(ws, http):
+    calls = http(lambda request: httpx.Response(200, json=OPENAI_LIST))
+    got = special.check({"purpose": "image", "provider": "openai", "model": "gpt-image-1"}, WS)
+    assert got["status"] == "ok" and "gpt-image-1" in got["message"]
+    # A list is all it asks for: nothing is generated, so nothing is charged.
+    assert [c.method for c in calls] == ["GET"] and calls[0].url.path.endswith("/models")
+
+    missing = special.check({"purpose": "image", "provider": "openai", "model": "gpt-image-9"}, WS)
+    assert missing["status"] == "warn" and "not among them" in missing["message"]
+    odd = special.check({"purpose": "speech", "provider": "openai", "model": "gpt-5"}, WS)
+    assert odd["status"] == "warn" and "speech model" in odd["message"]
+
+
+def test_check_reports_failures_instead_of_raising(ws, http):
+    http(lambda request: httpx.Response(401, json={"error": {"message": "bad key"}}))
+    got = special.check({"purpose": "image", "provider": "openai", "model": "gpt-image-1"}, WS)
+    assert got["status"] == "error" and "bad key" in got["message"]
+
+    def refused(request):
+        raise httpx.ConnectError("refused", request=request)
+    http(refused)
+    down = special.check({"purpose": "transcription", "provider": "ollama", "model": "whisper"}, WS)
+    assert down["status"] == "error" and "Is it running" in down["message"]
+    assert special.check({"purpose": "image", "provider": "anthropic", "model": "x"}, WS)["status"] == "error"
+    assert "No model is chosen" in special.check({"purpose": "video", "provider": ""}, WS)["message"]
+    assert "No model is typed" in special.check({"purpose": "video", "provider": "openai", "model": " "}, WS)["message"]
+
+
+def test_check_without_a_provider_checks_the_inherited_model(ws, http, monkeypatch):
+    monkeypatch.setattr(special, "effective", lambda workspace: {
+        "speech": {"provider": "google", "model": "gemini-2.5-flash-preview-tts", "inherited_from": "default"}})
+    seen = []
+    monkeypatch.setattr(special, "endpoint", lambda provider, workspace: seen.append(workspace) or special.Endpoint(
+        special.GOOGLE, "https://generativelanguage.googleapis.com/v1beta", "g-default"))
+    http(lambda request: httpx.Response(200, json=GOOGLE_LIST))
+    assert special.check({"purpose": "speech", "provider": "", "model": ""}, WS)["status"] == "ok"
+    assert seen == ["default"]
+
+
+def test_check_of_a_custom_chat_model_reads_anthropics_list(ws, http, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a-test")
+    calls = http(lambda request: httpx.Response(200, json={
+        "data": [{"id": "claude-sonnet-5"}], "has_more": False, "last_id": "claude-sonnet-5"}))
+    got = special.check({"custom": {"kind": "chat", "provider": "anthropic", "model": "claude-sonnet-5"}}, WS)
+    assert got["status"] == "ok"
+    assert calls[0].url.host == "api.anthropic.com" and calls[0].headers["x-api-key"] == "a-test"
+
+
+def test_check_of_an_http_model_sends_a_get_with_the_stored_token(ws, http, monkeypatch):
+    special.save(WS, {"custom": [{"id": "seg", "description": "segments", "kind": "http",
+                                  "url": "https://gpu.internal/segment",
+                                  "headers": {"Authorization": "Bearer sk-literal", "X-Org": "${ORG}"}}]})
+    monkeypatch.setenv("ORG", "acme")
+    calls = http(lambda request: httpx.Response(405))
+    form = {"id": "seg", "kind": "http", "url": "https://gpu.internal/segment",
+            "headers": {"Authorization": special.MASK, "X-Org": "${ORG}"}}
+    got = special.check({"custom": form}, WS)
+    assert got["status"] == "ok" and "405" in got["message"]
+    assert calls[0].method == "GET"
+    assert calls[0].headers["Authorization"] == "Bearer sk-literal" and calls[0].headers["X-Org"] == "acme"
+
+    http(lambda request: httpx.Response(401))
+    assert special.check({"custom": form}, WS)["status"] == "error"
+    http(lambda request: httpx.Response(404))
+    assert special.check({"custom": form}, WS)["status"] == "warn"
+    assert special.check({"custom": {**form, "url": "ftp://x"}}, WS)["status"] == "error"
+
+
+def test_the_check_route(ws, http, client):
+    http(lambda request: httpx.Response(200, json=OPENAI_LIST))
+    resp = client.post(f"/api/workspaces/{WS}/special-models/check",
+                       json={"purpose": "speech", "provider": "openai", "model": "tts-1"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "ok"
+    assert special.stored(WS) == {}
+
+
 # ── the build ────────────────────────────────────────────────────────────────
 
 def test_the_build_keeps_the_tools_and_says_which_have_no_model(ws):
@@ -416,3 +578,48 @@ def test_the_build_keeps_the_tools_and_says_which_have_no_model(ws):
     assert "- `generate_image`:" in built.system_prompt and "openai/gpt-image-1" in built.system_prompt
     missing = built.system_prompt.split("No model is added in this workspace for:")[1]
     assert "generate_image" not in missing.split(".")[0] and "generate_video" in missing
+
+
+# ── voices and their samples ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("model,voice,expected", [
+    ("kokoro-v1.0", "af_heart", "en"), ("kokoro-v1.0", "zf_xiaobei", "zh"), ("kokoro-v1.0", "ef_dora", "es"),
+    ("piper-ru_RU-irina-medium", "", "ru"), ("piper-de_DE-thorsten-medium", "0", "de"),
+    ("gpt-4o-mini-tts", "alloy", None), ("tts-1", "af_heart", None),
+    ("kitten-tts-nano-0.8-int8", "Bella", "en"), ("supertonic-3", "F1", None),
+])
+def test_a_voice_knows_its_language_from_its_name(model, voice, expected):
+    assert special.voice_language(model, voice) == expected
+
+
+def test_a_sample_speaks_the_voices_language_else_the_pages():
+    assert special.sample_text("kokoro-v1.0", "ff_siwis", "ru")[0] == "fr"
+    assert special.sample_text("gpt-4o-mini-tts", "nova", "de-DE")[0] == "de"
+    lang, text = special.sample_text("gpt-4o-mini-tts", "", "xx")
+    assert lang == "en" and text == special.SAMPLE_TEXTS["en"]
+
+
+def test_the_form_plays_a_sample_of_unsaved_values(ws, http, client):
+    calls = http(lambda request: httpx.Response(200, content=b"ID3-mp3", headers={"content-type": "audio/mpeg"}))
+    resp = client.post(f"/api/workspaces/{WS}/special-models/sample", json={
+        "provider": "openai", "model": "tts-1", "voice": "nova", "options": {"format": "wav"}, "language": "ru"})
+    assert resp.status_code == 200, resp.text
+    assert resp.content == b"ID3-mp3" and resp.headers["X-Sample-Language"] == "ru"
+    from urllib.parse import unquote
+    assert unquote(resp.headers["X-Sample-Text"]) == special.SAMPLE_TEXTS["ru"]
+    sent = json.loads(calls[0].content)
+    assert sent["voice"] == "nova" and sent["response_format"] == "wav" and sent["input"] == special.SAMPLE_TEXTS["ru"]
+    assert special.stored(WS) == {}  # nothing is saved
+
+    # No provider in the form: the workspace's own model reads it.
+    assert client.post(f"/api/workspaces/{WS}/special-models/sample", json={}).status_code == 400
+    special.save(WS, {"speech": {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "onyx"}}})
+    assert client.post(f"/api/workspaces/{WS}/special-models/sample", json={}).status_code == 200
+    assert json.loads(calls[-1].content)["voice"] == "onyx"
+
+    bad = client.post(f"/api/workspaces/{WS}/special-models/sample",
+                      json={"provider": "openai", "model": "tts-1", "voice": "no such voice!"})
+    assert bad.status_code == 400
+    http(lambda request: httpx.Response(401, json={"error": {"message": "bad key"}}))
+    failed = client.post(f"/api/workspaces/{WS}/special-models/sample", json={"provider": "openai", "model": "tts-1"})
+    assert failed.status_code == 400 and "bad key" in failed.text

@@ -506,8 +506,10 @@ def _hub_lookup_specs() -> List[ToolSpec]:
     # (chat/actions.py).
     from tools.hub_action import HUB_ACTION_TOOLS
     from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
+    from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
     return [spec_from_tool(t, category="service_ops")
-            for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS)]
+            for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS,
+                      *ASSISTANT_CONVERSATION_TOOLS)]
 
 
 def _system_ops_specs() -> List[ToolSpec]:

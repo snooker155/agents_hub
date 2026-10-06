@@ -78,7 +78,10 @@ class PinnedWorkspaceTool(BaseTool):
 #: for the assistant, whose reach is the person's, and the turn's own
 #: workspace for any other agent; ``service_lookup`` is service-wide and held
 #: only in an administrator's service thread.
-SELF_SCOPED_TOOLS = frozenset({"hub_lookup", "service_lookup", "hub_action"})
+SELF_SCOPED_TOOLS = frozenset({"hub_lookup", "service_lookup", "hub_action",
+                               # Reads only the running turn's own thread; its
+                               # workspace argument is a filter.
+                               "assistant_conversations"})
 
 
 def pin_workspace(tools: List[Any], workspace: str) -> List[Any]:

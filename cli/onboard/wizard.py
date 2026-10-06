@@ -1,9 +1,10 @@
 """`ah setup`: install and configure the whole service from the terminal.
 
-A guided first run in seven steps: how to run it (this checkout, Docker from
+A guided first run in eight steps: how to run it (this checkout, Docker from
 the published images, Compose from the checkout, or a hub that already runs
 elsewhere), the database, who may sign in, the model providers and their
-default models, a few features, a review, and then the work itself.
+default models, the assistant's voice (speech and transcription models), a
+few features, a review, and then the work itself.
 
 Nothing is written until the review is confirmed. Every question is asked
 through :mod:`cli.onboard.ui`, so the same steps run from an answers file for
@@ -13,7 +14,10 @@ an unattended install (``ah setup --answers setup.json --yes``), and
 What it writes is what the rest of the service already reads: ``.env``
 (the same keys the Settings page edits), the model catalog the Models page
 edits (``providers/catalog.py``), accounts through ``common/identity.py`` or,
-for a hub in Docker, through ``/api/auth/bootstrap`` and ``/api/auth/users``.
+for a hub in Docker, through ``/api/auth/bootstrap`` and ``/api/auth/users``,
+and the ``default`` workspace's speech and transcription models (the Special
+models tab, ``providers/special.py``), with the engines and models of the
+hub's own runtime when the voice runs on this machine.
 It holds no state of its own, so running it again is how a setting is changed
 later: every question then defaults to the value in force.
 """
@@ -43,7 +47,7 @@ from cli.onboard.ui import Asker, SetupError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 QUICKSTART = PROJECT_ROOT / "deploy" / "quickstart"
-STEPS = 7
+STEPS = 8
 
 SHAPES = [
     ("local", "This machine, from this checkout", "a virtualenv, `ah up`, the dashboard on :5173"),
@@ -178,6 +182,9 @@ class Plan:
     pip_extras: list = field(default_factory=list)
     remote: Optional[dict] = None
     web_port: str = "8080"
+    # The assistant's voice: mode, the special model entries for the default
+    # workspace, and what the hub's own runtime installs and downloads.
+    voice: dict = field(default_factory=dict)
 
     def cur(self, key: str, default: str = "") -> str:
         """The value in force: what this run already decided, then the file."""
@@ -198,7 +205,7 @@ class Plan:
 def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional[str],
                  advanced: bool) -> bool:
     """Returns False when the person cancels at the existing-config question."""
-    a.section(1, STEPS, "Install", "How this hub should run. Nothing is written before step 6.")
+    a.section(1, STEPS, "Install", "How this hub should run. Nothing is written before step 7.")
     if shape:
         if shape not in [s[0] for s in SHAPES]:
             raise SetupError(f"--shape must be one of {', '.join(s[0] for s in SHAPES)}")
@@ -621,12 +628,256 @@ def step_providers(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 5: features
+# Step 5: the assistant's voice
+# ---------------------------------------------------------------------------
+
+#: Cloud models the assistant hears and speaks with, per provider: the speech
+#: and transcription models, their prices (per 1000 characters, per call) and
+#: the voices to pick from, the first one the default.
+VOICE_CLOUD = {
+    "openai": {"speech": "gpt-4o-mini-tts", "transcription": "gpt-4o-mini-transcribe",
+               "speech_price": 0.015, "transcription_price": 0.003,
+               "voices": ["alloy", "nova", "coral", "sage", "onyx", "echo", "shimmer", "verse"]},
+    "google": {"speech": "gemini-2.5-flash-preview-tts", "transcription": "gemini-2.5-flash",
+               "speech_price": None, "transcription_price": None,
+               "voices": ["Kore", "Puck", "Charon", "Aoede", "Leda", "Zephyr"]},
+}
+
+#: Speech models the hub's own runtime can download, as on the Models page's
+#: Local tab (speechPresets.js): (id, label, size, repo, package, engine).
+VOICE_LOCAL_SPEECH = [
+    ("piper-ru", "Piper, Russian (Irina)", "about 60 MB", "rhasspy/piper-voices", "piper-ru_RU-irina-medium", "piper"),
+    ("piper-en", "Piper, English (Lessac)", "about 60 MB", "rhasspy/piper-voices", "piper-en_US-lessac-medium", "piper"),
+    ("piper-de", "Piper, German (Thorsten)", "about 60 MB", "rhasspy/piper-voices", "piper-de_DE-thorsten-medium", "piper"),
+    ("kokoro", "Kokoro 82M, many voices (English, French, Spanish, Italian, Japanese, Chinese)",
+     "about 330 MB", "fastrtc/kokoro-onnx", "kokoro-v1.0", "kokoro"),
+    ("supertonic", "Supertonic 3, ten voices in 31 languages (Russian, German, English among them)",
+     "about 400 MB", "Supertone/supertonic-3", "supertonic-3", "supertonic"),
+    ("kitten", "Kitten TTS nano, eight English voices", "about 28 MB",
+     "KittenML/kitten-tts-nano-0.8-int8", "kitten-tts-nano-0.8-int8", "kitten"),
+]
+#: The same for hearing: (id, label, size, repo, package).
+VOICE_LOCAL_TRANSCRIPTION = [
+    ("whisper-small", "Whisper small", "about 480 MB, fast on a CPU",
+     "Systran/faster-whisper-small", "faster-whisper-small"),
+    ("whisper-turbo", "Whisper large-v3 turbo", "about 1.6 GB, more accurate",
+     "deepdml/faster-whisper-large-v3-turbo-ct2", "faster-whisper-large-v3-turbo-ct2"),
+]
+HUB_LOCAL = "hub-local"
+
+
+def _local_speech_default() -> str:
+    lang = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
+    return "piper-ru" if lang.startswith("ru") else "piper-de" if lang.startswith("de") else "piper-en"
+
+
+def step_voice(a: Asker, plan: Plan) -> None:
+    """The assistant listens and speaks with the ``default`` workspace's
+    transcription and speech models; every personal workspace falls back to
+    them. Saved once the hub's database (or, in Docker, its API) is there."""
+    a.section(5, STEPS, "Assistant voice",
+              "What the assistant hears you with and reads its answers aloud with "
+              "(the Special models tab of the Models page, default workspace).")
+    cloud = [p for p in VOICE_CLOUD if p in plan.providers or _configured(plan, p)]
+    options = []
+    if cloud:
+        options.append(("cloud", "A cloud provider", ", ".join(P.LABELS[p] for p in cloud) + "; paid per use"))
+    options += [
+        ("local", "On this hub, its own model runtime",
+         "Whisper and Piper, Kokoro, Kitten or Supertonic; free, downloads 0.5 to 2 GB"),
+        ("browser", "The browser only", "Chrome or Safari listen and speak themselves; nothing on the server"),
+        ("skip", "Not now", "add the models later on the Models page"),
+    ]
+    mode = a.choose("voice.mode", "How should the assistant hear and speak?", options,
+                    default="cloud" if cloud else "browser")
+    plan.voice = {"mode": mode}
+    if mode == "cloud":
+        provider = cloud[0] if len(cloud) == 1 else a.choose(
+            "voice.provider", "Which provider?", [(p, P.LABELS[p], VOICE_CLOUD[p]["speech"]) for p in cloud],
+            default=cloud[0])
+        spec = VOICE_CLOUD[provider]
+        voice = a.choose("voice.voice", "Its voice (the assistant page and the Models page can change it)",
+                         [(v, v, "") for v in spec["voices"]], default=spec["voices"][0])
+        plan.voice.update({
+            "speech": {"provider": provider, "model": spec["speech"], "price_usd": spec["speech_price"],
+                       "options": {"voice": voice}},
+            "transcription": {"provider": provider, "model": spec["transcription"],
+                              "price_usd": spec["transcription_price"], "options": {}},
+        })
+    elif mode == "local":
+        speech_id = a.choose("voice.speech", "The voice that reads answers aloud",
+                             [(i, label, size) for i, label, size, *_ in VOICE_LOCAL_SPEECH],
+                             default=_local_speech_default())
+        hear_id = a.choose("voice.transcription", "The model that hears you",
+                           [(i, label, size) for i, label, size, *_ in VOICE_LOCAL_TRANSCRIPTION],
+                           default="whisper-small")
+        _, speech_label, _, s_repo, s_package, s_engine = next(x for x in VOICE_LOCAL_SPEECH if x[0] == speech_id)
+        _, hear_label, _, h_repo, h_package = next(x for x in VOICE_LOCAL_TRANSCRIPTION if x[0] == hear_id)
+        plan.voice.update({
+            "speech": {"provider": HUB_LOCAL, "model": s_package, "options": {}},
+            "transcription": {"provider": HUB_LOCAL, "model": h_package, "options": {}},
+            "engines": ["whisper", s_engine],
+            "packages": [(h_repo, h_package, hear_label), (s_repo, s_package, speech_label)],
+        })
+    elif mode == "browser":
+        a.note("The assistant page uses the browser's own recognition and voice; Firefox has neither.")
+
+
+def _voice_actions(plan: Plan) -> list[str]:
+    v = plan.voice
+    if not v.get("speech"):
+        return []
+    out = []
+    if v.get("engines"):
+        out.append("install the " + " and ".join(v["engines"]) + " engines into the hub's model runtime, "
+                   "then download " + ", ".join(label for _, _, label in v["packages"]))
+    where = "in the database" if plan.shape == "local" else "once the stack answers"
+    out.append(f"set the default workspace's speech model to {v['speech']['provider']}/{v['speech']['model']} "
+               f"and transcription to {v['transcription']['provider']}/{v['transcription']['model']} {where}")
+    return out
+
+
+def _voice_entries(plan: Plan) -> dict:
+    return {k: {kk: vv for kk, vv in plan.voice[k].items() if vv is not None}
+            for k in ("speech", "transcription")}
+
+
+def _voice_done(a: Asker, plan: Plan) -> None:
+    a.ok("Assistant voice: " + ", ".join(f"{k} {e['provider']}/{e['model']}"
+                                         for k, e in _voice_entries(plan).items()) + ".")
+
+
+def _wait_job(a: Asker, label: str, fetch, job_id: Optional[str], minutes: int = 45) -> bool:
+    """Follow a job of the model runtime until it ends; ``fetch(job_id)``
+    returns its record. Returns whether it finished."""
+    if not job_id:
+        return True
+    deadline = time.time() + minutes * 60
+    with a.console.status(f"  {label}…") as status:
+        while time.time() < deadline:
+            try:
+                job = fetch(job_id)
+            except Exception as exc:  # noqa: BLE001 - the runtime may be restarting; keep asking
+                job = {"status": "running", "message": str(exc)[:80]}
+            state = job.get("status")
+            if state == "done":
+                a.ok(f"{label}: done.")
+                return True
+            if state == "error":
+                a.warn(f"{label} failed: {job.get('error') or job.get('message') or 'see the Models page'}")
+                return False
+            pct = job.get("percent") or 0
+            status.update(f"  {label}… {pct:.0f}%" if pct else f"  {label}… {job.get('message') or ''}".rstrip())
+            time.sleep(2)
+    a.warn(f"{label} is still running; the Models page (Local tab) shows how it goes.")
+    return False
+
+
+def _runtime_work(a: Asker, plan: Plan, installed: dict, install, download, fetch) -> bool:
+    """Install the engines the runtime lacks and download the models it does
+    not have; the callables reach it directly (this checkout) or through the
+    hub's API. Returns whether everything finished."""
+    done = True
+    for engine in dict.fromkeys(plan.voice.get("engines") or []):
+        if installed.get("engines", {}).get(engine):
+            a.ok(f"The {engine} engine is already installed.")
+            continue
+        done = _wait_job(a, f"Installing the {engine} engine", fetch, install(engine).get("job_id")) and done
+    have = set(installed.get("models") or ())
+    for repo, package, label in plan.voice.get("packages") or []:
+        if package in have:
+            a.ok(f"{label} is already downloaded.")
+            continue
+        done = _wait_job(a, f"Downloading {label}", fetch, download(repo, package).get("job_id")) and done
+    return done
+
+
+def _what_runtime_has(listing: dict) -> dict:
+    return {"engines": listing.get("engines") or {},
+            "models": [m.get("name") for m in listing.get("models") or [] if isinstance(m, dict)]}
+
+
+def _apply_voice_local(a: Asker, plan: Plan) -> None:
+    v = plan.voice
+    if not v.get("speech"):
+        return
+    try:
+        if v.get("packages"):
+            from providers import local_models as lm
+            from providers import model_runtime_host as host
+            if host.active():
+                with a.console.status("  Starting the model runtime (its first start sets up its own Python)…"):
+                    host.ensure(wait=True, explicit=True)
+            if not lm.runtime_configured():
+                a.warn("No model runtime here (AGENTS_HUB_MODELS_MANAGED is off and AGENTS_HUB_MODELS_URL "
+                       "is empty); the assistant's voice was not set.")
+                return
+            client = lm.RuntimeClient(timeout=60)
+            if not _runtime_work(a, plan, _what_runtime_has(client.listing()), client.install_engine,
+                                 lambda repo, package: client.download(repo, package=package), client.job):
+                a.note("The models are set anyway; they answer once the runtime has them.")
+            lm.ensure_hub_local_backend()
+        from providers import special
+        from workspace import create_workspace_folder, get_workspace_folder
+        if not get_workspace_folder("default"):
+            create_workspace_folder("default")
+        special.save("default", {**special.stored("default"), **_voice_entries(plan)})
+        _voice_done(a, plan)
+    except Exception as exc:  # noqa: BLE001 - the rest of the setup stands; say what to do
+        a.warn(f"The assistant's voice was not set ({exc}). Add it on the Models page, Special models tab.")
+
+
+def _apply_voice_http(a: Asker, plan: Plan, session: Optional[str]) -> None:
+    import requests
+    v = plan.voice
+    if not v.get("speech"):
+        return
+    if plan.auth == "multi" and not session:
+        a.note("The assistant's voice was not set: no administrator session (the hub already had accounts). "
+               "Add it on the Models page, Special models tab.")
+        return
+    token = session or plan.env.get("AGENTS_HUB_API_TOKEN") or plan.cur("AGENTS_HUB_API_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token and plan.auth != "single" else {}
+
+    def call(method: str, path: str, **kw):
+        r = requests.request(method, f"{plan.base_url}{path}", headers=headers, timeout=60, **kw)
+        if not r.ok:
+            raise SetupError(f"{method} {path}: {r.status_code} {r.text[:200]}")
+        return r.json() if r.content else {}
+
+    try:
+        if v.get("packages"):
+            runtime = "/api/models/local/runtime"
+            # The models service may still be starting after the backend answers.
+            listing: dict = {}
+            with a.console.status("  Waiting for the model runtime…"):
+                for _ in range(60):
+                    listing = call("GET", runtime)
+                    if listing.get("ok"):
+                        break
+                    time.sleep(2)
+            if not listing.get("ok"):
+                raise SetupError(f"the model runtime did not answer: {listing.get('error') or 'not running'}")
+            if not _runtime_work(
+                    a, plan, _what_runtime_has(listing),
+                    lambda e: call("POST", f"{runtime}/engines/{e}/install"),
+                    lambda repo, package: call("POST", f"{runtime}/download", json={"repo": repo, "package": package}),
+                    lambda job_id: call("GET", f"{runtime}/jobs/{job_id}")):
+                a.note("The models are set anyway; they answer once the runtime has them.")
+        own = call("GET", "/api/workspaces/default/special-models").get("own") or {}
+        call("PUT", "/api/workspaces/default/special-models", json={**own, **_voice_entries(plan)})
+        _voice_done(a, plan)
+    except (SetupError, requests.RequestException) as exc:
+        a.warn(f"The assistant's voice was not set ({exc}). Add it on the Models page, Special models tab.")
+
+
+# ---------------------------------------------------------------------------
+# Step 6: features
 # ---------------------------------------------------------------------------
 
 
 def step_features(a: Asker, plan: Plan) -> None:
-    a.section(5, STEPS, "Features")
+    a.section(6, STEPS, "Features")
     demo = a.confirm("demo", "Seed the demo workspace on the first start (four agents, chats, views)?",
                      plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
     plan.env["DEMO_WORKSPACE"] = "1" if demo else "0"
@@ -682,8 +933,9 @@ def step_features(a: Asker, plan: Plan) -> None:
         extra = a.multi("services", "Extra services in the stack", [
             ("browser", "Browser", "headless Chromium for the browser tools"),
             ("scale", "Redis", "for more than one backend replica"),
-            ("models", "Local model runtime", "llama.cpp served as the provider hub-local"),
-        ], default=[p for p in ("browser", "scale", "models")
+            # No entry for the model runtime: it is part of every stack (the
+            # `models` service, its token shared over its volume).
+        ], default=[p for p in ("browser", "scale")
                     if p in (plan.cur("COMPOSE_PROFILES") or "").split(",")])
         plan.profiles += extra
         if "browser" in extra:
@@ -691,13 +943,10 @@ def step_features(a: Asker, plan: Plan) -> None:
             plan.env["AGENTS_HUB_BROWSER_TOKEN"] = plan.cur("AGENTS_HUB_BROWSER_TOKEN") or secrets.token_urlsafe(24)
         if "scale" in extra:
             plan.env["AGENTS_HUB_BROKER_URL"] = "redis://redis:6379/0"
-        if "models" in extra:
-            plan.env["AGENTS_HUB_MODELS_URL"] = "http://models:8200"
-            plan.env["AGENTS_HUB_MODELS_TOKEN"] = plan.cur("AGENTS_HUB_MODELS_TOKEN") or secrets.token_urlsafe(24)
 
 
 # ---------------------------------------------------------------------------
-# Step 6: review
+# Step 7: review
 # ---------------------------------------------------------------------------
 
 _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
@@ -731,11 +980,12 @@ def actions(plan: Plan) -> list[str]:
         out.append(f"create accounts {where}: {names}")
     if plan.shape == "local" and plan.providers:
         out.append("put the chosen models into the Models catalog, each provider's default starred")
+    out += _voice_actions(plan)
     return out
 
 
 def step_review(a: Asker, plan: Plan) -> None:
-    a.section(6, STEPS, "Review")
+    a.section(7, STEPS, "Review")
     if plan.profiles:
         plan.env["COMPOSE_PROFILES"] = ",".join(dict.fromkeys(plan.profiles))
     elif plan.shape in ("docker", "compose") and plan.cur("COMPOSE_PROFILES"):
@@ -755,7 +1005,7 @@ def step_review(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 7: apply
+# Step 8: apply
 # ---------------------------------------------------------------------------
 
 
@@ -898,6 +1148,7 @@ def apply_local(a: Asker, plan: Plan) -> None:
         _create_accounts_local(a, plan)
     if plan.providers:
         _apply_catalog(a, plan)
+    _apply_voice_local(a, plan)
     if _saved_remote():
         _forget_remote()
         a.note("This `ah` no longer points at the remote hub saved earlier; it runs this checkout.")
@@ -1049,6 +1300,7 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
     step_database(a, plan)
     step_access(a, plan)
     step_providers(a, plan)
+    step_voice(a, plan)
     step_features(a, plan)
     step_review(a, plan)
     if dry_run:
@@ -1058,7 +1310,7 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         a.note("Cancelled; nothing was changed.")
         return 0
 
-    a.section(7, STEPS, "Applying")
+    a.section(8, STEPS, "Applying")
     started = False
     if plan.shape == "local":
         apply_local(a, plan)
@@ -1074,6 +1326,8 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
     session = None
     if started and plan.admin:
         session = _bootstrap_http(a, plan)
+    if started:
+        _apply_voice_http(a, plan, session)
     if started and a.confirm("point_cli", "Point this `ah` at it, so commands go to the stack?", True):
         try:
             connect_remote(a, plan.base_url, session_token=session,
@@ -1086,5 +1340,8 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         plan.generated = [g for g in plan.generated if not g[0].startswith("password for")]
         a.note("No accounts were created, since the stack is not running yet. The dashboard asks for "
                "the first administrator when it is first opened, or run `ah setup` again once it is up.")
+    if not started and plan.voice.get("speech"):
+        a.note("The assistant's voice is set once the stack runs: run `ah setup` again then, or add it on "
+               "the Models page, Special models tab.")
     _farewell(a, plan, started)
     return 0

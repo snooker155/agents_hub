@@ -4,6 +4,7 @@
  */
 import { SlotData } from '../SlotValue';
 import { shortText } from '../processUtils';
+import ToolStatusMark from '../ToolStatusMark';
 import { useI18n } from '../../i18n';
 import { parseJsonSafe } from './memoryTools';
 import { TimelineToolCard } from './timeline';
@@ -166,14 +167,10 @@ function ExtractionToolCard({ entry }) {
   if (entry.running || entry.output == null) {
     return (
       <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 flex items-center gap-2">
+        <ToolStatusMark status="running" />
         <BrainCircuit className="w-3.5 h-3.5 text-violet-500" />
         <span className="text-xs font-semibold text-violet-700">
           {isSave ? t('chat.savingExtraction') : t('chat.extractingKnowledge')}
-        </span>
-        <span className="flex gap-1 ml-1">
-          {[0, 150, 300].map((d) => (
-            <span key={d} className="w-1 h-1 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
-          ))}
         </span>
       </div>
     );
@@ -194,6 +191,7 @@ function ExtractionToolCard({ entry }) {
   return (
     <div className={`rounded-lg border ${theme}`}>
       <div className="flex items-center gap-2 px-3 py-2">
+        <ToolStatusMark status={failed ? 'error' : 'ok'} />
         {isSave && !failed
           ? <Check className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
           : <BrainCircuit className={`w-3.5 h-3.5 flex-shrink-0 ${failed ? 'text-red-500' : 'text-violet-500'}`} />}
@@ -293,13 +291,9 @@ function RecallToolCard({ entry }) {
   if (entry.running || entry.output == null) {
     return (
       <div className="rounded-lg border border-sky-200 bg-sky-50/50 px-3 py-2 flex items-center gap-2">
+        <ToolStatusMark status="running" />
         <Database className="w-3.5 h-3.5 text-sky-500" />
         <span className="text-xs font-semibold text-sky-700">{t('chat.recallingFromMemory')}</span>
-        <span className="flex gap-1 ml-1">
-          {[0, 150, 300].map((d) => (
-            <span key={d} className="w-1 h-1 bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
-          ))}
-        </span>
       </div>
     );
   }
@@ -314,6 +308,7 @@ function RecallToolCard({ entry }) {
   return (
     <div className="rounded-lg border border-sky-200 bg-sky-50/40">
       <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+        <ToolStatusMark status="ok" />
         <Database className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
         <span className="text-xs font-semibold text-sky-700">{t('chat.memoryRecall')}</span>
         {result.query && (

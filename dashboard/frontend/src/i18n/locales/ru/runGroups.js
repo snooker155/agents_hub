@@ -38,5 +38,4 @@ export default {
   },
   childRuns: 'Запуски в этой группе',
   noChildRuns: 'Для этой группы пока не записано ни одного запуска агента.',
-  shownOfTotal: 'Показано {{shown}} из {{total}}',
 };

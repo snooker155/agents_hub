@@ -79,6 +79,25 @@ def split_embedded_history(prompt: str) -> tuple[list[dict], str]:
 HISTORY_MAX_MESSAGES = 40
 HISTORY_MAX_MESSAGE_CHARS = 4000
 HISTORY_CHAR_BUDGET = 60_000
+#: The oldest message a turn carries moves forward this many at a time, not
+#: one turn at a time. A window that slides on every turn changes the start
+#: of the conversation on every turn, and a prompt cache (a local model's
+#: above all, which recomputes everything after the first changed token)
+#: then computes the whole history again for each reply. In steps the start
+#: stays put for several turns, for at most this many messages less context.
+#: The web client steps its own window the same way (buildRequest.js).
+HISTORY_WINDOW_STEP = 10
+
+
+def window_start(n: int, keep: int, step: int = HISTORY_WINDOW_STEP) -> int:
+    """Where a window of at most ``keep`` of ``n`` items starts when its
+    start moves in multiples of ``step``: the first multiple of ``step`` that
+    leaves no more than ``keep``."""
+    over = n - keep
+    if over <= 0:
+        return 0
+    step = max(1, step)
+    return -(-over // step) * step
 
 _ROLE_LABELS = {"user": "User", "assistant": "Assistant"}
 
@@ -97,21 +116,28 @@ def bounded_history(history: list, *, budget_chars: float | None = None) -> list
     this cut entirely and let its own budget decide what survives; the
     per-message and per-turn-count caps below still apply either way.
     """
-    turns: list[tuple[str, str]] = []
     budget = HISTORY_CHAR_BUDGET if budget_chars is None else budget_chars
-    for msg in reversed(history[-HISTORY_MAX_MESSAGES:]):
+    start = window_start(len(history), HISTORY_MAX_MESSAGES)
+    rendered: list[tuple[str, str]] = []
+    for msg in history:
         role = "user" if str(msg.role) == "user" else "assistant"
         content = str(msg.content or "")
         if len(content) > HISTORY_MAX_MESSAGE_CHARS:
             content = content[:HISTORY_MAX_MESSAGE_CHARS] + "\n...[truncated]"
-        # The budget is spent on the rendered line, label included, which is what
-        # it has always been measured against.
+        rendered.append((role, content))
+    # The budget is spent from the newest turn back on the rendered line,
+    # label included, which is what it has always been measured against; where
+    # it runs out is then moved forward to the next step, like the count cut.
+    for idx in range(len(rendered) - 1, start - 1, -1):
+        role, content = rendered[idx]
         cost = len(f"{_ROLE_LABELS[role]}: {content}")
         if budget - cost < 0:
+            stepped = -(-(idx + 1) // HISTORY_WINDOW_STEP) * HISTORY_WINDOW_STEP
+            # A step that would leave nothing keeps what fits instead.
+            start = stepped if stepped < len(rendered) else idx + 1
             break
         budget -= cost
-        turns.insert(0, (role, content))
-    return turns
+    return rendered[start:]
 
 
 def _history_budget(provider: str, model: str, budget_chars: float | None) -> float | None:

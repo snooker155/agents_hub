@@ -54,8 +54,22 @@ export const ASSISTANT_DEMO_TEXT = [
   'Open [Tasks](/tasks) or [Costs](/costs) to see a page shown beside the conversation.',
 ].join('\n');
 
+// The steps a turn takes before the fixed reply, each as long as a real one,
+// so the live mark plays the scene a real assistant would show for it.
+const DEMO_STEPS = [
+  ['think', { thought: 'What changed for this person since yesterday?' }],
+  ['hub_lookup', { kind: 'notification' }],
+  ['hub_lookup', { kind: 'run', workspace: 'all' }],
+  ['search_docs', { query: 'assistant' }],
+  ['costs_summary', {}],
+];
+
 export const ASSISTANT_DEMO_FRAMES = [
   { event: 'run', data: { run_id: 'demo-assistant' } },
+  ...DEMO_STEPS.flatMap(([tool, input]) => [
+    { event: 'tool_start', data: { tool, input } },
+    { event: 'tool_end', data: { tool, demo_pause: 2600 } },
+  ]),
   ...ASSISTANT_DEMO_TEXT.split(/(?<= )/).map((token) => ({ event: 'token', data: { token } })),
   { event: 'message', data: { role: 'assistant', content: ASSISTANT_DEMO_TEXT } },
   { event: 'done', data: { ok: true, response: ASSISTANT_DEMO_TEXT } },

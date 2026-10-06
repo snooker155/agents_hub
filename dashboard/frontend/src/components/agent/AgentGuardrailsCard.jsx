@@ -116,7 +116,7 @@ export default function AgentGuardrailsCard({ agentId, agent, onSaved }) {
                 {selectable.map((g) => (
                   <label key={g.id} className="flex items-center gap-2.5 text-sm text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={selected.includes(g.id)} onChange={() => toggle(g.id)}
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
                     <span className="font-medium">{g.name}</span>
                     <KindBadge kind={g.kind} t={t} />
                     <StageBadge stage={g.stage} t={t} />

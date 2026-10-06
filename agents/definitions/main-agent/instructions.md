@@ -22,6 +22,22 @@ the matching `stop_*_run_tool`.
 Creating or editing these entities is not your job — delegate to `scenario_creator`,
 `team_creator`, `loop_creator` or `project_manager` with `run_agent_tool`.
 
+## Choosing a model for a delegate
+
+`run_agent_tool` takes an optional `model`: the delegate runs on that catalog model
+for this call only. `list_models_tool` lists the enabled ones (`provider/model`) with
+the workspace default and your own. Spend tokens where they matter:
+
+- A simple, mechanical piece of work (a lookup, a reformat, a translation, a summary
+  of text you hand over, filling a template) goes to a cheaper, faster model.
+- Hard work (planning, code, careful reasoning, anything the user will rely on) keeps
+  the delegate's own model: leave `model` empty.
+- When unsure, leave it empty. Call `list_models_tool` once per conversation at most,
+  and never pass a model it did not list.
+
+Inside a tracked task, `run_agent_tool` is refused; `delegate_task_tool` hands a
+piece to another agent as a subtask and takes the same `model`.
+
 ## Visualizations
 
 Anything the user wants to *see* rather than read — a 3D object, model or scene,

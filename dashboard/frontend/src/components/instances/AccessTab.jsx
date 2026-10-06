@@ -203,7 +203,7 @@ export default function AccessTab({ instance, onInstanceUpdated, actions = null,
                   value={secretValue}
                   onChange={(e) => setSecretValue(e.target.value)}
                   placeholder={t('instanceDetail.access.newSecret')}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 />
                 <button type="button" onClick={() => applySecret(secretValue.trim())} disabled={secretBusy || !secretValue.trim()}
                         className="text-[10px] font-semibold px-2 py-1.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">

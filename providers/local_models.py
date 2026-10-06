@@ -16,7 +16,10 @@ Three parts:
   the runtime service keeps its own registry for downloads.
 * The hub runtime: ``RuntimeClient`` talks to deploy/models, and
   ``ensure_hub_local_backend`` plus ``catalog_set_enabled`` make what it has
-  loaded usable as the provider ``hub-local``.
+  loaded usable as the provider ``hub-local``. Its speech models (kind
+  ``speech`` or ``transcription``) stay out of the chat catalog: a
+  workspace picks them as special models (providers/special.py) under the
+  same provider.
 """
 from __future__ import annotations
 
@@ -26,14 +29,41 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
 #: The custom backend id the hub runtime is registered under.
 HUB_LOCAL_ID = "hub-local"
 HUB_LOCAL_LABEL = "Hub runtime"
+
+#: Model kinds the runtime serves on /v1/audio rather than for chat.
+SPEECH_KINDS = ("speech", "transcription")
+
+#: The header the runtime counts its calls by (deploy/models/app.py, Usage):
+#: ``hub`` for the hub's agents and its own work, ``endpoint`` for a call to
+#: the hub's /v1 from outside, ``voice`` for the assistant's speech.
+SOURCE_HEADER = "X-Hub-Source"
+_source: ContextVar[str] = ContextVar("runtime_source", default="hub")
+
+
+@contextmanager
+def runtime_source(name: str) -> Iterator[None]:
+    """Calls to the runtime set up inside this block (a chat model built, a
+    speech endpoint resolved) are counted under ``name``."""
+    token = _source.set(name)
+    try:
+        yield
+    finally:
+        _source.reset(token)
+
+
+def source_headers() -> Dict[str, str]:
+    """The header naming the current caller, for a call to the runtime."""
+    return {SOURCE_HEADER: _source.get()}
 
 #: How many finished jobs the registry remembers.
 JOBS_KEPT = 50
@@ -184,6 +214,51 @@ def ollama_pull_stream(name: str) -> Iterator[Dict[str, Any]]:
                     yield event
     except httpx.HTTPError as exc:
         raise LocalModelError(f"Ollama at {ollama_base_url()} is unreachable: {type(exc).__name__}: {exc}")
+
+
+def lmstudio_base_url() -> str:
+    """LM Studio's address, rewritten for a containerised backend like
+    Ollama's (:func:`ollama_base_url`)."""
+    import os
+    from common.config import settings
+    from common.hostnet import host_service_url
+    url = (os.environ.get("LMSTUDIO_BASE_URL") or getattr(settings, "lmstudio_base_url", "")
+           or "http://localhost:1234")
+    return host_service_url(str(url).strip().rstrip("/"))
+
+
+#: Seconds a status check waits for a local server: it is on this machine,
+#: so anything slower is as good as down for a marker on a page.
+SERVER_CHECK_TIMEOUT = 1.5
+
+
+def server_status() -> Dict[str, Dict[str, Any]]:
+    """Whether the local model servers answer right now: Ollama, LM Studio
+    and the hub's own runtime, checked at once with a short timeout. Each is
+    ``{ok, url}``, plus ``error`` when it does not answer; the runtime is
+    left out when the hub has none."""
+    import httpx
+    from concurrent.futures import ThreadPoolExecutor
+
+    def probe(url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        try:
+            resp = httpx.get(url, timeout=SERVER_CHECK_TIMEOUT, headers=headers or {})
+            if resp.status_code < 400:
+                return {"ok": True}
+            return {"ok": False, "error": f"HTTP {resp.status_code}"}
+        except httpx.HTTPError as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
+    targets: Dict[str, Any] = {
+        "ollama": (ollama_base_url(), "/api/tags"),
+        "lmstudio": (lmstudio_base_url().removesuffix("/v1"), "/v1/models"),
+    }
+    cfg = runtime_settings()
+    if cfg["url"]:
+        targets[HUB_LOCAL_ID] = (cfg["url"], "/healthz")
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        futures = {name: pool.submit(probe, base + path) for name, (base, path) in targets.items()}
+        return {name: {**futures[name].result(), "url": targets[name][0]} for name in targets}
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -387,14 +462,29 @@ def start_ollama_pull(name: str, *, registry: Optional[JobRegistry] = None,
 
 # ── The hub runtime (deploy/models) ──────────────────────────────────────────
 
+def _token_file(path: str) -> str:
+    try:
+        return open(path, encoding="utf-8").read().strip() if path else ""
+    except OSError:
+        return ""
+
+
 def runtime_settings() -> Dict[str, Any]:
-    """URL, token and timeout of the runtime service, from settings."""
+    """URL, token and timeout of the runtime service: the one
+    ``AGENTS_HUB_MODELS_URL`` names (with ``AGENTS_HUB_MODELS_TOKEN`` or the
+    token file it wrote), else the one the hub runs itself on this host
+    (providers/model_runtime_host.py); ``managed`` says which."""
     from common.config import settings
-    return {
-        "url": str(getattr(settings, "models_url", "") or "").strip().rstrip("/"),
-        "token": str(getattr(settings, "models_token", "") or "").strip(),
-        "timeout": float(getattr(settings, "models_timeout", 60.0) or 60.0),
-    }
+    timeout = float(getattr(settings, "models_timeout", 60.0) or 60.0)
+    url = str(getattr(settings, "models_url", "") or "").strip().rstrip("/")
+    if url:
+        token = (str(getattr(settings, "models_token", "") or "").strip()
+                 or _token_file(str(getattr(settings, "models_token_file", "") or "").strip()))
+        return {"url": url, "token": token, "timeout": timeout, "managed": False}
+    from providers import model_runtime_host as host
+    if host.active():
+        return {"url": host.url(), "token": host.token(), "timeout": timeout, "managed": True}
+    return {"url": "", "token": "", "timeout": timeout, "managed": False}
 
 
 def runtime_configured() -> bool:
@@ -418,12 +508,15 @@ class RuntimeClient:
         self.timeout = float(timeout if timeout is not None else cfg["timeout"])
         self.transport = transport
 
-    def _request(self, method: str, path: str, *, timeout: Optional[float] = None,
-                 **kwargs: Any) -> Any:
+    def _send(self, method: str, path: str, *, timeout: Optional[float] = None, **kwargs: Any) -> Any:
+        """The runtime's answer to one call, a 4xx or 5xx raised as
+        ``LocalModelError`` with the runtime's reason (FastAPI's ``detail``
+        or the gateway's ``error.message``)."""
         import httpx
         if not self.url:
             raise LocalModelError("The model runtime is not configured (AGENTS_HUB_MODELS_URL).")
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        headers.update(kwargs.pop("headers", None) or {})
         try:
             with httpx.Client(transport=self.transport, timeout=timeout or self.timeout) as client:
                 resp = client.request(method, f"{self.url}{path}", headers=headers, **kwargs)
@@ -432,25 +525,69 @@ class RuntimeClient:
                 f"The model runtime at {self.url} is unreachable: {type(exc).__name__}: {exc}")
         if resp.status_code >= 400:
             try:
-                detail = resp.json().get("detail")
+                body = resp.json()
+                detail = body.get("detail") or (body.get("error") or {}).get("message")
             except Exception:  # noqa: BLE001 - any non-JSON error body
                 detail = None
             raise LocalModelError(str(detail or resp.text[:300] or f"HTTP {resp.status_code}"),
                                   resp.status_code)
+        return resp
+
+    def _request(self, method: str, path: str, *, timeout: Optional[float] = None,
+                 **kwargs: Any) -> Any:
+        resp = self._send(method, path, timeout=timeout, **kwargs)
         return resp.json() if resp.content else {}
 
     def health(self) -> Dict[str, Any]:
         return self._request("GET", "/healthz")
 
     def models(self) -> List[Dict[str, Any]]:
-        return list((self._request("GET", "/models") or {}).get("models") or [])
+        return list(self.listing().get("models") or [])
+
+    def listing(self) -> Dict[str, Any]:
+        """``/models`` whole: ``models`` and which speech ``engines`` are
+        installed."""
+        return self._request("GET", "/models") or {}
 
     def memory(self) -> Dict[str, Any]:
         return self._request("GET", "/memory")
 
-    def download(self, repo: str, file: str, revision: str = "main") -> Dict[str, Any]:
+    def usage(self) -> Dict[str, Any]:
+        """Every call through the runtime's gateway, per model, caller and
+        kind: ``since``, ``totals``, ``rows`` and ``recent``."""
+        return self._request("GET", "/usage") or {}
+
+    def clear_usage(self) -> Dict[str, Any]:
+        return self._request("DELETE", "/usage") or {}
+
+    def download(self, repo: str, file: str = "", revision: str = "main", *,
+                 package: str = "") -> Dict[str, Any]:
+        """A GGUF ``file``, or the speech model ``package`` that
+        :meth:`hf_files` listed for the repo."""
         return self._request("POST", "/download",
-                             json={"repo": repo, "file": file, "revision": revision})
+                             json={"repo": repo, "file": file, "package": package, "revision": revision})
+
+    def engines(self) -> Dict[str, Any]:
+        return self._request("GET", "/engines")
+
+    def install_engine(self, engine: str) -> Dict[str, Any]:
+        return self._request("POST", f"/engines/{engine}/install")
+
+    def ollama_models(self) -> Dict[str, Any]:
+        """The models Ollama keeps on the runtime's machine that it can take
+        over: ``{dir, found, models}``."""
+        return self._request("GET", "/ollama/models")
+
+    def ollama_import(self, name: str) -> Dict[str, Any]:
+        return self._request("POST", "/ollama/import", json={"name": name})
+
+    def lmstudio_models(self) -> Dict[str, Any]:
+        """LM Studio's models on the runtime's machine (GGUF files and MLX
+        folders): ``{dir, found, models}``."""
+        return self._request("GET", "/lmstudio/models")
+
+    def lmstudio_import(self, name: str) -> Dict[str, Any]:
+        return self._request("POST", "/lmstudio/import", json={"name": name})
 
     def jobs(self) -> List[Dict[str, Any]]:
         return list((self._request("GET", "/jobs") or {}).get("jobs") or [])
@@ -465,7 +602,28 @@ class RuntimeClient:
                                    "gpu_layers": gpu_layers, "threads": threads})
 
     def unload(self, file: str) -> Dict[str, Any]:
-        return self._request("POST", "/unload", json={"file": file})
+        # An unload first saves the model's prompt cache slots to disk.
+        return self._request("POST", "/unload", timeout=max(self.timeout, self.LOAD_TIMEOUT),
+                             json={"file": file})
+
+    # ── prompt cache (deploy/models/app.py, "Prompt cache") ──
+
+    def cache(self) -> Dict[str, Any]:
+        """Settings, what each loaded chat model holds, what is kept on disk."""
+        return self._request("GET", "/cache") or {}
+
+    def set_cache_settings(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request("PUT", "/cache/settings", json=changes) or {}
+
+    def apply_cache(self) -> Dict[str, Any]:
+        """Load again every model whose cache flags differ from the settings."""
+        return self._request("POST", "/cache/apply", timeout=max(self.timeout, 2 * self.LOAD_TIMEOUT)) or {}
+
+    def warm_cache(self, model: str) -> Dict[str, Any]:
+        return self._request("POST", "/cache/warmup", json={"model": model}) or {}
+
+    def clear_cache(self, model: Optional[str] = None) -> Dict[str, Any]:
+        return self._request("DELETE", "/cache", params={"model": model} if model else None) or {}
 
     def delete(self, file: str) -> Dict[str, Any]:
         return self._request("DELETE", f"/models/{file}")
@@ -473,8 +631,75 @@ class RuntimeClient:
     def hf_files(self, repo: str, revision: str = "main") -> Dict[str, Any]:
         return self._request("GET", "/hf/files", params={"repo": repo, "revision": revision})
 
+    def hf_search(self, q: str = "", purpose: str = "chat", license: str = "any",
+                  sort: str = "downloads", limit: int = 20) -> Dict[str, Any]:
+        """GGUF models on the Hub with what each needs here: ``results`` and
+        the ``hardware`` the estimates assume."""
+        return self._request("GET", "/hf/search", timeout=max(self.timeout, 60.0),
+                             params={"q": q, "purpose": purpose, "license": license,
+                                     "sort": sort, "limit": limit})
+
+    def hardware(self) -> Dict[str, Any]:
+        return self._request("GET", "/hardware")
+
     def structure(self, file: str) -> Dict[str, Any]:
         return self._request("GET", f"/models/{file}/structure")
+
+    # ── Recorded voices (the cloning engines' samples) ───────────────────────
+
+    def voices(self) -> List[Dict[str, Any]]:
+        return list((self._request("GET", "/voices") or {}).get("voices") or [])
+
+    def add_voice(self, name: str, audio: bytes, filename: str, content_type: str, *,
+                  owner: str, language: str = "", gender: str = "", shared: bool = False,
+                  replace: bool = False) -> Dict[str, Any]:
+        """A recording of ``name``; the person confirmed they may record it
+        (the runtime refuses one without ``consent``)."""
+        return self._request("POST", "/voices", timeout=max(self.timeout, 60.0),
+                             files={"file": (filename or "voice", audio, content_type or "application/octet-stream")},
+                             data={"name": name, "owner": owner, "language": language, "gender": gender,
+                                   "shared": "true" if shared else "false", "consent": "true",
+                                   "replace": "true" if replace else "false"})
+
+    def update_voice(self, name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request("PATCH", f"/voices/{name}", json=fields)
+
+    def delete_voice(self, name: str) -> Dict[str, Any]:
+        return self._request("DELETE", f"/voices/{name}")
+
+    def voice_audio(self, name: str) -> bytes:
+        return self._send("GET", f"/voices/{name}/audio").content
+
+    def speech(self, model: str, text: str, voice: str, response_format: str = "mp3") -> Tuple[bytes, str]:
+        """``text`` read by speech model ``model`` through the gateway, as
+        ``(audio, content type)``; Chatterbox may take minutes on a CPU."""
+        resp = self._send("POST", "/v1/audio/speech", timeout=max(self.timeout, 600.0),
+                          json={"model": model, "input": text, "voice": voice, "response_format": response_format},
+                          headers=source_headers())
+        return resp.content, resp.headers.get("content-type") or "audio/mpeg"
+
+
+#: Runtime engines whose voices are recordings people made.
+CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "openvoice")
+
+
+def voice_visible(record: Dict[str, Any], viewer: Any) -> bool:
+    """Whether ``viewer`` may see and pick a recorded voice: their own, one
+    shared, one nobody owns; every one for an administrator or the hub
+    itself (no viewer)."""
+    if viewer is None or getattr(viewer, "is_admin", False):
+        return True
+    owner = str(record.get("owner") or "")
+    return not owner or owner == getattr(viewer, "id", None) or bool(record.get("shared"))
+
+
+def voice_editable(record: Dict[str, Any], viewer: Any) -> bool:
+    """Whether ``viewer`` may change or remove a recorded voice: the person
+    who recorded it, or an administrator."""
+    if viewer is None or getattr(viewer, "is_admin", False):
+        return True
+    owner = str(record.get("owner") or "")
+    return bool(owner) and owner == getattr(viewer, "id", None)
 
 
 def model_name(file: str) -> str:
@@ -546,8 +771,8 @@ def catalog_set_enabled(name: str, enabled: bool, *, context_window: int = 0,
 
 
 __all__ = [
-    "HUB_LOCAL_ID", "JOBS", "JobRegistry", "LocalModelError", "LocalModelNotFound",
+    "HUB_LOCAL_ID", "JOBS", "JobRegistry", "SPEECH_KINDS", "LocalModelError", "LocalModelNotFound",
     "RuntimeClient", "catalog_set_enabled", "ensure_hub_local_backend", "model_name",
     "ollama_base_url", "ollama_delete", "ollama_list", "ollama_models", "ollama_pull_stream",
-    "ollama_show", "runtime_configured", "runtime_settings", "start_ollama_pull",
+    "ollama_show", "runtime_configured", "runtime_settings", "server_status", "start_ollama_pull",
 ]

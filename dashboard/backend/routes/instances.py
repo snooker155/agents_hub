@@ -211,8 +211,15 @@ async def list_instances(
     service_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ):
     """A page of instances plus the per-state counts for the header strip.
+
+    ``sort`` is ``live`` (the default: live copies first, newest activity
+    first) or a key of ``store.INSTANCE_SORTS``; ``order`` is ``asc``/``desc``;
+    the list pages load rows in batches and refetch the whole loaded window
+    from the top, so ``limit`` goes up to 2000.
 
     A request naming no workspace is otherwise open to any signed-in account
     (common/auth.py authorize()); the page is additionally narrowed here to
@@ -226,19 +233,24 @@ async def list_instances(
     caller would be the full-table scan this route exists to avoid, and the
     header strip is not itself the leak (no record is returned, only a count).
     """
-    page = store.list_instances(
-        limit=max(1, min(int(limit), 500)),
-        offset=max(0, int(offset)),
-        workspace=workspace,
-        agent_id=agent_id,
-        kind=kind,
-        state=state,
-        live=live,
-        node_id=node_id,
-        q=q,
-        include_archived=include_archived,
-        service_id=service_id,
-    )
+    try:
+        page = store.list_instances(
+            limit=max(1, min(int(limit), 2000)),
+            offset=max(0, int(offset)),
+            sort=sort,
+            order=order,
+            workspace=workspace,
+            agent_id=agent_id,
+            kind=kind,
+            state=state,
+            live=live,
+            node_id=node_id,
+            q=q,
+            include_archived=include_archived,
+            service_id=service_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     principal = identity.request_principal(request)
     items = access.filter_by_workspace(principal, page["items"])
     items = [carrier.sync(i) or i for i in items]

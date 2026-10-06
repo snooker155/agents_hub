@@ -162,7 +162,7 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={t('agentDetails.secretsPlaceholder')}
                 aria-label={t('agentDetails.secretsPlaceholder')}
-                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none w-72"
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none w-72"
               />
               <button type="submit"
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -179,7 +179,7 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
                 disabled={readOnly}
                 onChange={(e) => setIdentity(e.target.value)}
                 aria-label={t('agentDetails.githubIdentity')}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none"
               >
                 <option value="app">{t('agentDetails.githubIdentityApp')}</option>
                 <option value="user">{t('agentDetails.githubIdentityUser')}</option>

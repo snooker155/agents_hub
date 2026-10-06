@@ -299,7 +299,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.title')}</label>
           <input
             type="text"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
@@ -309,7 +309,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.agent')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
             >
@@ -322,7 +322,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.flow')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={flowId}
               onChange={(e) => setFlowId(e.target.value)}
             >
@@ -335,7 +335,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.loop')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={loopId}
               onChange={(e) => setLoopId(e.target.value)}
             >
@@ -349,7 +349,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.message')}</label>
           <textarea
             rows={3}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
           />
@@ -360,7 +360,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.when')}</label>
             <DateInput
               mode="datetime"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={runAt}
               onChange={setRunAt}
             />
@@ -368,7 +368,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <div className="w-36">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.repeat')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={recurrence}
               onChange={(e) => setRecurrence(e.target.value)}
             >
@@ -384,7 +384,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.cronExpression')}</label>
                 <input
                   type="text"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                   value={cron}
                   onChange={(e) => setCron(e.target.value)}
                   placeholder="0 9 * * 1-5"
@@ -395,7 +395,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.timezone')}</label>
               <input
                 type="text"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 value={tz}
                 onChange={(e) => setTz(e.target.value)}
                 placeholder="Europe/Berlin"
@@ -414,7 +414,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               type="checkbox"
               checked={catchUp}
               onChange={(e) => setCatchUp(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600"
             />
             {t('deployments.catchUp')}
           </label>
@@ -426,7 +426,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           <div className="min-w-0">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.environment')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={environmentId}
               onChange={(e) => setEnvironmentId(e.target.value)}
             >
@@ -438,7 +438,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.budgetUsd')}</label>
             <input
               type="number" min="0" step="0.01"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={budgetUsd}
               onChange={(e) => setBudgetUsd(e.target.value)}
               placeholder={t('deployments.uncapped')}
@@ -448,7 +448,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.autoPauseAfter')}</label>
             <input
               type="number" min="0"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={autoPauseAfter}
               onChange={(e) => setAutoPauseAfter(e.target.value)}
             />
@@ -500,7 +500,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.project')}</label>
                 <select
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
                   aria-label={t('deployments.project')}
@@ -515,7 +515,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                   <div className="flex items-center gap-2">
                     {allFiles.length > 8 && (
                       <input type="search" value={fileQuery} onChange={(e) => setFileQuery(e.target.value)} placeholder={t('deployments.filesSearch')}
-                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
                     )}
                     {/* Upload straight from the form: the file lands in the
                         workspace's file store and is selected here at once. */}
@@ -552,7 +552,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                   <input type="text" value={newSecret} onChange={(e) => setNewSecret(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSecret(); } }}
                     placeholder={t('deployments.addSecretPlaceholder')} aria-label={t('deployments.addSecretPlaceholder')}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none" />
                   <button type="button" onClick={addSecret} className="px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg hover:bg-gray-50">{t('deployments.addSecret')}</button>
                 </div>
               </div>
@@ -595,7 +595,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               {t('agentVersionPin.jobFieldLabel')}
             </label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={agentVersion}
               onChange={(e) => setAgentVersion(e.target.value)}
               aria-label={t('agentVersionPin.jobFieldLabel')}
@@ -669,7 +669,7 @@ function JournalDrawer({ job, onClose }) {
             type="checkbox"
             checked={onlyErrors}
             onChange={(e) => toggleOnlyErrors(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600"
           />
           {t('deployments.onlyFailures')}
         </label>
@@ -791,7 +791,7 @@ export default function Deployments() {
               type="checkbox"
               checked={showFinished}
               onChange={(e) => setShowFinished(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600"
             />
             {t('deployments.showFinished')}
           </label>

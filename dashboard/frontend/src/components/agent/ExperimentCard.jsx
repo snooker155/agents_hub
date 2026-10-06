@@ -7,7 +7,7 @@ import {
 import { useI18n } from '../../i18n';
 import { experimentArms } from './onlineEvals';
 
-const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none';
 
 const num = (v, digits = 0) => (v === null || v === undefined ? '—' : Number(v).toFixed(digits));
 const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(Number(v) * 100)}%`);

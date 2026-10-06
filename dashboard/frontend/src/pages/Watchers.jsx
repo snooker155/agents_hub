@@ -14,7 +14,7 @@ import MailPresetPicker from '../components/connectors/MailPresetPicker';
 import { presetForAddress } from '../components/connectors/mailPresets';
 import GmailSignInNote from '../components/connectors/GmailSignInNote';
 
-const inputCls = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const inputCls = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none';
 const smallBtn = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed';
 
 const fmt = (iso) => {
