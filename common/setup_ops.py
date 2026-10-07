@@ -78,6 +78,10 @@ OPERATIONS: Dict[str, Operation] = {op.name: op for op in (
               "give the assistant a voice from the hub's own model runtime (free; downloads 0.5 to 2 GB)",
               {"speech": "optional: a speech preset id from setup_guide options (default by language)",
                "transcription": "optional: whisper-small (default) or whisper-turbo"}),
+    Operation("local_set", "default_model",
+              "go local in one action: the hub's llama.cpp engine, one chat model sized to this machine, "
+              "Whisper and Kokoro (free; downloads 3 to 12 GB, in the background)",
+              {"workspace": "optional: the workspace that gets the speech models (default: default)"}),
     Operation("seed_demo", "demo", "add the demo workspace: four agents with chats, views, a team and a pulse"),
 )}
 
@@ -203,6 +207,10 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
         return (f"Give the assistant a voice from the hub's own runtime: {speech[1] if speech else '?'} "
                 f"({speech[2] if speech else '?'}) and {hear[1] if hear else '?'} ({hear[2] if hear else '?'}), "
                 f"downloaded in the background, free to use.")
+    if operation == "local_set":
+        return ("Set the hub up to run locally: install the llama.cpp engine, download one chat model sized "
+                "to this machine's memory, then Whisper and Kokoro for voice. Runs in the background and "
+                "becomes the default model only if no other model is configured.")
     if operation == "seed_demo":
         return "Add the demo workspace with four agents, their chats, views, a team and a pulse."
     return ""
@@ -338,6 +346,21 @@ def voice_local(speech: str = "", transcription: str = "", *, principal: Any = N
                                    f"shows how far); the page uses the browser's voice until they are ready."}
 
 
+def local_set(workspace: str = "", *, principal: Any = None) -> Dict[str, Any]:
+    """Start the ready local set (providers/local_set.py) as a background job."""
+    from providers import local_models as lm
+    from providers import local_set as ready
+    if not lm.runtime_configured():
+        raise SetupOpError("This hub has no model runtime (AGENTS_HUB_MODELS_MANAGED is off and "
+                           "AGENTS_HUB_MODELS_URL is empty): offer a cloud model instead.", code="no_runtime")
+    job = ready.start((workspace or "").strip() or "default")
+    _audit(principal, "local_set", {"job": job.get("id")})
+    return {"ok": True, "job_id": job.get("id"), "summary": (
+        "The local set is already being prepared." if job.get("already_running") else
+        "The local set is being prepared in the background: the engine, a chat model sized to this machine, "
+        "Whisper and Kokoro. The Models page, Local tab, shows each step.")}
+
+
 def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
     from common.demo_workspace import demo_status, ensure_demo_workspace
     ensure_demo_workspace()
@@ -351,6 +374,7 @@ _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "choose_model": lambda a, p: choose_model(a.get("provider", ""), a.get("model", ""), principal=p),
     "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), principal=p),
     "voice_local": lambda a, p: voice_local(a.get("speech", ""), a.get("transcription", ""), principal=p),
+    "local_set": lambda a, p: local_set(a.get("workspace", ""), principal=p),
     "seed_demo": lambda a, p: seed_demo(principal=p),
 }
 
@@ -487,4 +511,4 @@ def _advance(work: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = ["OPERATIONS", "Operation", "SetupOpError", "advance_work", "choose_model", "describe",
-           "first_model", "listing", "options", "perform", "seed_demo", "voice_cloud", "voice_local"]
+           "first_model", "listing", "local_set", "options", "perform", "seed_demo", "voice_cloud", "voice_local"]

@@ -283,8 +283,9 @@ export const removeWorkspaceMember = (name, userId) =>
 export const getSystemHealth = () => api.get('/health');
 
 // One document of the documentation corpus the agents read (docs/index.json),
-// e.g. 'changelog'. Returns { id, title, content, truncated }.
-export const getDoc = (id) => api.get(`/docs/${id}`);
+// e.g. 'changelog'. Returns { id, title, content, lang, truncated }.
+// lang defaults to the current UI language ('en', 'ru', or 'de'); the backend falls back to English.
+export const getDoc = (id, lang = '') => api.get(`/docs/${id}`, { params: { ...(lang ? { lang } : {}) } });
 
 /**
  * Drain one `text/event-stream` response, calling `onEvent` per `data:` frame.

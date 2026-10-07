@@ -302,3 +302,14 @@ describe('useConversationStore', () => {
     await waitFor(() => expect(importChats).toHaveBeenCalledTimes(2));
   });
 });
+
+describe('stored refusals', () => {
+  it('keeps a refusal on a saved message, so the card comes back after a reload', async () => {
+    const { stripForStorage } = await import('../chatStore');
+    const refusal = { code: 'budget', kind: 'workspace', agent_id: 'a1' };
+    const conv = { id: 'c1', messages: [{ role: 'assistant', error: true, refusal, running_tool: 'x' }] };
+    const [msg] = stripForStorage(conv).messages;
+    expect(msg.refusal).toEqual(refusal);
+    expect(msg.running_tool).toBeUndefined();
+  });
+});

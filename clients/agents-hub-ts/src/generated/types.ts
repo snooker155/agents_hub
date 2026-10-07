@@ -415,6 +415,7 @@ export type ChatRequest = {
   "conversation_title"?: string | null;
   "attachments"?: ChatAttachment[];
   "references"?: ChatReference[];
+  "voice"?: boolean;
   "source"?: string | null;
   "client_id"?: string | null;
   "client_turn_id"?: string | null;
@@ -1426,6 +1427,11 @@ export type PullBody = {
 
 export type QueryRequest = {
   "sql": string;
+};
+
+export type ReadySetBody = {
+  "workspace"?: string;
+  "dry_run"?: boolean;
 };
 
 export type RecheckRequest = {
@@ -3514,6 +3520,13 @@ export interface ApiPaths {
   };
   "/api/models/local/runtime/ollama/import": {
     post: { body: OllamaImportBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/ready-set": {
+    get: { response: Record<string, unknown> };
+    post: { body: ReadySetBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/ready-set/cancel": {
+    post: { response: Record<string, unknown> };
   };
   "/api/models/local/runtime/restart": {
     post: { response: Record<string, unknown> };

@@ -119,6 +119,8 @@ ALWAYS_GATED: frozenset[str] = frozenset({
     "hub_action",
     # The guided setup's changes to the install (common/setup_ops.py).
     "setup_step",
+    # A pulse the assistant sets up from a phrase (proactive/from_phrase.py).
+    "schedule_pulse",
 })
 
 #: Tools whose approval card says in a sentence what the call would do:
@@ -127,6 +129,7 @@ ALWAYS_GATED: frozenset[str] = frozenset({
 CALL_DESCRIBERS: Dict[str, str] = {
     "hub_action": "tools.hub_action:describe_call",
     "setup_step": "tools.setup_guide:describe_call",
+    "schedule_pulse": "tools.proactive_setup:describe_call",
 }
 
 

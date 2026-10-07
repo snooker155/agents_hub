@@ -12,6 +12,7 @@ import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import ToolPolicySettings from './ToolPolicySettings';
 import LoopSettingsWorkspace from './LoopSettingsWorkspace';
+import DefaultModelNote from './DefaultModelNote';
 
 // Brand names stay as they are; only the descriptive rows carry a key.
 const VECTOR_DBS = [
@@ -195,6 +196,7 @@ export function ProvidersSection({ s }) {
   );
   return (
     <div className="space-y-5">
+      <DefaultModelNote models={s.defaultModels} />
       <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-500">
         {t('settings.providersIntroBefore')} <span className="font-medium text-gray-700">{t('settings.models')}</span> {t('settings.providersIntroAfter')}
       </div>

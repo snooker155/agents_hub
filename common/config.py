@@ -693,6 +693,23 @@ class Settings(BaseSettings):
     otel_export_headers: str = Field(
         default="",
         validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_HEADERS", "otel_export_headers"))
+    # The standard OpenTelemetry variables, used as fallbacks when the
+    # AGENTS_HUB_ ones above are empty: a base endpoint (the traces go to
+    # <endpoint>/v1/traces, the metrics to <endpoint>/v1/metrics) and headers.
+    otel_endpoint: str = Field(
+        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_ENDPOINT", "otel_endpoint"))
+    otel_headers: str = Field(
+        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS", "otel_headers"))
+    # Where OTLP metrics go, when not <traces url with /v1/metrics>. Empty
+    # with no endpoint anywhere: no metrics export.
+    otel_metrics_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_URL", "otel_metrics_url"))
+    otel_metrics_interval_seconds: int = Field(
+        default=60, validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_INTERVAL", "otel_metrics_interval_seconds"))
+    # Model-call and tool-call child spans under each run's span: at most this
+    # many per run (0 turns them off).
+    otel_max_child_spans: int = Field(
+        default=40, validation_alias=AliasChoices("AGENTS_HUB_OTEL_MAX_CHILD_SPANS", "otel_max_child_spans"))
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

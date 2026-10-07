@@ -1156,16 +1156,29 @@ async def get_agent_auto_tools(agent_id: str, workspace: Optional[str] = None):
     return {"agent_id": agent_id, "workspace": ws, "tools": auto_injected_tools(spec, ws)}
 
 
+def _can_edit_agent(request: Request, spec) -> bool:
+    """Whether the caller holds editor on the agent's workspace (always true
+    outside multi): the chat's refusal card shows its button only to them."""
+    from common import identity
+    from common.auth import WS_EDITOR
+    try:
+        identity.require_role(identity.request_principal(request),
+                              workspace=getattr(spec, "owner_workspace", None) or "default", role=WS_EDITOR)
+    except HTTPException:
+        return False
+    return True
+
+
 @router.get("/{agent_id}/capability-override")
-async def get_agent_capability_override(agent_id: str):
+async def get_agent_capability_override(request: Request, agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return _capability_override_state(spec)
+    return {**_capability_override_state(spec), "can_edit": _can_edit_agent(request, spec)}
 
 
 @router.post("/{agent_id}/capability-override")
-async def update_agent_capability_override(agent_id: str, data: AgentCapabilityOverrideUpdate):
+async def update_agent_capability_override(request: Request, agent_id: str, data: AgentCapabilityOverrideUpdate):
     """Accept, for this one agent, a tool combination the capability guard
     would otherwise refuse (tools/capabilities.py, the lethal trifecta).
 
@@ -1178,6 +1191,8 @@ async def update_agent_capability_override(agent_id: str, data: AgentCapabilityO
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if not _can_edit_agent(request, spec):
+        raise HTTPException(status_code=403, detail="Editor access to the agent's workspace is required")
     if data.capability_override and is_system_workspace_agent(agent_id, spec.owner_workspace):
         # The system workspace rule is never softened (docs/system-workspace.md).
         raise HTTPException(status_code=400, detail="A system workspace agent cannot carry a capability override")

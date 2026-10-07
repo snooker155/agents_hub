@@ -27,6 +27,7 @@ import LiveMark from '../components/liveMark/LiveMark';
 import ChatMarkdown from '../components/chat/ChatMarkdown';
 import { FeedItem } from '../components/flow/ChatFeed';
 import { ToolApprovalCard } from '../components/chat/ToolApprovalCard';
+import RefusalCard from '../components/chat/RefusalCard';
 import { upsertApproval } from '../components/chat/toolApprovals';
 import ScreenPanel from '../components/assistant/ScreenPanel';
 import ChatSessionList from '../components/ChatSessionList';
@@ -352,7 +353,7 @@ export default function Assistant() {
           ? t('assistant.errors.budget')
           : e instanceof AssistantError && e.code === 'busy' ? t('assistant.errors.busy')
             : (e.message || t('assistant.errors.turn'));
-        setFeed((f) => [...f, { k: 'error', text: msg }]);
+        setFeed((f) => [...f, { k: 'error', text: msg, refusal: e instanceof AssistantError ? e.refusal : null }]);
         // Under the button as well: on a phone there is no transcript to read it in.
         setNotice(msg);
         if (speakTurnRef.current || spoken) sayLocal(msg);
@@ -1146,7 +1147,9 @@ export default function Assistant() {
               {feed.length === 0 && <p className="text-xs text-gray-400">{t('assistant.transcriptEmpty')}</p>}
               {feed.map((e, i) => (e.k === 'note'
                 ? <div key={i} className="text-[11px] text-center text-gray-500">{e.text}</div>
-                : <FeedItem key={i} e={e} renderText={renderReply} />))}
+                : e.refusal
+                  ? <RefusalCard key={i} refusal={e.refusal} />
+                  : <FeedItem key={i} e={e} renderText={renderReply} />))}
               {busy && (
                 <div className="flex items-center gap-1.5 text-xs text-violet-500">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('assistant.working')}

@@ -635,8 +635,10 @@ class AgentFactory:
         from tools.hub_action import HUB_ACTION_TOOLS
         from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
         from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+        from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
         from tools.setup_guide import SETUP_GUIDE_TOOLS
         available.extend(SETUP_GUIDE_TOOLS)
+        available.extend(PROACTIVE_SETUP_TOOLS)
         available.extend(HUB_LOOKUP_TOOLS)
         available.extend(ASSISTANT_CONVERSATION_TOOLS)
         available.extend(SERVICE_LOOKUP_TOOLS)

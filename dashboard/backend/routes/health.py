@@ -35,13 +35,19 @@ router = APIRouter(prefix="/api", tags=["health"])
 @router.get("/health")
 async def health(request: Request):
     """Liveness + state snapshot. Never raises: a failed probe is reported as such."""
-    from common.config import playground_enabled
+    from common.config import hub_role, playground_enabled
 
     result = snapshot(request.app.state)
     # Optional-feature facts, kept separate from the liveness/state data above:
     # the frontend reads this to hide a feature's pages rather than probing
     # its routes. See docs/playground.md, "Turning the playground off".
-    result["features"] = {"playground": playground_enabled()}
+    # ``cluster``: the hub runs as separate api and worker processes
+    # (docs/workers.md), the only case where the Cluster page has members,
+    # leases and a launch queue to show, so the menu offers it only then.
+    result["features"] = {
+        "playground": playground_enabled(),
+        "cluster": hub_role() != "all",
+    }
     return result
 
 

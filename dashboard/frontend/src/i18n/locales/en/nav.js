@@ -1,11 +1,16 @@
 export default {
   groups: {
-    main: 'Main',
-    workspace: 'Workspace',
-    infrastructure: 'Infrastructure',
-    tools: 'Tools',
-    system: 'System',
-    connect: 'Connect',
+    conversation: 'Conversation',
+    work: 'Work',
+    agents: 'Agents and library',
+    integrations: 'Integrations',
+    records: 'Records and admin',
+  },
+  mode: {
+    showFull: 'Full menu',
+    showSimple: 'Simple menu',
+    more: '+{{count}}',
+    hint: 'The simple menu keeps what you need to start; the full menu shows every page. Pages stay the same, only the map changes.',
   },
   assistant: 'Assistant',
   chat: 'Chat',

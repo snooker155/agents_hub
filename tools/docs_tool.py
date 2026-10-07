@@ -88,7 +88,19 @@ def _path_for(entry: Dict[str, Any]) -> Any:
     return (PROJECT_ROOT / rel) if rel else (DOCS_DIR / f"{entry['id']}.md")
 
 
-def _doc_path(doc_id: str) -> Any:
+#: Languages with a docs/<lang>/ folder of translated pages (the first hour
+#: ones: installation, overview, models, chat, assistant). A page missing
+#: there is served in English.
+TRANSLATED_LANGS = ("ru", "de")
+
+
+def _doc_path(doc_id: str, lang: str = "en") -> Any:
+    """The file of ``doc_id``: its translation in ``lang`` when there is one,
+    else the English page the index names."""
+    if lang in TRANSLATED_LANGS:
+        translated = DOCS_DIR / lang / f"{doc_id}.md"
+        if translated.is_file():
+            return translated
     entry = next((e for e in _index() if e.get("id") == doc_id), None)
     return _path_for(entry) if entry else DOCS_DIR / f"{doc_id}.md"
 
@@ -101,8 +113,8 @@ def _read_at(path: Any, mtime: float) -> str:
         return ""
 
 
-def _body(doc_id: str) -> str:
-    path = _doc_path(doc_id)
+def _body(doc_id: str, lang: str = "en") -> str:
+    path = _doc_path(doc_id, lang)
     return _read_at(path, _mtime(path))
 
 
@@ -271,10 +283,11 @@ def search_docs(query: str = "", limit: int = 5) -> str:
 
 class ReadDocInput(BaseModel):
     doc_id: str = Field(..., description="Document id from search_docs, e.g. 'loops'")
+    lang: str = Field("en", description="Language code: 'en', 'ru', or 'de'. Falls back to English if not available.")
 
 
 @tool("read_doc", args_schema=ReadDocInput)
-def read_doc(doc_id: str) -> str:
+def read_doc(doc_id: str, lang: str = "en") -> str:
     """Return one documentation page in full, by id.
 
     Ids come from search_docs. Quote or paraphrase what this returns when
@@ -282,6 +295,10 @@ def read_doc(doc_id: str) -> str:
     than filling the gap.
     """
     doc_id = (doc_id or "").strip().removesuffix(".md")
+    lang = (lang or "en").strip().lower()[:2]
+    if lang not in TRANSLATED_LANGS:
+        lang = "en"
+
     entry = next((e for e in _index() if e.get("id") == doc_id), None)
     if entry is None:
         available = [e["id"] for e in _index()]
@@ -290,14 +307,18 @@ def read_doc(doc_id: str) -> str:
             code="not_found",
             extra={"available": available} if available else None,
         )
-    content = _body(doc_id)
+    path = _doc_path(doc_id, lang)
+    content = _read_at(path, _mtime(path))
+    # The language actually served: the translation's folder, else English.
+    served_lang = lang if path.parent == DOCS_DIR / lang else "en"
+
     if not content:
         # The index names it but its file is missing or unreadable. An empty
         # "content" reads as "this page says nothing", and an agent reports
         # exactly that, so name the fault instead.
         return _json_err(
             f"Document '{doc_id}' is listed in the index but its file "
-            f"({_doc_path(doc_id).relative_to(PROJECT_ROOT)}) could not be read. "
+            f"({path.relative_to(PROJECT_ROOT)}) could not be read. "
             "Say the documentation could not be loaded; do not describe the "
             "document as empty.",
             code="unreadable")
@@ -311,6 +332,7 @@ def read_doc(doc_id: str) -> str:
         "surface": entry.get("surface"),
         "related": entry.get("related") or [],
         "content": content,
+        "lang": served_lang,
         "truncated": truncated,
     })
 

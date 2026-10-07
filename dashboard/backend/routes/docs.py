@@ -18,8 +18,8 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 
 
 @router.get("/{doc_id}")
-def get_doc(doc_id: str):
-    result = json.loads(read_doc.invoke({"doc_id": doc_id}))
+def get_doc(doc_id: str, lang: str = "en"):
+    result = json.loads(read_doc.invoke({"doc_id": doc_id, "lang": lang}))
     if not result.get("ok"):
         status = 404 if result.get("code") == "not_found" else 500
         raise HTTPException(status_code=status, detail=result.get("error"))

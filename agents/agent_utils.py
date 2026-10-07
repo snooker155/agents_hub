@@ -240,7 +240,11 @@ _OLLAMA_REASONING_MARKERS = ("qwen3", "deepseek-r1", "qwq", "gpt-oss", "magistra
 
 # Anthropic models on the adaptive-thinking API (budget_tokens is rejected
 # there); older models still need `enabled` + an explicit token budget.
-_ANTHROPIC_ADAPTIVE_MARKERS = ("opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "fable")
+_ANTHROPIC_ADAPTIVE_MARKERS = ("opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5",
+                               "fable", "mythos")
+# Anthropic models that reject a non-default temperature outright (Opus 4.7
+# and later, Sonnet 5 and later, Fable, Mythos): the request leaves it out.
+_ANTHROPIC_NO_SAMPLING_MARKERS = ("opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "fable", "mythos")
 
 
 def build_chat_model(
@@ -368,6 +372,9 @@ def build_chat_model(
             # (and rejects temperature entirely on Opus 4.7+), so omit it.
             return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, thinking=thinking,
                                  streaming=streaming,
+                                 default_request_timeout=req_timeout)
+        if any(m in mdl.lower() for m in _ANTHROPIC_NO_SAMPLING_MARKERS):
+            return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, streaming=streaming,
                                  default_request_timeout=req_timeout)
         return ChatAnthropic(model=mdl, api_key=key, temperature=_temp(mdl), max_tokens=tok,
                              streaming=streaming,

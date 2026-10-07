@@ -348,6 +348,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
         return (serialized or {}).get("name") if isinstance(serialized, dict) else None
 
     def _start(self, model_name: Optional[str]) -> None:
+        self._llm_started = time.perf_counter()  # the call's duration, for the exported spans
+        self._llm_model = model_name or ""
         line = f"[llm_start] model={model_name or 'unknown'}"
         self.thinking_history.append(line)
         self._emit_thinking(line)
@@ -445,6 +447,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                 "history": self._last_prompt_struct.get("history", []),
                 "user_message": self._last_prompt_struct.get("user_message", ""),
                 "response": self._response_text(response),
+                "duration_ms": int((time.perf_counter() - getattr(self, "_llm_started", time.perf_counter())) * 1000),
+                "model": getattr(self, "_llm_model", ""),
                 "token_usage": {
                     "inbound_tokens": p,
                     "outbound_tokens": c,
@@ -499,6 +503,7 @@ class StatsCollectorCallback(BaseCallbackHandler):
             from agents.tool_spill import spill_fields  # the file a long result went to
             entry.update(spill_fields(output_full))
             self._mark_tool(entry, ok=entry["status"] == "ok")
+            entry["duration_ms"] = int((time.perf_counter() - entry.get("_started", time.perf_counter())) * 1000)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
             self._emit_tool_end(entry)
@@ -508,6 +513,7 @@ class StatsCollectorCallback(BaseCallbackHandler):
             entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}",
                                         "status": "error"})
             self._mark_tool(entry, ok=False)
+            entry["duration_ms"] = int((time.perf_counter() - entry.get("_started", time.perf_counter())) * 1000)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
             self._emit_tool_end(entry)

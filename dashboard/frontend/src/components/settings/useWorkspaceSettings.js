@@ -29,6 +29,8 @@ export function useWorkspaceSettings(workspace) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // What saving a first provider key switched on (the Models page changes it).
+  const [defaultModels, setDefaultModels] = useState([]);
   const [error, setError] = useState('');
 
   const [globalSettings, setGlobalSettings] = useState({});
@@ -105,7 +107,8 @@ export function useWorkspaceSettings(workspace) {
     try {
       const payload = {};
       OVERRIDE_FIELDS.forEach((k) => { if (wsOverrides[k]) payload[k] = wsOverrides[k]; });
-      await updateWorkspaceSettingsOverrides(workspace, payload);
+      const { data: savedData } = await updateWorkspaceSettingsOverrides(workspace, payload);
+      setDefaultModels(savedData?.default_models || []);
       await load();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -335,7 +338,7 @@ export function useWorkspaceSettings(workspace) {
   };
 
   return {
-    workspace, loading, saving, saved, error, save,
+    workspace, loading, saving, saved, error, save, defaultModels,
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,

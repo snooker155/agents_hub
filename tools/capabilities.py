@@ -49,6 +49,9 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "hub_action",
+    # schedule_pulse (proactive/from_phrase.py) switches a pulse on once: a
+    # job and an agent exist after it ran.
+    "schedule_pulse",
     # The guided setup's changes (common/setup_ops.py): a default model, a
     # voice or the demo workspace, each already made once it ran.
     "setup_step",
@@ -578,6 +581,9 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # voice or the demo after a person's yes; it returns a sentence, nothing
     # read. show_on_screen only names a dashboard page for the person's screen.
     "setup_step", "show_on_screen",
+    # schedule_pulse (proactive/from_phrase.py) saves a schedule and an
+    # instruction after a person's yes and returns the schedule in words.
+    "schedule_pulse",
 
     # ── system workspace: the repository copy ────────────────────────────────
     # system_repo_sync fetches the local repository into the local copy and

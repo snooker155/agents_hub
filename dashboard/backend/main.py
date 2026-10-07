@@ -169,6 +169,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
+    # Periodic OTLP metrics export (common/otel_export.py), only when an
+    # endpoint is configured; a daemon thread off every request path.
+    try:
+        from common import otel_export as _otel_export
+        _otel_export.start_metrics_exporter()
+    except (ImportError, RuntimeError, ValueError) as e:  # a bad setting, or no thread to start
+        log.warning(f"⚠ Could not start the OTLP metrics exporter: {e}")
+
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
         from plans.scheduler import scheduler as _plan_scheduler

@@ -67,6 +67,10 @@ class ChatRequest(BaseModel):
     # scenario, loop, flow, team, agent or scheduled job the user picked in the
     # composer. Rendered into the prompt for this turn only.
     references: List[ChatReference] = []
+    # The message was spoken and transcribed (a Telegram voice note, see
+    # connectors/telegram/telegram_voice.py): the prompt says so, so the agent
+    # reads a misheard word as one rather than taking it literally.
+    voice: bool = False
     # Where this exchange originated, recorded as the run's ``message_origin`` so
     # the Messages list can distinguish e.g. Telegram runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.

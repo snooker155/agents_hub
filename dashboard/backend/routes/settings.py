@@ -500,7 +500,20 @@ async def update_settings(data: SettingsUpdate):
             configure_logging_for_active_workspace()
         except Exception:
             pass
-    return {"ok": True, "updated": list(updates.keys())}
+    out = {"ok": True, "updated": list(updates.keys())}
+    # A first key for a provider switches on one default model with its catalog
+    # price, so the first run works without a trip to the Models page.
+    from common import default_model
+    switched = []
+    for field, provider in (("openai_api_key", "openai"), ("anthropic_api_key", "anthropic"),
+                            ("google_api_key", "google")):
+        if str(updates.get(field) or "").strip():
+            found = default_model.ensure_default(provider)
+            if found:
+                switched.append(found)
+    if switched:
+        out["default_models"] = switched
+    return out
 
 
 # ── Local model connectivity test ─────────────────────────────────────────────

@@ -712,12 +712,13 @@ def _format_handoff(event: dict[str, Any]) -> str:
 
 async def _run_agent_for_telegram(
     api: TelegramAPI, chat_id: int, binding: dict[str, Any],
-    text: str, attachments: list[dict[str, Any]], store: Any = None,
+    text: str, attachments: list[dict[str, Any]], store: Any = None, spoken: bool = False,
 ) -> None:
     """Build a ChatRequest, drive the chat pipeline (agent or flow), send the reply.
 
     ``store`` is the bot's; a workspace's own bot runs the turn in its
-    workspace whatever the binding says."""
+    workspace whatever the binding says. ``spoken``: the text is a voice
+    note's transcript, which the prompt then says."""
     # Lazy import to avoid module-load circular dependency between agents/ and routes/.
     from chat import run_chat_pipeline, run_chat_flow_pipeline
     from chat.models import ChatRequest, ChatAttachment
@@ -762,6 +763,7 @@ async def _run_agent_for_telegram(
         conversation_title=binding.get("title") or f"Telegram chat {chat_id}",
         attachments=[ChatAttachment(**a) for a in attachments],
         source="telegram",  # tags the run's message_origin for the Messages list
+        voice=spoken,
     )
 
     await api.send_chat_action(chat_id, "typing")
@@ -1084,9 +1086,10 @@ class TelegramService:
                 return
 
             # Reject unsupported message kinds early.
-            unsupported = ("voice", "audio", "video_note", "sticker", "video")
+            # Voice notes, audio files and round videos are transcribed (telegram_voice.py).
+            unsupported = ("sticker", "video")
             if any(message.get(k) for k in unsupported):
-                await _send_text(api, chat_id, "This bot only supports text and photo/document attachments.")
+                await _send_text(api, chat_id, "This bot supports text, voice messages and photo/document attachments.")
                 return
 
             # Media-group albums: buffer and process as one logical message.
@@ -1185,10 +1188,30 @@ class TelegramService:
             for err in errors:
                 await _send_text(api, chat_id, err)
 
+            # A recording is heard with the workspace's transcription model; what was
+            # said is the message (after a caption, if the sender typed one).
+            from connectors.telegram import telegram_voice
+            spoken = False
+            for m in messages:
+                if telegram_voice.recording_of(m) is None:
+                    continue
+                try:
+                    said = await telegram_voice.transcribe_message(api, str(binding["workspace"]), m)
+                except telegram_voice.VoiceError as exc:
+                    await _send_text(api, chat_id, str(exc))
+                    continue
+                if said:
+                    spoken = True
+                    await _send_text(api, chat_id, f"Heard: {said[:500]}")
+                    text = f"{text}\n\n{said}".strip() if text else said
+                else:
+                    await _send_text(api, chat_id, "I could not make out any words in that recording.")
+
             if not text and not attachments:
                 return
 
-            await _run_agent_for_telegram(api, chat_id, binding, text, attachments, store=self.store)
+            await _run_agent_for_telegram(api, chat_id, binding, text, attachments, store=self.store,
+                                          spoken=spoken)
 
 
 # Module-level singleton — imported by main.py + routes/telegram.py.

@@ -305,6 +305,10 @@ export default {
   confirmDeleteBackend: 'Eigenes Backend „{{id}}“ löschen? Agenten, die darauf zeigen, fallen auf den Standardanbieter zurück.',
   providersIntroBefore: 'Dieser Abschnitt konfiguriert nur die Verbindung je Anbieter: API-Schlüssel und Basis-URL. Welche Modelle verfügbar sind, das Standardmodell je Anbieter und der globale Standardanbieter werden auf der Seite',
   providersIntroAfter: 'verwaltet.',
+  defaultModelNote: {
+    text: '{{model}} zu ${{input}} / ${{output}} pro 1 Mio. Token wurde als Standard für diesen Schlüssel eingeschaltet. Ändern können Sie das auf der',
+    link: 'Modelle-Seite.',
+  },
   localIntroBefore: 'Konfigurieren Sie die Verbindung zu Ihren lokalen Modellservern. Welches Modell jeder von ihnen nutzt, wählen Sie auf der Seite',
   localIntroAfter: '.',
   customIntroBefore: 'Fügen Sie eigene Modell-Backends hinzu: jeden OpenAI-kompatiblen Endpunkt (vLLM, TGI, OpenRouter, Together, Groq, ein selbst betriebenes Gateway), der weder ein eingebauter Cloud-Anbieter noch ein lokaler Server ist. Jedes Backend wird zu einem Anbieter auf der Seite',

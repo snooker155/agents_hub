@@ -462,6 +462,8 @@ function handleAgentEvent(event, ctx) {
                     context_used: event.usage?.context_used ?? m.context_used ?? null,
                     context_window: event.usage?.context_window ?? m.context_window ?? null,
                     context_overflow: event.error_code === 'context_overflow',
+                    // Why the turn was refused, when the guard or a limit said (RefusalCard).
+                    refusal: event.refusal || null,
                   }
                 : m
             ),

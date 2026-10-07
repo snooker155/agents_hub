@@ -1392,6 +1392,7 @@
             "assistant_conversations",
             "setup_guide",
             "setup_step",
+            "schedule_pulse",
             "show_on_screen",
             "service_lookup",
             "service_health",

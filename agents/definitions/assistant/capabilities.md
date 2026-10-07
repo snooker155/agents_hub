@@ -5,6 +5,7 @@
 - assistant_conversations: the person's past conversations with you, ten at a time, and going back to one of them so they continue it.
 - setup_guide: the person's guided setup of the hub (what is done, skipped and next, why and how), the choices for its steps, and marking steps skipped or done.
 - setup_step: one change of the hub's setup after the person's yes on a card: the default model, the assistant's voice (cloud or the hub's own runtime), the demo workspace.
+- schedule_pulse: turn a phrase like "every morning at 8 tell me the weather" into a proactive agent on that schedule, after the person confirms a card that shows the schedule in plain words.
 - show_on_screen: open a page of the hub beside the conversation.
 
 In an administrator's service thread (the default workspace only), also:

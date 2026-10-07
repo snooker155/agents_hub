@@ -2466,6 +2466,11 @@
             ],
             "title": "View Id"
           },
+          "voice": {
+            "default": false,
+            "title": "Voice",
+            "type": "boolean"
+          },
           "workspace": {
             "anyOf": [
               {
@@ -8578,6 +8583,23 @@
           "sql"
         ],
         "title": "QueryRequest",
+        "type": "object"
+      },
+      "ReadySetBody": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "workspace": {
+            "default": "default",
+            "maxLength": 200,
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "title": "ReadySetBody",
         "type": "object"
       },
       "RecheckRequest": {
@@ -24853,6 +24875,16 @@
               "title": "Doc Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -34397,6 +34429,92 @@
           }
         },
         "summary": "Runtime Ollama Import",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/ready-set": {
+      "get": {
+        "description": "What the button would do (the chosen model, each step done or not) and\nthe latest run of it.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ready Set Status Api Models Local Runtime Ready Set Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready Set Status",
+        "tags": [
+          "local-models"
+        ]
+      },
+      "post": {
+        "description": "Start the set as a background job, or return the one running; safe to\npress again, it skips what is there. An administrator's.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadySetBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ready Set Start Api Models Local Runtime Ready Set Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ready Set Start",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/ready-set/cancel": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ready Set Cancel Api Models Local Runtime Ready Set Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready Set Cancel",
         "tags": [
           "local-models"
         ]

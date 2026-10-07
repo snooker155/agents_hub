@@ -22,6 +22,7 @@ import LiveDelegation from './liveDelegation';
 import { currentActivity, foldDelegationTools } from './trail';
 import { steerCaption } from './steering';
 import ToolApprovals from './ToolApprovalCard';
+import RefusalCard from './RefusalCard';
 import { pendingApproval } from './toolApprovals';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
@@ -46,7 +47,7 @@ function WorkingDots({ label }) {
   );
 }
 
-function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath }) {
+function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath, onRetry }) {
   const { t } = useI18n();
   // Outside the Chat page (tests, other hosts) there is no Code panel to open.
   const openInCodePanel = useContext(ChatPageContext)?.openInCodePanel;
@@ -123,6 +124,8 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
     })
     : null;
   const done = !isStreaming;
+  // A turn the guard or a limit refused: a card with the action, not the error text.
+  const refusal = done && msg.error ? msg.refusal : null;
   const views = done ? messageViews(msg) : [];
   const shownViewIds = new Set(views.map((v) => v.view_id));
   const entities = (msg.entities || []).filter((e) => !(e.kind === 'view' && shownViewIds.has(e.id)));
@@ -147,11 +150,13 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
       {/* Bubble */}
       <div
         className={`max-w-[88%] sm:max-w-[72%] min-w-0 text-base leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm
-          ${msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
+          ${msg.error && !refusal ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
         {liveDelegation ? <LiveDelegation key={liveDelegation.run_id} entry={liveDelegation} /> : null}
         {showWorking ? (
           <WorkingDots label={workingLabel} />
+        ) : refusal ? (
+          <RefusalCard refusal={refusal} onRetry={onRetry} />
         ) : text ? (
           <ChatCodeActionsContext.Provider value={codeActions}>
             <CitedText content={text} citations={msg.citations} anchor={msg.id} streaming={isStreaming} />

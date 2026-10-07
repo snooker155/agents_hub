@@ -1,11 +1,16 @@
 export default {
   groups: {
-    main: 'Allgemein',
-    workspace: 'Workspace',
-    infrastructure: 'Infrastruktur',
-    tools: 'Werkzeuge',
-    system: 'System',
-    connect: 'Verbinden',
+    conversation: 'Gespräch',
+    work: 'Arbeit',
+    agents: 'Agenten und Bibliothek',
+    integrations: 'Integrationen',
+    records: 'Protokolle und Verwaltung',
+  },
+  mode: {
+    showFull: 'Vollständiges Menü',
+    showSimple: 'Einfaches Menü',
+    more: '+{{count}}',
+    hint: 'Das einfache Menü zeigt, was Sie für den Einstieg brauchen; das vollständige zeigt jede Seite. Die Seiten bleiben gleich, nur die Übersicht ändert sich.',
   },
   assistant: 'Assistent',
   chat: 'Chat',

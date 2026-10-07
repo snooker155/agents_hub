@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Docs from '../Docs';
@@ -13,13 +13,15 @@ import { I18nProvider } from '../../i18n';
 // every section in every language and fail on either symptom: an unresolved
 // `docs.*` key leaking into the output, or no localised text at all.
 
+const getDocMock = vi.fn((id) => Promise.resolve({ data: { id, title: id, content: `# ${id}\n\nReference text.` } }));
+
 vi.mock('../../api', () => ({
   getSystemHealth: () => Promise.resolve({ data: {} }),
   getSettings: () => Promise.resolve({ data: {} }),
   getWorkspaces: () => Promise.resolve({ data: [] }),
   getAgents: () => Promise.resolve({ data: [] }),
   testProvider: () => Promise.resolve({ data: { ok: true } }),
-  getDoc: (id) => Promise.resolve({ data: { id, title: id, content: `# ${id}\n\nReference text.` } }),
+  getDoc: (...a) => getDocMock(...a),
 }));
 
 const SECTIONS = [
@@ -31,7 +33,7 @@ const SECTIONS = [
   // Guide sections (GuideDoc, the docsGuide namespace).
   'project-deployments', 'files', 'registry', 'agent-loop', 'steering', 'mcp', 'browser',
   'outcomes', 'sessions-runs', 'services', 'deployments', 'local-models', 'health',
-  'production', 'accounts', 'widget', 'integrations',
+  'production', 'accounts', 'widget', 'integrations', 'assistant',
 ];
 
 // A language is "reaching the page" when its own script/function words show up.
@@ -69,4 +71,17 @@ describe('Docs', () => {
       }
     });
   }
+});
+
+describe('Docs full reference language', () => {
+  beforeEach(() => { localStorage.clear(); getDocMock.mockClear(); });
+
+  it('asks for the page in the interface language', async () => {
+    localStorage.setItem('agents_hub_language', 'ru');
+    const { container } = renderAt('/docs/assistant', <Docs />);
+    const details = container.querySelector('details');
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    await waitFor(() => expect(getDocMock).toHaveBeenCalledWith('assistant', 'ru'));
+  });
 });

@@ -116,6 +116,17 @@ _DEFAULT_PRICES: list[tuple[str, str, float, float]] = [
     # "gpt-5.1-chat-latest" & co. price as their own version first.
     ("openai", "chat-latest", 5.00, 30.00),
     # ── Anthropic ──
+    # Current Claude generations first: each is cheaper than the generic
+    # family row below it, which still prices the older models.
+    ("anthropic", "fable", 10.00, 50.00),
+    ("anthropic", "mythos", 10.00, 50.00),
+    ("anthropic", "opus-5-5", 4.00, 20.00),
+    ("anthropic", "opus-5", 5.00, 25.00),
+    ("anthropic", "opus-4-8", 5.00, 25.00),
+    ("anthropic", "opus-4-7", 5.00, 25.00),
+    ("anthropic", "opus-4-6", 5.00, 25.00),
+    ("anthropic", "sonnet-5", 2.00, 10.00),
+    ("anthropic", "haiku-4-5", 1.00, 5.00),
     ("anthropic", "haiku-3", 0.25, 1.25),
     ("anthropic", "3-haiku", 0.25, 1.25),
     ("anthropic", "haiku", 0.80, 4.00),

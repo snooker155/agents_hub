@@ -75,7 +75,7 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
 
 
 class SetupStepInput(BaseModel):
-    operation: str = Field(..., description="choose_model, voice_cloud, voice_local or seed_demo")
+    operation: str = Field(..., description="choose_model, voice_cloud, voice_local, local_set or seed_demo")
     provider: Optional[str] = Field(None, description="choose_model, voice_cloud: the provider")
     model: Optional[str] = Field(None, description="choose_model: the model id from setup_guide options")
     voice: Optional[str] = Field(None, description="voice_cloud: one of the provider's voices")
@@ -95,7 +95,9 @@ def setup_step(operation: str, provider: Optional[str] = None, model: Optional[s
     """Make one change of the hub's setup: choose_model (the default model for every
     workspace without its own), voice_cloud (the assistant hears and speaks with a
     connected OpenAI or Google key), voice_local (it does so with the hub's own
-    runtime, downloaded in the background) or seed_demo (the demo workspace). Say in
+    runtime, downloaded in the background), local_set (the whole local setup in one go:
+    engine, a chat model sized to this machine, Whisper and Kokoro, as a background
+    job) or seed_demo (the demo workspace). Say in
     one sentence what will change, then call it: the person answers a card (or says
     yes) and only then it runs. Keys are never set here: use propose_connection with
     kind provider.

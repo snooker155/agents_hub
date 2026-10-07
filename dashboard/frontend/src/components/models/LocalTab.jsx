@@ -5,13 +5,14 @@ import RuntimeCache from './RuntimeCache';
 import ImportModels from './ImportModels';
 import VoicesCard from './VoicesCard';
 import JobProgress from './JobProgress';
+import ReadySetCard from './ReadySetCard';
 import { useLocalJobs, ACTIVE_JOB_STATUSES as ACTIVE } from './jobs';
 import { downloadRuntimeModel, downloadRuntimeSpeechModel } from '../../api/localModels';
 import { useToast, errorDetail } from '../toast';
 import { useI18n } from '../../i18n';
 
 // Jobs whose end changes what the runtime section shows.
-const RUNTIME_JOB_KINDS = new Set(['hf_download', 'hf_package', 'engine_install', 'ollama_import', 'lmstudio_import']);
+const RUNTIME_JOB_KINDS = new Set(['local_set', 'hf_download', 'hf_package', 'engine_install', 'ollama_import', 'lmstudio_import']);
 
 /**
  * Feature 5's Local tab: the hub's own model runtime, which local models run
@@ -81,6 +82,7 @@ export default function LocalTab() {
 
   return (
     <div className="space-y-4">
+      <ReadySetCard onJobStarted={reloadJobs} />
       <RuntimeSection
         refreshKey={runtimeRefreshKey}
         reloadKey={usageReloadKey}

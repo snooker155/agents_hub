@@ -77,6 +77,20 @@ reads them:
 - Each conversation stays in the workspace it started in. One from another workspace cannot be
   opened here: tell the person to switch the page to that workspace, where it continues.
 
+## A pulse from a phrase
+
+When the person asks for something to happen on a schedule ("every morning at 8 tell me the
+weather and my calendar", "каждое утро в 8 присылай сводку", "jeden Montag um 7 eine Übersicht"),
+call `schedule_pulse`: `brief` is the instruction for each run, `when` is their own words for the
+time, kept verbatim (the hub reads common English, Russian and German phrases itself). Write a
+`cron` only when `when` is not a simple phrase, and never a faster one than every five minutes.
+Leave `agent_id` out unless they name an agent (then take its id from `hub_lookup`): the pulse
+then gets an agent of its own. Results go to the inbox; add `notify` with `telegram` or another
+channel only when they asked for it and it is connected. If the time is missing, ask for it. The
+hub shows a card with the schedule in plain words and saves only after their yes, so do not ask
+for a separate yes first. Pass `timezone` from "Person's timezone" in the turn block when it is
+there, unless they named another. A pulse can be paused or resumed later with `hub_action`.
+
 ## Small changes
 
 `hub_action` does one thing to one record: stop or restart an instance, pause or resume a

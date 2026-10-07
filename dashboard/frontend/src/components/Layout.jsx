@@ -4,10 +4,11 @@ import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
-import { MULTI, isAdmin, useAuth } from './auth';
+import { MULTI, useAuth } from './auth';
+import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
-import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines, Menu, X, ListChecks } from 'lucide-react';
+import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -64,7 +65,7 @@ const Layout = ({ children }) => {
   const { theme, setTheme } = useTheme();
   // Optional features the backend reports at /api/health; a feature that is
   // switched off has no sidebar row and no route (see App.jsx).
-  const { playground: playgroundEnabled } = useFeatures();
+  const features = useFeatures();
   const auth = useAuth();
   const { t } = useI18n();
   // The guided setup's own pill, while it runs (docs/assistant.md "Guided
@@ -283,120 +284,19 @@ const Layout = ({ children }) => {
     return <span className={`w-1.5 h-1.5 rounded-full ${s.ok ? 'bg-green-500' : 'bg-red-500'}`} />;
   };
 
-  const menuGroups = [
-    {
-      label: t('nav.groups.main'),
-      items: [
-        // One agent for the whole service, by voice or text (docs/assistant.md).
-        { name: t('nav.assistant'), path: '/assistant', icon: AudioLines },
-        { name: t('nav.chat'), path: '/chat', icon: MessageCircle },
-        { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard },
-      ],
-    },
-    {
-      label: t('nav.groups.workspace'),
-      items: [
-        { name: t('nav.workspaces'), path: '/workspaces', icon: Folder },
-        { name: t('nav.projects'), path: '/projects', icon: FolderGit2 },
-        { name: t('nav.tasks'), path: '/tasks', icon: CheckSquare },
-        { name: t('nav.plan'), path: '/plan', icon: CalendarClock },
-        { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
-        // An agent embedded on another site through one script tag.
-        { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode },
-        { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
-        { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
-        { name: t('nav.messages'), path: '/messages', icon: ScrollText },
-        // What the agents produced and work with: the views they built and the
-        // files the workspace keeps by id (chat, memory, tasks and evals reuse
-        // them), two tabs of one page. Memory stays under Tools on purpose: it
-        // is what the agents know about the user, not something they made.
-        // The Studio and a view's page are reached from here (the Studio
-        // button, a card's actions), so they light this item up and have no
-        // menu item of their own.
-        { name: t('nav.artifacts'), path: '/artifacts', icon: Images, also: ['/studio', '/views'] },
-      ],
-    },
-    {
-      // Attaching something that is not defined in here. Its own group rather
-      // than a row inside Infrastructure: someone looking for "how do I connect
-      // what we already have" is not looking under agents and containers, and
-      // this is the answer to that question.
-      label: t('nav.groups.connect'),
-      items: [
-        // Two directions, one question. The names carry the difference and
-        // each page states it in a line: something of yours runs elsewhere and
-        // reports in, or this service reaches out to a system you use.
-        { name: t('nav.connections'), path: '/connections', icon: Share2 },
-        { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
-        // Observers of outside state (a mailbox, an HTTP resource) that wake a
-        // proactive agent when something changes. See docs/watchers.md.
-        { name: t('nav.watchers'), path: '/watchers', icon: Eye },
-        // A third way in, and the one that is not an integration this product
-        // wrote: an MCP server hands over tools nobody here has seen, which is
-        // why attaching one asks for a capability declaration. See docs/mcp.md.
-        { name: t('nav.mcp'), path: '/mcp', icon: Plug },
-      ],
-    },
-    {
-      label: t('nav.groups.infrastructure'),
-      items: [
-        { name: t('nav.agents'), path: '/agents', icon: Users },
-        // Live copies of agents, across every carrier. Containers below shows
-        // the carriers themselves; a resident instance's own carrier is on
-        // its own page.
-        { name: t('nav.instances'), path: '/instances', icon: Activity },
-        // Agents kept running as replicas, and the runner every chat turn goes
-        // to (docs/services.md).
-        { name: t('nav.services'), path: '/services', icon: Cpu },
-        { name: t('nav.marketplace'), path: '/marketplace', icon: Store },
-        { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network },
-        { name: t('nav.teams'), path: '/teams', icon: UsersRound },
-        { name: t('nav.environments'), path: '/environments', icon: Container },
-        { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck },
-        { name: t('nav.containers'), path: '/containers', icon: Box },
-        // The agent's browser on screen, and free browsing on the same service.
-        { name: t('nav.browser'), path: '/browser', icon: Globe },
-      ],
-    },
-    {
-      label: t('nav.groups.tools'),
-      items: [
-        { name: t('nav.flows'), path: '/flows', icon: Factory },
-        { name: t('nav.loops'), path: '/loops', icon: Repeat },
-        { name: t('nav.registry'), path: '/registry', icon: Boxes },
-        { name: t('nav.toolbox'), path: '/tools', icon: Wrench },
-        { name: t('nav.skills'), path: '/skills', icon: GraduationCap },
-        { name: t('nav.memory'), path: '/memory', icon: Database },
-        { name: t('nav.webLogs'), path: '/web-logs', icon: Globe },
-        { name: t('nav.evals'), path: '/evals', icon: FlaskConical },
-        playgroundEnabled && { name: t('nav.playground'), path: '/playground', icon: Gamepad2 },
-      ].filter(Boolean),
-    },
-    {
-      label: t('nav.groups.system'),
-      items: [
-        // The service looking at itself: the snapshot, and the agent that can
-        // follow a symptom down from it.
-        { name: t('nav.health'), path: '/health', icon: Activity },
-        // Where everything runs once there is more than one process: members,
-        // leases, the launch queue, runs and instances by host.
-        { name: t('nav.cluster'), path: '/cluster', icon: Waypoints },
-        { name: t('nav.models'), path: '/models', icon: Brain },
-        { name: t('nav.costs'), path: '/costs', icon: DollarSign },
-        // Who owns each agent and MCP server, and whether it is approved.
-        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck },
-        { name: t('nav.docs'), path: '/docs', icon: BookOpen },
-        { name: t('nav.settings'), path: '/settings', icon: Settings },
-        // Accounts exist only under AUTH_MODE=multi, and only an administrator
-        // manages them. In the single-operator modes there is nothing to show.
-        isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog },
-        // Who did what: outside single mode there is somebody to answer to.
-        auth.features?.audit && { name: t('nav.audit'), path: '/audit', icon: ScrollText },
-        // The viewer's own sessions and API keys.
-        auth.mode === MULTI && auth.user && { name: t('nav.account'), path: '/account', icon: KeyRound },
-      ].filter(Boolean),
-    },
-  ];
+  // The map itself lives in navMenu.js: five groups, and in the simple menu
+  // only the rows a newcomer needs. The viewer's own choice wins over the
+  // default for their role, and is kept per browser.
+  const [menuChoice, setMenuChoice] = useState(readMenuMode);
+  const menuMode = menuChoice || defaultMenuMode(auth);
+  const allGroups = buildMenu({ t, auth, features });
+  const menuGroups = visibleGroups(allGroups, menuMode, location.pathname);
+  const moreCount = hiddenCount(allGroups, location.pathname);
+  const toggleMenuMode = () => {
+    const next = menuMode === SIMPLE ? FULL : SIMPLE;
+    writeMenuMode(next);
+    setMenuChoice(next);
+  };
 
   const handleWorkspaceChange = (e) => {
     const newWs = e.target.value;
@@ -506,12 +406,7 @@ const Layout = ({ children }) => {
               {sidebarCollapsed && gi === 0 && <div className="pt-3" />}
               {group.items.map((item) => {
                 const Icon = item.icon;
-                const under = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
-                const isActive = !group.disabled && (
-                  item.path === '/dashboard'
-                    ? location.pathname === item.path
-                    : under(item.path) || (item.also || []).some(under)
-                );
+                const isActive = !group.disabled && isItemActive(item, location.pathname);
                 if (group.disabled) {
                   return (
                     <div
@@ -544,6 +439,24 @@ const Layout = ({ children }) => {
           ))}
         </nav>
         <div className="border-t border-gray-100 py-2">
+          {/* Simple or full menu: the same pages either way, only the map. */}
+          <button
+            type="button"
+            onClick={toggleMenuMode}
+            title={sidebarCollapsed ? (menuMode === SIMPLE ? t('nav.mode.showFull') : t('nav.mode.showSimple')) : t('nav.mode.hint')}
+            aria-pressed={menuMode === FULL}
+            className={`w-full flex items-center py-2 text-xs font-medium text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${
+              sidebarCollapsed ? 'justify-center px-2' : 'px-6'
+            }`}
+          >
+            {menuMode === SIMPLE ? <ChevronsDown className={`w-4 h-4 ${sidebarCollapsed ? '' : 'mr-3'}`} /> : <ChevronsUp className={`w-4 h-4 ${sidebarCollapsed ? '' : 'mr-3'}`} />}
+            {!sidebarCollapsed && (
+              <span>
+                {menuMode === SIMPLE ? t('nav.mode.showFull') : t('nav.mode.showSimple')}
+                {menuMode === SIMPLE && moreCount > 0 && <span className="ml-1 text-gray-400">{t('nav.mode.more', { count: moreCount })}</span>}
+              </span>
+            )}
+          </button>
           <InstallAppButton compact={sidebarCollapsed} />
           {/* On a phone the header keeps only what is used most; the rest of
               its controls live here, at the foot of the menu. */}

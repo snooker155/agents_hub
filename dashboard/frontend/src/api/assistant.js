@@ -29,6 +29,8 @@ export class AssistantError extends Error {
     this.name = 'AssistantError';
     this.status = status;
     this.code = typeof detail === 'object' && detail ? detail.code || '' : '';
+    // The structured refusal of a 402 (chat/refusals.py), for the RefusalCard.
+    this.refusal = typeof detail === 'object' && detail ? detail.refusal || null : null;
   }
 }
 
@@ -44,12 +46,21 @@ async function refusal(response) {
 }
 
 /** One turn: `{message, workspace, mode, voice}`; `onEvent` gets every event. */
+/** The browser's IANA timezone, so "every morning at 8" is the person's own morning. */
+function browserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+}
+
 export async function streamAssistantTurn({ body, onEvent, signal }) {
   const response = await fetch(`${API_ORIGIN}/api/assistant`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
-    body: JSON.stringify(body),
+    body: JSON.stringify({ timezone: browserTimezone(), ...body }),
   });
   if (!response.ok || !response.body) throw await refusal(response);
   await consumeSSE(response, onEvent);

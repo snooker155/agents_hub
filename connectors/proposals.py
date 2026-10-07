@@ -854,6 +854,13 @@ async def _apply_provider(p, values, secrets, principal) -> Dict[str, Any]:
     else:
         updates.update({"WEB_SEARCH_PROVIDER": target, spec["key"]: key})
     await asyncio.to_thread(provider_env.save, updates)
+    switched = None
+    if spec["kind"] == "model":
+        from common import default_model
+        preferred = default_model.DEFAULT_MODELS.get(target)
+        if preferred not in (found.models or []):
+            preferred = (tiers.get("balanced") or (None,))[0]
+        switched = await asyncio.to_thread(default_model.ensure_default, target, preferred=preferred)
     audit.record("settings.provider_key", principal=principal, object_type="setting", object_id=target,
                  workspace="default", details={"via": TOOL, "provider": target})
     if spec["kind"] == "model":
@@ -863,7 +870,10 @@ async def _apply_provider(p, values, secrets, principal) -> Dict[str, Any]:
     else:
         summary = f"Web search through {spec['label']} is on for every agent with the web_search tool."
         href = "/settings/webSearch"
-    return {"ok": True, "summary": summary, "test": test, "href": href}
+    if switched:
+        summary += (f" Switched on {switched['model']} at ${switched['input_price']:g} / "
+                    f"${switched['output_price']:g} per 1M tokens; change it on the Models page.")
+    return {"ok": True, "summary": summary, "test": test, "href": href, "default_model": switched}
 
 
 # ── what the agent may propose ───────────────────────────────────────────────
