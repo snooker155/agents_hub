@@ -242,7 +242,7 @@ async def lifespan(app: FastAPI):
         try:
             from providers import model_runtime_host as _model_runtime
             _model_runtime.start_watchdog()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - startup goes on without the runtime; logged
             log.warning(f"⚠ Could not start the model runtime: {e}")
 
     # The deployment supervisor (deployments/supervisor.py): keeps a project's

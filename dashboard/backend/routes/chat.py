@@ -17,6 +17,7 @@ The two endpoints:
 """
 import asyncio
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -32,6 +33,8 @@ from models import ChatRequest
 
 from chat.pipelines import run_chat_pipeline, run_chat_flow_pipeline, run_chat_team_pipeline
 from chat.send import send_chat_message, ChatSendError
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -117,7 +120,7 @@ async def stream_message_sse(request: ChatRequest):
         try:
             async for _event in pipeline:
                 pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure ends the turn; this reports it
             # A turn run here has had its error published by the broadcaster.
             # The relay to a replica publishes only what the replica posts, so
             # a request it refuses before dispatch (an unknown agent) has to be
@@ -150,5 +153,5 @@ async def _publish_failure(channel: str, request: ChatRequest, exc: Exception) -
     try:
         await broker.apublish(channel, done)
         await broker.apublish(channel, {**stamp, "type": "chat_stream_end"})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the broker is down; nothing else can tell the caller
+        log.warning("could not publish a failed turn on %s", channel, exc_info=True)

@@ -28,11 +28,14 @@ Three points are deliberate:
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Optional
 
 from common import live_runs
+
+log = logging.getLogger(__name__)
 
 
 def _iso() -> str:
@@ -57,7 +60,7 @@ def announce_running_change(conversation_id: Optional[str]) -> None:
         from common.session_broker import notify_change
         notify_change("chat_turns")
     except Exception:  # noqa: BLE001 - a mark in a list is an extra, never the turn
-        pass
+        log.debug("could not announce a running change", exc_info=True)
 
 
 def channel_for(conversation_id: Optional[str]) -> Optional[str]:

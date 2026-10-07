@@ -13,6 +13,7 @@ Two rules shape the answers:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from common import identity
 from providers import local_models as lm
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/models/local", tags=["local-models"])
 
@@ -208,7 +211,7 @@ def runtime_stop() -> Dict[str, Any]:
     try:
         _disable_hub_local_chat_models()
     except Exception:  # noqa: BLE001 - the runtime is stopped; the picker catches up on the next load
-        pass
+        log.warning("could not disable the hub-local chat models", exc_info=True)
     return result
 
 
@@ -219,7 +222,7 @@ def runtime_restart() -> Dict[str, Any]:
     try:
         _disable_hub_local_chat_models()
     except Exception:  # noqa: BLE001 - see runtime_stop
-        pass
+        log.warning("could not disable the hub-local chat models", exc_info=True)
     return result
 
 
