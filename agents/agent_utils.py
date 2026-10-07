@@ -411,11 +411,18 @@ def build_chat_model(
     # explicitly whenever no gateway is configured; a custom base_url is left
     # alone, since a gateway may reject the option, and StatsCollectorCallback
     # falls back to its own estimate there.
-    if not common["base_url"]:
+    gateway = common["base_url"]
+    if not gateway:
         common["stream_usage"] = True
+        # The same seeding leaves ``OPENAI_BASE_URL=""`` in the environment,
+        # and the OpenAI SDK reads an empty value as the address itself
+        # (``URL('')``): every call then fails with "Connection error". Name
+        # the default address outright so the empty variable is never read.
+        if os.environ.get("OPENAI_BASE_URL") == "":
+            common["base_url"] = "https://api.openai.com/v1"
     common.update(openai_reasoning_kwargs(
         mdl, thinking_level, _temp(mdl),
-        api_key=common["api_key"], base_url=common["base_url"]))
+        api_key=common["api_key"], base_url=gateway))
     return ReasoningChatOpenAI(**common)
 
 
