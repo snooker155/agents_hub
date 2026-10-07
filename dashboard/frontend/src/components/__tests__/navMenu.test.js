@@ -33,6 +33,7 @@ describe('navMenu', () => {
     expect(shown.length).toBeLessThanOrEqual(16);
     expect(shown).toEqual(expect.arrayContaining(['/assistant', '/chat', '/workspaces', '/agents', '/models', '/settings', '/docs']));
     expect(shown).not.toContain('/connectors');
+    expect(shown).not.toContain('/dashboard');
     expect(visibleGroups(groups, SIMPLE).map((g) => g.key)).not.toContain('integrations');
     expect(hiddenCount(groups)).toBe(paths(groups).length - shown.length);
   });
@@ -44,9 +45,8 @@ describe('navMenu', () => {
     expect(lit('/deployments')).toEqual(['/plan']);
     expect(lit('/loops/l1')).toEqual(['/flows']);
     expect(lit('/connectors/slack')).toEqual(['/settings']);
-    expect(lit('/sessions')).toEqual(['/dashboard']);
+    expect(lit('/sessions')).toEqual(['/settings']);
     expect(lit('/plan')).toEqual(['/plan']);
-    expect(lit('/dashboard/x')).toEqual([]);
   });
 
   it('every page is in the simple menu or names a home row that is', () => {
@@ -55,6 +55,16 @@ describe('navMenu', () => {
     for (const it of groups.flatMap((g) => g.items)) {
       if (!it.simple) expect(simple.has(it.home)).toBe(true);
     }
+  });
+
+  it('dashboard and the agent registry sit with the administration under settings', () => {
+    const groups = buildMenu({ t, auth: single });
+    const records = groups.find((g) => g.key === 'records').items.map((it) => it.path);
+    expect(records).toContain('/agent-registry');
+    expect(groups.find((g) => g.key === 'agents').items.map((it) => it.path)).not.toContain('/agent-registry');
+    const lit = (pathname) => visibleGroups(groups, SIMPLE).flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
+    expect(lit('/dashboard')).toEqual(['/settings']);
+    expect(lit('/agent-registry')).toEqual(['/settings']);
   });
 
   it('full menu shows everything', () => {

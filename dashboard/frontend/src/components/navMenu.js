@@ -3,20 +3,22 @@
  * and two ways of showing it.
  *
  * - conversation: where a person talks (the assistant, the chat) and the
- *   overview of what is going on.
+ *   overview of what is going on (the Dashboard, full menu only: a person
+ *   using the hub for themselves has little to watch there).
  * - work: what gets done and when (projects, tasks, flows and the other
  *   forms of joined work, their schedules and what they produced).
  * - agents: who does it and what they know (agents and their live copies,
  *   models, skills, memory, the shelves agents come from).
  * - integrations: what the hub is attached to, in both directions.
- * - records: what happened, what it cost, and the administration.
+ * - records: what happened, what it cost, and the administration (the
+ *   agent registry among it).
  *
  * The simple menu shows the items marked `simple` (the first three groups
  * and the two pages nobody can do without, Settings and Docs); the full menu
  * shows everything. No page is removed in either mode: only the map
  * changes. Every other item names its `home`, the simple row it belongs to
- * (Deployments under Plan, Loops under Agent Flows, Connectors under
- * Settings), and a page reached by a link lights that row up, so the menu
+ * (Deployments under Plan, Loops under Agent Flows, Connectors and the
+ * Dashboard under Settings), and a page reached by a link lights that row up, so the menu
  * never changes shape under the person (see visibleGroups).
  *
  * Kept apart from Layout.jsx so the map can be tested without rendering the
@@ -83,7 +85,7 @@ export function buildMenu({ t, auth, features = {} }) {
         // One agent for the whole service, by voice or text (docs/assistant.md).
         { name: t('nav.assistant'), path: '/assistant', icon: AudioLines, simple: true },
         { name: t('nav.chat'), path: '/chat', icon: MessageCircle, simple: true },
-        { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard, simple: true },
+        { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard, home: '/settings' },
       ],
     },
     {
@@ -125,8 +127,6 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.instances'), path: '/instances', icon: Activity, home: '/agents' },
         { name: t('nav.services'), path: '/services', icon: Cpu, home: '/agents' },
         { name: t('nav.registry'), path: '/registry', icon: Boxes, home: '/marketplace' },
-        // Who owns each agent and MCP server, and whether it is approved.
-        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck, home: '/agents' },
       ],
     },
     {
@@ -151,16 +151,19 @@ export function buildMenu({ t, auth, features = {} }) {
     {
       key: 'records',
       items: [
-        // What happened and what it cost: the Dashboard is their summary.
-        { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle, home: '/dashboard' },
-        { name: t('nav.messages'), path: '/messages', icon: ScrollText, home: '/dashboard' },
-        { name: t('nav.runGroups'), path: '/run-groups', icon: Layers, home: '/dashboard' },
-        { name: t('nav.costs'), path: '/costs', icon: DollarSign, home: '/dashboard' },
+        // What happened and what it cost: the Dashboard is their summary, and
+        // like it they sit under Settings in the simple menu.
+        { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle, home: '/settings' },
+        { name: t('nav.messages'), path: '/messages', icon: ScrollText, home: '/settings' },
+        { name: t('nav.runGroups'), path: '/run-groups', icon: Layers, home: '/settings' },
+        { name: t('nav.costs'), path: '/costs', icon: DollarSign, home: '/settings' },
         { name: t('nav.evals'), path: '/evals', icon: FlaskConical, home: '/agents' },
-        { name: t('nav.webLogs'), path: '/web-logs', icon: Globe, home: '/dashboard' },
+        { name: t('nav.webLogs'), path: '/web-logs', icon: Globe, home: '/settings' },
         // Who did what: outside single mode there is somebody to answer to.
         auth?.features?.audit && { name: t('nav.audit'), path: '/audit', icon: ScrollText, home: '/settings' },
         // Administration lives under Settings.
+        // Who owns each agent and MCP server, and whether it is approved.
+        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck, home: '/settings' },
         { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck, home: '/settings' },
         { name: t('nav.environments'), path: '/environments', icon: Container, home: '/settings' },
         { name: t('nav.containers'), path: '/containers', icon: Box, home: '/settings' },
