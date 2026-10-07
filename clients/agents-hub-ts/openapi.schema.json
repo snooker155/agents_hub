@@ -1550,6 +1550,11 @@
       },
       "Body_runtime_add_voice_api_models_local_runtime_voices_post": {
         "properties": {
+          "cleanup": {
+            "default": "none",
+            "title": "Cleanup",
+            "type": "string"
+          },
           "consent": {
             "default": false,
             "title": "Consent",
@@ -2329,6 +2334,17 @@
               }
             ],
             "title": "Client Id"
+          },
+          "client_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Turn Id"
           },
           "conversation_id": {
             "anyOf": [
@@ -13333,6 +13349,20 @@
         "title": "VisibilityBody",
         "type": "object"
       },
+      "VoiceCleanupBody": {
+        "properties": {
+          "mode": {
+            "pattern": "^(none|denoise|restore)$",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "VoiceCleanupBody",
+        "type": "object"
+      },
       "VoicePatch": {
         "properties": {
           "base_model": {
@@ -22124,6 +22154,25 @@
         ]
       }
     },
+    "/api/chats/running": {
+      "get": {
+        "description": "The stored conversations the caller can see that are being answered now.\n\nWhoever started the turn: this tab, another tab or device, Telegram, an\nagent writing to its inbox. The Chat page marks them in its list and asks\nagain on every ``chat_turns.changed`` (chat/broadcast.py\nannounce_running_change).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Running Chats",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
     "/api/chats/{chat_id}": {
       "delete": {
         "description": "Drop one conversation. Its runs stay in the ledger.",
@@ -30153,7 +30202,7 @@
     },
     "/api/instances/{instance_id}/events": {
       "post": {
-        "description": "Fan one event a carrier posts out on the channels it names.\n\nA service replica executing a chat turn (chat/turns.py) has no broker of\nits own: it posts every event here, and this replica of the backend\npublishes it to the conversation's channel (what the Chat page, a mirror\ntab and the routing relay read) and to the instance's. Events on an\ninstance channel are also kept as the run's live tail (common/live_runs),\nas they are for any carrier run.",
+        "description": "Fan one event a carrier posts out on the channels it names.\n\nA service replica executing a chat turn (chat/turns.py) has no broker of\nits own: it posts every event here, and this replica of the backend\npublishes it to the conversation's channel (what the Chat page, a mirror\ntab and the routing relay read) and to the instance's. A chat turn's\nevents are also kept as the conversation's live turn, and any other\ncarrier run's as the run's live tail (common/live_runs), so this backend\ncan say what a conversation or a run is in the middle of.",
         "parameters": [
           {
             "in": "path",
@@ -34440,7 +34489,7 @@
         ]
       },
       "post": {
-        "description": "A recording for the cloning engines. ``consent``: the person confirms\nthe voice is theirs or its owner allowed it; without it nothing is\nkept. ``replace`` gives a voice of theirs a new sample.",
+        "description": "A recording for the cloning engines. ``consent``: the person confirms\nthe voice is theirs or its owner allowed it; without it nothing is\nkept. ``replace`` gives a voice of theirs a new sample. ``cleanup``\n(``denoise`` or ``restore``) cleans it right after, as a runtime job\nwhose id comes back in ``job_id``.",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -34577,7 +34626,7 @@
     },
     "/api/models/local/runtime/voices/{name}/audio": {
       "get": {
-        "description": "The recording as it is kept (cleaned up: trimmed, levelled, WAV).",
+        "description": "The recording as it is kept (trimmed, levelled, WAV, cleaned when a\ncleanup ran), or with ``original`` as it was before the cleanup.",
         "parameters": [
           {
             "in": "path",
@@ -34586,6 +34635,16 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "original",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Original",
+              "type": "boolean"
             }
           }
         ],
@@ -34610,6 +34669,60 @@
           }
         },
         "summary": "Runtime Voice Audio",
+        "tags": [
+          "local-models"
+        ]
+      }
+    },
+    "/api/models/local/runtime/voices/{name}/cleanup": {
+      "post": {
+        "description": "Take the room (noise, echo) out of a recording before the cloning\nmodels learn it, or put the original back. ``denoise`` and ``restore``\nare a runtime job (``job_id``) that installs the engine and fetches its\nweights the first time.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceCleanupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Clean Voice Api Models Local Runtime Voices  Name  Cleanup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Clean Voice",
         "tags": [
           "local-models"
         ]

@@ -273,6 +273,7 @@ export type Body_runtime_add_voice_api_models_local_runtime_voices_post = {
   "shared"?: boolean;
   "consent"?: boolean;
   "replace"?: boolean;
+  "cleanup"?: string;
 };
 
 export type Body_upload_file_api_files_post = {
@@ -416,6 +417,7 @@ export type ChatRequest = {
   "references"?: ChatReference[];
   "source"?: string | null;
   "client_id"?: string | null;
+  "client_turn_id"?: string | null;
   "view_id"?: string | null;
   "instance_id"?: string | null;
   "agent_version"?: number | null;
@@ -2150,6 +2152,10 @@ export type VisibilityBody = {
   "visibility": string;
 };
 
+export type VoiceCleanupBody = {
+  "mode": string;
+};
+
 export type VoicePatch = {
   "language"?: string | null;
   "gender"?: string | null;
@@ -2789,6 +2795,9 @@ export interface ApiPaths {
   };
   "/api/chats/import": {
     post: { body: ImportIn; response: unknown };
+  };
+  "/api/chats/running": {
+    get: { response: unknown };
   };
   "/api/chats/{chat_id}": {
     get: { response: unknown };
@@ -3518,6 +3527,9 @@ export interface ApiPaths {
   };
   "/api/models/local/runtime/voices/{name}/audio": {
     get: { response: unknown };
+  };
+  "/api/models/local/runtime/voices/{name}/cleanup": {
+    post: { body: VoiceCleanupBody; response: Record<string, unknown> };
   };
   "/api/models/local/runtime/voices/{name}/try": {
     post: { body: VoiceTryBody; response: unknown };

@@ -9,6 +9,7 @@ export default {
   notSavedHint: 'Диалог не удалось сохранить на сервере. Он остаётся в этой вкладке, пока связь не восстановится.',
   build: 'Сборка',
   newChat: 'Новый чат',
+  answering: 'Агент отвечает',
   newConversation: 'Новый диалог',
   thisConversation: 'этот диалог',
   confirmDeleteConversation: 'Удалить «{{label}}»?',

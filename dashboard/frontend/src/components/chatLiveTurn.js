@@ -27,6 +27,28 @@ export const MAX_LIVE_TEXT = 40000;
  *  up (the tab that ran it went away before saving). */
 export const LIVE_TURN_LINGER_MS = 15000;
 
+// The turns this tab's Chat page draws from their own events, by the
+// `client_turn_id` the page gave them (components/chat/useChatSend.js). An
+// event of this tab's is an echo to drop only while the page draws its turn:
+// a turn the page stopped drawing (the person left the Chat page and came
+// back, so the page that sent it is gone) is mirrored like anyone else's.
+const drawnTurns = new Set();
+
+/** The Chat page draws this turn itself; its echoes are not mirrored. */
+export function claimTurn(key) {
+  if (key) drawnTurns.add(key);
+}
+
+/** The page no longer draws this turn. */
+export function releaseTurn(key) {
+  if (key) drawnTurns.delete(key);
+}
+
+function isOwnEcho(event, clientId) {
+  if (!event.origin_client || event.origin_client !== clientId) return false;
+  return !event.client_turn_id || drawnTurns.has(event.client_turn_id);
+}
+
 const clip = (text) => (text.length > MAX_LIVE_TEXT ? text.slice(-MAX_LIVE_TEXT) : text);
 
 const blank = (fields = {}) => ({
@@ -187,14 +209,16 @@ export function reduceLiveTurn(turn, event) {
  * Follow the open conversation's live turn.
  *
  * @param {string|null} conversationId the chat being read.
- * @param {{muted?: boolean, resolvedRunIds?: Set<string>|null}} options
+ * @param {{muted?: boolean, resolvedRunIds?: Set<string>|null, keepResolved?: boolean}} options
  *   `muted` for the tab that is running the turn itself — it renders its own
  *   stream and must not mirror its echo. `resolvedRunIds` are the runs the
  *   stored transcript already holds, which is how a mirrored turn knows the
- *   authored version has arrived and it can step aside.
+ *   authored version has arrived and it can step aside. With `keepResolved`
+ *   such a turn is still returned, marked `resolved`, for a caller that needs
+ *   to know it is running (to talk to it) without drawing it.
  * @returns {object|null} the live turn, or null when the conversation is idle.
  */
-export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds = null } = {}) {
+export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds = null, keepResolved = false } = {}) {
   const { clientId } = useStream();
   // The turn is stored with the conversation (and the muted flag) it belongs
   // to, so switching chats or starting to type drops it without an effect that
@@ -226,7 +250,7 @@ export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds 
   useChannel(conversationId && !muted ? `chat:${conversationId}` : null, (event) => {
     if (!event) return;
     // Our own echo: this tab is rendering these events from its own stream.
-    if (event.origin_client && event.origin_client === clientIdRef.current) return;
+    if (isOwnEcho(event, clientIdRef.current)) return;
     setState((prev) => ({
       key,
       turn: reduceLiveTurn(prev.key === key ? prev.turn : null, event),
@@ -243,7 +267,9 @@ export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds 
 
   // Once the stored transcript holds this run, the authored bubbles are the
   // real thing and the mirror steps aside.
-  if (turn?.runId && resolvedRunIds?.has(String(turn.runId))) return null;
+  if (turn?.runId && resolvedRunIds?.has(String(turn.runId))) {
+    return keepResolved ? { ...turn, resolved: true } : null;
+  }
   return turn;
 }
 

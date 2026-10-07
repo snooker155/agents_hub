@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
@@ -72,6 +72,9 @@ import { conversationViews } from '../components/chat/turnViews';
 import { replyCodeBlocks } from '../components/chat/replyCode';
 import useChatComposerInput from '../components/chat/useChatComposerInput';
 import useChatSend from '../components/chat/useChatSend';
+import useChatTurns from '../components/chat/useChatTurns';
+import useChatSteering from '../components/chat/useChatSteering';
+import useRunningChats from '../components/chat/useRunningChats';
 
 // ---------------------------------------------------------------------------
 // Page-local preferences
@@ -113,8 +116,10 @@ export default function Chat() {
   const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
   // This tab's id on the shared SSE stream: sent with a turn so the
-  // broadcast can name its author, and with a save for the same reason.
-  const { clientId } = useStream();
+  // broadcast can name its author, and with a save for the same reason. The
+  // turns themselves arrive over that stream (chat/send/channelStream.js).
+  const stream = useStream();
+  const { clientId } = stream;
   const [agents, setAgents] = useState([]);
   const [workspaceAllowedAgentIds, setWorkspaceAllowedAgentIds] = useState(null);
   // Whether the workspace has personal memory (memory/personal.py) at all.
@@ -134,21 +139,33 @@ export default function Chat() {
   const [selectedProject, setSelectedProject] = useState('');
 
   const [currentConvId, setCurrentConvId] = useState(urlConvId || null);
+  // The open conversation as of the last commit, for a turn's event handlers,
+  // which outlive the render they were made in (see useChatSend).
+  const currentConvIdRef = useRef(currentConvId);
+  useLayoutEffect(() => { currentConvIdRef.current = currentConvId; }, [currentConvId]);
   // On a phone the conversation list is a drawer (ChatSidebar), open from the
   // top bar and closed again by picking or starting a conversation.
   const [listOpen, setListOpen] = useState(false);
   useEffect(() => { setListOpen(false); }, [urlConvId]);
-  // Whether a turn is being sent from this tab. Declared here because both the
+  // The turns this tab is sending, one per conversation at most, so several
+  // conversations can be answering at once (components/chat/useChatTurns.js).
+  // `loading` is the open conversation's: declared here because both the
   // conversation store and the live-turn mirror below are steered by it.
-  const [loading, setLoading] = useState(false);
+  const {
+    turns, begin: beginTurn, note: noteTurn, end: endTurn, get: getTurn, isRunning: isTurnRunning,
+  } = useChatTurns();
+  const loading = Boolean(currentConvId && turns[currentConvId]);
+  // Every conversation being answered now, by anyone (the list marks them);
+  // `turns` adds this tab's own the moment they are sent.
+  const runningChats = useRunningChats();
   // The conversation list is server state, not browser state: the store loads
   // it, fetches the open chat's transcript, and writes changes back. What this
   // page sees is the array it has always mutated.
-  // `paused` while a turn is running here: a reload triggered by someone else's
-  // save would drop the turn this tab is in the middle of writing.
+  // `paused` for a conversation with a turn running here: a reload triggered by
+  // someone else's save would drop the turn this tab is in the middle of writing.
   const {
     conversations, setConversations, removeConversation, syncError,
-  } = useConversationStore(currentConvId, { paused: loading });
+  } = useConversationStore(currentConvId, { paused: isTurnRunning });
   const [telegramBindings, setTelegramBindings] = useState([]);
   const [telegramSending, setTelegramSending] = useState(false);
   const [telegramError, setTelegramError] = useState('');
@@ -229,7 +246,6 @@ export default function Chat() {
   // session_id from the backend — used to subscribe to continuation SSE
   const [sessionId, setSessionId] = useState(null);
 
-  const abortCtrlRef = useRef(null);
   const continuationMsgIdRef = useRef(null);   // active continuation bubble on the session channel
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -297,14 +313,30 @@ export default function Chat() {
   // mirror steps aside as soon as that lands (hence the run ids above).
   // `muted` while this tab is the one sending: it renders its own stream and
   // would otherwise draw every token twice.
-  const liveTurn = useLiveChatTurn(currentConvId, {
+  const liveTurnSeen = useLiveChatTurn(currentConvId, {
     muted: loading,
     resolvedRunIds: conversationRunIds,
+    keepResolved: true,
   });
+  // The transcript's last bubble can be a reply still being written: the page
+  // sending it saves as it streams, and a page that was left mid-turn saved it
+  // that way last. While the live mirror follows that run it draws the bubble
+  // instead, so the reply keeps moving rather than standing at the last save.
+  const unfinishedRunId = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return last?.role === 'agent' && last.run_id && last.duration_ms == null
+      && last.total_tokens == null && !last.error
+      ? String(last.run_id) : null;
+  }, [messages]);
+  const mirrorTakesOver = Boolean(
+    !loading && unfinishedRunId && liveTurnSeen?.runId && String(liveTurnSeen.runId) === unfinishedRunId,
+  );
+  const liveTurn = mirrorTakesOver || (liveTurnSeen && !liveTurnSeen.resolved) ? liveTurnSeen : null;
   const liveMessages = useMemo(() => {
     if (!liveTurn) return [];
     const bubbles = [];
-    if ((liveTurn.user || '').trim()) {
+    // Taking over a stored bubble: the person's message is stored above it.
+    if (!mirrorTakesOver && (liveTurn.user || '').trim()) {
       bubbles.push({ id: 'live-user', role: 'user', content: liveTurn.user });
     }
     // A turn that changed hands: each handing agent's reply, then the agent
@@ -324,14 +356,15 @@ export default function Chat() {
       run_id: liveTurn.runId,
     });
     return bubbles;
-  }, [liveTurn, selectedAgent]);
+  }, [liveTurn, mirrorTakesOver, selectedAgent]);
   // What the feed renders: the stored transcript, plus the mirrored turn while
   // one is in flight. The mirror is appended here and nowhere else, so nothing
   // downstream of `messages` (persistence, context fill, run ids) ever sees it.
-  const renderedMessages = useMemo(
-    () => (liveMessages.length ? [...messages, ...liveMessages] : messages),
-    [messages, liveMessages],
-  );
+  const renderedMessages = useMemo(() => {
+    if (!liveMessages.length) return messages;
+    const stored = mirrorTakesOver ? messages.slice(0, -1) : messages;
+    return [...stored, ...liveMessages];
+  }, [messages, liveMessages, mirrorTakesOver]);
   // Build-view timelines for messages stored before the trail was kept with
   // the chat (components/chatStore.js stores it now, clipped). Reconstructed
   // per run_id from the server-fetched process insights, the same reasoning
@@ -403,6 +436,15 @@ export default function Chat() {
     const query = input.toLowerCase();
     return allCommands.filter((cmd) => cmd.name.toLowerCase().startsWith(query));
   }, [commandMenuOpen, input, allCommands]);
+
+  // A chat turn running in the open conversation that this page is not
+  // sending: another tab's, another device's, or this tab's own from before
+  // the Chat page was left. The composer can still talk to it (useChatSteering).
+  // A Telegram thread's turns are the bot's, and its composer replies as the bot.
+  const liveRunId = (
+    !loading && !currentTelegramBinding && targetMode === 'agent'
+    && liveTurnSeen?.status === 'running' && ['chat', 'steer'].includes(liveTurnSeen.source)
+  ) ? (liveTurnSeen.runId || null) : null;
 
   // ---- sync URL → state ----
   useEffect(() => {
@@ -545,6 +587,14 @@ export default function Chat() {
     loading, processInsights, processInsightsRef, processOpen: runDataWanted, setArtifacts,
     setProcessError, setProcessInsights, setProcessLoading, setSessionId, t, viewMode,
   });
+  // Back in a conversation whose turn is still running: the panels were reset
+  // for it above, and the turn's run and session (said before the switch) are
+  // what they follow until it ends.
+  useEffect(() => {
+    const turn = getTurn(currentConvId);
+    if (turn?.sessionId) setSessionId(turn.sessionId);
+    if (turn?.runId) setActiveRunId(turn.runId);
+  }, [currentConvId, getTurn]);
 
   const { codeRows, codeListLoading, codeListError } = useConversationCode({
     conversationRunIds, currentConvId, codeFocus, t,
@@ -668,13 +718,13 @@ export default function Chat() {
   }, [agents, allCommands, currentConvId, selectedAgent, setConversations, t]);
 
   const { sendMessage } = useChatSend({
-    abortCtrlRef, clientId, conversations, currentConvId, input, loadProcessData, loading,
-    mergeArtifact, messages, navigate, pendingAttachments, pendingReferences, processOpen: runDataWanted,
-    selectCommand, selectedAgent, selectedFlow, selectedProject, selectedTeam,
-    selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
-    setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments,
-    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, t, targetMode,
-    textareaRef,
+    beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
+    pendingReferences, processOpen: runDataWanted, selectCommand, selectedAgent, selectedFlow,
+    selectedProject, selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError,
+    setConversations, setCurrentConvId, setGraphRun, setInput, setPendingAttachments,
+    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, stream, t,
+    targetMode, textareaRef,
   });
   const jumpToArtifact = useCallback((path) => {
     setTimeout(() => {
@@ -683,11 +733,19 @@ export default function Chat() {
     }, 50);
   }, []);
 
-  const stopGeneration = () => {
-    abortCtrlRef.current?.abort();
-    if (activeRunId) stopMessage(activeRunId).catch(() => {});
-    setLoading(false);
-  };
+  // Stops the open conversation's turn only; the others keep running. A turn
+  // stopped before it named its run is stopped when it does (channelStream).
+  const stopGeneration = useCallback(() => {
+    const turn = getTurn(currentConvId);
+    if (!turn) {
+      if (liveRunId) stopMessage(liveRunId).catch(() => {});
+      return;
+    }
+    turn.ctrl.abort();
+    const runId = turn.runId || activeRunId;
+    if (runId) stopMessage(runId).catch(() => {});
+    endTurn(currentConvId);
+  }, [activeRunId, currentConvId, endTurn, getTurn, liveRunId]);
 
   // True only when the conversation's binding workspace matches the active workspace.
   // Reply-as-bot is forbidden across workspaces to keep the Telegram surface
@@ -793,6 +851,13 @@ export default function Chat() {
     }),
   } : null), [personalMemoryOn, mathWorkspace]);
 
+  // Messages sent while a turn works (chat/useChatSteering.js). Here and not
+  // in the composer, which is not rendered for every conversation.
+  const steering = useChatSteering({
+    conversations, currentConvId, input, liveRunId, loading, sendMessage, setConversations,
+    setInput, stopGeneration, targetMode, turns,
+  });
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -812,8 +877,8 @@ export default function Chat() {
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
     setAttachMenuOpen, setCodeOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
     setInput, setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
-    setSelectedTeam, setTargetMode, setViewMode, stopGeneration, syncError, t, targetMode,
-    teams, telegramError, telegramReplyAllowed, telegramSending, textareaRef,
+    setSelectedTeam, setTargetMode, setViewMode, steering, stopGeneration, syncError, t, targetMode,
+    teams, telegramError, turns, runningChats, telegramReplyAllowed, telegramSending, textareaRef,
     toggleAttachmentStore, viewMode, visibleConversations, visibleTelegramBindings
   };
 

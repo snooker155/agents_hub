@@ -159,6 +159,8 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
     forwarder = EventForwarder(instance_id, channels)
     stamp = {"conversation_id": conversation_id, "origin_client": request.client_id,
              "turn_msg_id": msg_id}
+    if request.client_turn_id:
+        stamp["client_turn_id"] = request.client_turn_id
     state: Dict[str, Any] = {"run_id": None, "done": False, "cap": False, "spent": 0.0}
 
     turn_context = {

@@ -32,6 +32,7 @@ class FakeRequest:
         self.flow_id = None
         self.team_id = None
         self.source = over.get("source")
+        self.client_turn_id = over.get("client_turn_id")
 
 
 async def _pipeline(events):
@@ -344,6 +345,54 @@ def test_the_live_endpoint_returns_the_turn_in_flight(client):
     assert body["run_id"] == "run-9"
 
 
+# ── several turns in one tab ─────────────────────────────────────────────────
+
+async def _body_test_the_tabs_name_for_a_turn_is_on_every_event(broker):
+    """A tab following several turns over one connection tells them apart by
+    the name it gave each one."""
+    from chat.broadcast import broadcast_turn
+
+    client_id, queue = broker.open_client(["chat:conv-1"])
+    async for _ in broadcast_turn(FakeRequest(client_turn_id="turn-k"),
+                                  _pipeline([{"type": "token", "token": "hi"}])):
+        pass
+    broker.close_client(client_id)
+
+    published = _drain(queue)
+    assert [e["type"] for e in published] == ["turn_start", "token", "chat_stream_end"]
+    assert all(e["client_turn_id"] == "turn-k" for e in published)
+
+
+async def _body_test_a_half_written_bubble_gets_the_final_answer(broker):
+    """The page saves a reply as it streams. Left before the end, that half
+    answer must not stay the record: the server finishes it and tells any
+    page with the chat open to reload."""
+    from chat.broadcast import broadcast_turn
+    from common import chat_store
+
+    chat_store.save_chat({"id": "conv-1", "messages": [
+        {"id": "m1", "role": "user", "content": "how do I ship this?"},
+        {"id": "m2", "role": "agent", "content": "ship", "run_id": "run-1",
+         "duration_ms": None, "total_tokens": None, "timeline": [{"type": "tool"}]},
+    ]})
+    client_id, queue = broker.open_client(["chat:conv-1"])
+    async for _ in broadcast_turn(FakeRequest(), _pipeline([
+        {"type": "done", "ok": True, "response": "ship it on Friday", "run_id": "run-1",
+         "usage": {"total_tokens": 9}, "duration_ms": 800},
+    ])):
+        pass
+    await asyncio.sleep(0)
+    broker.close_client(client_id)
+
+    messages = chat_store.get_chat("conv-1")["messages"]
+    assert [m["id"] for m in messages] == ["m1", "m2"]
+    assert messages[1]["content"] == "ship it on Friday"
+    assert messages[1]["duration_ms"] == 800 and messages[1]["total_tokens"] == 9
+    assert messages[1]["timeline"] == [{"type": "tool"}]
+    saved = [e for e in _drain(queue) if e["type"] == "chat_saved"]
+    assert saved and saved[0]["chat_id"] == "conv-1" and saved[0]["origin_client"] is None
+
+
 # ── running the async bodies above ──────────────────────────────────────────
 # The suite has no pytest-asyncio; async work is driven with asyncio.run, and
 # the broker's queues are created and read inside that same loop.
@@ -383,3 +432,94 @@ def test_a_telegram_turn_does_not_append_to_its_mirror_row():
 
 def test_a_failed_turn_is_not_written():
     asyncio.run(_body_test_a_failed_turn_is_not_written())
+
+
+def test_the_tabs_name_for_a_turn_is_on_every_event(broker):
+    asyncio.run(_body_test_the_tabs_name_for_a_turn_is_on_every_event(broker))
+
+def test_a_half_written_bubble_gets_the_final_answer(broker):
+    asyncio.run(_body_test_a_half_written_bubble_gets_the_final_answer(broker))
+
+
+# ── which conversations are being answered ───────────────────────────────────
+
+def test_a_replicas_turn_is_kept_by_conversation_and_ends_with_its_marker():
+    """A turn on a service replica reaches this backend only as the events it
+    posts for the conversation's channel; they are what says the
+    conversation is busy, and what the catch-up returns."""
+    from common import live_runs
+
+    assert live_runs.record_conversation_event("conv-r", {"type": "turn_start", "message": "hi"}) == "started"
+    assert live_runs.record_conversation_event("conv-r", {"type": "meta", "run_id": "run-r"}) is None
+    live_runs.record_conversation_event("conv-r", {"type": "token", "token": "hel"})
+    live_runs.record_conversation_event("conv-r", {"type": "token", "token": "lo"})
+    assert live_runs.running_conversations() == ["conv-r"]
+    turn = live_runs.by_conversation("conv-r")
+    assert turn["text"] == "hello" and turn["run_id"] == "run-r" and turn["user_message"] == "hi"
+    assert live_runs.by_run("run-r")["turn_id"] == turn["turn_id"]
+    assert live_runs.record_conversation_event("conv-r", {"type": "chat_stream_end"}) == "ended"
+    assert live_runs.running_conversations() == []
+
+
+def test_a_turn_joined_halfway_still_counts_and_a_silent_one_stops_counting(monkeypatch):
+    from common import live_runs
+
+    assert live_runs.record_conversation_event("conv-h", {"type": "token", "token": "x"}) == "started"
+    assert live_runs.running_conversations() == ["conv-h"]
+    later = live_runs._now() + live_runs.RUNNING_SILENCE_SECONDS + 1
+    monkeypatch.setattr(live_runs, "_now", lambda: later)
+    assert live_runs.running_conversations() == []
+
+
+def test_the_carrier_relay_folds_a_chat_event_once_and_announces_turns(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from common import live_runs
+    from routes import instances
+
+    announced = []
+    monkeypatch.setattr("chat.broadcast.announce_running_change", announced.append)
+    app = FastAPI()
+    app.include_router(instances.router)
+    client = TestClient(app)
+    post = lambda event, channels: client.post(  # noqa: E731
+        "/api/instances/inst-1/events", json={"event": event, "channels": channels})
+
+    post({"type": "turn_start", "message": "go"}, ["chat:conv-c"])
+    post({"type": "meta", "run_id": "run-c"}, ["chat:conv-c", "instance:inst-1"])
+    post({"type": "token", "token": "ab"}, ["chat:conv-c", "instance:inst-1"])
+    assert live_runs.by_conversation("conv-c")["text"] == "ab"
+    assert len(live_runs.active()) == 1
+    post({"type": "chat_stream_end"}, ["chat:conv-c"])
+    assert announced == ["conv-c", "conv-c"]
+    assert live_runs.running_conversations() == []
+
+
+def test_a_turn_run_here_is_announced_when_it_starts_and_ends(monkeypatch):
+    from chat import broadcast
+    from chat.broadcast import broadcast_turn
+
+    announced = []
+    monkeypatch.setattr(broadcast, "announce_running_change", announced.append)
+
+    async def _run():
+        async for _ in broadcast_turn(FakeRequest(conversation_id="conv-a"),
+                                      _pipeline([{"type": "token", "token": "x"}])):
+            pass
+
+    asyncio.run(_run())
+    assert announced == ["conv-a", "conv-a"]
+
+
+def test_the_running_endpoint_lists_only_chats_the_caller_can_see(client, monkeypatch):
+    from common import chat_store, live_runs
+    from routes import chats
+
+    chat_store.save_chat({"id": "conv-mine", "messages": []})
+    chat_store.save_chat({"id": "conv-hidden", "messages": []})
+    for conv in ("conv-mine", "conv-hidden", "conv-unstored"):
+        live_runs.start_turn(conversation_id=conv)
+    monkeypatch.setattr(chats, "_chat_visible", lambda principal, chat: chat["id"] != "conv-hidden")
+
+    assert client.get("/api/chats/running").json() == {"conversations": ["conv-mine"]}

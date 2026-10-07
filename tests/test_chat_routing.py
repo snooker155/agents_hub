@@ -190,6 +190,77 @@ def test_relay_refuses_a_paused_service_and_an_unknown_agent(monkeypatch, fake_a
         asyncio.run(_run(ChatRequest(agent_id="nobody", message="hi", workspace="ws")))
 
 
+def test_a_refusal_of_the_relay_reaches_the_conversation_channel(monkeypatch, fake_agent):
+    """A tab following the turn over the shared stream (and any other viewer)
+    learns of a failure the relay decides itself, not only the caller."""
+    from common.session_broker import broker
+
+    monkeypatch.setattr("services.routing.default_environment", lambda ws: (None, None))
+    svc = store.create(name="s", agent_id="swe_agent", workspace="ws")
+    store.pause(svc["service_id"])
+    request = ChatRequest(agent_id="swe_agent", message="hi", workspace="ws",
+                          conversation_id="conv-r", client_id="tab", client_turn_id="k1")
+
+    async def _run():
+        viewer, queue = broker.open_client(["chat:conv-r"])
+        events = [ev async for ev in routing.relay(request, "agent")]
+        published = []
+        while not queue.empty():
+            published.append(queue.get_nowait())
+        broker.close_client(viewer)
+        return events, published
+
+    events, published = asyncio.run(_run())
+    assert events[0]["type"] == "done" and events[0]["status"] == 503
+    assert "client_turn_id" not in events[0]
+    assert [e["type"] for e in published] == ["done", "chat_stream_end"]
+    assert all(e["client_turn_id"] == "k1" and e["origin_client"] == "tab" for e in published)
+    assert published[0]["status"] == 503
+
+
+def test_the_shared_stream_route_reports_a_turn_the_relay_refused(monkeypatch):
+    """POST /api/chat/stream-sse returns before the turn runs; a request the
+    relay raises on (an unknown agent) must still end the turn on the channel."""
+    import sys
+    from pathlib import Path
+
+    from fastapi import HTTPException
+
+    backend = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from common.session_broker import broker
+    from routes import chat as chat_routes
+
+    async def _refusing(request):
+        raise HTTPException(status_code=404, detail="Agent 'nobody' not found")
+        yield  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr(chat_routes, "_pipeline_for", _refusing)
+    monkeypatch.setattr(routing, "enabled", lambda: True)
+    request = ChatRequest(agent_id="swe_agent", message="hi", conversation_id="conv-s",
+                          client_turn_id="k2")
+
+    async def _run():
+        viewer, queue = broker.open_client(["chat:conv-s"])
+        out = await chat_routes.stream_message_sse(request)
+        for _ in range(20):
+            if not chat_routes._PUMP_TASKS:
+                break
+            await asyncio.sleep(0.01)
+        published = []
+        while not queue.empty():
+            published.append(queue.get_nowait())
+        broker.close_client(viewer)
+        return out, published
+
+    out, published = asyncio.run(_run())
+    assert out["conversation_id"] == "conv-s"
+    assert [e["type"] for e in published] == ["done", "chat_stream_end"]
+    assert published[0]["status"] == 404 and "nobody" in published[0]["error"]
+    assert all(e["client_turn_id"] == "k2" for e in published)
+
+
 def test_run_chat_pipeline_relays_when_routing_is_on(monkeypatch):
     from chat import pipelines
 

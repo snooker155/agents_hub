@@ -9,6 +9,7 @@ export default {
   notSavedHint: 'This conversation could not be saved to the server. It is kept in this tab until the connection is back.',
   build: 'Build',
   newChat: 'New chat',
+  answering: 'The agent is answering',
   newConversation: 'New conversation',
   thisConversation: 'this conversation',
   confirmDeleteConversation: 'Delete "{{label}}"?',

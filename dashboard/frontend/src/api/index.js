@@ -368,6 +368,9 @@ export const importChats = (chats) => api.post('/chats/import', { chats });
 // The turn a conversation is in the middle of, for a page that arrived after it
 // started: what has been generated so far, to continue from on the live channel.
 export const getChatLive = (chatId) => api.get(`/chats/${chatId}/live`);
+// The conversations being answered right now, whoever started the turn: the
+// Chat page marks them in its list (refetched on `chat_turns.changed`).
+export const getRunningChats = () => api.get('/chats/running');
 
 // Context references — what the chat composer can attach besides a file. The
 // kind catalog and the per-kind candidate lists both come from the server so the

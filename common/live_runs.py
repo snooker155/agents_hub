@@ -20,6 +20,11 @@ Two feeds keep it filled, and each event passes through exactly one of them:
   which sees the whole pipeline including the terminal ``done``.
 * :func:`record_run_event` — a run executing in another process, from the
   ``/api/sessions/{id}/events`` relay.
+* :func:`record_conversation_event` — a chat turn executing on a service
+  replica (chat/turns.py), from the events it posts for the conversation's
+  channel (``/api/instances/{id}/events``). The replica's own memory is not
+  the backend's, so without this the backend could not say what a
+  conversation is in the middle of.
 
 Anything not on those paths simply has no live snapshot, which every reader
 already has to handle: a run that finished before the page opened never has one.
@@ -68,6 +73,9 @@ MAX_TOOLS = 120
 #: How long a finished turn stays readable, so a page opened just after the last
 #: token still shows the answer rather than an empty live panel.
 KEEP_FINISHED_SECONDS = 120.0
+#: How long a running turn may say nothing and still count as running. The
+#: chat relay gives up on a silent turn after about as long (chat/routing.py).
+RUNNING_SILENCE_SECONDS = 900.0
 #: Hard ceiling on tracked turns, oldest evicted first.
 MAX_TURNS = 300
 
@@ -100,6 +108,7 @@ def _blank(turn_id: str, **fields) -> Dict[str, Any]:
         "usage": None,
         "duration_ms": None,
         "started_at": _now(),
+        "updated_at": _now(),
         "finished_at": None,
     }
     turn.update({k: v for k, v in fields.items() if v is not None})
@@ -216,6 +225,52 @@ def record_run_event(event: Dict[str, Any], *, session_id: Optional[str] = None)
     _mirror_write(snapshot)
 
 
+def record_conversation_event(conversation_id: str, event: Dict[str, Any]) -> Optional[str]:
+    """Fold one event a replica posted for ``chat:<conversation_id>``.
+
+    Returns ``"started"`` or ``"ended"`` when the conversation's turn began or
+    ended with this event, else None, so the caller can announce it.
+    """
+    if not conversation_id or not isinstance(event, dict):
+        return None
+    kind = event.get("type")
+    if kind == "turn_start":
+        start_turn(conversation_id=conversation_id, user_message=str(event.get("message") or ""),
+                   source=event.get("source"))
+        return "started"
+    if kind in ("chat_saved", "heartbeat"):
+        return None
+    with _lock:
+        turn_id = _by_conversation.get(str(conversation_id))
+        turn = _turns.get(turn_id) if turn_id else None
+    if kind == "chat_stream_end":
+        if turn is None:
+            return None
+        if turn["status"] == "running":
+            finish(turn_id)
+        return "ended"
+    started = None
+    if turn is None:
+        # Joined halfway (this backend restarted mid-turn): the first event
+        # is as good a beginning as exists, as for record_run_event.
+        turn_id = start_turn(conversation_id=conversation_id)
+        started = "started"
+    record(turn_id, event)
+    return started
+
+
+def running_conversations() -> List[str]:
+    """The conversations with a turn still running. A turn silent for longer
+    than :data:`RUNNING_SILENCE_SECONDS` is not counted: its end was lost (a
+    replica that died, a restart), and a conversation must not look busy for
+    good because of it."""
+    cutoff = _now() - RUNNING_SILENCE_SECONDS
+    with _lock:
+        return [t["conversation_id"] for t in _turns.values()
+                if t["status"] == "running" and t.get("conversation_id")
+                and t.get("updated_at", t["started_at"]) >= cutoff]
+
+
 # ── folding ──────────────────────────────────────────────────────────────────
 
 def _bind_run(turn: Dict[str, Any], run_id: str) -> None:
@@ -226,6 +281,7 @@ def _bind_run(turn: Dict[str, Any], run_id: str) -> None:
 
 
 def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
+    turn["updated_at"] = _now()
     kind = event.get("type")
     if event.get("run_id"):
         _bind_run(turn, str(event["run_id"]))
@@ -453,5 +509,6 @@ def reset() -> None:
     _mirror_last.clear()
 
 
-__all__ = ["start_turn", "record", "finish", "record_run_event", "by_run", "by_run_async",
+__all__ = ["start_turn", "record", "finish", "record_run_event", "record_conversation_event",
+           "running_conversations", "by_run", "by_run_async",
            "by_conversation", "active", "reset", "MAX_TEXT", "KEEP_FINISHED_SECONDS"]

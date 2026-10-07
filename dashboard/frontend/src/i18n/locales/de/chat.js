@@ -9,6 +9,7 @@ export default {
   notSavedHint: 'Diese Unterhaltung konnte nicht auf dem Server gespeichert werden. Sie bleibt in diesem Tab, bis die Verbindung zurück ist.',
   build: 'Build',
   newChat: 'Neuer Chat',
+  answering: 'Der Agent antwortet',
   newConversation: 'Neue Unterhaltung',
   thisConversation: 'diese Unterhaltung',
   confirmDeleteConversation: '„{{label}}“ löschen?',

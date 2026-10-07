@@ -163,13 +163,14 @@ describe('the target switch', () => {
     const setConversations = vi.fn((fn) => { convs = typeof fn === 'function' ? fn(convs) : fn; });
     const setSelectedAgent = vi.fn();
     const deps = {
-      abortCtrlRef: { current: null }, clientId: 'tab', conversations: convs, currentConvId: 'c1',
-      input: 'my invoice 42 is wrong', loadProcessData: vi.fn(), loading: false, mergeArtifact: vi.fn(),
+      beginTurn: vi.fn(), noteTurn: vi.fn(), endTurn: vi.fn(), isTurnRunning: () => false,
+      currentConvIdRef: { current: 'c1' }, clientId: 'tab', conversations: convs, currentConvId: 'c1',
+      input: 'my invoice 42 is wrong', loadProcessData: vi.fn(), mergeArtifact: vi.fn(),
       navigate: vi.fn(), pendingAttachments: [], pendingReferences: [], processOpen: false,
       selectCommand: vi.fn(), selectedAgent: 'front', selectedFlow: '', selectedProject: '',
       selectedTeam: '', selectedWorkspace: 'default', setActiveRunId: vi.fn(), setAttachmentError: vi.fn(),
       setConversations, setCurrentConvId: vi.fn(), setGraphRun: vi.fn(), setInput: vi.fn(),
-      setLoading: vi.fn(), setPendingAttachments: vi.fn(), setPendingReferences: vi.fn(),
+      setPendingAttachments: vi.fn(), setPendingReferences: vi.fn(),
       setProcessInsights: vi.fn(), setSelectedAgent, setSessionId: vi.fn(), t: (k) => k,
       targetMode: 'agent', textareaRef: { current: null },
     };
@@ -191,14 +192,14 @@ describe('the target switch', () => {
     const setSelectedAgent = vi.fn();
     let convs = [{ id: 'c1', agent_id: 'front', workspace: 'default', messages: [] }];
     const deps = {
-      abortCtrlRef: { current: null }, clientId: 'tab', conversations: convs, currentConvId: 'c1',
-      input: 'hello', loadProcessData: vi.fn(), loading: false, mergeArtifact: vi.fn(), navigate: vi.fn(),
+      beginTurn: vi.fn(), noteTurn: vi.fn(), endTurn: vi.fn(), isTurnRunning: () => false,
+      currentConvIdRef: { current: 'c1' }, clientId: 'tab', conversations: convs, currentConvId: 'c1',
+      input: 'hello', loadProcessData: vi.fn(), mergeArtifact: vi.fn(), navigate: vi.fn(),
       pendingAttachments: [], pendingReferences: [], processOpen: false, selectCommand: vi.fn(),
       selectedAgent: 'front', selectedFlow: '', selectedProject: '', selectedTeam: '',
       selectedWorkspace: 'default', setActiveRunId: vi.fn(), setAttachmentError: vi.fn(),
       setConversations: (fn) => { convs = typeof fn === 'function' ? fn(convs) : fn; },
-      setCurrentConvId: vi.fn(), setGraphRun: vi.fn(), setInput: vi.fn(), setLoading: vi.fn(),
-      setPendingAttachments: vi.fn(), setPendingReferences: vi.fn(), setProcessInsights: vi.fn(),
+      setCurrentConvId: vi.fn(), setGraphRun: vi.fn(), setInput: vi.fn(),       setPendingAttachments: vi.fn(), setPendingReferences: vi.fn(), setProcessInsights: vi.fn(),
       setSelectedAgent, setSessionId: vi.fn(), t: (k) => k, targetMode: 'agent', textareaRef: { current: null },
     };
     const { result } = renderHook(() => useChatSend(deps));

@@ -15,13 +15,14 @@ vi.mock('../../ContextEntityPicker', () => ({ default: () => null }));
 
 import ChatComposer from '../ChatComposer';
 import { ChatPageContext } from '../context';
+import { useChatSteering } from '../useChatSteering';
 
 // While a turn runs the box stays usable and a message goes to the turn in
 // the chosen mode instead of waiting for the Send button to come back.
 
 function Page({ loading, input = '', setInput = () => {}, extra = {} }) {
   const { t } = useI18n();
-  const page = {
+  const base = {
     addReferences: () => {}, attachMenuOpen: false, attachmentError: '', commandMenuIndex: 0,
     commandMenuOpen: false, commandSuggestions: [], composerPlaceholder: 'Message', contextKinds: [],
     contextUsage: null, currentTelegramBinding: null, fileInputRef: { current: null },
@@ -40,6 +41,8 @@ function Page({ loading, input = '', setInput = () => {}, extra = {} }) {
     setConversations: vi.fn(),
     ...extra,
   };
+  const steering = useChatSteering(base);
+  const page = { ...base, steering };
   return (
     <ChatPageContext.Provider value={page}>
       <ChatComposer />

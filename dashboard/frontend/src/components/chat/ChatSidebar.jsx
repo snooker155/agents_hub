@@ -1,4 +1,4 @@
-import { AlertCircle, AudioLines, FolderGit2, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
+import { AlertCircle, AudioLines, FolderGit2, Loader, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
@@ -12,7 +12,7 @@ export default function ChatSidebar() {
     setListOpen,
     selectableAgents, selectedWorkspace, setConversations, setSelectedAgent,
     setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode, syncError, t,
-    teams, visibleConversations, visibleTelegramBindings,
+    runningChats, teams, turns, visibleConversations, visibleTelegramBindings,
   } = useChatPage();
   return (
     <>
@@ -98,7 +98,17 @@ export default function ChatSidebar() {
                   : 'text-gray-600 hover:bg-white hover:shadow-sm'
                 }`}
             >
-              <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
+              {/* Being answered now: a turn this tab sent (it goes on while
+                  another conversation is open), or anyone else's. */}
+              {turns?.[conv.id] || runningChats?.has(conv.id) ? (
+                <Loader
+                  className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 animate-spin text-indigo-500"
+                  data-testid="chat-conv-running"
+                  aria-label={t('chat.answering')}
+                />
+              ) : (
+                <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
+              )}
               <div className="flex-1 min-w-0">
                 <div className="truncate leading-5">{conv.title}</div>
                 <div className="mt-0.5 flex flex-wrap gap-1">

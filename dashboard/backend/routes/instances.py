@@ -450,9 +450,10 @@ async def carrier_events(instance_id: str, body: CarrierEvents):
     A service replica executing a chat turn (chat/turns.py) has no broker of
     its own: it posts every event here, and this replica of the backend
     publishes it to the conversation's channel (what the Chat page, a mirror
-    tab and the routing relay read) and to the instance's. Events on an
-    instance channel are also kept as the run's live tail (common/live_runs),
-    as they are for any carrier run.
+    tab and the routing relay read) and to the instance's. A chat turn's
+    events are also kept as the conversation's live turn, and any other
+    carrier run's as the run's live tail (common/live_runs), so this backend
+    can say what a conversation or a run is in the middle of.
     """
     from common import live_runs
     from common.session_broker import broker
@@ -460,12 +461,20 @@ async def carrier_events(instance_id: str, body: CarrierEvents):
     event = dict(body.event or {})
     if not event.get("type"):
         raise HTTPException(status_code=400, detail="event needs a type")
+    channels = [str(c or "").strip() for c in body.channels[:8]]
+    channels = [c for c in channels if c]
+    # A chat turn's events are kept once, by conversation (which also knows
+    # the run): the same event posted to the instance's channel as well must
+    # not be folded a second time.
+    for_chat = any(c.startswith("chat:") for c in channels)
     published = 0
-    for channel in body.channels[:8]:
-        channel = str(channel or "").strip()
-        if not channel:
-            continue
-        if channel.startswith("instance:"):
+    for channel in channels:
+        if channel.startswith("chat:"):
+            change = live_runs.record_conversation_event(channel[len("chat:"):], event)
+            if change:
+                from chat.broadcast import announce_running_change
+                announce_running_change(channel[len("chat:"):])
+        elif channel.startswith("instance:") and not for_chat:
             live_runs.record_run_event(event, session_id=channel)
         await broker.apublish(channel, event)
         published += 1

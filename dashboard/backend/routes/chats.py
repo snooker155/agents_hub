@@ -146,6 +146,24 @@ def _refuse_assistant_write(chat_id: str) -> None:
             "message": "A conversation with the Assistant is continued or cleared on the Assistant page."})
 
 
+@router.get("/running")
+async def list_running_chats(request: Request):
+    """The stored conversations the caller can see that are being answered now.
+
+    Whoever started the turn: this tab, another tab or device, Telegram, an
+    agent writing to its inbox. The Chat page marks them in its list and asks
+    again on every ``chat_turns.changed`` (chat/broadcast.py
+    announce_running_change).
+    """
+    principal = identity.request_principal(request)
+    running = []
+    for chat_id in dict.fromkeys(live_runs.running_conversations()):
+        chat = chat_store.get_chat(chat_id)
+        if chat is not None and _chat_visible(principal, chat):
+            running.append(chat_id)
+    return {"conversations": running}
+
+
 @router.get("/{chat_id}/live")
 async def get_live_turn(chat_id: str, request: Request):
     """The turn this conversation is in the middle of, if there is one.
