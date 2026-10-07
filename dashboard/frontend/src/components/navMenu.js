@@ -28,7 +28,7 @@ import {
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
   GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck,
-  MessageSquareCode, Eye, AudioLines,
+  MessageSquareCode, Eye, AudioLines, Send,
 } from 'lucide-react';
 import { MULTI, isAdmin } from './auth';
 
@@ -142,6 +142,8 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.watchers'), path: '/watchers', icon: Eye, home: '/settings' },
         { name: t('nav.mcp'), path: '/mcp', icon: Plug, home: '/settings' },
         { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode, home: '/settings' },
+        // The hub where people already work: IDE, notes, Slack, Teams.
+        { name: t('nav.distribution'), path: '/distribution', icon: Send, home: '/settings' },
         // The agent's browser on screen, and free browsing on the same service.
         { name: t('nav.browser'), path: '/browser', icon: Globe, home: '/agents' },
       ],

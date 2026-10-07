@@ -48,7 +48,7 @@ class HubLookupInput(BaseModel):
         "and speech models and the voice), agent, notification, "
         "approval, task, view, project, scenario, loop, flow, team, job, instance, service, deployment, "
         "environment, browser, watcher, pulse (proactive agents), eval, guardrail, tool, connection, "
-        "skill, mcp, widget, registry, account"))
+        "skill, mcp, widget, distribution_install (Slack and Teams app installations), registry, account"))
     query: Optional[str] = Field(None, description="Text to filter the list by (a name, a status, an agent id)")
     id: Optional[str] = Field(None, description=(
         "Describe one record instead of listing: a run id, a session id, an agent id, 'provider/model', "

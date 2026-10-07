@@ -146,7 +146,7 @@ def _config_payload(spec, ws: str) -> dict[str, Any]:
         "source": "here" if (own or ws == DEFAULT_WORKSPACE) else DEFAULT_WORKSPACE,
         "config": store.public_config(),
         "enabled": store.is_enabled(),
-        "configured": store.is_configured(*svc.required_fields),
+        "configured": svc.configured(),
         "allowed": store.get_allowed(),
         "running": svc.is_running(),
         "identity": st.get("identity"),
@@ -220,7 +220,7 @@ async def remove_config(name: str, workspace: Optional[str] = None):
 async def test_channel(name: str, workspace: Optional[str] = None):
     spec = _spec(name)
     svc, _own = _bot(spec, _ws(workspace))
-    if not svc.store.is_configured(*svc.required_fields):
+    if not svc.configured():
         return {"ok": False, "error": "not configured"}
     return await svc.test()
 
@@ -239,7 +239,7 @@ async def get_status(name: str, workspace: Optional[str] = None):
         "last_error": st.get("last_error"),
         "identity": st.get("identity"),
         "enabled": svc.store.is_enabled(),
-        "configured": svc.store.is_configured(*svc.required_fields),
+        "configured": svc.configured(),
     }
 
 
@@ -316,7 +316,7 @@ async def send_as_bot(name: str, data: SendRequest, workspace: Optional[str] = N
     spec = _spec(name)
     ws = _ws(workspace)
     svc, own = _bot(spec, ws)
-    if not svc.store.is_configured(*svc.required_fields):
+    if not svc.configured():
         raise HTTPException(status_code=400, detail=f"{spec.name} is not configured")
     if not (data.text or "").strip():
         raise HTTPException(status_code=400, detail="Empty text")

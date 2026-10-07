@@ -622,6 +622,11 @@ app.include_router(local_models_router.router)
 
 # The hub as a provider (feature 5C): OpenAI-compatible /v1 served by the hub
 # itself, authorised by personal API keys. See docs/hub-as-provider.md.
+# The hub as an MCP server for Claude Code, Cursor and other MCP clients
+# (docs/hub-as-mcp-server.md), at /v1/mcp: /mcp is the dashboard's own page. Before
+# /v1's catch-all, which answers every other /v1 path with a 404.
+from routes import mcp_server as mcp_server_router
+app.include_router(mcp_server_router.router)
 from routes import openai_compat as openai_compat_router
 app.include_router(openai_compat_router.router)
 app.include_router(openai_compat_router.serving_router)
@@ -807,6 +812,10 @@ app.include_router(channels_router.router)
 app.include_router(connectors_router.router)
 app.include_router(slack_router.router)
 app.include_router(teams_channel_router.router)
+# The MCP server's address, the Obsidian plugin, the Slack and Teams apps and
+# the organisations that installed them (docs/distribution.md).
+from routes import distribution as distribution_router
+app.include_router(distribution_router.router)
 app.include_router(trackers_router.router)
 app.include_router(google_router.router)
 # Consent portal: a widget or channel end user grants their own Google or

@@ -1030,6 +1030,9 @@ UNTRUSTED_CHANNELS: FrozenSet[str] = frozenset({
     # The chat channels of connectors/channels (a run's ``source``) and the
     # issue trackers of connectors/trackers.
     "discord", "teams", "mail", "tracker_sync",
+    # An MCP client (Claude Code, Cursor) forwards whatever its own agent read:
+    # a repository, a web page, a ticket (dashboard/backend/routes/mcp_server.py).
+    "mcp",
 })
 
 

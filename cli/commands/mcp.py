@@ -135,6 +135,87 @@ def mcp_tools(
     console.print(f"[dim]{len(tools)} tool(s)[/dim]")
 
 
+# ── The other direction: this hub as an MCP server (docs/hub-as-mcp-server.md)
+
+_CLIENTS = ("claude-code", "cursor")
+
+
+def _mcp_url() -> str:
+    """Where an MCP client on this machine reaches the hub's /v1/mcp: the address
+    the CLI talks to, else the hub's public URL, else the local default."""
+    import os
+    base = os.environ.get("AGENTS_HUB_URL", "").strip()
+    if not base:
+        overview = call(hub().request, "GET", "/api/distribution") or {}
+        if overview.get("public_url_configured"):
+            base = str(overview.get("public_url") or "")
+    if not base:
+        base = f"http://localhost:{os.environ.get('DASHBOARD_PORT', '8000')}"
+    return base.rstrip("/") + "/v1/mcp"
+
+
+def _mcp_headers(key: Optional[str], workspace: Optional[str]) -> dict:
+    import os
+    key = (key or os.environ.get("AGENTS_HUB_API_KEY") or os.environ.get("AGENTS_HUB_API_TOKEN") or "").strip()
+    headers = {}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    if workspace:
+        headers["X-Agents-Hub-Workspace"] = workspace
+    return headers
+
+
+@mcp_app.command("connect")
+def mcp_connect(
+    client: str = typer.Argument(..., help="claude-code or cursor."),
+    key: Optional[str] = typer.Option(None, "--key", help="API key; defaults to AGENTS_HUB_API_KEY or AGENTS_HUB_API_TOKEN. A hub in single mode needs none."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Pin the agents to one workspace."),
+    write: bool = typer.Option(False, "--write", help="claude-code: run `claude mcp add`; cursor: write ~/.cursor/mcp.json."),
+    project: bool = typer.Option(False, "--project", help="cursor: write .cursor/mcp.json in this folder instead."),
+):
+    """Connect Claude Code or Cursor to this hub's agents, over MCP."""
+    import json
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+    if client not in _CLIENTS:
+        console.print(f"[red]Error:[/red] client is one of {', '.join(_CLIENTS)}")
+        raise typer.Exit(1)
+    url = _mcp_url()
+    headers = _mcp_headers(key, workspace)
+    if client == "claude-code":
+        argv = ["claude", "mcp", "add", "--transport", "http", "agents-hub", url]
+        for name, value in headers.items():
+            argv += ["--header", f"{name}: {value}"]
+        if not write:
+            console.print(" ".join(shlex.quote(a) for a in argv), soft_wrap=True, highlight=False)
+            return
+        try:
+            done = subprocess.run(argv, check=False)
+        except FileNotFoundError:
+            console.print("[red]Error:[/red] the claude command is not on PATH; run the line without --write to copy it.")
+            raise typer.Exit(1)
+        raise typer.Exit(done.returncode)
+
+    entry = {"url": url, **({"headers": headers} if headers else {})}
+    if not write:
+        console.print_json(json.dumps({"mcpServers": {"agents-hub": entry}}))
+        return
+    path = (Path.cwd() / ".cursor" / "mcp.json") if project else (Path.home() / ".cursor" / "mcp.json")
+    data = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text("utf-8") or "{}")
+        except ValueError:
+            console.print(f"[red]Error:[/red] {path} is not valid JSON; fix it or run without --write.")
+            raise typer.Exit(1)
+    data.setdefault("mcpServers", {})["agents-hub"] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
+    console.print(f"Wrote agents-hub to {path}. Restart Cursor or reload its MCP servers.")
+
+
 # ── The hub-wide allowlist catalog (dashboard/backend/routes/registry.py) ────
 #
 # Separate from the commands above: those manage what one workspace attached,

@@ -104,7 +104,7 @@ def channel_send(channel: str, text: str, chat_key: Optional[str] = None) -> str
     # The bot serving this workspace: its own, else the default's.
     service = registry.effective_service(channel, workspace) or spec.service
     store = service.store
-    if not store.is_configured(*service.required_fields):
+    if not service.configured():
         return _err(f"{channel} is not configured on the Connectors page")
     if chat_key:
         key = str(chat_key).strip()

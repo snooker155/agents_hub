@@ -27,6 +27,22 @@ A chat key is whatever identifies a conversation on the transport: a Slack
 channel id, a Discord channel id, a Teams conversation id, an email address.
 Always a string, compared as one.
 
+Two more keys serve a bot distributed through a catalog (the Slack
+Marketplace, the Teams store or an organisation's app catalog,
+docs/distribution.md)::
+
+    "installs": {                                  # one per organisation
+        "T0123": {"org_id": "T0123", "name": "Acme", "status": "pending",
+                  "workspace": null, "agent_id": "", "bot_token": "<secret>",
+                  "bot_user_id": "U0BOT", "installed_at": "...", ...}
+    },
+    "chat_orgs": {"C0123": "T0123"}                # which organisation a chat is in
+
+An organisation is a Slack team or a Microsoft tenant. An approved one lets
+every chat in it talk to the bot, bound to the installation's workspace and
+agent; a pending one (installed from the catalog by somebody the hub does not
+know) lets nobody in until an operator approves it on the Distribution page.
+
 Every setter is a read-modify-write inside ``store.transaction()``, atomic
 across every process and host.
 
@@ -155,6 +171,8 @@ class ChannelStore:
             "allowed": [],
             "cursor": {},
             "bindings": [],
+            "installs": {},
+            "chat_orgs": {},
         }
 
     def _coerce(self, data: Any) -> dict[str, Any]:
@@ -171,6 +189,12 @@ class ChannelStore:
         out["cursor"] = dict(cursor) if isinstance(cursor, dict) else {}
         bindings = data.get("bindings")
         out["bindings"] = [dict(b) for b in bindings if isinstance(b, dict)] if isinstance(bindings, list) else []
+        installs = data.get("installs")
+        if isinstance(installs, dict):
+            out["installs"] = {str(k): dict(v) for k, v in installs.items() if isinstance(v, dict)}
+        chat_orgs = data.get("chat_orgs")
+        if isinstance(chat_orgs, dict):
+            out["chat_orgs"] = {str(k): str(v) for k, v in chat_orgs.items() if v}
         return out
 
     def load(self) -> dict[str, Any]:
@@ -277,8 +301,11 @@ class ChannelStore:
 
     def upsert_binding(self, *, chat_key: str, agent_id: str = "", flow_id: Optional[str] = None,
                        workspace: Optional[str] = None, conversation_id: Optional[str] = None,
-                       title: Optional[str] = None) -> dict[str, Any]:
-        """Create or update a chat's binding; an agent and a flow are exclusive."""
+                       title: Optional[str] = None,
+                       from_install: Optional[bool] = None) -> dict[str, Any]:
+        """Create or update a chat's binding; an agent and a flow are exclusive.
+        ``from_install`` marks a binding an approved installation made, which
+        goes away with the installation."""
         key = str(chat_key)
 
         def _apply(data: dict[str, Any]) -> dict[str, Any]:
@@ -303,6 +330,8 @@ class ChannelStore:
                 "created_at": _utc_iso(),
                 "last_message_at": None,
             }
+            if from_install:
+                binding["from_install"] = True
             data["bindings"].append(binding)
             return dict(binding)
 
@@ -340,6 +369,82 @@ class ChannelStore:
             return len(data["bindings"]) != before
 
         return self._update(_apply)
+
+    # ── catalog installations ────────────────────────────────────────────────
+
+    #: Fields of an installation that never leave through the API.
+    INSTALL_SECRETS = ("bot_token",)
+
+    def list_installs(self) -> list[dict[str, Any]]:
+        """Every installation, secrets included (internal use only)."""
+        installs = self.load().get("installs") or {}
+        return [dict(v, org_id=k) for k, v in sorted(installs.items())]
+
+    def get_install(self, org_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not org_id:
+            return None
+        found = (self.load().get("installs") or {}).get(str(org_id))
+        return dict(found, org_id=str(org_id)) if found else None
+
+    def public_installs(self) -> list[dict[str, Any]]:
+        """Installations safe for the UI: each secret as a ``has_<field>`` flag."""
+        out = []
+        for inst in self.list_installs():
+            row = {k: v for k, v in inst.items() if k not in self.INSTALL_SECRETS}
+            for key in self.INSTALL_SECRETS:
+                row[f"has_{key}"] = bool(str(inst.get(key) or "").strip())
+            out.append(row)
+        return out
+
+    def upsert_install(self, org_id: str, **fields: Any) -> dict[str, Any]:
+        """Create or update one organisation's installation. A new one starts
+        ``pending`` unless ``status`` says otherwise; an update keeps what it
+        does not name (a reinstall refreshes the token, not the approval)."""
+        org = str(org_id).strip()
+        if not org:
+            raise ValueError("an installation needs an organisation id")
+
+        def _apply(data: dict[str, Any]) -> dict[str, Any]:
+            current = data["installs"].get(org)
+            if current is None:
+                current = {"status": "pending", "workspace": None, "agent_id": "",
+                           "installed_at": _utc_iso()}
+            current.update({k: v for k, v in fields.items() if v is not None})
+            current["org_id"] = org
+            data["installs"][org] = current
+            return dict(current)
+
+        return self._update(_apply)
+
+    def remove_install(self, org_id: str) -> bool:
+        """Forget an organisation: its installation, its chats' organisation
+        and the bindings those chats got from it."""
+        org = str(org_id)
+
+        def _apply(data: dict[str, Any]) -> bool:
+            if data["installs"].pop(org, None) is None:
+                return False
+            chats = {k for k, v in data["chat_orgs"].items() if v == org}
+            data["chat_orgs"] = {k: v for k, v in data["chat_orgs"].items() if v != org}
+            data["bindings"] = [b for b in data["bindings"]
+                                if not (str(b.get("chat_key")) in chats and b.get("from_install"))]
+            return True
+
+        return self._update(_apply)
+
+    def note_chat_org(self, chat_key: str, org_id: Optional[str]) -> None:
+        """Remember which organisation a chat is in. Written only when it
+        changes, so a busy chat does not rewrite the document per message."""
+        key, org = str(chat_key or ""), str(org_id or "")
+        if not key or not org or self.org_of(key) == org:
+            return
+        self._update(lambda d: d["chat_orgs"].__setitem__(key, org))
+
+    def org_of(self, chat_key: str) -> Optional[str]:
+        return (self.load().get("chat_orgs") or {}).get(str(chat_key))
+
+    def install_for_chat(self, chat_key: str) -> Optional[dict[str, Any]]:
+        return self.get_install(self.org_of(chat_key))
 
     def chat_keys_for_workspace(self, workspace: Optional[str]) -> list[str]:
         """Chats eligible for a workspace's notifications: a binding with no

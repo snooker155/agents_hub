@@ -21,6 +21,7 @@ export default {
   plan: 'Plan',
   deployments: 'Deployments',
   widgets: 'Widgets',
+  distribution: 'Distribution',
   agentRegistry: 'Agent registry',
   files: 'Files',
   sessions: 'Sessions',
