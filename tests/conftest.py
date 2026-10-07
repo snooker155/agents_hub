@@ -224,6 +224,16 @@ def provider_env_isolated(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def browser_service_isolated(tmp_path, monkeypatch):
+    """Keep the developer's browser service out of the tests: its pid file
+    lives under the real ``.agents_hub``, and while that service runs, every
+    status probe in the suite found it alive and answered for it."""
+    from common import browser_service
+    monkeypatch.setattr(browser_service, "STATE_FILE", tmp_path / "browser_service.json")
+    monkeypatch.setattr(browser_service, "LOG_FILE", tmp_path / "browser_service.log")
+
+
+@pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
     """Give every test an isolated, empty database.
 

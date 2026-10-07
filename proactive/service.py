@@ -188,6 +188,14 @@ def _job_workspace(spec: Any, profile: Dict[str, Any]) -> str:
     return str(profile.get("workspace") or getattr(spec, "owner_workspace", None) or "default")
 
 
+def workspace_of(agent_id: str) -> Optional[str]:
+    """The workspace the agent's pulse runs in, or None for an unknown agent:
+    the one the routes check a person's role against."""
+    from agents import registry
+    spec = registry.get_agent(agent_id)
+    return _job_workspace(spec, profile_of(spec)) if spec else None
+
+
 def _first_run_at(cron: str, tz_name: str) -> datetime:
     from croniter import croniter
     tz = profile_tz({"timezone": tz_name})

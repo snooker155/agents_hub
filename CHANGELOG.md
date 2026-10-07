@@ -343,6 +343,13 @@ turns that section into the next release.
 
 ### Fixed
 
+- The proactive routes (`/api/agents/{id}/proactive` and its pause, resume
+  and wake, `/api/proactive/summary`) and every eval route checked no role in
+  `multi` mode: any signed-in account could read, change and run them. Now a
+  viewer of the workspace reads and an editor changes; the summary and the
+  eval set list show only what the caller can see.
+- Three browser tests read the developer's own browser service state file;
+  the suite now gives every test its own.
 - An environment's sandbox `size` picked on the Environments page was
   dropped by the create and update routes and never saved.
 
