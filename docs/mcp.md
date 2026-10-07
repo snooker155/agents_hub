@@ -15,6 +15,10 @@ Configured per [workspace](workspaces.md). A server attached to one workspace is
 invisible to agents built in another, because the configuration lives inside the
 workspace record rather than beside it.
 
+This page is about the hub as an MCP client. For the other direction, the hub
+serving its agents to Claude Code, Cursor and other clients, see
+[the hub as an MCP server](hub-as-mcp-server.md).
+
 ## In the dashboard
 
 The **MCP** page lets you attach servers and manage their configuration. Each server form collects the id, transport type (stdio, streamable_http, sse, or websocket), the endpoint details (command and args for stdio, URL and headers for HTTP, URL only for websocket), capability claims, approval settings, and a tool allowlist. The Test button connects to the server and lists its tools, showing which ones the current allowlist keeps. When you grant tools to an agent, use either the group form `mcp:<server_id>` to take the whole server or the tool form `mcp__<server_id>__<tool_name>` to take one.

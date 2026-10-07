@@ -133,7 +133,8 @@
         "loops",
         "teams",
         "evals",
-        "mcp"
+        "mcp",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -186,7 +187,8 @@
         "connectors",
         "notifications",
         "proactive",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "distribution"
       ],
       "headings": [
         "What every channel has",
@@ -644,7 +646,8 @@
         "hooks",
         "agents",
         "workspaces",
-        "registry"
+        "registry",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "In the dashboard",
@@ -654,6 +657,7 @@
         "Approval",
         "Security notes",
         "How it behaves at runtime",
+        "The hub-wide allowlist",
         "Gotchas"
       ]
     },
@@ -1655,7 +1659,8 @@
         "cli",
         "a2a",
         "audit",
-        "settings"
+        "settings",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "What a key is",
@@ -1772,7 +1777,9 @@
         "models",
         "audit",
         "local-models",
-        "services"
+        "services",
+        "hub-as-mcp-server",
+        "distribution"
       ],
       "headings": [
         "What it serves",
@@ -2197,6 +2204,55 @@
         "Fixed",
         "Security",
         "Upgrade notes"
+      ]
+    },
+    {
+      "id": "hub-as-mcp-server",
+      "title": "The hub as an MCP server",
+      "surface": "Distribution",
+      "summary": "POST /v1/mcp serves the hub's agents to Claude Code, Cursor and other MCP clients as tools (list_workspaces, list_agents, ask_agent, get_run), authorised like /v1 by personal API keys, with signed conversation handles, wait_seconds and get_run for long turns, usage and audit rows, and runs treated as untrusted input.",
+      "related": [
+        "distribution",
+        "mcp",
+        "hub-as-provider",
+        "api-keys",
+        "tools-and-capabilities",
+        "cli"
+      ],
+      "headings": [
+        "Setup",
+        "The tools",
+        "Conversations",
+        "Long turns",
+        "Authentication",
+        "Untrusted input",
+        "Accounting",
+        "Protocol details",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "distribution",
+      "title": "Distribution",
+      "surface": "Distribution",
+      "summary": "The Distribution page: the MCP server address, the Obsidian plugin zip, a Slack app other Slack workspaces install over OAuth (manifest, private or public, Marketplace direct install URL) and a Teams app package, with pending installations an owner approves with a workspace and an agent.",
+      "related": [
+        "hub-as-mcp-server",
+        "channels",
+        "api-keys",
+        "hub-as-provider",
+        "identity"
+      ],
+      "headings": [
+        "Before you start: a public address",
+        "MCP",
+        "Obsidian plugin",
+        "Slack app",
+        "Teams app",
+        "Security model",
+        "Routes",
+        "Gotchas"
       ]
     }
   ]

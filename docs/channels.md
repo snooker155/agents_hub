@@ -73,6 +73,9 @@ buttons, and a press is fed back as the user's next message. Scopes:
 `chat:write`, `channels:history`, `im:history`, `files:read`,
 `app_mentions:read`. Test calls `auth.test`.
 
+Several Slack workspaces can install one Slack app over OAuth, and a Teams
+app can be distributed to many tenants: see [distribution](distribution.md).
+
 ## Discord
 
 Fields: `bot_token` (required), `application_id` (informational).

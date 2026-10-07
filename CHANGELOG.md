@@ -15,6 +15,22 @@ turns that section into the next release.
 
 ### Added
 
+- The hub as an MCP server (docs/hub-as-mcp-server.md): `POST /v1/mcp`,
+  Streamable HTTP, lets Claude Code, Cursor and other MCP clients call the
+  hub's agents with `list_workspaces`, `list_agents`, `ask_agent` and
+  `get_run`. Closed like `/v1` (personal API keys, `X-Agents-Hub-Workspace`),
+  conversations carried by a signed handle, slow turns picked up with
+  `get_run`, tokens per day and key budget checked, runs marked
+  `message_origin="mcp"` and treated as untrusted input by the capability
+  guard. `ah mcp connect <claude-code|cursor>` prints or writes the client
+  setup.
+- Distribution (docs/distribution.md): a Distribution page with the MCP
+  address, an Obsidian plugin (`clients/obsidian-agents-hub`, downloadable as a
+  zip), a Slack app that other Slack workspaces install over OAuth with a
+  manifest, a public Direct install URL and per team tokens, and a Teams app
+  package for an organisation's catalog or the Teams store. Organisations
+  that install wait as pending until an owner approves them with a workspace
+  and an agent; the allowlist and operator bindings keep working as before.
 - Simple and full menu (docs/overview.md "The menu"): the sidebar is five
   groups along the object tree (Conversation, Work, Agents and library,
   Integrations, Records and admin). The simple menu keeps sixteen pages,

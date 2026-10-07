@@ -128,6 +128,7 @@ ah mcp add <server-id> --command "..." [--arg a --arg b] [--transport stdio|http
 ah mcp remove <server-id>
 ah mcp test <server-id>                             # connect now, report what is there
 ah mcp tools <server-id> [--refresh]
+ah mcp connect <claude-code|cursor> [--key k] [-w ws] [--write] [--project]   # connect an MCP client to the hub (hub-as-mcp-server.md)
 
 ah user list                                        # AUTH_MODE=multi only; 404 otherwise
 ah user create <username> [--role member|admin] [--no-password]

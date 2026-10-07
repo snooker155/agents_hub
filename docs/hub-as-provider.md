@@ -17,6 +17,9 @@ reply = client.chat.completions.create(
 )
 ```
 
+The hub also speaks MCP at `/v1/mcp`, for coding tools that want to ask an agent
+as a tool: see [the hub as an MCP server](hub-as-mcp-server.md).
+
 ## What it serves
 
 - `GET /v1/models`: every model the Models page has enabled, per provider,
