@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
+import { WorkspaceContext } from '../../components/workspace';
 
 // The registry page is where an admin decides what gets to be shared: an
 // agent somebody published, or an MCP server somebody asked to attach
@@ -201,5 +202,30 @@ describe('AgentRegistry — a non-admin viewer', () => {
     await waitFor(() => expect(screen.getByText('Flow A')).toBeInTheDocument());
     // Flow A is owned by u1 and already in_review: no submit button for u2.
     expect(screen.queryByText('Submit for review')).not.toBeInTheDocument();
+  });
+});
+
+describe('AgentRegistry — workspace scope', () => {
+  const showIn = (selectedWorkspace) => render(
+    <I18nProvider><MemoryRouter>
+      <WorkspaceContext.Provider value={{ selectedWorkspace }}><AgentRegistry /></WorkspaceContext.Provider>
+    </MemoryRouter></I18nProvider>,
+  );
+
+  it('outside default asks for that workspace and has no workspace filter or hub toggles', async () => {
+    showIn('acme');
+    await waitFor(() => expect(screen.getByText('Agent A')).toBeInTheDocument());
+    expect(getRegistry).toHaveBeenCalledWith('acme');
+    expect(screen.queryByPlaceholderText('Workspace')).toBeNull();
+    expect(screen.queryByText(/Require review before publishing/i)).toBeNull();
+    expect(screen.queryByText(/acme/)).toBeNull();
+  });
+
+  it('in default shows the hub with the workspace filter', async () => {
+    showIn('default');
+    await waitFor(() => expect(screen.getByText('Agent A')).toBeInTheDocument());
+    expect(getRegistry).toHaveBeenCalledWith(undefined);
+    expect(screen.getByPlaceholderText('Workspace')).toBeInTheDocument();
+    expect(screen.getByText(/Require review before publishing/i)).toBeInTheDocument();
   });
 });

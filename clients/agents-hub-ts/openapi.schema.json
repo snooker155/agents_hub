@@ -41530,7 +41530,25 @@
     },
     "/api/registry": {
       "get": {
-        "description": "Everything the Agent registry page shows in one call: every agent,\nflow and skill across every workspace, every MCP server attached\nanywhere, the catalog, and the two hub toggles.",
+        "description": "Everything the Agent registry page shows in one call: the agents,\nflows and skills, the MCP servers attached, the catalog, and the two hub\ntoggles.\n\n``default`` (or no workspace, as the CLI asks) is the hub-wide view: every\nworkspace's items, each with the workspaces it is in. Any other workspace\nsees its own: the agents and flows it owns or added (``workspaces``\nnames it), the skills it owns (an installed copy is its own record) and\nthe servers attached to it, so the page has nothing to filter by\nworkspace there.\n\nIn multi mode the hub-wide view is for an administrator or a member of\n``default``; anybody else names a workspace they belong to.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -41539,6 +41557,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Registry",

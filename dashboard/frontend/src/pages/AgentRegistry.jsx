@@ -23,11 +23,15 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { isAdmin, isMultiUser, useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
+import { useWorkspace } from '../components/workspace';
 import PageLoader from '../components/PageLoader';
 
 /**
- * Agents and MCP servers across every workspace, with who made them and
- * whether they are cleared to be seen by anyone else. Two catalogs, one page:
+ * Agents and MCP servers, with who made them and whether they are cleared
+ * to be seen by anyone else. In the default workspace the page is the hub's:
+ * every workspace's items, which workspaces each is in, a filter by
+ * workspace and the two hub toggles. In any other workspace it shows that
+ * workspace's own items and nothing about the rest. Two catalogs, one page:
  * an agent's review status lives on its own record (agents/registry.py), the
  * MCP allowlist is its own table (mcp_client/catalog.py); both are read from
  * GET /api/registry in one call and mutated through routes/registry.py.
@@ -113,7 +117,7 @@ function NoteButton({ label, tone, onConfirm, icon: Icon }) {
  * on a draft/rejected item; approve/reject show for an admin on one waiting
  * in_review.
  */
-function ReviewableRow({ item, icon: Icon, admin, currentUserId, onSubmit, onApprove, onReject, t }) {
+function ReviewableRow({ item, icon: Icon, admin, hub, currentUserId, onSubmit, onApprove, onReject, t }) {
   const mine = currentUserId && item.owner_user === currentUserId;
   return (
     <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-4">
@@ -131,10 +135,12 @@ function ReviewableRow({ item, icon: Icon, admin, currentUserId, onSubmit, onApp
           <code>{item.id}</code>
           {' · '}
           {t('agentRegistry.owner')}: {item.owner_user || t('agentRegistry.unknown')}
-          {' · '}
-          {item.shared
-            ? t('agentRegistry.allWorkspaces')
-            : (item.workspaces.join(', ') || t('agentRegistry.noWorkspace'))}
+          {hub && <>
+            {' · '}
+            {item.shared
+              ? t('agentRegistry.allWorkspaces')
+              : (item.workspaces.join(', ') || t('agentRegistry.noWorkspace'))}
+          </>}
         </span>
       </span>
       <StatusBadge status={item.review_status} t={t} />
@@ -167,7 +173,7 @@ function ReviewableRow({ item, icon: Icon, admin, currentUserId, onSubmit, onApp
 }
 
 function ReviewableTab({
-  items, icon, emptyText, admin, currentUserId, onSubmit, onApprove, onReject, filters, t,
+  items, icon, emptyText, admin, hub, currentUserId, onSubmit, onApprove, onReject, filters, t,
 }) {
   const visible = items.filter((a) => {
     if (filters.status !== 'all' && a.review_status !== filters.status) return false;
@@ -190,6 +196,7 @@ function ReviewableTab({
           item={item}
           icon={icon}
           admin={admin}
+          hub={hub}
           currentUserId={currentUserId}
           onSubmit={onSubmit}
           onApprove={onApprove}
@@ -202,7 +209,7 @@ function ReviewableTab({
 }
 
 function McpTab({
-  servers, catalogEntries, admin, onApproveEntry, onBlockEntry, onRequest, filters, t,
+  servers, catalogEntries, admin, hub, onApproveEntry, onBlockEntry, onRequest, filters, t,
 }) {
   const [form, setForm] = useState({ id: '', name: '', transport: 'stdio', command: '', url: '' });
   const [requesting, setRequesting] = useState(false);
@@ -246,7 +253,7 @@ function McpTab({
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-gray-800 truncate">{s.name}</span>
                   <span className="block text-[11px] text-gray-400 truncate">
-                    <code>{s.id}</code> · {s.workspace} · {s.transport}
+                    <code>{s.id}</code>{hub && ` · ${s.workspace}`} · {s.transport}
                   </span>
                 </span>
                 {!s.enabled && (
@@ -362,6 +369,9 @@ export default function AgentRegistry() {
   const auth = useAuth();
   const admin = !isMultiUser(auth) || isAdmin(auth);
   const currentUserId = auth?.user?.id || null;
+  const { selectedWorkspace } = useWorkspace() || {};
+  // The hub-wide view belongs to the default workspace only.
+  const hub = !selectedWorkspace || selectedWorkspace === 'default';
 
   const [tab, setTab] = useState('agents');
   const [data, setData] = useState({
@@ -376,7 +386,7 @@ export default function AgentRegistry() {
 
   const load = useCallback(async () => {
     try {
-      const { data: body } = await getRegistry();
+      const { data: body } = await getRegistry(hub ? undefined : selectedWorkspace);
       setData(body);
       setError('');
     } catch (err) {
@@ -384,7 +394,7 @@ export default function AgentRegistry() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [hub, selectedWorkspace]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -404,7 +414,7 @@ export default function AgentRegistry() {
       <PageHeader
         icon={BadgeCheck}
         title={t('agentRegistry.title')}
-        description={t('agentRegistry.description')}
+        description={t(hub ? 'agentRegistry.description' : 'agentRegistry.descriptionWorkspace')}
         actions={<>
           <button
             onClick={load}
@@ -418,7 +428,7 @@ export default function AgentRegistry() {
 
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
-      {admin && (
+      {admin && hub && (
         <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-4">
           <Toggle
             label={t('agentRegistry.requireReviewLabel')}
@@ -503,12 +513,14 @@ export default function AgentRegistry() {
           className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 w-36"
         />
 
-        <input
-          value={workspace}
-          onChange={(e) => setWorkspace(e.target.value)}
-          placeholder={t('agentRegistry.workspaceFilter')}
-          className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 w-36"
-        />
+        {hub && (
+          <input
+            value={workspace}
+            onChange={(e) => setWorkspace(e.target.value)}
+            placeholder={t('agentRegistry.workspaceFilter')}
+            className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 w-36"
+          />
+        )}
       </div>
 
       {loading ? (
@@ -519,11 +531,12 @@ export default function AgentRegistry() {
           icon={Bot}
           emptyText={t('agentRegistry.noAgents')}
           admin={admin}
+          hub={hub}
           currentUserId={currentUserId}
           onSubmit={withRefresh(submitAgentForReview)}
           onApprove={withRefresh(approveAgent)}
           onReject={withRefresh(rejectAgent)}
-          filters={{ status, owner, workspace, query }}
+          filters={{ status, owner, workspace: hub ? workspace : '', query }}
           t={t}
         />
       ) : tab === 'flows' ? (
@@ -532,11 +545,12 @@ export default function AgentRegistry() {
           icon={GitBranch}
           emptyText={t('agentRegistry.noFlows')}
           admin={admin}
+          hub={hub}
           currentUserId={currentUserId}
           onSubmit={withRefresh(submitFlowForReview)}
           onApprove={withRefresh(approveFlow)}
           onReject={withRefresh(rejectFlow)}
-          filters={{ status, owner, workspace, query }}
+          filters={{ status, owner, workspace: hub ? workspace : '', query }}
           t={t}
         />
       ) : tab === 'skills' ? (
@@ -545,11 +559,12 @@ export default function AgentRegistry() {
           icon={BookOpen}
           emptyText={t('agentRegistry.noSkills')}
           admin={admin}
+          hub={hub}
           currentUserId={currentUserId}
           onSubmit={withRefresh(submitSkillForReview)}
           onApprove={withRefresh(approveSkill)}
           onReject={withRefresh(rejectSkill)}
-          filters={{ status, owner, workspace, query }}
+          filters={{ status, owner, workspace: hub ? workspace : '', query }}
           t={t}
         />
       ) : (
@@ -557,10 +572,11 @@ export default function AgentRegistry() {
           servers={data.mcp_servers}
           catalogEntries={data.mcp_catalog}
           admin={admin}
+          hub={hub}
           onApproveEntry={withRefresh(approveMcpCatalogEntry)}
           onBlockEntry={withRefresh(blockMcpCatalogEntry)}
           onRequest={withRefresh(requestMcpCatalogEntry)}
-          filters={{ status, workspace, owner }}
+          filters={{ status, workspace: hub ? workspace : '', owner }}
           t={t}
         />
       )}

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from agents import registry
 from common import audit, identity
+from common.auth import WS_VIEWER
 from common.paths import PROJECT_ROOT
 from flow import store as flow_store
 from mcp_client import catalog as mcp_catalog
@@ -161,23 +162,42 @@ def _server_row(workspace: str, record: Dict[str, Any]) -> Dict[str, Any]:
 # ── The page's one load ────────────────────────────────────────────────────
 
 @router.get("")
-async def get_registry():
-    """Everything the Agent registry page shows in one call: every agent,
-    flow and skill across every workspace, every MCP server attached
-    anywhere, the catalog, and the two hub toggles."""
+async def get_registry(request: Request, workspace: Optional[str] = None):
+    """Everything the Agent registry page shows in one call: the agents,
+    flows and skills, the MCP servers attached, the catalog, and the two hub
+    toggles.
+
+    ``default`` (or no workspace, as the CLI asks) is the hub-wide view: every
+    workspace's items, each with the workspaces it is in. Any other workspace
+    sees its own: the agents and flows it owns or added (``workspaces``
+    names it), the skills it owns (an installed copy is its own record) and
+    the servers attached to it, so the page has nothing to filter by
+    workspace there.
+
+    In multi mode the hub-wide view is for an administrator or a member of
+    ``default``; anybody else names a workspace they belong to."""
     names = _all_workspace_names()
-    agents = [_agent_row(spec, names) for spec in registry.list_agents()]
+    scoped = workspace if workspace and workspace != "default" else None
+    identity.require_role(_principal(request), workspace=scoped or "default", role=WS_VIEWER)
+
+    def here(row: Dict[str, Any]) -> bool:
+        return scoped is None or scoped in row["workspaces"]
+
+    agents = [row for row in (_agent_row(spec, names) for spec in registry.list_agents()) if here(row)]
     agents.sort(key=lambda a: a["name"].lower())
 
-    flows = [_flow_row(f, names) for f in flow_store.list_flows()]
+    flows = [row for row in (_flow_row(f, names) for f in flow_store.list_flows()) if here(row)]
     flows.sort(key=lambda f: (f["name"] or "").lower())
 
     skills_all = all_procedures()
-    skills = [_skill_row(p, skills_all) for p in skills_all]
+    skills = [
+        _skill_row(p, skills_all) for p in skills_all
+        if scoped is None or p.workspace == scoped
+    ]
     skills.sort(key=lambda s: (s["name"] or "").lower())
 
     mcp_servers: List[Dict[str, Any]] = []
-    for name in names:
+    for name in ([scoped] if scoped else names):
         for record in mcp_store.list_servers(name):
             mcp_servers.append(_server_row(name, record))
 

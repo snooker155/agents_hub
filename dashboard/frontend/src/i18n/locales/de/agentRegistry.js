@@ -1,6 +1,7 @@
 export default {
   title: 'Agentenregister',
   description: 'Jeder Agent und MCP Server über alle Arbeitsbereiche hinweg, wer ihn angelegt hat und ob er freigegeben ist.',
+  descriptionWorkspace: 'Agenten, Flows, Skills und MCP Server dieses Arbeitsbereichs: wer sie angelegt hat und ob sie freigegeben sind.',
   refresh: 'Aktualisieren',
   loading: 'Register wird geladen…',
   search: 'Suchen…',

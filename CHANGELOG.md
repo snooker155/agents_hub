@@ -42,6 +42,12 @@ turns that section into the next release.
   registry moved to the administration, and
   Cluster appears only when the hub runs as separate api and worker processes
   (`features.cluster` on `/api/health`).
+- The agent registry follows the selected workspace (docs/registry.md "The
+  page"): outside `default` it lists only that workspace's agents, flows,
+  skills and MCP servers, without the workspace filter or the hub toggles;
+  `default` keeps the hub-wide view, which in multi mode now answers only an
+  administrator or a member of `default` (any other account got every
+  workspace's items by leaving the workspace out).
 - A default model switches on with a provider key (docs/models.md): saving an
   OpenAI, Anthropic or Google key when that provider has no enabled model
   enables one (`gpt-5.4-mini`, `claude-sonnet-5-5`, `gemini-2.5-flash`) with
