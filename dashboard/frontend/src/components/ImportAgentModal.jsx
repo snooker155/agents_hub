@@ -24,7 +24,7 @@ import {
 } from '../api';
 
 const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none';
 
 /**
  * Import an agent that already lives in its own repository.

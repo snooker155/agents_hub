@@ -5,7 +5,6 @@ import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIc
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
-import { useChatSteering } from './useChatSteering';
 
 /**
  * While a turn runs: how a message typed now reaches it (Steer, Interrupt,
@@ -96,7 +95,9 @@ export default function ChatComposer() {
   // The box follows the text however it got there: typed, a slash command's
   // template, or Discuss, Edit and a run report from the Code panel.
   useEffect(() => { resizeTextarea(); }, [input, resizeTextarea]);
-  const steering = useChatSteering(page);
+  // Kept by the page (useChatSteering), so what waits for a turn outlives a
+  // switch to a conversation this composer is not shown for.
+  const { steering } = page;
   // The composer is laid over the foot of the conversation rather than under
   // it, so the messages scroll behind the box. The frame around both (the
   // column in Chat.jsx) learns the composer's height and the message list
@@ -116,9 +117,10 @@ export default function ChatComposer() {
     };
   }, []);
   // Enter while a turn runs goes to the turn (in the chosen mode) instead of
-  // starting a new one, which the page's own handler would refuse.
+  // starting a new one, which the page's own handler would refuse. That is
+  // also a turn this tab is not sending (`steering.busy`, see useChatSteering).
   const onKeyDown = (e) => {
-    if (loading && e.key === 'Enter' && !e.shiftKey && !(commandMenuOpen && commandSuggestions.length > 0)) {
+    if (steering.busy && e.key === 'Enter' && !e.shiftKey && !(commandMenuOpen && commandSuggestions.length > 0)) {
       e.preventDefault();
       steering.steer();
       return;
@@ -128,7 +130,7 @@ export default function ChatComposer() {
   return (
     <>
         {/* Input area: over the foot of the conversation, no rule above it */}
-        <div ref={frameRef} className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-2 pointer-events-none">
+        <div ref={frameRef} className="absolute inset-x-0 bottom-0 z-10 px-3 sm:px-4 pb-3 sm:pb-4 pt-2 pointer-events-none">
           <div className="max-w-3xl mx-auto pointer-events-auto">
             <input
               ref={fileInputRef}
@@ -255,7 +257,7 @@ export default function ChatComposer() {
 
             <div
               className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3 bg-white
-                focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
+               
                 shadow-lg transition-all"
             >
               {/* Attach: a file from the computer, or a record the hub already
@@ -319,7 +321,7 @@ export default function ChatComposer() {
               <textarea
                 ref={textareaRef}
                 className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={loading ? t('steering.placeholderBusy') : composerPlaceholder}
+                placeholder={steering.busy ? t('steering.placeholderBusy') : composerPlaceholder}
                 rows={1}
                 value={input}
                 disabled={!hasTarget}
@@ -333,7 +335,7 @@ export default function ChatComposer() {
                 onKeyDown={onKeyDown}
               />
 
-              {loading ? (
+              {steering.busy ? (
                 <>
                   {input.trim() && (
                     <button

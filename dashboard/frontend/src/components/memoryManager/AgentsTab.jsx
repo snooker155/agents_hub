@@ -8,7 +8,7 @@ import {
 import { getAgents, getWorkspacePersonalMemory, updateAgentMemory } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
-import { agentPools } from './helpers';
+import { agentPools, poolName } from './helpers';
 import PageLoader from '../PageLoader';
 
 function AgentsTab({ memories, workspaceFilter }) {
@@ -69,7 +69,7 @@ function AgentsTab({ memories, workspaceFilter }) {
   // the workspace's personal memory switch, next to any pool of its own
   // (memory/personal.py resolve). Count those agents as its users.
   const personalPool = memories.find(m => m.kind === 'personal' && (m.workspace || 'default') === ws) || null;
-  const personalName = personalPool ? personalPool.name : t('memoryManager.personalMemory');
+  const personalName = personalPool ? poolName(personalPool, t, !workspaceFilter) : t('memoryManager.personalMemory');
   const usesPersonal = (a) => !!(personal?.enabled && personal.agents?.[a.id]);
   const agentsWithMemory = agents.filter(a => agentPools(a).length > 0 || usesPersonal(a));
   const poolUsage = {};
@@ -113,7 +113,7 @@ function AgentsTab({ memories, workspaceFilter }) {
             {memories.map(m => (
               <div key={m.id} className="px-5 py-3 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-800">{m.name}</p>
+                  <p className="text-sm font-medium text-gray-800">{poolName(m, t, !workspaceFilter)}</p>
                   <p className="text-xs text-gray-400">{t('memoryManager.notesAndSlots', { notes: (m.notes || []).length, slots: Object.keys(m.structured_data || {}).length })}</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -233,9 +233,9 @@ function AgentsTab({ memories, workspaceFilter }) {
                     setSelectedPoolId(pid);
                     if (pid) setSelectedExtraIds(prev => prev.filter(p => p !== pid));
                   }}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
                   <option value="">{t('memoryManager.noneNoSharedMemory')}</option>
-                  {memories.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  {memories.map(m => <option key={m.id} value={m.id}>{poolName(m, t, !workspaceFilter)}</option>)}
                 </select>
               </div>
               {selectedPoolId && memories.filter(m => m.id !== selectedPoolId).length > 0 && (
@@ -251,9 +251,9 @@ function AgentsTab({ memories, workspaceFilter }) {
                           onChange={e => setSelectedExtraIds(prev =>
                             e.target.checked ? [...prev, m.id] : prev.filter(p => p !== m.id)
                           )}
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          className="rounded border-gray-300 text-indigo-600"
                         />
-                        <span className="truncate">{m.name}</span>
+                        <span className="truncate">{poolName(m, t, !workspaceFilter)}</span>
                       </label>
                     ))}
                   </div>

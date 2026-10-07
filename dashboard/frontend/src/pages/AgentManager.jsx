@@ -455,7 +455,7 @@ const AgentManager = () => {
               onChange={(e) => setAgentQuery(e.target.value)}
               placeholder={t('agentManager.searchAgents')}
               aria-label={t('agentManager.searchAgents')}
-              className="pl-8 pr-3 py-1.5 text-sm font-normal rounded-lg border border-gray-200 bg-white w-56 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+              className="pl-8 pr-3 py-1.5 text-sm font-normal rounded-lg border border-gray-200 bg-white w-56 focus:outline-none"
             />
           </div>
         )}
@@ -825,7 +825,7 @@ const AgentManager = () => {
                           <textarea
                             rows={5}
                             placeholder={t('agentManager.eGACodeReviewer')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"
                             value={creatorInput}
                             onChange={e => setCreatorInput(e.target.value)}
                           />
@@ -885,7 +885,7 @@ const AgentManager = () => {
                     <div>
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.sourceAgent')}</label>
                       <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         value={wizardData.original_id}
                         onChange={e => setWizardData(d => ({ ...d, original_id: e.target.value }))}
                       >
@@ -904,7 +904,7 @@ const AgentManager = () => {
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentId')} <span className="text-red-500">*</span></label>
                         <input
                           type="text" required placeholder={t('agentManager.eGCodeReviewer')}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                           value={wizardData.id}
                           onChange={e => setWizardData(d => ({ ...d, id: e.target.value.replace(/\s/g, '_').toLowerCase() }))}
                         />
@@ -915,7 +915,7 @@ const AgentManager = () => {
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.displayName')} <span className="text-red-500">*</span></label>
                       <input
                         type="text" required placeholder={t('agentManager.eGCodeReviewer2')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         value={wizardData.name}
                         onChange={e => setWizardData(d => ({ ...d, name: e.target.value }))}
                       />
@@ -924,7 +924,7 @@ const AgentManager = () => {
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.description')}</label>
                       <textarea
                         rows="2" placeholder={t('agentManager.whatDoesThisAgentDo')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         value={wizardData.description}
                         onChange={e => setWizardData(d => ({ ...d, description: e.target.value }))}
                       />
@@ -933,7 +933,7 @@ const AgentManager = () => {
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.capacitySlots')}</label>
                       <input
                         type="number" min="1"
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         value={wizardData.capacity}
                         onChange={e => setWizardData(d => ({ ...d, capacity: parseInt(e.target.value) || 1 }))}
                       />
@@ -967,7 +967,7 @@ const AgentManager = () => {
                           )}
                           <textarea
                             rows="5" placeholder={wizardData.extends ? t('agentManager.eGSameHeadingHint') : t('agentManager.youAreASpecializedAgent')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                             value={wizardData.system_prompt}
                             onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
                           />
@@ -975,7 +975,7 @@ const AgentManager = () => {
                         <div>
                           <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentManager.tools')}</label>
                           <select
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
                             value=""
                             onChange={e => { if (e.target.value) toggleWizardTool(e.target.value); }}
                           >
@@ -1002,7 +1002,7 @@ const AgentManager = () => {
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentEndpointUrl')} <span className="text-red-500">*</span></label>
                         <input
                           type="url" required placeholder="https://agent-service.internal/api"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                           value={wizardData.agent_url}
                           onChange={e => setWizardData(d => ({ ...d, agent_url: e.target.value }))}
                         />
@@ -1103,7 +1103,7 @@ const AgentManager = () => {
               <div className="mb-6">
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentManager.selectTargetTask')}</label>
                 <select
-                  className="w-full border border-gray-300 rounded-md px-3 py-3 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-300 rounded-md px-3 py-3 text-sm"
                   value={assignData.task_id}
                   onChange={(e) => setAssignData({ ...assignData, task_id: e.target.value })}
                   required

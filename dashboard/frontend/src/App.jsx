@@ -49,6 +49,7 @@ const Services = lazy(() => import('./pages/Services'));
 const ServiceDetail = lazy(() => import('./pages/ServiceDetail'));
 const MessageDetails = lazy(() => import('./pages/MessageDetails'));
 const Chat = lazy(() => import('./pages/Chat'));
+const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
@@ -154,6 +155,7 @@ function AppRoutes() {
         <Route path="/" element={guard(<Chat />)} />
         <Route path="/chat" element={guard(<Chat />)} />
         <Route path="/chat/:convId" element={guard(<Chat />)} />
+        <Route path="/assistant" element={guard(<Assistant />)} />
         <Route path="/dashboard" element={guard(<Dashboard />)} />
         <Route path="/orchestrator" element={guard(<Orchestrator />)} />
         <Route path="/tasks" element={guard(<TaskManager />)} />

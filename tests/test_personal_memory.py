@@ -158,6 +158,9 @@ def test_remember_writes_to_the_own_pool_or_with_personal_to_the_personal_one(as
     out = json.loads(tools["remember"].invoke(
         {"slot": "profile", "data": {"name": "Alice"}, "personal": True}))
     assert out["ok"] and out["pool"].startswith("Personal memory")
+    assert out["memory"] == {"pool": out["pool"], "workspace": "default", "personal": True}
+    own_out = json.loads(tools["remember"].invoke({"note_title": "api", "note_content": "v3"}))
+    assert own_out["memory"] == {"pool": "team pool", "workspace": "default", "personal": False}
     store = MemoryStore()
     assert [n["title"] for n in store.get(str(own.id)).notes] == ["api"]
     assert "profile" not in store.get(str(own.id)).structured_data

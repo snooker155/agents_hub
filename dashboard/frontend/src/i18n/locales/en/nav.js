@@ -7,6 +7,7 @@ export default {
     system: 'System',
     connect: 'Connect',
   },
+  assistant: 'Assistant',
   chat: 'Chat',
   dashboard: 'Dashboard',
   workspaces: 'Workspaces',

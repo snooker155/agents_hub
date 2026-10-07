@@ -64,9 +64,10 @@ POLL_SECONDS = 0.5
 HEARTBEAT_SECONDS = 20.0
 
 #: Message origins of a run whose chat can show the card: the dashboard's Chat
-#: page (``source`` None, recorded as ``chat``). Telegram, the widget, channels,
-#: ``/v1`` and an instance's page have nobody in front of the card.
-INTERACTIVE_ORIGINS = frozenset({"chat"})
+#: page (``source`` None, recorded as ``chat``) and the assistant's thread
+#: (routes/assistant.py). Telegram, the widget, channels, ``/v1`` and an
+#: instance's page have nobody in front of the card.
+INTERACTIVE_ORIGINS = frozenset({"chat", "assistant-chat"})
 
 #: Longest note kept, in characters.
 MAX_NOTE_CHARS = 2000
@@ -163,6 +164,20 @@ def list_for_tool(tool: str, *, status: Optional[str] = None,
         params.append(str(workspace))
     sql += " ORDER BY created_at DESC LIMIT ?"
     params.append(max(1, min(int(limit or 100), 500)))
+    return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
+
+
+def list_pending(*, since: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Calls still waiting, newest first; ``since`` (ISO time) keeps those
+    opened after it. The assistant looks here for the card a spoken yes is
+    about (routes/assistant.py)."""
+    sql = "SELECT * FROM tool_approvals WHERE status = ?"
+    params: List[Any] = [STATUS_PENDING]
+    if since:
+        sql += " AND created_at >= ?"
+        params.append(str(since))
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit or 50), 500)))
     return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
 
 
@@ -284,6 +299,12 @@ def _owner_of(run: Dict[str, Any]) -> Optional[str]:
                 return owner
         except Exception:  # noqa: BLE001 - an unreadable chat leaves the turn's own user
             log.debug("tool approvals: chat owner lookup failed for %s", conv_id, exc_info=True)
+    # The person the run is charged to (common/attribution.py): right on a
+    # runner replica too, where no request carries the user.
+    from common.auth import LOCAL_OPERATOR_ID
+    launched_by = str(run.get("launched_by") or "")
+    if launched_by and launched_by not in (LOCAL_OPERATOR_ID, "service"):
+        return launched_by
     try:
         from common import identity
         return identity.current_user_id() or None
@@ -444,6 +465,7 @@ __all__ = [
     "STATUS_APPROVED", "STATUS_CANCELLED", "STATUS_DENIED", "STATUS_EXPIRED", "STATUS_PENDING",
     "TIMEOUT_ENV",
     "chat_context", "close", "decide", "get", "hold", "is_expired", "list_for_run", "list_for_tool",
+    "list_pending",
     "open_approval",
     "timeout_seconds", "transport_for",
 ]

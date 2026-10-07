@@ -5,6 +5,7 @@ import { useStream } from '../stream';
 import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
 import { autoGrowTextarea } from '../../lib/autoGrow';
+import { historyWindowStart } from '../chat/send/buildRequest';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
@@ -185,9 +186,10 @@ export default function FlowChat({
       return;
     }
 
-    const history = messages
-      .filter((m) => (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim())
-      .slice(-40)
+    const said = messages
+      .filter((m) => (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim());
+    const history = said
+      .slice(historyWindowStart(said.length))
       .map((m) => ({ role: m.role, content: String(m.content || '') }));
 
     const userMsg = { id: genId(), role: 'user', content: text };
@@ -382,7 +384,7 @@ export default function FlowChat({
 
       <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3">
         <div className="mx-auto w-full max-w-2xl">
-        <div className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
+        <div className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm transition">
           <textarea
             ref={textareaRef}
             className="flex-1 resize-none self-center bg-transparent text-sm leading-relaxed text-slate-800 placeholder-slate-400 focus:outline-none disabled:opacity-50"

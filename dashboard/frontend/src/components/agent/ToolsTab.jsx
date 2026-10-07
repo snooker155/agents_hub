@@ -111,7 +111,7 @@ export default function ToolsTab() {
     if (policy.dirty) await policy.save();
   };
 
-  const selectCls = 'border border-gray-200 rounded px-1 py-0 h-6 text-xs leading-none bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  const selectCls = 'border border-gray-200 rounded px-1 py-0 h-6 text-xs leading-none bg-white focus:outline-none';
   const delegationActive = DELEGATION_TOOLS.some((tid) => selectedTools.includes(tid));
   return (
         <div className="space-y-6">
@@ -137,7 +137,7 @@ export default function ToolsTab() {
                     disabled={policy.loading}
                     onChange={(e) => policy.setMode('*', e.target.value)}
                     aria-label={t('toolPolicy.defaultMode')}
-                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none"
                   >
                     <option value={TOOL_POLICY_INHERIT}>{t('toolPolicy.modes.inherit')}</option>
                     {policy.modes.map((m) => <option key={m} value={m}>{modeLabel(m)}</option>)}

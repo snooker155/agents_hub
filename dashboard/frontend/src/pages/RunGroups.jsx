@@ -19,6 +19,8 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n, statusLabel } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -106,6 +108,7 @@ export default function RunGroups() {
   const { selectedWorkspace, liveUpdates } = useWorkspace();
 
   const [groups, setGroups] = useState([]);
+  const [total, setTotal] = useState(0);
   const [kinds, setKinds] = useState([]);
   const [filterKind, setFilterKind] = useState('');
   const [loading, setLoading] = useState(true);
@@ -114,21 +117,36 @@ export default function RunGroups() {
 
   const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
 
+  // Sort keys the backend orders by (managers/runs/groups.py GROUP_SORTS); the
+  // workspace one only where the Workspace column is shown.
+  const sortKeys = [
+    'started', 'finished', 'status', 'kind', 'title', 'cost', 'children',
+    ...(isDefaultWorkspace ? ['workspace'] : []),
+  ];
+  const paging = useListPaging('runGroups', {
+    sorts: sortKeys,
+    defaultSort: 'started',
+    resetOn: [filterKind, selectedWorkspace],
+  });
+  const pageParams = paging.params;
+
   const fetchGroups = useCallback(async () => {
     try {
-      const params = { limit: 100 };
+      const params = { ...pageParams };
       if (filterKind) params.kind = filterKind;
       if (!isDefaultWorkspace) params.workspace = selectedWorkspace;
       const res = await listRunGroups(params);
       const data = res.data || {};
-      setGroups(data.groups || []);
+      const items = data.groups || [];
+      setGroups(items);
+      setTotal(typeof data.total === 'number' ? data.total : items.length);
       setKinds(data.kinds || []);
     } catch (err) {
       console.error('Failed to load run groups', err);
     } finally {
       setLoading(false);
     }
-  }, [filterKind, isDefaultWorkspace, selectedWorkspace]);
+  }, [filterKind, isDefaultWorkspace, selectedWorkspace, pageParams]);
 
   useEffect(() => {
     setLoading(true);
@@ -166,7 +184,6 @@ export default function RunGroups() {
     }
   };
 
-  const total = groups.length;
   const visibleKinds = useMemo(
     () => (kinds.length ? kinds : ['flow', 'loop', 'team', 'container', 'scenario']),
     [kinds],
@@ -196,7 +213,7 @@ export default function RunGroups() {
               {t('runGroups.columns.kind')}
             </label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterKind}
               onChange={(e) => setFilterKind(e.target.value)}
             >
@@ -206,11 +223,12 @@ export default function RunGroups() {
               ))}
             </select>
           </div>
+          <ListPagingControls paging={paging} options={sortKeys} />
         </div>
       </div>
 
       <div className="space-y-4">
-        {loading ? (
+        {loading && !groups.length ? (
           <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : groups.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
@@ -345,11 +363,7 @@ export default function RunGroups() {
         )}
       </div>
 
-      {!loading && groups.length > 0 && (
-        <p className="text-xs text-gray-400 text-right">
-          {t('runGroups.shownOfTotal', { shown: groups.length, total })}
-        </p>
-      )}
+      <ListLoadMore paging={paging} shown={groups.length} total={total} loading={loading} />
     </PageContainer>
   );
 }

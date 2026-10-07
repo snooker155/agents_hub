@@ -283,8 +283,14 @@ async def list_sessions(
     agent_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ):
     """A page of session contexts, filtered and ordered in SQL.
+
+    ``sort`` is ``created`` (default), ``title``, ``workspace`` or
+    ``messages``; ``order`` is ``asc`` or ``desc``; the list pages load rows in batches and refetch the whole loaded window
+    from the top, so ``limit`` goes up to 2000.
 
     Returns ``{items, total, limit, offset}``. Only the returned page is
     enriched, and its status/participants come from one grouped query over the
@@ -309,17 +315,22 @@ async def list_sessions(
             # Sessions with no runs at all read as pending and have no tally.
             session_ids += _session_ids_without_runs()
 
-    page = _session_service_query(
-        workspace=workspace,
-        conversation_id=conversation_id,
-        agent_id=agent_id,
-        is_flow=is_flow,
-        from_date=from_date,
-        to_date=to_date,
-        session_ids=session_ids,
-        limit=max(1, min(int(limit), 500)),
-        offset=max(0, int(offset)),
-    )
+    try:
+        page = _session_service_query(
+            workspace=workspace,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            is_flow=is_flow,
+            from_date=from_date,
+            to_date=to_date,
+            session_ids=session_ids,
+            limit=max(1, min(int(limit), 2000)),
+            offset=max(0, int(offset)),
+            sort=sort,
+            order=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     principal = identity.request_principal(request)
     items = access.filter_by_workspace(principal, page["items"])
     stats = run_manager.session_run_stats([c.get("session_id") for c in items])
@@ -583,6 +594,8 @@ def _extract_chat_message_runs(log_text: str) -> list:
         tools = []
         tool_start_re = re.compile(r"^\[tool_start\]\s+step=(?P<step>\d+)\s+tool=(?P<tool>[^\s]+)\s+input=(?P<input>.*)$")
         tool_end_re = re.compile(r"^\[tool_end\]\s+output=(?P<output>.*)$")
+        # A call that raised ends on [tool_error] instead of [tool_end].
+        tool_error_re = re.compile(r"^\[tool_error\]\s+(?:tool=\S+\s+)?(?P<error>.*)$")
         for ln in body.splitlines():
             s = ln.strip()
             ms = tool_start_re.match(s)
@@ -590,11 +603,14 @@ def _extract_chat_message_runs(log_text: str) -> list:
                 tools.append({"step": int(ms.group("step")), "tool": ms.group("tool"), "input": ms.group("input"), "output": None, "running": True})
                 continue
             me = tool_end_re.match(s)
-            if me and tools:
+            mx = None if me else tool_error_re.match(s)
+            if (me or mx) and tools:
                 for j in range(len(tools) - 1, -1, -1):
                     if tools[j].get("output") is None:
-                        tools[j]["output"] = me.group("output")
+                        tools[j]["output"] = me.group("output") if me else f"ERROR: {mx.group('error')}"
                         tools[j]["running"] = False
+                        if mx:
+                            tools[j]["status"] = "error"
                         break
         _attach_tool_verdicts(tools, body)
         thinking = []
@@ -702,8 +718,12 @@ _TOOL_CALL_VERDICT_RE = re.compile(
     r"^\[tool_call\].*?\bstep=(?P<step>\d+)\b.*?\bpermission=(?P<perm>[a-z_]+)\s+reason_code=(?P<code>[a-z_]+)")
 
 
+_TOOL_CALL_FAILED_RE = re.compile(r"^\[tool_call\].*?\bstep=(?P<step>\d+)\b.*?\bstatus=error\b")
+
+
 def _attach_tool_verdicts(tools: list, log_text: str = "", stored_calls: Optional[list] = None) -> list:
-    """Give each tool call its ``evaluated_permission`` and ``reason_code``.
+    """Give each tool call its ``evaluated_permission`` and ``reason_code``,
+    and ``status: "error"`` when it failed.
 
     They come from the ``[tool_call]`` markers in the log (one per finished
     call, keyed by step) and, for a run whose log lacks them, from the stored
@@ -711,15 +731,30 @@ def _attach_tool_verdicts(tools: list, log_text: str = "", stored_calls: Optiona
     neither source knows keeps no fields; the UI then shows no badge.
     """
     by_step: dict = {}
+    failed_steps: set = set()
     for line in (log_text or "").splitlines():
-        m = _TOOL_CALL_VERDICT_RE.match(line.strip())
+        line = line.strip()
+        m = _TOOL_CALL_VERDICT_RE.match(line)
         if m:
             by_step[int(m.group("step"))] = {"evaluated_permission": m.group("perm"),
                                              "reason_code": m.group("code")}
+        m = _TOOL_CALL_FAILED_RE.match(line)
+        if m:
+            failed_steps.add(int(m.group("step")))
     stored = [c for c in (stored_calls or []) if isinstance(c, dict)]
     stored_by_step = {c.get("step"): c for c in stored if c.get("step") is not None}
     for i, tool in enumerate(tools or []):
-        if not isinstance(tool, dict) or tool.get("evaluated_permission"):
+        if not isinstance(tool, dict):
+            continue
+        # How the call ended: the [tool_call] marker says status=error, else
+        # the stored record of the same call carries its status.
+        if not tool.get("status") and not tool.get("running"):
+            src = stored_by_step.get(tool.get("step")) or (stored[i] if i < len(stored) else None)
+            if tool.get("step") in failed_steps:
+                tool["status"] = "error"
+            elif src and src.get("status") and src.get("tool") == tool.get("tool"):
+                tool["status"] = src["status"]
+        if tool.get("evaluated_permission"):
             continue
         verdict = by_step.get(tool.get("step")) if tool.get("step") is not None else None
         if verdict is None:

@@ -30,7 +30,8 @@ the child's other sections are appended in order. ``capabilities.md`` and
 expansion), else the parent's.
 
 Limits: no cycles, at most :data:`MAX_CHAIN` agents in a chain (grandparent,
-parent, child), a system agent is never a child, a remote (imported) agent
+parent, child), a system agent is a child only of another system agent (the
+shipped ``assistant`` extends ``main-agent``), a remote (imported) agent
 is neither a parent nor a child, and a child does not share another agent's
 definition folder (``definition_id``).
 """
@@ -318,8 +319,12 @@ def validate_extends(spec: Any) -> None:
     if not spec.extends:
         return
     parent_id = _resolve_id(spec.extends)
-    if spec.system:
-        raise InheritanceError("A system agent cannot extend another agent.")
+    raws = _raw_map()
+    parent = raws.get(parent_id)
+    if spec.system and (parent is None or not parent.system):
+        # A shipped agent builds only on another shipped one (the assistant on
+        # the main agent), so the chain stays inside bootstrap/agents.json.
+        raise InheritanceError("A system agent can only extend another system agent.")
     if spec.is_remote():
         raise InheritanceError("An imported (remote) agent cannot extend another agent.")
     if spec.definition_id and spec.definition_id != spec.id:
@@ -327,8 +332,6 @@ def validate_extends(spec: Any) -> None:
             "An agent that shares another agent's definition (definition_id) cannot extend an agent.")
     if parent_id == spec.id:
         raise InheritanceError("An agent cannot extend itself.")
-    raws = _raw_map()
-    parent = raws.get(parent_id)
     if parent is None:
         raise InheritanceError(f"Parent agent '{parent_id}' not found.")
     if parent.is_remote():

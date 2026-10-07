@@ -198,9 +198,6 @@ export default {
       auth_mode: "password uses the fields below; google signs in with the account connected on the Google tab (Connect with Gmail), and empty hosts, user and from address mean Gmail's and that account's.",
       from_address: "The address replies are sent from; messages from it are ignored.",
     },
-    jira: {
-      base_url: "For example https://acme.atlassian.net",
-    },
     microsoft: {
       default_user: "The user whose calendar the tools read when a call names none, e.g. anna@contoso.com",
       consent_tenant: "For the consent portal: who may sign in to grant their own account. common, organizations, consumers or a tenant id; empty means this tenant only.",

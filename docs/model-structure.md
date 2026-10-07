@@ -1,6 +1,6 @@
 # Model structure
 
-A read-only view of a local model's structure from its GGUF or safetensors header without loading the weights: architecture, layers, tensors and memory, drawn as a 2D block diagram or a 3D stack, and a card for API models.
+A read-only view of a local model's structure from its GGUF or safetensors header without loading the weights: architecture, layers, tensors and memory, drawn left to right as a 2D block diagram or a 3D row of slabs, and a card for API models. The 2D view opens on the first blocks at a readable size; the mouse wheel or a pinch zooms around the cursor, dragging the canvas moves along the model, and a click outside every block clears the selection.
 
 The parsing lives in `providers/model_structure.py`, the routes in `dashboard/backend/routes/model_structure.py`. The hub's own model runtime imports `structure_from_file` from the same module, so every source answers in one shape.
 
@@ -29,13 +29,15 @@ The quantization shown is the file's `general.file_type` (Q4_K_M, Q5_K_S and so 
 
 `parse_safetensors(path)` takes a single `.safetensors` file or a directory. A directory with `model.safetensors.index.json` reads the header of each shard its `weight_map` names (a shard path escaping the directory is refused); a directory without an index reads every `*.safetensors` in it. A `config.json` beside the files is flattened into the metadata and gives the architecture, `num_hidden_layers`, `hidden_size`, `num_attention_heads`, `num_key_value_heads`, `vocab_size`, `max_position_embeddings`, `intermediate_size` and `torch_dtype`. A multimodal config's `text_config` is lifted so the language model's geometry is found. Tensor bytes come from `data_offsets`.
 
+An MLX quantized checkpoint (a `quantization` block in `config.json`) packs several weights into each `U32` element and keeps a `.scales` and `.biases` tensor per module, one entry per group. Its parameter count is the scales' element count times `group_size` (a per-module entry in the block overrides it), the scales and biases count as storage only, and the quantization reads `MLX 4-bit` from the block's `bits`.
+
 ## Ollama models
 
 For provider `ollama` the hub asks Ollama's `/api/show` with `verbose`, which answers with the GGUF metadata as `model_info` and every tensor as `{name, type, shape}`. `from_ollama_show` turns that into the same structure, with the quantization from `details.quantization_level` and `modified_at` from the answer.
 
 An older Ollama lists no tensors. The layers are then drawn from `block_count` with no tensors in them, the size is estimated from the parameter count and the quantization's bits per weight and shared out evenly between the layers (after an embedding of vocabulary times hidden size), and `model.metadata.tensors_listed` is `false` so the page can say the proportions are an estimate.
 
-For provider `hub-local` the hub forwards to its own runtime, `GET {models_url}/models/{file}/structure` with the runtime's bearer token, and returns its answer unchanged.
+For provider `hub-local` the hub forwards to its runtime, `GET {runtime}/models/{file}/structure` with the runtime's bearer token, and returns its answer unchanged. The runtime is the one `AGENTS_HUB_MODELS_URL` names, else the one the hub runs itself (`runtime_settings()` in providers/local_models.py). The reader is part of the runtime's code stamp, so a changed reader marks the runtime stale and the hub restarts it once nothing is loaded.
 
 ## The block graph
 
@@ -57,7 +59,7 @@ The KV cache estimate assumes an f16 cache: per token it is layers times 2 (keys
 
 ## Routes
 
-- `GET /api/models/structure?provider=&model=`: the structure of an Ollama or hub-local model, or the card of a catalog model. The model is a query parameter because ids carry slashes and colons. 404 when Ollama or the catalog has no such model, 502 when a server cannot be reached, 503 when `hub-local` is asked for and no runtime is configured.
+- `GET /api/models/structure?provider=&model=`: the structure of an Ollama or hub-local model, or the card of a catalog model. The model is a query parameter because ids carry slashes and colons. 404 when Ollama or the catalog has no such model, 502 when a server cannot be reached, 503 when `hub-local` is asked for and no runtime is running.
 - `GET /api/models/structure/file?path=`: the structure of a file or safetensors directory on the host, for an operator. The path must lie under `models_dir` (when that setting exists) or `AGENTS_HUB_MODELS_DIR`; without either the route answers 403, and a path that escapes the directory, including through a symlink, is refused with 403. A relative path is taken relative to that directory.
 
 ## Gotchas

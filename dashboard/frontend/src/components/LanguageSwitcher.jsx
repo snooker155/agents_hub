@@ -4,9 +4,10 @@ import { useI18n, LANGUAGES } from '../i18n';
 
 /**
  * Interface language picker. Lives in the top bar right next to the theme
- * toggle and persists the choice in localStorage via the i18n provider.
+ * toggle and persists the choice in localStorage via the i18n provider. On a
+ * phone it sits at the foot of the menu instead, and opens upward (`up`).
  */
-const LanguageSwitcher = () => {
+const LanguageSwitcher = ({ up = false }) => {
   const { language, setLanguage, t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -34,7 +35,7 @@ const LanguageSwitcher = () => {
         <span>{current.short}</span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-40 py-1">
+        <div className={`absolute ${up ? 'left-0 bottom-full mb-1' : 'right-0 top-full mt-1'} bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-40 py-1`}>
           {LANGUAGES.map((lang) => (
             <button
               key={lang.code}

@@ -20,6 +20,8 @@ import { isExternalRun } from '../components/runOrigin';
 import { useI18n, statusLabel } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 // ---- helpers ----------------------------------------------------------------
 
 
@@ -80,10 +82,6 @@ function duration(started, finished) {
   return `${mins}m ${rem}s`;
 }
 
-// One window of runs per request. Large enough that the common case is a single
-// round-trip, small enough that the first paint never waits on a full table.
-const PAGE_SIZE = 200;
-
 // ---- Main page --------------------------------------------------------------
 
 export default function Messages() {
@@ -93,7 +91,6 @@ export default function Messages() {
 
   const [messages, setMessages]       = useState([]);
   const [totalMessages, setTotalMessages] = useState(0);
-  const [offset, setOffset]           = useState(0);
   const [agents, setAgents]           = useState([]);
   const [workspaces, setWorkspaces]   = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -123,13 +120,26 @@ export default function Messages() {
     ? 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_1fr_1fr_0.7fr_0.6fr_140px]'
     : 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_1fr_0.7fr_0.6fr_140px]';
 
-  // The backend filters and pages in SQL and answers {items, total, ...}; the
-  // page asks for one window at a time and grows it on demand, so a workspace
-  // with a hundred thousand runs costs the same first paint as an empty one.
+  // Sort keys the backend orders by (managers/runs/store.py RUN_SORTS); the
+  // workspace one only where the Workspace column is shown.
+  const sortKeys = [
+    'started', 'finished', 'status', 'agent', 'title', 'duration', 'tokens', 'channel',
+    ...(isDefaultWorkspace ? ['workspace'] : []),
+  ];
+  const paging = useListPaging('runs', {
+    sorts: sortKeys,
+    defaultSort: 'started',
+    resetOn: [effectiveWorkspace, filterAgent, filterStatus, filterFlow, filterChannel, filterFrom, filterTo],
+  });
+  const pageParams = paging.params;
+
+  // The backend filters, sorts and pages in SQL and answers {items, total, ...};
+  // the page asks for the one page on screen, so a workspace with a hundred
+  // thousand runs costs the same first paint as an empty one.
   const [refreshing, setRefreshing] = useState(false);
-  const fetchMessages = useCallback(async (nextOffset = 0, append = false) => {
+  const fetchMessages = useCallback(async () => {
     try {
-      const params = { limit: PAGE_SIZE, offset: nextOffset };
+      const params = { ...pageParams };
       if (effectiveWorkspace) params.workspace = effectiveWorkspace;
       if (filterAgent)  params.agent_id = filterAgent;
       if (filterStatus) params.status   = filterStatus;
@@ -141,15 +151,14 @@ export default function Messages() {
       const res = await getMessages(params);
       const data = res.data || {};
       const items = Array.isArray(data) ? data : (data.items || []);
-      setMessages(prev => (append ? [...prev, ...items] : items));
+      setMessages(items);
       setTotalMessages(Array.isArray(data) ? items.length : (data.total || 0));
-      setOffset(nextOffset);
     } catch (err) {
       console.error('Failed to load messages', err);
     } finally {
       setLoading(false);
     }
-  }, [effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo, filterFlow, filterChannel]);
+  }, [effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo, filterFlow, filterChannel, pageParams]);
 
   useEffect(() => {
     setFilterWorkspace(selectedWorkspace || '');
@@ -166,11 +175,11 @@ export default function Messages() {
 
   useEffect(() => {
     setLoading(true);
-    fetchMessages(0, false);
+    fetchMessages();
   }, [fetchMessages, liveUpdates]);
   // Coarse invalidations still arrive from bulk operations; a single run's
   // change comes as a delta below and patches its row without a refetch.
-  useLiveRefetch(() => fetchMessages(0, false), { type: 'runs.changed', enabled: liveUpdates });
+  useLiveRefetch(() => fetchMessages(), { type: 'runs.changed', enabled: liveUpdates });
   useStreamEvent('app', 'runs.delta', useCallback((ev) => {
     if (!liveUpdates || !Array.isArray(ev.items)) return;
     setMessages(prev => {
@@ -292,7 +301,7 @@ export default function Messages() {
             {t('messages.deleteSelected')}
           </button>
           <button
-            onClick={() => { setRefreshing(true); fetchMessages(0, false).finally(() => setRefreshing(false)); }}
+            onClick={() => { setRefreshing(true); fetchMessages().finally(() => setRefreshing(false)); }}
             disabled={refreshing}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-60"
           >
@@ -309,7 +318,7 @@ export default function Messages() {
             <div className="flex-1 min-w-[160px]">
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('messages.workspace')}</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
                 value={filterWorkspace}
                 onChange={e => setFilterWorkspace(e.target.value)}
               >
@@ -324,7 +333,7 @@ export default function Messages() {
           <div className="flex-1 min-w-[160px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('messages.agent')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterAgent}
               onChange={e => setFilterAgent(e.target.value)}
             >
@@ -338,7 +347,7 @@ export default function Messages() {
           <div className="flex-1 min-w-[140px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('messages.status')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
             >
@@ -352,7 +361,7 @@ export default function Messages() {
           <div className="flex-1 min-w-[140px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('messages.type')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterFlow}
               onChange={e => setFilterFlow(e.target.value)}
             >
@@ -365,7 +374,7 @@ export default function Messages() {
           <div className="flex-1 min-w-[140px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('messages.channel')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterChannel}
               onChange={e => setFilterChannel(e.target.value)}
             >
@@ -381,7 +390,7 @@ export default function Messages() {
             <DateInput
               mode="datetime"
               valueFormat="iso"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterFrom}
               onChange={setFilterFrom}
             />
@@ -392,11 +401,13 @@ export default function Messages() {
             <DateInput
               mode="datetime"
               valueFormat="iso"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterTo}
               onChange={setFilterTo}
             />
           </div>
+
+          <ListPagingControls paging={paging} options={sortKeys} />
 
           {hasFilters && (
             <button
@@ -420,7 +431,7 @@ export default function Messages() {
 
       {/* Messages list */}
       <div className="space-y-4">
-        {loading ? (
+        {loading && !messages.length ? (
           <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : messages.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
@@ -436,7 +447,7 @@ export default function Messages() {
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                 />
               </div>
               <div>{t('messages.message')}</div>
@@ -466,7 +477,7 @@ export default function Messages() {
                       checked={!!selectedIds[msg.run_id]}
                       onChange={() => toggleSelectRow(msg.run_id)}
                       onClick={e => e.stopPropagation()}
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                     />
                   </div>
 
@@ -477,7 +488,7 @@ export default function Messages() {
                         checked={!!selectedIds[msg.run_id]}
                         onChange={() => toggleSelectRow(msg.run_id)}
                         onClick={e => e.stopPropagation()}
-                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                       />
                     </div>
                     <div className="font-medium text-gray-900 truncate">
@@ -553,24 +564,11 @@ export default function Messages() {
                 </div>
               ))}
             </div>
-            {messages.length < totalMessages && (
-              <button
-                type="button"
-                onClick={() => fetchMessages(offset + PAGE_SIZE, true)}
-                className="w-full py-2.5 text-sm text-indigo-600 hover:bg-indigo-50 border-t border-gray-100"
-              >
-                {t('messages.loadMore', { count: totalMessages - messages.length })}
-              </button>
-            )}
           </div>
         )}
       </div>
 
-      {!loading && messages.length > 0 && (
-        <p className="text-xs text-gray-400 text-right">
-          {t('messages.shownOfTotal', { shown: messages.length, total: totalMessages })}
-        </p>
-      )}
+      <ListLoadMore paging={paging} shown={messages.length} total={totalMessages} loading={loading} />
     </PageContainer>
   );
 }

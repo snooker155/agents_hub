@@ -20,8 +20,31 @@ and `tools/special_models.py` (the tools).
 
 "OpenAI compatible" covers Ollama, LM Studio and a custom backend with the
 openai adapter (Settings, custom providers): a local Stable Diffusion behind
-LocalAI or a whisper server answers the same calls. Anthropic has no image,
+LocalAI or a whisper server answers the same calls. The hub's own runtime
+(provider "Hub runtime", `hub-local`) runs open speech and transcription
+models downloaded from Hugging Face: Whisper, Piper, Kokoro, Kitten and Supertonic; see
+[local models](local-models.md#speech-models). For it the form suggests no
+cloud model names, and the voice field offers the chosen model's own voices. Anthropic has no image,
 video or audio models, so it is not offered for these purposes.
+
+**Voices.** Picking or typing a speech model asks for its voices at once, no
+search needed: the runtime reads a model's own from its files (Kokoro's,
+Kitten's and Supertonic's sets, a Piper model's speakers; a single-speaker Piper model has one voice and the
+field says so), any other provider gets the voices known for its API shape.
+The field is then a list, with the language of each voice that speaks one
+(Kokoro's name prefix, Piper's locale in the model id, English for Kitten;
+Supertonic's voices read every language it knows), and "model default"
+first. **Listen**, next to it, plays a short line with the chosen voice, saved
+or not: in the voice's own language, else in the page's (OpenAI's and
+Google's voices speak any); 13 languages have a line, others hear English. A
+cloud model charges a fraction of a cent for it, not counted on a run.
+Writers only. API: `GET /api/workspaces/{name}/special-models/voices?provider=&model=`
+answers `{voices, own, language, languages}`; `POST
+/api/workspaces/{name}/special-models/sample` with `{provider, model, voice,
+options, language}` (no provider: the workspace's own model) answers the
+audio, the line in `X-Sample-Text` (URL-encoded) and its language in
+`X-Sample-Language`. The assistant page's voice picker has the same button
+(`POST /api/assistant/voice-sample`, charged as a `voice` run).
 
 ## How an agent knows
 
@@ -55,7 +78,38 @@ field suggests known ids and accepts any), a price and the purpose's options
 (size and quality for images, default length for video, voice and format for
 speech, language for transcription). A workspace uses only the models it
 added itself: nothing comes from `default` or any other workspace, and a
-purpose left empty is shown as not added. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
+purpose left empty is shown as not added. The one exception is a
+[personal workspace](identity.md#personal-workspace): for a purpose it left
+empty it uses `default`'s model, called with `default`'s connection settings,
+and the form shows that purpose as "From default". Custom models are never
+inherited. The price of an inherited call is charged to the run, so to the
+personal workspace and the person, not to `default`. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
+
+**Find at provider**, next to the model field, asks the chosen provider for
+its model list (with the workspace's own key where it sets one) and keeps
+only the models that fit the purpose: speech models for speech, image models
+for images and so on. Gemini lists say which methods a model supports
+(`predict` for Imagen, `predictLongRunning` for Veo); the OpenAI shape, local
+servers and custom backends list bare ids, so there the id decides
+(`gpt-image`, `dall-e`, `sora`, `tts`, `whisper`, `transcribe`, `flux`,
+`kokoro` and the like), and embeddings, realtime and live models are left out.
+A model the filter misses can still be typed in. Nothing is stored by a search.
+API: `GET /api/workspaces/{name}/special-models/discover?purpose=&provider=`.
+
+**Check connection** shows under a purpose once it has a provider and a
+model (or inherits one), and on each custom model. It checks what the form
+holds, saved or not, and never runs the model, so nothing is charged: a
+provider is asked for its model list with the workspace's settings and the
+model must be on it (a model that is listed but does not look like the
+purpose's, say a chat model for speech, is a warning). A custom chat model is
+looked up the same way, Anthropic included. An HTTP model is sent a `GET`
+with its headers (the stored token where the form holds the mask): any answer
+proves the address, 401 or 403 means the token was refused, 404 means a
+wrong path. Each request waits at most 15 seconds. Writers only, since it
+sends requests to the address typed in. API:
+`POST /api/workspaces/{name}/special-models/check` with
+`{"purpose", "provider", "model"}` or `{"custom": {...}}`; the answer is
+`{"status": "ok" | "warn" | "error", "message", "elapsed_ms"}`.
 
 Keys are the provider keys from Settings, or the workspace's own key override
 where it sets one. An HTTP model takes headers; put a token in a workspace
@@ -89,6 +143,11 @@ model of your own is also priced by its tokens from the catalog. The run's
 money cap is charged at once, and a call it cannot pay for is refused before
 it is made. In a workspace whose budget is fail closed, a purpose with no
 price is refused too, the same rule as an unpriced chat model.
+
+The [assistant](assistant.md#voice) uses the speech and transcription models
+of the person's home workspace without a tool: it transcribes what the person
+says and reads its answers aloud, at the same prices. Transcription is recorded
+as a `voice` run of its own, speech on the turn's run (`voice_calls`).
 
 ## Capabilities
 

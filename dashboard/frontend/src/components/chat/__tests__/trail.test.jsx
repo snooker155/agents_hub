@@ -190,3 +190,31 @@ describe('delegated run events', () => {
     expect(live).toMatchObject({ running: false, ok: true, output: 'Done: v1' });
   });
 });
+
+describe('tool call outcome', () => {
+  const turn = () => {
+    let convs = [{ id: 'c1', messages: [{ id: 'a1', role: 'agent', run_id: 'r1', timeline: [] }] }];
+    let insights = { message_runs: [{ run_id: 'r1', tools: [] }] };
+    const ctx = {
+      convId: 'c1', assistantId: 'a1', isFlowMode: false, state: {},
+      setConversations: (fn) => { convs = fn(convs); },
+      setProcessInsights: (fn) => { insights = fn(insights); },
+    };
+    return { ctx, timeline: () => convs[0].messages[0].timeline, tools: () => insights.message_runs[0].tools };
+  };
+
+  it('closes a call that raised as an error instead of leaving it running', () => {
+    const { ctx, timeline, tools } = turn();
+    handleAgentEvent({ type: 'tool_start', step: 1, tool: 'read_file', input: 'a' }, ctx);
+    handleAgentEvent({ type: 'tool_error', tool: 'read_file', error: 'no such file', status: 'error' }, ctx);
+    expect(timeline()[0]).toMatchObject({ running: false, error: true, status: 'error', output: 'ERROR: no such file' });
+    expect(tools()[0]).toMatchObject({ running: false, status: 'error' });
+  });
+
+  it('keeps the status a finished call came back with', () => {
+    const { ctx, timeline } = turn();
+    handleAgentEvent({ type: 'tool_start', step: 1, tool: 'read_file', input: 'a' }, ctx);
+    handleAgentEvent({ type: 'tool_end', step: 1, tool: 'read_file', output: '{"ok": false}', status: 'error' }, ctx);
+    expect(timeline()[0]).toMatchObject({ running: false, status: 'error' });
+  });
+});

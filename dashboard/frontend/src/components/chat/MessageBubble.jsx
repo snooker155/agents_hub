@@ -27,7 +27,7 @@ import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
 import LiveMark from '../liveMark/LiveMark';
 import { stateForTurn } from '../liveMark/activity';
-import { Bot, User } from 'lucide-react';
+import { Bot, Mic, User } from 'lucide-react';
 
 function WorkingDots({ label }) {
   return (
@@ -68,8 +68,14 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
           <User className="w-4 h-4" />
         </div>
-        <div data-prompt-bubble className="chat-prompt-bubble max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
+        <div data-prompt-bubble className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
+          {/* Said aloud to the Assistant: the line is its transcript. */}
+          {msg.voice && (
+            <span className="mt-1 flex items-center gap-1 text-[11px] text-indigo-100" data-testid="spoken-caption">
+              <Mic className="w-3 h-3" /> {t('chat.assistantThread.spoken')}
+            </span>
+          )}
           {caption && (
             <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
               {msg.steer.mode === 'system' && <span className="font-semibold mr-1">{t('steering.systemTag')}</span>}
@@ -112,6 +118,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
       waiting: !!waitingOn,
       thinking: !!liveThought,
       tool: runningTool,
+      input: activity?.kind === 'tool' ? activity.input : undefined,
       text: !!text,
     })
     : null;
@@ -139,7 +146,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
 
       {/* Bubble */}
       <div
-        className={`max-w-[72%] min-w-0 text-base leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm
+        className={`max-w-[88%] sm:max-w-[72%] min-w-0 text-base leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm
           ${msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
         {liveDelegation ? <LiveDelegation key={liveDelegation.run_id} entry={liveDelegation} /> : null}

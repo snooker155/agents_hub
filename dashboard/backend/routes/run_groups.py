@@ -1,7 +1,7 @@
 """
 Run groups API — one view over flows, loops, teams and task containers.
 
-``GET  /api/runs/groups``                 list groups (``?kind=``, ``?workspace=``)
+``GET  /api/runs/groups``                 list groups (``?kind=``, ``?workspace=``, ``?sort=``, ``?offset=``)
 ``GET  /api/runs/groups/{kind}/{id}``     one group
 ``POST /api/runs/groups/{kind}/{id}/stop``  stop it
 
@@ -27,30 +27,55 @@ from managers.runs import groups as run_groups
 router = APIRouter(prefix="/api/runs/groups", tags=["run-groups"])
 
 
+# How many groups of each kind the list reads before it sorts and pages. The
+# stores keep their own records and none of them can order by cost or title in
+# a query, so the page is cut from this window; ``total`` counts the window.
+GROUP_SCAN = 500
+
+
 @router.get("")
 async def list_run_groups(
     request: Request,
     kind: Optional[str] = None,
     workspace: Optional[str] = None,
     limit: int = 50,
+    offset: int = 0,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ):
-    """List run groups, newest first. Without ``kind`` all four are returned,
-    each capped at ``limit`` so one busy kind cannot crowd out the others.
+    """A window of run groups (``limit`` up to 2000, as for the runs list),
+    newest first unless ``sort`` names another key
+    of ``managers.runs.groups.GROUP_SORTS`` (``order`` is ``asc``/``desc``).
+
+    Returns ``{groups, total, limit, offset, kinds}``. Up to
+    :data:`GROUP_SCAN` groups of each kind are read, merged, sorted and then
+    paged, so one busy kind cannot crowd out the others.
 
     A request naming no workspace is otherwise open to any signed-in account
     (common/auth.py authorize()); the list is additionally narrowed here to
     groups whose own workspace the caller can see, a no-op outside ``multi``
     mode. See common/access.py.
     """
+    limit = max(1, min(int(limit), 2000))
+    offset = max(0, int(offset))
     try:
-        found = run_groups.list_groups(kind=kind, workspace=workspace, limit=limit)
+        found = run_groups.list_groups(kind=kind, workspace=workspace,
+                                       limit=max(GROUP_SCAN, offset + limit))
+        found = run_groups.sort_groups(found, sort, order)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     principal = identity.request_principal(request)
     visible = access.visible_workspaces(principal)
     if visible is not None:
         found = [g for g in found if access.can_see_workspace(principal, g.workspace)]
-    return {"groups": [g.to_dict() for g in found], "kinds": list(run_groups.KINDS)}
+    page = found[offset:offset + limit]
+    return {
+        "groups": [g.to_dict() for g in page],
+        "total": len(found),
+        "limit": limit,
+        "offset": offset,
+        "kinds": list(run_groups.KINDS),
+    }
 
 
 @router.get("/{kind}/{group_id}")

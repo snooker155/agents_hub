@@ -226,3 +226,18 @@ def test_route_messages_skip_runs_that_were_deleted(client):
     assert [m["run_id"] for m in messages] == [kept]
     # The count still reports what the session references, as it always has.
     assert client.get(f"/api/sessions/{sid}").json()["message_count"] == 2
+
+
+def test_query_contexts_sorts_by_title_and_message_count():
+    quiet = ss.get_or_create_task_session(title="Bravo", workspace="ws-sort", task_id="SORT-1")
+    busy = ss.get_or_create_task_session(title="alpha", workspace="ws-sort", task_id="SORT-2")
+    for rid in ("r-1", "r-2"):
+        ss.add_run_to_session(busy, rid)
+    ss.add_run_to_session(quiet, "r-3")
+
+    by_title = ss.query_contexts(workspace="ws-sort", sort="title", order="asc")["items"]
+    assert [c["session_id"] for c in by_title] == [busy, quiet]
+    by_count = ss.query_contexts(workspace="ws-sort", sort="messages", order="asc")["items"]
+    assert [c["session_id"] for c in by_count] == [quiet, busy]
+    with pytest.raises(ValueError):
+        ss.query_contexts(workspace="ws-sort", sort="nope")

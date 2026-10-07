@@ -25,7 +25,7 @@ export default {
   keySet: 'gesetzt',
   keyMissing: 'nicht gesetzt',
   apiAuth: 'API-Auth',
-  agentCache: 'Agent-Build-Cache',
+  agentCache: 'Wiederverwendung von Agenten-Builds',
   on: 'an',
   off: 'aus',
   agentChat: 'Den Service Agent fragen',

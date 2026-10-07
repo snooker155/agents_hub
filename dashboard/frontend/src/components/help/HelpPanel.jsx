@@ -151,10 +151,10 @@ export default function HelpPanel() {
         aria-label={t('help.open')}
         aria-expanded={open}
         aria-controls={PANEL_ID}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+        className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
       >
         <CircleQuestionMark className="w-4 h-4" strokeWidth={2.25} />
-        <span>{t('help.button')}</span>
+        <span className="hidden sm:inline">{t('help.button')}</span>
       </button>
 
       {open && (
@@ -164,7 +164,7 @@ export default function HelpPanel() {
           role="dialog"
           aria-modal="false"
           aria-labelledby={`${PANEL_ID}-title`}
-          className={`fixed inset-y-0 right-0 z-50 flex flex-col bg-white border-l border-gray-200 shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
+          className={`fixed inset-y-0 right-0 z-50 flex flex-col pt-safe pb-safe bg-white border-l border-gray-200 shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
         >
           <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
             <CircleQuestionMark className="w-5 h-5 text-indigo-600 shrink-0" strokeWidth={2.25} />

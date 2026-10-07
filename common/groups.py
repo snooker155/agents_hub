@@ -286,6 +286,9 @@ def add_mapping(group_name: str, *, target: str, role: str,
         workspace = (workspace or "").strip()
         if not workspace:
             raise ValueError("a workspace mapping needs a workspace")
+        from common import personal_workspace
+        if personal_workspace.is_reserved_name(workspace) or personal_workspace.is_personal(workspace):
+            raise ValueError("a personal workspace cannot be granted to a group")
     now = _now()
     with db.transaction() as conn:
         conn.execute(

@@ -859,8 +859,10 @@ class ToolGuard:
         if mode == policy.AUTO:
             return self._auto(call, description, policy_denied_text)
 
-        # always_ask, from the policy or from the approval list.
-        reason = (
+        # always_ask, from the policy or from the approval list. A tool that
+        # can say what this call would do puts that sentence on the card.
+        from tools.approval import describe_call
+        reason = describe_call(tool_id, call.input) or (
             f"`{tool_id}` is on this workspace's approval list."
             if source == policy.SOURCE_APPROVAL_LIST
             else f"The tool policy asks a person before `{tool_id}` runs."

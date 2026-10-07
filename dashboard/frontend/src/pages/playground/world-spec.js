@@ -12,7 +12,7 @@
 
 export const inputClass =
   'w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:outline-none '
-  + 'focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400';
+  + '';
 
 /** Comparisons a condition may make. No expressions — a condition is a triple. */
 export const OPERATORS = ['==', '!=', '>', '>=', '<', '<=', 'contains'];

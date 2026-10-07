@@ -226,7 +226,14 @@ def _entity_turn(instance_id: str, instance: Dict[str, Any], args: Dict[str, Any
                         "model": model, "run_id": run_id})
         stop_cb = RunStopCallback(run_id)
         state["stop"] = stop_cb
-        task = asyncio.create_task(agent.arun(prompt, callbacks=[callback, stop_cb], run_id=run_id))
+        # The stream emitter on the context the task copies, as in the backend
+        # (chat/entity_chat.py): approval and connection cards reach the stream.
+        from common import stream_sink
+        _stream_token = stream_sink.set_emitter(callback.emit_external)
+        try:
+            task = asyncio.create_task(agent.arun(prompt, callbacks=[callback, stop_cb], run_id=run_id))
+        finally:
+            stream_sink.reset_emitter(_stream_token)
 
         async def _pump() -> None:
             while True:

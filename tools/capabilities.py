@@ -48,6 +48,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
+    "hub_action",
     # The system workspace's repository copy (tools/system_ops.py): a commit,
     # a written task result and a branch deletion have each already happened.
     "system_commit", "system_attach_patch", "system_prune_branches",
@@ -204,6 +205,18 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "web_log_recent": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "list_instances": frozenset({READS_PRIVATE}),
     "list_sessions": frozenset({READS_PRIVATE}),
+    # The assistant's lookup over the hub's records (chat/lookup.py): runs,
+    # sessions, spend, tasks and the rest as metadata, never a run's answer,
+    # a log or a chat's messages, so it reads private data without ingesting
+    # untrusted text and can sit beside notify_user.
+    "hub_lookup": frozenset({READS_PRIVATE}),
+    # The administrator's service-wide lookup: users, the audit trail, health,
+    # containers, settings without secrets, web log hosts. Metadata as well.
+    "service_lookup": frozenset({READS_PRIVATE}),
+    # The assistant's past conversations with the person
+    # (tools/assistant_conversations.py): titles and the person's own
+    # messages in their own thread, never an answer or a tool's output.
+    "assistant_conversations": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
 
     # ── system workspace (tools/system_ops.py) ───────────────────────────────
@@ -551,6 +564,9 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # run_diagnostics (common/doctor.py) returns check statuses, counts and
     # one sentence summaries, the same class of metadata as service_health.
     "run_diagnostics",
+    # hub_action (chat/actions.py) stops, pauses or resumes one record after a
+    # person's yes on its card; it returns the new state, nothing read.
+    "hub_action",
 
     # ── system workspace: the repository copy ────────────────────────────────
     # system_repo_sync fetches the local repository into the local copy and

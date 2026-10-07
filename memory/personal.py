@@ -15,7 +15,8 @@ Everything is configured per workspace, in its metadata::
 workspace at all. Off, every agent has it off and the per-agent switches
 cannot be changed. ``agents`` holds each agent's explicit on or off. An agent
 missing from it is off, except the workspace's main agent (its default chat
-agent), which is on until someone turns it off. When the main agent changes,
+agent) and the assistant (:data:`ALWAYS_ON_BY_DEFAULT`), which are on until
+someone turns them off. When the main agent changes,
 the new one is turned on and the old one keeps what it had
 (:func:`main_agent_changed`). Workers, evaluators and agents that read
 untrusted pages stay off unless someone turns them on: an injected instruction
@@ -50,6 +51,12 @@ METADATA_KEY = "personal_memory"
 
 _NAMESPACE = uuid.UUID("5d8c3a2e-6f0b-4c1e-9a57-2b6e1f0c9d41")
 _lock = threading.Lock()
+
+
+#: Agents that have personal memory on until someone turns it off, in every
+#: workspace, besides its main agent: the service's assistant
+#: (routes/assistant.py) is a person's own assistant wherever it runs.
+ALWAYS_ON_BY_DEFAULT = ("assistant",)
 
 
 class PersonalMemoryDisabled(RuntimeError):
@@ -111,6 +118,8 @@ def agent_settings(workspace: Optional[str]) -> Dict[str, Any]:
     agents = dict(config["agents"])
     if main and main not in agents:
         agents[main] = True
+    for agent_id in ALWAYS_ON_BY_DEFAULT:
+        agents.setdefault(agent_id, True)
     return {"workspace": ws, "enabled": config["enabled"], "main_agent": main, "agents": agents}
 
 

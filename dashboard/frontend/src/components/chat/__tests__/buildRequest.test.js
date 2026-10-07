@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  truncateTitle, buildAttachmentLine, buildHistoryPayload,
+  truncateTitle, buildAttachmentLine, buildHistoryPayload, historyWindowStart,
   resolveConversationTitle, buildStreamRequestBody,
 } from '../send/buildRequest';
 
@@ -75,6 +75,15 @@ describe('buildHistoryPayload', () => {
     expect(out).toHaveLength(40);
     expect(out[0].content).toBe('m10');
     expect(out[39].content).toBe('m49');
+  });
+
+  it('moves the window start in steps so the prompt start stays put', () => {
+    const turns = (n) => Array.from({ length: n }, (_, i) => ({ role: 'user', content: `m${i}` }));
+    // 41 to 50 messages all start at m10; 51 starts at m20.
+    for (const n of [41, 45, 50]) expect(buildHistoryPayload(turns(n))[0].content).toBe('m10');
+    expect(buildHistoryPayload(turns(51))[0].content).toBe('m20');
+    expect(buildHistoryPayload(turns(51))).toHaveLength(31);
+    expect(historyWindowStart(30)).toBe(0);
   });
 
   it('survives an empty/missing list', () => {

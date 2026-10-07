@@ -16,6 +16,7 @@ holds the common pieces once:
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Any, Dict, List, Optional
@@ -42,6 +43,29 @@ def content_text(content: Any) -> str:
                     parts.append(block["text"])
         return "".join(parts)
     return ""
+
+
+def tool_status(output: Any) -> str:
+    """``"error"`` when a finished tool call failed, ``"ok"`` otherwise.
+
+    A call fails when the tool raised (LangChain then hands back a ToolMessage
+    with ``status="error"``), returned the ``{"ok": false, ...}`` envelope
+    (tools/_json.py), or answered with a bare ``Error:`` line.
+    """
+    if getattr(output, "status", None) == "error":
+        return "error"
+    content = getattr(output, "content", output)
+    text = (content if isinstance(content, str) else content_text(content)).lstrip()
+    if text.startswith(("ERROR:", "Error:")):
+        return "error"
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return "ok"
+        if isinstance(data, dict) and data.get("ok") is False:
+            return "error"
+    return "ok"
 
 
 def token_text(token: Any, chunk: Any = None) -> str:
@@ -470,17 +494,19 @@ class StatsCollectorCallback(BaseCallbackHandler):
     def on_tool_end(self, output, **_):
         output_full = str(output)
         if self._pending_tool is not None:
-            entry = self._with_verdict({**self._pending_tool, "output": output_full})
+            entry = self._with_verdict({**self._pending_tool, "output": output_full,
+                                        "status": tool_status(output)})
             from agents.tool_spill import spill_fields  # the file a long result went to
             entry.update(spill_fields(output_full))
-            self._mark_tool(entry, ok=True)
+            self._mark_tool(entry, ok=entry["status"] == "ok")
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
             self._emit_tool_end(entry)
 
     def on_tool_error(self, error, **_):
         if self._pending_tool is not None:
-            entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}"})
+            entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}",
+                                        "status": "error"})
             self._mark_tool(entry, ok=False)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None

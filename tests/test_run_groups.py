@@ -340,3 +340,20 @@ def test_a_flow_groups_cost_includes_the_runs_nested_inside_it():
 
     assert run_groups.group_cost("flow", "fr-child") == pytest.approx(2.0)
     assert run_groups.group_cost("flow", "fr-parent") == pytest.approx(3.0)
+
+
+def test_the_route_sorts_and_pages_the_merged_list(client):
+    _a_flow_run("fr-a", workspace="ws")
+    _a_flow_run("fr-b", workspace="ws")
+    _a_team_run()
+
+    by_kind = client.get("/api/runs/groups", params={"sort": "kind", "order": "asc"}).json()
+    assert [g["kind"] for g in by_kind["groups"]] == ["flow", "flow", "team"]
+    assert by_kind["total"] == 3
+
+    page = client.get("/api/runs/groups", params={"sort": "kind", "order": "asc",
+                                                  "limit": 1, "offset": 2}).json()
+    assert [g["kind"] for g in page["groups"]] == ["team"]
+    assert page["total"] == 3 and page["offset"] == 2
+
+    assert client.get("/api/runs/groups", params={"sort": "nope"}).status_code == 400

@@ -16,6 +16,7 @@ browser is still holding from before this existed.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field
 from common import access, chat_store, identity, live_runs
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
+log = logging.getLogger(__name__)
 
 
 def _chat_visible(principal, chat: Dict[str, Any]) -> bool:
@@ -101,7 +103,65 @@ async def list_chats(
     page = chat_store.list_chats(workspace=workspace, limit=limit, offset=offset)
     principal = identity.request_principal(request)
     items = [c for c in page["items"] if _chat_visible(principal, c)]
+    # The caller's conversations with the Assistant, as text and read only,
+    # on the first page and in the same newest-first order.
+    if offset == 0:
+        threads = _assistant_threads(workspace)
+        if threads:
+            items = sorted(items + threads, reverse=True,
+                           key=lambda c: str(c.get("updated_at") or c.get("created_at") or ""))
     return {**page, "items": items}
+
+
+def _assistant_threads(workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The caller's assistant threads for the list. Each stays in the
+    workspace it started in: a workspace shows its own, ``default`` (or no
+    workspace) shows them all, each naming its workspace."""
+    try:
+        from routes.assistant import chat_threads
+        threads = chat_threads()
+    except Exception:  # noqa: BLE001 - the Chat page's own list stands without them
+        log.warning("chats: could not list the assistant threads", exc_info=True)
+        return []
+    if not workspace or workspace == "default":
+        return threads
+    return [t for t in threads if t.get("workspace") == workspace]
+
+
+def _assistant_thread(chat_id: str) -> Optional[Dict[str, Any]]:
+    from routes.assistant import CHAT_ID_PREFIX, chat_thread
+    if not chat_id.startswith(CHAT_ID_PREFIX):
+        return None
+    thread = chat_thread(chat_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return thread
+
+
+def _refuse_assistant_write(chat_id: str) -> None:
+    from routes.assistant import CHAT_ID_PREFIX
+    if chat_id.startswith(CHAT_ID_PREFIX):
+        raise HTTPException(status_code=409, detail={
+            "code": "read_only",
+            "message": "A conversation with the Assistant is continued or cleared on the Assistant page."})
+
+
+@router.get("/running")
+async def list_running_chats(request: Request):
+    """The stored conversations the caller can see that are being answered now.
+
+    Whoever started the turn: this tab, another tab or device, Telegram, an
+    agent writing to its inbox. The Chat page marks them in its list and asks
+    again on every ``chat_turns.changed`` (chat/broadcast.py
+    announce_running_change).
+    """
+    principal = identity.request_principal(request)
+    running = []
+    for chat_id in dict.fromkeys(live_runs.running_conversations()):
+        chat = chat_store.get_chat(chat_id)
+        if chat is not None and _chat_visible(principal, chat):
+            running.append(chat_id)
+    return {"conversations": running}
 
 
 @router.get("/{chat_id}/live")
@@ -125,6 +185,9 @@ async def get_live_turn(chat_id: str, request: Request):
 @router.get("/{chat_id}")
 async def get_chat(chat_id: str, request: Request):
     """One conversation with its full transcript."""
+    thread = _assistant_thread(chat_id)
+    if thread is not None:
+        return thread
     chat = chat_store.get_chat(chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -145,6 +208,7 @@ async def save_chat(request: Request, chat_id: str, payload: ChatIn,
     """
     if payload.id != chat_id:
         raise HTTPException(status_code=400, detail="Chat id mismatch")
+    _refuse_assistant_write(chat_id)
     # Replacing a conversation is gated like reading it: somebody who cannot
     # see another person's chat cannot overwrite it by knowing its id either.
     existing = chat_store.get_chat(chat_id)
@@ -173,6 +237,7 @@ async def _announce_save(chat_id: str, origin_client: Optional[str]) -> None:
 @router.delete("/{chat_id}")
 async def delete_chat(chat_id: str, request: Request):
     """Drop one conversation. Its runs stay in the ledger."""
+    _refuse_assistant_write(chat_id)
     chat = chat_store.get_chat(chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail="Chat not found")

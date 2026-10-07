@@ -117,6 +117,12 @@ same thing in your browser, with nothing to install.
 
 <table>
 <tr>
+<td colspan="2"><a href="site/public/screenshots/dark/assistant.png"><img src="site/public/screenshots/dark/assistant.png" alt="The Assistant page, the live mark over the latest answer, the talk button and the transcript beside it"></a></td>
+</tr>
+<tr>
+<td colspan="2"><b>Assistant.</b> The whole service through one agent, by voice or text: hold the button and speak, hear the first paragraph of the answer, and open the pages it links beside the conversation.</td>
+</tr>
+<tr>
 <td width="50%"><a href="site/public/screenshots/dark/agents.png"><img src="site/public/screenshots/dark/agents.png" alt="The Agents page, a grid of agent cards with their tools, instances, services and sessions"></a></td>
 <td width="50%"><a href="site/public/screenshots/dark/chat.png"><img src="site/public/screenshots/dark/chat.png" alt="The Chat page, a recorded conversation with the demo analyst, and the Process, Artifacts and Code panels"></a></td>
 </tr>

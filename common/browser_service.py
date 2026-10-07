@@ -323,6 +323,9 @@ def start_local(token: str, port: int) -> Dict[str, Any]:
     env = dict(os.environ)
     env.update({"BROWSER_TOKEN": token, "BROWSER_PORT": str(int(port)), "BROWSER_HOST": "127.0.0.1",
                 "PYTHONUNBUFFERED": "1"})
+    # policy.py falls back to common.ssrf outside the image (where it is copied
+    # in as hub_ssrf.py), so the repository root has to be importable.
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(PROJECT_ROOT), env.get("PYTHONPATH", "")) if p)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     handle = open(LOG_FILE, "ab")  # noqa: SIM115 - handed to the child
     handle.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} start on port {port}\n".encode())

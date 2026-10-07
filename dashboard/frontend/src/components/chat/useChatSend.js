@@ -1,5 +1,5 @@
 import { genId } from './turnState';
-import { streamChat } from '../../api';
+import { stopMessage, streamChat } from '../../api';
 import { targetId } from './targets';
 import { EMPTY_GRAPH_RUN } from '../graphRun';
 import { useCallback } from 'react';
@@ -9,6 +9,25 @@ import { handleAgentEvent } from './send/handleAgentResponse';
 import { handleFlowEvent } from './send/handleFlowResponse';
 import { handleTeamEvent } from './send/handleTeamResponse';
 import { mapSendError, noStreamPatch } from './send/errors';
+import { DETACHED, streamChatOverChannel } from './send/channelStream';
+import { claimTurn, releaseTurn } from '../chatLiveTurn';
+
+// How long a turn followed over its own streaming response stays claimed after
+// the response ends: its last events reach the channel after the response
+// body, and must still count as this tab's echo.
+const ECHO_GRACE_MS = 5000;
+
+// What a stored conversation talks to, for a turn sent to it while another
+// one is open (the page's pickers show the open one's).
+function targetOf(conv) {
+  const targetMode = conv?.target_mode || (conv?.team_id ? 'team' : conv?.flow_id ? 'flow' : 'agent');
+  return {
+    targetMode,
+    selectedAgent: conv?.agent_id || '',
+    selectedFlow: conv?.flow_id || '',
+    selectedTeam: conv?.team_id || '',
+  };
+}
 
 /**
  * Sending a turn.
@@ -24,49 +43,68 @@ import { mapSendError, noStreamPatch } from './send/errors';
  * split by which of the three targets it's answering), and errors. This file
  * is just the wiring: it stays a single `sendMessage` that calls those stages
  * in order, so behaviour is unchanged.
+ *
+ * A turn belongs to its conversation, not to the page (./useChatTurns.js):
+ * several conversations can be answering at once. The page-wide panels
+ * (Process, the graph mirror, artifacts, the session stream) follow only the
+ * conversation that is open, so a turn running behind another chat records
+ * its run and session on its own entry and leaves those panels alone.
+ *
+ * `sendMessage(text, {convId})` sends to a conversation other than the open
+ * one (a message that waited for that conversation's turn to end); it talks
+ * to whatever that conversation talks to and leaves the composer as it is.
  */
 export function useChatSend(deps) {
   const {
-    abortCtrlRef, clientId, conversations, currentConvId, input, loadProcessData, loading,
-    mergeArtifact, navigate, pendingAttachments, pendingReferences, processOpen,
-    selectCommand, selectedAgent, selectedFlow, selectedProject, selectedTeam,
-    selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
-    setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments,
-    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, t, targetMode,
-    textareaRef,
+    beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
+    pendingReferences, processOpen, selectCommand, selectedAgent, selectedFlow, selectedProject,
+    selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
+    setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences,
+    setProcessInsights, setSelectedAgent, setSessionId, stream, t, targetMode, textareaRef,
   } = deps;
 
   // ---- send message ----
-  const sendMessage = useCallback(async (overrideText) => {
+  const sendMessage = useCallback(async (overrideText, { convId: toConvId = null } = {}) => {
+    const background = Boolean(toConvId && toConvId !== currentConvId);
+    const backgroundConv = background ? conversations.find((c) => c.id === toConvId) : null;
+    if (background && !backgroundConv) return;
+    const target = background
+      ? targetOf(backgroundConv)
+      : { targetMode, selectedAgent, selectedFlow, selectedTeam };
     // Button clicks call this with their value; the onClick handler passes a
     // SyntheticEvent, so only honour an explicit string override.
     const text = (typeof overrideText === 'string' ? overrideText : input).trim();
-    const hasAttachments = pendingAttachments.length > 0;
-    const hasReferences = pendingReferences.length > 0;
-    const isFlowMode = targetMode === 'flow';
-    const isTeamMode = targetMode === 'team';
+    // The composer's attachments belong to the open conversation.
+    const attachments = background ? [] : pendingAttachments;
+    const references = background ? [] : pendingReferences;
+    const isFlowMode = target.targetMode === 'flow';
+    const isTeamMode = target.targetMode === 'team';
     // Flows and teams both answer with several bubbles rather than one streamed
     // reply, so the single-assistant-bubble path is skipped for both.
     const isMultiAgent = isFlowMode || isTeamMode;
-    if ((!text && !hasAttachments && !hasReferences) || loading) return;
-    if (!targetId(targetMode, { selectedAgent, selectedFlow, selectedTeam })) return;
+    if (!text && !attachments.length && !references.length) return;
+    if (isTurnRunning(background ? toConvId : currentConvId)) return;
+    if (!targetId(target.targetMode, target)) return;
 
-    // Each turn walks the graph again: carrying the previous turn's path over
-    // would show a route this run never took.
-    setGraphRun(EMPTY_GRAPH_RUN);
+    if (!background) {
+      // Each turn walks the graph again: carrying the previous turn's path over
+      // would show a route this run never took.
+      setGraphRun(EMPTY_GRAPH_RUN);
 
-    // Handle special client-side slash commands
-    if (text === '/clear') { selectCommand({ name: '/clear' }); return; }
-    if (text === '/new') { selectCommand({ name: '/new' }); return; }
-    if (text === '/help') { selectCommand({ name: '/help' }); return; }
-    if (text === '/config') { selectCommand({ name: '/config' }); return; }
+      // Handle special client-side slash commands
+      if (text === '/clear') { selectCommand({ name: '/clear' }); return; }
+      if (text === '/new') { selectCommand({ name: '/new' }); return; }
+      if (text === '/help') { selectCommand({ name: '/help' }); return; }
+      if (text === '/config') { selectCommand({ name: '/config' }); return; }
+    }
 
-    const attachmentLine = buildAttachmentLine(t, { pendingAttachments, pendingReferences });
+    const attachmentLine = buildAttachmentLine(t, { pendingAttachments: attachments, pendingReferences: references });
     const userMsgText = [text, attachmentLine].filter(Boolean).join('\n');
     const userMsg = { id: genId(), role: 'user', content: userMsgText };
 
     // Ensure there is an active conversation
-    let convId = currentConvId;
+    let convId = background ? toConvId : currentConvId;
     if (!convId) {
       convId = genId();
       const newConv = buildNewConversation({
@@ -75,21 +113,42 @@ export function useChatSend(deps) {
       });
       setConversations((prev) => [newConv, ...prev]);
       setCurrentConvId(convId);
+      // Ahead of the render, so the turn's first events already count as
+      // the open conversation's.
+      currentConvIdRef.current = convId;
       navigate(`/chat/${convId}`);
     }
 
     // Append user message
     setConversations((prev) => appendUserMessage(prev, convId, userMsg, text, attachmentLine));
 
-    setInput('');
-    setPendingAttachments([]);
-    setPendingReferences([]);
-    setAttachmentError('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    setLoading(true);
+    if (!background) {
+      setInput('');
+      setPendingAttachments([]);
+      setPendingReferences([]);
+      setAttachmentError('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    }
 
     const ctrl = new AbortController();
-    abortCtrlRef.current = ctrl;
+    const turnKey = genId();
+    // Over the tab's SSE connection once it is up (see send/channelStream);
+    // before that, the turn's own streaming response.
+    const overChannel = Boolean(clientId && stream);
+    claimTurn(turnKey);
+    // Leaving the Chat page lets go of the turn without stopping it: the
+    // conversation's live mirror shows it when the page is back (chatLiveTurn)
+    // and the server writes its answer (chat/broadcast.py). A turn on its own
+    // streaming response keeps reading it, since closing that would end the
+    // turn's bookkeeping on the server.
+    const detach = () => {
+      releaseTurn(turnKey);
+      if (overChannel) ctrl.abort(DETACHED);
+    };
+    beginTurn(convId, ctrl, { detach });
+    // Whether this turn's conversation is the one on screen, asked per event:
+    // the person can switch away and back while it runs.
+    const here = () => currentConvIdRef.current === convId;
 
     // Use the conversation's own workspace (set at creation time), not the current global selection.
     // This locks the conversation to the workspace it was started in.
@@ -109,7 +168,7 @@ export function useChatSend(deps) {
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId
-              ? { ...c, messages: [...c.messages, buildAssistantBubble(assistantId, selectedAgent)] }
+              ? { ...c, messages: [...c.messages, buildAssistantBubble(assistantId, target.selectedAgent)] }
               : c,
           ),
         );
@@ -121,18 +180,34 @@ export function useChatSend(deps) {
       // conversation to another one, see send/handleAgentResponse).
       const state = { runId: null, finalPayload: null, currentNodeId: null, nodeMsgIds: {}, handoffs };
       const ctx = {
-        convId, setConversations, setActiveRunId, setSessionId, setGraphRun,
-        setProcessInsights, mergeArtifact, processOpen, isMultiAgent, isFlowMode,
+        convId, setConversations,
+        setActiveRunId: (id) => { noteTurn(convId, { runId: id }); if (here()) setActiveRunId(id); },
+        setSessionId: (id) => { noteTurn(convId, { sessionId: id }); if (here()) setSessionId(id); },
+        setGraphRun: (update) => { if (here()) setGraphRun(update); },
+        setProcessInsights: (update) => { if (here()) setProcessInsights(update); },
+        mergeArtifact: (art) => { if (here()) mergeArtifact(art); },
+        processOpen, isMultiAgent, isFlowMode,
         assistantId, userMsgText, t, state,
       };
 
-      await streamChat({
-        signal: ctrl.signal,
-        body: buildStreamRequestBody({
-          targetMode, isFlowMode, isTeamMode, selectedAgent, selectedFlow, selectedTeam,
-          text, effectiveWorkspace, projectId: convRecord?.project_id, convId, convTitle,
-          clientId, historyPayload, pendingAttachments, pendingReferences, selectedWorkspace,
+      const body = {
+        ...buildStreamRequestBody({
+          targetMode: target.targetMode, isFlowMode, isTeamMode,
+          selectedAgent: target.selectedAgent, selectedFlow: target.selectedFlow,
+          selectedTeam: target.selectedTeam, text, effectiveWorkspace,
+          projectId: convRecord?.project_id, convId, convTitle, clientId, historyPayload,
+          pendingAttachments: attachments, pendingReferences: references, selectedWorkspace,
         }),
+        client_turn_id: turnKey,
+      };
+      const follow = overChannel
+        ? (args) => streamChatOverChannel({
+          ...args, stream, onLateRun: (runId) => { stopMessage(runId).catch(() => {}); },
+        })
+        : streamChat;
+      await follow({
+        signal: ctrl.signal,
+        body,
         onEvent: (event) => {
           if (handleTeamEvent(event, ctx)) return;
           if (handleFlowEvent(event, ctx)) return;
@@ -157,7 +232,7 @@ export function useChatSend(deps) {
             ),
           );
         }
-      } else if ((state.runId || state.finalPayload.run_id) && processOpen) {
+      } else if ((state.runId || state.finalPayload.run_id) && processOpen && here()) {
         loadProcessData(state.runId || state.finalPayload.run_id);
       }
     } catch (err) {
@@ -169,13 +244,14 @@ export function useChatSend(deps) {
         ),
       );
     } finally {
-      setLoading(false);
-      abortCtrlRef.current = null;
+      endTurn(convId, ctrl);
+      if (overChannel) releaseTurn(turnKey);
+      else setTimeout(() => releaseTurn(turnKey), ECHO_GRACE_MS);
       // The conversation now belongs to the agent that answered: the top bar
       // shows it and the next turn goes to it (the conversation record was
       // pointed at it when the handoff arrived).
       const lastHandoff = handoffs[handoffs.length - 1];
-      if (lastHandoff?.to_agent_id && setSelectedAgent) setSelectedAgent(lastHandoff.to_agent_id);
+      if (lastHandoff?.to_agent_id && setSelectedAgent && here()) setSelectedAgent(lastHandoff.to_agent_id);
       // The turn is over however it ended (done, abort, network error): drop any
       // half-written thought so no bubble is left with a stale live ticker.
       setConversations((prev) =>
@@ -187,7 +263,7 @@ export function useChatSend(deps) {
         ),
       );
     }
-  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, setConversations, clientId, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, abortCtrlRef, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
+  }, [input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.

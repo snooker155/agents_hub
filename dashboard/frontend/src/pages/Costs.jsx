@@ -11,7 +11,7 @@ import DateInput from '../components/DateInput';
 import { usePageChatSubject } from '../components/pageChat/pageChat';
 import PageLoader from '../components/PageLoader';
 const card = 'bg-white p-6 rounded-xl shadow-sm border border-gray-100';
-const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none';
 
 const fmtInt = (n) => (n || 0).toLocaleString();
 const fmtUsd = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

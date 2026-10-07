@@ -112,7 +112,7 @@ function CreateModal({ workspace, onClose, onCreated }) {
           onChange={(e) => setForm({ ...form, id: e.target.value })}
           placeholder="billing-graph"
           required
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1 focus:ring-indigo-500 focus:border-indigo-500"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1"
         />
         <p className="text-[11px] text-gray-400 mb-3">{t('connections.idHint')}</p>
 
@@ -123,7 +123,7 @@ function CreateModal({ workspace, onClose, onCreated }) {
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
           placeholder="Billing graph"
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:ring-indigo-500 focus:border-indigo-500"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3"
         />
 
         <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">
@@ -132,7 +132,7 @@ function CreateModal({ workspace, onClose, onCreated }) {
         <select
           value={form.kind}
           onChange={(e) => setForm({ ...form, kind: e.target.value })}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:ring-indigo-500 focus:border-indigo-500"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4"
         >
           {Object.entries(KIND_LABEL).map(([value, label]) => (
             <option key={value} value={value}>{label}</option>

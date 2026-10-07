@@ -6,6 +6,10 @@ lives on the [models](models.md) page, not here.
 ## What is here
 
 - **API keys** per provider, and the base URL when it is not the default.
+- **Temperature**, its own item under Models: the global value every model runs
+  at unless it has its own on the [models](models.md) page or the agent sets
+  one (`LLM_TEMPERATURE`, 0 to 2, applied at once). Machine-wide, so the
+  Settings tab of a workspace does not show it.
 - **Custom backends** — any OpenAI-compatible endpoint.
 - **Local models** — Ollama and LM Studio, which need a running local server
   rather than a key, and the hub's own models runtime

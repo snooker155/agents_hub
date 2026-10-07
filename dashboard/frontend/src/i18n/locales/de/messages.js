@@ -46,7 +46,4 @@ export default {
     external: 'Externe API',
     sim: 'Simulation',
   },
-  loadMore_one: '1 weitere laden',
-  loadMore_other: '{{count}} weitere laden',
-  shownOfTotal: '{{shown}} von {{total}} angezeigt',
 };

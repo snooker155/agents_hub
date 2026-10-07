@@ -86,7 +86,7 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
     }
   };
 
-  const field = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  const field = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none';
   const label = 'block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5';
 
   return (

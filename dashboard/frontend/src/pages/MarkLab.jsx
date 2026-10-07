@@ -5,12 +5,14 @@ import { useI18n } from '../i18n';
 import LiveMark from '../components/liveMark/LiveMark';
 import useSteadyState from '../components/liveMark/useSteadyState';
 import { STATES } from '../components/liveMark/poses';
-import { SEARCH_STATES, WORK_STATES } from '../components/liveMark/scenes';
+import { REBUILD_STATES, RELAY_STATES, SEARCH_STATES, WORK_STATES } from '../components/liveMark/scenes';
 import { stateForTool, stateForTurn } from '../components/liveMark/activity';
 
 /*
  * A bench for the live mark (components/liveMark): every state on a button,
- * the poses and the artifact's scenes in their groups, a scripted run with
+ * the poses and the artifact's scenes, relay stories and rebuilds of the
+ * mark in their groups (a clip's button carries the artifact's name for
+ * it), a scripted run with
  * the timings a real one has (including a lookup that returns in 140 ms, to
  * show what the hold does), the mark at the sizes it is
  * used at, and a box that tells which state a tool name maps to. Not in the
@@ -23,15 +25,18 @@ const RUN = [
   { tool: 'fetch_url', ms: 3500 },
   { tool: 'search_memory', ms: 3000 },
   { tool: 'get_task', ms: 140 },
-  { thinking: true, ms: 1200 },
+  { tool: 'think', ms: 3500 },
+  { tool: 'schedule_task', ms: 3000 },
   { tool: 'write_file', ms: 5000 },
   { tool: 'run_code', ms: 2000 },
   { tool: 'create_view', ms: 4500 },
+  { tool: 'ask_special_model', ms: 3000 },
+  { tool: 'notify_user', ms: 3500 },
   { waiting: true, ms: 2000 },
   { text: true, ms: 2500 },
 ]
 
-const GROUPS = [['poses', STATES], ['search', SEARCH_STATES], ['work', WORK_STATES]];
+const GROUPS = [['poses', STATES], ['search', SEARCH_STATES], ['work', WORK_STATES], ['relay', RELAY_STATES], ['rebuild', REBUILD_STATES]];
 
 function stepLabel(step, t) {
   if (step.tool) return t('liveMark.lab.step', { tool: step.tool, ms: step.ms });
@@ -109,11 +114,12 @@ export default function MarkLab() {
                         key={s}
                         type="button"
                         onClick={() => pick(s)}
+                        title={t(`liveMark.states.${s}`)}
                         className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${requested === s && stepIdx < 0
                           ? 'bg-indigo-600 border-indigo-600 text-white'
                           : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-400'}`}
                       >
-                        {t(`liveMark.states.${s}`)}
+                        {t(`liveMark.lab.clips.${s}`, { defaultValue: t(`liveMark.states.${s}`) })}
                       </button>
                     ))}
                   </div>
@@ -162,7 +168,7 @@ export default function MarkLab() {
                 onChange={(e) => setTool(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && tool.trim()) pick(stateForTool(tool.trim())); }}
                 placeholder={t('liveMark.lab.toolPlaceholder')}
-                className="flex-1 min-w-0 px-3 py-1.5 text-sm font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-500"
+                className="flex-1 min-w-0 px-3 py-1.5 text-sm font-mono border border-gray-200 rounded-lg focus:outline-none"
               />
               {tool.trim() ? (
                 <button type="button" onClick={() => pick(stateForTool(tool.trim()))}

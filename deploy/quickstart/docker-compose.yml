@@ -11,9 +11,11 @@
 # which is bind mounted into the backend so the keys survive an upgrade.
 #
 # What runs: the backend (the API, with every agent as a subprocess inside
-# it) and the dashboard (nginx, which also proxies /api, so the CLI reaches
-# the service at the same address: AGENTS_HUB_URL=http://localhost:8080).
-# State lives in the named volume `agents_hub_data`.
+# it), the dashboard (nginx, which also proxies /api, so the CLI reaches the
+# service at the same address: AGENTS_HUB_URL=http://localhost:8080) and the
+# model runtime, which downloads local models (chat, speech, transcription)
+# from Hugging Face and serves them (Models page, Local tab). State lives in
+# the named volumes `agents_hub_data` and `models_data`.
 #
 #   docker compose pull && docker compose up -d      upgrade to the newest release
 #   docker compose exec backend python -m cli db backup --to /data/backups
@@ -45,11 +47,15 @@ services:
       # The state directory (database, workspaces, run logs, views) on the
       # named volume rather than inside the image's layer.
       AGENTS_HUB_ROOT: /data
+      # The model runtime below; its token is read from its volume.
+      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
+      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
     env_file:
       - path: .env
         required: false
     volumes:
       - agents_hub_data:/data
+      - models_data:/models-data:ro
       # The file Settings writes provider keys into. Mounted from the host so
       # they outlive the container; the env.example next to this file is the
       # template.
@@ -57,6 +63,10 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+      # First, so the shared volume is made by the runtime, owned by its user
+      # and holding its token, before the backend mounts it.
+      models:
+        condition: service_started
       # Only when the `postgres` profile is on (COMPOSE_PROFILES=postgres in
       # .env, which `ah setup` writes); otherwise the backend keeps SQLite on
       # the volume and this entry is skipped.
@@ -85,6 +95,26 @@ services:
       timeout: 3s
       retries: 20
 
+  # The model runtime (deploy/models in the repository): llama.cpp for chat
+  # models, Whisper, Piper and Kokoro for transcription and speech. It writes
+  # its token to its volume on first start; the backend reads it from there.
+  # CPU only; no port is published, only the backend talks to it.
+  models:
+    image: ghcr.io/snooker155/agents-hub-models:${AGENTS_HUB_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      MODELS_TOKEN: ${AGENTS_HUB_MODELS_TOKEN:-}
+      MODELS_TOKEN_FILE: /models/.token
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - models_data:/models
+    init: true
+    # Time to save the models' prompt cache slots to the volume on a stop.
+    stop_grace_period: 60s
+    mem_limit: ${MODELS_MEM_LIMIT:-8g}
+    security_opt:
+      - no-new-privileges:true
+
   frontend:
     image: ghcr.io/snooker155/agents-hub-frontend:${AGENTS_HUB_TAG:-latest}
     restart: unless-stopped
@@ -94,6 +124,30 @@ services:
       backend:
         condition: service_healthy
 
+  # HTTPS in front of the dashboard, under a profile so a plain `up` never
+  # starts it. A phone needs HTTPS to install the dashboard as an app and to
+  # let the assistant use the microphone (docs/pwa.md). Caddy gets and renews
+  # a Let's Encrypt certificate for HUB_DOMAIN on its own; the domain's DNS
+  # must point at this host and ports 80 and 443 must be reachable. In .env:
+  # COMPOSE_PROFILES=https and HUB_DOMAIN=hub.example.com (add postgres to
+  # the profiles list with a comma when that profile is on too).
+  https:
+    image: caddy:2-alpine
+    profiles:
+      - https
+    restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", "${HUB_DOMAIN:-localhost}", "--to", "frontend:80"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # The certificates, kept across restarts so Let's Encrypt is not asked again.
+      - caddy_data:/data
+    depends_on:
+      - frontend
+
 volumes:
   agents_hub_data:
   agents_hub_pg:
+  models_data:
+  caddy_data:

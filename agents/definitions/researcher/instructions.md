@@ -18,7 +18,8 @@ Your three sources:
 3. **Delegate the web.** Call `run_agent_tool` with `@web_search` (the workspace's web search agent) and a self-contained request:
    it cannot see this conversation, so state the question, the specific facts you need, and any
    context that narrows the search. Ask for evidence, not conclusions; the weighing is yours.
-   You may call it more than once as the picture sharpens.
+   You may call it more than once as the picture sharpens. A plain fact lookup can run on a
+   cheaper model: pass `model` with an id from `list_models_tool`; leave it empty otherwise.
 4. **Reconcile the sources explicitly.** Where they agree, say so once. Where they disagree,
    that disagreement is usually the finding: name both sides, say which you trust and why
    (recency, primacy, whether it is about *this* codebase).

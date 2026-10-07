@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getWorkspaceIsolation } from '../../api/isolation';
+import { patchWorkspaceSummary } from '../../api/workspaceSummary';
 
 /**
  * A workspace's isolation state (common/isolation.py `state()`), shared by
@@ -26,6 +27,8 @@ export function setWorkspaceIsolationCache(workspace, data) {
   if (!workspace) return;
   cache.set(workspace, data);
   notify(workspace);
+  // The header badge reads the switch from the workspace summary.
+  if (data) patchWorkspaceSummary(workspace, { isolated: Boolean(data.isolated) });
 }
 
 export default function useWorkspaceIsolation(workspace) {

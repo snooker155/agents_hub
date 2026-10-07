@@ -86,8 +86,14 @@ async def list_messages(
     q: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ):
     """A page of agent run messages, filtered and ordered in SQL.
+
+    ``sort`` is a key of ``managers.runs.store.RUN_SORTS`` (default ``started``) and
+    ``order`` is ``asc`` or ``desc``; the list pages load rows in batches and refetch the whole loaded window
+    from the top, so ``limit`` goes up to 2000.
 
     Returns ``{items, total, limit, offset}``. Filtering used to happen in
     Python over every run ever recorded, which a workspace running a thousand
@@ -99,21 +105,26 @@ async def list_messages(
     mode. Filtered after the SQL page is fetched, so ``total`` still counts
     the unfiltered page — see common/access.py's filter_by_workspace.
     """
-    page = run_manager.query_runs(
-        workspace=workspace,
-        agent_id=agent_id,
-        status=status,
-        session_id=session_id,
-        instance_id=instance_id,
-        channel=channel,
-        is_flow=is_flow,
-        flow_agent_ids=sorted(FLOW_AGENT_IDS),
-        from_date=from_date,
-        to_date=to_date,
-        q=q,
-        limit=max(1, min(int(limit), 500)),
-        offset=max(0, int(offset)),
-    )
+    try:
+        page = run_manager.query_runs(
+            workspace=workspace,
+            agent_id=agent_id,
+            status=status,
+            session_id=session_id,
+            instance_id=instance_id,
+            channel=channel,
+            is_flow=is_flow,
+            flow_agent_ids=sorted(FLOW_AGENT_IDS),
+            from_date=from_date,
+            to_date=to_date,
+            q=q,
+            limit=max(1, min(int(limit), 2000)),
+            offset=max(0, int(offset)),
+            sort=sort,
+            order=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     principal = identity.request_principal(request)
     items = access.filter_by_workspace(principal, page["items"])
     return {**page, "items": _enrich_page(items)}

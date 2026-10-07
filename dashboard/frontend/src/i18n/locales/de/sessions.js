@@ -28,7 +28,4 @@ export default {
   confirmBulkDelete: '{{count}} ausgewählte Sitzungen löschen?',
   deleteFailed: 'Sitzung konnte nicht gelöscht werden',
   bulkDeletePartial: 'Einige Löschungen sind fehlgeschlagen ({{count}}). Beispiel: {{id}} ({{reason}})',
-  loadMore_one: '1 weitere laden',
-  loadMore_other: '{{count}} weitere laden',
-  shownOfTotal: '{{shown}} von {{total}} angezeigt',
 };

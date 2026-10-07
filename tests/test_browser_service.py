@@ -115,6 +115,7 @@ def test_start_local_runs_the_service_script_and_stop_ends_it(quiet_probes, monk
                 self.wfile.write(b'{"ok": true, "sessions": 0, "max_sessions": 8}')
             def log_message(self, *a): pass
         assert os.environ["BROWSER_TOKEN"] == "tok-1"
+        import common.ssrf  # policy.py's fallback outside the image
         HTTPServer(("127.0.0.1", int(os.environ["BROWSER_PORT"])), H).serve_forever()
     """))
     monkeypatch.setattr(bs, "SERVICE_DIR", service_dir)

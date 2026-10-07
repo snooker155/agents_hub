@@ -422,7 +422,7 @@ export default function InstanceComposer({
           value={runnerAgent}
           onChange={(e) => onRunnerAgent(e.target.value)}
           className="flex-shrink-0 max-w-[14rem] px-3 text-sm border border-gray-300 rounded-2xl bg-white
-            focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            focus:outline-none"
           aria-label={t('instanceDetail.message.runnerAgent')}
         >
           <option value="">{t('instanceDetail.message.runnerAgent')}</option>
@@ -434,7 +434,7 @@ export default function InstanceComposer({
 
       <div
         className="flex-1 min-w-0 flex items-center gap-2 border border-gray-300 rounded-2xl px-3 py-2
-          focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all"
+          transition-all"
       >
         <div className="relative flex-shrink-0">
           <button

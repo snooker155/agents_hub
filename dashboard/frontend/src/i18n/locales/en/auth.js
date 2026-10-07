@@ -47,6 +47,14 @@ export default {
     updateFailed: 'Could not change the account.',
     deleteFailed: 'Could not delete the account.',
     passwordFailed: 'Could not set the password.',
+    limit: 'Limit per month',
+    limitOf: '{{spent}} of {{limit}}',
+    limitNone: '{{spent}}, no limit',
+    limitFromDefault: 'default',
+    limitPrompt: 'Monthly spend limit for {{name}} in USD. 0 means no limit; leave empty to follow the default.',
+    limitInvalid: 'A limit is a number of dollars, 0 or more.',
+    defaultLimit: 'Default limit per person, USD per month',
+    defaultLimitHint: 'Applies to everyone without a limit of their own. 0 means no limit. Runs and chat turns are refused once a person reaches theirs.',
   },
 
   members: {

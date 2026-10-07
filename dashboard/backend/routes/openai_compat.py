@@ -936,10 +936,12 @@ async def chat_completions(request: Request):
     include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
     tool_choice = body.get("tool_choice")
 
+    from providers.local_models import runtime_source
     try:
-        model = build_chat_model(provider=served["provider"], model=served["model"],
-                                 temperature=float(temperature) if temperature is not None else None,
-                                 max_tokens=max_tokens, streaming=stream)
+        with runtime_source("endpoint"):
+            model = build_chat_model(provider=served["provider"], model=served["model"],
+                                     temperature=float(temperature) if temperature is not None else None,
+                                     max_tokens=max_tokens, streaming=stream)
         if tools and tool_choice != "none":
             choice = _tool_choice(tool_choice)
             try:

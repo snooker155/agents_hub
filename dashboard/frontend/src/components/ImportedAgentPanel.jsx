@@ -150,7 +150,7 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && recheck()}
             placeholder="http://localhost:8410"
-            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <button
             onClick={recheck}

@@ -14,6 +14,7 @@ import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
+import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { inputCls } from '../components/settingsUi';
 import {
@@ -1081,7 +1082,7 @@ const WorkspaceDetails = () => {
                   value={agentSearch}
                   onChange={(e) => setAgentSearch(e.target.value)}
                   placeholder={t('workspaceDetails.findAgentByNameId')}
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none"
                 />
               </div>
               <div className="grid grid-cols-1 gap-3">
@@ -1225,7 +1226,7 @@ const WorkspaceDetails = () => {
             onChange={(e) => setInstructionsDraft(e.target.value)}
             rows={20}
             placeholder={t('workspaceDetails.instructionsPlaceholder', { name })}
-            className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none resize-y leading-relaxed"
+            className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 outline-none resize-y leading-relaxed"
           />
           {instructions && instructionsDraft !== instructions && (
             <p className="text-xs text-amber-600 mt-2">{t('workspaceDetails.youHaveUnsavedChanges')}</p>
@@ -1463,6 +1464,7 @@ function WorkspacePaletteDefault({ workspace }) {
       setOverrides(nextOverrides);
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 2000);
+      invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);
     } catch (err) {
       setError(err?.response?.data?.detail || t('workspaceDetails.palette.saveFailed'));
@@ -1482,6 +1484,7 @@ function WorkspacePaletteDefault({ workspace }) {
       setOverrides(nextOverrides);
       setDraft(PRESETS.navy);
       setEnabled({ neutral: false, ok: false, danger: false });
+      invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);
     } catch (err) {
       setError(err?.response?.data?.detail || t('workspaceDetails.palette.saveFailed'));

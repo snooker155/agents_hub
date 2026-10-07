@@ -5,14 +5,16 @@
  *
  * A scene's frame(st, t, w) draws the artifact's clip at time t (it unfolds
  * from 0.5 s, is folded again by 6.9 s; bell(t, a, b, c, d) rises over a..b
- * and falls over c..d), with w = { live, work, out }: a clock that never
- * stops, the seconds spent working, and the seconds since the step ended
- * (negative while it lasts). mountWork() plays the clip up to the scene's
- * hold point, keeps it there while the work goes on (what moves meanwhile
- * comes from `live` and `work`: bars that follow fresh data, code typed and
- * retyped, a flow run round after round), lets the scene settle what the
- * work left half done when the step ends, then plays the finale and the fold
- * from the scene's outFrom point.
+ * and falls over c..d), with w = { live, work, out, back }: a clock that
+ * never stops, the seconds spent working, the seconds since the step ended
+ * (negative while it lasts) and, while a scene folds straight back, how much
+ * of its unfolding is left (1 down to 0, null otherwise). mountWork() plays
+ * the clip up to the scene's hold point, keeps it there while the work goes
+ * on (what moves meanwhile comes from `live` and `work`: bars that follow
+ * fresh data, code typed and retyped, a flow run round after round), lets
+ * the scene settle what the work left half done when the step ends, then
+ * plays the finale and the fold from the scene's outFrom point. A step that
+ * ends while the scene is still unfolding plays the unfolding back instead.
  */
 /* eslint-disable no-unused-vars */
 
@@ -66,7 +68,14 @@ function bump(u) { return Math.sin(Math.PI * clamp(u)); }
 // how much of the working motion shows: none in the intro, eased in once
 // the work starts, eased out once the step ends
 function amp(w) { return smooth(w.work / 0.3) * (w.out < 0 ? 1 : 1 - smooth(w.out / 0.3)); }
-var EXIT_SPEED = 1.8;
+// Once the step ends the scene finishes faster than it played, so the mark
+// keeps up with the run: what the work left half done is settled on a clock
+// running at SETTLE_SPEED (w.out, and the waits settle() returns, are in its
+// seconds), and the finale and the fold play at EXIT_SPEED.
+var SETTLE_SPEED = 2;
+var EXIT_SPEED = 2.5;
+var START = 0.45;   // the clip's time where it is the mark, about to unfold
+var HURRY = 4;      // the unfolding, once the step has ended
 
 var W = {};
 
@@ -115,6 +124,11 @@ W.gen3d = {
   // whole turn by the time it has folded, starting at the speed it had
   turn: function (st, t, w) {
     var th = GEN_SPIN * w.live;
+    // folding straight back: on to the next whole turn as it flattens
+    if (w.back != null) {
+      if (st.thB == null) { st.thB = th; st.thR = 2 * Math.PI * Math.ceil(th / (2 * Math.PI)); }
+      return lerp(st.thR, st.thB, w.back);
+    }
     if (w.out < 0) return th;
     if (st.th0 == null) {
       st.thD = (6.4 - this.hold) / EXIT_SPEED; st.th0 = th;
@@ -714,8 +728,11 @@ export function mountWork(g, kind) {
   var sc = W[kind];
   if (!sc) return null;
   var st = sc.build(g);
-  var s = { phase: 'intro', t: 0.45, live: 0, work: 0, out: -1, wait: 0, from: sc.hold };
-  function w() { return { live: s.live, work: s.work, out: s.out }; }
+  var s = { phase: 'intro', t: START, live: 0, work: 0, out: -1, wait: 0, from: sc.hold };
+  function w() {
+    var back = s.phase !== 'rewind' ? null : s.rw > START ? (s.t - START) / (s.rw - START) : 0;
+    return { live: s.live, work: s.work, out: s.out, back: back };
+  }
   function leave() {
     var r = sc.settle ? sc.settle(st, w()) : null;
     s.out = 0;
@@ -726,18 +743,24 @@ export function mountWork(g, kind) {
   function update(dt, next) {
     var leaving = next !== kind;
     s.live += dt;
-    if (s.phase === 'intro') {
-      // a step that ends before the scene has formed hurries it along
-      s.t = Math.min(sc.hold, s.t + dt * (leaving ? 3 : 1));
+    // a step that ends in the first half of the unfolding folds straight
+    // back (and does so to the end: the same step again unfolds anew from
+    // the mark); later on it hurries the scene along
+    if (s.phase === 'intro' && leaving && s.t < (START + sc.hold) / 2) { s.phase = 'rewind'; s.rw = s.t; }
+    if (s.phase === 'rewind') {
+      s.t = Math.max(START, s.t - dt * HURRY);
+      if (s.t <= START) { sc.frame(st, START, w()); return 'done'; }
+    } else if (s.phase === 'intro') {
+      s.t = Math.min(sc.hold, s.t + dt * (leaving ? HURRY : 1));
       if (s.t >= sc.hold) { if (leaving) leave(); else s.phase = 'work'; }
     } else if (s.phase === 'work') {
       s.work += dt;
       if (leaving) leave();
     } else if (s.phase === 'settle') {
-      s.out += dt;
+      s.out += dt * SETTLE_SPEED;
       if (s.out >= s.wait) { s.phase = 'outro'; s.t = s.from; }
     } else {
-      s.out += dt;
+      s.out += dt * SETTLE_SPEED;
       s.t += dt * EXIT_SPEED;
       if (s.t >= 6.9) { sc.frame(st, 6.9, w()); return 'done'; }
     }

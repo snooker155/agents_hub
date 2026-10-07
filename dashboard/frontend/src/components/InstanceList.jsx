@@ -9,6 +9,8 @@ import { getInstances, stopInstance } from '../api';
 import { useStreamEvent, useLiveRefetch } from './stream';
 import { CARRIER_MODE_ICONS, KIND_ICONS, STATE_STYLES, formatDuration, relativeTime } from './instanceUtils';
 import { useI18n } from '../i18n';
+import { ListLoadMore, ListPagingControls } from './ListPaging';
+import { useListPaging } from './listPagingState';
 
 /*
  * The list of live agent copies, shared by the Instances page and the per-agent
@@ -21,8 +23,6 @@ import { useI18n } from '../i18n';
  * instead of refetching the list, and identical copies of one agent collapse
  * into a group you expand only when you care.
  */
-
-const PAGE_SIZE = 100;
 
 export function StateBadge({ state, t }) {
   const style = STATE_STYLES[state] || STATE_STYLES.finished;
@@ -175,7 +175,6 @@ export default function InstanceList({
   const [counts, setCounts] = useState({});
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [offset, setOffset] = useState(0);
   const [busyIds, setBusyIds] = useState({});
   const [collapsed, setCollapsed] = useState({});
 
@@ -185,6 +184,19 @@ export default function InstanceList({
   const [query, setQuery] = useState('');
   const [grouped, setGrouped] = useState(false);
 
+  const showAgent = showAgentColumn && !agentId;
+  // Sort keys the backend orders by (instances/store.py INSTANCE_SORTS);
+  // `live` is its default, working copies first.
+  const sortKeys = [
+    'live', 'activity', 'started', 'label', ...(showAgent ? ['agent'] : []),
+    'state', 'runs', 'tokens', 'duration',
+  ];
+  const paging = useListPaging('instances', {
+    sorts: sortKeys,
+    defaultSort: 'live',
+    resetOn: [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query.trim()],
+  });
+
   const params = useMemo(() => ({
     workspace,
     agent_id: agentId || undefined,
@@ -193,21 +205,20 @@ export default function InstanceList({
     kind: filterKind || undefined,
     live: liveOnly ? true : undefined,
     q: query.trim() || undefined,
-    limit: PAGE_SIZE,
-  }), [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query]);
+    ...paging.params,
+  }), [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query, paging.params]);
 
-  const fetchPage = useCallback(async (nextOffset = 0, append = false) => {
-    if (!append) setLoading(true);
+  const fetchPage = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await getInstances({ ...params, offset: nextOffset });
+      const res = await getInstances(params);
       const data = res.data || {};
-      setItems((prev) => (append ? [...prev, ...(data.items || [])] : (data.items || [])));
+      setItems(data.items || []);
       setCounts(data.counts || {});
       setTotal(data.total || 0);
-      setOffset(nextOffset);
     } catch (e) {
       console.error('Failed to load instances', e);
-      if (!append) { setItems([]); setTotal(0); }
+      setItems([]); setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -217,7 +228,7 @@ export default function InstanceList({
   const searchTimer = useRef(null);
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => fetchPage(0, false), query ? 250 : 0);
+    searchTimer.current = setTimeout(() => fetchPage(), query ? 250 : 0);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [fetchPage, query]);
 
@@ -241,7 +252,7 @@ export default function InstanceList({
     });
   }, [liveUpdates, agentId]));
 
-  useLiveRefetch(() => fetchPage(0, false), {
+  useLiveRefetch(() => fetchPage(), {
     type: 'instances.changed', enabled: liveUpdates,
   });
 
@@ -249,7 +260,7 @@ export default function InstanceList({
     setBusyIds((b) => ({ ...b, [instance.instance_id]: true }));
     try {
       await stopInstance(instance.instance_id);
-      await fetchPage(0, false);
+      await fetchPage();
     } catch (e) {
       console.error('Failed to stop instance', e);
     } finally {
@@ -267,9 +278,6 @@ export default function InstanceList({
     }
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [grouped, items]);
-
-  const showAgent = showAgentColumn && !agentId;
-  const hasMore = items.length < total;
 
   const columns = (
     <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-200">
@@ -331,14 +339,12 @@ export default function InstanceList({
             <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
             {t('instances.filters.groupByAgent')}
           </label>
-          <button type="button" onClick={() => fetchPage(0, false)}
+          <ListPagingControls paging={paging} options={sortKeys} compact />
+          <button type="button" onClick={() => fetchPage()}
                   className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
                   title={t('instances.actions.refresh')}>
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <span className="text-xs text-gray-400 ml-auto">
-            {t('instances.showing', { shown: items.length, total })}
-          </span>
         </div>
       )}
 
@@ -403,16 +409,8 @@ export default function InstanceList({
           </div>
         )}
 
-        {hasMore && (
-          <button
-            type="button"
-            onClick={() => fetchPage(offset + PAGE_SIZE, true)}
-            className="w-full py-2.5 text-sm text-indigo-600 hover:bg-indigo-50 border-t border-gray-100"
-          >
-            {t('instances.loadMore', { count: total - items.length })}
-          </button>
-        )}
       </div>
+      <ListLoadMore paging={paging} shown={items.length} total={total} loading={loading} />
     </div>
   );
 }

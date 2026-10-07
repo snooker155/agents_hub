@@ -103,7 +103,7 @@ export default function PageChatPanel() {
         onClick={() => setOpen(true)}
         title={t('pageChat.openHint')}
         aria-label={t('pageChat.open')}
-        className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-indigo-600 text-white
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 mb-safe z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-indigo-600 text-white
                    shadow-lg shadow-indigo-600/30 flex items-center justify-center
                    hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400
                    focus:ring-offset-2 transition-colors"
@@ -115,7 +115,7 @@ export default function PageChatPanel() {
 
   return (
     <aside
-      className={`fixed inset-y-0 right-0 z-40 flex flex-col bg-white border-l border-gray-200
+      className={`fixed inset-y-0 right-0 z-40 flex flex-col pt-safe pb-safe bg-white border-l border-gray-200
                   shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
       aria-label={t('pageChat.title')}
     >

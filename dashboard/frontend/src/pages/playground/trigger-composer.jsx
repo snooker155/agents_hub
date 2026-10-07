@@ -43,7 +43,7 @@ export function TriggerComposer({ agents, onSend, className = '' }) {
           two and undid the one-field reading this is built for. */}
       <div
         className="flex items-center gap-3 bg-gray-100 border border-gray-300 rounded-2xl px-3 py-2
-          focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
+         
           shadow-sm transition-all"
       >
         <select

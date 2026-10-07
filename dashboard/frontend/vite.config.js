@@ -46,6 +46,10 @@ const demoBuild = isDemo
 
 export default defineConfig({
   ...demoBuild,
+  // The bundle's map (source file to hashed chunks), read by the service
+  // worker to keep the pages a phone opens most ready offline (public/sw.js,
+  // docs/pwa.md). Served next to index.html, outside /assets.
+  build: { manifest: 'asset-manifest.json', ...demoBuild.build },
   plugins: [react()],
   server: { proxy: apiProxy },
   // `vite preview` serves the built bundle, which `ah up` uses as the local

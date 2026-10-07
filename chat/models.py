@@ -75,6 +75,11 @@ class ChatRequest(BaseModel):
     # client id, so the server can deliver this run's events over the browser's
     # single existing /api/stream connection instead of a dedicated stream.
     client_id: Optional[str] = None
+    # The caller's own name for this turn, stamped on every event published to
+    # the conversation's channel. A tab following its turns over that channel
+    # (several conversations at once, each with its own turn) tells its turns
+    # apart by it, and a stopped turn's last events from the next one.
+    client_turn_id: Optional[str] = None
     # The Visualization Studio binds a conversation to one live view. When set,
     # the pipeline exposes it to the view mutation tools (via current_view_id)
     # and injects a compact scene-context note so the agent knows what it edits.

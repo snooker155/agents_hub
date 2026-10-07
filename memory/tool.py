@@ -801,6 +801,13 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 return pid
         return _pool_names[pid]
 
+    def _where(mem) -> dict:
+        """Which memory a write changed, for the step in the chat: the pool,
+        its workspace and whether it is the person's personal memory."""
+        from memory.personal import is_personal
+        return {"pool": mem.name, "workspace": getattr(mem, "workspace", None) or "default",
+                "personal": is_personal(mem)}
+
     # -----------------------------------------------------------------------
     # core memory blocks — the always-in-context layer
     # -----------------------------------------------------------------------
@@ -1315,7 +1322,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 except Exception as ge:
                     errors.append(f"graph bridge skipped: {ge}")
 
-            out = {"ok": True, "saved": saved, "errors": errors, "graph_links": graph_links}
+            out = {"ok": True, "saved": saved, "errors": errors, "graph_links": graph_links,
+                   "memory": _where(mem)}
             if multi:
                 out["pool"] = _pool_name(target)
             return json.dumps(out)
@@ -1469,6 +1477,7 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 "deleted": deleted,
                 "errors": errors,
                 "graph_unlinked": graph_unlinked,
+                **({"memory": _where(mem)} if deleted else {}),
             })
         except Exception as e:
             return json.dumps({"ok": False, "error": f"forget failed: {e}"})

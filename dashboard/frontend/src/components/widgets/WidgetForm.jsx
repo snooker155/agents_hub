@@ -13,7 +13,7 @@ import {
   ACCENT_SWATCHES, FALLBACK_OPTIONS, bytesToKb, clampLimit, kbToBytes, originsFromText, originsToText,
 } from './widgetUtils';
 
-const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500';
+const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none';
 const labelCls = 'block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider';
 const hintCls = 'text-xs text-gray-400 mt-1';
 
@@ -222,7 +222,7 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
 
       <label className="flex items-center gap-2 text-sm text-gray-700">
         <input type="checkbox" checked={!!form.enabled} onChange={set('enabled')}
-          className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+          className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
         {t('widgets.form.enabled')}
       </label>
 

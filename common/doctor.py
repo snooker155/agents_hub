@@ -314,17 +314,30 @@ def check_browser(snap: Dict[str, Any]) -> Result:
 # ── model runtime ────────────────────────────────────────────────────────────
 
 def check_models_runtime(snap: Dict[str, Any]) -> Result:
-    from common.config import settings
-    url = str(getattr(settings, "models_url", "") or "").strip().rstrip("/")
+    """The runtime local models run on: the one AGENTS_HUB_MODELS_URL names,
+    or the one the hub runs itself on this host."""
+    from providers import local_models as lm
+    cfg = lm.runtime_settings()
+    url = cfg["url"]
     if not url:
-        return ("skip", "The model runtime is not configured.", {})
+        return ("skip", "The model runtime is turned off (AGENTS_HUB_MODELS_MANAGED=false and no "
+                        "AGENTS_HUB_MODELS_URL).", {})
     import httpx
+    detail: Dict[str, Any] = {"url": url, "managed": cfg.get("managed", False)}
     try:
         resp = httpx.get(f"{url}/healthz", timeout=MODELS_TIMEOUT_SECONDS)
     except Exception as exc:  # noqa: BLE001 - reported as the check's result
-        return ("fail", f"The model runtime at {url} is unreachable: {type(exc).__name__}.",
-                {"url": url, "error": str(exc)[:300]})
-    detail: Dict[str, Any] = {"url": url, "status_code": resp.status_code}
+        detail["error"] = str(exc)[:300]
+        if cfg.get("managed"):
+            from providers import model_runtime_host as host
+            state = host.status()
+            detail["state"] = state.get("state")
+            if state.get("stopped_by_user"):
+                return ("warn", "The hub's model runtime was stopped from the Models page.", detail)
+            return ("fail", "The hub's model runtime is not running; the Models page, Local tab, "
+                            "shows why and can start it.", detail)
+        return ("fail", f"The model runtime at {url} is unreachable: {type(exc).__name__}.", detail)
+    detail["status_code"] = resp.status_code
     if resp.status_code >= 400:
         return ("fail", f"The model runtime answered HTTP {resp.status_code}.", detail)
     try:
@@ -334,8 +347,9 @@ def check_models_runtime(snap: Dict[str, Any]) -> Result:
     if isinstance(body, dict):
         detail["loaded"] = body.get("loaded")
         detail["mode"] = body.get("mode")
-    if not str(getattr(settings, "models_token", "") or "").strip():
-        return ("warn", "The model runtime answers but AGENTS_HUB_MODELS_TOKEN is not set.", detail)
+    if not cfg["token"]:
+        return ("warn", "The model runtime answers but no token is set (AGENTS_HUB_MODELS_TOKEN "
+                        "or AGENTS_HUB_MODELS_TOKEN_FILE).", detail)
     return ("ok", "The model runtime answers.", detail)
 
 

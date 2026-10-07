@@ -1,8 +1,9 @@
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
+import { AudioLines, Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
 import { useChatScroll } from './useChatScroll';
 
@@ -34,7 +35,7 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
+    agentName, agents, artifacts, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
     liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
     targetMode, teams, telegramReplyAllowed, viewMode,
@@ -45,7 +46,8 @@ export default function ChatMessageList() {
   });
   const renderMessage = (msg, idx) => {
     const msgAgentName = msg.role !== 'user'
-      ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
+      ? (currentConv?.origin === 'assistant' ? t('chat.assistantThread.badge')
+        : msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
       : undefined;
     // A reply that took the conversation over by handoff opens with
     // the line saying who took over and why (chat/handoff.py).
@@ -127,6 +129,25 @@ export default function ChatMessageList() {
           </div>
         )}
 
+        {/* A conversation with the Assistant, by voice or text, as its text: read only. */}
+        {currentConv?.origin === 'assistant' && (
+          <div className="flex-shrink-0 px-4 py-2 border-b border-indigo-200 bg-indigo-50 text-xs text-indigo-800 flex items-center gap-2"
+            data-testid="assistant-thread-banner">
+            <AudioLines className="w-3.5 h-3.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <strong>{t('chat.assistantThread.title')}</strong>
+              {currentConv.assistant_thread?.mode === 'service' && <> · {t('chat.assistantThread.service')}</>}
+              {' '}· {t('chat.assistantThread.hint')}
+            </div>
+            <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">{t('chat.readOnly')}</span>
+            {currentConv.assistant_thread?.active && (
+              <Link to="/assistant" className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium hover:bg-indigo-700">
+                {t('chat.assistantThread.continue')}
+              </Link>
+            )}
+          </div>
+        )}
+
         {/* Messages */}
         <div className="relative flex-1 min-h-0 flex flex-col">
         {/* The composer is over the foot of this scroller (ChatComposer sets
@@ -134,7 +155,7 @@ export default function ChatMessageList() {
             scrolled clear of it. */}
         <div ref={scrollerRef} onScroll={onScroll} className="flex-1 overflow-y-auto"
              style={{ paddingBottom: 'var(--chat-composer-height, 0px)' }}>
-          <div ref={contentRef} className="max-w-full mx-auto px-6 py-8">
+          <div ref={contentRef} className="max-w-full mx-auto px-3 py-4 sm:px-6 sm:py-8">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center">
                 {targetMode === 'team' ? (

@@ -154,8 +154,8 @@ def _recent_sessions(memory_id: str, limit: int) -> List[Dict[str, Any]]:
 def _session_excerpt(run: Dict[str, Any]) -> str:
     when = run.get("started_at") or run.get("created_at") or ""
     title = run.get("title") or run.get("agent_id") or ""
-    user_in = str(run.get("input") or "").strip()
-    out = str(run.get("output") or "").strip()
+    from managers.run_manager import run_exchange
+    user_in, out = run_exchange(run)
     body = f"[{when}] {title}\nUser: {user_in}\nAgent: {out}".strip()
     return body if len(body) <= MAX_SESSION_CHARS else body[:MAX_SESSION_CHARS] + "\n...[truncated]"
 

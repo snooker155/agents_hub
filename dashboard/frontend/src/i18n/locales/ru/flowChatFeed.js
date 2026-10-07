@@ -34,4 +34,9 @@ export default {
     env_params: 'параметр',
     limits: 'ограничение',
   },
+  // Куда записал шаг remember или forget: «Сохранено в личную память · dev».
+  memory: {
+    remember: { personal: 'Сохранено в личную память · {{workspace}}', pool: 'Сохранено в память «{{pool}}» · {{workspace}}' },
+    forget: { personal: 'Удалено из личной памяти · {{workspace}}', pool: 'Удалено из памяти «{{pool}}» · {{workspace}}' },
+  },
 };

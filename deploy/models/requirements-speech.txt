@@ -1,0 +1,11 @@
+# Speech engines for speech_worker.py: transcription (faster-whisper) and
+# speech (Piper, Kokoro, Kitten, Supertonic). Kitten needs nothing of its
+# own: onnxruntime, phonemizer-fork and espeakng-loader come with kokoro-onnx. Installed in the image unless it is built with
+# --build-arg SPEECH=0; in host mode install them into the runtime's Python,
+# or one at a time from the Models page (POST /engines/{engine}/install).
+# PyAV decodes what Whisper hears and encodes mp3, opus, aac and flac.
+faster-whisper>=1.1
+piper-tts>=1.3
+kokoro-onnx>=0.4
+supertonic>=1.3
+av>=12

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from common import code_version
 from instances import carrier, inbox, registry, store as istore
 from managers import run_manager as rm
 from services import replicas, routing, store, supervisor
@@ -59,6 +60,8 @@ def _standby(instance):
 
 
 def _replica(service, **fields):
+    # Started from the code this process runs, unless the test says otherwise.
+    fields.setdefault("carrier_code", code_version.current())
     inst = registry.ensure_instance(service.get("agent_id") or "", kind="resident" if service.get("agent_id") else "runner",
                                     workspace=service["workspace"], state="standby",
                                     service_id=service["service_id"])
@@ -157,6 +160,25 @@ def test_pick_takes_the_least_loaded_replica_and_grows_when_all_are_full(monkeyp
     assert waiting["instance_id"] in (a["instance_id"], b["instance_id"])
 
 
+def test_pick_avoids_a_replica_on_old_code(monkeypatch):
+    svc = store.create(name="s", agent_id="swe_agent", workspace="ws", replicas_max=3, concurrency=2)
+    old = _replica(svc, carrier_code="older")
+    current = _replica(svc)
+    inbox.enqueue(current["instance_id"], "busy", conversation_id="c-a")
+    # The current replica, though the old one is less loaded.
+    assert replicas.pick(svc, conversation_id="c-new")["instance_id"] == current["instance_id"]
+    # With the current one full, a new replica rather than the old one.
+    inbox.enqueue(current["instance_id"], "busy too", conversation_id="c-b")
+    started = []
+    monkeypatch.setattr(replicas, "start_replica", lambda service, reason="": started.append(reason) or _replica(svc))
+    new = replicas.pick(svc, conversation_id="c-new")
+    assert started == ["on demand"] and new["instance_id"] not in (old["instance_id"], current["instance_id"])
+    # When none may be started, the old one still takes the message.
+    inbox.enqueue(new["instance_id"], "a", conversation_id="c-c")
+    inbox.enqueue(new["instance_id"], "b", conversation_id="c-d")
+    assert replicas.pick(svc, conversation_id="c-new", allow_start=False)["instance_id"] == old["instance_id"]
+
+
 def test_pick_refuses_a_paused_service_and_one_that_may_not_start():
     svc = store.pause(store.create(name="s", agent_id="swe_agent", workspace="ws")["service_id"])
     with pytest.raises(replicas.ServiceUnavailable):
@@ -174,6 +196,15 @@ def test_start_replica_spawns_a_carrier_with_the_service_id(fake_agent, fake_pop
     assert fake_popen[0]["cmd"][fake_popen[0]["cmd"].index("--agent-id") + 1] == "swe_agent"
     kinds = [e["kind"] for e in store.events(svc["service_id"])]
     assert "replica_started" in kinds
+
+
+def test_a_replica_is_stamped_with_the_code_it_was_started_from(fake_popen):
+    svc = store.create(name="ws runner", agent_id=None, workspace="default")
+    rep = replicas.start_replica(svc, reason="warm")
+    assert rep["carrier_code"] == code_version.current()
+    assert not replicas.is_stale(rep)
+    assert replicas.is_stale({**rep, "carrier_code": "older"})
+    assert replicas.is_stale({k: v for k, v in rep.items() if k != "carrier_code"})
 
 
 def test_a_runner_replica_has_no_agent(fake_popen):
@@ -231,6 +262,33 @@ def test_reconcile_stops_idle_replicas_beyond_the_minimum(monkeypatch):
     assert {i for i, _ in stopped} == {a["instance_id"], b["instance_id"]}
     assert all(reason == "idle" for _, reason in stopped)
     assert fresh["instance_id"] not in {i for i, _ in stopped}
+
+
+def test_reconcile_replaces_idle_replicas_on_old_code(monkeypatch):
+    svc = store.create(name="s", agent_id="swe_agent", workspace="ws", replicas_min=2, replicas_max=4)
+    idle_old = _replica(svc, carrier_code="older")
+    busy_old = _replica(svc, carrier_code="older")
+    # A None field is not written: a replica from before the stamp.
+    unstamped = _replica(svc, carrier_code=None)
+    inbox.enqueue(busy_old["instance_id"], "working", conversation_id="c1")
+    stopped, started = [], []
+
+    def _stop(service, rep, reason=""):
+        stopped.append((rep["instance_id"], reason))
+        istore.update(rep["instance_id"], state="stopped", carrier_status="stopped",
+                      stop_requested_at=datetime.now(timezone.utc).isoformat())
+        return True
+
+    monkeypatch.setattr(replicas, "stop_replica", _stop)
+    monkeypatch.setattr(replicas, "start_replica", lambda service, reason="": started.append(reason) or _replica(svc))
+    counts = supervisor.reconcile_service(svc)
+    # The idle ones go, the busy one finishes first; the minimum is refilled
+    # from current code.
+    assert sorted(stopped) == sorted([(idle_old["instance_id"], "code changed"),
+                                      (unstamped["instance_id"], "code changed")])
+    assert counts["stopped"] == 2 and counts["started"] == 1 and started == ["below minimum"]
+    live = replicas.live_replicas(svc)
+    assert {r["instance_id"] for r in live if replicas.is_stale(r)} == {busy_old["instance_id"]}
 
 
 def test_reconcile_stops_everything_of_a_paused_service(monkeypatch):

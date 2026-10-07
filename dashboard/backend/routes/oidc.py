@@ -57,6 +57,15 @@ def _denied(request: Request, code: str, message: str = "",
     return _landing(request, error=code)
 
 
+
+def _ensure_personal_workspace(user_id: str) -> None:
+    """A person signing in has a workspace of their own (common/personal_workspace.py)."""
+    from common import personal_workspace
+    try:
+        personal_workspace.ensure_personal_workspace(user_id)
+    except Exception:  # noqa: BLE001 - logged; the sign-in goes on without it
+        log.warning("personal workspace for %s could not be ensured", user_id, exc_info=True)
+
 @router.get("/api/auth/oidc/start")
 async def oidc_start(request: Request, next_path: str = Query("/", alias="next")):
     """Send the browser to the provider, with state, nonce and PKCE set up."""
@@ -126,6 +135,7 @@ async def oidc_callback(request: Request, code: str = "", state: str = "",
     if session is None:
         return _denied(request, "disabled", "no session could be opened",
                        username=user["username"], user_id=user["id"])
+    _ensure_personal_workspace(user["id"])
     audit.record("auth.login", actor={"actor_id": user["id"], "actor_kind": "user",
                                       "actor_name": user["username"]},
                  object_type="session", object_id=session.get("session_id"), ip=ip,

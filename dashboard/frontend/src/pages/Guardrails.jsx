@@ -69,7 +69,7 @@ export default function Guardrails() {
           <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
             <input type="checkbox" checked={includeArchived}
               onChange={(e) => setIncludeArchived(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600" />
             {t('guardrails.showArchived')}
           </label>
           <button onClick={fetchData}

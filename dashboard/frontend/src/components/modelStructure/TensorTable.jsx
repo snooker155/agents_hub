@@ -81,7 +81,7 @@ export default function TensorTable({ block }) {
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t('modelStructure.table.filter')}
             aria-label={t('modelStructure.table.filter')}
-            className="w-56 rounded-md border border-gray-300 bg-white py-1.5 pl-7 pr-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className="w-56 rounded-md border border-gray-300 bg-white py-1.5 pl-7 pr-2 text-sm focus:outline-none"
           />
         </label>
       </div>

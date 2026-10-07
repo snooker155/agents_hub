@@ -37,6 +37,7 @@ vi.mock('../../api', () => ({
   createMyApiKey: (...a) => createMyApiKey(...a),
   revokeMyApiKey: (...a) => revokeMyApiKey(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
+  getOwnSpend: () => Promise.resolve({ data: { limit_usd: 0, spend: 0, source: 'default', exceeded: false } }),
 }));
 
 // The key's own money quota (docs/api-keys.md "Money quota"): a separate

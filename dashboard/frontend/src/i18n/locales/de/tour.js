@@ -4,6 +4,10 @@ export default {
   done: 'Fertig',
   progress: '{{current}} von {{total}}',
   steps: {
+    assistant: {
+      title: 'Assistent',
+      description: 'Der ganze Dienst über einen Agenten, per Sprache oder Text. Halten Sie die Taste oder die Leertaste zum Sprechen; die Antwort wird vorgelesen und ihre Links öffnen sich neben der Unterhaltung.',
+    },
     chat: {
       title: 'Chat',
       description: 'Sprechen Sie von hier aus mit jedem Agenten, Flow oder Team. Die Kopfzeile zeigt den Workspace, das Projekt und das Modell, das die nächste Nachricht verwendet.',

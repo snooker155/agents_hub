@@ -72,7 +72,7 @@ export default function AgentWebDomainsCard({ agentId, readOnly = false }) {
   };
 
   const areaCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono min-h-[5rem] '
-    + 'focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-gray-50';
+    + ' focus:outline-none disabled:bg-gray-50';
   const wsBlocked = (effective?.blocked || []).filter((h) => !listOf(saved.blocked).includes(h));
 
   return (

@@ -3,10 +3,7 @@ export default {
   description: 'Every live copy of every agent — including the ones parked in standby.',
   descriptionInWorkspace: 'Live agent copies in workspace "{{workspace}}".',
   loading: 'Loading instances…',
-  showing: '{{shown}} of {{total}}',
   groupCount: '{{live}} live · {{total}} total',
-  loadMore_one: 'Load 1 more',
-  loadMore_other: 'Load {{count}} more',
   empty: {
     title: 'No instances yet',
     hint: 'A copy appears here the moment an agent starts working, from a task, a chat, a resident instance or a flow.',

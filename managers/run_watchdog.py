@@ -424,6 +424,9 @@ def _sweep(counter: list) -> None:
                     _fail_run(rec, "Run process died without finalizing (crash or external kill).")
                     counter[0] += 1
 
+        elif status == "stop":
+            counter[0] += _settle_stop(rec)
+
         elif status == "queued":
             counter[0] += _check_queued_run(rec)
 
@@ -433,6 +436,37 @@ def _sweep(counter: list) -> None:
     counter[0] += _sweep_entity_runs()
     _check_fence()
     counter[0] += _sweep_instances()
+
+
+def _settle_stop(rec: Dict[str, Any]) -> int:
+    """A stop request (``stop``) nobody saw through. A run stopped in
+    process gets ``stop`` and its finish time together and its turn aborts
+    at the next model or tool boundary, so once :data:`PENDING_TIMEOUT_SECONDS`
+    passed since that finish it is over. A run in its own process is over once
+    that process is gone. Either way the record reads ``stopped`` from then
+    on; before this, nothing but a lookup of that very run (``get_status``)
+    ever moved it, so a stop whose process died unseen stayed ``stop`` for
+    good and counted as running."""
+    from managers import run_manager as rm
+
+    finished = str(rec.get("finished_at") or "")
+    if finished:
+        age = _age_seconds(finished)
+        if age is None or age <= PENDING_TIMEOUT_SECONDS:
+            return 0
+    elif not _run_is_dead(rec):
+        return 0
+    run_id = str(rec.get("run_id") or "")
+    updates: Dict[str, Any] = {"status": "stopped", "finished_at": finished or rm.utc_now_iso(),
+                               "exit_code": rec.get("exit_code") if rec.get("exit_code") is not None else 0}
+    if not finished:
+        # When the process died is unknown, so the finish time is this
+        # sweep's: lists of what ended lately leave such a run out.
+        updates["settled_by"] = "watchdog"
+    with _fenced_write():
+        rm.update_run(run_id, updates)
+    log.warning("watchdog settled stopped run %s (%s)", run_id[:8], rec.get("agent_id"))
+    return 1
 
 
 def _check_queued_run(rec: Dict[str, Any]) -> int:
@@ -577,6 +611,27 @@ def _entity_run_is_dead(rec: Dict[str, Any]) -> Optional[bool]:
     return None if alive is None else not alive
 
 
+#: How long an active entity run with nothing to check it by may stand
+#: before it counts as an orphan. Every launcher now writes a heartbeat (and
+#: a pid or container) when the run starts, so only an older record lacks
+#: all of them; the wait keeps a run caught between its insert and its first
+#: write from ever being taken for one.
+ORPHAN_ENTITY_SECONDS = float(os.environ.get("RUN_ORPHAN_SECONDS", "3600"))
+
+
+def _entity_run_is_orphan(rec: Dict[str, Any]) -> bool:
+    """An active entity run this host could never judge: no heartbeat, no
+    pid, no container, and no other host named, started long ago. Resuming
+    one is no use (whatever it was waiting on is long gone), so it is closed
+    as failed instead of being skipped on every sweep forever."""
+    if rec.get("heartbeat_at") or rec.get("container_name") or int(rec.get("pid") or 0) > 0:
+        return False
+    if not _carried_here(rec):
+        return False
+    age = _age_seconds(str(rec.get("started_at") or rec.get("created_at") or ""))
+    return age is not None and age > ORPHAN_ENTITY_SECONDS
+
+
 def _entity_checkpoint_resumable(rec: Dict[str, Any]) -> bool:
     """Whether this run's checkpoint is enough to resume from.
 
@@ -594,7 +649,7 @@ def _entity_checkpoint_resumable(rec: Dict[str, Any]) -> bool:
     return True
 
 
-def _fail_entity_run(rec: Dict[str, Any], error: str) -> None:
+def _fail_entity_run(rec: Dict[str, Any], error: str, *, stop_reason: str = "error") -> None:
     """Close a dead entity run as failed and finalize its task, generically
     for every kind. Flow keeps its own close (it mirrors the log file and
     clears the flow's coarse running marker); every other kind goes through
@@ -613,7 +668,7 @@ def _fail_entity_run(rec: Dict[str, Any], error: str) -> None:
         else:
             with _fenced_write():
                 entity_runs.close(run_id, status="failed", exit_code=1, error=error,
-                                  stop_reason="error")
+                                  stop_reason=stop_reason)
     except leases.LeaseLost:
         raise
     except Exception:
@@ -731,6 +786,13 @@ def _sweep_entity_runs(kinds: Optional[Iterable[str]] = None) -> int:
             handled += _check_pending_entity_run(rec)
             continue
         if status not in ("running", "stopping"):
+            continue
+        if _entity_run_is_orphan(rec):
+            _fail_entity_run(rec, (
+                "Run left without a process, a heartbeat or a host to ask: it was "
+                "started by an older hub or before a restart and never finished."
+            ), stop_reason="orphan")
+            handled += 1
             continue
         if not _entity_run_is_dead(rec):
             continue

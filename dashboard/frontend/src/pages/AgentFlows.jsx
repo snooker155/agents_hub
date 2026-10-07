@@ -481,7 +481,7 @@ const AgentFlows = () => {
                   value={newFlow.name}
                   onChange={(event) => setNewFlow((current) => ({ ...current, name: event.target.value }))}
                   placeholder={t('agentFlows.customerOnboardingPipeline')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
                 />
               </div>
               <div className="space-y-2">
@@ -491,7 +491,7 @@ const AgentFlows = () => {
                   onChange={(event) => setNewFlow((current) => ({ ...current, description: event.target.value }))}
                   rows={4}
                   placeholder={t('agentFlows.whatThisFlowIsResponsible')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
                 />
               </div>
               <div className="flex justify-end gap-3">
@@ -547,7 +547,7 @@ const AgentFlows = () => {
                   value={importName}
                   onChange={(e) => setImportName(e.target.value)}
                   placeholder={t('agentFlows.importedFlow')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
                   disabled={importing}
                 />
               </div>
@@ -560,7 +560,7 @@ const AgentFlows = () => {
                   rows={14}
                   spellCheck={false}
                   placeholder={t('agentFlows.pasteFlowYamlHereOr')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-900 outline-none transition"
                   disabled={importing}
                 />
               </div>
@@ -623,7 +623,7 @@ const AgentFlows = () => {
                   onChange={(e) => setWizardReq(e.target.value)}
                   rows={5}
                   placeholder={t('agentFlows.eGINeedA')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
                   disabled={wizardLoading}
                 />
               </div>
@@ -649,7 +649,7 @@ const AgentFlows = () => {
                       <select
                         value={wizardProvider}
                         onChange={(e) => handleProviderChange(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-400"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                         disabled={wizardLoading}
                       >
                         {PROVIDERS.map((p) => (
@@ -667,7 +667,7 @@ const AgentFlows = () => {
                             value={wizardBaseUrl}
                             onChange={(e) => { setWizardBaseUrl(e.target.value); setAvailableModels([]); }}
                             placeholder={DEFAULT_BASE_URLS[wizardProvider]}
-                            className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-400"
+                            className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                             disabled={wizardLoading || fetchingModels}
                           />
                           <button
@@ -696,7 +696,7 @@ const AgentFlows = () => {
                             <select
                               value={wizardModel}
                               onChange={(e) => setWizardModel(e.target.value)}
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-400"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                               disabled={wizardLoading}
                             >
                               {list.map((m) => (
@@ -708,7 +708,7 @@ const AgentFlows = () => {
                               value={wizardModel}
                               onChange={(e) => setWizardModel(e.target.value)}
                               placeholder={t('agentFlows.typeModelNameOrFetch')}
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-400"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                               disabled={wizardLoading}
                             />
                           );

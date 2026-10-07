@@ -112,7 +112,32 @@ NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user", "propose_connection"
 #: Tools that wait for a person's yes on every call, whatever the gate, the
 #: workspace's or the agent's policy say: irreversible actions on the hub
 #: itself. Deleting a workspace removes its folder and every record in it.
-ALWAYS_GATED: frozenset[str] = frozenset({"delete_workspace"})
+ALWAYS_GATED: frozenset[str] = frozenset({
+    "delete_workspace",
+    # The assistant's one-step changes to the hub's records (chat/actions.py):
+    # a person says yes to each one, on its card or aloud.
+    "hub_action",
+})
+
+#: Tools whose approval card says in a sentence what the call would do:
+#: tool id -> "module:function" taking the call's input, returning the
+#: sentence or "" (then the card keeps the generic reason).
+CALL_DESCRIBERS: Dict[str, str] = {
+    "hub_action": "tools.hub_action:describe_call",
+}
+
+
+def describe_call(tool_id: str, tool_input: Any) -> str:
+    """The card's sentence for this call, or "" when the tool has none."""
+    target = CALL_DESCRIBERS.get(str(tool_id or ""))
+    if not target:
+        return ""
+    import importlib
+    module, _, func = target.partition(":")
+    try:
+        return str(getattr(importlib.import_module(module), func)(tool_input) or "")
+    except Exception:  # noqa: BLE001 - a describer never stops the card
+        return ""
 
 
 def needs_approval(tool_id: str, agent_spec: Any = None) -> bool:
@@ -354,6 +379,8 @@ def chat_answer_text(tool_id: str, tool_input: Any, approval: Dict[str, Any],
 
 __all__ = [
     "ALWAYS_GATED",
+    "CALL_DESCRIBERS",
+    "describe_call",
     "NEEDS_APPROVAL",
     "NEVER_GATED",
     "REASONING_TOOL_NAMES",

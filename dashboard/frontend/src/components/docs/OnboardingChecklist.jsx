@@ -69,7 +69,8 @@ export default function OnboardingChecklist({ onNavigate }) {
         const { data } = await getSettings();
         const hasCloudKey = [data.openai_api_key_masked, data.anthropic_api_key_masked, data.google_api_key_masked]
           .some((m) => m && m !== '****');
-        const hasLocal = Boolean(data.ollama_model || data.lmstudio_model);
+        // A local model: on the hub's own runtime (provider hub-local), or Ollama / LM Studio.
+        const hasLocal = Boolean(data.default_provider === 'hub-local' || data.ollama_model || data.lmstudio_model);
         provider = hasCloudKey || hasLocal ? STATUS.DONE : STATUS.TODO;
         providerLabel = data.default_provider || '';
       } catch {

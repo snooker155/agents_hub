@@ -12,7 +12,7 @@
  * fetches the finished run as before.
  */
 import { DELEGATION_TOOLS } from './trail';
-import { policyVerdict } from '../policyVerdict';
+import { toolOutcome } from '../toolStatus';
 
 // Apply `fn` to the record of delegation `runId`, wherever it is nested.
 // Returns the same array when nothing matched.
@@ -75,9 +75,9 @@ function patchFor(event) {
         tools: [...(d.tools || []), { step: event.step, tool: event.tool, input: event.input, output: null, running: true }],
       });
     case 'tool_end':
-      return (d) => ({ ...d, tools: resolveLast(d.tools, { output: event.output, ...policyVerdict(event) }) });
+      return (d) => ({ ...d, tools: resolveLast(d.tools, { output: event.output, ...toolOutcome(event) }) });
     case 'tool_error':
-      return (d) => ({ ...d, tools: resolveLast(d.tools, { output: `ERROR: ${event.error}`, error: true, ...policyVerdict(event) }) });
+      return (d) => ({ ...d, tools: resolveLast(d.tools, { output: `ERROR: ${event.error}`, error: true, ...toolOutcome(event) }) });
     case 'text':
       // What the worker said last is its answer so far.
       return (event.content || '').trim() ? (d) => ({ ...d, output: event.content }) : null;

@@ -18,7 +18,7 @@
 import { createContext, useContext } from 'react';
 import { applyPalette, clearPalette } from '../lib/palette';
 import { getMyPreferences } from '../api/palette';
-import { getWorkspaceSettingsOverrides } from '../api';
+import { loadWorkspaceSummary } from '../api/workspaceSummary';
 
 // A default value so a component that reads the theme outside the provider
 // (a page rendered on its own in a test) sees the built-in setting instead
@@ -89,8 +89,8 @@ async function workspacePalette() {
   const workspace = readSelectedWorkspace();
   if (!workspace) return null;
   try {
-    const { data } = await getWorkspaceSettingsOverrides(workspace);
-    const palette = data?.overrides?.palette;
+    const summary = await loadWorkspaceSummary(workspace);
+    const palette = summary?.palette;
     return hasAnyColor(palette) ? palette : null;
   } catch {
     return null;

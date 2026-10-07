@@ -115,7 +115,7 @@ export const navigateWithAuthTicket = async (url) => {
 // Every streaming endpoint below opens its own fetch (a long-lived response
 // body axios cannot hand back incrementally), so each has to attach this
 // itself rather than riding the interceptor below.
-const authFetchHeaders = () => {
+export const authFetchHeaders = () => {
   const token = activeToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
@@ -201,6 +201,11 @@ export const getMe = () => api.get('/auth/me');
 export const getUsers = () => api.get('/auth/users');
 export const createUser = (data) => api.post('/auth/users', data);
 export const updateUser = (id, data) => api.patch(`/auth/users/${id}`, data);
+// Spend limit per person (common/user_budget.py): every person's limit and
+// month spend plus the hub default (admin), and the caller's own.
+export const getSpendLimits = () => api.get('/auth/spend-limits');
+export const setDefaultSpendLimit = (limitUsd) => api.put('/auth/spend-limits/default', { limit_usd: limitUsd });
+export const getOwnSpend = () => api.get('/auth/spend');
 export const deleteUser = (id) => api.delete(`/auth/users/${id}`);
 export const resetUserPassword = (id, password) =>
   api.post(`/auth/users/${id}/password`, { password });
@@ -290,7 +295,7 @@ export const getDoc = (id) => api.get(`/docs/${id}`);
  * dropped: a stream is a best-effort narration and one malformed chunk must
  * not end the turn.
  */
-const consumeSSE = async (response, onEvent) => {
+export const consumeSSE = async (response, onEvent) => {
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   let buffer = '';
@@ -363,6 +368,9 @@ export const importChats = (chats) => api.post('/chats/import', { chats });
 // The turn a conversation is in the middle of, for a page that arrived after it
 // started: what has been generated so far, to continue from on the live channel.
 export const getChatLive = (chatId) => api.get(`/chats/${chatId}/live`);
+// The conversations being answered right now, whoever started the turn: the
+// Chat page marks them in its list (refetched on `chat_turns.changed`).
+export const getRunningChats = () => api.get('/chats/running');
 
 // Context references — what the chat composer can attach besides a file. The
 // kind catalog and the per-kind candidate lists both come from the server so the
@@ -445,6 +453,35 @@ export const updateWorkspaceRole = (name, role, agentId) => api.put(`/workspaces
 // Special models (providers/special.py): images, video, speech, transcription, own models.
 export const getWorkspaceSpecialModels = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/special-models`);
 export const updateWorkspaceSpecialModels = (name, config) => api.put(`/workspaces/${encodeURIComponent(name)}/special-models`, config);
+export const checkWorkspaceSpecialModel = (name, body) => api.post(`/workspaces/${encodeURIComponent(name)}/special-models/check`, body);
+export const discoverWorkspaceSpecialModels = (name, purpose, provider) => api.get(
+  `/workspaces/${encodeURIComponent(name)}/special-models/discover`, { params: { purpose, provider } },
+);
+/** The voices of one model: `{voices, own, language, languages}`. */
+export const getWorkspaceSpecialModelVoices = (name, provider, model, config = {}) => api.get(
+  `/workspaces/${encodeURIComponent(name)}/special-models/voices`, { ...config, params: { purpose: 'speech', provider, model } },
+);
+/**
+ * A short line read by a speech model the form holds,
+ * `{provider, model, voice, options, language}`: `{blob, language, text}`.
+ * Its own fetch, so a refusal's message survives a binary response type.
+ */
+export async function sampleWorkspaceSpecialModel(name, body, { signal } = {}) {
+  const response = await fetch(`${API_ORIGIN}/api/workspaces/${encodeURIComponent(name)}/special-models/sample`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
+    signal,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.json())?.detail; } catch { /* no body */ }
+    throw new Error(typeof detail === 'string' && detail ? detail : (detail?.message || `HTTP ${response.status}`));
+  }
+  let text = '';
+  try { text = decodeURIComponent(response.headers.get('X-Sample-Text') || ''); } catch { /* left out */ }
+  return { blob: await response.blob(), language: response.headers.get('X-Sample-Language') || '', text };
+}
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
 export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });
@@ -629,6 +666,7 @@ export const getOrchestratorRoutingLog = (workspace) =>
 
 // Stats
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
+export const getStatsOverview = (workspace, days = 14) => api.get('/stats/overview', { params: { workspace, days } });
 // With a workspace the MCP servers attached to it are listed as well.
 export const getTools = (workspace) => api.get('/tools', inWorkspace(workspace));
 export const getToolSource = (toolId) => api.get(`/tools/${encodeURIComponent(toolId)}/source`);
@@ -636,7 +674,15 @@ export const updateToolSource = (toolId, data) => api.put(`/tools/${encodeURICom
 export const getRuns = (workspace) => api.get('/runs', { params: workspace ? { workspace } : {} });
 
 // Workspaces
-export const getWorkspaces = () => api.get('/workspaces');
+// Callers that ask at the same moment (the header, a page, React's double
+// mount in development) share the request in flight.
+let workspacesInFlight = null;
+export const getWorkspaces = () => {
+  if (!workspacesInFlight) {
+    workspacesInFlight = api.get('/workspaces').finally(() => { workspacesInFlight = null; });
+  }
+  return workspacesInFlight;
+};
 export const createWorkspace = (name) => api.post('/workspaces', { name });
 export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(name)}`);
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);

@@ -34,4 +34,9 @@ export default {
     env_params: 'parameter',
     limits: 'limit',
   },
+  // Where a remember or forget step wrote: "Saved to personal memory · dev".
+  memory: {
+    remember: { personal: 'Saved to personal memory · {{workspace}}', pool: 'Saved to memory "{{pool}}" · {{workspace}}' },
+    forget: { personal: 'Removed from personal memory · {{workspace}}', pool: 'Removed from memory "{{pool}}" · {{workspace}}' },
+  },
 };

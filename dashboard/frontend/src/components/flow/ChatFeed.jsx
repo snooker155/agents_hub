@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
 import {
-  PlusCircle, MinusCircle, Pencil, MoreHorizontal, Wrench, Brain,
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
+  PlusCircle, MinusCircle, Pencil, MoreHorizontal, Brain,
+  AlertTriangle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { toolInline } from '../toolFormatters';
+import ToolStatusMark from '../ToolStatusMark';
 import { trimBubbleText } from '../../lib/chatText';
 import { useI18n } from '../../i18n';
 
 // How a change to the entity under edit reads: the verb decides the icon and
 // the colour, so a run of them can be skimmed for what was *removed* without
 // reading a word.
+// A feed step's status as the shared tool mark reads it.
+const FEED_TOOL_STATUS = { running: 'running', done: 'ok', error: 'error' };
+
 const CHANGE_STYLES = {
   added: { icon: PlusCircle, className: 'text-green-600' },
   removed: { icon: MinusCircle, className: 'text-red-500' },
@@ -61,6 +65,15 @@ function ThoughtStep({ text }) {
 // (ProjectGraph), the planner chat and every entity build chat. `renderText`,
 // when given, turns a reply's text into nodes (the Help panel makes its links
 // navigate inside the app); without it a reply is plain text.
+// Where a remember or forget step wrote: personal memory is per workspace, so
+// the line names the workspace too.
+function memoryLine(e, t) {
+  const m = e.memory || {};
+  const action = e.tool === 'forget' ? 'forget' : 'remember';
+  return t(`flowChatFeed.memory.${action}.${m.personal ? 'personal' : 'pool'}`,
+    { pool: m.pool || '', workspace: m.workspace || 'default' });
+}
+
 export function FeedItem({ e, renderText = null }) {
   const { t } = useI18n();
   if (e.k === 'user') {
@@ -124,16 +137,13 @@ export function FeedItem({ e, renderText = null }) {
     const failed = e.status === 'error';
     return (
       <div className={`flex items-start gap-1.5 text-xs ${failed ? 'text-red-600' : 'text-gray-500'}`}>
-        {failed
-          ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          : e.status === 'done'
-            ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-green-500 shrink-0" />
-            : <Wrench className="w-3.5 h-3.5 mt-0.5 text-indigo-400 shrink-0" />}
+        <ToolStatusMark status={FEED_TOOL_STATUS[e.status] || 'unknown'} className="mt-1" />
         <div className="min-w-0">
           <span className="font-mono">{e.tool}</span>
           {inline ? <span className="text-gray-400"> · {inline}</span> : null}
           {e.status === 'running' ? <span className="text-indigo-400 animate-pulse"> …</span> : null}
           {failed && e.error ? <span className="break-words"> — {e.error}</span> : null}
+          {e.memory ? <div className="text-gray-400">{memoryLine(e, t)}</div> : null}
         </div>
       </div>
     );

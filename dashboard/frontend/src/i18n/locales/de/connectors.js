@@ -198,9 +198,6 @@ export default {
       auth_mode: "password nutzt die Felder unten; google meldet sich mit dem auf dem Google-Tab verbundenen Konto an (Mit Gmail verbinden), leere Hosts, Benutzer und Absenderadresse bedeuten Gmail und dieses Konto.",
       from_address: "Die Adresse, von der Antworten gesendet werden; Nachrichten von ihr werden ignoriert.",
     },
-    jira: {
-      base_url: "Zum Beispiel https://acme.atlassian.net",
-    },
     microsoft: {
       default_user: "Der Benutzer, dessen Kalender die Werkzeuge lesen, wenn ein Aufruf keinen nennt, z. B. anna@contoso.com",
       consent_tenant: "Für das Zustimmungsportal: wer sich anmelden darf, um das eigene Konto freizugeben. common, organizations, consumers oder eine Tenant-ID; leer heißt nur dieser Tenant.",

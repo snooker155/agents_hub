@@ -159,7 +159,7 @@ export default function NarrativePanel({
             onChange={(e) => setText(e.target.value)}
             placeholder={t('playgroundNarrative.placeholder')}
             spellCheck
-            className="flex-1 w-full resize-none border-0 focus:ring-0 focus:outline-none text-sm leading-relaxed font-mono text-gray-800 bg-transparent p-2"
+            className="flex-1 w-full resize-none border-0 focus:outline-none text-sm leading-relaxed font-mono text-gray-800 bg-transparent p-2"
           />
         </div>
 

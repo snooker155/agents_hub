@@ -9,7 +9,7 @@ import { getWatchers } from '../../api/watchers';
 import { useWorkspace } from '../workspace';
 import CronHint from '../CronHint';
 
-const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none';
 const smallBtn = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed';
 
 const OUTCOME_CLS = {
@@ -262,7 +262,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
           {/* Profile */}
           <label className="flex items-center gap-2.5 text-sm text-gray-800 cursor-pointer">
             <input type="checkbox" checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
             <span className="font-medium">{t('proactive.enabled')}</span>
           </label>
 
@@ -271,7 +271,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
             <p className="text-xs text-gray-500 mb-2">{t('proactive.brief.hint')}</p>
             <textarea value={form.brief} onChange={(e) => set('brief', e.target.value)} rows={5}
               aria-label={t('proactive.brief.title')} placeholder={t('proactive.brief.placeholder')}
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none" />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -386,7 +386,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
               {NOTIFY_CHANNELS.map((ch) => (
                 <label key={ch} className="flex items-center gap-1.5 cursor-pointer">
                   <input type="checkbox" checked={form.notify.includes(ch)} onChange={() => toggleChannel(ch)}
-                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
                   {t(`proactive.notify.${ch}`)}
                 </label>
               ))}

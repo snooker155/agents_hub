@@ -210,8 +210,13 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     Two guards keep it from fighting the browser. A chat that does not exist is
     left alone, because a conversation the dashboard never created (a Telegram
     thread, an instance delivery) should not appear in the sidebar. A run whose
-    id is already on a message is skipped, so whichever writer got there first
-    holds the turn and the other does not duplicate it.
+    id is already on a finished message is skipped, so whichever writer got
+    there first holds the turn and the other does not duplicate it. A bubble the
+    page saved while the turn was still being written (no ``duration_ms`` and
+    no ``total_tokens`` yet) is not finished: the page saves as it streams, and when it is gone before
+    the end (left for another page, closed) that half answer would otherwise be
+    the record. Such a bubble gets the final answer here, keeping the rest of
+    what the page wrote.
 
     ``extra`` is merged into the agent bubble: a reply that took the
     conversation over by handoff carries its ``handoff`` there, which is what
@@ -226,8 +231,31 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
         if chat is None:
             return False
         messages = _messages(chat)
-        if any(str(m.get("run_id") or "") == str(run_id) for m in messages):
-            return False
+        same_run = [i for i, m in enumerate(messages)
+                    if str(m.get("run_id") or "") == str(run_id)]
+        if same_run:
+            i = same_run[-1]
+            partial = messages[i]
+            unfinished = (partial.get("role") == "agent" and partial.get("duration_ms") is None
+                          and partial.get("total_tokens") is None)
+            if not unfinished:
+                return False
+            messages = list(messages)
+            messages[i] = {
+                **partial, **(extra or {}),
+                "content": agent_message, "error": False,
+                "inbound_tokens": (usage or {}).get("inbound_tokens", partial.get("inbound_tokens")),
+                "outbound_tokens": (usage or {}).get("outbound_tokens", partial.get("outbound_tokens")),
+                "total_tokens": (usage or {}).get("total_tokens", partial.get("total_tokens")),
+                "duration_ms": duration_ms if duration_ms is not None else 0,
+                "thinking_live": "",
+            }
+            doc = _fit({**chat, "messages": messages, "updated_at": _now()})
+            conn.execute(
+                "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
+                (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
+            )
+            return True
         turn = []
         if (user_message or "").strip():
             turn.append({"id": f"srv-u-{run_id}", "role": "user",

@@ -129,6 +129,9 @@ def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], N
     # key that already spent its month refuses to start, the same gate
     # agents.agent_launcher.prepare_run applies to a task run.
     check_launch_budget()
+    # And the person's own monthly limit (common/user_budget.py).
+    from common.user_budget import check_user_budget
+    check_user_budget(spec.get("launched_by"))
     spec.setdefault("key_id", launching_key())
     spec.setdefault("execution_mode", "local")
     # An isolated workspace's agent loop runs on the hub, where the state it

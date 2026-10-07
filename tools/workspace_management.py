@@ -395,6 +395,10 @@ def create_workspace(name: str, description: Optional[str] = None,
                         code="invalid_name")
     if name == _system_workspace():
         return json_err(f"'{name}' is reserved for the system workspace", code="invalid_name")
+    from common import personal_workspace
+    if personal_workspace.is_reserved_name(name):
+        return json_err(f"names starting with '{personal_workspace.PREFIX}' are reserved for "
+                        "personal workspaces", code="invalid_name")
     entry = ws_storage.WORKSPACES_ROOT / name
     if entry.exists() or entry.is_symlink():
         return json_err(f"workspace '{name}' already exists", code="exists")
@@ -569,8 +573,8 @@ def remove_workspace_agent(name: str, agent_id: str) -> str:
 @tool("delete_workspace", args_schema=_NameArgs)
 def delete_workspace(name: str) -> str:
     """Delete a workspace with its folder, tasks' home and settings. Always
-    waits for a person's yes. The default and the system workspace cannot be
-    deleted. An attached workspace is only detached: the directory it points
+    waits for a person's yes. The default, the system and a personal
+    workspace cannot be deleted. An attached workspace is only detached: the directory it points
     at is kept."""
     refused = _out_of_scope()
     if refused:
@@ -581,6 +585,9 @@ def delete_workspace(name: str) -> str:
         return json_err("the default workspace cannot be deleted", code="forbidden")
     if name == _system_workspace():
         return json_err("the system workspace cannot be deleted", code="forbidden")
+    from common import personal_workspace
+    if personal_workspace.is_personal(name):
+        return json_err("a personal workspace cannot be deleted", code="forbidden")
     user = _acting_user()
     missing = _find(name, user)
     if missing:

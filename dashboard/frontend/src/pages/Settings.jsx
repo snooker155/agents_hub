@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { MULTI, TOKEN, useAuth } from '../components/auth';
@@ -14,7 +14,7 @@ import { SectionCard, inputCls } from '../components/settingsUi';
 import { useI18n } from '../i18n';
 import {
   ProviderStatusBadge, SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
-  ProvidersSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebSearchSection,
+  ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebSearchSection,
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
@@ -43,6 +43,7 @@ const GROUPS = [
       { id: 'providers',     key: 'providers',     icon: Key,    workspaceScoped: true },
       { id: 'local',         key: 'local',         icon: Cpu,    workspaceScoped: true },
       { id: 'custom',        key: 'custom',        icon: Server },
+      { id: 'temperature',   key: 'temperature',   icon: Thermometer },
     ],
   },
   {
@@ -584,6 +585,7 @@ export default function Settings() {
             <WorkspaceSettingsStatus s={ws} />
 
             {active.id === 'providers' && <ProvidersSection s={ws} />}
+            {active.id === 'temperature' && <GlobalTemperatureSection s={ws} />}
             {active.id === 'local' && <LocalServersSection s={ws} />}
             {active.id === 'observability' && <ObservabilitySection s={ws} />}
             {active.id === 'rag' && <RagSection s={ws} />}

@@ -114,7 +114,7 @@ function makeEdge(source, target, label = '') {
 }
 
 // ── Inspector for the selected node/edge (manual editing) ──────────────────
-const FIELD = 'w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100';
+const FIELD = 'w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:outline-none';
 
 function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDelete, onClose }) {
   const { t } = useI18n();
@@ -726,7 +726,7 @@ function ProjectGraph({ projectId }) {
             <div className="border-t border-gray-100 p-3">
               <ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} className="mb-2" />
               <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-2.5
-                focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 shadow-sm transition-all">
+                shadow-sm transition-all">
                 <textarea
                   ref={textareaRef}
                   rows={1}

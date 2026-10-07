@@ -28,9 +28,4 @@ export default {
   confirmBulkDelete: 'Удалить выбранные сессии ({{count}})?',
   deleteFailed: 'Не удалось удалить сессию',
   bulkDeletePartial: 'Часть удалений не прошла ({{count}}). Пример: {{id}} ({{reason}})',
-  loadMore_one: 'Показать ещё 1',
-  loadMore_few: 'Показать ещё {{count}}',
-  loadMore_many: 'Показать ещё {{count}}',
-  loadMore_other: 'Показать ещё {{count}}',
-  shownOfTotal: 'Показано {{shown}} из {{total}}',
 };

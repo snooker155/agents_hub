@@ -62,7 +62,7 @@ export default function BrowserToolbar({
             onBlur={() => setDraft(null)}
             placeholder={t('browser.addressPlaceholder')}
             aria-label={t('browser.address')}
-            className="w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs text-gray-700 focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            className="w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs text-gray-700 focus:outline-none"
           />
         </form>
       ) : (

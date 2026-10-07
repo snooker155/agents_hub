@@ -94,6 +94,44 @@ Whoever creates a workspace becomes its `owner`. The `default` workspace is
 not special: it is read by its members and written by its editors, like any
 other, so give people membership of it if they should see it.
 
+## Personal workspace
+
+In `multi` mode `default` and `system` hold the service's own configuration,
+and a member who is not given membership of them never sees them. Each person
+still needs a home for their own threads, files and memory, so every account
+gets a personal workspace (`common/personal_workspace.py`):
+
+- **Made on first use.** Signing in (password, single sign-on, the first
+  admin's bootstrap), `GET /api/auth/me` and `GET /api/workspaces` make sure
+  it exists. It is named `personal-<user id>` and marked
+  `personal_of: <user id>` in its metadata; the person is its `owner`. An
+  administrator gets one by the same path.
+- **Listed first.** `GET /api/workspaces` puts the caller's own personal
+  workspace first (`own_personal: true`), then `default`, then the rest; an
+  administrator sees other people's personal workspaces last, labelled with
+  their owner (`personal_label`). The header picker shows it as "Personal".
+- **Never deleted, renamed or shared.** Deleting it is refused for everyone,
+  administrators included, through the API and the `delete_workspace` tool.
+  No member can be added or removed, and no group rule can name it. Names
+  starting with `personal-` are reserved: creating or attaching a workspace
+  with one is refused. SCIM deactivation and deletion leave it in place
+  with its files; an administrator still reaches it.
+- **Falls back to `default`.** A personal workspace with no default model and
+  no connection settings of its own runs with `default`'s
+  (`personal_workspace.model_source`, `get_workspace_default_model_config`);
+  for a [special model](special-models.md) purpose it left empty, it uses
+  `default`'s. Everything else, connectors included, follows the ordinary
+  rules: a connector belongs to the workspace it was created in, and
+  `default`'s are available everywhere. This is the only place one workspace
+  borrows another's configuration.
+- **Spend is limited per person.** Its budget, like every workspace budget in
+  `multi`, is set by an administrator only (`POST /api/costs/budget`), and
+  the person's own monthly limit applies on top, see
+  [Limit per person](costs.md#limit-per-person).
+
+In `single` and `token` mode there is one operator, and `default` is their
+workspace: nothing here creates anything.
+
 ## Corporate identity
 
 The department signs in with its own accounts, the administrator sees who

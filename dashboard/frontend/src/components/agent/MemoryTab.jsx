@@ -18,6 +18,9 @@ export default function MemoryTab() {
     setEpisodicSaving, setMemoryData, setMemoryType, setPrimaryPool, setSelectedTools,
     setPersonalMemory, setToolsSaving, sharedMemories, t, toast,
   } = useAgentPage();
+  // The default workspace lists every workspace's pools: name the one a
+  // personal pool belongs to.
+  const onDefault = !selectedWorkspace || selectedWorkspace === 'default';
   return (
         <div className="space-y-5">
           {/* ── Configuration card ── */}
@@ -35,7 +38,7 @@ export default function MemoryTab() {
                 <select
                   value={memoryType}
                   onChange={(e) => { setMemoryType(e.target.value); markMemoryDraftDirty(); if (e.target.value !== 'shared') setConnectedPool(null); }}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 >
                   <option value="none">{t('agentDetails.none')}</option>
                   <option value="local">{t('agentDetails.localAgentSpecificOption')}</option>
@@ -44,7 +47,7 @@ export default function MemoryTab() {
               </div>
 
               {memoryType === 'shared' && (() => {
-                const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, poolName(m, t)]));
+                const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, poolName(m, t, onDefault)]));
                 const primary = memoryPools[0] || '';
                 const extras = memoryPools.slice(1);
                 const unattached = sharedMemories.filter(m => !memoryPools.includes(m.id));
@@ -57,12 +60,12 @@ export default function MemoryTab() {
                         <select
                           value={primary}
                           onChange={(e) => setPrimaryPool(e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                         >
                           <option value="">{t('agentDetails.selectAMemoryPool')}</option>
                           {sharedMemories.map(m => (
                             <option key={m.id} value={m.id}>
-                              {poolName(m, t)}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
+                              {poolName(m, t, onDefault)}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
                             </option>
                           ))}
                         </select>
@@ -72,7 +75,7 @@ export default function MemoryTab() {
                           value={primary}
                           onChange={(e) => setPrimaryPool(e.target.value.trim())}
                           placeholder={t('agentDetails.sharedMemoryPoolIdUuid')}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                         />
                       )}
                       {primary && (
@@ -83,7 +86,7 @@ export default function MemoryTab() {
                               type="checkbox"
                               checked={memoryReadOnly.has(primary)}
                               onChange={() => toggleReadOnly(primary)}
-                              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                              className="rounded border-gray-300 text-indigo-600"
                             />
                             {t('agentDetails.poolReadOnly')}
                           </label>
@@ -106,7 +109,7 @@ export default function MemoryTab() {
                                   type="checkbox"
                                   checked={memoryReadOnly.has(pid)}
                                   onChange={() => toggleReadOnly(pid)}
-                                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                  className="rounded border-gray-300 text-indigo-600"
                                 />
                                 {t('agentDetails.readOnlyShort')}
                               </label>
@@ -126,11 +129,11 @@ export default function MemoryTab() {
                         <select
                           value=""
                           onChange={(e) => addExtraPool(e.target.value)}
-                          className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none"
                         >
                           <option value="">{t('agentDetails.attachAnotherPool')}</option>
                           {unattached.map(m => (
-                            <option key={m.id} value={m.id}>{poolName(m, t)}</option>
+                            <option key={m.id} value={m.id}>{poolName(m, t, onDefault)}</option>
                           ))}
                         </select>
                       ) : extras.length === 0 ? (
@@ -149,7 +152,7 @@ export default function MemoryTab() {
                     onChange={(e) => { setMemoryData(e.target.value); markMemoryDraftDirty(); }}
                     placeholder={t('agentDetails.enterMemoryContentOrConfiguration')}
                     rows={5}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   />
                 </div>
               )}
@@ -275,7 +278,7 @@ export default function MemoryTab() {
                 {memoryPools.length > 1 && (
                   <p className="text-xs text-gray-400 mb-2">{t('agentDetails.showingThePrimaryPoolAdditional')} <Link to="/memory" className="text-indigo-600 hover:text-indigo-800">{t('agentDetails.sharedMemory')}</Link> {t('agentDetails.page')}</p>
                 )}
-                <MemoryPoolDetails pool={connectedPool} />
+                <MemoryPoolDetails pool={connectedPool} withWorkspace={onDefault} />
               </div>
             ) : memoryPools[0] ? (
               <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">

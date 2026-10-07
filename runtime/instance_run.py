@@ -818,7 +818,7 @@ class InstanceLoop:
     def _heartbeat(self) -> None:
         from instances import carrier, store
         while not _stopping.wait(HEARTBEAT_SECONDS):
-            carrier.heartbeat(self.instance_id)
+            carrier.heartbeat(self.instance_id, **_build_counts())
             try:
                 inst = store.get(self.instance_id) or {}
             except Exception:  # noqa: BLE001 - a transient read; the next heartbeat retries
@@ -829,6 +829,18 @@ class InstanceLoop:
                 log("Stop requested through the instance record")
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
+
+
+def _build_counts() -> Dict[str, Any]:
+    """This replica's agent build reuse (agents/agent_cache.py), sent with
+    every heartbeat: the builds live in this process's memory, so this is
+    the only way the hub's health snapshot sees them (common/health.py)."""
+    try:
+        from agents.agent_cache import cache_stats
+        return {"agent_builds": cache_stats()}
+    except Exception:  # noqa: BLE001 - the beat goes out without the counts
+        _logger.debug("agent build counts unavailable", exc_info=True)
+        return {}
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

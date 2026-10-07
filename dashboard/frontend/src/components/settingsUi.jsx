@@ -6,7 +6,7 @@
 // up importing from the other.
 
 export const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none';
 
 export function SectionCard({ title, actions, children }) {
   return (

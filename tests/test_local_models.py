@@ -219,6 +219,26 @@ def runtime(monkeypatch):
             return httpx.Response(200, json={"id": p.rsplit("/", 1)[-1], "status": "running"})
         if p == "/hf/files":
             return httpx.Response(200, json={"repo": request.url.params["repo"], "files": []})
+        if p == "/hf/search":
+            return httpx.Response(200, json={"results": [{"repo": "org/m", "q": request.url.params["q"],
+                                                          "purpose": request.url.params["purpose"]}],
+                                             "hardware": {"kind": "cpu"}})
+        if p == "/hardware":
+            return httpx.Response(200, json={"kind": "apple", "bandwidth_gbps": 400})
+        if p == "/cache":
+            if request.method == "DELETE":
+                return httpx.Response(200, json={"stored": [], "cleared": request.url.params.get("model")})
+            return httpx.Response(200, json={"settings": {"enabled": True}, "models": [], "pending": []})
+        if p == "/cache/settings":
+            return httpx.Response(200, json={"settings": json.loads(request.content), "pending": ["a"]})
+        if p == "/cache/apply":
+            return httpx.Response(200, json={"reloaded": ["a"], "failed": [], "pending": []})
+        if p == "/cache/warmup":
+            return httpx.Response(200, json={"started": True, "model": json.loads(request.content)["model"]})
+        if p == "/usage" and state.get("usage") is not None:
+            if request.method == "DELETE":
+                state["usage"] = {"rows": [], "totals": {"requests": 0}}
+            return httpx.Response(200, json=state["usage"])
         return httpx.Response(404, json={"detail": "nope"})
 
     transport = httpx.MockTransport(handler)
@@ -352,3 +372,75 @@ def test_pull_stream_parses_ollama_lines(monkeypatch):
     events = list(lm.ollama_pull_stream("llama3.2"))
     assert [e["status"] for e in events] == ["pulling manifest", "pulling a", "success"]
     assert seen["body"]["stream"] is True and seen["body"]["model"] == "llama3.2"
+
+
+# ── runtime usage: every call, labelled by its caller ────────────────────────
+
+def test_runtime_status_carries_usage_and_an_old_runtime_is_outdated(api, runtime, monkeypatch):
+    # The fake runtime answers 404 on /usage until it has counts, as one
+    # started from code older than the count does.
+    body = api.get("/api/models/local/runtime").json()
+    assert body["ok"] is True and body["usage"] is None and body["usage_outdated"] is True
+    state = runtime["state"]
+    state["usage"] = {"rows": [{"model": "a", "source": "hub", "requests": 3}], "totals": {"requests": 3}}
+    body = api.get("/api/models/local/runtime").json()
+    assert body["usage"]["totals"]["requests"] == 3 and body["usage_outdated"] is False
+    assert api.delete("/api/models/local/runtime/usage").json()["rows"] == []
+
+
+def test_calls_to_the_runtime_name_their_caller(monkeypatch):
+    from providers.adapters import _build_openai_compatible
+    backend = {"id": "hub-local", "base_url": "http://models.test:8200/v1", "api_key": "tok"}
+
+    def build(b):
+        return _build_openai_compatible(b, model="a", temperature=None, max_tokens=None,
+                                        streaming=False, thinking_level=None)
+
+    assert build(backend).default_headers["X-Hub-Source"] == "hub"
+    with lm.runtime_source("endpoint"):
+        assert build(backend).default_headers["X-Hub-Source"] == "endpoint"
+    assert build(backend).default_headers["X-Hub-Source"] == "hub"
+    assert "X-Hub-Source" not in (build({**backend, "id": "elsewhere"}).default_headers or {})
+
+    from providers import registry, special
+    monkeypatch.setattr(registry, "get_backend", lambda pid: {**backend, "id": pid})
+    with lm.runtime_source("voice"):
+        assert special.endpoint("hub-local", None).headers["X-Hub-Source"] == "voice"
+        assert "X-Hub-Source" not in special.endpoint("elsewhere", None).headers
+
+
+def test_runtime_search_and_hardware_pass_through(api, runtime):
+    body = api.get("/api/models/local/runtime/hf/search", params={"q": "qwen", "purpose": "code"}).json()
+    assert body["results"] == [{"repo": "org/m", "q": "qwen", "purpose": "code"}]
+    assert api.get("/api/models/local/runtime/hardware").json()["bandwidth_gbps"] == 400
+
+
+def test_cache_routes_pass_through_and_survive_a_runtime_that_is_down(api, runtime, monkeypatch):
+    assert api.get("/api/models/local/runtime/cache").json() == {
+        "ok": True, "settings": {"enabled": True}, "models": [], "pending": []}
+    r = api.put("/api/models/local/runtime/cache/settings", json={"kv_type": "q8_0"})
+    assert r.status_code == 200 and r.json()["settings"] == {"kv_type": "q8_0"} and r.json()["pending"] == ["a"]
+    assert api.post("/api/models/local/runtime/cache/apply").json()["reloaded"] == ["a"]
+    assert api.post("/api/models/local/runtime/cache/warmup", json={"file": "a"}).json()["model"] == "a"
+    assert api.delete("/api/models/local/runtime/cache", params={"model": "a"}).json()["cleared"] == "a"
+
+    def old_runtime(request):
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    real_init = lm.RuntimeClient.__init__
+    monkeypatch.setattr(lm.RuntimeClient, "__init__",
+                        lambda self, *a, **kw: real_init(self, transport=httpx.MockTransport(old_runtime)))
+    body = api.get("/api/models/local/runtime/cache").json()
+    assert body["ok"] is False and body["outdated"] is True
+
+
+def test_cache_changes_are_for_administrators(api, runtime, monkeypatch):
+    from common import identity
+    monkeypatch.setattr(identity, "current_mode", lambda: identity.MULTI)
+    before = len(runtime["calls"])
+    assert api.put("/api/models/local/runtime/cache/settings", json={"slots": 2}).status_code in (401, 403)
+    assert api.post("/api/models/local/runtime/cache/apply").status_code in (401, 403)
+    assert api.delete("/api/models/local/runtime/cache").status_code in (401, 403)
+    assert len(runtime["calls"]) == before
+    # Reading how the cache does stays open.
+    assert api.get("/api/models/local/runtime/cache").json()["ok"] is True

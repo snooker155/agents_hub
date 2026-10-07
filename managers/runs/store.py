@@ -195,6 +195,21 @@ def _list_row_to_record(row) -> Dict[str, Any]:
     return rec
 
 
+# Named sort orders for the runs list (``query_runs(sort=...)``). Text columns
+# are coalesced so NULLs sort the same on SQLite and Postgres.
+RUN_SORTS = {
+    "started": "COALESCE(started_at, created_at, '')",
+    "finished": "COALESCE(finished_at, '')",
+    "status": "COALESCE(status, '')",
+    "agent": "COALESCE(agent_id, '')",
+    "workspace": "COALESCE(workspace, '')",
+    "channel": "COALESCE(channel, '')",
+    "title": "LOWER(COALESCE(title, ''))",
+    "duration": "COALESCE(duration_ms, 0)",
+    "tokens": "COALESCE(total_tokens, 0)",
+}
+
+
 def query_runs(
     *,
     workspace: Optional[str] = None,
@@ -216,11 +231,15 @@ def query_runs(
     limit: int = 100,
     offset: int = 0,
     ascending: bool = False,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A filtered, ordered page of run records plus the total match count.
 
     Returns ``{items, total, limit, offset}``. Ordering is by ``started_at``
-    (falling back to ``created_at``), newest first unless ``ascending``.
+    (falling back to ``created_at``), newest first unless ``ascending``;
+    ``sort`` names another key of :data:`RUN_SORTS` and ``order`` is
+    ``asc``/``desc`` (an unknown key raises ``ValueError``).
     """
     clauses: List[str] = []
     params: List[Any] = []
@@ -284,12 +303,15 @@ def query_runs(
         params.extend(ids)
 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    order = "ASC" if ascending else "DESC"
+    if sort:
+        order_sql = db.order_by(RUN_SORTS, sort, order, "started", tiebreak="run_id DESC")
+    else:
+        order_sql = f"COALESCE(started_at, created_at) {'ASC' if ascending else 'DESC'}"
     conn = db.get_conn()
     total = conn.execute(f"SELECT COUNT(*) FROM runs{where}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT {', '.join(_RUN_LIST_COLUMNS)} FROM runs{where} "
-        f"ORDER BY COALESCE(started_at, created_at) {order} LIMIT ? OFFSET ?",
+        f"ORDER BY {order_sql} LIMIT ? OFFSET ?",
         list(params) + [int(limit), int(offset)],
     ).fetchall()
     return {
@@ -557,6 +579,25 @@ def get_run_process(run_id: str) -> Dict[str, Any]:
     if rp.has_heavy_data(proc):
         return rp.with_legacy_aliases(rp.canonicalize(proc))
     return proc
+
+
+def run_exchange(run: Dict[str, Any]) -> Tuple[str, str]:
+    """The person's message and the agent's answer of one run, as text.
+
+    A chat turn leaves the ``input`` and ``output`` columns empty: the message
+    is in the payload's input context and the answer in its response (and in
+    the record's ``response`` key), so a reader of the columns alone sees a
+    conversation with nothing in it. The columns and the title are the
+    fallback for runs that predate the payload.
+    """
+    run_id = str(run.get("run_id") or "")
+    proc = get_run_process(run_id) if run_id else {}
+    context = proc.get("input_context") or {}
+    response = proc.get("response") or {}
+    user = context.get("user_message") or run.get("input") or run.get("title") or ""
+    reply = (response.get("text") if isinstance(response, dict) else response) \
+        or run.get("response") or run.get("output") or ""
+    return str(user).strip(), str(reply).strip()
 
 
 def delete_run_process(run_id: str) -> None:

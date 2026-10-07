@@ -191,3 +191,15 @@ def test_session_stats_skip_sessions_that_were_not_asked_for():
     assert set(rm.session_run_stats(["sess-a"])) == {"sess-a"}
     assert set(rm.session_run_stats()) >= {"sess-a", "sess-b"}
     assert rm.session_run_stats([]) == {}
+
+
+def test_query_runs_sorts_by_a_named_column_either_way():
+    b = _run(agent="beta", workspace="ws-sort")
+    a = _run(agent="alpha", workspace="ws-sort")
+    c = _run(agent="gamma", workspace="ws-sort")
+    up = rm.query_runs(workspace="ws-sort", sort="agent", order="asc")["items"]
+    assert [r["run_id"] for r in up] == [a, b, c]
+    down = rm.query_runs(workspace="ws-sort", sort="agent", order="desc", limit=2, offset=1)
+    assert [r["run_id"] for r in down["items"]] == [b, a] and down["total"] == 3
+    with pytest.raises(ValueError):
+        rm.query_runs(workspace="ws-sort", sort="nope")

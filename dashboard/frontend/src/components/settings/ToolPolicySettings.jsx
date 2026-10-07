@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n';
 const MODES = ['always_allow', 'always_ask', 'auto'];
 const NONE = '';
 
-const fieldCls = 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const fieldCls = 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none';
 
 /**
  * The workspace's per-tool permission policy, inside the Settings tool policy

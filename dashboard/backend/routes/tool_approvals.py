@@ -76,9 +76,13 @@ def _owner(approval: Dict[str, Any], run: Dict[str, Any]) -> Optional[str]:
 
 def _require_answerer(request: Request, approval: Dict[str, Any], run: Dict[str, Any]):
     """The caller's principal, once they may answer this call; 403 otherwise."""
+    return require_answerer(identity.request_principal(request), approval, run)
+
+
+def require_answerer(principal: Any, approval: Dict[str, Any], run: Dict[str, Any]):
+    """:func:`_require_answerer` for a principal already in hand."""
     from common.auth import MULTI
 
-    principal = identity.request_principal(request)
     access.require_visible(principal, _workspace(approval, run))
     if principal is not None and getattr(principal, "kind", "") == "service":
         raise HTTPException(status_code=403,
@@ -132,7 +136,18 @@ def decide_approval(approval_id: str, body: DecideBody, request: Request):
     approval = _load(approval_id)
     run = _run_of(approval)
     principal = _require_answerer(request, approval, run)
-    decision = str(body.decision or "").strip().lower()
+    return answer(approval, run, principal, body.decision, body.note)
+
+
+def answer(approval: Dict[str, Any], run: Dict[str, Any], principal: Any, decision: str,
+           note: str = "", *, via: Optional[str] = None) -> Dict[str, Any]:
+    """Settle a waiting call for a person who may answer it (the caller
+    checked :func:`require_answerer`) and record it in the audit log.
+    ``via`` says how the answer came when it was not the card's buttons:
+    ``voice`` for a spoken yes or no to the assistant (routes/assistant.py).
+    Raises 400 for an unknown decision, 409 when the call no longer waits."""
+    approval_id = str(approval.get("approval_id") or "")
+    decision = str(decision or "").strip().lower()
     if decision not in tool_approvals.DECISIONS:
         raise HTTPException(status_code=400, detail="decision must be approve or deny")
     if decision == "approve" and approval.get("tool") == "propose_connection":
@@ -141,10 +156,12 @@ def decide_approval(approval_id: str, body: DecideBody, request: Request):
         raise HTTPException(status_code=400, detail="a connection proposal is approved by applying it: "
                                                     "POST /api/connection-proposals/{id}/apply")
     author = principal or "operator"
-    settled = tool_approvals.decide(approval_id, decision, note=body.note, author=author)
+    settled = tool_approvals.decide(approval_id, decision, note=note, author=author)
     details = {"run_id": approval.get("run_id"), "tool": approval.get("tool"),
-               "decision": decision, "note": (body.note or "").strip()[:500],
+               "decision": decision, "note": (note or "").strip()[:500],
                "agent_id": approval.get("agent_id"), "approval_id": approval_id}
+    if via:
+        details["via"] = via
     if settled is None:
         current = tool_approvals.get(approval_id) or approval
         audit.record("tool.approval", principal=principal, object_type="tool",

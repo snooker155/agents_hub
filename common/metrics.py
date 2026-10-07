@@ -75,6 +75,16 @@ def _runs_by_status() -> Dict[str, int]:
         return {}
 
 
+def _running_runs() -> int:
+    try:
+        from common.health import RUNNING_RUNS_SQL
+        row = db.get_conn().execute(f"SELECT COUNT(*) FROM runs WHERE {RUNNING_RUNS_SQL}").fetchone()
+        return int(row[0] or 0)
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("running runs collector failed", exc_info=True)
+        return 0
+
+
 def _tokens_by_workspace() -> Dict[str, int]:
     """Total (input+output) tokens per workspace, straight off the ``runs``
     table's own token columns — the same numbers the costs page sums, just
@@ -151,8 +161,8 @@ def render() -> str:
     _emit(lines, "agents_hub_runs_total", "Run records by status.", "gauge",
           [({"status": status}, n) for status, n in sorted(by_status.items())])
     # Mirrors common.health's own "running_runs": a run mid-stop is still
-    # occupying a slot, not yet free.
-    running = by_status.get("running", 0) + by_status.get("stop", 0)
+    # occupying a slot, not yet free; one stopped and finished is not.
+    running = _running_runs()
     _emit(lines, "agents_hub_runs_running", "Runs currently in a running state.",
           "gauge", [({}, running)])
 

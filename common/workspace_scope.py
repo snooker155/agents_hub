@@ -23,6 +23,13 @@ run belongs to. Three rules carry that, each enforced where it can be:
 A fourth rule is about workspaces themselves: a tool that creates or manages
 workspaces (:data:`WORKSPACE_ADMIN_TOOLS`) works only for the main agent, and
 only in a run of the ``default`` workspace.
+
+The assistant (:data:`ASSISTANT_AGENT`, routes/assistant.py) is the one agent
+whose reach depends on who talks to it. It runs each turn in the workspace the
+person picked (one they can see), pinned there like any other agent. In an
+administrator's service thread, which runs in ``default``, it also holds
+:data:`ASSISTANT_SERVICE_TOOLS` and the workspace management tools; the route
+asks for that with ``service_mode`` and the factory grants it only then.
 """
 from __future__ import annotations
 
@@ -44,6 +51,8 @@ SERVICE_WIDE_TOOLS = frozenset({
     # the hub's containers and resident instances
     "list_containers", "container_logs", "stop_container", "list_instances", "instance_logs",
     "instance_timeline", "stop_instance", "restart_instance",
+    # users, the audit trail, health and the rest (tools/hub_lookup.py)
+    "service_lookup",
     # the system workspace's repository copy
     "system_repo_sync", "system_run_tests", "system_commit", "system_attach_patch",
     "system_prune_branches",
@@ -61,6 +70,19 @@ WORKSPACE_ADMIN_TOOLS: frozenset = frozenset({
 WORKSPACE_ADMIN_AGENT = "main-agent"
 WORKSPACE_ADMIN_HOME = "default"
 
+#: The service's assistant (agents/definitions/assistant).
+ASSISTANT_AGENT = "assistant"
+#: What the assistant holds only in an administrator's service thread: the
+#: hub's health, the doctor, and the service agent's lists and stop buttons.
+#: Not the run, error and container logs: they carry text anyone could have
+#: written, and the assistant can also send messages out (the capability
+#: guard's trifecta); reading logs stays with the service agent.
+ASSISTANT_SERVICE_TOOLS: frozenset = frozenset({
+    "service_health", "run_diagnostics", "list_sessions", "routing_log", "costs_summary",
+    "stop_run", "list_containers", "stop_container", "list_instances", "stop_instance",
+    "restart_instance", "service_lookup",
+})
+
 
 class ScopeError(ValueError):
     """A tool set or a call that would reach outside the agent's workspace.
@@ -71,10 +93,26 @@ def is_service_wide(agent_id: Optional[str]) -> bool:
     return str(agent_id or "") in SERVICE_WIDE_AGENTS
 
 
-def tool_allowed(agent_id: Optional[str], tool_id: str, workspace: Optional[str] = None) -> bool:
+def _assistant_tool_allowed(workspace: Optional[str], service_mode: Optional[bool]) -> bool:
+    """An assistant's service tool: always storable; at build time only in a
+    service thread, which runs in ``default``."""
+    if workspace is None and service_mode is None:
+        return True
+    if not service_mode:
+        return False
+    from common.workspace_context import normalize_workspace_name
+    return (normalize_workspace_name(workspace or "") or "") == WORKSPACE_ADMIN_HOME
+
+
+def tool_allowed(agent_id: Optional[str], tool_id: str, workspace: Optional[str] = None,
+                 *, service_mode: Optional[bool] = None) -> bool:
     """Whether ``agent_id`` may hold ``tool_id`` when it runs in ``workspace``
-    (``None``: wherever it runs, the save time question)."""
+    (``None``: wherever it runs, the save time question). ``service_mode``
+    is the assistant's build in an administrator's service thread."""
     tid = str(tool_id or "")
+    if str(agent_id or "") == ASSISTANT_AGENT and (
+            tid in ASSISTANT_SERVICE_TOOLS or tid in WORKSPACE_ADMIN_TOOLS):
+        return _assistant_tool_allowed(workspace, service_mode)
     if tid in SERVICE_WIDE_TOOLS:
         return is_service_wide(agent_id)
     if tid in WORKSPACE_ADMIN_TOOLS:
@@ -87,11 +125,11 @@ def tool_allowed(agent_id: Optional[str], tool_id: str, workspace: Optional[str]
 
 
 def offenders(agent_id: Optional[str], tool_ids: Iterable[str],
-              workspace: Optional[str] = None) -> List[str]:
+              workspace: Optional[str] = None, *, service_mode: Optional[bool] = None) -> List[str]:
     out: List[str] = []
     for tid in tool_ids or []:
         tid = str(tid)
-        if tid and not tool_allowed(agent_id, tid, workspace) and tid not in out:
+        if tid and not tool_allowed(agent_id, tid, workspace, service_mode=service_mode) and tid not in out:
             out.append(tid)
     return out
 
@@ -156,7 +194,7 @@ def check_record(record_workspace: Any, *, what: str = "record",
 
 
 __all__ = [
-    "SERVICE_WIDE_AGENTS", "SERVICE_WIDE_TOOLS", "ScopeError", "WORKSPACE_ADMIN_AGENT",
+    "ASSISTANT_AGENT", "ASSISTANT_SERVICE_TOOLS", "SERVICE_WIDE_AGENTS", "SERVICE_WIDE_TOOLS", "ScopeError", "WORKSPACE_ADMIN_AGENT",
     "WORKSPACE_ADMIN_HOME", "WORKSPACE_ADMIN_TOOLS", "check_agent_tools", "check_record",
     "current_agent", "current_workspace", "is_service_wide", "offenders", "same_workspace",
     "tool_allowed",

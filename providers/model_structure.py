@@ -416,6 +416,7 @@ def parse_safetensors(path: Union[str, Path]) -> Dict[str, Any]:
     folder = p if p.is_dir() else p.parent
 
     config = folder / "config.json"
+    cfg: Any = None
     if config.is_file():
         try:
             cfg = json.loads(config.read_text(encoding="utf-8"))
@@ -452,7 +453,37 @@ def parse_safetensors(path: Union[str, Path]) -> Dict[str, Any]:
         tensors = _tensors_from_header(header, None)
         _merge_st_metadata(header, metadata)
 
-    return {"metadata": metadata, "tensors": tensors, "file_size": file_size}
+    quant = cfg.get("quantization") if isinstance(cfg, dict) else None
+    quantization = _unpack_mlx_quantized(tensors, quant) if isinstance(quant, dict) else None
+    return {"metadata": metadata, "tensors": tensors, "file_size": file_size,
+            "quantization": quantization}
+
+
+def _unpack_mlx_quantized(tensors: List[Dict[str, Any]], quant: Dict[str, Any]) -> Optional[str]:
+    """MLX quantized checkpoints pack several weights into each uint32 and
+    keep a ``.scales`` (and ``.biases``) tensor with one entry per group of
+    ``group_size`` weights. Count the weights the scales cover, and count the
+    scales and biases as storage only, the way a GGUF block's scales are."""
+    default_group = _as_int(quant.get("group_size")) or 64
+    by_name = {t["name"]: t for t in tensors}
+    found = False
+    for t in tensors:
+        name = t["name"]
+        if not name.endswith(".weight") or t["dtype"] != "U32":
+            continue
+        module = name[: -len(".weight")]
+        scales = by_name.get(module + ".scales")
+        if scales is None:
+            continue
+        override = quant.get(module)
+        group = (_as_int(override.get("group_size")) if isinstance(override, dict) else None) or default_group
+        t["n_elements"] = _prod(scales["shape"]) * group
+        for extra in (scales, by_name.get(module + ".biases")):
+            if extra is not None:
+                extra["n_elements"] = 0
+        found = True
+    bits = _as_int(quant.get("bits"))
+    return f"MLX {bits}-bit" if found and bits else None
 
 
 def _merge_st_metadata(header: Dict[str, Any], metadata: Dict[str, Any]) -> None:
@@ -699,6 +730,7 @@ def to_structure(parsed: Dict[str, Any], *, source: str, provider: str, model_id
         quantization = GGUF_FILE_TYPES.get(ft) if ft is not None else None
     dominant = _dominant((t["dtype"], t["bytes"]) for t in all_tensors)
     dtype = metadata.get("torch_dtype") if source == "safetensors" else dominant
+    quantization = quantization or parsed.get("quantization")
     if not quantization and source != "safetensors":
         quantization = dominant
 
@@ -916,12 +948,15 @@ def _from_runtime(model: str) -> Dict[str, Any]:
     module and answers in the same shape."""
     import httpx
     from urllib.parse import quote
-    from common.config import settings
-    base = str(getattr(settings, "models_url", "") or "").rstrip("/")
+    from providers.local_models import runtime_settings
+    # The same lookup the rest of the hub uses: AGENTS_HUB_MODELS_URL when
+    # set, else the runtime the hub runs itself on this host.
+    cfg = runtime_settings()
+    base = str(cfg["url"] or "").rstrip("/")
     if not base:
-        raise ModelStructureError("the hub model runtime is not configured (models_url)", 503)
-    token = str(getattr(settings, "models_token", "") or "")
-    timeout = float(getattr(settings, "models_timeout", 0) or 30)
+        raise ModelStructureError("the hub model runtime is not running", 503)
+    token = str(cfg["token"] or "")
+    timeout = float(cfg["timeout"] or 30)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"{base}/models/{quote(model, safe='')}/structure"
     try:

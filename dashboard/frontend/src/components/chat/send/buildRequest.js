@@ -38,11 +38,25 @@ function buildAttachmentLine(t, { pendingAttachments, pendingReferences }) {
 // reconstructed server-side from the run log, not resent. A message sent
 // while a turn worked counts only once the model read it; one still waiting
 // is about to be sent as the turn itself.
+//
+// At most HISTORY_MAX messages, cut in steps of HISTORY_STEP: a window that
+// slid by one turn on every send would change the start of the prompt every
+// turn, and a prompt cache (a local model's above all) would compute the
+// whole conversation again for each reply. Mirrors chat/context.py.
+const HISTORY_MAX = 40;
+const HISTORY_STEP = 10;
+
+function historyWindowStart(n, keep = HISTORY_MAX, step = HISTORY_STEP) {
+  const over = n - keep;
+  return over <= 0 ? 0 : Math.ceil(over / step) * step;
+}
+
 function buildHistoryPayload(messages) {
-  return (messages || [])
+  const kept = (messages || [])
     .filter((m) => (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim())
-    .filter(inHistory)
-    .slice(-40)
+    .filter(inHistory);
+  return kept
+    .slice(historyWindowStart(kept.length))
     .map((m) => ({ role: m.role, content: String(m.content || '') }));
 }
 
@@ -94,4 +108,7 @@ function buildStreamRequestBody({
   };
 }
 
-export { truncateTitle, buildAttachmentLine, buildHistoryPayload, resolveConversationTitle, buildStreamRequestBody };
+export {
+  truncateTitle, buildAttachmentLine, buildHistoryPayload, historyWindowStart, resolveConversationTitle,
+  buildStreamRequestBody,
+};
