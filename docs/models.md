@@ -20,6 +20,22 @@ Resolution order, most specific first:
 An agent with nothing pinned inherits, which is usually what you want: change
 the workspace default and the whole workspace moves.
 
+## A first key switches on a model
+
+Saving a provider key (Settings, the welcome window, or the assistant's
+connection card) used to leave a trip to this page before the first run: enable
+a model and set its price. Now, when the provider has no enabled model yet, the
+hub enables one default model for it (`common/default_model.py`, one table:
+`gpt-5.4-mini` for OpenAI, `claude-sonnet-5-5` for Anthropic,
+`gemini-2.5-flash` for Google), fills its catalog price, stars it as the
+provider's default and, if the hub has no global default provider or the
+current one has no key, makes this provider the global default and writes
+`DEFAULT_PROVIDER` and the provider's `*_MODEL` to `.env`. It never overrides a
+choice: a provider with an enabled model is left alone, and a global default
+that has a key stays. A key saved in another workspace enables the model but
+does not touch the global default. Settings shows what was switched on, with
+the price and a link here, and you change it on this page as usual.
+
 ## Pricing
 
 Each model carries three prices in USD per million tokens: **input**, **cached

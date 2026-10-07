@@ -116,7 +116,7 @@ workspace (a `default`-workspace endpoint for a row with no workspace, such as
 a sign-in), so a SIEM can collect the trail as it happens instead of polling
 `GET /api/audit`. See [notifications](notifications.md#outbound-webhooks-and-slack)
 for the endpoint shape, the exact event envelope, and the signing scheme that
-protects it: the same one every outbound delivery uses. **Connect →
+protects it: the same one every outbound delivery uses. **Integrations →
 Connectors → Webhooks** offers `notification` and `audit` as a checkbox pair
 when adding an endpoint.
 

@@ -63,7 +63,7 @@ With no accounts, there is no administrator to create the first one, so
 `POST /api/auth/bootstrap` is open until exactly one account exists and refuses
 for good afterwards. The dashboard shows that form instead of the login screen
 on a first visit, and signs the new administrator straight in. Everything after
-that goes through Accounts, in the sidebar's system group.
+that goes through Accounts, in the sidebar's Records and admin group.
 
 ## Roles and what each may do
 

@@ -125,6 +125,16 @@ The person sees their limit and month spend on the Account page (`GET
 /api/auth/spend`); an administrator sees everyone's in the Limit column of the
 Users page (`GET /api/auth/spend-limits`).
 
+## When a limit stops a chat turn
+
+A chat turn refused by a budget shows a card with the reason and the place to
+raise the limit: the workspace limit opens Costs, a person's limit opens the
+Users page (administrators), a turn cap opens the service. **Try again** sends
+the same message after you raise it. The `done` event, and the 402 body of
+`POST /api/chat/message` and the assistant, carry `refusal` with `code`
+`budget`, `kind` (`workspace`, `person` or `turn`), `spent_usd`, `limit_usd`
+and the workspace, user or service it concerns, next to the text message.
+
 ## Report
 
 `GET /api/accounting/report?group_by=key|user|project|workspace|agent|model`

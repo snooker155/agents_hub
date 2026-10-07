@@ -299,6 +299,7 @@
       "headings": [
         "Where the numbers come from",
         "Budgets",
+        "When a limit stops a chat turn",
         "Per-run limit",
         "What actually costs money",
         "Reducing it",
@@ -695,6 +696,7 @@
       "headings": [
         "Catalog vs. enabled",
         "Defaults and overrides",
+        "A first key switches on a model",
         "Pricing",
         "Context window",
         "Providers",
@@ -718,6 +720,7 @@
         "How the objects nest",
         "Two kinds of agent",
         "Where work actually happens",
+        "The menu",
         "Two things worth knowing early"
       ]
     },
@@ -871,6 +874,7 @@
         "What a tick is",
         "The profile",
         "Schedule and quiet hours",
+        "From a phrase",
         "Budgets and limits",
         "The tick's answer",
         "Triggers besides the clock",
@@ -908,6 +912,27 @@
       ]
     },
     {
+      "id": "observability",
+      "title": "Observability",
+      "summary": "Prometheus metrics at /metrics, OpenTelemetry export of runs (with model and tool call spans) and metrics, the Grafana dashboard and the alert rules.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "slo",
+        "runbook",
+        "costs",
+        "workers"
+      ],
+      "headings": [
+        "Prometheus: GET /metrics",
+        "OpenTelemetry export",
+        "Spans",
+        "Metrics",
+        "Grafana dashboard and alerts",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "service-health",
       "title": "Service health and diagnostics",
       "summary": "Whether the moving parts are alive, and what to do when they are not.",
@@ -924,7 +949,8 @@
         "workers",
         "system-workspace",
         "runbook",
-        "slo"
+        "slo",
+        "observability"
       ],
       "headings": [
         "The snapshot",
@@ -946,7 +972,8 @@
         "service-health",
         "slo",
         "deployment",
-        "backup"
+        "backup",
+        "observability"
       ],
       "headings": [
         "Provider key invalid or rate limited",
@@ -1021,6 +1048,7 @@
       ],
       "headings": [
         "What is here",
+        "After saving a first key",
         "Per-workspace overrides",
         "Reading the health of this"
       ]
@@ -1138,7 +1166,7 @@
     {
       "id": "telegram",
       "title": "Telegram",
-      "summary": "A Telegram bot can be bound to this service, so a conversation continues from a phone and notifications arrive where you are.",
+      "summary": "A Telegram bot can be bound to this service, so a conversation continues from a phone, voice messages are transcribed, and notifications arrive where you are.",
       "surface": "Settings",
       "related": [
         "chat",
@@ -1149,6 +1177,7 @@
       ],
       "headings": [
         "What the binding does",
+        "Voice messages",
         "Notifications",
         "The security consequence"
       ]
@@ -1172,6 +1201,7 @@
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "When a chat turn is refused",
         "Delegation counts as holding the capability",
         "The browser tools",
         "run_code",
@@ -1724,6 +1754,7 @@
       "headings": [
         "Ollama from the UI",
         "The hub runtime",
+        "Ready local set",
         "Downloads from Hugging Face",
         "Load and unload and memory",
         "The provider hub-local",

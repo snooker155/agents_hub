@@ -1,7 +1,7 @@
 # Chat channels
 
 Slack, Discord, Microsoft Teams and mail, the places a person already talks
-in, bound to agents the way a [Telegram](telegram.md) chat is. **Connect →
+in, bound to agents the way a [Telegram](telegram.md) chat is. **Integrations →
 Connectors** in the sidebar, one tab per channel.
 
 Telegram was the first channel and has its own tab and routes. The four here

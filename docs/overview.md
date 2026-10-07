@@ -22,9 +22,9 @@ workspace                  an isolated folder + its own agents, settings and mem
 Running any of these produces the same three records, which is what makes the
 system observable at all:
 
-- **run** — one agent invocation. The atom. Everything is made of these.
-- **session** — a conversation: the runs that belong together.
-- **instance** — a live copy of an agent, with its own state and history.
+- **run**: one agent invocation. The atom. Everything is made of these.
+- **session**: a conversation, the runs that belong together.
+- **instance**: a live copy of an agent, with its own state and history.
 
 ## Two kinds of agent
 
@@ -42,6 +42,22 @@ want, and nothing the product ships will change them.
 - **Tasks** are for tracked work: assigned, staged, resumable.
 - **Flows, loops, teams and scenarios** are for work that needs more than one
   agent, or more than one pass.
+
+## The menu
+
+The sidebar follows the same tree in five groups: **Conversation** (Assistant,
+Chat, Dashboard), **Work** (projects, tasks, the plan, artifacts, flows, loops,
+teams), **Agents and library** (agents, models, skills, memory, the
+marketplace), **Integrations** (connectors, connections, watchers, MCP servers,
+widgets) and **Records and admin** (sessions, runs, costs, evals, settings,
+accounts).
+
+It has two modes. The **simple menu** keeps about fifteen pages, the ones a
+newcomer needs, plus Settings and Docs; it is the default of a single operator
+and of every non-administrator. The **full menu** shows every page and is the
+default of an administrator of a multi-user hub. The toggle at the foot of the
+menu switches between them, and the browser remembers the choice. No page is
+removed in either mode: a page opened by a link still shows its own row.
 
 ## Two things worth knowing early
 

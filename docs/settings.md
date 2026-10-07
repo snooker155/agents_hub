@@ -37,9 +37,18 @@ parts that make sense per workspace ([workspaces](workspaces.md), "The
 Settings tab").
 
 Connectors are **not** here any more. Telegram, GitHub/GitLab and Blender moved
-to Connect → Connectors ([connectors](connectors.md)), because a connector is
+to Integrations → Connectors ([connectors](connectors.md)), because a connector is
 something you attach rather than a credential you set. Old `/settings/telegram`
 links redirect there.
+
+## After saving a first key
+
+When a saved key is the first one for its provider, Settings reports the model
+it switched on: its id, its price per 1M tokens and a link to the
+[models](models.md#a-first-key-switches-on-a-model) page, where the choice is
+changed. Model selection itself never lives in Settings. The response of the
+save (`PUT /api/settings`, or the workspace settings save) carries the same
+facts as `default_models`.
 
 ## Per-workspace overrides
 

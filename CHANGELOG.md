@@ -15,6 +15,54 @@ turns that section into the next release.
 
 ### Added
 
+- Simple and full menu (docs/overview.md "The menu"): the sidebar is five
+  groups along the object tree (Conversation, Work, Agents and library,
+  Integrations, Records and admin). The simple menu keeps about fifteen pages
+  and is the default of a single operator and of every non-administrator; the
+  full menu is the default of a multi-user administrator. A toggle at the foot
+  of the menu switches, a page opened by a link still shows its row, and
+  Cluster appears only when the hub runs as separate api and worker processes
+  (`features.cluster` on `/api/health`).
+- A default model switches on with a provider key (docs/models.md): saving an
+  OpenAI, Anthropic or Google key when that provider has no enabled model
+  enables one (`gpt-5.4-mini`, `claude-sonnet-5-5`, `gemini-2.5-flash`) with
+  its catalog price, and makes the provider the global default when there is
+  none. Settings says what was switched on. Current Claude models (Opus 4.6
+  to 5.5, Sonnet 5 and 5.5, Haiku 4.5, Fable) have their own price rows, and
+  models that reject a temperature (Opus 4.7 and later, Sonnet 5 and later,
+  Fable) are called without one.
+- Refusals as a card (docs/tools-and-capabilities.md, docs/costs.md): a turn
+  stopped by the capability guard or a spending limit shows the reason in
+  plain words with the action in place: "Allow for this agent" for editors,
+  raising a workspace limit right on the card for administrators, a link to
+  the person's or the service's limit, and "Try again". The structured
+  `refusal` rides on the chat `done` event, the blocking send and the
+  assistant's 402. `POST /api/agents/{id}/capability-override` now needs an
+  editor of the agent's workspace.
+- Ready local set (docs/local-models.md "Ready local set"): one button on the
+  Local tab, and a guided setup step, starts the runtime, installs llama.cpp,
+  downloads one Qwen3 chat model sized to the machine's memory, installs
+  Whisper and Kokoro and assigns them as the workspace speech models. A
+  background job with progress per step, safe to press again, cancelable.
+- Telegram voice messages (docs/telegram.md "Voice messages"): voice notes,
+  audio files and round videos are transcribed with the workspace's
+  transcription model and answered; the prompt says the message was spoken.
+- A pulse from a phrase (docs/proactive.md "From a phrase"): the assistant's
+  `schedule_pulse` turns "every morning at 8 send me a summary" (English,
+  Russian, German phrases parsed by the hub, cron from the model otherwise)
+  into a proactive profile behind a card that states the schedule in plain
+  words, in the person's browser timezone.
+- Observability (docs/observability.md): child spans per model call and tool
+  call on the OTLP run export, OTLP metrics export, the standard
+  `OTEL_EXPORTER_OTLP_*` variables, new Prometheus metrics (runs finished by
+  agent and status, tokens and cost by model, run duration histogram, tool
+  calls), a Grafana dashboard in `deploy/grafana/` and six new alert rules.
+- First hour documentation in Russian and German: installation, overview,
+  models, chat and assistant in `docs/ru/` and `docs/de/`, served by
+  `read_doc` and `GET /api/docs/{id}?lang=` in the interface language, with
+  English as the fallback. The Docs page gained an Assistant section and full
+  references under Installation, Overview, Chat and Models.
+
 - `SECURITY.md`: how to report a vulnerability privately, response times,
   supported versions, what counts and what is a documented choice, and a
   hardening list. `docs/threat-model.md`: what the hub protects, from whom,

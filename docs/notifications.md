@@ -10,7 +10,7 @@ webhook that files a task.
 
 ## Outbound: webhooks and Slack
 
-**Connect → Connectors → Webhooks** in the sidebar. An endpoint is configured
+**Integrations → Connectors → Webhooks** in the sidebar. An endpoint is configured
 per [workspace](workspaces.md):
 
 ```json
@@ -135,7 +135,7 @@ in-memory is.
 
 ## Alert rules
 
-**Connect → Connectors → Webhooks**, the rules list below the endpoints. A
+**Integrations → Connectors → Webhooks**, the rules list below the endpoints. A
 rule raises a notification on its own, without an agent or a person asking for
 one, evaluated whenever a run reaches a terminal status:
 

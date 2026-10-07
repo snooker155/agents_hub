@@ -282,6 +282,10 @@ Health page.
 
 ## What it can change
 
+`schedule_pulse` is the one creating tool: it turns a phrase such as "every
+morning at 8 tell me the weather" into a [proactive agent](proactive.md#from-a-phrase),
+after a card that shows the schedule in plain words.
+
 `hub_action` does one small thing to one record the person reaches: a kind,
 a verb and an id. Building, editing and deleting stay with the pages and
 the creator agents, and nothing here starts paid work.
@@ -364,6 +368,9 @@ audited as `setup.<operation>`:
 - `voice_local`: the hub's own runtime; the models are saved at once and the
   engines and downloads run as runtime jobs, carried on whenever the guide is
   read. The step shows **working** with the job's progress until they finish.
+- `local_set`: the [ready local set](local-models.md): the llama.cpp engine, one
+  chat model sized to this machine, Whisper and Kokoro, as one background job
+  the Models page's Local tab follows step by step.
 - `seed_demo`: the [demo workspace](demo.md).
 
 A key is never a `setup_step`: `propose_connection` with kind `provider`

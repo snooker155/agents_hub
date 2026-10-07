@@ -3,7 +3,7 @@
 An MCP server is somebody else's tool collection, speaking the Model Context
 Protocol: a filesystem bridge, a ticket system, an internal service that already
 talks the protocol. Attach one and its tools become ordinary hub tools an agent
-can be granted. **Connect → MCP servers** in the sidebar.
+can be granted. **Integrations → MCP servers** in the sidebar.
 
 The same direction as [connectors](connectors.md): this hub reaches out to
 something you already run. The difference is what comes back. A connector is a
