@@ -17,10 +17,12 @@ turns that section into the next release.
 
 - Simple and full menu (docs/overview.md "The menu"): the sidebar is five
   groups along the object tree (Conversation, Work, Agents and library,
-  Integrations, Records and admin). The simple menu keeps about fifteen pages
-  and is the default of a single operator and of every non-administrator; the
-  full menu is the default of a multi-user administrator. A toggle at the foot
-  of the menu switches, a page opened by a link still shows its row, and
+  Integrations, Records and admin). The simple menu keeps sixteen pages,
+  workspaces among them, and is the default of a single operator and of every
+  non-administrator; the full menu is the default of a multi-user
+  administrator. A toggle at the foot of the menu switches; the simple menu
+  never changes shape, a page outside it lights up the row it belongs to
+  (Deployments lights up Plan), and
   Cluster appears only when the hub runs as separate api and worker processes
   (`features.cluster` on `/api/health`).
 - A default model switches on with a provider key (docs/models.md): saving an

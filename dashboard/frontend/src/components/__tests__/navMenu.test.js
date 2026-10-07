@@ -27,26 +27,39 @@ describe('navMenu', () => {
     }
   });
 
-  it('simple menu keeps a short list with settings and docs', () => {
+  it('simple menu keeps a short list with workspaces, settings and docs', () => {
     const groups = buildMenu({ t, auth: single });
-    const shown = paths(visibleGroups(groups, SIMPLE, '/chat'));
+    const shown = paths(visibleGroups(groups, SIMPLE));
     expect(shown.length).toBeLessThanOrEqual(16);
-    expect(shown).toEqual(expect.arrayContaining(['/assistant', '/chat', '/agents', '/models', '/settings', '/docs']));
+    expect(shown).toEqual(expect.arrayContaining(['/assistant', '/chat', '/workspaces', '/agents', '/models', '/settings', '/docs']));
     expect(shown).not.toContain('/connectors');
-    expect(visibleGroups(groups, SIMPLE, '/chat').map((g) => g.key)).not.toContain('integrations');
-    expect(hiddenCount(groups, '/chat')).toBe(paths(groups).length - shown.length);
+    expect(visibleGroups(groups, SIMPLE).map((g) => g.key)).not.toContain('integrations');
+    expect(hiddenCount(groups)).toBe(paths(groups).length - shown.length);
   });
 
-  it('simple menu still shows the row of the page on screen', () => {
-    const groups = buildMenu({ t, auth: single });
-    const shown = visibleGroups(groups, SIMPLE, '/connectors/slack');
-    expect(paths(shown)).toContain('/connectors');
-    expect(shown.find((g) => g.key === 'integrations').items).toHaveLength(1);
+  it('simple menu lights up the home row of a hidden page instead of adding one', () => {
+    const shown = visibleGroups(buildMenu({ t, auth: single }), SIMPLE);
+    expect(paths(shown)).not.toContain('/deployments');
+    const lit = (pathname) => shown.flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
+    expect(lit('/deployments')).toEqual(['/plan']);
+    expect(lit('/loops/l1')).toEqual(['/flows']);
+    expect(lit('/connectors/slack')).toEqual(['/settings']);
+    expect(lit('/sessions')).toEqual(['/dashboard']);
+    expect(lit('/plan')).toEqual(['/plan']);
+    expect(lit('/dashboard/x')).toEqual([]);
+  });
+
+  it('every page is in the simple menu or names a home row that is', () => {
+    const groups = buildMenu({ t, auth: multiAdmin, features: { cluster: true } });
+    const simple = new Set(groups.flatMap((g) => g.items).filter((it) => it.simple).map((it) => it.path));
+    for (const it of groups.flatMap((g) => g.items)) {
+      if (!it.simple) expect(simple.has(it.home)).toBe(true);
+    }
   });
 
   it('full menu shows everything', () => {
     const groups = buildMenu({ t, auth: single });
-    expect(visibleGroups(groups, FULL, '/chat')).toBe(groups);
+    expect(visibleGroups(groups, FULL)).toBe(groups);
   });
 
   it('cluster row only for an operator when the hub is a cluster', () => {
@@ -58,7 +71,7 @@ describe('navMenu', () => {
   });
 
   it('account stays in the simple menu for a signed in user', () => {
-    expect(paths(visibleGroups(buildMenu({ t, auth: multiUser }), SIMPLE, '/'))).toContain('/account');
+    expect(paths(visibleGroups(buildMenu({ t, auth: multiUser }), SIMPLE))).toContain('/account');
   });
 
   it('playground row follows the feature flag', () => {

@@ -290,8 +290,8 @@ const Layout = ({ children }) => {
   const [menuChoice, setMenuChoice] = useState(readMenuMode);
   const menuMode = menuChoice || defaultMenuMode(auth);
   const allGroups = buildMenu({ t, auth, features });
-  const menuGroups = visibleGroups(allGroups, menuMode, location.pathname);
-  const moreCount = hiddenCount(allGroups, location.pathname);
+  const menuGroups = visibleGroups(allGroups, menuMode);
+  const moreCount = hiddenCount(allGroups);
   const toggleMenuMode = () => {
     const next = menuMode === SIMPLE ? FULL : SIMPLE;
     writeMenuMode(next);
