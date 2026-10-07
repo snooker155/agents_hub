@@ -67,6 +67,12 @@ def runtime(monkeypatch):
             return httpx.Response(200, json={"voices": VOICES})
         if p == "/voices" and request.method == "POST":
             return httpx.Response(200, json={"name": "new", "owner": "u1", "duration": 9.5})
+        if p.startswith("/voices/") and p.endswith("/cleanup"):
+            name = p.split("/")[2]
+            mode = json.loads(request.content)["mode"]
+            return httpx.Response(200, json={"job_id": None if mode == "none" else "j1", "engine": "deepfilternet",
+                                             "voice": {**next(v for v in VOICES if v["name"] == name),
+                                                       "cleaning": {"job_id": "j1", "mode": mode}}})
         if p.startswith("/voices/") and p.endswith("/audio"):
             return httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"})
         if p.startswith("/voices/") and request.method == "PATCH":
@@ -166,3 +172,28 @@ def test_the_pickers_offer_a_cloning_models_voices_per_person(runtime, monkeypat
     # engines' voices are never filtered.
     assert special.model_voices("hub-local", "chatterbox-multilingual") == RUNTIME_MODELS[0]["voices"]
     assert special.model_voices("hub-local", "kokoro-v1.0", U1) == ["af_heart"]
+
+
+def test_cleaning_a_recording_is_for_its_owner(api, runtime, who):
+    r = api.post("/api/models/local/runtime/voices/anna/cleanup", json={"mode": "restore"})
+    assert r.status_code == 200 and r.json()["job_id"] == "j1" and r.json()["voice"]["mine"] is True
+    sent = runtime[-1]
+    assert sent.url.path == "/voices/anna/cleanup" and json.loads(sent.content) == {"mode": "restore"}
+    assert api.post("/api/models/local/runtime/voices/team/cleanup", json={"mode": "denoise"}).status_code == 403
+    assert api.post("/api/models/local/runtime/voices/boris/cleanup", json={"mode": "denoise"}).status_code == 404
+    assert api.post("/api/models/local/runtime/voices/anna/cleanup", json={"mode": "sparkle"}).status_code == 422
+    who["principal"] = ADMIN
+    assert api.post("/api/models/local/runtime/voices/team/cleanup", json={"mode": "none"}).status_code == 200
+
+
+def test_a_recording_names_its_cleanup_and_the_original_is_heard(api, runtime):
+    files = {"file": ("me.webm", b"audio", "audio/webm")}
+    api.post("/api/models/local/runtime/voices", data={"name": "new", "consent": "true", "cleanup": "restore"},
+             files=files)
+    assert b'name="cleanup"\r\n\r\nrestore' in runtime[-1].content
+    api.post("/api/models/local/runtime/voices", data={"name": "new2", "consent": "true"}, files=files)
+    assert b'name="cleanup"\r\n\r\nnone' in runtime[-1].content
+    r = api.get("/api/models/local/runtime/voices/anna/audio", params={"original": "true"})
+    assert r.status_code == 200 and runtime[-1].url.params.get("original") == "true"
+    api.get("/api/models/local/runtime/voices/anna/audio")
+    assert "original" not in runtime[-1].url.params

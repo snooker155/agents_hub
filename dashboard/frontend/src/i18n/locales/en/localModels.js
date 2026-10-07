@@ -96,8 +96,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice' },
-    kinds: { speech: 'Speech', transcription: 'Transcription', chat: 'Chat' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Speech', transcription: 'Transcription', chat: 'Chat', cleanup: 'Voice cleanup' },
     installed: 'Installed',
     install: 'Install',
     installStarted: 'Installing {{engine}}…',
@@ -153,6 +153,14 @@ export default {
     deleted: 'Voice {{name}} deleted.',
     deleteFailed: 'Could not delete the voice.',
     updateFailed: 'Could not change the voice.',
+    cleanup: 'Cleanup',
+    cleanupModes: { none: 'none', denoise: 'remove noise', restore: 'remove noise and echo' },
+    cleanupHint: 'A laptop microphone records the room too: noise and echo that the model then copies into the voice. "Remove noise" is quick and leaves the timbre as it is. "Remove noise and echo" rebuilds the speech (Resemble Enhance, about 30 seconds on a CPU): the echo goes almost entirely, the timbre may shift a little, so compare it with the original. The first time installs the engine and downloads its weights: about 0.7 GB for echo, 9 MB for noise on a Mac.',
+    cleaning: 'Cleaning the recording…',
+    cleaned: 'Recording {{name}} cleaned.',
+    cleanupFailed: 'Could not clean the recording.',
+    playOriginal: 'Original',
+    playOriginalTitle: 'The recording before cleanup',
     watermark: 'Chatterbox speech carries Resemble AI\'s inaudible watermark, which identifies it as synthesized. Chatterbox MLX adds none.',
   },
 
@@ -356,6 +364,7 @@ export default {
       engine_install: 'Engine install',
       ollama_import: 'Ollama import',
       lmstudio_import: 'LM Studio import',
+      voice_cleanup: 'Voice cleanup',
     },
     completedOfTotal: '{{completed}} of {{total}}',
     resume: 'Resume',

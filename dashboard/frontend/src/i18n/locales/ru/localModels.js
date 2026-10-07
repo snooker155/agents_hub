@@ -96,8 +96,8 @@ export default {
 
   speech: {
     enginesTitle: 'Движки',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice' },
-    kinds: { speech: 'Синтез речи', transcription: 'Распознавание', chat: 'Чат' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Синтез речи', transcription: 'Распознавание', chat: 'Чат', cleanup: 'Очистка голоса' },
     installed: 'Установлен',
     install: 'Установить',
     installStarted: 'Устанавливаю {{engine}}…',
@@ -153,6 +153,14 @@ export default {
     deleted: 'Голос {{name}} удалён.',
     deleteFailed: 'Не удалось удалить голос.',
     updateFailed: 'Не удалось изменить голос.',
+    cleanup: 'Очистка',
+    cleanupModes: { none: 'без очистки', denoise: 'убрать шум', restore: 'убрать шум и эхо' },
+    cleanupHint: 'Микрофон ноутбука пишет и комнату: шум и эхо, которые потом слышны в голосе модели. «Убрать шум» быстро и не трогает тембр. «Убрать шум и эхо» пересобирает речь заново (Resemble Enhance, около 30 секунд на процессоре): эхо уходит почти полностью, тембр может немного измениться, поэтому сравните с оригиналом. В первый раз ставится движок и скачиваются веса: около 0,7 ГБ для эха, 9 МБ для шума на Mac.',
+    cleaning: 'Чищу запись…',
+    cleaned: 'Запись {{name}} очищена.',
+    cleanupFailed: 'Не удалось очистить запись.',
+    playOriginal: 'Оригинал',
+    playOriginalTitle: 'Запись до очистки',
     watermark: 'Речь Chatterbox несёт неслышимый водяной знак Resemble AI, по которому её можно опознать как синтезированную. Chatterbox MLX такого знака не ставит.',
   },
 
@@ -370,6 +378,7 @@ export default {
       engine_install: 'Установка движка',
       ollama_import: 'Импорт из Ollama',
       lmstudio_import: 'Импорт из LM Studio',
+      voice_cleanup: 'Очистка голоса',
     },
     completedOfTotal: '{{completed}} из {{total}}',
     resume: 'Продолжить',

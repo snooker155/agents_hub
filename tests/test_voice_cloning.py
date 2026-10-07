@@ -616,3 +616,162 @@ def test_an_unknown_voice_reads_in_the_models_own(worker, tmp_path, monkeypatch)
     engine.multilingual = False
     engine.speak("Привет", "alloy", 1.0)
     assert engine.calls[-1][3] == "en"  # an English-only checkpoint takes no language
+
+
+# ── cleanup (voice_enhance.py) ───────────────────────────────────────────────
+
+def _cleanup_ready(svc, tmp_path, monkeypatch, *, apple=True, ran=None):
+    """Engines installed, weights in place, and voice_enhance.py replaced
+    by a stand-in that writes ``CLEANED`` where the cleaned sample goes."""
+    monkeypatch.setattr(svc, "mlx_platform", lambda: apple)
+    monkeypatch.setattr(svc, "engines", lambda: {"deepfilternet": apple, "resemble_enhance": True})
+    for engine, (_repo, files) in svc.CLEANUP_WEIGHTS.items():
+        for dest in files.values():
+            target = svc.cleanup_weights_dir(engine) / dest
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"w")
+    ran = [] if ran is None else ran
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        Path(cmd[-1]).write_bytes(b"CLEANED:" + Path(cmd[-2]).read_bytes()[:4])
+        return svc.subprocess.CompletedProcess(cmd, 0, stdout='{"seconds": 1.5, "rate": 48000}\n', stderr="")
+
+    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    return ran
+
+
+def _wait_job(client, job_id):
+    import time
+    for _ in range(200):
+        job = client.get(f"/jobs/{job_id}", headers=AUTH).json()
+        if job["status"] in ("done", "error"):
+            return job
+        time.sleep(0.02)
+    raise AssertionError("the cleanup did not end")
+
+
+def test_a_cleanup_keeps_the_original_and_can_put_it_back(client, svc, tmp_path, monkeypatch, no_pyav):
+    ran = _cleanup_ready(svc, tmp_path, monkeypatch)
+    d = tmp_path / ".voices" / "anton"
+    voice = _record(client, "anton").json()
+    assert voice["cleanup"] == "" and (d / "original.wav").read_bytes() == (d / "sample.wav").read_bytes()
+    recorded = (d / "original.wav").read_bytes()
+    (d / "cache").mkdir()
+
+    r = client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "denoise"})
+    assert r.status_code == 200 and r.json()["engine"] == "deepfilternet"
+    job = _wait_job(client, r.json()["job_id"])
+    assert job["status"] == "done" and job["kind"] == "voice_cleanup", job
+    cmd = ran[-1]
+    assert cmd[1].endswith("voice_enhance.py") and cmd[cmd.index("--engine") + 1] == "deepfilternet"
+    assert cmd[cmd.index("--mode") + 1] == "denoise" and cmd[-2] == str(d / "original.wav")
+    assert (d / "sample.wav").read_bytes().startswith(b"CLEANED:") and not (d / "cache").exists()
+    assert (d / "original.wav").read_bytes() == recorded
+    listed = client.get("/voices", headers=AUTH).json()["voices"][0]
+    assert listed["cleanup"] == "denoise" and listed["cleanup_engine"] == "deepfilternet"
+    assert "cleaning" not in listed and "cleaning" not in json.loads((d / "voice.json").read_text())
+    assert client.get("/voices/anton/audio", headers=AUTH).content.startswith(b"CLEANED:")
+    assert client.get("/voices/anton/audio?original=true", headers=AUTH).content == recorded
+
+    # Noise and echo: Resemble Enhance, again from the original.
+    job = _wait_job(client, client.post("/voices/anton/cleanup", headers=AUTH,
+                                        json={"mode": "restore"}).json()["job_id"])
+    assert job["status"] == "done"
+    assert ran[-1][ran[-1].index("--engine") + 1] == "resemble_enhance" and ran[-1][-2] == str(d / "original.wav")
+
+    r = client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "none"})
+    assert r.status_code == 200 and r.json()["job_id"] is None and r.json()["voice"]["cleanup"] == ""
+    assert (d / "sample.wav").read_bytes() == recorded
+    assert client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "loud"}).status_code == 400
+    assert client.post("/voices/ghost/cleanup", headers=AUTH, json={"mode": "denoise"}).status_code == 404
+
+
+def test_a_recording_can_ask_for_its_cleanup(client, svc, tmp_path, monkeypatch, no_pyav):
+    ran = _cleanup_ready(svc, tmp_path, monkeypatch, apple=False)
+    r = _record(client, "anton", cleanup="denoise")
+    assert r.status_code == 200 and r.json()["job_id"]
+    assert _wait_job(client, r.json()["job_id"])["status"] == "done"
+    # Without MLX the light cleanup is Resemble Enhance's denoiser.
+    assert ran[-1][ran[-1].index("--engine") + 1] == "resemble_enhance"
+    assert client.get("/voices", headers=AUTH).json()["voices"][0]["cleanup"] == "denoise"
+    # A new sample starts uncleaned.
+    assert _record(client, "anton", replace="true").json()["cleanup"] == ""
+    assert _record(client, "other", cleanup="sparkle").status_code == 400
+
+
+def test_a_voice_from_before_cleanups_gets_its_original_kept(client, svc, tmp_path, monkeypatch, no_pyav):
+    _cleanup_ready(svc, tmp_path, monkeypatch)
+    _record(client, "old")
+    d = tmp_path / ".voices" / "old"
+    (d / "original.wav").unlink()
+    recorded = (d / "sample.wav").read_bytes()
+    job = _wait_job(client, client.post("/voices/old/cleanup", headers=AUTH, json={"mode": "denoise"}).json()["job_id"])
+    assert job["status"] == "done" and (d / "original.wav").read_bytes() == recorded
+
+
+def test_a_failed_cleanup_leaves_the_sample_and_says_why(client, svc, tmp_path, monkeypatch, no_pyav):
+    _cleanup_ready(svc, tmp_path, monkeypatch)
+    _record(client, "anton")
+    d = tmp_path / ".voices" / "anton"
+    before = (d / "sample.wav").read_bytes()
+    monkeypatch.setattr(svc.subprocess, "run", lambda cmd, **kw: svc.subprocess.CompletedProcess(
+        cmd, 1, stdout="", stderr="Traceback\nRuntimeError: out of memory\n"))
+    job = _wait_job(client, client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "restore"}).json()["job_id"])
+    assert job["status"] == "error" and "out of memory" in job["error"]
+    assert (d / "sample.wav").read_bytes() == before
+    assert client.get("/voices", headers=AUTH).json()["voices"][0]["cleanup"] == ""
+
+
+def test_a_cleanup_installs_its_engine_and_fetches_its_weights(client, svc, tmp_path, monkeypatch, no_pyav):
+    ran = _cleanup_ready(svc, tmp_path, monkeypatch)
+    shutil_root = svc.cleanup_weights_dir("deepfilternet")
+    (shutil_root / "model.safetensors").unlink()
+    installed = {"deepfilternet": False}
+    monkeypatch.setattr(svc, "engines", lambda: {"deepfilternet": installed["deepfilternet"]})
+
+    def install(job_id, engine):
+        installed[engine] = True
+        return None
+
+    fetched = []
+
+    def fetch(job_id, url, dest, **kw):
+        fetched.append(url)
+        dest.write_bytes(b"w")
+        return 1
+
+    monkeypatch.setattr(svc, "install_steps", install)
+    monkeypatch.setattr(svc, "_fetch", fetch)
+    _record(client, "anton")
+    job = _wait_job(client, client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "denoise"}).json()["job_id"])
+    assert job["status"] == "done" and installed["deepfilternet"] and ran
+    assert fetched == [f"{svc.HF_BASE}/mlx-community/DeepFilterNet-mlx/resolve/main/v3/model.safetensors"]
+
+
+def test_mlx_cleanup_and_engines_stay_off_other_machines(svc, monkeypatch):
+    monkeypatch.setattr(svc, "mlx_platform", lambda: False)
+    assert svc.cleanup_engine("denoise") == "resemble_enhance"
+    assert svc.cleanup_engine("restore") == "resemble_enhance"
+    assert "deepfilternet" in svc.APPLE_ENGINES
+    # resemble-enhance's own pins (deepspeed, torch 2.1, gradio) stay out.
+    cmds = svc.install_commands("resemble_enhance")
+    assert cmds[-1][-2:] == ["--no-deps", "resemble-enhance==0.0.1"]
+    assert not any("deepspeed" in part or "gradio" in part for cmd in cmds for part in cmd)
+    assert svc.engine_python("resemble_enhance") == svc.engine_python("chatterbox")
+    assert svc.engine_python("deepfilternet") == svc.engine_python("chatterbox_mlx")
+
+
+def test_voice_enhance_refuses_what_an_engine_cannot_do(tmp_path):
+    enhance = _load("voice_enhance_script", "voice_enhance.py")
+    try:
+        with pytest.raises(SystemExit):
+            enhance.main(["--engine", "deepfilternet", "--mode", "restore", "--weights", str(tmp_path),
+                          "in.wav", "out.wav"])
+        # Training-only packages stand in as empty modules when missing.
+        enhance._stand_in("hub_missing_pkg_for_test", "hub_missing_pkg_for_test.sub")
+        assert "hub_missing_pkg_for_test.sub" in sys.modules
+    finally:
+        sys.modules.pop("hub_missing_pkg_for_test", None)
+        sys.modules.pop("hub_missing_pkg_for_test.sub", None)
+        sys.modules.pop("voice_enhance_script", None)

@@ -116,10 +116,10 @@ def venv_python() -> Path:
 
 def code_version() -> str:
     """The digest the runtime reports as ``version`` (deploy/models/app.py
-    ``code_version``): the same four files, hashed the same way."""
+    ``code_version``): the same five files, hashed the same way."""
     h = hashlib.sha1()
     for f in (RUNTIME_SRC / "app.py", RUNTIME_SRC / "speech_worker.py", RUNTIME_SRC / "openvoice_vc.py",
-              PROJECT_ROOT / "providers" / "model_structure.py"):
+              PROJECT_ROOT / "providers" / "model_structure.py", RUNTIME_SRC / "voice_enhance.py"):
         try:
             h.update(f.resolve().read_bytes())
         except OSError:

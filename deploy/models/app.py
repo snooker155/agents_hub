@@ -131,6 +131,7 @@ MAX_SPEECH_LOADED = max(1, _env_int("MODELS_MAX_SPEECH_LOADED", 3))
 #: in another environment.
 SPEECH_PYTHON = os.environ.get("MODELS_SPEECH_PYTHON") or sys.executable
 SPEECH_WORKER = Path(__file__).resolve().with_name("speech_worker.py")
+VOICE_ENHANCE = Path(__file__).resolve().with_name("voice_enhance.py")
 
 _REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 _REVISION_RE = re.compile(r"^[\w.\-/]{1,100}$")
@@ -1263,12 +1264,12 @@ def mlx_message(msg: Dict[str, Any], harmony: Optional[HarmonyStream], *, whole:
 #: Engine -> purpose, the same words the hub's special models use.
 ENGINE_KIND = {"whisper": "transcription", "piper": "speech", "kokoro": "speech", "kitten": "speech",
                "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech",
-               "mlx": "chat"}
+               "mlx": "chat", "deepfilternet": "cleanup", "resemble_enhance": "cleanup"}
 #: Every engine the Models page lists, chat first.
 ALL_ENGINES = ("llama", "mlx", "whisper", "piper", "kokoro", "kitten", "supertonic", "chatterbox", "chatterbox_mlx",
-               "openvoice")
+               "openvoice", "deepfilternet", "resemble_enhance")
 #: Engines that run only on Apple silicon: listed nowhere else.
-APPLE_ENGINES = ("mlx", "chatterbox_mlx")
+APPLE_ENGINES = ("mlx", "chatterbox_mlx", "deepfilternet")
 SPEECH_KINDS = ("speech", "transcription")
 #: Engine -> the modules that have to import for it to run, comma separated.
 #: Kitten runs on the worker's own code over onnxruntime and phonemizer,
@@ -1277,7 +1278,9 @@ ENGINE_MODULES = {"whisper": "faster_whisper", "piper": "piper", "kokoro": "koko
                   "kitten": "onnxruntime,phonemizer,espeakng_loader", "supertonic": "supertonic",
                   "chatterbox": "chatterbox,torch,librosa,perth,pkg_resources", "openvoice": "torch,numpy,av",
                   "chatterbox_mlx": "mlx_audio,mlx,av",
-                  "mlx": "mlx_lm"}
+                  "mlx": "mlx_lm",
+                  "deepfilternet": "mlx_audio,mlx,av",
+                  "resemble_enhance": "resemble_enhance,torch,torchaudio,scipy,librosa,soundfile,omegaconf,rich,av"}
 #: The torch version the voice cloning engines share: the one Chatterbox
 #: is built against (newer on Python 3.14, which 2.6 has no wheels for).
 _TORCH = ['torch==2.6.0; python_version < "3.14"', 'torch>=2.9; python_version >= "3.14"']
@@ -1304,14 +1307,23 @@ ENGINE_PACKAGES = {
     # mlx-audio's port of Chatterbox, the version it was checked with.
     "chatterbox_mlx": ["mlx-audio>=0.5.8,<0.6", "av>=12"],
     "mlx": ["mlx-lm>=0.32"],
+    # Voice cleanup (voice_enhance.py). DeepFilterNet shares Chatterbox
+    # MLX's environment and port collection.
+    "deepfilternet": ["mlx-audio>=0.5.8,<0.6", "av>=12"],
+    # resemble-enhance pins a training stack (deepspeed, torch 2.1, gradio)
+    # inference never touches: what inference imports goes in here, the
+    # package itself with --no-deps, the rest is stood in for at run time.
+    "resemble_enhance": [*_TORCH, *_TORCHAUDIO, "numpy>=1.24", "scipy>=1.11", "librosa>=0.10", "soundfile>=0.12",
+                         "omegaconf>=2.3", "rich>=13", "tqdm>=4.66", "av>=12"],
 }
 #: Packages installed without their dependencies, after ENGINE_PACKAGES.
-ENGINE_NO_DEPS = {"chatterbox": ["chatterbox-tts==0.1.7"]}
+ENGINE_NO_DEPS = {"chatterbox": ["chatterbox-tts==0.1.7"], "resemble_enhance": ["resemble-enhance==0.0.1"]}
 #: Engines that run in an environment of their own (:func:`engine_python`),
 #: by its name: torch and Chatterbox's exact pins, or mlx-audio's newer
 #: transformers, stay away from the light ONNX engines and from each other,
 #: and removing that directory removes them.
-ENGINE_VENVS = {"chatterbox": "torch", "openvoice": "torch", "chatterbox_mlx": "mlx-audio"}
+ENGINE_VENVS = {"chatterbox": "torch", "openvoice": "torch", "chatterbox_mlx": "mlx-audio",
+                "deepfilternet": "mlx-audio", "resemble_enhance": "torch"}
 #: Environment name -> the variable that points at an interpreter of one's
 #: own instead.
 VENV_PYTHON_ENV = {"torch": "MODELS_TORCH_PYTHON", "mlx-audio": "MODELS_MLX_AUDIO_PYTHON"}
@@ -1321,7 +1333,7 @@ WORKER_PACKAGES = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1", "python-multipart>=0
 #: Engine -> the format column of the model list.
 ENGINE_FORMAT = {"whisper": "ctranslate2", "piper": "onnx", "kokoro": "onnx", "kitten": "onnx",
                  "supertonic": "onnx", "chatterbox": "torch", "chatterbox_mlx": "mlx", "openvoice": "torch",
-                 "mlx": "mlx"}
+                 "mlx": "mlx", "deepfilternet": "mlx", "resemble_enhance": "torch"}
 #: The files of a faster-whisper model directory worth fetching.
 WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt", "vocabulary.json",
                  "preprocessor_config.json")
@@ -2781,7 +2793,7 @@ def code_version() -> str:
     import hashlib
     h = hashlib.sha1()
     for f in (Path(__file__).resolve(), SPEECH_WORKER, SPEECH_WORKER.with_name("openvoice_vc.py"),
-              _structure_source()):
+              _structure_source(), VOICE_ENHANCE):
         try:
             h.update(f.read_bytes())
         except OSError:
@@ -3634,33 +3646,42 @@ def install_commands(engine: str) -> List[List[str]]:
     return cmds
 
 
-def run_install(job_id: str, engine: str) -> None:
+#: One pip at a time: an engine install and a voice cleanup that installs
+#: its engine may both write to the same environment.
+_pip_lock = threading.Lock()
+
+
+def install_steps(job_id: str, engine: str) -> Optional[str]:
     """``pip install`` an engine's packages into the Python it runs under
     (:func:`engine_python`), the last line of pip's output as the job's
-    message."""
-    for cmd in install_commands(engine):
-        jobs.update(job_id, status="running", message=" ".join(cmd[2:])[:200])
-        tail: List[str] = []
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                    stdin=subprocess.DEVNULL)
-            for line in proc.stdout or []:
-                line = line.strip()
-                if line:
-                    tail = (tail + [line])[-8:]
-                    jobs.update(job_id, message=line[:200])
-            code = proc.wait()
-        except Exception as exc:  # noqa: BLE001 - the job records why
-            jobs.update(job_id, status="error", error=f"{type(exc).__name__}: {exc}"[:400], finished_at=_now())
-            return
-        if code != 0:
-            tool = "venv" if "venv" in cmd[1:3] else "pip"
-            jobs.update(job_id, status="error", finished_at=_now(),
-                        error=(f"{tool} exited with code {code}: " + " | ".join(tail[-3:]))[:500])
-            return
+    message. Returns what went wrong, None once the engine imports."""
+    with _pip_lock:
+        for cmd in install_commands(engine):
+            jobs.update(job_id, status="running", message=" ".join(cmd[2:])[:200])
+            tail: List[str] = []
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                        stdin=subprocess.DEVNULL)
+                for line in proc.stdout or []:
+                    line = line.strip()
+                    if line:
+                        tail = (tail + [line])[-8:]
+                        jobs.update(job_id, message=line[:200])
+                code = proc.wait()
+            except Exception as exc:  # noqa: BLE001 - the job records why
+                return f"{type(exc).__name__}: {exc}"[:400]
+            if code != 0:
+                tool = "venv" if "venv" in cmd[1:3] else "pip"
+                return (f"{tool} exited with code {code}: " + " | ".join(tail[-3:]))[:500]
     if not engines().get(engine):
-        jobs.update(job_id, status="error", finished_at=_now(),
-                    error=f"pip finished, but {ENGINE_MODULES[engine]} still does not import")
+        return f"pip finished, but {ENGINE_MODULES[engine]} still does not import"
+    return None
+
+
+def run_install(job_id: str, engine: str) -> None:
+    error = install_steps(job_id, engine)
+    if error:
+        jobs.update(job_id, status="error", error=error, finished_at=_now())
         return
     jobs.update(job_id, status="done", percent=100.0, message=f"{engine} installed", finished_at=_now())
 
@@ -3815,6 +3836,9 @@ _VOICE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 _RESERVED_VOICES = {"default"}
 VOICE_GENDERS = ("", "female", "male")
 _VOICE_FIELDS = ("language", "gender", "shared", "base_model", "base_voice")
+#: What a recording keeps beside ``sample.wav``: the sample before any
+#: cleanup, so cleaning again starts from it and "none" brings it back.
+ORIGINAL_SAMPLE = "original.wav"
 
 
 def _voice_dir(name: str) -> Path:
@@ -3825,7 +3849,8 @@ def _voice_dir(name: str) -> Path:
 
 
 def voice_record(name: str) -> Optional[Dict[str, Any]]:
-    """``voice.json`` of a recorded voice, with its name; None when there is
+    """``voice.json`` of a recorded voice, with its name and the cleanup
+    running on it (``cleaning``: the job's id and mode); None when there is
     no such voice."""
     d = voices_dir() / name
     if not (d / "sample.wav").is_file():
@@ -3834,7 +3859,11 @@ def voice_record(name: str) -> Optional[Dict[str, Any]]:
         data = json.loads((d / "voice.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return {**(data if isinstance(data, dict) else {}), "name": name}
+    record = {**(data if isinstance(data, dict) else {}), "name": name}
+    running = cleanup_running(name)
+    if running is not None:
+        record["cleaning"] = {"job_id": running["id"], "mode": (running.get("meta") or {}).get("mode")}
+    return record
 
 
 def list_voices() -> List[Dict[str, Any]]:
@@ -3844,7 +3873,9 @@ def list_voices() -> List[Dict[str, Any]]:
 def _write_voice(name: str, record: Dict[str, Any]) -> None:
     d = voices_dir() / name
     tmp = d / "voice.json.tmp"
-    tmp.write_text(json.dumps({k: v for k, v in record.items() if k != "name"}, ensure_ascii=False, indent=1),
+    # The name and a running cleanup are read from elsewhere, not kept.
+    tmp.write_text(json.dumps({k: v for k, v in record.items() if k not in ("name", "cleaning")},
+                              ensure_ascii=False, indent=1),
                    encoding="utf-8")
     tmp.replace(d / "voice.json")
 
@@ -3863,13 +3894,16 @@ def save_voice(name: str, audio: bytes, fields: Dict[str, Any], *, replace: bool
         raise HTTPException(status_code=422, detail=str(exc))
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"reading audio needs {exc.name} in the runtime's Python")
+    if old is not None and cleanup_running(name) is not None:
+        raise HTTPException(status_code=409, detail=f"{name!r} is being cleaned; wait for it to finish")
     d.mkdir(parents=True, exist_ok=True)
-    tmp = d / "sample.wav.tmp"
-    tmp.write_bytes(wav)
-    tmp.replace(d / "sample.wav")
+    for target in (ORIGINAL_SAMPLE, "sample.wav"):
+        tmp = d / f"{target}.tmp"
+        tmp.write_bytes(wav)
+        tmp.replace(d / target)
     shutil.rmtree(d / "cache", ignore_errors=True)
     record = {**(old or {}), **{k: v for k, v in fields.items() if v is not None},
-              "duration": seconds, "updated_at": _now()}
+              "duration": seconds, "cleanup": "", "updated_at": _now()}
     record.setdefault("created_at", record["updated_at"])
     _write_voice(name, record)
     return {**record, "name": name}
@@ -3883,6 +3917,170 @@ def update_voice(name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     record["updated_at"] = _now()
     _write_voice(name, record)
     return record
+
+
+# ── Voice cleanup ──
+# A sample's room (echo, hum) taken out before the cloning engines learn
+# from it, by voice_enhance.py in its engine's environment: ``denoise``
+# (DeepFilterNet on Apple silicon, Resemble Enhance's denoiser elsewhere)
+# or ``restore`` (Resemble Enhance, noise and echo). A job: the engine is
+# installed and its weights fetched the first time. The original stays in
+# ``original.wav``; every cleanup starts from it and ``none`` puts it back.
+
+CLEANUP_MODES = ("none", "denoise", "restore")
+#: Engine -> its weights on Hugging Face: the repo and, per file there, where
+#: it goes under the engine's weights directory (:func:`cleanup_weights_dir`).
+CLEANUP_WEIGHTS: Dict[str, Tuple[str, Dict[str, str]]] = {
+    "deepfilternet": ("mlx-community/DeepFilterNet-mlx", {
+        "v3/config.json": "config.json", "v3/model.safetensors": "model.safetensors"}),
+    "resemble_enhance": ("ResembleAI/resemble-enhance", {
+        "enhancer_stage2/hparams.yaml": "hparams.yaml",
+        "enhancer_stage2/ds/G/latest": "ds/G/latest",
+        "enhancer_stage2/ds/G/default/mp_rank_00_model_states.pt": "ds/G/default/mp_rank_00_model_states.pt"}),
+}
+#: How long one cleanup may run: Resemble Enhance takes about twice the
+#: recording's length on a laptop CPU, and a sample is 30 s at most.
+CLEANUP_TIMEOUT = 900.0
+
+
+def cleanup_engine(mode: str) -> str:
+    return "deepfilternet" if mode == "denoise" and mlx_platform() else "resemble_enhance"
+
+
+def cleanup_weights_dir(engine: str) -> Path:
+    """Hidden beside the models, so the model list skips it."""
+    return MODELS_DIR / ".cleanup" / engine
+
+
+def cleanup_running(name: str) -> Optional[Dict[str, Any]]:
+    """The queued or running cleanup of voice ``name``, if any."""
+    return next((j for j in jobs.list() if j["kind"] == "voice_cleanup" and j["status"] in ("queued", "running")
+                 and (j.get("meta") or {}).get("voice") == name), None)
+
+
+def _write_sample(d: Path, wav: bytes) -> None:
+    tmp = d / "sample.wav.tmp"
+    tmp.write_bytes(wav)
+    tmp.replace(d / "sample.wav")
+    shutil.rmtree(d / "cache", ignore_errors=True)
+
+
+def _original(d: Path) -> Path:
+    """The sample before cleanup; a voice recorded before cleanups existed
+    has only ``sample.wav``, which is its original."""
+    original = d / ORIGINAL_SAMPLE
+    if not original.is_file():
+        shutil.copyfile(d / "sample.wav", original)
+    return original
+
+
+def restore_original(name: str) -> Dict[str, Any]:
+    """Cleanup ``none``: the sample as it was recorded."""
+    d = voices_dir() / name
+    record = voice_record(name)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"no recorded voice {name!r}")
+    if record.get("cleanup"):
+        _write_sample(d, _original(d).read_bytes())
+    record.pop("cleaning", None)
+    record.update(cleanup="", updated_at=_now())
+    _write_voice(name, record)
+    return record
+
+
+def _fetch_cleanup_weights(job_id: str, engine: str) -> None:
+    repo, files = CLEANUP_WEIGHTS[engine]
+    root = cleanup_weights_dir(engine)
+    for src, dest in files.items():
+        target = root / dest
+        if not target.is_file():
+            _fetch(job_id, f"{HF_BASE}/{repo}/resolve/main/{src}", target)
+
+
+def run_cleanup(job_id: str, name: str, mode: str) -> None:
+    """Install the engine when missing, fetch its weights, clean the
+    original and keep the result as the voice's sample, levelled and trimmed
+    the way a recording is (speech_worker.prepare_sample)."""
+    engine = cleanup_engine(mode)
+    d = voices_dir() / name
+
+    def fail(error: str) -> None:
+        jobs.update(job_id, status="error", error=error[:500], finished_at=_now())
+
+    jobs.update(job_id, status="running", message=f"preparing {engine}")
+    if not engines().get(engine):
+        error = install_steps(job_id, engine)
+        if error:
+            return fail(f"installing {engine}: {error}")
+    try:
+        _fetch_cleanup_weights(job_id, engine)
+    except _FetchError as exc:
+        return fail(f"downloading the {engine} weights: {exc}; ask again to resume")
+    try:
+        original = _original(d)
+        stamp = original.stat().st_mtime
+    except OSError:
+        return fail(f"the voice {name!r} is gone")
+    out = d / "cleaned.tmp.wav"
+    cmd = [engine_python(engine), str(VOICE_ENHANCE), "--engine", engine, "--mode", mode,
+           "--weights", str(cleanup_weights_dir(engine)), str(original), str(out)]
+    jobs.update(job_id, message=f"cleaning with {engine}", percent=0.0, completed=0, total=0)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=CLEANUP_TIMEOUT,
+                              stdin=subprocess.DEVNULL, env={**os.environ, "TQDM_DISABLE": "1"})
+    except subprocess.TimeoutExpired:
+        out.unlink(missing_ok=True)
+        return fail(f"{engine} took longer than {CLEANUP_TIMEOUT:.0f} s")
+    if proc.returncode != 0:
+        out.unlink(missing_ok=True)
+        lines = [ln for ln in (proc.stderr or proc.stdout or "").strip().splitlines() if ln.strip()]
+        return fail(f"{engine} failed: " + " | ".join(lines[-3:]))
+    try:
+        wav, seconds = _worker().prepare_sample(out.read_bytes())
+    except _worker().WorkerError as exc:
+        return fail(f"the cleaned recording: {exc}")
+    finally:
+        out.unlink(missing_ok=True)
+    record = voice_record(name)
+    try:
+        replaced = original.stat().st_mtime != stamp
+    except OSError:
+        replaced = True
+    if record is None or replaced:
+        return fail(f"{name!r} was recorded again or removed while it was being cleaned")
+    _write_sample(d, wav)
+    record.pop("cleaning", None)
+    record.update(cleanup=mode, cleanup_engine=engine, duration=seconds, updated_at=_now())
+    _write_voice(name, record)
+    took = ""
+    try:
+        took = f" in {json.loads(proc.stdout.strip().splitlines()[-1])['seconds']:.0f} s"
+    except (ValueError, KeyError, IndexError, TypeError):
+        pass
+    jobs.update(job_id, status="done", percent=100.0, message=f"{name} cleaned with {engine}{took}",
+                finished_at=_now())
+
+
+def start_cleanup(name: str, mode: str) -> Dict[str, Any]:
+    """Cleanup ``mode`` of voice ``name``: a job (``job_id``), or for
+    ``none`` the voice's record at once."""
+    if mode not in CLEANUP_MODES:
+        raise HTTPException(status_code=400, detail=f"cleanup is one of {', '.join(CLEANUP_MODES)}")
+    _voice_dir(name)
+    if voice_record(name) is None:
+        raise HTTPException(status_code=404, detail=f"no recorded voice {name!r}")
+    running = cleanup_running(name)
+    if running is not None:
+        raise HTTPException(status_code=409, detail=f"{name!r} is being cleaned already (job {running['id']})")
+    if mode == "none":
+        return {"job_id": None, "voice": restore_original(name)}
+    engine = cleanup_engine(mode)
+    if engine in APPLE_ENGINES and not mlx_platform():
+        raise HTTPException(status_code=409, detail="MLX runs on Apple silicon only")
+    job = jobs.create("voice_cleanup", f"{name}: {mode}", meta={"voice": name, "mode": mode, "engine": engine})
+    threading.Thread(target=run_cleanup, args=(job["id"], name, mode), name=f"cleanup-{job['id']}",
+                     daemon=True).start()
+    return {"job_id": job["id"], "engine": engine, "voice": voice_record(name)}
 
 
 def _clean_fields(language: Optional[str], gender: Optional[str], shared: Optional[bool],
@@ -3988,7 +4186,9 @@ async def get_voices() -> Dict[str, Any]:
 async def post_voice(request: Request) -> Dict[str, Any]:
     """multipart: ``name``, ``file`` (any audio), ``consent`` (must be
     true: the person confirmed the voice is theirs or they may use it),
-    ``owner``, ``shared``, ``language``, ``gender``, ``replace``."""
+    ``owner``, ``shared``, ``language``, ``gender``, ``replace``, and
+    ``cleanup`` (see :func:`start_cleanup`; its job's id comes back as
+    ``job_id``)."""
     form = await request.form()
     upload = form.get("file")
     if upload is None or not hasattr(upload, "read"):
@@ -4004,7 +4204,14 @@ async def post_voice(request: Request) -> Dict[str, Any]:
                            str(form.get("shared") or "").lower() in ("1", "true", "yes"), None, None)
     fields.update({"owner": str(form.get("owner") or "")[:200], "consent_at": _now()})
     replace = str(form.get("replace") or "").lower() in ("1", "true", "yes")
-    return await asyncio.to_thread(save_voice, name, audio, fields, replace=replace)
+    cleanup = str(form.get("cleanup") or "none").strip().lower()
+    if cleanup not in CLEANUP_MODES:
+        raise HTTPException(status_code=400, detail=f"cleanup is one of {', '.join(CLEANUP_MODES)}")
+    record = await asyncio.to_thread(save_voice, name, audio, fields, replace=replace)
+    if cleanup != "none":
+        started = await asyncio.to_thread(start_cleanup, name, cleanup)
+        record = {**(started.get("voice") or record), "job_id": started["job_id"]}
+    return record
 
 
 class VoicePatch(BaseModel):
@@ -4022,12 +4229,23 @@ async def patch_voice(name: str, body: VoicePatch) -> Dict[str, Any]:
     return await asyncio.to_thread(update_voice, name, fields)
 
 
+class VoiceCleanupBody(BaseModel):
+    mode: str
+
+
+@app.post("/voices/{name}/cleanup", dependencies=auth)
+async def cleanup_voice(name: str, body: VoiceCleanupBody) -> Dict[str, Any]:
+    return await asyncio.to_thread(start_cleanup, name, body.mode.strip().lower())
+
+
 @app.get("/voices/{name}/audio", dependencies=auth)
-async def voice_audio(name: str) -> Response:
+async def voice_audio(name: str, original: bool = False) -> Response:
+    """The sample the engines use, or with ``original`` the one recorded."""
     d = _voice_dir(name)
     if not (d / "sample.wav").is_file():
         raise HTTPException(status_code=404, detail=f"no recorded voice {name!r}")
-    return Response(content=(d / "sample.wav").read_bytes(), media_type="audio/wav")
+    path = d / ORIGINAL_SAMPLE if original and (d / ORIGINAL_SAMPLE).is_file() else d / "sample.wav"
+    return Response(content=path.read_bytes(), media_type="audio/wav")
 
 
 @app.delete("/voices/{name}", dependencies=auth)
@@ -4035,6 +4253,8 @@ async def delete_voice(name: str) -> Dict[str, Any]:
     d = _voice_dir(name)
     if not d.is_dir():
         raise HTTPException(status_code=404, detail=f"no recorded voice {name!r}")
+    if cleanup_running(name) is not None:
+        raise HTTPException(status_code=409, detail=f"{name!r} is being cleaned; wait for it to finish")
     await asyncio.to_thread(shutil.rmtree, d)
     return {"ok": True, "name": name}
 

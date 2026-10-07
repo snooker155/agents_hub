@@ -94,8 +94,9 @@ export const getRuntimeVoices = () => api.get('/models/local/runtime/voices');
 
 // A recording as a Blob or File; `consent` must be true (the person confirmed
 // the voice is theirs or its owner agreed). `replace` gives a voice of theirs
-// a new sample.
-export const addRuntimeVoice = ({ name, audio, filename, language, gender, shared, consent, replace }) => {
+// a new sample. `cleanup` ('denoise' or 'restore') cleans it right after, a
+// runtime job whose id comes back as `job_id`.
+export const addRuntimeVoice = ({ name, audio, filename, language, gender, shared, consent, replace, cleanup }) => {
   const form = new FormData();
   form.append('name', name);
   form.append('file', audio, filename || audio.name || 'voice.webm');
@@ -104,6 +105,7 @@ export const addRuntimeVoice = ({ name, audio, filename, language, gender, share
   form.append('shared', shared ? 'true' : 'false');
   form.append('consent', consent ? 'true' : 'false');
   form.append('replace', replace ? 'true' : 'false');
+  form.append('cleanup', cleanup || 'none');
   return api.post('/models/local/runtime/voices', form,
     { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 });
 };
@@ -115,9 +117,17 @@ export const updateRuntimeVoice = (name, fields) =>
 
 export const deleteRuntimeVoice = (name) => api.delete(`/models/local/runtime/voices/${encodeURIComponent(name)}`);
 
-// The recording as it is kept, a WAV Blob.
-export const getRuntimeVoiceAudio = (name) =>
-  api.get(`/models/local/runtime/voices/${encodeURIComponent(name)}/audio`, { responseType: 'blob' });
+// The recording as it is kept, a WAV Blob; with `original` as it was before
+// its cleanup.
+export const getRuntimeVoiceAudio = (name, original = false) =>
+  api.get(`/models/local/runtime/voices/${encodeURIComponent(name)}/audio`,
+    { responseType: 'blob', params: original ? { original: true } : undefined });
+
+// Take the room out of a recording: 'denoise', 'restore' (noise and echo) or
+// 'none' (the original back). { job_id, engine, voice }; job_id is null for
+// 'none'.
+export const cleanRuntimeVoice = (name, mode) =>
+  api.post(`/models/local/runtime/voices/${encodeURIComponent(name)}/cleanup`, { mode });
 
 // A line read in the recorded voice by cloning model `model`: the response's
 // data is the audio Blob, its X-Synthesis-Seconds header how long it took.

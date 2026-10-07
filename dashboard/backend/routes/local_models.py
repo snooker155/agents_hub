@@ -522,10 +522,13 @@ def runtime_voices(request: Request) -> Dict[str, Any]:
 @router.post("/runtime/voices")
 async def runtime_add_voice(request: Request, name: str = Form(...), file: UploadFile = File(...),
                             language: str = Form(""), gender: str = Form(""), shared: bool = Form(False),
-                            consent: bool = Form(False), replace: bool = Form(False)) -> Dict[str, Any]:
+                            consent: bool = Form(False), replace: bool = Form(False),
+                            cleanup: str = Form("none")) -> Dict[str, Any]:
     """A recording for the cloning engines. ``consent``: the person confirms
     the voice is theirs or its owner allowed it; without it nothing is
-    kept. ``replace`` gives a voice of theirs a new sample."""
+    kept. ``replace`` gives a voice of theirs a new sample. ``cleanup``
+    (``denoise`` or ``restore``) cleans it right after, as a runtime job
+    whose id comes back in ``job_id``."""
     import asyncio
     if not consent:
         raise HTTPException(status_code=400, detail="Confirm that this is your voice or that its owner agreed.")
@@ -541,7 +544,7 @@ async def runtime_add_voice(request: Request, name: str = Form(...), file: Uploa
         record = await asyncio.to_thread(
             lm.RuntimeClient().add_voice, name.strip(), audio, file.filename or "voice",
             file.content_type or "application/octet-stream", owner=str(getattr(viewer, "id", "") or ""),
-            language=language, gender=gender, shared=shared, replace=replace)
+            language=language, gender=gender, shared=shared, replace=replace, cleanup=cleanup)
     except lm.LocalModelError as exc:
         _raise(exc)
     return _shown(record, viewer)
@@ -576,12 +579,35 @@ def runtime_delete_voice(name: str, request: Request) -> Dict[str, Any]:
         _raise(exc)
 
 
+class VoiceCleanupBody(BaseModel):
+    #: none (the original back), denoise, or restore (noise and echo).
+    mode: str = Field(pattern=r"^(none|denoise|restore)$")
+
+
+@router.post("/runtime/voices/{name}/cleanup")
+def runtime_clean_voice(name: str, body: VoiceCleanupBody, request: Request) -> Dict[str, Any]:
+    """Take the room (noise, echo) out of a recording before the cloning
+    models learn it, or put the original back. ``denoise`` and ``restore``
+    are a runtime job (``job_id``) that installs the engine and fetches its
+    weights the first time."""
+    viewer = _viewer(request)
+    _voice(name, viewer, edit=True)
+    try:
+        out = lm.RuntimeClient().clean_voice(name, body.mode)
+    except lm.LocalModelError as exc:
+        _raise(exc)
+    if isinstance(out.get("voice"), dict):
+        out["voice"] = _shown(out["voice"], viewer)
+    return out
+
+
 @router.get("/runtime/voices/{name}/audio")
-def runtime_voice_audio(name: str, request: Request) -> Response:
-    """The recording as it is kept (cleaned up: trimmed, levelled, WAV)."""
+def runtime_voice_audio(name: str, request: Request, original: bool = False) -> Response:
+    """The recording as it is kept (trimmed, levelled, WAV, cleaned when a
+    cleanup ran), or with ``original`` as it was before the cleanup."""
     _voice(name, _viewer(request))
     try:
-        return Response(content=lm.RuntimeClient().voice_audio(name), media_type="audio/wav")
+        return Response(content=lm.RuntimeClient().voice_audio(name, original=original), media_type="audio/wav")
     except lm.LocalModelError as exc:
         _raise(exc)
 

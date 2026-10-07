@@ -338,6 +338,26 @@ voice. Each engine computes what it needs from a sample once (Chatterbox's
 conditionals, OpenVoice's tone color) and keeps it in the voice's `cache/`; a
 new sample drops it.
 
+**Cleanup.** A laptop's microphones record the room too, and the cloning
+engines copy its echo and hum into every line they read. A voice's
+**Cleanup** (on its row, and in the recorder, where it runs right after the
+save) takes them out with `deploy/models/voice_enhance.py`, run as a runtime
+job in its engine's environment:
+
+| Cleanup | Engine | What it does | On a 15 s MacBook recording |
+|---|---|---|---|
+| remove noise | [DeepFilterNet 3](https://github.com/Rikorose/DeepFilterNet) through mlx-audio (Apple silicon, `mlx-community/DeepFilterNet-mlx`, 9 MB); Resemble Enhance's denoiser elsewhere | noise and a little of the echo, the timbre stays (speaker similarity 0.98) | about 4 s; echo decay 221 to 165 ms |
+| remove noise and echo | [Resemble Enhance](https://github.com/resemble-ai/resemble-enhance) (MIT, `ResembleAI/resemble-enhance`, 713 MB) | rebuilds the speech as if recorded close up: noise and echo go, the timbre may shift a little (similarity 0.87) | about 30 s on the CPU; echo decay 221 to 100 ms, and in Chatterbox's lines from about 300 to 85 ms |
+
+The first cleanup installs its engine (DeepFilterNet shares Chatterbox MLX's
+environment, Resemble Enhance the torch one; resemble-enhance goes in with
+`--no-deps`, since it pins deepspeed, torch 2.1 and gradio that inference
+never uses) and fetches the weights into `MODELS_DIR/.cleanup/<engine>/`.
+Resemble Enhance runs on CUDA or the CPU: on a Mac's GPU (MPS) its output
+comes out broken. The recording as it was stays in `original.wav`: every
+cleanup starts from it, **Original** on the row plays it, and cleanup
+**none** puts it back. A new sample starts uncleaned.
+
 **Picking one.** A recording is a voice of both models: it shows in every voice
 picker for that model (a workspace's speech model, the assistant), and a
 request names it in `voice`. A person sees their own recordings and the shared
@@ -523,10 +543,11 @@ On the hub, under `/api/models/local`:
 | `GET /runtime/models/{file}/structure` | the GGUF structure ([model structure](model-structure.md)) |
 | `GET /runtime/jobs`, `GET /runtime/jobs/{id}` | the runtime's download jobs, same shape |
 | `GET /runtime/voices` | `{voices: [{name, language, gender, duration, owner, shared, base_model, base_voice, created_at, consent_at, mine, editable}]}`: the person's own, the shared ones, all for an administrator |
-| `POST /runtime/voices` multipart `name, file, language, gender, shared, consent, replace` | the voice; 400 without `consent`, 409 for a name taken, 422 for a recording with too little speech, 403 replacing someone else's |
+| `POST /runtime/voices` multipart `name, file, language, gender, shared, consent, replace, cleanup` | the voice; 400 without `consent`, 409 for a name taken, 422 for a recording with too little speech, 403 replacing someone else's |
 | `PATCH /runtime/voices/{name}` `{language, gender, shared, base_model, base_voice}` | the voice; the owner or an administrator only |
 | `DELETE /runtime/voices/{name}` | `{ok, name}`; the owner or an administrator only |
-| `GET /runtime/voices/{name}/audio` | the kept sample, WAV |
+| `GET /runtime/voices/{name}/audio` `?original=true` | the kept sample, WAV; with `original` the recording before its cleanup |
+| `POST /runtime/voices/{name}/cleanup` `{mode: none, denoise, restore}` | `{job_id, engine, voice}`: a runtime job (`voice_cleanup`) for `denoise` and `restore`, `job_id` null for `none`; the owner or an administrator only, 409 while one runs |
 | `POST /runtime/voices/{name}/try` `{model, text, language}` | a line read in the voice by `model`, audio; `X-Synthesis-Seconds` says how long it took |
 | `DELETE /runtime/usage` | resets the counts and answers with them, the shape of `usage` in `GET /runtime`: `{since, totals, rows: [{model, source, kind, requests, errors, prompt_tokens, completion_tokens, duration_ms, gen_tokens, gen_ms, cached_tokens, computed_tokens, hits, prompt_calls, prefill_ms, prefill_tokens, ttft_ms, ttft_n}], recent, series: [{t, requests, prompt_tokens, cached_tokens, computed_tokens, prefill_ms, ttft_ms, ttft_n}], bucket_seconds}`; 404 from a runtime too old to count |
 | `GET /runtime/cache` | `{ok, settings, defaults, kv_types, limits, models: [{name, engine, context_length, slots, kv_type, bytes_per_token, bytes_per_token_measured, kv_bytes, weights_bytes, rss_bytes, ram_cache_bytes, restored, warmup, heads, pending, disk_bytes}], stored: [{name, loaded, disk_bytes, tokens, saved_at, heads}], disk_bytes, memory, pending}`, always 200: `ok: false` with `error` (and `outdated` for a runtime older than the cache) |

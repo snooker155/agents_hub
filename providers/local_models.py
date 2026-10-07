@@ -652,14 +652,21 @@ class RuntimeClient:
 
     def add_voice(self, name: str, audio: bytes, filename: str, content_type: str, *,
                   owner: str, language: str = "", gender: str = "", shared: bool = False,
-                  replace: bool = False) -> Dict[str, Any]:
+                  replace: bool = False, cleanup: str = "none") -> Dict[str, Any]:
         """A recording of ``name``; the person confirmed they may record it
-        (the runtime refuses one without ``consent``)."""
+        (the runtime refuses one without ``consent``). ``cleanup`` other than
+        ``none`` starts one on it, its job's id in ``job_id``."""
         return self._request("POST", "/voices", timeout=max(self.timeout, 60.0),
                              files={"file": (filename or "voice", audio, content_type or "application/octet-stream")},
                              data={"name": name, "owner": owner, "language": language, "gender": gender,
                                    "shared": "true" if shared else "false", "consent": "true",
-                                   "replace": "true" if replace else "false"})
+                                   "replace": "true" if replace else "false", "cleanup": cleanup or "none"})
+
+    def clean_voice(self, name: str, mode: str) -> Dict[str, Any]:
+        """Take the room out of a recording: ``denoise``, ``restore`` (noise
+        and echo) or ``none`` (back to the original). A job for the first
+        two: ``{job_id, engine, voice}``."""
+        return self._request("POST", f"/voices/{name}/cleanup", json={"mode": mode})
 
     def update_voice(self, name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("PATCH", f"/voices/{name}", json=fields)
@@ -667,8 +674,10 @@ class RuntimeClient:
     def delete_voice(self, name: str) -> Dict[str, Any]:
         return self._request("DELETE", f"/voices/{name}")
 
-    def voice_audio(self, name: str) -> bytes:
-        return self._send("GET", f"/voices/{name}/audio").content
+    def voice_audio(self, name: str, original: bool = False) -> bytes:
+        """The sample the engines use, or with ``original`` the recording
+        before its cleanup."""
+        return self._send("GET", f"/voices/{name}/audio", params={"original": "true"} if original else None).content
 
     def speech(self, model: str, text: str, voice: str, response_format: str = "mp3") -> Tuple[bytes, str]:
         """``text`` read by speech model ``model`` through the gateway, as

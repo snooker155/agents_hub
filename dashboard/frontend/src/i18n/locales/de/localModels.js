@@ -96,8 +96,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice' },
-    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', chat: 'Chat' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', chat: 'Chat', cleanup: 'Stimmbereinigung' },
     installed: 'Installiert',
     install: 'Installieren',
     installStarted: '{{engine}} wird installiert…',
@@ -153,6 +153,14 @@ export default {
     deleted: 'Stimme {{name}} gelöscht.',
     deleteFailed: 'Die Stimme konnte nicht gelöscht werden.',
     updateFailed: 'Die Stimme konnte nicht geändert werden.',
+    cleanup: 'Bereinigung',
+    cleanupModes: { none: 'keine', denoise: 'Rauschen entfernen', restore: 'Rauschen und Hall entfernen' },
+    cleanupHint: 'Ein Laptop-Mikrofon nimmt auch den Raum auf: Rauschen und Hall, die das Modell dann in die Stimme übernimmt. „Rauschen entfernen“ ist schnell und lässt die Klangfarbe, wie sie ist. „Rauschen und Hall entfernen“ baut die Sprache neu auf (Resemble Enhance, etwa 30 Sekunden auf der CPU): der Hall verschwindet fast ganz, die Klangfarbe kann sich leicht ändern, vergleichen Sie also mit dem Original. Beim ersten Mal werden die Engine installiert und ihre Gewichte geladen: etwa 0,7 GB für Hall, 9 MB für Rauschen auf dem Mac.',
+    cleaning: 'Aufnahme wird bereinigt…',
+    cleaned: 'Aufnahme {{name}} bereinigt.',
+    cleanupFailed: 'Die Aufnahme konnte nicht bereinigt werden.',
+    playOriginal: 'Original',
+    playOriginalTitle: 'Die Aufnahme vor der Bereinigung',
     watermark: 'Sprache von Chatterbox trägt das unhörbare Wasserzeichen von Resemble AI, an dem sie als synthetisch erkennbar ist. Chatterbox MLX setzt keines.',
   },
 
@@ -356,6 +364,7 @@ export default {
       engine_install: 'Engine-Installation',
       ollama_import: 'Ollama-Import',
       lmstudio_import: 'LM-Studio-Import',
+      voice_cleanup: 'Stimmbereinigung',
     },
     completedOfTotal: '{{completed}} von {{total}}',
     resume: 'Fortsetzen',

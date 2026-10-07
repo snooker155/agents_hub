@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader, Mic, Play, Square, Trash2, Upload } from 'lucide-react';
 import {
   getRuntimeVoices, addRuntimeVoice, updateRuntimeVoice, deleteRuntimeVoice, getRuntimeVoiceAudio, tryRuntimeVoice,
+  cleanRuntimeVoice, getRuntimeJob,
 } from '../../api/localModels';
 import { CLONING_ENGINES } from './speechPresets';
 import { useI18n } from '../../i18n';
@@ -13,6 +14,10 @@ const LANGUAGES = ['ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'nl', 'tr', '
   'ja', 'zh', 'ko', 'ar', 'he', 'hi', 'ms', 'sw'];
 // A recording stops by itself here: the runtime keeps 30 s at most.
 const MAX_SECONDS = 30;
+// What a recording's room can be cleaned of: nothing, noise, noise and echo.
+const CLEANUP_MODES = ['none', 'denoise', 'restore'];
+// How often a running cleanup is asked how far it got.
+const CLEANUP_POLL_MS = 1500;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/;
 // What to read aloud while recording: varied sounds, about 15 seconds.
 const READ_ALOUD = {
@@ -121,6 +126,32 @@ export default function VoicesCard({ models }) {
     return () => { live = false; };
   }, [reloadKey, cloningKey]);
 
+  // Running cleanups (a runtime job each), asked until they end; the end
+  // reloads the list, which then carries the cleaned sample.
+  const [progress, setProgress] = useState({});
+  const reported = useRef(new Set());
+  const cleaningIds = (voices || []).map((v) => v.cleaning?.job_id).filter(Boolean).join(',');
+  useEffect(() => {
+    if (!cleaningIds) return undefined;
+    let live = true;
+    const ids = cleaningIds.split(',');
+    const tick = async () => {
+      const found = await Promise.all(ids.map((id) => getRuntimeJob(id).then((r) => r.data).catch(() => null)));
+      if (!live) return;
+      setProgress((old) => Object.fromEntries([...Object.entries(old), ...found.filter(Boolean).map((j) => [j.id, j])]));
+      const ended = found.filter((j) => j && (j.status === 'done' || j.status === 'error') && !reported.current.has(j.id));
+      ended.forEach((j) => {
+        reported.current.add(j.id);
+        if (j.status === 'done') toast.success(t('localModels.voices.cleaned', { name: j.meta?.voice || '' }));
+        else toast.error(t('localModels.voices.cleanupFailed'), j.error || '');
+      });
+      if (ended.length) load();
+    };
+    tick();
+    const timer = setInterval(tick, CLEANUP_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [cleaningIds]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (voices === null) return null;
 
   const change = async (voice, fields) => {
@@ -143,11 +174,20 @@ export default function VoicesCard({ models }) {
     }
   };
 
-  const listen = async (voice) => {
-    const key = `sample:${voice.name}`;
+  const clean = async (voice, mode) => {
+    try {
+      await cleanRuntimeVoice(voice.name, mode);
+      load();
+    } catch (e) {
+      toast.error(t('localModels.voices.cleanupFailed'), errorDetail(e));
+    }
+  };
+
+  const listen = async (voice, original = false) => {
+    const key = `${original ? 'original' : 'sample'}:${voice.name}`;
     if (player.playing === key) return player.stop();
     try {
-      await player.play(key, async () => (await getRuntimeVoiceAudio(voice.name)).data);
+      await player.play(key, async () => (await getRuntimeVoiceAudio(voice.name, original)).data);
     } catch (e) {
       toast.error(t('localModels.voices.playFailed'), await blobDetail(e));
     }
@@ -197,7 +237,8 @@ export default function VoicesCard({ models }) {
                   <span className="text-xs text-gray-400">
                     {[v.language && languageName(v.language, locale),
                       v.gender && t(`localModels.voices.genders.${v.gender}`),
-                      v.duration && t('localModels.voices.seconds', { seconds: Math.round(v.duration) })]
+                      v.duration && t('localModels.voices.seconds', { seconds: Math.round(v.duration) }),
+                      v.cleanup && v.cleanup !== 'none' && t(`localModels.voices.cleanupModes.${v.cleanup}`)]
                       .filter(Boolean).join(' · ')}
                   </span>
                   {v.mine && <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">{t('localModels.voices.mine')}</span>}
@@ -211,6 +252,18 @@ export default function VoicesCard({ models }) {
                     {player.playing === `sample:${v.name}` ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                     {t('localModels.voices.playSample')}
                   </button>
+                  {v.cleanup && v.cleanup !== 'none' && (
+                    <button
+                      type="button"
+                      onClick={() => listen(v, true)}
+                      title={t('localModels.voices.playOriginalTitle')}
+                      data-testid="voice-play-original"
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-100"
+                    >
+                      {player.playing === `original:${v.name}` ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                      {t('localModels.voices.playOriginal')}
+                    </button>
+                  )}
                   {cloning.map((m) => {
                     const key = `try:${v.name}:${m.name}`;
                     const busy = player.playing === key;
@@ -231,6 +284,18 @@ export default function VoicesCard({ models }) {
                   })}
                   {v.editable && (
                     <>
+                      <label className="flex items-center gap-1 text-xs text-gray-600" title={t('localModels.voices.cleanupHint')}>
+                        {t('localModels.voices.cleanup')}
+                        <select
+                          value={v.cleaning?.mode || v.cleanup || 'none'}
+                          disabled={!!v.cleaning}
+                          onChange={(e) => clean(v, e.target.value)}
+                          data-testid="voice-cleanup"
+                          className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white disabled:opacity-60"
+                        >
+                          {CLEANUP_MODES.map((m) => <option key={m} value={m}>{t(`localModels.voices.cleanupModes.${m}`)}</option>)}
+                        </select>
+                      </label>
                       <label className="flex items-center gap-1 text-xs text-gray-600">
                         <input type="checkbox" checked={!!v.shared} onChange={(e) => change(v, { shared: e.target.checked })} />
                         {t('localModels.voices.shared')}
@@ -250,7 +315,7 @@ export default function VoicesCard({ models }) {
                       )}
                       <button
                         type="button"
-                        onClick={() => setAdding({ name: v.name, language: v.language || '', gender: v.gender || '', shared: !!v.shared, replace: true })}
+                        onClick={() => setAdding({ name: v.name, language: v.language || '', gender: v.gender || '', shared: !!v.shared, replace: true, cleanup: v.cleanup || 'restore' })}
                         className="text-xs text-gray-500 hover:text-gray-800"
                       >
                         {t('localModels.voices.replace')}
@@ -259,6 +324,9 @@ export default function VoicesCard({ models }) {
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </>
+                  )}
+                  {v.cleaning && (
+                    <CleanupProgress job={progress[v.cleaning.job_id]} />
                   )}
                 </li>
               ))}
@@ -278,7 +346,7 @@ export default function VoicesCard({ models }) {
           ) : (
             <button
               type="button"
-              onClick={() => setAdding({ name: '', language: locale && LANGUAGES.includes(locale) ? locale : 'en', gender: '', shared: false, replace: false })}
+              onClick={() => setAdding({ name: '', language: locale && LANGUAGES.includes(locale) ? locale : 'en', gender: '', shared: false, replace: false, cleanup: 'restore' })}
               data-testid="voice-add"
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
             >
@@ -292,6 +360,18 @@ export default function VoicesCard({ models }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** How far a voice's cleanup got: the runtime job's last line and percent. */
+function CleanupProgress({ job }) {
+  const { t } = useI18n();
+  const percent = job?.percent > 0 && job.percent < 100 ? ` ${Math.round(job.percent)}%` : '';
+  return (
+    <span className="basis-full flex items-center gap-1.5 text-xs text-indigo-700" data-testid="voice-cleaning">
+      <Loader className="w-3 h-3 animate-spin shrink-0" />
+      <span className="truncate">{t('localModels.voices.cleaning')}{job?.message ? ` ${job.message}${percent}` : ''}</span>
+    </span>
   );
 }
 
@@ -391,7 +471,7 @@ function VoiceRecorder({ initial, taken, onCancel, onSaved }) {
       const ext = (audio.type || '').includes('ogg') ? 'ogg' : (audio.type || '').includes('mp4') ? 'm4a' : 'webm';
       await addRuntimeVoice({
         name: form.name, audio, filename: audio.name || `${form.name}.${ext}`, language: form.language,
-        gender: form.gender, shared: form.shared, consent, replace: form.replace,
+        gender: form.gender, shared: form.shared, consent, replace: form.replace, cleanup: form.cleanup,
       });
       onSaved(form.name);
     } catch (e) {
@@ -429,11 +509,20 @@ function VoiceRecorder({ initial, taken, onCancel, onSaved }) {
             {['', 'female', 'male'].map((g) => <option key={g} value={g}>{t(`localModels.voices.genders.${g || 'none'}`)}</option>)}
           </select>
         </label>
+        <label className="text-xs text-gray-600 flex flex-col gap-1">
+          {t('localModels.voices.cleanup')}
+          <select value={form.cleanup || 'none'} onChange={set('cleanup')} data-testid="voice-recorder-cleanup" className="text-sm border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none">
+            {CLEANUP_MODES.map((m) => <option key={m} value={m}>{t(`localModels.voices.cleanupModes.${m}`)}</option>)}
+          </select>
+        </label>
         <label className="flex items-center gap-1.5 text-xs text-gray-600 pb-1.5">
           <input type="checkbox" checked={!!form.shared} onChange={set('shared')} />
           {t('localModels.voices.shared')}
         </label>
       </div>
+      {form.cleanup && form.cleanup !== 'none' && (
+        <p className="text-[11px] text-gray-500">{t('localModels.voices.cleanupHint')}</p>
+      )}
       {form.name && !nameOk && <p className="text-xs text-red-600">{t('localModels.voices.nameInvalid')}</p>}
 
       <div className="text-xs text-gray-600 space-y-1">

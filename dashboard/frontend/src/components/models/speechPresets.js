@@ -42,6 +42,10 @@ export const ENGINES = [
   // Apple silicon only: the runtime lists it nowhere else.
   { id: 'chatterbox_mlx', kind: 'speech' },
   { id: 'openvoice', kind: 'speech' },
+  // Recorded voice cleanup; a cleanup installs its engine itself. DeepFilterNet
+  // is Apple silicon only.
+  { id: 'deepfilternet', kind: 'cleanup' },
+  { id: 'resemble_enhance', kind: 'cleanup' },
 ];
 
 export const isSpeechKind = (kind) => kind === 'speech' || kind === 'transcription';
