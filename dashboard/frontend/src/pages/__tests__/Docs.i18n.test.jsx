@@ -2,8 +2,11 @@ import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Docs from '../Docs';
-import OnboardingModal, { ONBOARDING_SEEN_KEY } from '../../components/docs/OnboardingModal';
 import { I18nProvider } from '../../i18n';
+
+// OnboardingModal now depends on the guided setup (useSetupGuide) rather than
+// only on localStorage, so its own coverage moved to
+// components/docs/__tests__/OnboardingModal.test.jsx, which mocks that guide.
 
 // The Docs page used to mix translated strings with hardcoded English prose, so
 // half of it kept its language when the switcher changed. These tests render
@@ -66,32 +69,4 @@ describe('Docs', () => {
       }
     });
   }
-});
-
-describe('OnboardingModal', () => {
-  beforeEach(() => localStorage.clear());
-
-  it('opens on first launch and links to the Getting Started guide', () => {
-    const { container, getByText, queryByText } = render(
-      <I18nProvider>
-        <MemoryRouter><OnboardingModal /></MemoryRouter>
-      </I18nProvider>,
-    );
-    expect(getByText('Start the tour')).toBeTruthy();
-    expect(getByText('Open Getting Started')).toBeTruthy();
-    expect(getByText('Skip')).toBeTruthy();
-    // The docs link was dropped so the footer fits one row.
-    expect(queryByText('Open documentation')).toBeNull();
-    expect(container.textContent).not.toMatch(/onboardingModal\./);
-  });
-
-  it('stays closed once dismissed', () => {
-    localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
-    const { container } = render(
-      <I18nProvider>
-        <MemoryRouter><OnboardingModal /></MemoryRouter>
-      </I18nProvider>,
-    );
-    expect(container.textContent).toBe('');
-  });
 });

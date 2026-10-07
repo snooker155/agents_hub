@@ -81,7 +81,9 @@ class PinnedWorkspaceTool(BaseTool):
 SELF_SCOPED_TOOLS = frozenset({"hub_lookup", "service_lookup", "hub_action",
                                # Reads only the running turn's own thread; its
                                # workspace argument is a filter.
-                               "assistant_conversations"})
+                               "assistant_conversations",
+                               # The install's setup, the person's own guide.
+                               "setup_guide", "setup_step", "show_on_screen"})
 
 
 def pin_workspace(tools: List[Any], workspace: str) -> List[Any]:

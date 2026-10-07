@@ -10,6 +10,8 @@ export default {
     database: 'Database',
     watcher: 'Watcher',
     secret: 'Secret',
+    // A model or web search key for the whole hub, not one workspace's.
+    provider: 'Provider key (hub-wide)',
   },
   warnings: 'Warnings',
   replaces: 'Connect overwrites the connection already configured for {{title}}.',

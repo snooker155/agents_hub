@@ -15,6 +15,19 @@ turns that section into the next release.
 
 ### Added
 
+- Guided setup by the assistant (docs/assistant.md "Guided setup",
+  docs/installation.md "After the install"): after an account and one model,
+  the assistant leads the rest of the setup and the first steps of using the
+  hub, by voice or text, one step at a time: the default model, its voice,
+  web search, the demo, the team, the health check, a first chat, channel,
+  accounts, agent, task and automation. The welcome window asks for the first
+  model when there is none (`POST /api/setup-guide/model`, the key checked
+  with the provider first) and then hands over to the assistant; the
+  Assistant page has a Setup tab and the header a Setup pill. New assistant
+  tools: `setup_guide`, `setup_step` (behind a card on every call, audited as
+  `setup.<operation>`) and `show_on_screen`; `propose_connection` gained the
+  kind `provider` for a model or web search key. `GET/POST /api/setup-guide`.
+
 - Workspace roles (docs/workspace-roles.md): coder, reviewer, planner,
   visualizer, web search, verifier, researcher, analyst and writer. A
   workspace gives each role to one of its agents (workspace settings, Agent
@@ -259,6 +272,12 @@ turns that section into the next release.
 
 ### Changed
 
+- `ah setup` QuickStart asks only for the install, the database, access and
+  a model; the assistant's voice, the demo and web search are left to the
+  assistant (an answers file that names them still applies them).
+- A model key or model saved on the Settings page applies without a restart:
+  the backend's environment is updated and runner replicas started with other
+  keys are replaced once idle (`common/provider_env.py`).
 - The shipped system agents delegate by role: main-agent, orchestrator,
   universal_agent and the creators name `@coder`, `@reviewer`, `@planner` and
   `@visualizer`; researcher, verifier and sourcer `@web_search`; analyst

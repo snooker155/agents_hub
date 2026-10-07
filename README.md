@@ -53,8 +53,10 @@ curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/
 docker compose up -d
 ```
 
-Open **http://localhost:8080**, put a provider key in Settings (or uncomment
-one in `.env` first), pick an agent in Chat and send something.
+Open **http://localhost:8080**. The welcome window asks for one model key
+(or uncomment one in `.env` first), then the assistant takes you through the
+rest of the setup and the first steps, by voice or by text
+([guided setup](docs/assistant.md#guided-setup)).
 
 - State lives on the `agents_hub_data` volume; `.env` is mounted into the
   backend, so keys entered in Settings survive an upgrade.
@@ -77,7 +79,8 @@ cd agents_hub
 
 On a first install it ends in `ah setup`, which asks for the database, the
 accounts, the providers and their default models, then offers to start the
-hub. Otherwise, in a new terminal:
+hub; the assistant in the dashboard sets up the rest with you. Otherwise, in
+a new terminal:
 
 ```bash
 ah up                           # API on :8000, dashboard on :5173

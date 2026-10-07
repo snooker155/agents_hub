@@ -39,6 +39,13 @@ const FALLBACKS = [
   [/^\/api\/auth\/preferences$/, () => ({})],
   [/^\/api\/health$/, () => ({ status: 'ok', demo: true, checks: {} })],
   [/^\/api\/demo$/, () => ({ enabled: true, present: true, workspace: 'demo', counts: {} })],
+  // The guided setup never runs in the demo: a model is already there, and
+  // nobody touring it should be offered a welcome window.
+  [/^\/api\/setup-guide$/, () => ({
+    active: false, started_at: null, finished_at: null, dismissed_at: null,
+    mode: '', admin: true, multi: false, needs_model: false,
+    steps: [], done: 0, total: 0, next: null, complete: false, work: null,
+  })],
   [/^\/api\/stats$/, () => ({
     active_runs: 0, available_slots: 0, total_capacity: 0, total_tasks: 0,
     completed_tasks: 0, completion_rate: 0, recent_runs: [],

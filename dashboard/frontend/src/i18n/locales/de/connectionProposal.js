@@ -11,6 +11,7 @@ export default {
     database: 'Datenbank',
     watcher: 'Watcher',
     secret: 'Geheimnis',
+    provider: 'Anbieter-Schlüssel (für den ganzen Hub)',
   },
   warnings: 'Warnungen',
   replaces: 'Verbinden ersetzt die bereits eingerichtete Verbindung für {{title}}.',

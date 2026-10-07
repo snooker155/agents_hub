@@ -175,11 +175,10 @@ def test_the_prompt_asks_for_links_and_forbids_changes():
 
 def test_no_provider_is_the_first_missing_step(monkeypatch):
     from common import onboarding
-    from common.config import settings
 
-    for field in ("openai_api_key", "anthropic_api_key", "google_api_key",
-                  "ollama_model", "lmstudio_model"):
-        monkeypatch.setattr(settings, field, None if "key" in field else "")
+    # Read live (common/provider_env.py): the process environment and .env.
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OLLAMA_MODEL", "LMSTUDIO_MODEL"):
+        monkeypatch.setenv(var, "")
 
     missing = onboarding.missing_steps(onboarding.hub_snapshot("default"))
     assert missing and missing[0].startswith("no model provider")
@@ -187,9 +186,8 @@ def test_no_provider_is_the_first_missing_step(monkeypatch):
 
 def test_a_configured_provider_is_not_reported_missing(monkeypatch):
     from common import onboarding
-    from common.config import settings
 
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     snap = onboarding.hub_snapshot("default")
     assert "anthropic" in snap["providers"]["keys_set"]
     assert not any(m.startswith("no model provider") for m in onboarding.missing_steps(snap))

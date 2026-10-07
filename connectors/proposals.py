@@ -25,7 +25,10 @@ the part that does to the person:
 Kinds: ``connector`` (the credential connectors of connectors/credentials.py:
 Jira, Linear, Google, Microsoft, Notion, Confluence), ``channel`` (Slack,
 Discord, Teams, mail), ``mcp_server``, ``database`` (a read-only connection),
-``watcher`` (an IMAP or HTTP observer) and ``secret`` (a workspace secret).
+``watcher`` (an IMAP or HTTP observer), ``secret`` (a workspace secret) and
+``provider`` (a model provider's or a web search API key for the whole hub,
+the Settings page's keys: checked against the provider before it is saved,
+an administrator's to apply).
 
 A proposal is plain JSON (:func:`build`), shaped for the card: a flat list of
 fields, nested keys spelled with a dot (``headers.Authorization``), workspace
@@ -44,7 +47,7 @@ log = logging.getLogger("connectors.proposals")
 
 TOOL = "propose_connection"
 
-KINDS: Tuple[str, ...] = ("connector", "channel", "mcp_server", "database", "watcher", "secret")
+KINDS: Tuple[str, ...] = ("connector", "channel", "mcp_server", "database", "watcher", "secret", "provider")
 HUB_KINDS = frozenset({"connector", "channel"})
 
 #: The capability claim of an MCP server an agent proposes, before the person
@@ -436,6 +439,50 @@ def _secret(target: str, config: Dict[str, Any], workspace: str, *, from_agent: 
             ["No host list: the value may be sent anywhere the agent's tools reach."]}
 
 
+#: The hub's own keys a ``provider`` proposal sets: model providers, whose key
+#: is tried against their model list first, and web search providers.
+PROVIDER_TARGETS: Dict[str, Dict[str, str]] = {
+    "openai": {"label": "OpenAI", "key": "OPENAI_API_KEY", "url": "OPENAI_BASE_URL", "kind": "model"},
+    "anthropic": {"label": "Anthropic", "key": "ANTHROPIC_API_KEY", "kind": "model"},
+    "google": {"label": "Google Gemini", "key": "GOOGLE_API_KEY", "kind": "model"},
+    "brave": {"label": "Brave Search", "key": "WEB_SEARCH_API_KEY", "kind": "search"},
+    "tavily": {"label": "Tavily", "key": "WEB_SEARCH_API_KEY", "kind": "search"},
+    "exa": {"label": "Exa", "key": "WEB_SEARCH_API_KEY", "kind": "search"},
+}
+
+
+def _provider_has_key(target: str) -> bool:
+    from common import provider_env
+    spec = PROVIDER_TARGETS[target]
+    live = provider_env.live()
+    if spec["kind"] == "search":
+        return live.get("WEB_SEARCH_PROVIDER") == target and bool(live.get(spec["key"]))
+    return bool(live.get(spec["key"]))
+
+
+def _provider(target: str, config: Dict[str, Any], workspace: str, *, from_agent: bool) -> Dict[str, Any]:
+    spec = PROVIDER_TARGETS.get(target)
+    if spec is None:
+        raise ProposalError(f"target must be one of {', '.join(PROVIDER_TARGETS)}", code="unknown_target")
+    known = {"api_key"} | ({"base_url"} if spec.get("url") else set())
+    unknown = sorted(k for k in config if k not in known)
+    if unknown:
+        raise ProposalError(f"unknown fields for {target}: {', '.join(unknown)}; fields are "
+                            f"{', '.join(sorted(known))}", code="unknown_field")
+    if from_agent and not _blank(config.get("api_key")):
+        _refuse_secret("api_key")
+    has = bool(_safe(lambda: _provider_has_key(target), False))
+    fields = [_field("api_key", secret=True, required=True, has_value=has)]
+    if spec.get("url"):
+        from common import provider_env
+        current = _safe(lambda: provider_env.live_value(spec["url"]), "")
+        fields.append(_field("base_url", value=str(config.get("base_url") or current or ""),
+                             placeholder="https://api.openai.com/v1 (leave empty for OpenAI itself)"))
+    what = "web search" if spec["kind"] == "search" else "models"
+    return {"title": f"{spec['label']} API key", "scope": "hub", "fields": fields, "replaces": has,
+            "warnings": [f"Saved for the whole hub: every workspace's agents use it for {what}."]}
+
+
 def _safe(fn, default):
     """Current state is a courtesy on the card (``has_value``, ``replaces``):
     a store this process cannot read leaves the default, never fails the build."""
@@ -461,7 +508,12 @@ def build(kind: str, target: str = "", config: Optional[Dict[str, Any]] = None, 
         raise ProposalError(f"kind must be one of {', '.join(KINDS)}", code="bad_kind")
     target = str(target or "").strip()
     cfg = _nest(config if isinstance(config, dict) else {})
-    if kind in HUB_KINDS:
+    if kind == "provider":
+        # The hub's own settings, not a workspace's.
+        workspace = "default"
+        target = target.lower()
+        body = _provider(target, cfg, workspace, from_agent=from_agent)
+    elif kind in HUB_KINDS:
         # A connector lives in the workspace that defines it; the default
         # workspace's live everywhere (connectors/channels/store.py).
         ws = str(workspace or "").strip() or "default"
@@ -501,6 +553,9 @@ def required_role(proposal: Dict[str, Any]) -> Dict[str, Any]:
     from common.auth import WS_EDITOR, WS_OWNER
 
     kind = proposal.get("kind")
+    if kind == "provider":
+        # The Settings page's keys are an administrator's.
+        return {"admin": True}
     if kind in HUB_KINDS:
         return {"workspace": proposal.get("workspace") or "default", "role": WS_EDITOR}
     values = {f["key"]: f.get("value") for f in proposal.get("fields") or []}
@@ -567,7 +622,8 @@ async def perform(prepared: Dict[str, Any], *, principal: Any = None) -> Dict[st
     fresh = prepared["proposal"]
     performer = {"connector": _apply_connector, "channel": _apply_channel,
                  "mcp_server": _apply_mcp, "database": _apply_database,
-                 "watcher": _apply_watcher, "secret": _apply_secret}[fresh["kind"]]
+                 "watcher": _apply_watcher, "secret": _apply_secret,
+                 "provider": _apply_provider}[fresh["kind"]]
     outcome = await performer(fresh, dict(prepared["values"]), dict(prepared["secrets"]), principal)
     outcome["proposal"] = fresh
     return outcome
@@ -769,6 +825,47 @@ async def _apply_secret(p, values, secrets, principal) -> Dict[str, Any]:
             "test": None, "href": f"/workspaces/{ws}?tab=secrets"}
 
 
+async def _apply_provider(p, values, secrets, principal) -> Dict[str, Any]:
+    from cli.onboard import probe as P
+    from common import audit, provider_env
+
+    target = p["target"]
+    spec = PROVIDER_TARGETS[target]
+    key = secrets.get("api_key") or ""
+    if not key:
+        # Kept as it is: only the base URL changed.
+        key = provider_env.live_value(spec["key"]) if spec["kind"] == "model" or _provider_has_key(target) else ""
+    if not key:
+        raise ProposalError("fill in: api_key", code="missing_secret")
+    test = None
+    updates: Dict[str, str] = {}
+    if spec["kind"] == "model":
+        base = str(values.get("base_url") or "").strip().rstrip("/")
+        found = await asyncio.to_thread(P.probe, target, key, base, 10.0)
+        if not found.ok:
+            # Nothing is saved: the card stays open for another try.
+            raise ProposalError(f"{spec['label']} did not accept it: {found.error}", code="test_failed")
+        tiers = P.presets(target, found.models)
+        test = {"ok": True, "count": len(found.models),
+                "suggested": (tiers.get("balanced") or (None,))[0]}
+        updates[spec["key"]] = key
+        if spec.get("url"):
+            updates[spec["url"]] = base
+    else:
+        updates.update({"WEB_SEARCH_PROVIDER": target, spec["key"]: key})
+    await asyncio.to_thread(provider_env.save, updates)
+    audit.record("settings.provider_key", principal=principal, object_type="setting", object_id=target,
+                 workspace="default", details={"via": TOOL, "provider": target})
+    if spec["kind"] == "model":
+        summary = (f"{spec['label']} key saved for the whole hub. Test passed: {test['count']} models listed."
+                   + (f" Its balanced model is {test['suggested']}." if test.get("suggested") else ""))
+        href = "/settings/providers"
+    else:
+        summary = f"Web search through {spec['label']} is on for every agent with the web_search tool."
+        href = "/settings/webSearch"
+    return {"ok": True, "summary": summary, "test": test, "href": href}
+
+
 # ── what the agent may propose ───────────────────────────────────────────────
 
 def options(kind: Optional[str] = None, *, workspace: Optional[str] = None) -> Dict[str, Any]:
@@ -842,11 +939,18 @@ def _options_of(kind: str, workspace: Optional[str]) -> Dict[str, Any]:
                 "secret_rule": "a field of type secret holds the NAME of a workspace secret; when it "
                                "does not exist yet, the card asks the person for its value",
                 "existing": [w.name for w in _safe(lambda: watcher_service.list_watchers(ws), [])] if ws else []}
+    if kind == "provider":
+        return {"scope": "hub", "targets": [
+            {"target": t, "label": spec["label"], "for": spec["kind"],
+             "configured": bool(_safe(lambda t=t: _provider_has_key(t), False)),
+             "fields": ["api_key"] + (["base_url"] if spec.get("url") else []),
+             "secret_fields": ["api_key"]}
+            for t, spec in PROVIDER_TARGETS.items()]}
     # secret
     return {"scope": "workspace", "workspace": ws or None,
             "fields": ["allowed_hosts", "agent_id"], "secret_fields": ["value"],
             "existing": sorted(_workspace_secret_names(ws)) if ws else []}
 
 
-__all__ = ["HUB_KINDS", "KINDS", "MCP_CAPABILITIES", "ProposalError", "TOOL", "apply", "build",
-           "options", "perform", "prepare", "required_role"]
+__all__ = ["HUB_KINDS", "KINDS", "MCP_CAPABILITIES", "PROVIDER_TARGETS", "ProposalError", "TOOL", "apply",
+           "build", "options", "perform", "prepare", "required_role"]

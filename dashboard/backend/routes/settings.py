@@ -470,6 +470,10 @@ async def update_settings(data: SettingsUpdate):
         env_key = _FIELD_TO_ENV.get(field)
         if env_key:
             _write_env_key(env_key, str(value))
+    # A provider key or model applies to the next model call, here and in the
+    # runner replicas (replaced once idle), instead of after a restart.
+    from common import provider_env
+    provider_env.sync_process(_ENV_FILE)
     # run_code reads these off the in-process Settings object at each call
     # (tools/run_code.py _settings, sandbox/registry.py resolve), so changing
     # them there applies to the next run without a restart. The .env write

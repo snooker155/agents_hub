@@ -93,10 +93,15 @@ def conversation_holder(service_id: str, replica_ids: List[str],
 
 def is_stale(replica: Dict[str, Any]) -> bool:
     """Whether ``replica`` was started from other code than this process runs
-    (common/code_version.py). One started before replicas were stamped has no
-    stamp and counts as stale."""
-    from common import code_version
-    return replica.get("carrier_code") != code_version.current()
+    (common/code_version.py), or with other model provider settings than the
+    ones in force (common/provider_env.py: a key added on the Settings page
+    or by the guided setup). One started before replicas were stamped has no
+    code stamp and counts as stale."""
+    from common import code_version, provider_env
+    if replica.get("carrier_code") != code_version.current():
+        return True
+    given = replica.get("carrier_env")
+    return bool(given) and given != provider_env.stamp()
 
 
 def idle_seconds(replica: Dict[str, Any]) -> float:

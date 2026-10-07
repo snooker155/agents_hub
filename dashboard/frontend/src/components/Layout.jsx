@@ -7,13 +7,14 @@ import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
-import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines, Menu, X } from 'lucide-react';
+import { Waypoints, LayoutDashboard, CheckSquare, LogOut, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Activity, PlayCircle, MessageCircle, MessageSquare, ScrollText, Settings, Sun, Moon, Monitor, Network, Radio, Pause, Cpu, ChevronDown, FolderGit2, Box, Boxes, WifiOff, PanelLeftClose, PanelLeftOpen, Store, CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound, GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck, MessageSquareCode, Eye, AudioLines, Menu, X, ListChecks } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
 import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
+import useSetupGuide from './setup/useSetupGuide';
 import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
 import HelpPanel from './help/HelpPanel';
@@ -66,6 +67,10 @@ const Layout = ({ children }) => {
   const { playground: playgroundEnabled } = useFeatures();
   const auth = useAuth();
   const { t } = useI18n();
+  // The guided setup's own pill, while it runs (docs/assistant.md "Guided
+  // setup"); cheap, since useSetupGuide only polls while the guide is
+  // active or a step's own work is going on.
+  const { guide } = useSetupGuide();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: the `model` part of GET /api/workspaces/{name}/summary
   // - global_default: DEFAULT_PROVIDER + its model from .env (lowest-priority fallback)
@@ -670,6 +675,23 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* The guided setup's own progress, while it runs: hidden on the
+                Assistant page itself, since it is already there. */}
+            {guide?.active && !guide.complete && location.pathname !== '/assistant' && (
+              <button
+                type="button"
+                onClick={() => navigate('/assistant?setup=1')}
+                title={t('setupGuide.pill', { done: guide.done, total: guide.total })}
+                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                <span>{t('setupGuide.pill', { done: guide.done, total: guide.total })}</span>
+                <span className="hidden sm:inline-block w-10 h-1 rounded-full bg-indigo-200 overflow-hidden">
+                  <span className="block h-full bg-indigo-600"
+                    style={{ width: `${guide.total ? (guide.done / guide.total) * 100 : 0}%` }} />
+                </span>
+              </button>
+            )}
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}

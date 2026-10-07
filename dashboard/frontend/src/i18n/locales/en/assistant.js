@@ -67,6 +67,7 @@ export default {
     transcript: 'Transcript',
     history: 'History',
     screen: 'On screen',
+    setup: 'Setup',
   },
   transcriptEmpty: 'The conversation appears here.',
   clearTranscript: 'Clear the transcript',
@@ -78,6 +79,17 @@ export default {
     title: 'Page opened by the assistant',
     open: 'Open this page',
     close: 'Close',
+    // A page offered under the answer instead (a phone, mid-turn): opening
+    // it is a tap away, same as the other wording, never an automatic jump.
+    show: 'Show on screen',
+  },
+  // The guided setup's own turns (components/setup, docs/assistant.md
+  // "Guided setup"): the welcome window's hand over, the header pill's
+  // resume, and the Setup tab's "do it with the assistant".
+  setup: {
+    kickoff: 'Help me set up the hub, step by step.',
+    resume: "Let's continue the setup.",
+    ask: "Let's do this step: {{title}}.",
   },
   notes: {
     voiceFellBack: 'The speech model could not answer, so the browser reads the answers for now.',

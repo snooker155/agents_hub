@@ -56,6 +56,7 @@ from routes import databases as databases_router
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import help_chat as help_chat_router
 from routes import assistant as assistant_router
+from routes import setup_guide as setup_guide_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
 from routes import oidc as oidc_router
@@ -707,6 +708,8 @@ app.include_router(page_chat.router)
 # The Help panel: the support agent, one thread per user, about the product itself
 app.include_router(help_chat_router.router)
 app.include_router(assistant_router.router)
+# The guided setup the assistant leads (common/setup_guide.py)
+app.include_router(setup_guide_router.router)
 
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)

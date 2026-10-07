@@ -45,12 +45,14 @@ import {
 import { SentenceStream, firstParagraphSentences, isSpeakable } from '../components/assistant/sentences';
 import {
   LISTEN_MODES, applyTurnEvent, delegateOf, earPhase, earTuning, feedFromThread, firstParagraph,
-  isScreenLink, lastAnswer, markState, readPrefs, showModeSwitch, writePrefs,
+  isScreenLink, lastAnswer, markState, readPrefs, screenToolPath, showModeSwitch, writePrefs,
 } from '../components/assistant/assistantState';
 import {
   AssistantError, clearAssistant, forgetAssistantConversation, getAssistant, sampleAssistantVoice, stopAssistant,
   streamAssistantTurn, transcribeRecording,
 } from '../api/assistant';
+import SetupGuidePanel from '../components/setup/SetupGuidePanel';
+import useSetupGuide, { dispatchSetupGuideRefresh, setupStepText } from '../components/setup/useSetupGuide';
 
 //: Quiet for this long into a turn, the hub says which step it is on.
 const ANNOUNCE_AFTER_MS = 7000;
@@ -89,6 +91,10 @@ export default function Assistant() {
   // models (else the home's). One the assistant cannot reach (another
   // person's personal workspace) falls back to the thread's home.
   const { selectedWorkspace } = useWorkspace() || {};
+  // The guided setup (docs/assistant.md "Guided setup"): the Setup tab beside
+  // the transcript, and what the welcome window or the header's own pill
+  // hands this page into (below, "the setup hand over").
+  const { guide, act: guideAct } = useSetupGuide();
   const [prefs, setPrefsState] = useState(readPrefs);
   const [mode, setMode] = useState('personal');
   const [meta, setMeta] = useState(null);
@@ -102,6 +108,10 @@ export default function Assistant() {
   const [transcribing, setTranscribing] = useState(false);
   const [notice, setNotice] = useState('');
   const [screen, setScreen] = useState(null);
+  // A `show_on_screen` tool offered a page while there was no room to show it
+  // (a phone): a link under the answer opens it, instead of leaving the
+  // conversation mid-turn.
+  const [screenOffer, setScreenOffer] = useState(null);
   const [rightTab, setRightTab] = useState('transcript');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sttFallback, setSttFallback] = useState(false);
@@ -221,8 +231,18 @@ export default function Assistant() {
     lastSpokeRef.current = Date.now();
   }, [speaker]);
 
+  // The assistant's "show on screen": a page opened beside the conversation
+  // when there is room for it, or just navigated to on a phone. Declared
+  // ahead of `runTurn`, which calls it for the `show_on_screen` tool.
+  const openScreen = useCallback((path) => {
+    if (!wide) { navigate(path); return; }
+    setScreen(path);
+    setRightTab('screen');
+    if (!prefs.transcriptOpen) setPrefs({ transcriptOpen: true });
+  }, [navigate, prefs.transcriptOpen, setPrefs, wide]);
+
   // ── a turn ─────────────────────────────────────────────────────────────────
-  const runTurn = useCallback(async (message, { spoken = false, ear = false } = {}) => {
+  const runTurn = useCallback(async (message, { spoken = false, ear = false, speakReply = false } = {}) => {
     const text = String(message || '').trim();
     if (!text || busy || busyRef.current) return;
     busyRef.current = true;
@@ -231,10 +251,11 @@ export default function Assistant() {
     setBusy(true);
     setNotice('');
     setCards([]);
+    setScreenOffer(null);
     setTurn({ tool: '', input: null, thinking: false, text: false });
     setFeed((f) => [...f, { k: 'user', text }]);
     runIdRef.current = null;
-    speakTurnRef.current = !prefs.muted && (spoken || prefs.voiceOnly);
+    speakTurnRef.current = !prefs.muted && (spoken || prefs.voiceOnly || speakReply);
     sentencesRef.current = new SentenceStream();
     spokeSegmentRef.current = false;
     lastSpokeRef.current = Date.now();
@@ -257,6 +278,13 @@ export default function Assistant() {
               break;
             case 'tool_start': {
               setTurn((s) => ({ ...s, tool: ev.tool || '', input: ev.input ?? null, thinking: false }));
+              // A page opened for the person: beside the conversation when
+              // there is room, offered under the answer otherwise, never a
+              // mid-turn navigation away from the assistant.
+              if (ev.tool === 'show_on_screen') {
+                const path = screenToolPath(ev.input);
+                if (path) { if (wide) openScreen(path); else setScreenOffer(path); }
+              }
               if (!speak) break;
               // What the model said before a tool is a segment of its own; the
               // answer after the tools starts a fresh first paragraph.
@@ -273,6 +301,12 @@ export default function Assistant() {
               break;
             }
             case 'tool_end':
+              setTurn((s) => ({ ...s, tool: '', input: null }));
+              // A setup tool just changed something the guide reports on.
+              if (ev.tool === 'setup_guide' || ev.tool === 'setup_step' || ev.tool === 'propose_connection') {
+                dispatchSetupGuideRefresh();
+              }
+              break;
             case 'tool_error':
               setTurn((s) => ({ ...s, tool: '', input: null }));
               break;
@@ -336,7 +370,7 @@ export default function Assistant() {
       }
       bumpSessions();
     }
-  }, [busy, bumpSessions, load, mode, prefs.muted, prefs.voiceOnly, saySentence, sayLocal, speaker, t, workspace]);
+  }, [busy, bumpSessions, load, mode, openScreen, prefs.muted, prefs.voiceOnly, saySentence, sayLocal, speaker, t, wide, workspace]);
 
   /** A spoken yes or no while a card waits: answered by the hub, no turn. */
   const answerByVoice = useCallback(async (text) => {
@@ -354,6 +388,11 @@ export default function Assistant() {
       setNotice(e instanceof AssistantError && e.code === 'busy' ? t('assistant.errors.busyCard') : e.message);
     }
   }, [mode, sayLocal, t, workspace]);
+
+  /** The Setup tab's "Do it with the assistant": a turn naming the step. */
+  const askStep = useCallback((step) => {
+    runTurn(t('assistant.setup.ask', { title: setupStepText(t, step, 'title') }), { speakReply: guide?.mode === 'voice' });
+  }, [guide?.mode, runTurn, t]);
 
   // ── speech in ──────────────────────────────────────────────────────────────
   const heard = useCallback((text) => {
@@ -648,9 +687,16 @@ export default function Assistant() {
   // Called by name on another page (WakeListener): what followed the name is
   // this page's first turn, or it listens for it.
   const wakeHandoff = useRef(location.state?.wake || null);
+  // The guided setup's own hand over: the welcome window's buttons
+  // (`state.setup`), or the header's pill (`?setup=1`, which names no mode
+  // of its own, since it only shows once the guide already picked one).
+  const setupHandoff = useRef(location.state?.setup
+    || (new URLSearchParams(location.search).get('setup') === '1' ? { fromQuery: true } : null));
   useEffect(() => {
-    if (location.state?.wake) navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, location.state, navigate]);
+    if (location.state?.wake || location.state?.setup || new URLSearchParams(location.search).get('setup') === '1') {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.search, location.state, navigate]);
   useEffect(() => {
     const handoff = wakeHandoff.current;
     if (!handoff || !meta) return;
@@ -658,6 +704,20 @@ export default function Assistant() {
     if (handoff.command) runTurn(handoff.command, { spoken: true, ear: true });
     else wakeUp({ sound: false });
   }, [meta, runTurn, wakeUp]);
+  useEffect(() => {
+    const handoff = setupHandoff.current;
+    if (!handoff || !meta || busyRef.current) return;
+    if (handoff.fromQuery && !guide) return; // its mode is the guide's own
+    setupHandoff.current = null;
+    const voiceMode = (handoff.fromQuery ? guide?.mode : handoff.mode) === 'voice';
+    if (voiceMode) {
+      speaker.unlock();
+      setPrefs({ listen: 'conversation' });
+      setConversing(true);
+    }
+    runTurn(t(handoff.fromQuery ? 'assistant.setup.resume' : 'assistant.setup.kickoff'), { speakReply: voiceMode });
+    if (wide) { setPrefs({ transcriptOpen: true }); setRightTab('setup'); }
+  }, [guide, meta, runTurn, setPrefs, speaker, t, wide]);
 
   const chooseListen = (next) => {
     speaker.unlock();
@@ -722,13 +782,6 @@ export default function Assistant() {
     setRightTab('transcript');
   };
 
-  const openScreen = useCallback((path) => {
-    if (!wide) { navigate(path); return; }
-    setScreen(path);
-    setRightTab('screen');
-    if (!prefs.transcriptOpen) setPrefs({ transcriptOpen: true });
-  }, [navigate, prefs.transcriptOpen, setPrefs, wide]);
-
   const AnswerLink = useCallback(({ href, children }) => {
     if (isScreenLink(href)) {
       return (
@@ -774,6 +827,11 @@ export default function Assistant() {
     t('assistant.settings.sampleFailed'),
   );
   const rightOpen = wide && prefs.transcriptOpen;
+  // The Setup tab: while the guide runs, and for a day after it finishes so
+  // the person can still see what it did.
+  const guideFinishedRecently = Boolean(guide?.finished_at)
+    && Date.now() - new Date(guide.finished_at).getTime() < 24 * 60 * 60 * 1000;
+  const showSetupTab = Boolean(guide?.active) || guideFinishedRecently;
   const listenNote = !serverStt && browserRec.available ? t('assistant.notes.browserListen')
     : !canListen ? t('assistant.notes.noListen')
       // Waiting for its name, the workspace's model hears every phrase said near the microphone.
@@ -899,6 +957,14 @@ export default function Assistant() {
             {answer ? renderReply(answer)
               : <p className="text-gray-400 text-base">{t(empty, { phrase: wakeName })}</p>}
           </div>
+
+          {screenOffer && (
+            <button type="button" onClick={() => { const path = screenOffer; setScreenOffer(null); openScreen(path); }}
+              data-testid="assistant-screen-offer"
+              className="text-sm font-medium text-indigo-600 underline hover:text-indigo-800">
+              {t('assistant.screen.show')}
+            </button>
+          )}
 
           {cards.length > 0 && (
             <div className="w-full max-w-xl space-y-2">
@@ -1041,7 +1107,7 @@ export default function Assistant() {
           {/* As tall as the page's header beside it (min-h-14 there). */}
           <div className="flex items-center gap-1 px-3 h-14 border-b border-gray-200 shrink-0 text-xs" role="tablist"
             data-testid="assistant-side-tabs">
-            {['transcript', 'history', ...(screen ? ['screen'] : [])].map((tab) => (
+            {['transcript', 'history', ...(screen ? ['screen'] : []), ...(showSetupTab ? ['setup'] : [])].map((tab) => (
               <button key={tab} type="button" role="tab" aria-selected={rightTab === tab}
                 onClick={() => { if (tab === 'history') pastChats.reload(); setRightTab(tab); }}
                 className={`px-2.5 py-1 rounded-md ${rightTab === tab ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}`}>
@@ -1058,6 +1124,8 @@ export default function Assistant() {
           </div>
           {rightTab === 'screen' && screen ? (
             <ScreenPanel path={screen} onClose={() => { setScreen(null); setRightTab('transcript'); }} />
+          ) : rightTab === 'setup' ? (
+            <SetupGuidePanel guide={guide} act={guideAct} onAsk={askStep} />
           ) : rightTab === 'history' ? (
             <div className="flex-1 min-h-0 overflow-y-auto p-3" data-testid="assistant-history">
               {pastSessions.length === 0 ? (

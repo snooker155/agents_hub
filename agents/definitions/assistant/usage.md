@@ -8,6 +8,7 @@ Good fits:
 - "Create a task for the researcher about X", "run the nightly team" (it quotes the cost first)
 - "Remember that I prefer short answers"
 - "Pause the mail watcher", "restart the support instance" (a card asks first)
+- "Help me set up the hub", "what should I set up next?": it leads the guided setup step by step
 
 Poor fits:
 - Building or editing a flow, loop, scenario, team or world: those have their own creator agents.

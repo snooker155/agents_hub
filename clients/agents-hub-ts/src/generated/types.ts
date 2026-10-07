@@ -737,6 +737,12 @@ export type FinalizeTaskBody = {
   "exit_code": number;
 };
 
+export type FirstModel = {
+  "provider": string;
+  "api_key"?: string;
+  "base_url"?: string;
+};
+
 export type FlowCreate = {
   "name": string;
   "description"?: string;
@@ -927,6 +933,13 @@ export type GuardrailUpdate = {
   "enabled"?: boolean | null;
   "fail_closed"?: boolean | null;
   "model"?: string | null;
+};
+
+export type GuideAction = {
+  "action": string;
+  "step"?: string | null;
+  "mode"?: string | null;
+  "tour_done"?: boolean | null;
 };
 
 export type HTTPValidationError = {
@@ -4084,6 +4097,13 @@ export interface ApiPaths {
   "/api/settings/workspace": {
     get: { response: unknown };
     put: { body: WorkspaceContextUpdate; response: unknown };
+  };
+  "/api/setup-guide": {
+    get: { response: unknown };
+    post: { body: GuideAction; response: unknown };
+  };
+  "/api/setup-guide/model": {
+    post: { body: FirstModel; response: unknown };
   };
   "/api/shared-memory": {
     get: { response: unknown };

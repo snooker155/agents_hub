@@ -307,6 +307,77 @@ record's workspace, `editor` like the page's own button, and is written to
 the audit log as `assistant.<kind>.<action>`.
 
 
+## Guided setup
+
+After the install the hub has an account and one model; the assistant takes
+the person the rest of the way ([installation](installation.md#after-the-install-the-assistant-takes-over)).
+The welcome window starts it with **Talk to the assistant** (the answers are
+read aloud and the page listens after each one, the Conversation mode) or
+**Type to the assistant**; the header's **Setup** pill and `/assistant?setup=1`
+come back to it, and the page's **Setup** tab shows every step.
+
+The guide (`common/setup_guide.py`, `GET /api/setup-guide`) is a list of steps,
+each with why it matters, how it is detected as done, what the assistant does
+about it and the page that shows it:
+
+| Step | Done when | The assistant |
+|---|---|---|
+| `model` | a model provider has a key, a local server or a custom backend with a model | `propose_connection` kind `provider` |
+| `default_model` | the default provider can run and has a model | `setup_step` `choose_model` (balanced recommended) |
+| `voice` | `default` has speech and transcription models | `setup_step` `voice_cloud` or `voice_local` |
+| `web_search` | a web search provider and key are set | `propose_connection` kind `provider` (brave, tavily, exa) |
+| `demo` | the demo workspace is there | `setup_step` `seed_demo` |
+| `people` (multi) | more than one account | the Users page |
+| `health` | marked done by the assistant after `run_diagnostics` | `run_diagnostics` |
+| `first_chat` | a chat exists | the Chat page |
+| `channel` | a chat channel is configured | `propose_connection` kind `channel` |
+| `accounts` | a credential connector is configured | `propose_connection` kind `connector` |
+| `first_agent` | an agent of the person's own exists | `agent_creator`, the Marketplace |
+| `first_task` | a task exists | `create_task` |
+| `automation` | a watcher or a pulse exists | `propose_connection` kind `watcher`, the Pulse tab |
+| `tour` | the browser says the welcome tour was taken | the Setup tab's tour button |
+
+The first seven are the install's own setup and are an administrator's
+(everyone, outside `multi` mode); the rest are everyone's. Done is read from
+the hub on every call, so a step done on its page ticks in the guide too, and
+the demo's agents, chats and tasks tick nothing. Only skips, steps marked done
+and whether the guide runs are remembered, per person.
+
+While the guide runs, every turn carries it ("Guided setup" in the prompt):
+the steps with their status, the next one, why and how. The assistant takes
+one step per answer, opens its page beside the conversation with
+`show_on_screen`, and reads or marks the guide with `setup_guide` (`status`,
+`options` for the model tiers, voices and search providers, `skip`, `done`,
+`finish`).
+
+`setup_step` makes one change of the install, and like `hub_action` it waits
+for a yes on a card on every call, saying what will change ("Make
+openai/gpt-5.4 the hub's default model..."). It needs an administrator and is
+audited as `setup.<operation>`:
+
+- `choose_model`: stars and enables the model in the [Models](models.md)
+  catalog and writes `DEFAULT_PROVIDER` and the provider's model to `.env`,
+  as `ah setup` does.
+- `voice_cloud`: OpenAI or Google speech and transcription models with a
+  voice, in `default`'s special models (every personal workspace falls back
+  to them).
+- `voice_local`: the hub's own runtime; the models are saved at once and the
+  engines and downloads run as runtime jobs, carried on whenever the guide is
+  read. The step shows **working** with the job's progress until they finish.
+- `seed_demo`: the [demo workspace](demo.md).
+
+A key is never a `setup_step`: `propose_connection` with kind `provider`
+(targets `openai`, `anthropic`, `google`, `brave`, `tavily`, `exa`) shows a
+card the person types the key into. A model key is checked against the
+provider's model list before anything is saved; a refused key leaves the
+card open. Applying needs an administrator.
+
+A key saved from a card, the welcome window or the Settings page applies to
+the next model call without a restart: it is copied into the backend's
+environment, handed to every process started after it, and a runner replica
+started with other keys is replaced once it is idle
+(`common/provider_env.py`).
+
 ## Answers
 
 The assistant opens every answer with one or two sentences that work read

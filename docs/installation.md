@@ -183,7 +183,9 @@ run does, and writes nothing until you confirm a review of every value:
 1. **Install**: this checkout (Path C), Docker from the published images
    (Path A, into a folder of your choice), Compose from this checkout
    (Path B), or a hub that already runs somewhere else. Then QuickStart
-   (sensible defaults, only what cannot be guessed) or Advanced.
+   (only what cannot be guessed: the assistant sets up the rest with you, see
+   [after the install](#after-the-install-the-assistant-takes-over)) or
+   Advanced.
 2. **Database**: SQLite; Postgres in a Docker container setup starts for you
    (on this machine) or in the same stack (the Docker paths, the `postgres`
    profile); or a Postgres you already have, tested before it is accepted.
@@ -206,9 +208,11 @@ run does, and writes nothing until you confirm a review of every value:
    Flash) with one of its voices; the hub's own model runtime (Whisper small
    or large-v3 turbo to hear, Piper in Russian, English or German, Kokoro,
    Supertonic in 31 languages or Kitten in English to speak; free, 0.5 to 2 GB to download); the browser only (its own
-   recognition and voice, nothing on the server); or not now.
-6. **Features**: the demo workspace; in Advanced the dashboard port, where
+   recognition and voice, nothing on the server); or not now. QuickStart
+   leaves this to the assistant.
+6. **Features**: in Advanced the demo workspace, the dashboard port, where
    agents run, web search, RAG, and for Compose the browser and Redis.
+   QuickStart leaves the demo and web search to the assistant.
 7. **Review** of every setting it will write (secrets masked) and every
    action it will take.
 8. **Apply**: installs missing Python extras, starts Postgres, writes
@@ -221,6 +225,26 @@ run does, and writes nothing until you confirm a review of every value:
    Docker that waits for the stack, so without starting it the voice is left
    for a later run or the Models page. After a Docker setup it can point
    `ah` at the stack with a personal API key of the new administrator.
+
+An answers file that names `voice.mode` or `demo` still applies them in
+QuickStart.
+
+### After the install: the assistant takes over
+
+The console (or the browser) does only what the assistant cannot do for
+itself: an account and one model to think with. When the dashboard opens for
+the first time, the welcome window either asks for that model (a key of
+OpenAI, Anthropic or Google, or a model server already running on this
+machine, checked with the provider before it is saved) or, once there is one,
+offers **Talk to the assistant** or **Type to the assistant**. From there the
+[assistant](assistant.md#guided-setup) leads the rest of the setup one step at
+a time, by voice or by text: the default model, its own voice, web search,
+the demo workspace, the team, the hub's health, then a first chat, a channel,
+accounts, an agent of your own, a task and something that runs on its own. It
+makes each change after your yes on a card, keys are typed into a card, never
+said or typed into the conversation, and the page of each step opens beside
+the conversation. A **Setup** pill in the header shows how far it has got and
+brings you back to it.
 
 `./install.sh` runs it by itself on a first install from a terminal
 (`--no-setup` skips it, `--setup` runs it on a re-install). Run it again

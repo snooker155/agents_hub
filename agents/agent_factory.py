@@ -629,11 +629,14 @@ class AgentFactory:
         from tools.connector_tools import connector_tools
         available.extend(connector_tools())
         # The assistant's view of the hub's records as the person sees them,
-        # the service-wide one and the one-step actions (tools/hub_lookup.py,
-        # tools/hub_action.py): plain per-tool grants.
+        # the service-wide one, the one-step actions and the guided setup
+        # (tools/hub_lookup.py, tools/hub_action.py, tools/setup_guide.py):
+        # plain per-tool grants.
         from tools.hub_action import HUB_ACTION_TOOLS
         from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
         from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+        from tools.setup_guide import SETUP_GUIDE_TOOLS
+        available.extend(SETUP_GUIDE_TOOLS)
         available.extend(HUB_LOOKUP_TOOLS)
         available.extend(ASSISTANT_CONVERSATION_TOOLS)
         available.extend(SERVICE_LOOKUP_TOOLS)

@@ -351,6 +351,9 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         inner_cmd.extend(["--http-port", str(http_port)])
 
     env = os.environ.copy()
+    # A provider key saved since the backend started (common/provider_env.py).
+    from common import provider_env
+    provider_env.overlay(env)
     from common.workspace_context import normalize_workspace_name
     env["AGENT_WORKSPACE"] = normalize_workspace_name(workspace) or "default"
     # The carrier relays its turns' events back with a token of its own that
@@ -409,6 +412,9 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         # The code the carrier was started from: a service replica whose
         # stamp is not the backend's is replaced (services/supervisor.py).
         "carrier_code": code_version.current(),
+        # And the provider settings it was given: one started before a key
+        # changed is replaced the same way.
+        "carrier_env": provider_env.stamp(),
         "carrier_status": "starting",
         "carrier_started_at": now,
         "carrier_finished_at": None,
