@@ -171,6 +171,41 @@ def check_cors(snap: Dict[str, Any]) -> Result:
             detail)
 
 
+# ── security posture ─────────────────────────────────────────────────────────
+
+def check_security(snap: Dict[str, Any]) -> Result:
+    """The settings SECURITY.md's hardening list names, read together: the
+    capability guard, the secret key against the secrets already stored, and
+    whether people share a hub whose runs have the host's permissions.
+    ``single`` mode on a local subprocess is the laptop case and reads ok."""
+    from agents.capability_guard import guard_mode
+    from common import db, identity, secrets
+    from common.config import agent_execution_mode, settings
+    mode = identity.current_mode()
+    execution = agent_execution_mode()
+    guard = guard_mode()
+    backend = str(getattr(settings, "secret_backend", "local") or "local").strip().lower()
+    stored = 0
+    if backend != "vault":
+        stored = int(db.get_conn().execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
+    detail = {"auth_mode": mode, "execution_mode": execution, "capability_guard": guard,
+              "secret_backend": backend, "secret_key": secrets.key_configured(),
+              "secrets_stored": stored}
+    problems = []
+    if guard != "block":
+        problems.append(f"CAPABILITY_GUARD is {guard}: an agent may hold all three "
+                        "capabilities; set it back to block")
+    if backend != "vault" and stored and not secrets.key_configured():
+        problems.append(f"{stored} secret(s) stored but AGENTS_HUB_SECRET_KEY is empty, "
+                        "so runs receive none of them")
+    if mode != "single" and execution == "local":
+        problems.append(f"{mode} mode with AGENT_EXECUTION_MODE=local: every run has this "
+                        "host's permissions; use docker")
+    if problems:
+        return ("warn", "; ".join(problems) + ".", detail)
+    return ("ok", f"{mode} mode, {execution} runs, capability guard on block.", detail)
+
+
 # ── stale runs and leases ────────────────────────────────────────────────────
 
 def _age_seconds(ts: Optional[str]) -> Optional[float]:
@@ -530,6 +565,7 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("migrations", "Database migrations", check_migrations),
     ("provider", "Default model provider", check_provider),
     ("cors", "Cross-origin access", check_cors),
+    ("security", "Security settings", check_security),
     ("stale_runs", "Stale runs and leases", check_stale_runs),
     ("run_queue", "Launch queue", check_run_queue),
     ("outbox", "Outbound notifications", check_outbox),

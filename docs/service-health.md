@@ -143,6 +143,17 @@ and `token` mode, and a warning in `multi` mode, where any site can call the
 API with a token stolen from a person. Fix: set `ALLOW_ORIGINS` to the
 dashboard's origins, comma separated.
 
+### Check: security
+
+The settings the hardening list in `SECURITY.md` (repository root) asks for,
+read together. A warning for each of: `CAPABILITY_GUARD` set to
+anything but `block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty
+(runs then receive none of them); `token` or `multi` mode with
+`AGENT_EXECUTION_MODE=local`, where every person's runs have the host's own
+permissions. `single` mode with local runs is the one person laptop case and
+reads ok. Fix: the setting the warning names, in `.env` or on the Settings
+page. The [threat model](threat-model.md) says why each matters.
+
 ### Check: stale runs
 
 Agent runs still `running` whose heartbeat is older than the watchdog's

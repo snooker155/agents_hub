@@ -390,3 +390,31 @@ def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch)
     monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, closed])
     status, summary, _detail = doc.check_skills(_snap())
     assert status == "warn" and "license" in summary
+
+
+def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
+    import agents.capability_guard as guard
+    import common.config as config
+    from common import db, identity, secrets
+    monkeypatch.setattr(identity, "current_mode", lambda: "single")
+    monkeypatch.setattr(config, "agent_execution_mode", lambda: "local")
+    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
+    monkeypatch.setattr(secrets, "key_configured", lambda: False)
+    status, summary, detail = doctor.check_security(_snap())
+    assert status == "ok" and detail["secrets_stored"] == 0
+
+    monkeypatch.setattr(guard, "guard_mode", lambda: "warn")
+    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
+    db.get_conn().execute(
+        "INSERT INTO secrets (secret_id, workspace, name, agent_id, user_id, ciphertext, key_version, hint,"
+        " created_by, created_at, updated_at) VALUES ('s1', 'default', 'TOKEN', '', '', 'x', 1, '', '', '', '')")
+    status, summary, detail = doctor.check_security(_snap())
+    assert status == "warn"
+    assert "CAPABILITY_GUARD is warn" in summary
+    assert "1 secret(s) stored" in summary
+    assert "multi mode with AGENT_EXECUTION_MODE=local" in summary
+
+    monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
+    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
+    monkeypatch.setattr(secrets, "key_configured", lambda: True)
+    assert doctor.check_security(_snap())[0] == "ok"

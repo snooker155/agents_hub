@@ -2105,6 +2105,50 @@
       ]
     },
     {
+      "id": "threat-model",
+      "title": "Threat model",
+      "summary": "What the hub protects (provider keys, secrets, the host, private work, connected accounts, money), who might attack (text an agent reads first, then members, widget visitors, the network, dependencies), the boundaries and what holds each, a table of threats with the answer and what is left, and what the hub does not defend against.",
+      "surface": "Security",
+      "related": [
+        "security",
+        "identity",
+        "isolation",
+        "secrets",
+        "tools-and-capabilities",
+        "environments",
+        "hooks",
+        "guardrails",
+        "widget",
+        "service-health"
+      ],
+      "headings": [
+        "What is worth protecting",
+        "Who might attack",
+        "Boundaries and what holds each",
+        "Threats and answers",
+        "What the hub does not defend against",
+        "Checking a deployment"
+      ]
+    },
+    {
+      "id": "security",
+      "path": "SECURITY.md",
+      "title": "Security policy: reporting a vulnerability",
+      "summary": "How to report a vulnerability privately (GitHub private reporting or email), how fast it is answered, which versions get fixes, what counts as a vulnerability and what is a documented choice, and the short hardening list for a hub beyond one laptop.",
+      "surface": "Product",
+      "related": [
+        "threat-model",
+        "identity",
+        "service-health"
+      ],
+      "headings": [
+        "Reporting a vulnerability",
+        "Supported versions",
+        "What counts",
+        "Hardening"
+      ]
+    },
+    {
       "id": "changelog",
       "path": "CHANGELOG.md",
       "title": "Changelog: what's new in each release",

@@ -15,6 +15,15 @@ turns that section into the next release.
 
 ### Added
 
+- `SECURITY.md`: how to report a vulnerability privately, response times,
+  supported versions, what counts and what is a documented choice, and a
+  hardening list. `docs/threat-model.md`: what the hub protects, from whom,
+  the boundaries and what holds each, threats with their answers and what is
+  left, and what it does not defend against.
+- `ah doctor` has a `security` check (docs/service-health.md "Check:
+  security"): a capability guard not on `block`, secrets stored without
+  `AGENTS_HUB_SECRET_KEY`, and `token` or `multi` mode with local runs.
+
 - Guided setup by the assistant (docs/assistant.md "Guided setup",
   docs/installation.md "After the install"): after an account and one model,
   the assistant leads the rest of the setup and the first steps of using the
