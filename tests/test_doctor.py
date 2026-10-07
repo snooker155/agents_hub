@@ -62,9 +62,24 @@ def test_run_doctor_returns_every_check_in_the_contract_shape(monkeypatch):
     ids = [c["id"] for c in result["checks"]]
     assert ids == [cid for cid, _t, _f in doctor.CHECKS]
     for c in result["checks"]:
-        assert set(c) == {"id", "title", "status", "summary", "detail", "doc", "anchor"}
+        assert set(c) == {"id", "title", "status", "summary", "summary_i18n", "detail", "doc",
+                          "anchor"}
         assert c["status"] in {"ok", "warn", "fail", "skip"}
         assert isinstance(c["detail"], dict) and c["summary"]
+        assert type(c["summary"]) is str
+        i18n = c["summary_i18n"]
+        assert i18n.get("key") or i18n.get("parts"), c["id"]
+
+
+def test_msg_reads_as_english_and_carries_its_key():
+    msg = doctor.Msg("disk.free", "3.0 GB free under the state directory.", gb="3.0")
+    assert msg == "3.0 GB free under the state directory."
+    assert msg.i18n() == {"key": "disk.free", "params": {"gb": "3.0"}}
+    joined = doctor.Msg.joined([doctor.Msg("a.one", "first thing", n=1),
+                                doctor.Msg("a.two", "second thing")])
+    assert joined == "First thing; second thing."
+    assert joined.i18n() == {"parts": [{"key": "a.one", "params": {"n": 1}},
+                                       {"key": "a.two", "params": {}}]}
 
 
 # ── the checks, one by one ───────────────────────────────────────────────────

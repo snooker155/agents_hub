@@ -1,8 +1,14 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import process from 'node:process';
 
 import { I18nProvider } from '../../i18n';
+import en from '../../i18n/locales/en/health.js';
+import ru from '../../i18n/locales/ru/health.js';
+import de from '../../i18n/locales/de/health.js';
 
 // Feature 3's two new panels on the Health page: the doctor's structured self
 // checks, and the system workspace (its clone, its scheduled loop, its
@@ -21,7 +27,7 @@ const DOCTOR = {
       detail: { latency_ms: 12 }, doc: 'service-health', anchor: 'check-db',
     },
     {
-      id: 'disk', title: 'Disk space', status: 'warn', summary: 'Getting full.',
+      id: 'disk_space', title: 'Disk space', status: 'warn', summary: 'Getting full.',
       detail: { free_gb: 5 }, doc: 'service-health', anchor: 'check-disk',
     },
   ],
@@ -116,6 +122,96 @@ describe('Health — Diagnostics', () => {
     // regex over-matches it.
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(getDoctor).toHaveBeenCalledTimes(2));
+  });
+});
+
+// The doctor's checks as common/doctor.py sends them: English summary plus
+// the message key the page translates by.
+const DOCTOR_I18N = {
+  status: 'warn',
+  checked_at: '2026-09-24T10:00:00Z',
+  checks: [
+    {
+      id: 'disk', title: 'Free disk', status: 'ok',
+      summary: '3.0 GB free under the state directory.',
+      summary_i18n: { key: 'disk.free', params: { gb: '3.0' } },
+      detail: { free_bytes: 3221225472, path: '/srv/state' },
+      doc: 'service-health', anchor: 'check-disk',
+    },
+    {
+      id: 'stale_runs', title: 'Stale runs and leases', status: 'warn',
+      summary: '2 run(s) have not beaten for over 180 s; expired lease(s): worker.',
+      summary_i18n: { parts: [
+        { key: 'staleRuns.stale', params: { count: 2, seconds: 180 } },
+        { key: 'staleRuns.leases', params: { roles: 'worker' } },
+      ] },
+      detail: {}, doc: 'service-health', anchor: 'check-stale-runs',
+    },
+    {
+      id: 'brand_new', title: 'Brand new check', status: 'ok',
+      summary: 'A sentence this build has no key for.',
+      summary_i18n: { key: 'brandNew.ok', params: {} },
+      detail: { available: true }, doc: 'service-health', anchor: 'check-brand-new',
+    },
+  ],
+};
+
+describe('Health — Diagnostics in the reader\'s language', () => {
+  beforeEach(() => {
+    localStorage.setItem('agents_hub_language', 'ru');
+    getDoctor.mockImplementation(() => ok(DOCTOR_I18N));
+  });
+  afterEach(() => localStorage.removeItem('agents_hub_language'));
+
+  it('translates titles and summaries by their keys', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('Свободное место на диске')).toBeInTheDocument());
+    expect(screen.getByText('В каталоге состояния свободно 3.0 ГБ.')).toBeInTheDocument();
+    expect(screen.getByText('Зависшие запуски и аренды')).toBeInTheDocument();
+    // Two findings joined into one sentence, plural form picked by count.
+    expect(screen.getByText('2 запуска молчат дольше 180 с; просроченные аренды: worker.'))
+      .toBeInTheDocument();
+  });
+
+  it('keeps the English for a check this build has no translation for', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('Brand new check')).toBeInTheDocument());
+    expect(screen.getByText('A sentence this build has no key for.')).toBeInTheDocument();
+  });
+
+  it('translates detail labels and formats their values', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('Свободное место на диске')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Свободное место на диске'));
+    expect(screen.getByText('Свободно')).toHaveAttribute('title', 'free_bytes');
+    expect(screen.getByText('3.0 GB')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Brand new check'));
+    expect(screen.getByText('Доступен')).toBeInTheDocument();
+    expect(screen.getByText('да')).toBeInTheDocument();
+  });
+});
+
+// Every message key the doctor can send has a sentence in every locale, so a
+// new check cannot quietly show English to a Russian or German reader.
+describe('Health — doctor message keys', () => {
+  // Vitest runs from dashboard/frontend.
+  const source = readFileSync(resolve(process.cwd(), '../../common/doctor.py'), 'utf8');
+  const keys = [...new Set([...source.matchAll(/Msg\(\s*"([\w.]+)"/g)].map((m) => m[1]))];
+  const titleIds = [...source.matchAll(/^\s*\("(\w+)", "[^"]+", check_\w+\),$/gm)].map((m) => m[1]);
+
+  const has = (dict, path) => {
+    let node = dict;
+    for (const part of path.split('.')) node = node?.[part];
+    return typeof node === 'string';
+  };
+
+  it.each([['en', en], ['ru', ru], ['de', de]])('%s has every key', (_lang, dict) => {
+    expect(keys.length).toBeGreaterThan(40);
+    expect(titleIds.length).toBeGreaterThan(10);
+    const summaries = dict.doctor.summaries;
+    const missing = keys.filter((k) => !has(summaries, k) && !has(summaries, `${k}_other`));
+    expect(missing).toEqual([]);
+    expect(titleIds.filter((id) => !has(dict.doctor.titles, id))).toEqual([]);
   });
 });
 
