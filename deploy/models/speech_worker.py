@@ -104,7 +104,8 @@ CHATTERBOX_LANGS = ("ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", 
                     "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh")
 
 #: The rate a recorded sample is kept at, and how long it may be: Chatterbox
-#: listens to its first 10 s, OpenVoice averages whatever it gets.
+#: listens closely to 10 s of it (:func:`reference_start` picks which),
+#: OpenVoice averages whatever it gets.
 SAMPLE_RATE = 24000
 SAMPLE_MIN_SECONDS = 3.0
 SAMPLE_MAX_SECONDS = 30.0
@@ -339,6 +340,74 @@ def prepare_sample(data: bytes) -> Tuple[bytes, float]:
                           "10 to 20 seconds of speech work best")
     audio = audio * (0.89 / max(float(np.abs(audio).max()), 1e-6))
     return wav_bytes(audio, SAMPLE_RATE), round(audio.size / SAMPLE_RATE, 2)
+
+
+#: How much of a sample Chatterbox's decoder takes (its DEC_COND_LEN; the
+#: first 6 s of it also prompt its text model): the part picked for it.
+REFERENCE_SECONDS = 10.0
+_REF_FRAME = 0.02
+_REF_STEP = 0.25
+
+
+def reference_start(audio: Any, rate: int, seconds: float = REFERENCE_SECONDS) -> float:
+    """Where in a sample the best ``seconds`` for Chatterbox begin. It hears
+    the beginning of what it is given, so a longer recording that opens
+    hesitantly, far from the microphone or with a cough would teach it
+    those. Every start a quarter second apart, moved back to the quietest
+    moment within 0.3 s so no word is cut, is scored by how much of the
+    window is speech, how loud the speech is against the loudest window
+    (farther from the microphone means quieter and more room), the longest
+    pause past 0.6 s and frames 12 dB above the speech (coughs, clicks,
+    bumps). 0.0 for a sample not much longer than ``seconds``."""
+    import numpy as np
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = int(rate * _REF_FRAME)
+    count = audio.size // n
+    window = int(seconds / _REF_FRAME)
+    if count * _REF_FRAME <= seconds + 0.5:
+        return 0.0
+    db = 20 * np.log10(np.maximum(np.sqrt(np.mean(audio[:count * n].reshape(count, n) ** 2, axis=1)), 1e-6))
+    voiced = db > np.percentile(db, 99) - 30
+    back = int(0.3 / _REF_FRAME)
+    rows = []
+    for at in range(0, count - window + 1, int(_REF_STEP / _REF_FRAME)):
+        lo = max(0, at - back)
+        start = lo + int(np.argmin(db[lo:at + 1]))
+        seg, v = db[start:start + window], voiced[start:start + window]
+        if seg.size < window:
+            continue
+        level = float(np.median(seg[v])) if v.any() else -120.0
+        # The longest run of frames without speech.
+        edges = np.flatnonzero(np.diff(np.concatenate(([1], v.astype(np.int8), [1]))))
+        pause = float(np.max(edges[1::2] - edges[::2])) * _REF_FRAME if edges.size else 0.0
+        rows.append((start, float(v.mean()), level, pause, float(np.mean(seg > level + 12))))
+    if not rows:
+        return 0.0
+    loudest = max(r[2] for r in rows)
+    # Between windows about as good, the earlier one (0.002 a second).
+    best = max(rows, key=lambda r: r[1] - 0.02 * (loudest - r[2]) - 0.15 * max(0.0, r[3] - 0.6) - 2.0 * r[4]
+               - 0.002 * r[0] * _REF_FRAME)
+    return round(best[0] * _REF_FRAME, 2)
+
+
+def read_wav(data: bytes) -> Tuple[Any, int]:
+    """A 16-bit WAV (a kept sample) as mono float32 and its rate, without
+    PyAV."""
+    import numpy as np
+    with wave.open(io.BytesIO(data)) as src:
+        rate, width, channels = src.getframerate(), src.getsampwidth(), src.getnchannels()
+        raw = src.readframes(src.getnframes())
+    if width != 2:
+        raise WorkerError("the sample is not 16-bit PCM")
+    pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    return (pcm.reshape(-1, channels).mean(axis=1) if channels > 1 else pcm), rate
+
+
+def reference_window(data: bytes) -> Tuple[float, float]:
+    """The seconds of a kept sample Chatterbox listens to closely."""
+    audio, rate = read_wav(data)
+    start = reference_start(audio, rate)
+    return start, round(min(audio.size / rate, start + REFERENCE_SECONDS), 2)
 
 
 def voices_root() -> Optional[Path]:
@@ -810,7 +879,9 @@ class ChatterboxBase(Engine):
     multilingual = True
 
     def __init__(self, path: Path) -> None:
-        self.key = f"{self.name}-{path.name}"
+        # "best10": made from the best 10 s; a cache made from the first 10 s
+        # has the name without it and is no longer read.
+        self.key = f"{self.name}-{path.name}-best10"
         self.default: Any = None
         self._conds: Dict[str, Tuple[float, Any]] = {}
         self._lock = threading.Lock()
@@ -830,6 +901,26 @@ class ChatterboxBase(Engine):
 
     def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float) -> Any:
         raise NotImplementedError
+
+    def _prepare_from_best(self, sample: Path) -> Any:
+        """Conditionals from the sample turned around to begin at its best
+        10 s (:func:`reference_start`): the decoder and the text model's
+        prompt take those, the speaker embedding still hears all of it, and
+        the one seam sits where the sample ends, not inside the window."""
+        import numpy as np
+        try:
+            audio, rate = read_wav(sample.read_bytes())
+        except (WorkerError, wave.Error, EOFError):
+            return self._prepare(sample)
+        start = int(reference_start(audio, rate) * rate)
+        if start <= 0:
+            return self._prepare(sample)
+        turned = sample.with_name(f".reference-{self.name}.wav")
+        turned.write_bytes(wav_bytes(np.concatenate([audio[start:], audio[:start]]), rate))
+        try:
+            return self._prepare(turned)
+        finally:
+            turned.unlink(missing_ok=True)
 
     def _conditionals(self, voice: Optional[str]) -> Any:
         recorded = recorded_voices()
@@ -853,7 +944,7 @@ class ChatterboxBase(Engine):
             except Exception:  # noqa: BLE001 - a cache from another version is made again
                 log.warning("the cached conditionals of %s do not load; preparing them again", voice)
         if conds is None:
-            conds = self._prepare(sample)
+            conds = self._prepare_from_best(sample)
             try:
                 cache.parent.mkdir(parents=True, exist_ok=True)
                 self._save_cached(conds, cache)

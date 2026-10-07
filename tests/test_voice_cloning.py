@@ -595,14 +595,14 @@ def test_conditionals_are_prepared_once_and_kept(worker, tmp_path, monkeypatch):
     # Russian text, an English recording: guidance off so the accent stays out.
     assert gen == [("generate", "Привет. Как дела?", "conds:anna", "ru", 0.9, 0.0)]
     assert ("prepare", "anna") in engine.calls
-    assert (voices / "anna" / "cache" / "fake-model.bin").read_text() == "conds:anna"
+    assert (voices / "anna" / "cache" / "fake-model-best10.bin").read_text() == "conds:anna"
     engine.speak("Hello there.", "anna", 1.0)
     assert [c for c in engine.calls if c[0] == "prepare"] == [("prepare", "anna")]
     assert engine.calls[-1][-1] == 0.5  # same language: guidance on
     # A restarted worker reads the cache instead of preparing again.
     again = _fake_chatterbox(worker, tmp_path)
     again.speak("Hello.", "anna", 1.0)
-    assert ("load", "fake-model.bin") in again.calls and not [c for c in again.calls if c[0] == "prepare"]
+    assert ("load", "fake-model-best10.bin") in again.calls and not [c for c in again.calls if c[0] == "prepare"]
 
 
 def test_an_unknown_voice_reads_in_the_models_own(worker, tmp_path, monkeypatch):
@@ -775,3 +775,75 @@ def test_voice_enhance_refuses_what_an_engine_cannot_do(tmp_path):
         sys.modules.pop("hub_missing_pkg_for_test", None)
         sys.modules.pop("hub_missing_pkg_for_test.sub", None)
         sys.modules.pop("voice_enhance_script", None)
+
+
+# ── the part of a sample Chatterbox listens to ───────────────────────────────
+
+def _speechlike(seconds: float, rate: int = 24000, level: float = 0.3, seed: int = 0):
+    """Noise in syllables: 0.2 s on, 0.08 s off, the way speech comes and goes."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    out = rng.normal(0, level / 3, int(seconds * rate)).astype(np.float32)
+    t = np.arange(out.size) / rate
+    return out * ((t % 0.28) < 0.2)
+
+
+def test_the_best_ten_seconds_skip_a_poor_opening(worker):
+    import numpy as np
+    rate = 24000
+    good = _speechlike(14, rate, seed=1)
+    # Far from the microphone, with long pauses and a cough.
+    far = np.concatenate([_speechlike(2, rate, 0.06), np.zeros(int(1.5 * rate)), _speechlike(2, rate, 0.06),
+                          np.zeros(rate), np.random.default_rng(2).normal(0, 0.9, rate // 4)]).astype(np.float32)
+    start = worker.reference_start(np.concatenate([far, good]), rate)
+    assert far.size / rate - 0.3 <= start <= far.size / rate + 0.5
+    # A short sample is taken whole, from its start.
+    assert worker.reference_start(good[:int(10.3 * rate)], rate) == 0.0
+    # A cough and a long hesitation early on are left out too.
+    longer = _speechlike(20, rate, seed=6)
+    flawed = np.concatenate([longer[:3 * rate], np.random.default_rng(3).normal(0, 0.9, rate // 4),
+                             longer[3 * rate:5 * rate], np.zeros(2 * rate), longer[5 * rate:]]).astype(np.float32)
+    assert worker.reference_start(flawed, rate) >= 7.0
+    start, end = worker.reference_window(worker.wav_bytes(np.concatenate([far, good]), rate))
+    assert round(end - start, 2) == 10.0
+
+
+def test_chatterbox_hears_the_sample_from_its_best_part(worker, tmp_path, monkeypatch):
+    import numpy as np
+    rate = 24000
+    voices = tmp_path / "voices"
+    monkeypatch.setenv("MODELS_VOICES_DIR", str(voices))
+    (voices / "anna").mkdir(parents=True)
+    poor = np.zeros(4 * rate, dtype=np.float32)
+    poor[rate:rate + rate // 4] = 0.9  # a bump, then silence
+    sample = np.concatenate([poor, _speechlike(14, rate, seed=4)])
+    (voices / "anna" / "sample.wav").write_bytes(worker.wav_bytes(sample, rate))
+    engine = _fake_chatterbox(worker, tmp_path)
+    heard = []
+    engine._prepare = lambda path: heard.append((path.name, worker.read_wav(path.read_bytes())[0])) or "c"
+    engine.speak("Hello.", "anna", 1.0)
+    name, audio = heard[0]
+    assert name == ".reference-fake.wav" and audio.size == sample.size
+    start = worker.reference_start(sample, rate)
+    assert start >= 3.5
+    # Turned around: the best part first, the rest after it, nothing lost.
+    assert np.allclose(audio[:rate], sample[int(start * rate):int(start * rate) + rate], atol=1e-4)
+    assert not (voices / "anna" / ".reference-fake.wav").exists()
+    assert worker.recorded_voices(voices) == ["anna"]
+
+
+def test_a_voice_says_which_part_chatterbox_listens_to(client, svc, tmp_path, monkeypatch):
+    import numpy as np
+    worker = svc._worker()
+    sample = worker.wav_bytes(np.concatenate([np.zeros(4 * 24000, dtype=np.float32), _speechlike(14, seed=5)]), 24000)
+    monkeypatch.setattr(worker, "prepare_sample", lambda data: (sample, 18.0))
+    voice = _record(client, "anna").json()
+    start, end = voice["reference"]
+    assert start >= 3.5 and round(end - start, 2) == 10.0
+    # A voice recorded before has it worked out when listed, and kept.
+    d = tmp_path / ".voices" / "anna"
+    meta = json.loads((d / "voice.json").read_text())
+    meta.pop("reference")
+    (d / "voice.json").write_text(json.dumps(meta))
+    assert client.get("/voices", headers=AUTH).json()["voices"][0]["reference"] == [start, end]
+    assert json.loads((d / "voice.json").read_text())["reference"] == [start, end]

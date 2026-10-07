@@ -3860,10 +3860,27 @@ def voice_record(name: str) -> Optional[Dict[str, Any]]:
     except (OSError, ValueError):
         data = {}
     record = {**(data if isinstance(data, dict) else {}), "name": name}
+    if "reference" not in record:
+        # Recorded before the best part was picked: worked out once, kept.
+        try:
+            record["reference"] = _reference((d / "sample.wav").read_bytes())
+            _write_voice(name, record)
+        except OSError:
+            pass
     running = cleanup_running(name)
     if running is not None:
         record["cleaning"] = {"job_id": running["id"], "mode": (running.get("meta") or {}).get("mode")}
     return record
+
+
+def _reference(wav: bytes) -> Optional[List[float]]:
+    """``[start, end]``: the seconds of a sample Chatterbox listens to
+    closely (speech_worker.reference_start); None for one it cannot read."""
+    try:
+        return list(_worker().reference_window(wav))
+    except Exception:  # noqa: BLE001 - a sample it cannot read shows no part
+        log.warning("could not find the reference part of a sample", exc_info=True)
+        return None
 
 
 def list_voices() -> List[Dict[str, Any]]:
@@ -3903,7 +3920,8 @@ def save_voice(name: str, audio: bytes, fields: Dict[str, Any], *, replace: bool
         tmp.replace(d / target)
     shutil.rmtree(d / "cache", ignore_errors=True)
     record = {**(old or {}), **{k: v for k, v in fields.items() if v is not None},
-              "duration": seconds, "cleanup": "", "updated_at": _now()}
+              "duration": seconds, "cleanup": "", "reference": _reference(wav),
+              "updated_at": _now()}
     record.setdefault("created_at", record["updated_at"])
     _write_voice(name, record)
     return {**record, "name": name}
@@ -3981,7 +3999,9 @@ def restore_original(name: str) -> Dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail=f"no recorded voice {name!r}")
     if record.get("cleanup"):
-        _write_sample(d, _original(d).read_bytes())
+        wav = _original(d).read_bytes()
+        _write_sample(d, wav)
+        record["reference"] = _reference(wav)
     record.pop("cleaning", None)
     record.update(cleanup="", updated_at=_now())
     _write_voice(name, record)
@@ -4050,7 +4070,8 @@ def run_cleanup(job_id: str, name: str, mode: str) -> None:
         return fail(f"{name!r} was recorded again or removed while it was being cleaned")
     _write_sample(d, wav)
     record.pop("cleaning", None)
-    record.update(cleanup=mode, cleanup_engine=engine, duration=seconds, updated_at=_now())
+    record.update(cleanup=mode, cleanup_engine=engine, duration=seconds,
+                  reference=_reference(wav), updated_at=_now())
     _write_voice(name, record)
     took = ""
     try:

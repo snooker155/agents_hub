@@ -338,6 +338,21 @@ voice. Each engine computes what it needs from a sample once (Chatterbox's
 conditionals, OpenVoice's tone color) and keeps it in the voice's `cache/`; a
 new sample drops it.
 
+**The best 10 seconds.** Chatterbox takes the timbre from 10 s of a sample
+(its decoder reference) and the manner of speech from the first 6 s of those;
+only its speaker embedding hears all of it. So 20 to 30 s are worth
+recording: `speech_worker.reference_start` picks the 10 s to use, scoring
+every start a quarter second apart (moved back to the nearest quiet moment)
+by how much of it is speech, how loud the speech is against the loudest
+window (farther from the microphone is quieter and roomier), long pauses and
+sudden bursts (coughs, clicks), and Chatterbox gets the sample turned around
+to begin there. The voice's record keeps the part as `reference: [start,
+end]`, and the row plays it. On a 30 s recording whose first 9 s were far
+from the microphone with pauses and a cough, Chatterbox MLX read with
+speaker similarity 0.93 to the clean voice from the picked part against
+0.85 to 0.89 from the first 10 s (DNSMOS 3.3 to 3.4 against 2.9 to 3.1).
+OpenVoice averages the whole sample anyway.
+
 **Cleanup.** A laptop's microphones record the room too, and the cloning
 engines copy its echo and hum into every line they read. A voice's
 **Cleanup** (on its row, and in the recorder, where it runs right after the
@@ -542,7 +557,7 @@ On the hub, under `/api/models/local`:
 | `DELETE /runtime/models/{file}` | `{ok, deleted}`, 409 while loaded |
 | `GET /runtime/models/{file}/structure` | the GGUF structure ([model structure](model-structure.md)) |
 | `GET /runtime/jobs`, `GET /runtime/jobs/{id}` | the runtime's download jobs, same shape |
-| `GET /runtime/voices` | `{voices: [{name, language, gender, duration, owner, shared, base_model, base_voice, created_at, consent_at, mine, editable}]}`: the person's own, the shared ones, all for an administrator |
+| `GET /runtime/voices` | `{voices: [{name, language, gender, duration, reference, cleanup, cleaning, owner, shared, base_model, base_voice, created_at, consent_at, mine, editable}]}`: the person's own, the shared ones, all for an administrator |
 | `POST /runtime/voices` multipart `name, file, language, gender, shared, consent, replace, cleanup` | the voice; 400 without `consent`, 409 for a name taken, 422 for a recording with too little speech, 403 replacing someone else's |
 | `PATCH /runtime/voices/{name}` `{language, gender, shared, base_model, base_voice}` | the voice; the owner or an administrator only |
 | `DELETE /runtime/voices/{name}` | `{ok, name}`; the owner or an administrator only |

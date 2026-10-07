@@ -19,12 +19,15 @@ const CLEANUP_MODES = ['none', 'denoise', 'restore'];
 // How often a running cleanup is asked how far it got.
 const CLEANUP_POLL_MS = 1500;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/;
-// What to read aloud while recording: varied sounds, about 15 seconds.
+// What to read aloud while recording: varied sounds, about 30 seconds (the
+// runtime picks the best 10 for Chatterbox, OpenVoice hears all of it).
 const READ_ALOUD = {
-  ru: 'Сегодня утром я вышел из дома чуть раньше обычного. На улице было прохладно, пахло свежим хлебом из пекарни на углу. Я купил кофе, посмотрел на часы и понял, что успеваю на встречу. Как же приятно никуда не спешить!',
-  en: 'This morning I left home a little earlier than usual. The air was cool, and the bakery on the corner smelled of fresh bread. I bought a coffee, checked the time, and realised I would make it to the meeting. What a pleasure it is not to rush!',
-  de: 'Heute Morgen bin ich etwas früher als sonst aus dem Haus gegangen. Die Luft war kühl, und die Bäckerei an der Ecke duftete nach frischem Brot. Ich kaufte einen Kaffee, sah auf die Uhr und merkte, dass ich pünktlich sein würde. Wie schön es ist, sich nicht zu beeilen!',
+  ru: 'Сегодня утром я вышел из дома чуть раньше обычного. На улице было прохладно, пахло свежим хлебом из пекарни на углу. Я купил кофе, посмотрел на часы и понял, что успеваю на встречу. Как же приятно никуда не спешить! По дороге я встретил старого знакомого, и мы поговорили о планах на выходные. Он собирается за город, к озеру, а я, наверное, останусь дома и наконец дочитаю книгу. Вечером обещали дождь, так что зонт лучше взять с собой.',
+  en: 'This morning I left home a little earlier than usual. The air was cool, and the bakery on the corner smelled of fresh bread. I bought a coffee, checked the time, and realised I would make it to the meeting. What a pleasure it is not to rush! On the way I ran into an old friend, and we talked about our plans for the weekend. He is heading out of town to the lake, while I will probably stay home and finally finish my book. They say it will rain tonight, so I had better take an umbrella.',
+  de: 'Heute Morgen bin ich etwas früher als sonst aus dem Haus gegangen. Die Luft war kühl, und die Bäckerei an der Ecke duftete nach frischem Brot. Ich kaufte einen Kaffee, sah auf die Uhr und merkte, dass ich pünktlich sein würde. Wie schön es ist, sich nicht zu beeilen! Unterwegs traf ich einen alten Bekannten, und wir sprachen über unsere Pläne fürs Wochenende. Er fährt aufs Land an den See, ich bleibe wohl zu Hause und lese endlich mein Buch zu Ende. Für den Abend ist Regen angesagt, also nehme ich lieber einen Schirm mit.',
 };
+// A sample longer than this has a part picked for Chatterbox worth showing.
+const REFERENCE_SECONDS = 10;
 
 // The reason in an error whose body came back as a Blob (the audio routes).
 async function blobDetail(e) {
@@ -53,6 +56,7 @@ function usePlayer() {
     current.current = null;
     if (now?.audio) {
       now.audio.onended = null;
+      now.audio.ontimeupdate = null;
       now.audio.pause();
     }
     if (now?.url) URL.revokeObjectURL(now.url);
@@ -61,7 +65,8 @@ function usePlayer() {
 
   useEffect(() => stop, [stop]);
 
-  const play = useCallback(async (key, fetchBlob) => {
+  // `range` ([start, end] seconds) plays only that part.
+  const play = useCallback(async (key, fetchBlob, range) => {
     stop();
     const mine = { key };
     current.current = mine;
@@ -72,6 +77,12 @@ function usePlayer() {
       mine.url = URL.createObjectURL(blob);
       mine.audio = new Audio(mine.url);
       mine.audio.onended = () => { if (current.current === mine) stop(); };
+      if (range) {
+        mine.audio.currentTime = range[0];
+        mine.audio.ontimeupdate = () => {
+          if (current.current === mine && mine.audio.currentTime >= range[1]) stop();
+        };
+      }
       setState({ key, loading: false });
       await mine.audio.play();
       return true;
@@ -82,6 +93,13 @@ function usePlayer() {
   }, [stop]);
 
   return { playing: state.key, loading: state.loading, play, stop };
+}
+
+// Whether a voice's sample is long enough that the part Chatterbox listens
+// to is a part of it, not the whole.
+function hasReference(voice) {
+  const ref = voice.reference;
+  return Array.isArray(ref) && ref.length === 2 && (voice.duration || 0) > REFERENCE_SECONDS + 0.5;
 }
 
 function languageName(code, locale) {
@@ -183,11 +201,13 @@ export default function VoicesCard({ models }) {
     }
   };
 
-  const listen = async (voice, original = false) => {
-    const key = `${original ? 'original' : 'sample'}:${voice.name}`;
+  // The sample, the recording before its cleanup, or (`range`) the part of
+  // the sample Chatterbox listens to.
+  const listen = async (voice, original = false, range = null) => {
+    const key = `${range ? 'reference' : original ? 'original' : 'sample'}:${voice.name}`;
     if (player.playing === key) return player.stop();
     try {
-      await player.play(key, async () => (await getRuntimeVoiceAudio(voice.name, original)).data);
+      await player.play(key, async () => (await getRuntimeVoiceAudio(voice.name, original)).data, range);
     } catch (e) {
       toast.error(t('localModels.voices.playFailed'), await blobDetail(e));
     }
@@ -252,6 +272,22 @@ export default function VoicesCard({ models }) {
                     {player.playing === `sample:${v.name}` ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                     {t('localModels.voices.playSample')}
                   </button>
+                  {hasReference(v) && (
+                    <button
+                      type="button"
+                      onClick={() => listen(v, false, v.reference)}
+                      title={t('localModels.voices.referenceTitle', {
+                        start: v.reference[0].toFixed(1), end: v.reference[1].toFixed(1),
+                      })}
+                      data-testid="voice-play-reference"
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-100"
+                    >
+                      {player.playing === `reference:${v.name}` ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                      {t('localModels.voices.reference', {
+                        start: Math.round(v.reference[0]), end: Math.round(v.reference[1]),
+                      })}
+                    </button>
+                  )}
                   {v.cleanup && v.cleanup !== 'none' && (
                     <button
                       type="button"
