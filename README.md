@@ -244,3 +244,4 @@ Source-available under the [Agents Hub Personal Evaluation License](./LICENSE):
 one person may read, run and modify it on a machine they control, for
 evaluation and personal use. Redistribution, hosting for others, commercial
 and production use need a separate agreement with the copyright holder.
+[SECURITY.md](./SECURITY.md) says how to report a vulnerability.

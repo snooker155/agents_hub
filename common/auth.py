@@ -76,7 +76,7 @@ def auth_headers() -> Dict[str, str]:
 # every such service a key to the whole dashboard.
 #
 # ``/scim/v2`` is the provisioning API an identity provider drives with its
-# own bearer token (``AUTH_SCIM_TOKEN``, see dashboard/backend/routes/scim.py):
+# own bearer token (``AUTH_SCIM_TOKEN``, see ee/routes/scim.py):
 # it sits outside ``/api`` so the operator token never applies to it, and is
 # listed here so the intent is in one place.
 #
@@ -168,7 +168,7 @@ PUBLIC_AUTH_ROUTES = frozenset({
     ("GET", "/api/auth/mode"),
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/bootstrap"),
-    # Single sign-on (common/oidc.py): the redirect to the provider, and the
+    # Single sign-on (ee/oidc.py): the redirect to the provider, and the
     # redirect back from it, both happen before there is a session.
     ("GET", "/api/auth/oidc/start"),
     ("GET", "/api/auth/oidc/callback"),

@@ -118,7 +118,6 @@ dashboard/backend/routes/messages.py:S110 1
 dashboard/backend/routes/model_structure.py:BLE001 1
 dashboard/backend/routes/models.py:BLE001 5
 dashboard/backend/routes/models.py:S110 1
-dashboard/backend/routes/oidc.py:BLE001 2
 dashboard/backend/routes/ops.py:BLE001 9
 dashboard/backend/routes/ops.py:S110 2
 dashboard/backend/routes/page_chat.py:BLE001 1

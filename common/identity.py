@@ -24,7 +24,7 @@ Three modes, chosen with ``AUTH_MODE`` (see docs/identity.md):
     Named users with passwords, sessions, a global role (``admin`` /
     ``member``) and per-workspace membership roles (``owner`` / ``editor`` /
     ``viewer``). Stage 3 adds, on top of the same tables: accounts linked to
-    an external identity (single sign-on, ``common/oidc.py``, or SCIM
+    an external identity (single sign-on, ``ee/oidc.py``, or SCIM
     provisioning), groups and the rules that turn them into roles
     (``common/groups.py``), personal API keys that act as their owner
     (``common/api_keys.py``), session metadata and revocation, a login
@@ -152,7 +152,10 @@ def mode_features() -> Dict[str, bool]:
     """
     mode = current_mode()
     from common.config import settings
-    oidc = bool((getattr(settings, "auth_oidc_issuer", "") or "").strip())
+    from common.edition import enterprise_available
+    # Single sign-on and SCIM live in ee/; without it they are not offered.
+    enterprise = enterprise_available()
+    oidc = enterprise and bool((getattr(settings, "auth_oidc_issuer", "") or "").strip())
     return {
         "login": mode == MULTI,
         "users": mode == MULTI,
@@ -165,7 +168,7 @@ def mode_features() -> Dict[str, bool]:
         "api_keys": mode == MULTI,
         "groups": mode == MULTI,
         "audit": mode != SINGLE,
-        "scim": mode == MULTI and bool((getattr(settings, "auth_scim_token", "") or "").strip()),
+        "scim": mode == MULTI and enterprise and bool((getattr(settings, "auth_scim_token", "") or "").strip()),
     }
 
 
@@ -528,7 +531,7 @@ def open_session(user_id: str, *, kind: str = SESSION_PASSWORD, ip: Optional[str
     Returns ``{token, expires_at, session_id, user}`` or None for an unknown
     or disabled account. The credential check happens before this: a
     verified password (:func:`login`), a verified id token
-    (``common/oidc.py``), or the bootstrap.
+    (``ee/oidc.py``), or the bootstrap.
     """
     row = db.get_conn().execute("SELECT * FROM users WHERE user_id = ?",
                                 (str(user_id),)).fetchone()

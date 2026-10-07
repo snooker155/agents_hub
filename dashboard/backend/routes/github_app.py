@@ -25,8 +25,8 @@ with the signed state cookie the connect route set in the same browser, and
 the cookie names the user, so no session is needed on the way back. The setup
 route only triggers a sync, which asks GitHub itself what is installed.
 
-The state cookie is signed with common/oidc.py's HMAC (``sign_state``), with
-a ``purpose`` field so an OIDC sign-in cookie can never pass for this one.
+The state cookie is signed with common/signed_state.py's HMAC (``sign_state``),
+with a ``purpose`` field so a single sign-on cookie can never pass for this one.
 """
 from __future__ import annotations
 
@@ -66,8 +66,8 @@ def _principal(request: Request):
 
 
 def _public_url(request: Request) -> str:
-    from common import oidc
-    return oidc.public_url(request)
+    from common import signed_state
+    return signed_state.public_url(request)
 
 
 def _redirect_uri(request: Request) -> str:
@@ -211,14 +211,14 @@ async def github_connect(request: Request):
         raise HTTPException(status_code=400,
                             detail="Connecting a GitHub account needs AGENTS_HUB_SECRET_KEY: "
                                    + secret_store.NO_KEY_MESSAGE)
-    from common import oidc
+    from common import signed_state
     state = pysecrets.token_urlsafe(24)
-    cookie = oidc.sign_state({"purpose": _PURPOSE, "uid": principal.id,
+    cookie = signed_state.sign_state({"purpose": _PURPOSE, "uid": principal.id,
                               "state": state, "exp": int(time.time()) + STATE_TTL_SECONDS})
     response = RedirectResponse(github_app.connect_url(state, _redirect_uri(request)),
                                 status_code=302)
     response.set_cookie(STATE_COOKIE, cookie, max_age=STATE_TTL_SECONDS, path=STATE_COOKIE_PATH,
-                        httponly=True, samesite="lax", secure=oidc.cookie_secure(request))
+                        httponly=True, samesite="lax", secure=signed_state.cookie_secure(request))
     return response
 
 
@@ -249,13 +249,13 @@ async def github_callback(request: Request):
         except github_app.GitHubAppError:
             pass
 
-    from common import oidc
+    from common import signed_state
     saved = None
     try:
-        saved = oidc.read_state(request.cookies.get(STATE_COOKIE))
+        saved = signed_state.read_state(request.cookies.get(STATE_COOKIE))
         if saved.get("purpose") != _PURPOSE:
             saved = None
-    except oidc.OidcError:
+    except signed_state.StateError:
         saved = None
     state_ok = bool(saved) and bool(params.get("state")) and hmac.compare_digest(
         str(saved.get("state", "")), str(params.get("state")))

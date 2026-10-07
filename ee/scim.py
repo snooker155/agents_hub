@@ -1,3 +1,4 @@
+# Agents Hub enterprise edition: kept apart from the core, see ee/__init__.py.
 """
 SCIM 2.0, the pure half: filter parsing, resource mapping, paging, errors.
 

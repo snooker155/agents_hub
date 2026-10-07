@@ -1,3 +1,4 @@
+# Agents Hub enterprise edition: kept apart from the core, see ee/__init__.py.
 """
 SCIM 2.0 provisioning: an identity provider's own channel for Users and Groups.
 
@@ -18,7 +19,7 @@ request may proceed, with :func:`_guard`. Three answers, in order:
   connection rather than to a person.
 
 Everything about the protocol itself (filters, paging, the resource JSON,
-PATCH operations) is ``common/scim.py``; this module is the thin layer that
+PATCH operations) is ``ee/scim.py``; this module is the thin layer that
 calls into ``common.identity`` and ``common.groups`` to act on what that
 module parsed, and records the audit row for each change.
 """
@@ -31,8 +32,9 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from common import audit, groups as groups_store, identity, scim
+from common import audit, groups as groups_store, identity
 from common.auth import MULTI, extract_bearer
+from ee import scim
 
 router = APIRouter(tags=["scim"])
 
@@ -121,7 +123,7 @@ def _from_value_error(exc: ValueError) -> JSONResponse:
     return _err(400, msg, "invalidValue")
 
 
-# ── resource shaping (needs the database, so it lives here, not in common.scim) ──
+# ── resource shaping (needs the database, so it lives here, not in ee.scim) ──
 
 def _user_resource(user: Dict[str, Any]) -> Dict[str, Any]:
     member_of = [{"value": g["id"], "display": g["display_name"] or g["name"]}
@@ -382,7 +384,7 @@ async def patch_user(request: Request, user_id: str, payload: ScimPatchIn):
     except scim.ScimError as exc:
         return _from_scim_error(exc)
     # A given/family name PATCH touching only one of the two is completed
-    # from the current display name, which common/scim.py cannot do without
+    # from the current display name, which ee/scim.py cannot do without
     # a database: this is the one place that combining happens.
     if "given_name" in changes or "family_name" in changes:
         if "display_name" not in changes:

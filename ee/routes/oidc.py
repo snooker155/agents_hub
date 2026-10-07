@@ -1,3 +1,4 @@
+# Agents Hub enterprise edition: kept apart from the core, see ee/__init__.py.
 """
 Single sign-on routes: the redirect to the provider and the way back.
 
@@ -11,7 +12,7 @@ act on. The session token travels back in the URL *fragment*, never the query
 string: a fragment is not sent to any server, so it stays out of access logs,
 proxies and the ``Referer`` of whatever the page loads next.
 
-Everything protocol-shaped lives in ``common/oidc.py``; this file only turns
+Everything protocol-shaped lives in ``ee/oidc.py``; this file only turns
 its result into an account, a session and an audit row.
 """
 from __future__ import annotations
@@ -25,7 +26,7 @@ from fastapi.responses import RedirectResponse
 from common import audit, identity
 import logging
 
-from common import oidc
+from ee import oidc
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ async def oidc_start(request: Request, next_path: str = Query("/", alias="next")
         raise HTTPException(status_code=400, detail=str(exc))
     try:
         location, cookie = oidc.begin(request, next_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any discovery failure becomes the login page's error
         # Discovery failed: the provider is down or the issuer is wrong.
         return _denied(request, "provider_unreachable", str(exc))
     response = RedirectResponse(location, status_code=302)
@@ -104,7 +105,7 @@ async def oidc_callback(request: Request, code: str = "", state: str = "",
                                cookie_value=request.cookies.get(oidc.STATE_COOKIE))
     except oidc.OidcError as exc:
         return _denied(request, exc.code, str(exc))
-    except Exception as exc:  # the provider answered something unexpected
+    except Exception as exc:  # noqa: BLE001 - the provider answered something unexpected
         return _denied(request, "verification_failed", str(exc))
 
     try:

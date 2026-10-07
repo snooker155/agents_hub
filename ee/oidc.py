@@ -1,3 +1,4 @@
+# Agents Hub enterprise edition: kept apart from the core, see ee/__init__.py.
 """
 OIDC single sign-on: Authorization Code with PKCE, against any provider that
 publishes a discovery document (Keycloak, Microsoft Entra ID, Google).
@@ -11,12 +12,7 @@ Why it is built this way:
 - **One signed cookie for the round trip.** ``state``, ``nonce`` and the PKCE
   verifier have to survive the trip to the provider and back. They go into a
   single short-lived cookie (HttpOnly, SameSite=Lax, ten minutes) signed with
-  an HMAC, rather than into a server-side table: nothing to clean up, and any
-  replica that shares the signing key can finish a flow another one started.
-  The key is ``AGENTS_HUB_SECRET_KEY`` when set, else the OIDC client secret,
-  else the process's service credential (``identity.service_token()``), in
-  that order, so a multi-replica deployment has something shared to sign with
-  and a single process always has something.
+  an HMAC (``common/signed_state.py``, which says which key signs it).
 - **Only the id token is trusted, and only once verified**: signature against
   the provider's JWKS (refetched once when a key id is unknown, which is how
   key rotation shows up), ``iss``, ``aud``, ``exp`` and the ``nonce`` from the
@@ -46,6 +42,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from common import signed_state
+
 log = logging.getLogger(__name__)
 
 #: Name of the round-trip cookie, scoped to the two OIDC routes.
@@ -66,12 +64,8 @@ _discovery_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _jwks_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 
-class OidcError(Exception):
+class OidcError(signed_state.StateError):
     """A failed sign-in. ``code`` is what the login screen is told."""
-
-    def __init__(self, code: str, message: str = "") -> None:
-        super().__init__(message or code)
-        self.code = code
 
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -169,99 +163,30 @@ def jwks(force: bool = False) -> Dict[str, Any]:
     return keys
 
 
-# ── the public URL and the redirect ──────────────────────────────────────────
+# ── the public URL, the redirect and the round-trip cookie ───────────────────
+#
+# Shared with the GitHub user connection, so they live in the core
+# (common/signed_state.py); this module only turns a bad cookie into a failed
+# sign-in.
 
-def public_url(request) -> str:
-    """Where the browser reaches this hub: ``AUTH_PUBLIC_URL``, else derived
-    from the request, honouring ``X-Forwarded-Proto`` and ``X-Forwarded-Host``
-    from a reverse proxy."""
-    configured = (getattr(_settings(), "auth_public_url", "") or "").strip().rstrip("/")
-    if configured:
-        return configured
-    headers = request.headers
-    proto = (headers.get("x-forwarded-proto") or "").split(",")[0].strip()
-    host = (headers.get("x-forwarded-host") or "").split(",")[0].strip()
-    proto = proto or request.url.scheme
-    host = host or headers.get("host") or request.url.netloc
-    return f"{proto}://{host}".rstrip("/")
+public_url = signed_state.public_url
+cookie_secure = signed_state.cookie_secure
+safe_next = signed_state.safe_next
+sign_state = signed_state.sign_state
+_b64 = signed_state.b64
 
 
 def redirect_uri(request) -> str:
     return f"{public_url(request)}/api/auth/oidc/callback"
 
 
-def cookie_secure(request) -> bool:
-    """Whether the round-trip cookie is marked Secure (``AUTH_COOKIE_SECURE``)."""
-    raw = str(getattr(_settings(), "auth_cookie_secure", "auto") or "auto").strip().lower()
-    if raw in ("true", "1", "yes", "on"):
-        return True
-    if raw in ("false", "0", "no", "off"):
-        return False
-    return public_url(request).startswith("https://")
-
-
-def safe_next(value: Optional[str]) -> str:
-    """A post-login destination: a path on this hub, never another site.
-
-    Raises ValueError for anything with a scheme, a host (``//evil``, and the
-    ``/\\evil`` spelling browsers read the same way) or no leading slash.
-    """
-    value = (value or "").strip()
-    if not value:
-        return "/"
-    parsed = urllib.parse.urlsplit(value)
-    if (parsed.scheme or parsed.netloc or not value.startswith("/")
-            or value.startswith("//") or value.startswith("/\\") or "\\" in value[:2]
-            or any(ord(c) < 32 for c in value)):
-        raise ValueError("next must be a relative path on this hub")
-    return value
-
-
-# ── the signed round-trip cookie ─────────────────────────────────────────────
-
-def _signing_key() -> bytes:
-    from common import identity
-    settings = _settings()
-    material = ((getattr(settings, "secret_key", "") or "").strip()
-                or client_secret()
-                or identity.service_token())
-    return hashlib.sha256(b"agents-hub-oidc-state:" + material.encode("utf-8")).digest()
-
-
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def sign_state(payload: Dict[str, Any]) -> str:
-    body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    mac = hmac.new(_signing_key(), body.encode("ascii"), hashlib.sha256).digest()
-    return f"{body}.{_b64(mac)}"
-
-
 def read_state(value: Optional[str]) -> Dict[str, Any]:
     """The cookie's payload, or OidcError("bad_state") when it is missing,
     forged or expired."""
-    if not value or "." not in value:
-        raise OidcError("bad_state", "no sign-in in progress")
-    body, mac = value.rsplit(".", 1)
-    expected = hmac.new(_signing_key(), body.encode("ascii"), hashlib.sha256).digest()
     try:
-        presented = _unb64(mac)
-    except ValueError:
-        raise OidcError("bad_state", "malformed state cookie")
-    if not hmac.compare_digest(expected, presented):
-        raise OidcError("bad_state", "state cookie signature mismatch")
-    try:
-        payload = json.loads(_unb64(body).decode("utf-8"))
-    except ValueError:
-        raise OidcError("bad_state", "malformed state cookie")
-    if float(payload.get("exp", 0)) < time.time():
-        raise OidcError("bad_state", "the sign-in took too long")
-    return payload
+        return signed_state.read_state(value)
+    except signed_state.StateError as exc:
+        raise OidcError(exc.code, str(exc)) from exc
 
 
 def _pkce_pair() -> Tuple[str, str]:

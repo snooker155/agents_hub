@@ -281,6 +281,12 @@ turns that section into the next release.
 
 ### Changed
 
+- Single sign-on and SCIM live in `ee/oidc.py`, `ee/scim.py` and
+  `ee/routes/`; the signed round-trip cookie they share with the GitHub
+  connection is core (`common/signed_state.py`). Without `ee/` the backend
+  does not mount their routes and the login screen does not offer them
+  (`common/edition.py`).
+
 - `ah setup` QuickStart asks only for the install, the database, access and
   a model; the assistant's voice, the demo and web search are left to the
   assistant (an answers file that names them still applies them).

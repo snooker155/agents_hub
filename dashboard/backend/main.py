@@ -59,9 +59,7 @@ from routes import assistant as assistant_router
 from routes import setup_guide as setup_guide_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
-from routes import oidc as oidc_router
 from routes import groups as groups_router
-from routes import scim as scim_router
 from routes import audit as audit_router
 from routes import account as account_router
 from routes import secrets as secrets_router
@@ -855,9 +853,14 @@ app.include_router(auth_router.router)
 # and their mappings, SCIM provisioning, the audit trail, the caller's own
 # account (sessions, API keys) and workspace secrets. Each router answers
 # 404 outside the mode it needs, the same way the accounts routes do.
-app.include_router(oidc_router.router)
+# Single sign-on and SCIM are the enterprise part (ee/, its own licence):
+# mounted when the directory is there, absent from a community tree.
+from common.edition import enterprise_available
+if enterprise_available():
+    from ee.routes import oidc as oidc_router, scim as scim_router
+    app.include_router(oidc_router.router)
+    app.include_router(scim_router.router)
 app.include_router(groups_router.router)
-app.include_router(scim_router.router)
 app.include_router(audit_router.router)
 app.include_router(account_router.router)
 app.include_router(secrets_router.router)
