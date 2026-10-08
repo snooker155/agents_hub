@@ -23,6 +23,22 @@ turns that section into the next release.
   Settings card, `ah setup`, the setup guide and the assistant's settings
   lookup say which one a search uses. `WEB_SEARCH_MODEL` names the small model
   that drives such a search.
+- Image models in the hub runtime, on Apple silicon: Qwen-Image through
+  mflux (engine `mflux`, kind `image`), served on `POST /v1/images/generations`
+  and `/v1/images/edits` in OpenAI's shape and picked for a workspace's
+  Images purpose as provider "Hub runtime", so `generate_image` draws
+  locally. A Qwen-Image folder is detected from its four folders, downloaded
+  as a package from the Images preset (`mlx-community/Qwen-Image-2512-8bit`,
+  34 GB, or the 4-bit one) or hard-linked in from LM Studio, loaded in a pool
+  of its own (`MODELS_MAX_IMAGE_LOADED`, `MODELS_IMAGE_LOAD_TIMEOUT`) and
+  counted under kind `image` on the Runtime load card. The engine runs
+  under an interpreter that already has mflux when the machine has one (the
+  one `mflux-generate` runs under, a uv tool, pipx or a conda environment;
+  Install then only adds the worker's web packages there), else installs
+  from the engines row into an environment of its own
+  (`MODELS_MFLUX_PYTHON` pins one). `AGENTS_HUB_IMAGE_TIMEOUT` (default
+  1800 s) is how long the hub's image tool waits for a picture
+  (docs/local-models.md, "Image models").
 
 ## [0.10.0] - 2026-10-08
 

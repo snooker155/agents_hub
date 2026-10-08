@@ -90,6 +90,7 @@ export default {
     chat: 'Чат:',
     transcription: 'Распознавание:',
     speech: 'Синтез речи:',
+    image: 'Картинки:',
   },
 
 
@@ -121,8 +122,8 @@ export default {
 
   speech: {
     enginesTitle: 'Движки',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
-    kinds: { speech: 'Синтез речи', transcription: 'Распознавание', chat: 'Чат', cleanup: 'Очистка голоса' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Синтез речи', transcription: 'Распознавание', image: 'Картинки', chat: 'Чат', cleanup: 'Очистка голоса' },
     installed: 'Установлен',
     install: 'Установить',
     installStarted: 'Устанавливаю {{engine}}…',
@@ -198,7 +199,7 @@ export default {
     purpose: 'Назначение',
     license: 'Лицензия',
     sort: 'Порядок',
-    purposes: { any: 'Любое', chat: 'Чат', code: 'Код', embeddings: 'Эмбеддинги', speech: 'Синтез речи', transcription: 'Распознавание речи' },
+    purposes: { any: 'Любое', chat: 'Чат', code: 'Код', embeddings: 'Эмбеддинги', speech: 'Синтез речи', transcription: 'Распознавание речи', image: 'Картинки' },
     licenses: { any: 'Любая', permissive: 'Свободные (Apache, MIT)', 'apache-2.0': 'Apache 2.0', mit: 'MIT', llama: 'Llama', gemma: 'Gemma' },
     sorts: { downloads: 'Скачивания', likes: 'Лайки', trending: 'Популярные сейчас', updated: 'Недавно обновлённые' },
     noResults: 'Ничего не нашлось. Попробуйте другое слово или снимите фильтры.',
@@ -250,7 +251,7 @@ export default {
     noCalls: 'Вызовов пока не было.',
     recent: 'Недавние вызовы',
     sources: { hub: 'Агенты хаба', endpoint: 'Endpoint /v1', voice: 'Голос ассистента', direct: 'Напрямую' },
-    kinds: { chat: 'Чат', embeddings: 'Эмбеддинги', speech: 'Синтез речи', transcription: 'Распознавание' },
+    kinds: { chat: 'Чат', embeddings: 'Эмбеддинги', speech: 'Синтез речи', transcription: 'Распознавание', image: 'Картинки' },
     tokensUnknown: 'Модель не сообщила число токенов',
   },
 

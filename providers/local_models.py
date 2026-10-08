@@ -16,10 +16,10 @@ Three parts:
   the runtime service keeps its own registry for downloads.
 * The hub runtime: ``RuntimeClient`` talks to deploy/models, and
   ``ensure_hub_local_backend`` plus ``catalog_set_enabled`` make what it has
-  loaded usable as the provider ``hub-local``. Its speech models (kind
-  ``speech`` or ``transcription``) stay out of the chat catalog: a
-  workspace picks them as special models (providers/special.py) under the
-  same provider.
+  loaded usable as the provider ``hub-local``. Its speech and image models
+  (kind ``speech``, ``transcription`` or ``image``) stay out of the chat
+  catalog: a workspace picks them as special models (providers/special.py)
+  under the same provider.
 """
 from __future__ import annotations
 
@@ -42,6 +42,11 @@ HUB_LOCAL_LABEL = "Hub runtime"
 
 #: Model kinds the runtime serves on /v1/audio rather than for chat.
 SPEECH_KINDS = ("speech", "transcription")
+#: ... and on /v1/images (Qwen-Image through mflux).
+IMAGE_KINDS = ("image",)
+#: Every kind that is picked per workspace as a special model, never in the
+#: chat catalog.
+SPECIAL_KINDS = SPEECH_KINDS + IMAGE_KINDS
 
 #: The header the runtime counts its calls by (deploy/models/app.py, Usage):
 #: ``hub`` for the hub's agents and its own work, ``endpoint`` for a call to
@@ -780,7 +785,8 @@ def catalog_set_enabled(name: str, enabled: bool, *, context_window: int = 0,
 
 
 __all__ = [
-    "HUB_LOCAL_ID", "JOBS", "JobRegistry", "SPEECH_KINDS", "LocalModelError", "LocalModelNotFound",
+    "HUB_LOCAL_ID", "JOBS", "JobRegistry", "SPEECH_KINDS", "IMAGE_KINDS", "SPECIAL_KINDS", "LocalModelError",
+    "LocalModelNotFound",
     "RuntimeClient", "catalog_set_enabled", "ensure_hub_local_backend", "model_name",
     "ollama_base_url", "ollama_delete", "ollama_list", "ollama_models", "ollama_pull_stream",
     "ollama_show", "runtime_configured", "runtime_settings", "server_status", "start_ollama_pull",

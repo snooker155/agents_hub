@@ -48,7 +48,8 @@ model) and MLX model folders (`config.json` with a text architecture and
 file by file into a hidden `.<name>.import` directory and renamed when whole.
 MLX models run on the MLX engine, so on Apple silicon only; elsewhere they are
 marked "LM Studio only". An image model (no `config.json` at the folder's
-root, such as Qwen-Image) is not listed. Checked on 2026-10-06:
+root) is not listed, except a Qwen-Image folder, which the import card lists
+as an image model ([Image models](#image-models)). Checked on 2026-10-06:
 `mlx-community/gpt-oss-20b-MXFP4-Q8` imported (hard links, same inodes),
 loaded in 3 s and answered, its reasoning split from the answer.
 
@@ -69,7 +70,7 @@ refreshed every 30 s).
 
 A service of its own (`deploy/models/app.py`) that downloads models from
 Hugging Face and serves them: one `llama-server` subprocess per loaded chat
-model, one speech worker per loaded speech model, and one OpenAI-compatible
+model, one worker per loaded speech or image model, and one OpenAI-compatible
 gateway (`/v1`) in front of them all. Every route but `/healthz` needs
 `Authorization: Bearer <token>`. Local models need nothing else: no Ollama,
 no LM Studio, no brew. Ollama and LM Studio stay usable as external servers,
@@ -119,6 +120,7 @@ installs what is missing, as a job:
 | Whisper | transcription | `pip install faster-whisper` into the runtime's Python |
 | Piper, Kokoro, Kitten, Supertonic | speech | `pip install piper-tts`, `kokoro-onnx`, `onnxruntime phonemizer-fork espeakng-loader` (Kitten) or `supertonic` |
 | MLX | chat models in MLX or Hugging Face safetensors format, Apple silicon only | `pip install mlx-lm` |
+| mflux | images with Qwen-Image, Apple silicon only ([Image models](#image-models)) | `pip install mflux` into an environment of its own, `<models dir>/.engines/mflux` (it brings torch and transformers, a few gigabytes) |
 
 An MLX model runs as `python -m mlx_lm.server` on its own port, in the chat
 pool with the GGUF models. The gateway always asks it for `default_model`
@@ -178,7 +180,9 @@ The chat model is the largest rung of one ladder (`CHAT_LADDER` in
 the runtime reports (the GPU's, else 80 % of RAM) with room for the context.
 The assistant's guided setup calls the same action as `setup_step`
 `local_set`. `GET /api/models/local/runtime/ready-set` gives the plan and the
-latest run, `POST` starts it (`{"dry_run": true}` only describes it), and
+latest run (`ready`: every step is there; `installed`: everything but loading
+the chat model, which a runtime restart undoes; the card folds on the
+latter), `POST` starts it (`{"dry_run": true}` only describes it), and
 `POST /api/models/local/runtime/ready-set/cancel` cancels.
 
 ## Finding a model
@@ -334,6 +338,87 @@ Whisper runs on the CPU (CUDA when the image and host have it,
 On an M-series CPU, `faster-whisper-tiny` turns a few seconds of speech into
 text in under a second, and Piper speaks a sentence in well under a second
 once loaded.
+
+## Image models
+
+The runtime draws pictures too, on Apple silicon: Qwen-Image (Alibaba's 20
+billion parameter image model, text in any language, legible text in the
+picture) through [mflux](https://github.com/filipstrand/mflux), the engine
+`mflux`, in `speech_worker.py` beside the speech engines.
+
+| Model on Hugging Face | Size | What it does |
+|---|---|---|
+| `mlx-community/Qwen-Image-2512-8bit` | 34 GB | draws from text; given a picture, redraws it (image to image). The preset. |
+| `mlx-community/Qwen-Image-2512-4bit` | 18 GB | the same, smaller and a little rougher |
+| `Qwen/Qwen-Image-2512` | 57 GB | Qwen's own weights in the diffusers layout; mflux loads them unquantised |
+| `mlx-community/Qwen-Image-Edit-*` | | Qwen-Image-Edit: takes a picture and an instruction ("make it night"). A directory whose name says `edit` is run as this model |
+
+A model is a directory with `transformer/`, `text_encoder/`, `vae/` and
+`tokenizer/` (mflux's saved layout and the diffusers one alike); the runtime
+tells it from its folders, with no `config.json` at the top. Three ways to
+get one:
+
+- the **Images** preset or any Qwen-Image repo typed into the Local tab's
+  field: the four folders are fetched as a package, kept as folders, into
+  `MODELS_DIR/<repo name>` (the model id is the repo's name, say
+  `Qwen-Image-2512-8bit`);
+- **Import from LM Studio**: a Qwen-Image folder LM Studio or mflux
+  downloaded under `~/.lmstudio/models/<publisher>/<name>` is listed on the
+  import card with kind Images and hard-linked in (nothing copied);
+- a directory copied into `MODELS_DIR` by hand.
+
+**Running.** A loaded image model is one worker subprocess, like a speech
+model, in a pool of its own: `MODELS_MAX_IMAGE_LOADED` (default 1) at a
+time, never evicting a chat or speech model. It loads at once (no context
+length) and takes a while to: tens of gigabytes read from disk,
+`MODELS_IMAGE_LOAD_TIMEOUT` (default 900 s) is how long the runtime waits.
+The gateway serves it on OpenAI's image routes, and the first request to a
+model that is on disk but not running loads it:
+
+- `POST /v1/images/generations` `{model, prompt, size, quality, n}`: `size`
+  is WIDTHxHEIGHT (`auto` is 1024x1024, each side at most 2048, rounded to
+  16), `quality` low, medium, high or auto is 8, 20, 40 or 20 steps, `n` up
+  to 4 pictures. The worker's own fields: `steps` (beats `quality`),
+  `guidance` (default 4), `seed` (random when absent), `negative_prompt`.
+  The answer is OpenAI's: `data[].b64_json` PNG, `output_format: png`, and
+  `generation` with the seed, steps, size and seconds each picture took.
+- `POST /v1/images/edits` multipart: `image`, `prompt`, `model` and the same
+  fields. Qwen-Image-Edit follows the instruction; the plain model redraws
+  the picture, `strength` (0.05 to 1, default 0.6) saying how far from it.
+
+A picture takes minutes on a laptop. Checked on 2026-10-08 with
+`Qwen-Image-2512-8bit` imported from LM Studio on an M1 Max (64 GB): the
+worker answered its health check 19 s after start (the weights are mapped,
+not read), the first 512x512 picture at 4 steps took 51 s (the first step
+25 s while the weights came in, then 6 to 8 s a step), so 1024x1024 at the
+default 20 steps is several minutes. The gateway therefore waits up to an
+hour for one and the hub's image tool (`AGENTS_HUB_IMAGE_TIMEOUT`, default
+1800 s) half of that. Every call is
+counted on the Runtime load card under kind `image`, with no token counts.
+
+**Using it.** Pick provider "Hub runtime" for the Images purpose in a
+workspace's [special models](special-models.md); **Find at provider** lists
+the image models the runtime has. The agents' `generate_image` tool then
+draws with it, and `size` and `quality` reach the model as above. Prices are
+0 unless you set one.
+
+**The engine.** mflux needs a torch and transformers newer than the ones
+Chatterbox pins, so it cannot share the voice engines' environment. Before
+making one of its own, the runtime looks for an interpreter that already
+has mflux: the one `mflux-generate` on PATH runs under, a uv tool, a pipx
+venv, then every conda environment (`CONDA_EXE`'s root, `~/miniforge3`,
+`~/miniconda3`, `~/anaconda3`, `~/.conda`, the Homebrew miniforge). The
+first that imports mflux runs the engine; `GET /engines` says so with
+`python_source: found` (`own`, `pinned`, `runtime` otherwise). Such an
+interpreter usually lacks the worker's web packages (fastapi, uvicorn,
+python-multipart): the engine then shows as not installed, and **Install**
+puts those three packages there and nothing else. With none found, Install
+makes `MODELS_DIR/.engines/mflux` and installs mflux into it (it brings
+torch and transformers, a few gigabytes). `MODELS_MFLUX_PYTHON` pins an
+interpreter and skips the search; an environment of its own, once made,
+comes before a found one. mflux runs on MLX, so Apple silicon only;
+elsewhere the engine is not listed and an image model on disk is marked as
+not loadable. mflux 0.19 was the version checked.
 
 ## Recorded voices
 
@@ -569,15 +654,15 @@ On the hub, under `/api/models/local`:
 | `DELETE /ollama/{name}` | `{ok: true}`, 404 when Ollama has no such model |
 | `GET /ollama/{name}/show` | Ollama's `/api/show` |
 | `GET /jobs`, `GET /jobs/{id}` | `{jobs: [...]}`, one job: `{id, kind, name, status, completed, total, percent, message, error, started_at, finished_at}` |
-| `GET /runtime` | `{configured, ok, url, provider, models, engines, memory, error, managed, usage, usage_outdated}`, always 200; `usage` is the call counts below, null with `usage_outdated: true` from a runtime too old to count; each model has `engine` and `kind` (`chat`, `speech`, `transcription`); `managed` is the state of the runtime the hub runs itself (`state`: preparing, starting, running, stopped, failed; `message`, `stale`, `log_tail`), null for one run elsewhere |
+| `GET /runtime` | `{configured, ok, url, provider, models, engines, memory, error, managed, usage, usage_outdated}`, always 200; `usage` is the call counts below, null with `usage_outdated: true` from a runtime too old to count; each model has `engine` and `kind` (`chat`, `speech`, `transcription`, `image`); `managed` is the state of the runtime the hub runs itself (`state`: preparing, starting, running, stopped, failed; `message`, `stale`, `log_tail`), null for one run elsewhere |
 | `POST /runtime/start`, `/runtime/stop`, `/runtime/restart` | the new `managed` state; 409 when the hub does not run the runtime itself |
 | `POST /runtime/download` `{repo, file, revision}` or `{repo, package, revision}` | `{job_id, file}`; `package` is a speech model the listing named |
 | `GET /runtime/hf/files?repo=&revision=` | `{repo, revision, files: [{file, size_bytes, quantization, fit}], packages: [{name, engine, kind, files, size_bytes, language, downloaded}], model: {params, architecture, context_length, license, moe, active_share}, hardware}`; `fit` is `{verdict, need_bytes, budget_bytes, tokens_per_second, context}`, a split model's parts counted together |
-| `GET /runtime/hf/search?q=&purpose=&license=&sort=` | `{results: [{repo, task, license, downloads, likes, updated, gated, params, architecture, context_length, moe, estimates: [{quant, size_bytes, ...fit}], best}], hardware}`; purpose `chat`, `code`, `embeddings`, `speech`, `transcription`, `any` (a speech result has `engine`, `kind`, `packages`, `size_min`, `size_max` in place of the estimates); license `any`, `permissive`, `apache-2.0`, `mit`, `llama`, `gemma`; sort `downloads`, `likes`, `trending`, `updated` |
+| `GET /runtime/hf/search?q=&purpose=&license=&sort=` | `{results: [{repo, task, license, downloads, likes, updated, gated, params, architecture, context_length, moe, estimates: [{quant, size_bytes, ...fit}], best}], hardware}`; purpose `chat`, `code`, `embeddings`, `speech`, `transcription`, `image`, `any` (a speech or image result has `engine`, `kind`, `packages`, `size_min`, `size_max` in place of the estimates); license `any`, `permissive`, `apache-2.0`, `mit`, `llama`, `gemma`; sort `downloads`, `likes`, `trending`, `updated` |
 | `GET /runtime/hardware` | `{kind, name, ram_bytes, gpu_bytes, gpu_count, bandwidth_gbps, known, efficiency, calibrated, measured}` |
-| `GET /runtime/engines` | `{python, engines: [{id, kind, installed, packages}]}`, llama first |
+| `GET /runtime/engines` | `{python, engines: [{id, kind, installed, packages, python, python_source}]}`, llama first; `kind` is `chat`, `speech`, `transcription`, `image` or `cleanup`; `python_source` is `runtime`, `own`, `pinned` or `found` |
 | `POST /runtime/engines/{engine}/install` | `{job_id, engine}`; llama: the release build, others: `pip install` in the runtime's Python |
-| `POST /runtime/load` `{file, context_length, gpu_layers, threads}` | `{ok, name, file, port, context_length, engine, kind, already_loaded, evicted, catalog}`; a speech model stays out of the catalog |
+| `POST /runtime/load` `{file, context_length, gpu_layers, threads}` | `{ok, name, file, port, context_length, engine, kind, already_loaded, evicted, catalog}`; a speech or image model stays out of the catalog |
 | `POST /runtime/unload` `{file}` | `{ok, unloaded, kind}` |
 | `DELETE /runtime/models/{file}` | `{ok, deleted}`, 409 while loaded |
 | `GET /runtime/models/{file}/structure` | the GGUF structure ([model structure](model-structure.md)) |
@@ -596,7 +681,7 @@ On the hub, under `/api/models/local`:
 | `POST /runtime/cache/warmup` `{file}` | `{started, heads}`; administrators |
 | `DELETE /runtime/cache?model=` | forgets the saved slots and heads of one model or all; administrators |
 
-A job's `kind` is `ollama_pull`, `hf_download`, `hf_package` (a speech model),
+A job's `kind` is `ollama_pull`, `hf_download`, `hf_package` (a speech or image model),
 `engine_install` or `ollama_import`; `status` is `queued`,
 `running`, `done` or `error`. Runtime actions that cannot reach the service
 answer 502 with the reason; the service's own refusals keep their 4xx.

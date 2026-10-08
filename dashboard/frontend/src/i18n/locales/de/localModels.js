@@ -90,6 +90,7 @@ export default {
     chat: 'Chat:',
     transcription: 'Transkription:',
     speech: 'Sprachausgabe:',
+    image: 'Bilder:',
   },
 
 
@@ -121,8 +122,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
-    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', chat: 'Chat', cleanup: 'Stimmbereinigung' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder', chat: 'Chat', cleanup: 'Stimmbereinigung' },
     installed: 'Installiert',
     install: 'Installieren',
     installStarted: '{{engine}} wird installiert…',
@@ -198,7 +199,7 @@ export default {
     purpose: 'Zweck',
     license: 'Lizenz',
     sort: 'Reihenfolge',
-    purposes: { any: 'Beliebig', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription' },
+    purposes: { any: 'Beliebig', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder' },
     licenses: { any: 'Beliebig', permissive: 'Frei (Apache, MIT)', 'apache-2.0': 'Apache 2.0', mit: 'MIT', llama: 'Llama', gemma: 'Gemma' },
     sorts: { downloads: 'Downloads', likes: 'Likes', trending: 'Im Trend', updated: 'Zuletzt aktualisiert' },
     noResults: 'Nichts gefunden. Versuchen Sie ein anderes Wort oder entfernen Sie Filter.',
@@ -248,7 +249,7 @@ export default {
     noCalls: 'Noch keine Aufrufe.',
     recent: 'Letzte Aufrufe',
     sources: { hub: 'Agenten des Hubs', endpoint: 'Endpunkt /v1', voice: 'Stimme des Assistenten', direct: 'Direkt' },
-    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription' },
+    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder' },
     tokensUnknown: 'Das Modell hat keine Tokenzahlen gemeldet',
   },
 

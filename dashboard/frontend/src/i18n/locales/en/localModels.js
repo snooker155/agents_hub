@@ -90,6 +90,7 @@ export default {
     chat: 'Chat:',
     transcription: 'Transcription:',
     speech: 'Speech:',
+    image: 'Images:',
   },
 
 
@@ -121,8 +122,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
-    kinds: { speech: 'Speech', transcription: 'Transcription', chat: 'Chat', cleanup: 'Voice cleanup' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Speech', transcription: 'Transcription', image: 'Images', chat: 'Chat', cleanup: 'Voice cleanup' },
     installed: 'Installed',
     install: 'Install',
     installStarted: 'Installing {{engine}}…',
@@ -198,7 +199,7 @@ export default {
     purpose: 'Purpose',
     license: 'License',
     sort: 'Order',
-    purposes: { any: 'Any', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription' },
+    purposes: { any: 'Any', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription', image: 'Images' },
     licenses: { any: 'Any', permissive: 'Permissive (Apache, MIT)', 'apache-2.0': 'Apache 2.0', mit: 'MIT', llama: 'Llama', gemma: 'Gemma' },
     sorts: { downloads: 'Downloads', likes: 'Likes', trending: 'Trending', updated: 'Recently updated' },
     noResults: 'Nothing found. Try another word or clear the filters.',
@@ -248,7 +249,7 @@ export default {
     noCalls: 'No calls yet.',
     recent: 'Recent calls',
     sources: { hub: 'Hub agents', endpoint: 'Endpoint /v1', voice: 'Assistant voice', direct: 'Direct' },
-    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription' },
+    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription', image: 'Images' },
     tokensUnknown: 'The model did not report token counts',
   },
 

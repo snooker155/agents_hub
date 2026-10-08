@@ -7,7 +7,7 @@ import { FitBadge, HardwareLine } from './FitBadge';
 import { fmtParams, fmtContext } from './fit';
 import { humanBytes } from './jobs';
 
-const PURPOSES = ['chat', 'code', 'embeddings', 'speech', 'transcription', 'any'];
+const PURPOSES = ['chat', 'code', 'embeddings', 'speech', 'transcription', 'image', 'any'];
 const LICENSES = ['any', 'permissive', 'apache-2.0', 'mit', 'llama', 'gemma'];
 const SORTS = ['downloads', 'likes', 'trending', 'updated'];
 

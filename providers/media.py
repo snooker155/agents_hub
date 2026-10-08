@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 
 #: Seconds one HTTP request may take (a picture can take a minute).
 REQUEST_TIMEOUT = float(os.environ.get("AGENTS_HUB_MEDIA_TIMEOUT", "300") or 300)
+#: Seconds an image request may take: a local model (Qwen-Image in the hub
+#: runtime) draws for minutes on a laptop.
+IMAGE_TIMEOUT = max(REQUEST_TIMEOUT, float(os.environ.get("AGENTS_HUB_IMAGE_TIMEOUT", "1800") or 1800))
 #: Seconds between polls of a video job.
 VIDEO_POLL_SECONDS = 5.0
 
@@ -183,6 +186,7 @@ def _openai_image(ep: Endpoint, model: str, prompt: str, *, options: Dict[str, s
     if model.startswith("dall-e"):
         fields["response_format"] = "b64_json"
     with _client() as client:
+        client.timeout = IMAGE_TIMEOUT  # a picture takes longer than any other call
         if image is not None:
             form = {k: str(v) for k, v in fields.items()}
             resp = client.post(f"{ep.base_url}/images/edits", headers=_headers(ep, json_body=False),
@@ -206,6 +210,7 @@ def _google_image(ep: Endpoint, model: str, prompt: str, *, options: Dict[str, s
                   image: Optional[Tuple[str, bytes, str]]) -> Media:
     _need_key(ep, "Google")
     with _client() as client:
+        client.timeout = IMAGE_TIMEOUT
         if model.startswith("imagen"):
             if image is not None:
                 raise SpecialModelError("Imagen models create images; they do not edit one. "
@@ -437,5 +442,5 @@ def call_http_model(url: str, headers: Dict[str, str], payload: Dict[str, Any]) 
 
 __all__ = [
     "Media", "generate_image", "start_video", "poll_video", "synthesize_speech", "transcribe",
-    "call_http_model", "resolve_header_vars", "REQUEST_TIMEOUT",
+    "call_http_model", "resolve_header_vars", "REQUEST_TIMEOUT", "IMAGE_TIMEOUT",
 ]
