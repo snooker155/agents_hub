@@ -69,7 +69,7 @@ def open_target(target: str) -> Any:
     ``db.get_conn()`` (``?`` placeholders, name-addressable rows)."""
     if target_dialect(target) == "postgres":
         try:
-            import psycopg
+            import psycopg  # pyright: ignore[reportMissingImports] - optional
         except ImportError as exc:  # pragma: no cover - environment
             raise RuntimeError(
                 "the Postgres driver is not installed: pip install -r requirements-postgres.txt"

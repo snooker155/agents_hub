@@ -181,7 +181,7 @@ class S3BlobStore(BlobStore):
         if self._client is None:
             with self._client_lock:
                 if self._client is None:
-                    import boto3  # local import: optional dependency (requirements-blobs.txt)
+                    import boto3  # pyright: ignore[reportMissingImports] - optional (requirements-blobs.txt)
 
                     kwargs: dict = {}
                     if self._endpoint:

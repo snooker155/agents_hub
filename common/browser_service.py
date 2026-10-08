@@ -163,12 +163,12 @@ def docker_status() -> Dict[str, Any]:
 def playwright_status() -> Dict[str, Any]:
     """Whether the hub's Python has Playwright, and Chromium for its version."""
     try:
-        import playwright  # noqa: F401
+        import playwright  # noqa: F401  # pyright: ignore[reportMissingImports] - optional
     except ImportError:
         return {"installed": False, "chromium": False, "reason": "the playwright package is not installed"}
     try:
-        import playwright as pw
-        browsers = json.loads((Path(pw.__file__).parent / "driver" / "package" / "browsers.json").read_text())
+        import playwright as pw  # pyright: ignore[reportMissingImports] - optional
+        browsers = json.loads((Path(pw.__file__ or "").parent / "driver" / "package" / "browsers.json").read_text())
         revision = next(b["revision"] for b in browsers["browsers"] if b["name"] == "chromium")
     except Exception:  # noqa: BLE001 - an odd install: report as unknown rather than failing the page
         return {"installed": True, "chromium": None, "reason": "could not read the expected Chromium revision"}

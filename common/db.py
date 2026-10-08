@@ -419,7 +419,7 @@ def _get_pool() -> Any:
         if _pool is not None:
             return _pool
         try:
-            from psycopg_pool import ConnectionPool
+            from psycopg_pool import ConnectionPool  # pyright: ignore[reportMissingImports] - optional
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise RuntimeError(
                 f"{DATABASE_URL_ENV} is set but the Postgres driver is not installed: "
