@@ -121,7 +121,7 @@ def _extract_json(text: str) -> Optional[Any]:
         text = fence.group(1).strip()
     try:
         return json.loads(text)
-    except Exception:
+    except ValueError:
         pass
     # Last resort: the outermost {...} or [...] span.
     for opener, closer in (("{", "}"), ("[", "]")):
@@ -129,7 +129,7 @@ def _extract_json(text: str) -> Optional[Any]:
         if start != -1 and end > start:
             try:
                 return json.loads(text[start:end + 1])
-            except Exception:
+            except ValueError:
                 continue
     return None
 
@@ -190,7 +190,7 @@ def grade_json_schema(output: str, case, params: Dict[str, Any]) -> GradeResult:
     if isinstance(schema, str):
         try:
             schema = json.loads(schema)
-        except Exception as e:
+        except ValueError as e:
             return GradeResult("json_schema", 0.0, False, f"schema is not valid JSON: {e}")
     if not isinstance(schema, dict):
         return GradeResult("json_schema", 0.0, False, "no `schema` configured")
@@ -243,7 +243,7 @@ def grade_assertions(output: str, case, params: Dict[str, Any]) -> GradeResult:
                 ok = len(out.strip()) <= int(value)
             else:
                 ok = False
-        except Exception:
+        except (re.error, ValueError, TypeError):
             ok = False
         results.append(ok)
         if not ok:
@@ -283,11 +283,11 @@ def _input_json(value: Any) -> str:
     if isinstance(value, str):
         try:
             return json.dumps(json.loads(value), ensure_ascii=False)
-        except Exception:
+        except ValueError:
             return value
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
+    except (TypeError, ValueError):
         return str(value)
 
 
@@ -304,7 +304,7 @@ def _tool_output_is_error(output: Any) -> bool:
         return True
     try:
         parsed = json.loads(text)
-    except Exception:
+    except ValueError:
         return False
     if isinstance(parsed, dict):
         if parsed.get("ok") is False:
@@ -511,7 +511,7 @@ def judge_result(text: str, params: Dict[str, Any]) -> GradeResult:
 
     try:
         raw_score = float(parsed.get("score", 0))
-    except Exception:
+    except (TypeError, ValueError):
         raw_score = 0.0
     score = max(0.0, min(raw_score / 10.0, 1.0))
     reasoning = str(parsed.get("reasoning") or "")
@@ -550,7 +550,7 @@ def grade_llm_judge(output: str, case, params: Dict[str, Any]) -> GradeResult:
         )
         # One human message, sent as the plain prompt string it always was.
         text = _reply_text(llm.invoke(messages[0][1]))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the judge call can raise anything the SDK does and is reported as a failed grade
         log.warning("llm_judge failed: %s", e)
         return GradeResult("llm_judge", 0.0, False, f"judge call failed: {type(e).__name__}: {e}")
     return judge_result(text, params)
@@ -934,7 +934,8 @@ def _load_run_payload(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
         payload = rm.get_run_process(run_id)
         if isinstance(payload, dict):
             return payload
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable run record falls back to the container payload
+        log.debug("run process payload unavailable", exc_info=True)
         return None
     return _container_payload(run_id)
 
@@ -956,7 +957,8 @@ def _container_payload(run_id: str) -> Optional[Dict[str, Any]]:
             if isinstance(leaf_payload, dict):
                 calls.extend(_tool_calls(leaf_payload))
         return {"tool_calls": calls}
-    except Exception:
+    except Exception:  # noqa: BLE001 - no container payload means no tool calls
+        log.debug("container tool calls unavailable", exc_info=True)
         return None
 
 

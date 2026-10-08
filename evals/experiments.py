@@ -267,7 +267,7 @@ def route_run(run_id: str, agent_id: Optional[str], *, task_id: Optional[str] = 
         }
         _set_pin(agent_id, pin)
         return pin
-    except Exception:
+    except Exception:  # noqa: BLE001 - routing falls back to the live definition and is logged
         log.warning("experiments: routing run %s of '%s' failed, using the live definition",
                     run_id, agent_id, exc_info=True)
         return None
@@ -289,7 +289,7 @@ def take_pin(agent_id: str) -> Optional[Dict[str, Any]]:
     try:
         from agents import versions as agent_versions
         row = agent_versions.get_version_row(agent_id, int(pin["version"]))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing version row means the live definition, logged below
         row = None
     if row is None:
         log.warning("experiments: version %s of '%s' is gone, run %s uses the live definition",
@@ -310,7 +310,7 @@ def record_assignment(pin: Dict[str, Any]) -> None:
                 "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (run_id) DO NOTHING",
                 (pin["run_id"], pin["agent_id"], pin["experiment_id"], int(pin["version"]),
                  pin.get("routing_key"), _now()))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a failed assignment record must not fail the run
         log.warning("experiments: could not record the assignment of run %s",
                     pin.get("run_id"), exc_info=True)
         return
@@ -318,7 +318,7 @@ def record_assignment(pin: Dict[str, Any]) -> None:
         try:
             from managers import run_manager as rm
             rm.update_run(pin["run_id"], {"definition_hash": pin["hash"]})
-        except Exception:
+        except Exception:  # noqa: BLE001 - stamping the hash is best effort
             log.debug("experiments: could not stamp definition_hash on run %s",
                       pin.get("run_id"), exc_info=True)
 

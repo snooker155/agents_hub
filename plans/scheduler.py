@@ -64,8 +64,8 @@ class PlanScheduler:
             try:
                 from common import leases
                 await asyncio.to_thread(leases.release, self.LEASE_ROLE)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - releasing the lease on stop is best effort
+                log.debug("scheduler lease release failed", exc_info=True)
 
     async def _loop(self) -> None:
         from plans import service
@@ -76,7 +76,8 @@ class PlanScheduler:
         while not self._stop.is_set():
             try:
                 self._leader = await asyncio.to_thread(leases.hold, self.LEASE_ROLE, ttl)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a failing lease backend means not leader this tick
+                log.debug("scheduler lease check failed", exc_info=True)
                 self._leader = False
             if not self._leader:
                 try:

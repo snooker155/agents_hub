@@ -57,7 +57,7 @@ def _default_owner() -> str:
 def _resolve_tz(name: Optional[str]) -> ZoneInfo:
     try:
         return ZoneInfo(name or "UTC")
-    except Exception:
+    except (KeyError, ValueError, OSError):
         # Bad/legacy data should not crash a tick; fall back to UTC.
         return ZoneInfo("UTC")
 
@@ -312,8 +312,8 @@ def _notify_plan_changed() -> None:
     try:
         from common.session_broker import notify_change
         notify_change("plan")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a change push is best effort
+        log.debug("plan change notification failed", exc_info=True)
 
 
 def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
@@ -449,7 +449,7 @@ def _push_telegram(workspace: Optional[str], title: str, body: str) -> None:
     try:
         from connectors.telegram.notify import notify_workspace
         notify_workspace(workspace, title, body)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort delivery that never raises
         log.debug("telegram notification delivery failed", exc_info=True)
 
 
@@ -478,7 +478,7 @@ def _push_endpoints(workspace: Optional[str], kind: str, n: Notification) -> Non
             if endpoint.get("kind") != kind:
                 continue
             notify_outbound.dispatch(endpoint, event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort delivery that never raises
         log.debug("%s notification delivery failed", kind, exc_info=True)
 
 
@@ -498,8 +498,8 @@ def _publish_notification(n: Notification) -> None:
                 NOTIFICATIONS_CHANNEL, {"type": "notification", "notification": payload}
             )
             return
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - falls back to the HTTP publish below
+        log.debug("in-process notification publish failed", exc_info=True)
     try:
         import requests
         from common.auth import auth_headers
@@ -510,8 +510,8 @@ def _publish_notification(n: Notification) -> None:
             headers=auth_headers(),
             timeout=2,
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a notification that cannot be pushed live is still stored
+        log.debug("notification publish over HTTP failed", exc_info=True)
 
 
 def list_notifications(
@@ -550,8 +550,8 @@ def notification_to_dict(n: Notification) -> Dict[str, Any]:
     if data.get("created_at") is not None:
         try:
             data["created_at"] = data["created_at"].isoformat()
-        except Exception:
-            pass
+        except AttributeError:
+            log.debug("created_at is not a datetime", exc_info=True)
     return data
 
 
@@ -579,7 +579,7 @@ def _upcoming_runs_at(job: ScheduledJob, count: int = 3) -> List[str]:
             current = _next_run(probe, current)
             out.append(current.isoformat())
         return out
-    except Exception:
+    except Exception:  # noqa: BLE001 - an upcoming-runs preview must never break the listing
         log.debug("upcoming_runs_at failed for job %s", job.id, exc_info=True)
         return []
 
@@ -684,12 +684,12 @@ def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
         if data.get(ts) is not None:
             try:
                 data[ts] = data[ts].isoformat()
-            except Exception:
-                pass
+            except AttributeError:
+                log.debug("timestamp is not a datetime", exc_info=True)
     data["upcoming_runs_at"] = _upcoming_runs_at(job)
     try:
         last = fire_store.last_for_job(job.id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing last fire must not break the job view
         log.debug("last_fire lookup failed for job %s", job.id, exc_info=True)
         last = None
     data["last_fire"] = fire_to_dict(last) if last else None
@@ -704,8 +704,8 @@ def fire_to_dict(f: FireRecord) -> Dict[str, Any]:
         if data.get(ts) is not None:
             try:
                 data[ts] = data[ts].isoformat()
-            except Exception:
-                pass
+            except AttributeError:
+                log.debug("timestamp is not a datetime", exc_info=True)
     return data
 
 
@@ -800,8 +800,8 @@ def classify_fire_error(exc_or_message: Any) -> str:
         from common.budget import BudgetExceededError
         if isinstance(exc_or_message, BudgetExceededError):
             return "budget_exceeded"
-    except Exception:
-        pass
+    except ImportError:
+        log.debug("budget module unavailable", exc_info=True)
 
     text = str(exc_or_message) if exc_or_message is not None else ""
     low = text.lower()
@@ -836,7 +836,7 @@ def _notify_job_paused(job: ScheduledJob, error: Optional[str], consecutive_erro
             source={"job_id": str(job.id)},
             workspace=job.workspace,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - the pause notification is best effort
         log.debug("auto-pause notification failed for job %s", job.id, exc_info=True)
 
 
@@ -865,7 +865,7 @@ def _record_fire(
             outcome=outcome,
             summary=summary,
         ))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a failed journal write must not fail the tick
         log.debug("failed writing fire journal for job %s", job.id, exc_info=True)
         return None
 
@@ -965,7 +965,7 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 result["consolidation_id"] = _fire_memory_consolidate(job, trigger=trigger)
             else:
                 result["task_id"] = _fire_agent_task(job)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the failure is recorded on the fire and classified
             error = str(e)
             error_type = classify_fire_error(e)
 
@@ -1012,7 +1012,7 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         # finding a stale, already-past run_at and firing again immediately.
         try:
             fields["run_at"] = _next_run(job, now)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - bad cron data must not wedge the tick
             # Bad cron/timezone data should not wedge the tick; keep the job
             # alive and try again shortly rather than crashing the scheduler.
             log.error("failed computing next run for job %s: %s", job.id, e)
@@ -1110,8 +1110,8 @@ def _fire_agent_task(
                 session_id = get_or_create_task_session(
                     title=task.title, workspace=ws_name, task_id=str(task.id)
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a task without a session still runs
+                log.debug("task session could not be created", exc_info=True)
             run_id = str(uuid4())
             run_manager.upsert_run({
                 "run_id": run_id,
@@ -1179,7 +1179,7 @@ def _apply_job_fields_to_task(task_id: str, job: ScheduledJob) -> None:
         tasks_service.update_task(
             UUID(str(task_id)), budget_usd=job.budget_usd, environment_id=job.environment_id,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - the budget and environment copy is best effort
         log.debug(
             "failed applying budget/environment to task %s for job %s", task_id, job.id,
             exc_info=True,

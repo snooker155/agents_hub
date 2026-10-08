@@ -22,11 +22,14 @@ object.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from views.store import view_dir
+
+log = logging.getLogger(__name__)
 
 #: Commands worth replaying. Read-only reporting (stats, validate, preview,
 #: export) is not part of how an object was built.
@@ -108,8 +111,8 @@ def recent(view_id: str) -> List[str]:
                 line = line.strip()
                 if line:
                     return str(json.loads(line).get("ts") or "")
-        except Exception:
-            pass
+        except (OSError, ValueError, AttributeError):
+            log.debug("blender history timestamp unreadable", exc_info=True)
         return ""
 
     logs = sorted((base / "geometry").glob("*.jsonl"),

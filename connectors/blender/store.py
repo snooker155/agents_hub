@@ -82,7 +82,7 @@ def _ensure_legacy_imported() -> None:
     try:
         text = _FILE.read_text(encoding="utf-8")
         data = json.loads(text) if text.strip() else None
-    except Exception:
+    except (OSError, ValueError):
         return
     if isinstance(data, dict):
         _store.import_legacy({_STATE_KEY: data}, _FILE)

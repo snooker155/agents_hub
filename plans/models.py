@@ -177,7 +177,7 @@ class ScheduledJob(BaseModel):
     def touch(self) -> None:
         try:
             object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
-        except Exception:
+        except Exception:  # noqa: BLE001 - the frozen-model path falls back to plain setattr
             setattr(self, "updated_at", datetime.now(timezone.utc))
 
 

@@ -14,6 +14,7 @@ replay of the log. Nothing is lost when one dies except time.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import selectors
 import signal
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from connectors.blender import store
+
+log = logging.getLogger(__name__)
 
 HOST_SCRIPT = Path(__file__).resolve().parent / "host" / "main.py"
 
@@ -160,13 +163,13 @@ class BlenderDaemon:
         try:
             for line in iter(self.proc.stdout.readline, b""):
                 log.write(line)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the log drain thread must end quietly when the pipe closes
+            log.debug("blender engine log drain stopped", exc_info=True)
         finally:
             try:
                 log.close()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - closing the log is best effort
+                log.debug("blender engine log close failed", exc_info=True)
 
     def _connect(self) -> None:
         deadline = time.time() + 10.0
@@ -216,13 +219,13 @@ class BlenderDaemon:
                     self._send({"id": "bye", "cmd": "shutdown"})
                     self._sock.settimeout(5.0)
                     self._file.readline()
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a graceful shutdown request is best effort, the process is stopped next
+                    log.debug("blender engine shutdown request failed", exc_info=True)
             for closer in (self._file, self._sock):
                 try:
                     closer and closer.close()
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - closing a dead socket must not stop the rest of the teardown
+                    log.debug("blender engine socket close failed", exc_info=True)
             self._file = self._sock = None
             if self.proc is not None and self.proc.poll() is None:
                 self.proc.terminate()
@@ -277,7 +280,7 @@ class BlenderDaemon:
 
             try:
                 resp = json.loads(line.decode("utf-8"))
-            except Exception as exc:
+            except ValueError as exc:
                 raise DaemonError(f"unreadable response from the engine: {exc}")
 
             self.last_used = time.time()
@@ -372,7 +375,7 @@ def _rss(pid: int) -> Optional[int]:
                              capture_output=True, text=True, timeout=5)
         value = (out.stdout or "").strip()
         return int(value) * 1024 if value.isdigit() else None
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
 

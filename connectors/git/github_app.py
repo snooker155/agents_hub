@@ -551,7 +551,7 @@ def disconnect(user_id: str) -> bool:
             _http("DELETE", f"{api_url()}/applications/{client_id()}/grant",
                   headers={"Accept": "application/vnd.github+json"},
                   json_body={"access_token": access}, auth=(client_id(), client_secret()))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - revoking the grant is best effort and already logged
             log.warning("github app: revoking the grant failed: %s", type(exc).__name__)
     with db.transaction() as conn:
         conn.execute("DELETE FROM github_user_tokens WHERE user_id = ?", (str(user_id),))
@@ -607,7 +607,7 @@ def token_for_run(workspace: str, agent_id: Optional[str],
         if installation_id is None:
             return None
         return installation_token(installation_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a token lookup that fails means no token, already logged
         log.warning("github app: no token for %s in %s: %s", agent_id, workspace, exc)
         return None
 

@@ -334,7 +334,7 @@ def _arg_text(value: Any) -> str:
         return value
     try:
         return json.dumps(value, ensure_ascii=False)
-    except Exception:
+    except (TypeError, ValueError):
         return str(value)
 
 
@@ -347,7 +347,7 @@ def forbidden_tool_calls(run_id: str) -> List[Dict[str, Any]]:
     try:
         from managers import run_manager as rm
         calls = (rm.get_run_process(run_id) or {}).get("tool_calls") or []
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - unreadable tool calls count as none and are logged
         log.debug("could not read tool calls for %s: %s", run_id, e)
         return []
 

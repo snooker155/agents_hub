@@ -120,8 +120,8 @@ class TelegramAPI:
             payload["reply_markup"] = reply_markup
         try:
             await self._post("editMessageReplyMarkup", payload)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - removing the reply markup is cosmetic
+            log.debug("telegram editMessageReplyMarkup failed", exc_info=True)
 
     async def answer_callback_query(self, callback_query_id: str, *, text: str | None = None) -> None:
         """Acknowledge a button press so Telegram stops the client's spinner.
@@ -133,14 +133,14 @@ class TelegramAPI:
             payload["text"] = text[:200]  # Telegram caps callback answers at 200 chars
         try:
             await self._post("answerCallbackQuery", payload)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - an unanswered callback query is cosmetic
+            log.debug("telegram answerCallbackQuery failed", exc_info=True)
 
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         try:
             await self._post("sendChatAction", {"chat_id": chat_id, "action": action})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the typing indicator is cosmetic
+            log.debug("telegram sendChatAction failed", exc_info=True)
 
     async def get_file(self, file_id: str) -> dict[str, Any]:
         return await self._post("getFile", {"file_id": file_id})
@@ -205,7 +205,8 @@ def _workspace_names() -> list[str]:
     try:
         from workspace import list_workspace_folders
         return sorted(p.name for p in list_workspace_folders())
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable workspace list shows as empty
+        log.debug("telegram workspace names unavailable", exc_info=True)
         return []
 
 
@@ -217,8 +218,8 @@ def _allowed_agent_ids_for(workspace: str) -> Optional[list[str]]:
         allowed = meta.get("allowed_agents")
         if isinstance(allowed, list) and allowed:
             return [str(a) for a in allowed]
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an unreadable workspace record means no restriction
+        log.debug("telegram allowed agents unreadable", exc_info=True)
     return None
 
 
@@ -237,7 +238,8 @@ def _load_flows() -> list[dict[str, Any]]:
     try:
         from flow import store as flow_store
         return flow_store.list_flows()
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable flow store shows as no flows
+        log.debug("telegram flow list unavailable", exc_info=True)
         return []
 
 
@@ -283,7 +285,7 @@ async def _wake_for_unanswered(chat_id: int, workspace: Optional[str],
 async def _send_text(api: TelegramAPI, chat_id: int, text: str) -> None:
     try:
         await api.send_message(chat_id, text)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a failed send is logged and the turn continues
         log.warning("telegram send_message failed for chat=%s: %s", chat_id, exc)
 
 
@@ -558,7 +560,7 @@ async def _build_attachments_from_message(
             try:
                 meta = await api.get_file(file_id)
                 data = await api.download_file(meta["file_path"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the download error is reported to the person in the reply
                 errors.append(f"Failed to download photo: {exc}")
                 continue
             if len(data) > _MAX_FILE_BYTES:
@@ -581,7 +583,7 @@ async def _build_attachments_from_message(
             try:
                 meta = await api.get_file(file_id)
                 data = await api.download_file(meta["file_path"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the download error is reported to the person in the reply
                 errors.append(f"Failed to download document: {exc}")
                 continue
             if len(data) > _MAX_FILE_BYTES:
@@ -808,7 +810,7 @@ async def _run_agent_for_telegram(
                     final_text = str(event.get("response") or "")
                     final_response_obj = event.get("response_obj")
                 break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a failed turn is reported to the chat as its error
         final_error = str(exc)
     finally:
         _secrets.reset_end_user(end_user_token)
@@ -859,7 +861,7 @@ async def _run_agent_for_telegram(
                 reply_markup=rendered.get("reply_markup"),
             )
             return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - falls through to a plain text send, already logged
             log.warning("telegram structured send failed for chat=%s: %s", chat_id, exc)
             # fall through to plain text so the user still gets the reply
 
@@ -987,7 +989,7 @@ class TelegramService:
             me = await TelegramAPI(token).get_me()
             self._status["bot_username"] = me.get("username")
             self._status["last_error"] = None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a failed getMe is stored as the runner status
             self._status["last_error"] = f"getMe failed: {exc}"
             return
 
@@ -1016,8 +1018,8 @@ class TelegramService:
                 await asyncio.wait_for(self._task, timeout=5.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a task that failed while stopping must not break the stop
+                log.debug("telegram poll task ended with an error", exc_info=True)
         self._task = None
         self._stop_event = None
         self._status["running"] = False
@@ -1056,7 +1058,7 @@ class TelegramService:
                 backoff = 1.0
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the poll loop must keep running and backs off
                 self._status["last_error"] = str(exc)[:200]
                 log.warning("telegram poll error: %s", exc)
                 try:

@@ -54,7 +54,7 @@ def _parse(ts: Optional[str]) -> Optional[datetime]:
     try:
         dt = datetime.fromisoformat(str(ts))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    except Exception:
+    except ValueError:
         return None
 
 
@@ -121,8 +121,8 @@ def _auto_answer(task, pending: Dict[str, Any], answer: str) -> bool:
         try:
             from common.session_service import rebind_continuations_to_run
             rebind_continuations_to_run(str(task.id), run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - rebinding continuations is best effort after the auto-answer
+            log.debug("continuation rebind failed", exc_info=True)
         ts.append_task_activity_log(
             task.id, "auto_answer",
             f"No human response — auto-answered with default: {answer}",
@@ -138,8 +138,8 @@ def _auto_answer(task, pending: Dict[str, Any], answer: str) -> bool:
                 workspace=str(getattr(task, "workspace", "") or "") or None,
                 channels=["dashboard"],
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the notification is best effort after the auto-answer
+            log.debug("auto-answer notification failed", exc_info=True)
         return True
     except Exception:
         log.exception("auto-answer failed for task %s", task.id)
@@ -178,7 +178,8 @@ def sweep_awaiting_input() -> Dict[str, int]:
 
     try:
         tasks = ts.list_tasks()
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable task list skips the sweep
+        log.debug("task list unavailable for the sweep", exc_info=True)
         return {"skipped": 1}
 
     for task in tasks:

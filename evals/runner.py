@@ -43,7 +43,8 @@ def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
             "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound}},
         }
         return round(run_cost_usd(fake, load_price_map()), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing price map reports zero cost
+        log.debug("run cost could not be priced", exc_info=True)
         return 0.0
 
 
@@ -139,8 +140,8 @@ def _resolve_model(cfg: RunConfig) -> tuple:
         if spec:
             provider = provider or (spec.provider or "")
             model = model or (spec.model or "")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the agent spec is only a hint for the model name
+        log.debug("eval agent spec unavailable", exc_info=True)
     if not model:
         try:
             from common.config import settings
@@ -155,8 +156,8 @@ def _resolve_model(cfg: RunConfig) -> tuple:
                 "ollama": settings.ollama_model,
                 "lmstudio": settings.lmstudio_model,
             }.get(provider, settings.model)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - settings are only a fallback for the model name
+            log.debug("eval default model unavailable", exc_info=True)
     return provider, model
 
 
@@ -244,7 +245,7 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     try:
         from agents.agent_factory import create_agent
         agent = create_agent(agent_id, work_dir or workspace, **overrides)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a build failure is reported on the outcome
         return Outcome(ok=False,
                        error=f"could not build agent {agent_id!r}: {type(e).__name__}: {e}")
 
@@ -273,7 +274,7 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
         from agents.agent_invoke import invoke_agent
         invocation = invoke_agent(agent, prompt, run_id=run_id)
         rm.close_run_from_result(run_id, invocation.result, process=invocation.process)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any run failure is reported on the outcome
         outcome.ok = False
         outcome.error = f"{type(e).__name__}: {e}"
         return outcome
@@ -471,7 +472,7 @@ def run_eval(
                         check_budget(ws)
                     except EvalStopped:
                         raise
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - a budget failure halts the sweep with its reason
                         # BudgetExceededError (or anything else the budget layer
                         # raises) halts the whole sweep, not just this cell.
                         stopped_reason = f"budget: {e}"
@@ -491,8 +492,8 @@ def run_eval(
                                 "attempt": attempt,
                                 "score": result.score,
                             })
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: BLE001 - a progress callback must not stop the sweep
+                            log.debug("eval progress callback failed", exc_info=True)
         run.status = "completed"
     except EvalStopped:
         run.status = "stopped"

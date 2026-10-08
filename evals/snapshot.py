@@ -35,10 +35,13 @@ by hand, and nothing that grants access to anything:
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 #: Folders never walked into.
 SKIP_DIRS = frozenset({
@@ -252,7 +255,7 @@ def isolation_dir(workspace: Optional[str], eval_run_id: str, case_id: str,
                 target.mkdir(parents=True, exist_ok=True)
                 return target
         except Exception:  # noqa: BLE001 - fall back to a temporary directory
-            pass
+            log.debug("eval snapshot directory unavailable", exc_info=True)
     return Path(tempfile.mkdtemp(prefix=f"eval-{eval_run_id}-{leaf}-"))
 
 

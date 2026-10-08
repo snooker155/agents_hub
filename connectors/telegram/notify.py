@@ -85,7 +85,7 @@ def _send_text(token: str, chat_id: int, text: str) -> bool:
             if not body.get("ok"):
                 ok = False
                 log.warning("telegram sendMessage failed chat=%s: %s", chat_id, body.get("description"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a failed send is logged and reported through the return value
             ok = False
             log.warning("telegram sendMessage error chat=%s: %s", chat_id, exc)
     return ok
