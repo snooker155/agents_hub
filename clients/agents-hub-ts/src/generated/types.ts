@@ -4608,13 +4608,6 @@ export interface ApiPaths {
     get: { response: unknown };
     post: { body: ApplyOpsRequest; response: unknown };
   };
-  "/api/views/{view_id}/proxy/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-  };
   "/api/views/{view_id}/revert": {
     post: { body: RevertRequest; response: unknown };
   };
@@ -4844,19 +4837,6 @@ export interface ApiPaths {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
   };
-  "/apps/{slug}": {
-    get: { response: unknown };
-    head: { response: unknown };
-  };
-  "/apps/{slug}/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-    options: { response: unknown };
-    head: { response: unknown };
-  };
   "/consent/callback": {
     get: { response: unknown };
   };
@@ -4874,19 +4854,6 @@ export interface ApiPaths {
   };
   "/metrics": {
     get: { response: unknown };
-  };
-  "/preview/{ticket}": {
-    get: { response: unknown };
-    head: { response: unknown };
-  };
-  "/preview/{ticket}/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-    options: { response: unknown };
-    head: { response: unknown };
   };
   "/readyz": {
     get: { response: unknown };

@@ -444,6 +444,28 @@ turns that section into the next release.
   `/api/agents/researcher_agent/...`). The `ah apply` example's agents are
   now `team_researcher` and `team_writer`.
 
+- The frontend's vega, vega-lite and vega-embed moved a major each (6, 6, 7)
+  and katex to 0.19, with the audit fixes for axios, react-router, mermaid
+  and dompurify: `npm audit --omit=dev` reports nothing. Chart views render
+  the same specs as before.
+- The five largest backend modules are packages or module sets now:
+  `routes/projects/`, `routes/agents/`, `deploy/models/app_*.py`,
+  `playground/runner_*.py`, `memory/tool_*.py`. Import paths, route paths
+  and behaviour are unchanged; a contributor opens a 300 to 700 line file
+  instead of a 2000 to 4600 line one. The frontend's `src/api/index.js`,
+  `TaskDetails` and `Docs` pages are split the same way.
+- Every Python package enforces ruff's blind-except rules (BLE001, S110)
+  now, not only `common/` and five others: 1251 broad `except Exception`
+  blocks were reviewed, about 200 narrowed to the exceptions the block can
+  raise, the rest carry a reason and log what they swallow instead of a
+  silent `pass`. `scripts/ci/ruff_baseline.txt` is empty and the
+  per-file-ignores list is gone (CONTRIBUTING.md "Blind excepts").
+- CI type-checks `common/` with pyright in basic mode (`pyrightconfig.json`,
+  CONTRIBUTING.md "Types"); its 44 findings were fixed, among them a
+  four-tuple stored in a ContextVar typed for three, Optional turn ids
+  handed to functions that need a str, and two dead helpers in
+  `common/utils.py`.
+
 ### Fixed
 
 - The proactive routes (`/api/agents/{id}/proactive` and its pause, resume
@@ -455,6 +477,10 @@ turns that section into the next release.
   the suite now gives every test its own.
 - An environment's sandbox `size` picked on the Environments page was
   dropped by the create and update routes and never saved.
+
+- The preview, app and view proxies no longer register duplicate OpenAPI
+  operation ids (one handler serves several methods; they are hidden from
+  the schema now, so the app starts without the FastAPI warnings).
 
 ### Upgrade notes
 
