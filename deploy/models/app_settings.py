@@ -37,6 +37,10 @@ JOBS_KEPT = 50
 #: Three: a voice converter (OpenVoice) needs the model that reads for it
 #: running beside it, and transcription stays loaded next to the pair.
 MAX_SPEECH_LOADED = max(1, _env_int("MODELS_MAX_SPEECH_LOADED", 3))
+#: Image models (Qwen-Image is 20 billion parameters: one at a time).
+MAX_IMAGE_LOADED = max(1, _env_int("MODELS_MAX_IMAGE_LOADED", 1))
+#: Seconds an image model may take to load: tens of gigabytes from disk.
+IMAGE_LOAD_TIMEOUT_SECONDS = float(_env_int("MODELS_IMAGE_LOAD_TIMEOUT", 900))
 #: The interpreter speech workers run under: this one unless the engines live
 #: in another environment.
 SPEECH_PYTHON = os.environ.get("MODELS_SPEECH_PYTHON") or sys.executable

@@ -179,7 +179,10 @@ _SOURCE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 #: The gateway path a call came in on, and the kind it is counted under.
 _KIND_OF_PATH = {"/v1/chat/completions": "chat", "/v1/completions": "chat",
                  "/v1/embeddings": "embeddings", "/v1/audio/speech": "speech",
-                 "/v1/audio/transcriptions": "transcription"}
+                 "/v1/audio/transcriptions": "transcription",
+                 "/v1/images/generations": "image", "/v1/images/edits": "image"}
+#: Kinds whose answers carry no token counts: audio and pictures.
+_UNCOUNTED_KINDS = ("speech", "image")
 
 #: The counts are written at most this often; the shutdown writes the rest.
 _USAGE_WRITE_INTERVAL = 2.0
@@ -432,7 +435,7 @@ def metered(request: Request, path: str, model: str, response: Response, started
     first: List[float] = []
 
     def done(code: int, tail: bytes) -> None:
-        counted = kind != "speech" and code < 400
+        counted = kind not in _UNCOUNTED_KINDS and code < 400
         stats = call_stats(tail) if counted else {}
         gen_n, gen_ms = gen_timing(tail) if counted else (0, 0.0)
         usage.record(model=model or "(none)", source=source, kind=kind, ok=code < 400, code=code,
@@ -456,7 +459,7 @@ def metered(request: Request, path: str, model: str, response: Response, started
         tail = b""
         try:
             async for piece in inner:
-                if kind != "speech":
+                if kind not in _UNCOUNTED_KINDS:
                     raw = piece if isinstance(piece, bytes) else str(piece).encode()
                     tail = (tail + raw)[-_USAGE_TAIL_BYTES:]
                     if timed and not first and _FIRST_OUTPUT_RE.search(raw):

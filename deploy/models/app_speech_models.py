@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -30,13 +31,17 @@ log = logging.getLogger("models_service")
 #: Engine -> purpose, the same words the hub's special models use.
 ENGINE_KIND = {"whisper": "transcription", "piper": "speech", "kokoro": "speech", "kitten": "speech",
                "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech",
+               "mflux": "image",
                "mlx": "chat", "deepfilternet": "cleanup", "resemble_enhance": "cleanup"}
 #: Every engine the Models page lists, chat first.
 ALL_ENGINES = ("llama", "mlx", "whisper", "piper", "kokoro", "kitten", "supertonic", "chatterbox", "chatterbox_mlx",
-               "openvoice", "deepfilternet", "resemble_enhance")
+               "openvoice", "mflux", "deepfilternet", "resemble_enhance")
 #: Engines that run only on Apple silicon: listed nowhere else.
-APPLE_ENGINES = ("mlx", "chatterbox_mlx", "deepfilternet")
+APPLE_ENGINES = ("mlx", "chatterbox_mlx", "deepfilternet", "mflux")
 SPEECH_KINDS = ("speech", "transcription")
+IMAGE_KINDS = ("image",)
+#: Every kind a worker (speech_worker.py) serves: not chat.
+WORKER_KINDS = SPEECH_KINDS + IMAGE_KINDS
 #: Engine -> the modules that have to import for it to run, comma separated.
 #: Kitten runs on the worker's own code over onnxruntime and phonemizer,
 #: OpenVoice's converter on the worker's openvoice_vc.py over torch.
@@ -44,6 +49,8 @@ ENGINE_MODULES = {"whisper": "faster_whisper", "piper": "piper", "kokoro": "koko
                   "kitten": "onnxruntime,phonemizer,espeakng_loader", "supertonic": "supertonic",
                   "chatterbox": "chatterbox,torch,librosa,perth,pkg_resources", "openvoice": "torch,numpy,av",
                   "chatterbox_mlx": "mlx_audio,mlx,av",
+                  # The worker's own modules too: a found interpreter (FOUND_ENGINES) may lack them.
+                  "mflux": "mlx,mflux,fastapi,uvicorn,multipart",
                   "mlx": "mlx_lm",
                   "deepfilternet": "mlx_audio,mlx,av",
                   "resemble_enhance": "resemble_enhance,torch,torchaudio,scipy,librosa,soundfile,omegaconf,rich,av"}
@@ -72,6 +79,10 @@ ENGINE_PACKAGES = {
     "openvoice": [*_TORCH, "numpy>=1.24", "av>=12"],
     # mlx-audio's port of Chatterbox, the version it was checked with.
     "chatterbox_mlx": ["mlx-audio>=0.5.8,<0.6", "av>=12"],
+    # Qwen-Image on MLX (speech_worker.py, QwenImageMflux), the version it
+    # was checked with; it brings torch and transformers, so an environment
+    # of its own (ENGINE_VENVS).
+    "mflux": ["mflux>=0.19,<0.20"],
     "mlx": ["mlx-lm>=0.32"],
     # Voice cleanup (voice_enhance.py). DeepFilterNet shares Chatterbox
     # MLX's environment and port collection.
@@ -89,17 +100,27 @@ ENGINE_NO_DEPS = {"chatterbox": ["chatterbox-tts==0.1.7"], "resemble_enhance": [
 #: transformers, stay away from the light ONNX engines and from each other,
 #: and removing that directory removes them.
 ENGINE_VENVS = {"chatterbox": "torch", "openvoice": "torch", "chatterbox_mlx": "mlx-audio",
-                "deepfilternet": "mlx-audio", "resemble_enhance": "torch"}
+                "deepfilternet": "mlx-audio", "resemble_enhance": "torch", "mflux": "mflux"}
 #: Environment name -> the variable that points at an interpreter of one's
 #: own instead.
-VENV_PYTHON_ENV = {"torch": "MODELS_TORCH_PYTHON", "mlx-audio": "MODELS_MLX_AUDIO_PYTHON"}
+VENV_PYTHON_ENV = {"torch": "MODELS_TORCH_PYTHON", "mlx-audio": "MODELS_MLX_AUDIO_PYTHON",
+                   "mflux": "MODELS_MFLUX_PYTHON"}
+#: Engines whose package people often have installed already, under the
+#: command they run it with: before making an environment of its own, the
+#: runtime looks for an interpreter that imports the package
+#: (:func:`found_python`) and runs the engine there.
+FOUND_ENGINES = {"mflux": ("mflux", "mflux-generate")}
+#: Seconds a fruitless search is remembered before looking again.
+FOUND_SEARCH_TTL = 120.0
 TORCH_ENGINES = tuple(e for e, v in ENGINE_VENVS.items() if v == "torch")
 #: What a speech worker itself needs, for an environment made for it.
 WORKER_PACKAGES = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1", "python-multipart>=0.0.9", "numpy>=1.24", "av>=12"]
 #: Engine -> the format column of the model list.
 ENGINE_FORMAT = {"whisper": "ctranslate2", "piper": "onnx", "kokoro": "onnx", "kitten": "onnx",
                  "supertonic": "onnx", "chatterbox": "torch", "chatterbox_mlx": "mlx", "openvoice": "torch",
-                 "mlx": "mlx", "deepfilternet": "mlx", "resemble_enhance": "torch"}
+                 "mflux": "mlx", "mlx": "mlx", "deepfilternet": "mlx", "resemble_enhance": "torch"}
+#: The folders of a Qwen-Image repo on Hugging Face (speech_worker.QWEN_IMAGE_DIRS).
+QWEN_IMAGE_DIRS = ("transformer", "text_encoder", "vae", "tokenizer")
 #: The files of a faster-whisper model directory worth fetching.
 WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt", "vocabulary.json",
                  "preprocessor_config.json")
@@ -122,7 +143,18 @@ def _worker() -> Any:
 
 
 def speech_engine_of(path: Path) -> Optional[str]:
+    """The worker engine (speech or image) that serves the directory
+    ``path``, from its files; None for anything else."""
     return _worker().detect_engine(path) if path.is_dir() else None
+
+
+def pool_of(kind: str) -> str:
+    """Which pool of loaded models ``kind`` counts in: ``chat``, ``speech``
+    (speech and transcription) or ``image``; each has its own cap and a
+    load evicts only within its pool."""
+    if kind in IMAGE_KINDS:
+        return "image"
+    return "speech" if kind in SPEECH_KINDS else "chat"
 
 
 def engines() -> Dict[str, bool]:
@@ -151,13 +183,108 @@ def _pinned_python(name: str) -> str:
 
 
 def engine_python(engine: str) -> str:
-    """The interpreter ``engine`` runs under: its environment's, or the one
-    its ``VENV_PYTHON_ENV`` variable names; ``SPEECH_PYTHON`` for an engine
-    with no environment of its own."""
+    """The interpreter ``engine`` runs under: the one its ``VENV_PYTHON_ENV``
+    variable names, else its own environment once made, else (for a
+    :data:`FOUND_ENGINES` engine) an interpreter on this machine that
+    already has the package, else its own environment, to be made;
+    ``SPEECH_PYTHON`` for an engine with no environment of its own."""
     name = ENGINE_VENVS.get(engine)
     if name is None:
         return app_settings.SPEECH_PYTHON
-    return _pinned_python(name) or str(venv_dir(name) / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    pinned = _pinned_python(name)
+    if pinned:
+        return pinned
+    own = str(venv_dir(name) / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    if engine not in FOUND_ENGINES or Path(own).is_file():
+        return own
+    return found_python(engine) or own
+
+
+def python_source(engine: str) -> str:
+    """Where :func:`engine_python` got the interpreter: ``runtime`` (this
+    one), ``pinned`` (the variable), ``own`` (the engine's environment) or
+    ``found`` (an install of the person's own)."""
+    name = ENGINE_VENVS.get(engine)
+    if name is None:
+        return "runtime"
+    if _pinned_python(name):
+        return "pinned"
+    python = engine_python(engine)
+    return "found" if engine in FOUND_ENGINES and python == found_python(engine) else "own"
+
+
+_found: Dict[str, Tuple[float, str]] = {}
+
+
+def _conda_roots() -> List[Path]:
+    home = Path.home()
+    roots: List[Path] = []
+    exe = os.environ.get("CONDA_EXE") or shutil.which("conda")
+    if exe:
+        roots.append(Path(exe).resolve().parents[1])
+    roots += [home / d for d in ("miniforge3", "mambaforge", "miniconda3", "anaconda3", ".conda")]
+    roots += [Path("/opt/homebrew/Caskroom/miniforge/base"), Path("/opt/miniconda3"), Path("/opt/anaconda3"),
+              Path("/usr/local/Caskroom/miniforge/base")]
+    return roots
+
+
+def candidate_pythons(package: str, command: str) -> List[str]:
+    """Interpreters that may have ``package``: the one ``command`` on PATH
+    runs under (its shebang, else the python beside it), a uv tool, a pipx
+    venv and every conda environment, those that exist, in that order."""
+    out: List[str] = []
+    exe = shutil.which(command)
+    if exe:
+        try:
+            first = Path(exe).open("rb").readline().decode("utf-8", "ignore").strip()
+        except OSError:
+            first = ""
+        if first.startswith("#!") and not first[2:].strip().startswith("/usr/bin/env"):
+            out.append(first[2:].strip().split()[0])
+        out.append(str(Path(exe).resolve().parent / "python"))
+    home = Path.home()
+    out += [str(home / ".local" / "share" / "uv" / "tools" / package / "bin" / "python"),
+            str(home / ".local" / "pipx" / "venvs" / package / "bin" / "python")]
+    seen_roots = set()
+    for root in _conda_roots():
+        envs = root / "envs"
+        if root in seen_roots or not envs.is_dir():
+            continue
+        seen_roots.add(root)
+        for env in sorted(p for p in envs.iterdir() if p.is_dir()):
+            out.append(str(env / "bin" / "python"))
+    found: List[str] = []
+    for p in out:
+        if p not in found and Path(p).is_file():
+            found.append(p)
+    return found
+
+
+def found_python(engine: str) -> str:
+    """An interpreter on this machine that already imports ``engine``'s
+    package (:data:`FOUND_ENGINES`), or "" when none does. A find is kept
+    while that interpreter exists; a miss is kept :data:`FOUND_SEARCH_TTL`
+    seconds, so the model list does not search on every call."""
+    spec = FOUND_ENGINES.get(engine)
+    if spec is None:
+        return ""
+    package, command = spec
+    cached = _found.get(engine)
+    now = time.monotonic()
+    if cached is not None:
+        if cached[1] and Path(cached[1]).is_file():
+            return cached[1]
+        if not cached[1] and now - cached[0] < FOUND_SEARCH_TTL:
+            return ""
+    hit = ""
+    for python in candidate_pythons(package, command):
+        if _modules_found(python, {engine: package}).get(engine):
+            hit = python
+            break
+    _found[engine] = (now, hit)
+    if hit:
+        log.info("%s runs under %s, which already has %s", engine, hit, package)
+    return hit
 
 
 def speech_engines() -> Dict[str, bool]:
@@ -229,6 +356,8 @@ def package_name(engine: str, stem: str) -> str:
     ``piper-ru_RU-irina-medium``), so the hub can tell what it is from the id
     alone."""
     slug = re.sub(r"[^\w.-]+", "-", stem).strip("-.") or engine
+    if engine == "mflux":
+        return slug  # a Qwen-Image repo's name says what it is
     family = engine.split("_", 1)[0]  # chatterbox_mlx is a chatterbox
     return slug if family in slug.lower() else f"{engine}-{slug}"
 
@@ -278,6 +407,17 @@ def speech_packages(repo: str, items: List[Dict[str, Any]]) -> List[Dict[str, An
         add("supertonic", repo_name, files, save_as={f: f for f in files})
 
     top = set(by_dir.get("", []))
+    low_repo = repo.lower()
+    if ("qwen" in low_repo and "image" in low_repo and "text_encoder_2" not in by_dir
+            and all(any(d == q or d.startswith(q + "/") for d in by_dir) for q in QWEN_IMAGE_DIRS)
+            and any(d.split("/")[0] == "transformer" and any(n.endswith(".safetensors") for n in names)
+                    for d, names in by_dir.items())):
+        # A Qwen-Image model (mflux's saved layout or Qwen's diffusers one):
+        # the four folders whole, kept as folders, plus the index at the top.
+        files = sorted(p for p in sizes if p.split("/")[0] in QWEN_IMAGE_DIRS
+                       and not p.rsplit("/", 1)[-1].startswith("."))
+        files += [f for f in ("model_index.json",) if f in top]
+        add("mflux", repo_name, files, save_as={f: f for f in files})
     if "chatterbox" in repo.lower() and all(f in top for f in _worker().CHATTERBOX_FILES):
         extra = [f for f in ("conds.pt", "Cangjie5_TC.json") if f in top]
         add("chatterbox", "chatterbox-multilingual", [*_worker().CHATTERBOX_FILES, *extra])
@@ -502,7 +642,9 @@ def list_models() -> List[Dict[str, Any]]:
                      "size_bytes": sum(f.stat().st_size for f in p.rglob("*") if f.is_file()),
                      "loaded": loaded is not None, "port": loaded.port if loaded else None,
                      "context_length": None, "loaded_at": loaded.loaded_at if loaded else None,
-                     "voices": speech_voices(p, engine), "source": _marker(p).get("repo")}
+                     "voices": speech_voices(p, engine),
+                     # A download records its repo, an import where it came from.
+                     "source": _marker(p).get("repo") or _marker(p).get("source")}
             if not installed:
                 entry["note"] = (f"the {engine} engine is not installed in this runtime; install it "
                                  "on the Models page or with pip install -r requirements-speech.txt")

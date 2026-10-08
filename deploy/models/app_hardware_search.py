@@ -384,23 +384,28 @@ SEARCH_PURPOSES: Dict[str, List[List[str]]] = {
     "embeddings": [["feature-extraction"], ["sentence-similarity"]],
     "transcription": [["ctranslate2", "automatic-speech-recognition"]],
     "speech": [["piper", "text-to-speech"], ["onnx", "text-to-speech"]],
+    "image": [["text-to-image"]],
 }
-#: Purposes the speech engines serve: no GGUF filter, and only repos one of
-#: them runs (:func:`speech_engine_for`) stay in the results.
-SPEECH_PURPOSES = ("transcription", "speech")
+#: Purposes the worker engines serve (speech, transcription, images): no
+#: GGUF filter, and only repos one of them runs (:func:`speech_engine_for`)
+#: stay in the results.
+SPEECH_PURPOSES = ("transcription", "speech", "image")
 #: Speech repos without a task tag (the official Piper voices, Kokoro and
 #: Kitten have none) are found by name: (tags, the word searched when the
 #: person typed none; with a word, theirs is searched).
 SPEECH_NAME_QUERIES: Dict[str, List[Tuple[List[str], str]]] = {
     "speech": [(["onnx"], "piper"), (["onnx"], "kokoro"), (["onnx"], "kitten-tts"), (["onnx"], "supertonic")],
     "transcription": [],
+    "image": [([], "qwen-image")],
 }
 #: The repos the presets use, shown first when the search matches them: the
 #: Hub reports no downloads for them, so a sort would bury them.
 SPEECH_FEATURED = {"speech": ["rhasspy/piper-voices", "fastrtc/kokoro-onnx", "Supertone/supertonic-3",
                               "KittenML/kitten-tts-nano-0.8-int8", "ResembleAI/chatterbox",
                               "mlx-community/chatterbox-4bit", "myshell-ai/OpenVoiceV2"],
-                   "transcription": ["Systran/faster-whisper-small", "Systran/faster-whisper-large-v3"]}
+                   "transcription": ["Systran/faster-whisper-small", "Systran/faster-whisper-large-v3"],
+                   "image": ["mlx-community/Qwen-Image-2512-8bit", "mlx-community/Qwen-Image-2512-4bit",
+                             "Qwen/Qwen-Image-2512"]}
 
 
 def speech_engine_for(repo: str, tags: List[str], purpose: str) -> Optional[str]:
@@ -410,6 +415,9 @@ def speech_engine_for(repo: str, tags: List[str], purpose: str) -> Optional[str]
     low = repo.lower()
     if purpose == "transcription":
         return "whisper" if "whisper" in low else None
+    if purpose == "image":
+        # Qwen-Image repos: mflux's saved layout or Qwen's own; MLX runs on Apple silicon only.
+        return "mflux" if "qwen" in low and "image" in low and app_speech_models.mlx_platform() else None
     if "piper-plus" in low or "piper_plus" in low:
         return None  # a fork with its own runtime
     if "kokoro" in low:

@@ -1,4 +1,4 @@
-"""The OpenAI-compatible gateway, usage and cache routes, and the speech routes."""
+"""The OpenAI-compatible gateway, usage and cache routes, and the speech and image routes."""
 from __future__ import annotations
 
 import asyncio
@@ -25,15 +25,16 @@ router = APIRouter()
 
 @router.get("/v1/models", dependencies=app_core.auth)
 async def v1_models() -> Dict[str, Any]:
-    """Loaded chat models, and every speech model that can run here, loaded
-    or not (the gateway loads one on its first request). ``kind`` tells them
-    apart; the hub keeps speech models out of its chat model picker."""
+    """Loaded chat models, and every speech and image model that can run
+    here, loaded or not (the gateway loads one on its first request).
+    ``kind`` tells them apart; the hub keeps speech and image models out of
+    its chat model picker."""
     app_serving._drop_dead()
     data: List[Dict[str, Any]] = [
         {"id": m.name, "object": "model", "owned_by": "hub-local", "created": 0, "kind": "chat",
          "context_length": m.context_length} for m in app_speech_models.state.loaded.values() if m.engine == "llama"]
     for e in await asyncio.to_thread(app_speech_models.list_models):
-        if e.get("kind") in app_speech_models.SPEECH_KINDS and e.get("loadable"):
+        if e.get("kind") in app_speech_models.WORKER_KINDS and e.get("loadable"):
             data.append({"id": e["name"], "object": "model", "owned_by": "hub-local", "created": 0,
                          "kind": e["kind"], "engine": e["engine"], "loaded": e["loaded"],
                          "voices": e.get("voices") or []})
@@ -50,11 +51,20 @@ def _not_loaded(model: str) -> JSONResponse:
                        f"(loaded: {', '.join(sorted(app_speech_models.state.loaded)) or 'none'})", "model_not_loaded")
 
 
-async def _forward(m: app_speech_models.Loaded, path: str, raw: bytes, content_type: str) -> Response:
+#: The route a model of each worker kind is called on.
+_ROUTE_OF_KIND = {"speech": "/v1/audio/speech", "transcription": "/v1/audio/transcriptions",
+                  "image": "/v1/images/generations"}
+#: Seconds to wait for a picture: a 20-billion-parameter model on a laptop
+#: takes minutes for one.
+IMAGE_READ_TIMEOUT = 3600.0
+
+
+async def _forward(m: app_speech_models.Loaded, path: str, raw: bytes, content_type: str,
+                   read_timeout: float = 600.0) -> Response:
     """``raw`` as it came, to the model's own server, the answer streamed back."""
     m.touch()
     url = f"http://127.0.0.1:{m.port}{path}"
-    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=600.0))
+    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=read_timeout))
     try:
         upstream = await client.send(client.build_request("POST", url, content=raw,
                                                           headers={"content-type": content_type}),
@@ -91,8 +101,8 @@ async def _route_chat(path: str, raw: bytes, body: Any, model: str) -> Response:
     if m is None or m.proc.poll() is not None:
         return _not_loaded(model)
     if m.kind != "chat":
-        return _error(400, f"{model!r} is a {m.kind} model; use /v1/audio/"
-                           f"{'speech' if m.kind == 'speech' else 'transcriptions'}", "wrong_model_kind")
+        return _error(400, f"{model!r} is a {m.kind} model; use {_ROUTE_OF_KIND.get(m.kind, '/v1/audio')}",
+                      "wrong_model_kind")
     if path == "/v1/chat/completions":
         c = app_cache.cache_settings()
         if c["enabled"] and c["warmup"]:
@@ -281,14 +291,14 @@ async def clear_cache(model: Optional[str] = None) -> Dict[str, Any]:
 
 
 async def _speech_model(model: str, kind: str, keep: Tuple[str, ...] = ()) -> Any:
-    """The running server of speech model ``model``, loaded now when it is
-    on disk but not running (evicting none of ``keep``); or the error answer
-    to send instead."""
+    """The running server of the speech or image model ``model``, loaded now
+    when it is on disk but not running (evicting none of ``keep``); or the
+    error answer to send instead."""
     app_serving._drop_dead()
     m = app_speech_models._find_loaded(model) if model else None
     if m is None and model:
         entry = next((e for e in await asyncio.to_thread(app_speech_models.list_models)
-                      if e["name"] == model and e.get("kind") in app_speech_models.SPEECH_KINDS), None)
+                      if e["name"] == model and e.get("kind") in app_speech_models.WORKER_KINDS), None)
         if entry is not None:
             if not entry["loadable"]:
                 return _error(409, entry.get("note") or f"{model} cannot run here", "engine_missing")
@@ -380,3 +390,49 @@ async def v1_transcriptions(request: Request) -> Response:
     return app_core.metered(request, path, model,
                    await _forward(target, path, raw, request.headers.get("content-type") or "multipart/form-data"),
                    started)
+
+
+# ── images ───────────────────────────────────────────────────────────────────
+
+@router.post("/v1/images/generations", dependencies=app_core.auth)
+async def v1_image_generations(request: Request) -> Response:
+    """OpenAI's image route over an image model (speech_worker.py, the mflux
+    engine): ``{model, prompt, size, quality, n}`` and the worker's own
+    ``seed``, ``steps``, ``guidance``, ``negative_prompt``; the answer is
+    ``data[].b64_json`` PNG."""
+    started = time.monotonic()
+    path = "/v1/images/generations"
+    raw = await request.body()
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return app_core.metered(request, path, "", _error(400, "body is not JSON", "bad_request"), started)
+    model = str(body.get("model") or "") if isinstance(body, dict) else ""
+    target = await _speech_model(model, "image")
+    if isinstance(target, Response):
+        return app_core.metered(request, path, model, target, started)
+    return app_core.metered(request, path, model,
+                            await _forward(target, path, raw, "application/json", IMAGE_READ_TIMEOUT), started)
+
+
+@router.post("/v1/images/edits", dependencies=app_core.auth)
+async def v1_image_edits(request: Request) -> Response:
+    """OpenAI's edit route: multipart with ``image``, ``prompt``, ``model``
+    and the same fields; Qwen-Image-Edit follows the instruction, the plain
+    model redraws the picture (``strength``)."""
+    started = time.monotonic()
+    path = "/v1/images/edits"
+    raw = await request.body()
+    try:
+        form = await request.form()
+        model = str(form.get("model") or "")
+        await form.close()
+    except Exception:  # noqa: BLE001 - anything that is not a readable form
+        return app_core.metered(request, path, "", _error(400, "expected multipart/form-data with an image, "
+                                                           "a prompt and a model", "bad_request"), started)
+    target = await _speech_model(model, "image")
+    if isinstance(target, Response):
+        return app_core.metered(request, path, model, target, started)
+    return app_core.metered(request, path, model,
+                            await _forward(target, path, raw, request.headers.get("content-type") or "multipart/form-data",
+                                           IMAGE_READ_TIMEOUT), started)

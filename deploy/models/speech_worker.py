@@ -56,6 +56,18 @@ Voices
     compute from a sample (Chatterbox's conditionals, OpenVoice's tone
     color) in its ``cache/``, so a voice is analysed once per model.
 
+mflux
+    Images with Qwen-Image on Apple's MLX through `mflux
+    <https://github.com/filipstrand/mflux>`_, over a model directory with
+    ``transformer/``, ``text_encoder/``, ``vae/`` and ``tokenizer/``: an
+    mflux-saved quantised model such as mlx-community/Qwen-Image-2512-8bit
+    (34 GB) or Qwen's own diffusers layout (Qwen/Qwen-Image-2512). A
+    directory whose name says ``edit`` is Qwen-Image-Edit, which rewrites
+    the pictures it is given; the plain model draws from text and, given
+    a picture, redraws it (image to image). Apple silicon only. The one
+    engine here that makes pictures, not sound, served on the OpenAI image
+    routes below.
+
 Routes
     GET  /health                    200 once the model is loaded
     GET  /voices                    the voices a speech model knows
@@ -64,6 +76,11 @@ Routes
                                     (Chatterbox also takes exaggeration and cfg_weight)
     POST /v1/audio/convert          multipart: file, voice, source, tau, response_format
                                     (OpenVoice: speech in, the same speech in ``voice`` out)
+    POST /v1/images/generations     JSON: prompt, size, quality, n, seed, steps, guidance,
+                                    negative_prompt (an image model); the answer is OpenAI's,
+                                    ``data[].b64_json`` PNG
+    POST /v1/images/edits           multipart: image, prompt and the same fields; ``strength``
+                                    says how far a plain Qwen-Image may leave the picture
 
 The model loads before the server starts listening, so a refused connection
 means "still loading" to the runtime's health wait. Engines are imported only
@@ -93,7 +110,8 @@ log = logging.getLogger("speech_worker")
 
 #: Engine -> what it does, the purpose name the hub uses for it.
 ENGINE_KIND = {"whisper": "transcription", "piper": "speech", "kokoro": "speech", "kitten": "speech",
-               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech"}
+               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech",
+               "mflux": "image"}
 #: Engines whose voices are the samples people recorded.
 CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "openvoice")
 
@@ -120,6 +138,14 @@ _ESPEAK_PATH_MAX = 100
 #: Kokoro voice name prefix -> the language its phonemizer needs.
 _KOKORO_LANG = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it",
                 "p": "pt-br", "j": "ja", "z": "cmn"}
+
+#: The folders of a Qwen-Image model directory (mflux's saved layout and
+#: Qwen's diffusers one alike); ``text_encoder_2`` would make it FLUX.
+QWEN_IMAGE_DIRS = ("transformer", "text_encoder", "vae", "tokenizer")
+#: Steps for OpenAI's ``quality`` words; Qwen-Image's own default is 20.
+IMAGE_STEPS = {"low": 8, "medium": 20, "high": 40, "auto": 20}
+IMAGE_MAX_SIDE = 2048
+IMAGE_MAX_N = 4
 
 #: Supertonic's model files, under ``onnx/`` beside ``voice_styles/``.
 SUPERTONIC_FILES = ("duration_predictor.onnx", "text_encoder.onnx", "vector_estimator.onnx",
@@ -173,7 +199,19 @@ def detect_engine(path: Path) -> Optional[str]:
         return "chatterbox_mlx"
     if "checkpoint.pth" in names and "config.json" in names and _is_tone_converter(path / "config.json"):
         return "openvoice"
+    if is_qwen_image_dir(path):
+        return "mflux"
     return None
+
+
+def is_qwen_image_dir(path: Path) -> bool:
+    """Whether ``path`` holds a Qwen-Image model: the four folders, weights
+    in the transformer's, and no second text encoder (that is FLUX)."""
+    if not all((path / d).is_dir() and any((path / d).iterdir()) for d in QWEN_IMAGE_DIRS):
+        return False
+    if (path / "text_encoder_2").is_dir():
+        return False
+    return any(p.suffix == ".safetensors" for p in (path / "transformer").iterdir())
 
 
 def _is_mlx_chatterbox(config: Path) -> bool:
@@ -489,6 +527,9 @@ class Engine:
 
     def convert(self, audio: bytes, voice: Optional[str], source: str, tau: float) -> bytes:
         raise WorkerError(f"{self.name} models do not change the voice of speech", 400)
+
+    def generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes] = None) -> Tuple[bytes, Dict[str, Any]]:
+        raise WorkerError(f"{self.name} models make no pictures; use /v1/audio", 400)
 
 
 class Whisper(Engine):
@@ -1207,8 +1248,123 @@ class OpenVoice(Engine):
         return wav_bytes(out, self.vc.rate)
 
 
+# ── Images ───────────────────────────────────────────────────────────────────
+
+def image_options(fields: Any) -> Dict[str, Any]:
+    """The generation settings of an OpenAI image request (a JSON body or a
+    form): ``size`` as WxH (``auto`` is 1024x1024, each side at most
+    :data:`IMAGE_MAX_SIDE`), ``quality`` or ``steps``, ``guidance``,
+    ``seed`` (random when absent), ``n``, ``negative_prompt`` and
+    ``strength`` for an edit by the plain model. A wrong value is a 400."""
+    def number(name: str, lo: float, hi: float, default: Optional[float], whole: bool = False) -> Any:
+        raw = fields.get(name)
+        if raw in (None, ""):
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise WorkerError(f"{name} is not a number", 400)
+        if not lo <= value <= hi:
+            raise WorkerError(f"{name} must be between {lo:g} and {hi:g}", 400)
+        return int(value) if whole else value
+
+    size = str(fields.get("size") or "auto").strip().lower()
+    if size in ("auto", ""):
+        width, height = 1024, 1024
+    else:
+        parts = size.replace("×", "x").split("x")
+        try:
+            width, height = (int(parts[0]), int(parts[1])) if len(parts) == 2 else (0, 0)
+        except ValueError:
+            width, height = 0, 0
+        if not (16 <= width <= IMAGE_MAX_SIDE and 16 <= height <= IMAGE_MAX_SIDE):
+            raise WorkerError(f"size must be WIDTHxHEIGHT, each from 16 to {IMAGE_MAX_SIDE}, or auto", 400)
+    quality = str(fields.get("quality") or "auto").strip().lower()
+    if quality not in IMAGE_STEPS:
+        raise WorkerError(f"quality must be one of {', '.join(IMAGE_STEPS)}", 400)
+    steps = number("steps", 1, 100, IMAGE_STEPS[quality], whole=True)
+    seed = number("seed", 0, 2**31 - 1, None, whole=True)
+    if seed is None:
+        import random
+        seed = random.randrange(2**31 - 1)
+    return {
+        "width": 16 * (width // 16), "height": 16 * (height // 16), "steps": steps, "seed": seed,
+        "guidance": number("guidance", 0, 30, 4.0),
+        "n": number("n", 1, IMAGE_MAX_N, 1, whole=True),
+        "negative_prompt": str(fields.get("negative_prompt") or "").strip() or None,
+        "strength": number("strength", 0.05, 1.0, 0.6),
+    }
+
+
+class QwenImageMflux(Engine):
+    """Qwen-Image through mflux on Apple's MLX. The plain model draws from
+    text and, given a picture, redraws it with ``strength`` saying how far
+    it may go; Qwen-Image-Edit (a directory named ``edit``) takes a picture
+    and an instruction. mflux loads the weights as they are saved, so an
+    8-bit directory runs in 8 bit. MLX keeps a stream per thread: loading
+    and every picture run on one thread of its own."""
+
+    kind = "image"
+    name = "mflux"
+
+    def __init__(self, path: Path, threads: int = 0) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        self.path = path
+        self.edit = "edit" in path.name.lower()
+        self._mlx = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+        self.model = self._mlx.submit(self._load).result()
+
+    def _load(self) -> Any:
+        if self.edit:
+            from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
+            return QwenImageEdit(model_path=str(self.path))
+        from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
+        return QwenImage(model_path=str(self.path))
+
+    def generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes] = None) -> Tuple[bytes, Dict[str, Any]]:
+        if self.edit and image is None:
+            raise WorkerError(f"{self.path.name} edits pictures; send one on /v1/images/edits", 400)
+        return self._mlx.submit(self._generate, prompt, options, image).result()
+
+    def _generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes]) -> Tuple[bytes, Dict[str, Any]]:
+        import time as _time
+        kwargs: Dict[str, Any] = {
+            "seed": int(options["seed"]), "prompt": prompt, "num_inference_steps": int(options["steps"]),
+            "width": int(options["width"]), "height": int(options["height"]),
+            "guidance": float(options["guidance"]), "negative_prompt": options.get("negative_prompt"),
+        }
+        started = _time.monotonic()
+        source: Optional[str] = None
+        try:
+            if image is not None:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as fh:
+                    fh.write(image)
+                    source = fh.name
+                if self.edit:
+                    kwargs["image_paths"] = [source]
+                else:
+                    kwargs["image_path"] = source
+                    kwargs["image_strength"] = float(options["strength"])
+            try:
+                made = self.model.generate_image(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - mflux's own message is the answer
+                raise WorkerError(f"mflux: {type(exc).__name__}: {exc}"[:500], 500)
+        finally:
+            if source:
+                try:
+                    os.unlink(source)
+                except OSError:
+                    pass
+        buf = io.BytesIO()
+        made.image.save(buf, format="PNG")
+        return buf.getvalue(), {"seed": kwargs["seed"], "steps": kwargs["num_inference_steps"],
+                                "width": made.width or kwargs["width"], "height": made.height or kwargs["height"],
+                                "seconds": round(_time.monotonic() - started, 1)}
+
+
 ENGINES = {"whisper": Whisper, "piper": Piper, "kokoro": Kokoro, "kitten": Kitten, "supertonic": Supertonic,
-           "chatterbox": Chatterbox, "chatterbox_mlx": ChatterboxMLX, "openvoice": OpenVoice}
+           "chatterbox": Chatterbox, "chatterbox_mlx": ChatterboxMLX, "openvoice": OpenVoice,
+           "mflux": QwenImageMflux}
 
 
 def load_engine(engine: str, path: Path, threads: int = 0) -> Engine:
@@ -1293,6 +1449,47 @@ def build_app(engine: Engine, model_name: str) -> FastAPI:
         if fmt == "verbose_json":
             return JSONResponse({"task": "transcribe", **result})
         return JSONResponse({"text": result["text"]})
+
+    async def pictures(prompt: str, fields: Any, image: Optional[bytes]) -> Response:
+        """OpenAI's image answer: one ``data`` item per picture, PNG in
+        ``b64_json``, and ``generation`` saying how each was made."""
+        import base64
+        import time as _time
+        if not prompt:
+            return error("prompt is empty")
+        try:
+            options = image_options(fields)
+            data, made = [], []
+            for i in range(int(options["n"])):
+                png, meta = await run_in_threadpool(engine.generate, prompt, {**options, "seed": options["seed"] + i},
+                                                    image)
+                data.append({"b64_json": base64.b64encode(png).decode("ascii")})
+                made.append(meta)
+        except WorkerError as exc:
+            return error(str(exc), exc.status)
+        return JSONResponse({"created": int(_time.time()), "data": data, "output_format": "png",
+                             "generation": made[0] if len(made) == 1 else made})
+
+    @app.post("/v1/images/generations")
+    async def image_generations(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            return error("body is not JSON")
+        if not isinstance(body, dict):
+            return error("body is not a JSON object")
+        return await pictures(str(body.get("prompt") or "").strip(), body, None)
+
+    @app.post("/v1/images/edits")
+    async def image_edits(request: Request) -> Response:
+        form = await request.form()
+        upload = form.get("image") or form.get("image[]")
+        if upload is None or not hasattr(upload, "read"):
+            return error("image is missing")
+        picture = await upload.read()
+        if not picture:
+            return error("image is empty")
+        return await pictures(str(form.get("prompt") or "").strip(), form, picture)
 
     return app
 

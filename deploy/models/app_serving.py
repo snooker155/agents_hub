@@ -88,7 +88,7 @@ async def load_model(file: str, context_length: int, gpu_layers: int,
     its pool when the pool is full; never one named in ``keep``."""
     path = app_speech_models._model_path(file)
     engine = app_speech_models.speech_engine_of(path)
-    speech = engine is not None
+    speech = engine is not None  # a worker engine: speech or image
     mlx_cfg = app_engines.mlx_config(path) if not speech else None
     if mlx_cfg is not None:
         engine = "mlx"
@@ -96,8 +96,8 @@ async def load_model(file: str, context_length: int, gpu_layers: int,
             raise HTTPException(status_code=409, detail=f"{path.name} is an MLX model, and MLX runs on "
                                                         "Apple silicon only")
     if engine is None and not path.name.lower().endswith(".gguf"):
-        raise HTTPException(status_code=400, detail=f"{path.name} is neither a GGUF file, an MLX model "
-                                                    "nor a speech model this runtime can load")
+        raise HTTPException(status_code=400, detail=f"{path.name} is neither a GGUF file, an MLX model, "
+                                                    "a speech model nor an image model this runtime can load")
     if engine is not None and not app_speech_models.engines().get(engine):
         raise HTTPException(status_code=409, detail=f"the {engine} engine is not installed in this "
                                                     "runtime; install it on the Models page first")
@@ -116,11 +116,14 @@ async def load_model(file: str, context_length: int, gpu_layers: int,
                         "kind": current.kind, "already_loaded": True, "evicted": []}
             # A different context length needs a restart of that server.
             await asyncio.to_thread(_stop, app_speech_models.state.loaded.pop(name))
-        # Chat and speech models are two pools: a speech model never evicts
-        # the chat model, and the other way round.
-        cap = app_settings.MAX_SPEECH_LOADED if speech else app_settings.MAX_LOADED
+        # Chat, speech and image models are three pools: a speech model
+        # never evicts the chat model, an image model neither, and the other
+        # way round.
+        pool_name = app_speech_models.pool_of(kind)
+        cap = {"speech": app_settings.MAX_SPEECH_LOADED, "image": app_settings.MAX_IMAGE_LOADED}.get(
+            pool_name, app_settings.MAX_LOADED)
         while True:
-            pool = [m for m in app_speech_models.state.loaded.values() if (m.kind in app_speech_models.SPEECH_KINDS) == speech]
+            pool = [m for m in app_speech_models.state.loaded.values() if app_speech_models.pool_of(m.kind) == pool_name]
             if len(pool) < cap:
                 break
             spare = [m for m in pool if m.name not in keep]
@@ -168,7 +171,8 @@ async def load_model(file: str, context_length: int, gpu_layers: int,
         ctx = 0 if speech else (app_engines.mlx_context(mlx_cfg) if mlx_cfg is not None else context_length)
         harmony = bool(mlx_cfg) and str(mlx_cfg.get("model_type")) == "gpt_oss"
         try:
-            await wait_healthy(port, proc)
+            await wait_healthy(port, proc, timeout=(app_settings.IMAGE_LOAD_TIMEOUT_SECONDS if kind in app_speech_models.IMAGE_KINDS
+                                                   else app_settings.LOAD_TIMEOUT_SECONDS))
         except Exception as exc:  # noqa: BLE001 - any health-check failure is returned to the caller as an HTTP error
             await asyncio.to_thread(_stop, app_speech_models.Loaded(name, path.name, port, proc, ctx, engine, kind))
             raise HTTPException(status_code=502, detail=f"{exc}. Log tail: {app_speech_models._log_tail(name)}")

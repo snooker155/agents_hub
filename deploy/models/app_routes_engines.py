@@ -44,7 +44,9 @@ def install_commands(engine: str) -> List[List[str]]:
     """The commands installing ``engine`` runs, in order. An engine with an
     environment of its own (:data:`ENGINE_VENVS`) gets it made first, and
     the worker's own packages in it; a torch engine gets torch from
-    :func:`torch_index` before the rest, which then finds it in place."""
+    :func:`torch_index` before the rest, which then finds it in place. An
+    engine found in an interpreter of the person's own (:func:`found_python`)
+    gets the worker's packages there and no environment."""
     python = app_speech_models.engine_python(engine)
     pip = [python, "-m", "pip", "install", "--disable-pip-version-check"]
     cmds: List[List[str]] = []
@@ -200,7 +202,8 @@ async def get_engines() -> Dict[str, Any]:
              "version": app_engines._llama_record().get("tag"), "bin": app_engines.llama_bin()}
     return {"python": app_settings.SPEECH_PYTHON, "engines": [llama] + [
         {"id": e, "kind": app_speech_models.ENGINE_KIND[e], "installed": found.get(e, False),
-         "packages": app_speech_models.ENGINE_PACKAGES[e] + app_speech_models.ENGINE_NO_DEPS.get(e, []), "python": app_speech_models.engine_python(e)}
+         "packages": app_speech_models.ENGINE_PACKAGES[e] + app_speech_models.ENGINE_NO_DEPS.get(e, []),
+         "python": app_speech_models.engine_python(e), "python_source": app_speech_models.python_source(e)}
         for e in app_speech_models.ENGINE_MODULES if e in found]}
 
 

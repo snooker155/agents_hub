@@ -330,6 +330,19 @@ def _lmstudio_entries() -> List[Tuple[Dict[str, Any], Path]]:
     mlx_ok = app_speech_models.mlx_platform()
     for repo in sorted(p for p in root.glob("*/*") if p.is_dir()):
         publisher = repo.parent.name
+        if app_speech_models.speech_engine_of(repo) == "mflux":
+            # A Qwen-Image folder (LM Studio downloads them for other apps):
+            # an image model the mflux engine runs.
+            dest = re.sub(r"[^\w.-]+", "-", repo.name).strip("-.")
+            bits = re.search(r"(\d+)[-_]?bit", repo.name.lower())
+            out.append(({"name": f"{publisher}/{repo.name}", "file": dest, "format": "mlx", "kind": "image",
+                         "engine": "mflux",
+                         "size_bytes": sum(f.stat().st_size for f in repo.rglob("*") if f.is_file()),
+                         "family": "qwen-image", "quantization": f"{bits.group(1)}-bit" if bits else None,
+                         "parameter_size": None, "imported": (app_settings.MODELS_DIR / dest).exists(),
+                         "compatible": mlx_ok, "embedding": False,
+                         "note": None if mlx_ok else "an MLX model: MLX runs on Apple silicon only"}, repo))
+            continue
         config = mlx_config(repo)
         if config is not None:
             quant = config.get("quantization") if isinstance(config.get("quantization"), dict) else {}
