@@ -23,7 +23,9 @@ The per-minute rate limit applies the same way, and ``ask_agent`` checks the
 caller's tokens per day and a key's money cap before an agent starts, like a
 ``/v1`` completion does.
 
-The tools:
+The tools are the same for every client; nothing here knows which one calls.
+This module keeps the agent ones; files, knowledge, workflows and runs are in
+``routes/mcp_server_tools.py``:
 
 * ``list_workspaces``: the workspaces the caller can reach.
 * ``list_agents``: the agents runnable in one workspace (the chat's rule,
@@ -34,7 +36,10 @@ The tools:
   an untrusted channel (``tools.capabilities.UNTRUSTED_CHANNELS``), because
   what an IDE agent forwards may come from any file it read. The workspace and
   role checks are ``/v1``'s own (``openai_compat._agent_workspace``).
-* ``get_run``: a run's status and answer, for a turn that outlived the call.
+  ``file_ids`` attach workspace files (``upload_file``) to the turn.
+* ``list_files``, ``read_file``, ``upload_file``, ``list_knowledge``,
+  ``search_knowledge``, ``list_workflows``, ``run_workflow``, ``list_runs``,
+  ``get_run``, ``stop_run``: see ``routes/mcp_server_tools.py``.
 """
 from __future__ import annotations
 
@@ -43,12 +48,14 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from common import identity
+from routes import mcp_server_tools as hub_tools
+from routes.mcp_server_tools import Ctx, ToolError, ToolFn, check_budget, workspace_names
 
 log = logging.getLogger(__name__)
 
@@ -81,13 +88,11 @@ INSTRUCTIONS = (
     "Agents Hub runs AI agents with their own tools, memory and knowledge. "
     "Call list_agents to see who is available, then ask_agent with one "
     "self-contained message. Pass the returned conversation back to continue "
-    "the same conversation. A turn that takes longer than wait_seconds "
-    "returns a run_id; call get_run with it later.")
-
-
-class ToolError(Exception):
-    """A tool call the client should see as a failed tool result
-    (``isError: true``), not as a protocol error."""
+    "the same conversation. To give an agent a file, upload_file it and pass "
+    "the file_id in file_ids. search_knowledge and read_file answer from the "
+    "workspace's own documents and files without asking an agent. Teams, flows "
+    "and loops (list_workflows) run with run_workflow. Work that takes longer "
+    "than wait_seconds returns a run_id; call get_run with it later.")
 
 
 class _RpcError(Exception):
@@ -97,29 +102,10 @@ class _RpcError(Exception):
         self.message = message
 
 
-class Ctx:
-    """What a tool sees of the request: who calls, and from where."""
-
-    def __init__(self, request: Request, principal: Any) -> None:
-        self.request = request
-        self.principal = principal
-
-
 # ── Tools ────────────────────────────────────────────────────────────────────
 
-def _workspace_names(principal: Any) -> List[str]:
-    from common import access
-    from workspace.storage import list_workspace_folders
-    names = sorted(p.name for p in list_workspace_folders())
-    if "default" not in names:
-        names.insert(0, "default")
-    return [n for n in names
-            if access.can_see_workspace(principal, n)
-            and (principal is None or principal.reaches(n))]
-
-
 async def _list_workspaces(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
-    return {"workspaces": _workspace_names(ctx.principal)}
+    return {"workspaces": workspace_names(ctx.principal)}
 
 
 async def _list_agents(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -128,11 +114,11 @@ async def _list_agents(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
 
     workspace = str(args.get("workspace") or "").strip() or v1._header_workspace(ctx.request)
     if workspace:
-        if workspace not in _workspace_names(ctx.principal):
+        if workspace not in workspace_names(ctx.principal):
             raise ToolError(f"workspace '{workspace}' is not reachable with this credential")
         specs = usable_agents(workspace)
     else:
-        specs = usable_in_any(_workspace_names(ctx.principal))
+        specs = usable_in_any(workspace_names(ctx.principal))
     agents = [{"agent_id": s.id, "name": s.name or s.id,
                "description": getattr(s, "description", "") or ""}
               for s in sorted(specs, key=lambda s: s.id)]
@@ -176,10 +162,25 @@ def _wait_seconds(value: Any) -> float:
     return max(5.0, min(wait, ceiling))
 
 
+def _attachments(file_ids: List[str], workspace: str) -> List[Any]:
+    """Workspace files for a turn, by id. A file of another workspace, or one
+    that does not exist, is refused here with its id rather than dropped by
+    the pipeline later."""
+    from chat.models import ChatAttachment
+    from files import service
+    out = []
+    for file_id in dict.fromkeys(f.strip() for f in file_ids if f.strip()):
+        record = service.get_file(file_id)
+        if record is None or record["workspace"] != workspace:
+            raise ToolError(f"no file '{file_id}' in workspace '{workspace}'; "
+                            "upload_file puts one there")
+        out.append(ChatAttachment(file_id=file_id, filename=record["name"]))
+    return out
+
+
 async def _ask_agent(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
     from chat.models import ChatRequest
     from chat.runs import build_conversation_history
-    from common import rate_limit
     from routes import openai_compat as v1
     from widgets.relay import TurnRelay
 
@@ -190,12 +191,7 @@ async def _ask_agent(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
         raise ToolError("agent_id is required; call list_agents to see the ids")
     if not message:
         raise ToolError("message is required")
-    within, _ = rate_limit.check_tokens_per_day(principal)
-    if not within:
-        raise ToolError("daily token limit reached; it resets at 00:00 UTC")
-    within_budget, _ = rate_limit.check_key_budget(principal)
-    if not within_budget:
-        raise ToolError("this API key has reached its monthly budget")
+    check_budget(principal)
     try:
         spec = v1._agent_spec(v1.AGENT_PREFIX + agent_id)
         workspace = v1._agent_workspace(ctx.request, principal, spec,
@@ -206,6 +202,11 @@ async def _ask_agent(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
     if context:
         message = "\n\n".join(["Context from the caller:", context, "---", message])
 
+    file_ids = args.get("file_ids") or []
+    if not isinstance(file_ids, list) or not all(isinstance(f, str) for f in file_ids):
+        raise ToolError("file_ids must be a list of file ids")
+    attachments = _attachments(file_ids, workspace)
+
     handle = str(args.get("conversation") or "").strip()
     conversation_id = (_read_conversation(handle, agent_id=spec.id, workspace=workspace,
                                           principal=principal) if handle else None)
@@ -215,7 +216,8 @@ async def _ask_agent(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
 
     chat_request = ChatRequest(
         agent_id=spec.id, message=message, workspace=workspace, history=history,
-        conversation_id=conversation_id, conversation_title=message[:60], source=ORIGIN)
+        conversation_id=conversation_id, conversation_title=message[:60], source=ORIGIN,
+        attachments=attachments)
     key_id = (getattr(principal, "credential_id", None)
               if getattr(principal, "via", "") == "api_key" else None)
     relay = TurnRelay(chat_request, user_id=getattr(principal, "id", None), key_id=key_id).start()
@@ -264,34 +266,6 @@ async def _ask_agent(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
             "run_id": done.get("run_id"), "conversation": conversation, "usage": usage}
 
 
-async def _get_run(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
-    from common import access
-    from managers.run_manager import get_run_by_id, get_run_process
-
-    run_id = str(args.get("run_id") or "").strip()
-    if not run_id:
-        raise ToolError("run_id is required")
-    run = get_run_by_id(run_id)
-    workspace = str((run or {}).get("workspace") or "") or "default"
-    principal = ctx.principal
-    if (not run or not access.can_see_workspace(principal, workspace)
-            or (principal is not None and not principal.reaches(workspace))):
-        # The same answer for "no such run" and "not yours", so ids cannot be probed.
-        raise ToolError(f"no run '{run_id}'")
-    status = str(run.get("status") or "")
-    out: Dict[str, Any] = {"run_id": run_id, "status": status, "agent_id": run.get("agent_id"),
-                           "workspace": workspace, "started_at": run.get("started_at"),
-                           "finished_at": run.get("finished_at")}
-    if status in ("completed", "failed", "stopped", "stop"):
-        ctx_rec = (get_run_process(run_id) or {}).get("llm_input_context") or {}
-        out["answer"] = str(ctx_rec.get("response") or "")
-        if run.get("error"):
-            out["error"] = str(run.get("error"))
-    return out
-
-
-ToolFn = Callable[[Ctx, Dict[str, Any]], Awaitable[Dict[str, Any]]]
-
 _WORKSPACE_ARG = {"type": "string",
                   "description": "Workspace to run in. Defaults to the X-Agents-Hub-Workspace "
                                  "header, the API key's only workspace, or the agent's own."}
@@ -319,7 +293,8 @@ TOOLS: List[Dict[str, Any]] = [
         "description": "Send one message to an Agents Hub agent and get its answer. The agent "
                        "runs on the hub with its own tools, memory and knowledge. Put "
                        "everything it needs in the message or context: it cannot see your "
-                       "files. Returns a conversation handle to continue the conversation.",
+                       "local files, so pass them as context or upload_file them and give "
+                       "file_ids. Returns a conversation handle to continue the conversation.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -332,6 +307,9 @@ TOOLS: List[Dict[str, Any]] = [
                 "conversation": {"type": "string",
                                  "description": "The conversation value of an earlier answer, "
                                                 "to continue that conversation."},
+                "file_ids": {"type": "array", "items": {"type": "string"},
+                             "description": "Workspace files the agent should read, by id "
+                                            "(from upload_file or list_files)."},
                 "wait_seconds": {"type": "number",
                                  "description": "How long to wait for the answer before "
                                                 "returning a run_id instead (default 600)."},
@@ -341,33 +319,30 @@ TOOLS: List[Dict[str, Any]] = [
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
     },
-    {
-        "name": "get_run",
-        "title": "Get a run",
-        "description": "The status of an agent run, and its answer once it finished. Use it "
-                       "with the run_id ask_agent returned when the agent was still working.",
-        "inputSchema": {"type": "object",
-                        "properties": {"run_id": {"type": "string"}},
-                        "required": ["run_id"], "additionalProperties": False},
-        "annotations": {"readOnlyHint": True, "openWorldHint": False},
-    },
+    *hub_tools.TOOLS,
 ]
 
 _HANDLERS: Dict[str, ToolFn] = {
     "list_workspaces": _list_workspaces,
     "list_agents": _list_agents,
     "ask_agent": _ask_agent,
-    "get_run": _get_run,
+    **hub_tools.HANDLERS,
 }
 
 
 def _tool_text(name: str, result: Dict[str, Any]) -> str:
     """The text an MCP client shows its model: the answer itself for a
-    finished turn (with the handle on a line of its own), JSON otherwise."""
+    finished turn (with the handle on a line of its own), a file's text as
+    it is, JSON otherwise."""
     if name == "ask_agent" and result.get("status") == "completed":
         return (f"{result.get('answer') or '(no answer)'}\n\n"
                 f"[agent {result.get('answered_by')}, run {result.get('run_id')}; "
                 f"conversation: {result.get('conversation')}]")
+    if name == "read_file":
+        end = result["offset"] + len(result["text"])
+        more = f"; next_offset: {result['next_offset']}" if result.get("truncated") else ""
+        return (f"{result['text']}\n\n[file {result.get('name')} ({result.get('file_id')}), "
+                f"characters {result['offset']}..{end} of {result['total_chars']}{more}]")
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 

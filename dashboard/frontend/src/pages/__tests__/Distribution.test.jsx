@@ -72,21 +72,31 @@ beforeEach(() => {
 });
 
 describe('Distribution page', () => {
-  it('puts the address and the typed key into the Claude Code snippet', async () => {
+  it('puts the address and the typed key into the snippet of the chosen client', async () => {
     show();
-    const snippet = await screen.findByTestId('mcp-claude');
-    expect(snippet.textContent).toContain('https://hub.example/v1/mcp');
+    const snippet = await screen.findByTestId('mcp-snippet');
+    expect(snippet.textContent).toContain('claude mcp add --transport http agents-hub https://hub.example/v1/mcp');
     fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: 'ah_secret' } });
-    expect(screen.getByTestId('mcp-claude').textContent).toContain('Authorization: Bearer ah_secret');
-    expect(screen.getByTestId('mcp-cursor').textContent).toContain('"Authorization": "Bearer ah_secret"');
+    expect(screen.getByTestId('mcp-snippet').textContent).toContain("'Authorization: Bearer ah_secret'");
+    fireEvent.click(screen.getByRole('button', { name: 'Cursor' }));
+    expect(screen.getByTestId('mcp-snippet').textContent).toContain('"Authorization": "Bearer ah_secret"');
+    expect(screen.getByRole('link', { name: /add to cursor/i }).getAttribute('href')).toMatch(/^cursor:\/\//);
+    fireEvent.click(screen.getByRole('button', { name: 'VS Code' }));
+    expect(screen.getByTestId('mcp-snippet').textContent).toContain('"type": "http"');
+    expect(screen.getByRole('link', { name: /add to vs code/i }).getAttribute('href')).toMatch(/^vscode:mcp\/install\?/);
+    fireEvent.click(screen.getByRole('button', { name: 'Codex CLI' }));
+    expect(screen.getByTestId('mcp-snippet').textContent).toContain('[mcp_servers.agents-hub]');
+    expect(screen.queryByRole('link', { name: /add to/i })).toBeNull();
+    expect(screen.getByText('ah mcp connect codex --write')).toBeInTheDocument();
   });
 
   it('leaves the Authorization header out when the hub has no sign-in', async () => {
     api.getDistribution.mockImplementation(() => ok(info({ auth_mode: 'single' })));
     show();
-    const snippet = await screen.findByTestId('mcp-claude');
+    const snippet = await screen.findByTestId('mcp-snippet');
     expect(snippet.textContent).not.toContain('Authorization');
-    expect(screen.getByTestId('mcp-cursor').textContent).not.toContain('headers');
+    fireEvent.click(screen.getByRole('button', { name: 'Windsurf' }));
+    expect(screen.getByTestId('mcp-snippet').textContent).not.toContain('headers');
   });
 
   it('approves a pending install with its workspace and agent', async () => {

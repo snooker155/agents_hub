@@ -2,7 +2,7 @@
  * Distribution page: the hub's agents where people already work
  * (dashboard/backend/routes/distribution.py).
  *
- * Four cards: MCP for Claude Code and Cursor, the Obsidian plugin, the Slack
+ * Four cards: MCP for any client (Claude Code, Cursor, VS Code...), the Obsidian plugin, the Slack
  * app and the Teams app. The two chat apps share one installs list, where an
  * organisation that put the bot in its own workspace waits for approval and
  * is then given an agent.
@@ -13,8 +13,10 @@ import { AlertTriangle, Check, Copy, Download, ExternalLink, Plus, RefreshCw, Se
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import PageLoader from '../components/PageLoader';
 import { SectionCard, inputCls } from '../components/settingsUi';
+import BalancedColumns from '../components/dashboard/BalancedColumns';
 import InstallsTable from '../components/distribution/InstallsTable';
 import { useAgentsOf } from '../components/distribution/useAgentsOf';
+import { MCP_CLIENTS, mcpInstallLink, mcpSnippet } from '../components/distribution/mcpClients';
 import { errorDetail, useToast } from '../components/toast';
 import { useI18n } from '../i18n';
 import { getWorkspaces } from '../api';
@@ -27,6 +29,8 @@ const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 
 const btnSecondary = 'flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50';
 const notice = 'rounded-lg px-3 py-2 text-sm border';
 const LABEL = 'block text-xs font-medium text-gray-600 mb-1';
+// BalancedColumns measures a card from its children and stretches the last one in a column.
+const CARD = 'relative flex-1';
 
 // A failed download arrives as a Blob, so the server's detail has to be read out of it.
 async function failure(err) {
@@ -83,10 +87,19 @@ function Snippet({ label, text, testId, children }) {
   );
 }
 
+const MCP_TOOL_GROUPS = [
+  ['agents', ['list_workspaces', 'list_agents', 'ask_agent']],
+  ['files', ['list_files', 'read_file', 'upload_file']],
+  ['knowledge', ['list_knowledge', 'search_knowledge']],
+  ['workflows', ['list_workflows', 'run_workflow']],
+  ['runs', ['list_runs', 'get_run', 'stop_run']],
+];
+
 function McpCard({ info, workspaces }) {
   const { t } = useI18n();
   const [key, setKey] = useState('');
   const [workspace, setWorkspace] = useState('');
+  const [client, setClient] = useState(MCP_CLIENTS[0]);
   const mode = info.auth_mode;
   const url = info.mcp?.url || '';
   const headerName = info.mcp?.workspace_header || 'X-Agents-Hub-Workspace';
@@ -99,15 +112,12 @@ function McpCard({ info, workspaces }) {
     return h;
   }, [mode, key, workspace, headerName]);
 
-  const claude = `claude mcp add --transport http ${serverName} ${url}${
-    Object.entries(headers).map(([k, v]) => ` --header "${k}: ${v}"`).join('')}`;
-  const config = { url, ...(Object.keys(headers).length ? { headers } : {}) };
-  const cursor = JSON.stringify({ mcpServers: { [serverName]: config } }, null, 2);
-  const deeplink = `cursor://anysphere.cursor-deeplink/mcp/install?name=${encodeURIComponent(serverName)}&config=${
-    btoa(JSON.stringify(config))}`;
+  const target = { url, headers, serverName };
+  const snippet = mcpSnippet(client, target);
+  const installLink = mcpInstallLink(client, target);
 
   return (
-    <SectionCard title={t('distribution.mcp.title')}>
+    <SectionCard className={CARD} title={t('distribution.mcp.title')}>
       <p className="text-sm text-gray-600">{t('distribution.mcp.intro')}</p>
       <CopyRow label={t('distribution.mcp.url')} value={url} testId="mcp-url" />
       <div className="grid gap-3 sm:grid-cols-2">
@@ -134,19 +144,47 @@ function McpCard({ info, workspaces }) {
           </select>
         </div>
       </div>
-      <Snippet label={t('distribution.mcp.claudeCode')} text={claude} testId="mcp-claude" />
-      <Snippet label={t('distribution.mcp.cursor')} text={cursor} testId="mcp-cursor">
-        <a href={deeplink} className={btnSecondary}>
-          <ExternalLink className="w-3.5 h-3.5" /> {t('distribution.mcp.addToCursor')}
-        </a>
+      <div>
+        <span className={LABEL}>{t('distribution.mcp.client')}</span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('distribution.mcp.client')}>
+          {MCP_CLIENTS.map((c) => (
+            <button key={c} type="button" aria-pressed={client === c} onClick={() => setClient(c)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium border ${client === c
+                ? 'bg-indigo-600 border-indigo-600 text-white'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+              {t(`distribution.mcp.clients.${c}.name`)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Snippet label={t(`distribution.mcp.clients.${client}.where`)} text={snippet} testId="mcp-snippet">
+        {installLink && (
+          <a href={installLink} className={btnSecondary}>
+            <ExternalLink className="w-3.5 h-3.5" />
+            {t('distribution.mcp.addTo', { client: t(`distribution.mcp.clients.${client}.name`) })}
+          </a>
+        )}
       </Snippet>
+      <p className="text-xs text-gray-500">
+        {t('distribution.mcp.cliHint')}{' '}
+        <code className="bg-gray-100 rounded px-1 py-0.5">ah mcp connect {client} --write</code>
+      </p>
       <div>
         <span className={LABEL}>{t('distribution.mcp.tools')}</span>
-        <ul className="text-sm text-gray-700 space-y-0.5 list-disc pl-5">
-          {['list_workspaces', 'list_agents', 'ask_agent', 'get_run'].map((n) => (
-            <li key={n}>{t(`distribution.mcp.toolList.${n}`)}</li>
+        <dl className="space-y-2">
+          {MCP_TOOL_GROUPS.map(([group, names]) => (
+            <div key={group}>
+              <dt className="text-sm font-medium text-gray-800">{t(`distribution.mcp.toolGroups.${group}.title`)}</dt>
+              <dd className="text-sm text-gray-600">
+                {t(`distribution.mcp.toolGroups.${group}.text`)}{' '}
+                <span className="inline-flex flex-wrap gap-1 align-middle">
+                  {names.map((n) => <code key={n} className="text-xs bg-gray-100 text-gray-700 rounded px-1 py-0.5">{n}</code>)}
+                </span>
+              </dd>
+            </div>
           ))}
-        </ul>
+        </dl>
+        <p className="text-xs text-gray-500 mt-2">{t('distribution.mcp.toolsNote')}</p>
       </div>
     </SectionCard>
   );
@@ -168,7 +206,7 @@ function ObsidianCard({ info, onError }) {
     }
   };
   return (
-    <SectionCard title={t('distribution.obsidian.title')}>
+    <SectionCard className={CARD} title={t('distribution.obsidian.title')}>
       {!ob.available ? (
         <p className="text-sm text-gray-500">{t('distribution.obsidian.unavailable')}</p>
       ) : (
@@ -236,10 +274,10 @@ function SlackCard({ info, workspaces, reload, onError }) {
   };
 
   if (!slack.available) {
-    return <SectionCard title={t('distribution.slack.title')}><p className="text-sm text-gray-500">{t('distribution.notAvailable')}</p></SectionCard>;
+    return <SectionCard className={CARD} title={t('distribution.slack.title')}><p className="text-sm text-gray-500">{t('distribution.notAvailable')}</p></SectionCard>;
   }
   return (
-    <SectionCard title={t('distribution.slack.title')}>
+    <SectionCard className={CARD} title={t('distribution.slack.title')}>
       <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
         <Status tone={slack.configured ? 'good' : 'warn'}>
           {slack.configured ? t('distribution.slack.configured') : t('distribution.slack.notConfigured')}
@@ -340,10 +378,10 @@ function TeamsCard({ info, workspaces, reload }) {
   };
 
   if (!teams.available) {
-    return <SectionCard title={t('distribution.teams.title')}><p className="text-sm text-gray-500">{t('distribution.notAvailable')}</p></SectionCard>;
+    return <SectionCard className={CARD} title={t('distribution.teams.title')}><p className="text-sm text-gray-500">{t('distribution.notAvailable')}</p></SectionCard>;
   }
   return (
-    <SectionCard title={t('distribution.teams.title')}>
+    <SectionCard className={CARD} title={t('distribution.teams.title')}>
       <div className="flex flex-wrap items-center gap-2">
         <Status tone={teams.configured ? 'good' : 'warn'}>
           {teams.configured ? t('distribution.slack.configured') : t('distribution.slack.notConfigured')}
@@ -441,12 +479,16 @@ export default function Distribution() {
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> <span>{t(`distribution.warnings.${w}`)}</span>
             </div>
           ))}
-          <div className="grid gap-6 xl:grid-cols-2 items-start">
-            <McpCard info={info} workspaces={workspaces} />
-            <ObsidianCard info={info} onError={setError} />
-            <SlackCard info={info} workspaces={workspaces} reload={load} onError={setError} />
-            <TeamsCard info={info} workspaces={workspaces} reload={load} />
-          </div>
+          {/* The cards differ a lot in height, so a plain grid left a hole
+              under the short ones: two columns balanced by content instead. */}
+          <BalancedColumns
+            items={[
+              { key: 'mcp', node: <McpCard info={info} workspaces={workspaces} /> },
+              { key: 'obsidian', node: <ObsidianCard info={info} onError={setError} /> },
+              { key: 'slack', node: <SlackCard info={info} workspaces={workspaces} reload={load} onError={setError} /> },
+              { key: 'teams', node: <TeamsCard info={info} workspaces={workspaces} reload={load} /> },
+            ]}
+          />
         </>
       )}
     </PageContainer>

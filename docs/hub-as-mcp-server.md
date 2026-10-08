@@ -1,13 +1,17 @@
 # The hub as an MCP server
 
-The hub speaks the Model Context Protocol at `POST /v1/mcp`, so Claude Code,
-Cursor and any other MCP client can ask the hub's agents questions as tools.
-The agent runs on the hub with its own tools, memory and knowledge; the
-client sees one answer. This is the other direction from
-[MCP servers](mcp.md), where the hub is the client and attaches somebody
-else's tools to its agents. The code is
-`dashboard/backend/routes/mcp_server.py`; the page that shows the address and
-the install snippets is Distribution ([distribution](distribution.md)).
+The hub speaks the Model Context Protocol at `POST /v1/mcp`, so any MCP
+client (Claude Code, Cursor, VS Code, Windsurf, Claude Desktop, Codex, Gemini
+CLI and the rest) can use the hub as a set of tools: ask its agents, read and
+upload workspace files, search the workspace's knowledge, start teams, flows
+and loops, and follow or stop runs. The server and its tools are the same for
+every client; only where each client keeps its settings differs. This is the
+other direction from [MCP servers](mcp.md), where the hub is the client and
+attaches somebody else's tools to its agents. The code is
+`dashboard/backend/routes/mcp_server.py` (protocol and agent tools) and
+`dashboard/backend/routes/mcp_server_tools.py` (files, knowledge, workflows,
+runs); the page that shows the address and a snippet for each client is
+Distribution ([distribution](distribution.md)).
 
 ## Setup
 
@@ -44,28 +48,120 @@ Put the server in `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json`
 The Distribution page also has an Add to Cursor button that opens Cursor with
 the entry filled in.
 
+### VS Code
+
+Put the server in `.vscode/mcp.json` in a project (note `servers` and
+`type`, not `mcpServers`):
+
+```json
+{
+  "servers": {
+    "agents-hub": {
+      "type": "http",
+      "url": "https://hub.example.com/v1/mcp",
+      "headers": { "Authorization": "Bearer ahk_..." }
+    }
+  }
+}
+```
+
+For every project, add it to your profile with
+`code --add-mcp '{"name":"agents-hub","type":"http","url":"https://hub.example.com/v1/mcp"}'`
+(headers as above), or with the Add to VS Code button on the Distribution
+page.
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`, with `serverUrl`:
+
+```json
+{
+  "mcpServers": {
+    "agents-hub": {
+      "serverUrl": "https://hub.example.com/v1/mcp",
+      "headers": { "Authorization": "Bearer ahk_..." }
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+Claude Desktop starts local servers from `claude_desktop_config.json`
+(Settings, Developer, Edit config), so a remote server with a header goes
+through the `mcp-remote` bridge, which needs Node.js:
+
+```json
+{
+  "mcpServers": {
+    "agents-hub": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://hub.example.com/v1/mcp",
+               "--header", "Authorization:${AUTH_HEADER}"],
+      "env": { "AUTH_HEADER": "Bearer ahk_..." }
+    }
+  }
+}
+```
+
+The value travels through `env` so the space in `Bearer ...` survives
+argument quoting on Windows.
+
+### Codex CLI
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.agents-hub]
+url = "https://hub.example.com/v1/mcp"
+http_headers = { "Authorization" = "Bearer ahk_..." }
+```
+
+### Gemini CLI
+
+`~/.gemini/settings.json` (or `.gemini/settings.json` in a project), with
+`httpUrl`:
+
+```json
+{
+  "mcpServers": {
+    "agents-hub": {
+      "httpUrl": "https://hub.example.com/v1/mcp",
+      "headers": { "Authorization": "Bearer ahk_..." }
+    }
+  }
+}
+```
+
 ### From the command line
 
-`ah mcp connect <claude-code|cursor>` prints what to paste, with the hub's
-address filled in:
+`ah mcp connect <client>` prints what to paste for one client, with the hub's
+address filled in. The clients are `claude-code`, `cursor`, `vscode`,
+`windsurf`, `claude-desktop`, `codex`, `gemini` and `other` (the plain URL
+and headers):
 
 ```
 ah mcp connect claude-code
-ah mcp connect cursor --workspace shop
+ah mcp connect vscode --workspace shop
 ```
 
-For `claude-code` it prints the `claude mcp add` line, for `cursor` the
-`mcpServers` JSON. The address is `AGENTS_HUB_URL` when set, else the hub's
-configured public URL, else `http://localhost:8000` (or `DASHBOARD_PORT`). The
-key is `--key`, else `AGENTS_HUB_API_KEY`, else `AGENTS_HUB_API_TOKEN`; with
-none, no `Authorization` header is written, which is right for a hub in
-`single` mode. `-w` or `--workspace` adds the `X-Agents-Hub-Workspace` header.
+The address is `AGENTS_HUB_URL` when set, else the hub's configured public
+URL, else `http://localhost:8000` (or `DASHBOARD_PORT`). The key is `--key`,
+else `AGENTS_HUB_API_KEY`, else `AGENTS_HUB_API_TOKEN`; with none, no
+`Authorization` header is written, which is right for a hub in `single` mode.
+`-w` or `--workspace` adds the `X-Agents-Hub-Workspace` header.
 
-`--write` does the install: for `claude-code` it runs `claude mcp add` (the
-`claude` command must be on `PATH`); for `cursor` it merges the `agents-hub`
-entry into `~/.cursor/mcp.json`, or into `.cursor/mcp.json` in the current
-folder with `--project`, keeping the other servers in the file. Restart
-Cursor or reload its MCP servers afterwards.
+`--write` does the install. For `claude-code` it runs `claude mcp add`, for
+`vscode` it runs `code --add-mcp` (the command must be on `PATH`). For the
+others it merges the `agents-hub` entry into the client's own file and keeps
+the other servers in it: `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`,
+Claude Desktop's `claude_desktop_config.json` (in `~/Library/Application Support/Claude/`
+on macOS, `%APPDATA%\Claude\` on Windows, `~/.config/Claude/` on Linux),
+`~/.gemini/settings.json`, and `~/.codex/config.toml` (appended; a file that
+already has `[mcp_servers.agents-hub]` is left alone with an error). With
+`--project` the file is the one in the current folder: `.cursor/mcp.json`,
+`.vscode/mcp.json` or `.gemini/settings.json`. Restart the client or reload
+its MCP servers afterwards.
 
 ### Other MCP clients
 
@@ -80,8 +176,34 @@ workspace. In `single` mode no key is needed.
 |---|---|
 | `list_workspaces` | The workspaces this credential can reach. |
 | `list_agents` | The agents you can ask, with a name and description each. Takes an optional `workspace`; without one, every agent runnable in some reachable workspace. |
-| `ask_agent` | One turn with an agent. Arguments: `agent_id` and `message` (required), `context`, `workspace`, `conversation`, `wait_seconds`. |
-| `get_run` | The status of a run and, once it finished, its answer. Argument: `run_id`. |
+| `ask_agent` | One turn with an agent. Arguments: `agent_id` and `message` (required), `context`, `file_ids`, `workspace`, `conversation`, `wait_seconds`. |
+| `list_files` | Files of a workspace, newest first: uploads and what agents wrote. Optional `query` (part of a name, or an id), `source`, `limit`. |
+| `read_file` | The text of a file (text, code, JSON, CSV, PDF) by `file_id` or by `path` in the workspace folder. A long file comes in pages: `offset`, `max_chars` (20 000 by default, 200 000 at most), and `next_offset` in the answer. |
+| `upload_file` | Put a file into a workspace: `name` and either `content` (text) or `content_base64`. The same bytes return the existing file (`deduplicated: true`). With `path` the file is written into the workspace folder and replaces one already there. |
+| `list_knowledge` | The memory pools of a workspace, with how many documents and notes each holds. |
+| `search_knowledge` | Ranked passages from the pools for a `query`: indexed documents, notes, facts and blocks, the way an agent's `search_memory` ranks them. Optional `pool` (name or id) and `top_k`. No model call. |
+| `list_workflows` | The teams, flows and loops of a workspace. Optional `kind`. |
+| `run_workflow` | Start a team, flow or loop: `kind`, `id`, `input` (a team's or loop's goal, a flow's task description), `wait_seconds` (120 by default, 0 to return at once, 1800 at most). |
+| `list_runs` | Recent runs of a workspace, agent turns and team, flow, loop and scenario runs together. Your own unless `mine` is false; optional `kind`, `status`, `limit`. |
+| `get_run` | The status of any run (agent, team, flow, loop) and its answer once it finished. Argument: `run_id`. |
+| `stop_run` | Stop a running agent turn, team, flow or loop and everything it started. Argument: `run_id`. |
+
+Reads need the workspace to be reachable with the credential. `upload_file`,
+`run_workflow` and `stop_run`, like `ask_agent`, also need the `editor` role
+there in `multi` mode. The workspace is chosen the same way everywhere: the
+`workspace` argument, else the `X-Agents-Hub-Workspace` header, else the
+key's only workspace, else `default` (for `ask_agent`, the agent's own
+workspace before `default`).
+
+Nothing over MCP creates, changes or deletes agents, connectors, memory pools
+or settings. What an IDE agent forwards may come from any file it read, so the
+hub's configuration stays behind the dashboard. A personal memory pool is
+listed and searched only for its owner, never for an admin.
+
+`file_ids` on `ask_agent` attaches workspace files to the turn the way the
+chat composer does: upload a local file with `upload_file`, then pass its id.
+A file of another workspace, or one that does not exist, is refused with its
+id.
 
 `list_agents` applies the chat's own rule for who may run what (system agents
 everywhere, an unshared agent only in its owner workspace, a workspace's
@@ -128,6 +250,13 @@ handle, and the turn keeps running on the hub. Call `get_run` with that
 completed, failed or stopped. `get_run` answers "no such run" both for an id
 that does not exist and for one in a workspace the caller cannot reach, so ids
 cannot be probed.
+
+`run_workflow` works the same way: it starts the run through the kind's own
+launcher (the run is the same one the Teams, Flows or Loops page would start,
+and it shows there), waits up to `wait_seconds`, and returns either the
+finished run with its `answer` (a team's or loop's result, a flow's task
+result) or the `run_id` with a note to call `get_run`. `stop_run` stops a run
+of any kind with everything nested under it.
 
 Many MCP clients give a tool call a timeout of their own, shorter than the
 agent's work. Ask for a `wait_seconds` below that timeout and poll with
@@ -183,6 +312,13 @@ object type `agent`, the workspace, the run id and `via: mcp` in the details,
 and the path `/v1/mcp`. A failed turn is recorded with the error. A turn that
 outlives `wait_seconds` is not recorded until it is read: its cost is on the
 run itself, as for any chat turn.
+
+`run_workflow` checks the same two limits before it starts anything. The run
+it starts is charged to the caller and the key like any run started from the
+dashboard ([costs](costs.md)), so it counts against the key's monthly cap.
+`upload_file`, `run_workflow` and `stop_run` each leave an audit row
+(`file.upload`, `workflow.run`, `run.stop`) with `via: mcp` and the path
+`/v1/mcp`.
 
 ## Protocol details
 

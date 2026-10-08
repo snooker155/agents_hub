@@ -35,6 +35,7 @@ or `token` reaches, whether or not the request logger is on:
 | `agent.proactive.enabled`, `.disabled`, `.changed`, `.paused`, `.resumed`, `.woken` | `routes/agent_proactive.py` | a [proactive](proactive.md) profile switched, edited, paused, resumed or woken by hand |
 | `agent.heartbeat.acted` | `proactive/service.py` (`on_task_run_finished`) | a tick of a proactive agent that acted, with its task id and cost |
 | `model.serve` | `routes/openai_compat.py` | a call to the hub's own `/v1/chat/completions`, with token counts (docs/hub-as-provider.md) |
+| `workflow.run`, `run.stop` | `routes/mcp_server_tools.py` | a team, flow or loop started, or a run stopped, over [MCP](hub-as-mcp-server.md), with `via: mcp` |
 
 [Single sign-on](sso.md), [groups](identity.md), [SCIM](scim.md), [API
 keys](api-keys.md) and [secrets](secrets.md) record their own key points

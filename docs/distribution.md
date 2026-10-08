@@ -2,8 +2,8 @@
 
 Where the hub's agents can be reached from outside its own web app. The
 Distribution page (`/distribution`, under Integrations in the full menu) has
-one section per way out: an MCP server for coding tools, an Obsidian plugin, a
-Slack app and a Microsoft Teams app. The routes are in
+one section per way out: an MCP server for coding tools and other MCP
+clients, an Obsidian plugin, a Slack app and a Microsoft Teams app. The routes are in
 `dashboard/backend/routes/distribution.py`; the Slack OAuth return is in
 `dashboard/backend/routes/slack.py`; the installations live in the channel
 store (`connectors/channels/store.py`).
@@ -21,9 +21,12 @@ when the address is not set (`public_url_unset`) or is not https
 
 ## MCP
 
-The hub is an MCP server at `/v1/mcp`, for Claude Code, Cursor and other MCP
-clients. The page shows the address and the install snippets, and an Add to
-Cursor button. Setup, tools, accounting and limits are in
+The hub is an MCP server at `/v1/mcp`, the same for every MCP client. The
+page shows the address, a client picker (Claude Code, Cursor, VS Code,
+Windsurf, Claude Desktop, Codex CLI, Gemini CLI, other) with the snippet for
+the chosen one, Add to Cursor and Add to VS Code buttons, the matching
+`ah mcp connect` line, and the tools grouped as agents, files, knowledge,
+workflows and runs. Setup, tools, accounting and limits are in
 [the hub as an MCP server](hub-as-mcp-server.md).
 
 ## Obsidian plugin
