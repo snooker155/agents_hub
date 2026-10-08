@@ -8,6 +8,7 @@ run over a fake engine."""
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import io
 import json
 import sys
@@ -19,6 +20,8 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+
+from _models_runtime import load_runtime
 
 MODELS_SVC_DIR = Path(__file__).resolve().parents[1] / "deploy" / "models"
 TOKEN = "test-token"
@@ -48,6 +51,8 @@ class FakeProc:
 
 
 def _load(name: str, file: str):
+    if file == "app.py":
+        return load_runtime(name)
     spec = importlib.util.spec_from_file_location(name, MODELS_SVC_DIR / file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -58,22 +63,22 @@ def _load(name: str, file: str):
 @pytest.fixture
 def svc(tmp_path, monkeypatch):
     mod = _load("models_speech_app", "app.py")
-    monkeypatch.setattr(mod, "TOKEN", TOKEN)
-    monkeypatch.setattr(mod, "MODELS_DIR", tmp_path)
-    monkeypatch.setattr(mod, "MAX_LOADED", 1)
-    monkeypatch.setattr(mod, "MAX_SPEECH_LOADED", 1)
-    monkeypatch.setattr(mod, "_port_free", lambda port: True)
-    monkeypatch.setattr(mod, "engines", lambda: {"whisper": True, "piper": True, "kokoro": True,
+    monkeypatch.setattr(mod.app_settings, "TOKEN", TOKEN)
+    monkeypatch.setattr(mod.app_settings, "MODELS_DIR", tmp_path)
+    monkeypatch.setattr(mod.app_settings, "MAX_LOADED", 1)
+    monkeypatch.setattr(mod.app_settings, "MAX_SPEECH_LOADED", 1)
+    monkeypatch.setattr(mod.app_speech_models, "_port_free", lambda port: True)
+    monkeypatch.setattr(mod.app_speech_models, "engines", lambda: {"whisper": True, "piper": True, "kokoro": True,
                                                  "kitten": True, "supertonic": True})
     FakeProc.started = []
-    monkeypatch.setattr(mod.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(subprocess, "Popen", FakeProc)
 
     async def healthy(port, proc, timeout=0):
         return None
 
-    monkeypatch.setattr(mod, "wait_healthy", healthy)
-    mod.state.loaded = {}
-    mod.state.lock = None
+    monkeypatch.setattr(mod.app_serving, "wait_healthy", healthy)
+    mod.app_speech_models.state.loaded = {}
+    mod.app_speech_models.state.lock = None
     yield mod
     sys.modules.pop("models_speech_app", None)
 
@@ -168,7 +173,7 @@ def test_kitten_and_supertonic_directories_are_listed_with_their_voices(client, 
 
 
 def test_a_missing_engine_makes_its_models_unloadable_with_a_note(client, svc, tmp_path, monkeypatch):
-    monkeypatch.setattr(svc, "engines", lambda: {"whisper": False, "piper": True, "kokoro": True})
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: {"whisper": False, "piper": True, "kokoro": True})
     whisper_dir(tmp_path)
     body = client.get("/models", headers=AUTH).json()
     assert body["engines"]["whisper"] is False
@@ -202,14 +207,14 @@ def _tree(*entries):
 
 
 def test_speech_packages_find_whisper_piper_and_kokoro(svc):
-    whisper = svc.speech_packages("Systran/faster-whisper-small", _tree(
+    whisper = svc.app_speech_models.speech_packages("Systran/faster-whisper-small", _tree(
         ("README.md", 1), ("config.json", 2), ("model.bin", 100), ("tokenizer.json", 3), ("vocabulary.txt", 4)))
     assert [(p["name"], p["engine"], p["kind"]) for p in whisper] == [
         ("faster-whisper-small", "whisper", "transcription")]
     assert whisper[0]["files"] == ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]
     assert whisper[0]["size_bytes"] == 109
 
-    piper = svc.speech_packages("rhasspy/piper-voices", _tree(
+    piper = svc.app_speech_models.speech_packages("rhasspy/piper-voices", _tree(
         ("ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx", 60), ("ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json", 5),
         ("ru/ru_RU/irina/medium/MODEL_CARD", 1), ("en/en_US/x/low/en_US-x-low.onnx", 10)))  # no config: skipped
     assert [(p["name"], p["language"], p["size_bytes"]) for p in piper] == [
@@ -217,30 +222,30 @@ def test_speech_packages_find_whisper_piper_and_kokoro(svc):
     assert piper[0]["files"] == ["ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx",
                                  "ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json"]
 
-    kokoro = svc.speech_packages("fastrtc/kokoro-onnx", _tree(("kokoro-v1.0.onnx", 300), ("voices-v1.0.bin", 28)))
+    kokoro = svc.app_speech_models.speech_packages("fastrtc/kokoro-onnx", _tree(("kokoro-v1.0.onnx", 300), ("voices-v1.0.bin", 28)))
     assert [(p["name"], p["files"]) for p in kokoro] == [("kokoro-v1.0", ["kokoro-v1.0.onnx", "voices-v1.0.bin"])]
 
-    kitten = svc.speech_packages("KittenML/kitten-tts-nano-0.8-int8", _tree(
+    kitten = svc.app_speech_models.speech_packages("KittenML/kitten-tts-nano-0.8-int8", _tree(
         ("README.md", 1), ("config.json", 2), ("kitten_tts_nano_v0_8.onnx", 25), ("voices.npz", 3)))
     assert [(p["name"], p["engine"], p["language"], p["size_bytes"]) for p in kitten] == [
         ("kitten-tts-nano-0.8-int8", "kitten", "en_US", 30)]  # named after the repo: fp32 holds the same file name
     assert kitten[0]["files"] == ["kitten_tts_nano_v0_8.onnx", "voices.npz", "config.json"]
     # The transformers.js export of Kitten is laid out for the browser.
-    assert svc.speech_packages("onnx-community/KittenTTS-Nano-v0.8-ONNX", _tree(
+    assert svc.app_speech_models.speech_packages("onnx-community/KittenTTS-Nano-v0.8-ONNX", _tree(
         ("config.json", 1), ("onnx/model.onnx", 20), ("voices/af.bin", 1))) == []
 
     supertonic_files = [("onnx/" + f, 10) for f in ("duration_predictor.onnx", "text_encoder.onnx",
                         "vector_estimator.onnx", "vocoder.onnx", "tts.json", "unicode_indexer.json")]
-    supertonic = svc.speech_packages("Supertone/supertonic-3", _tree(
+    supertonic = svc.app_speech_models.speech_packages("Supertone/supertonic-3", _tree(
         ("config.json", 1), ("README.md", 1), ("audio_samples/x.wav", 9), *supertonic_files,
         ("voice_styles/F1.json", 2), ("voice_styles/M1.json", 2)))
     assert [(p["name"], p["engine"], p["size_bytes"]) for p in supertonic] == [("supertonic-3", "supertonic", 65)]
     assert supertonic[0]["save_as"] == {f: f for f in supertonic[0]["files"]}  # its folders are kept
     assert "voice_styles/F1.json" in supertonic[0]["files"] and "audio_samples/x.wav" not in supertonic[0]["files"]
-    assert svc.speech_packages("Supertone/supertonic-3", _tree(*supertonic_files[:-1], ("voice_styles/F1.json", 2))) == []
+    assert svc.app_speech_models.speech_packages("Supertone/supertonic-3", _tree(*supertonic_files[:-1], ("voice_styles/F1.json", 2))) == []
 
     # model.bin and config.json alone, outside a Whisper repo, are something else.
-    assert svc.speech_packages("org/nllb-ct2", _tree(("model.bin", 1), ("config.json", 1),
+    assert svc.app_speech_models.speech_packages("org/nllb-ct2", _tree(("model.bin", 1), ("config.json", 1),
                                                      ("tokenizer.json", 1))) == []
 
 
@@ -260,8 +265,8 @@ def test_hf_files_follows_the_next_page_and_lists_packages(client, svc, tmp_path
         body, headers = pages[cursor]
         return httpx.Response(200, json=body, headers=headers)
 
-    monkeypatch.setattr(svc, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
-    monkeypatch.setattr(svc, "detect_hardware", svc._plain_cpu)
+    monkeypatch.setattr(svc.app_core, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(svc.app_hardware_search, "detect_hardware", svc.app_hardware_search._plain_cpu)
     piper_dir(tmp_path, "piper-de_DE-b-low")
     body = client.get("/hf/files", headers=AUTH, params={"repo": "rhasspy/piper-voices"}).json()
     assert seen == [None, "2"]
@@ -288,7 +293,7 @@ def _hub(monkeypatch, svc, files, fail_once=()):
             return httpx.Response(500)
         return httpx.Response(200, content=files[src])
 
-    monkeypatch.setattr(svc, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(svc.app_core, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
 
 
 def _wait(client, job_id, timeout=5.0):
@@ -356,9 +361,9 @@ def test_an_unknown_package_is_a_404(client, svc, monkeypatch):
 
 
 def test_a_package_job_interrupted_by_a_restart_is_resumable(svc, tmp_path):
-    svc.jobs.create("hf_package", "o/r: piper-x", meta={"dest": "piper-x"})
+    svc.app_core.jobs.create("hf_package", "o/r: piper-x", meta={"dest": "piper-x"})
     (tmp_path / ".piper-x.download").mkdir()
-    fresh = svc.Jobs()
+    fresh = svc.app_core.Jobs()
     assert fresh.load() == 1
     job = fresh.list()[0]
     assert job["status"] == "error" and job["resumable"] is True
@@ -380,7 +385,7 @@ def test_a_speech_model_loads_through_the_worker_and_never_evicts_the_chat_model
     # The speech pool holds one: the next speech model evicts the first, not the chat model.
     r = client.post("/load", headers=AUTH, json={"file": "piper-ru_RU-irina-medium"})
     assert r.json()["evicted"] == ["faster-whisper-small"]
-    assert set(svc.state.loaded) == {"chat", "piper-ru_RU-irina-medium"}
+    assert set(svc.app_speech_models.state.loaded) == {"chat", "piper-ru_RU-irina-medium"}
     out = client.post("/unload", headers=AUTH, json={"file": "piper-ru_RU-irina-medium"}).json()
     assert out["kind"] == "speech"
 
@@ -404,7 +409,7 @@ def forwarded(svc, monkeypatch):
         calls.append((m.name, path, raw, content_type))
         return Response(content=b"AUDIO", media_type="audio/mpeg")
 
-    monkeypatch.setattr(svc, "_forward", forward)
+    monkeypatch.setattr(svc.app_gateway, "_forward", forward)
     return calls
 
 
@@ -462,14 +467,14 @@ class PipProc:
 
 def test_installing_an_engine_runs_pip_as_a_job(client, svc, monkeypatch):
     found = {"whisper": False, "piper": False, "kokoro": False}
-    monkeypatch.setattr(svc, "engines", lambda: dict(found))
-    monkeypatch.setattr(svc.subprocess, "Popen", PipProc)
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: dict(found))
+    monkeypatch.setattr(subprocess, "Popen", PipProc)
 
     def install(*a, **kw):
         found["piper"] = True
         return PipProc(*a, **kw)
 
-    monkeypatch.setattr(svc.subprocess, "Popen", install)
+    monkeypatch.setattr(subprocess, "Popen", install)
     r = client.post("/engines/piper/install", headers=AUTH)
     job = _wait(client, r.json()["job_id"])
     assert job["status"] == "done" and job["kind"] == "engine_install"
@@ -481,8 +486,8 @@ def test_installing_an_engine_runs_pip_as_a_job(client, svc, monkeypatch):
 
 
 def test_a_failed_install_reports_pips_last_lines(client, svc, monkeypatch):
-    monkeypatch.setattr(svc, "engines", lambda: {"whisper": False, "piper": False, "kokoro": False})
-    monkeypatch.setattr(svc.subprocess, "Popen", PipProc)
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: {"whisper": False, "piper": False, "kokoro": False})
+    monkeypatch.setattr(subprocess, "Popen", PipProc)
     monkeypatch.setattr(PipProc, "code", 1)
     job = _wait(client, client.post("/engines/kokoro/install", headers=AUTH).json()["job_id"])
     assert job["status"] == "error" and "code 1" in job["error"] and "Successfully" in job["error"]
@@ -606,13 +611,13 @@ def test_a_speech_engine_refuses_to_transcribe(worker):
 def test_a_repackaged_piper_voice_saves_its_config_where_piper_looks(client, svc, tmp_path, monkeypatch):
     # speaches-ai and others ship model.onnx with config.json; Piper reads
     # <model>.onnx.json, so the config is saved under that name.
-    pk = svc.speech_packages("speaches-ai/piper-ru_RU-dmitri-medium",
+    pk = svc.app_speech_models.speech_packages("speaches-ai/piper-ru_RU-dmitri-medium",
                              _tree(("model.onnx", 60), ("config.json", 2), ("README.md", 1)))
     assert [(p["name"], p["engine"], p["language"], p["save_as"]) for p in pk] == [
         ("piper-ru_RU-dmitri-medium", "piper", "ru_RU", {"config.json": "model.onnx.json"})]
     # A folder not named piper is not guessed at: an ONNX model with a
     # config.json could be anything.
-    assert svc.speech_packages("org/some-tts", _tree(("model.onnx", 60), ("config.json", 2))) == []
+    assert svc.app_speech_models.speech_packages("org/some-tts", _tree(("model.onnx", 60), ("config.json", 2))) == []
 
     files = {"model.onnx": b"o" * 60, "config.json": b'{"speaker_id_map": {"a": 0}}'}
     _hub(monkeypatch, svc, files)
@@ -631,14 +636,14 @@ def test_a_repackaged_piper_voice_saves_its_config_where_piper_looks(client, svc
 
 
 def test_speech_engine_is_read_from_the_name_and_tags(svc):
-    assert svc.speech_engine_for("Systran/faster-whisper-small", [], "transcription") == "whisper"
-    assert svc.speech_engine_for("org/parakeet-ct2", [], "transcription") is None
-    assert svc.speech_engine_for("fastrtc/kokoro-onnx", ["onnx"], "speech") == "kokoro"
-    assert svc.speech_engine_for("org/voice", ["piper"], "speech") == "piper"
-    assert svc.speech_engine_for("ayousanz/piper-plus-tsukuyomi-chan", [], "speech") is None
-    assert svc.speech_engine_for("org/other-tts", ["onnx"], "speech") is None
-    assert svc.speech_engine_for("KittenML/kitten-tts-nano-0.8-int8", ["onnx"], "speech") == "kitten"
-    assert svc.speech_engine_for("Supertone/supertonic-3", ["onnx", "text-to-speech"], "speech") == "supertonic"
+    assert svc.app_hardware_search.speech_engine_for("Systran/faster-whisper-small", [], "transcription") == "whisper"
+    assert svc.app_hardware_search.speech_engine_for("org/parakeet-ct2", [], "transcription") is None
+    assert svc.app_hardware_search.speech_engine_for("fastrtc/kokoro-onnx", ["onnx"], "speech") == "kokoro"
+    assert svc.app_hardware_search.speech_engine_for("org/voice", ["piper"], "speech") == "piper"
+    assert svc.app_hardware_search.speech_engine_for("ayousanz/piper-plus-tsukuyomi-chan", [], "speech") is None
+    assert svc.app_hardware_search.speech_engine_for("org/other-tts", ["onnx"], "speech") is None
+    assert svc.app_hardware_search.speech_engine_for("KittenML/kitten-tts-nano-0.8-int8", ["onnx"], "speech") == "kitten"
+    assert svc.app_hardware_search.speech_engine_for("Supertone/supertonic-3", ["onnx", "text-to-speech"], "speech") == "supertonic"
 
 
 def test_speech_search_skips_gguf_keeps_runnable_repos_and_puts_presets_first(client, svc, monkeypatch):
@@ -679,8 +684,8 @@ def test_speech_search_skips_gguf_keeps_runnable_repos_and_puts_presets_first(cl
             {"id": "org/other-tts", "downloads": 999, "tags": ["onnx", "text-to-speech"]},
         ])
 
-    monkeypatch.setattr(svc, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
-    monkeypatch.setattr(svc, "mlx_platform", lambda: True)
+    monkeypatch.setattr(svc.app_core, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: True)
     body = client.get("/hf/search", headers=AUTH, params={"purpose": "speech"}).json()
     assert all("gguf" not in f for f, _ in queries)
     assert (["onnx"], "kokoro") in queries and (["onnx"], "piper") in queries

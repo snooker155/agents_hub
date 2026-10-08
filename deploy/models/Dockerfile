@@ -48,7 +48,7 @@ RUN python3 -m venv /srv/venv && pip install --no-cache-dir -r /srv/requirements
 # The hub's GGUF reader, vendored at build time under a name that cannot clash
 # with anything on the image's path. app.py imports it as hub_model_structure.
 COPY providers/model_structure.py /srv/hub_model_structure.py
-COPY deploy/models/app.py deploy/models/speech_worker.py deploy/models/openvoice_vc.py deploy/models/voice_enhance.py /srv/
+COPY deploy/models/app.py deploy/models/app_*.py deploy/models/speech_worker.py deploy/models/openvoice_vc.py deploy/models/voice_enhance.py /srv/
 
 RUN useradd --create-home --uid 10001 models \
     && mkdir -p /models \

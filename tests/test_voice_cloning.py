@@ -10,6 +10,9 @@ workers' answers come through an httpx MockTransport, and the sample
 cleanup is replaced where PyAV is missing."""
 from __future__ import annotations
 
+import platform
+import shutil
+import subprocess
 import io
 import json
 import sys
@@ -27,21 +30,21 @@ from test_models_speech import (AUTH, TOKEN, FakeProc, _load, _tree, kokoro_dir,
 @pytest.fixture
 def svc(tmp_path, monkeypatch):
     mod = _load("voice_cloning_app", "app.py")
-    monkeypatch.setattr(mod, "TOKEN", TOKEN)
-    monkeypatch.setattr(mod, "MODELS_DIR", tmp_path)
-    monkeypatch.setattr(mod, "MAX_SPEECH_LOADED", 1)
-    monkeypatch.setattr(mod, "_port_free", lambda port: True)
-    monkeypatch.setattr(mod, "engines", lambda: {e: True for e in ("piper", "kokoro", "supertonic", "kitten",
+    monkeypatch.setattr(mod.app_settings, "TOKEN", TOKEN)
+    monkeypatch.setattr(mod.app_settings, "MODELS_DIR", tmp_path)
+    monkeypatch.setattr(mod.app_settings, "MAX_SPEECH_LOADED", 1)
+    monkeypatch.setattr(mod.app_speech_models, "_port_free", lambda port: True)
+    monkeypatch.setattr(mod.app_speech_models, "engines", lambda: {e: True for e in ("piper", "kokoro", "supertonic", "kitten",
                                                                    "chatterbox", "openvoice")})
     FakeProc.started = []
-    monkeypatch.setattr(mod.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(subprocess, "Popen", FakeProc)
 
     async def healthy(port, proc, timeout=0):
         return None
 
-    monkeypatch.setattr(mod, "wait_healthy", healthy)
-    mod.state.loaded = {}
-    mod.state.lock = None
+    monkeypatch.setattr(mod.app_serving, "wait_healthy", healthy)
+    mod.app_speech_models.state.loaded = {}
+    mod.app_speech_models.state.lock = None
     yield mod
     sys.modules.pop("voice_cloning_app", None)
 
@@ -90,7 +93,7 @@ def _wav(seconds: float = 0.5, rate: int = 24000) -> bytes:
 @pytest.fixture
 def no_pyav(svc, monkeypatch):
     """The sample cleanup without PyAV: the upload is kept as it came."""
-    worker = svc._worker()
+    worker = svc.app_speech_models._worker()
     monkeypatch.setattr(worker, "prepare_sample", lambda data: (data, 12.5))
     return worker
 
@@ -129,7 +132,7 @@ def test_cloning_models_list_the_recorded_voices(client, svc, tmp_path, no_pyav)
 
 
 def test_hugging_face_packages_of_both_engines(svc):
-    chatterbox = svc.speech_packages("ResembleAI/chatterbox", _tree(
+    chatterbox = svc.app_speech_models.speech_packages("ResembleAI/chatterbox", _tree(
         ("ve.pt", 5), ("t3_mtl23ls_v2.safetensors", 2000), ("s3gen.pt", 1000),
         ("grapheme_mtl_merged_expanded_v1.json", 1), ("conds.pt", 1), ("Cangjie5_TC.json", 2),
         ("t3_cfg.safetensors", 2000)))
@@ -138,13 +141,13 @@ def test_hugging_face_packages_of_both_engines(svc):
     assert chatterbox[0]["files"] == ["t3_mtl23ls_v2.safetensors", "s3gen.pt", "ve.pt",
                                       "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"]
     assert chatterbox[0]["size_bytes"] == 3009  # the English-only weights stay behind
-    openvoice = svc.speech_packages("myshell-ai/OpenVoiceV2", _tree(
+    openvoice = svc.app_speech_models.speech_packages("myshell-ai/OpenVoiceV2", _tree(
         ("converter/config.json", 1), ("converter/checkpoint.pth", 130), ("base_speakers/ses/en-us.pth", 1)))
     assert [(p["name"], p["engine"], p["files"]) for p in openvoice] == [
         ("OpenVoiceV2-converter", "openvoice", ["converter/config.json", "converter/checkpoint.pth"])]
-    assert svc.speech_engine_for("ResembleAI/chatterbox", [], "speech") == "chatterbox"
-    assert svc.speech_engine_for("someone/chatterbox-finetune", [], "speech") is None
-    assert svc.speech_engine_for("myshell-ai/OpenVoiceV2", [], "speech") == "openvoice"
+    assert svc.app_hardware_search.speech_engine_for("ResembleAI/chatterbox", [], "speech") == "chatterbox"
+    assert svc.app_hardware_search.speech_engine_for("someone/chatterbox-finetune", [], "speech") is None
+    assert svc.app_hardware_search.speech_engine_for("myshell-ai/OpenVoiceV2", [], "speech") == "openvoice"
 
 
 # ── recorded voices ──────────────────────────────────────────────────────────
@@ -195,7 +198,7 @@ def test_record_list_change_play_and_delete_a_voice(client, tmp_path, no_pyav):
 
 
 def test_an_unusable_recording_is_a_422(client, svc, monkeypatch):
-    worker = svc._worker()
+    worker = svc.app_speech_models._worker()
 
     def refuse(data):
         raise worker.WorkerError("the recording is silent")
@@ -270,7 +273,7 @@ def test_text_is_read_in_whole_sentences(worker):
 # ── the fast path: a reading model, then OpenVoice ───────────────────────────
 
 def _models(svc):
-    return svc.list_models()
+    return svc.app_speech_models.list_models()
 
 
 def test_the_reading_model_follows_language_and_gender(svc, tmp_path):
@@ -281,19 +284,19 @@ def test_the_reading_model_follows_language_and_gender(svc, tmp_path):
         z.writestr("am_michael.npy", b"\x00")
         z.writestr("af_alloy.npy", b"\x00")
     models = _models(svc)
-    assert svc.pick_base("Привет, как дела?", {}, models) == ("piper-ru_RU-irina-medium", "")
-    assert svc.pick_base("Hello there, how are you?", {"gender": "female"}, models) == ("kokoro-v1.0", "af_heart")
-    assert svc.pick_base("Hello there, how are you?", {"gender": "male"}, models) == ("kokoro-v1.0", "am_michael")
-    assert svc.pick_base("Γεια σου κόσμε", {}, models) is None  # nothing here reads Greek
+    assert svc.app_voices.pick_base("Привет, как дела?", {}, models) == ("piper-ru_RU-irina-medium", "")
+    assert svc.app_voices.pick_base("Hello there, how are you?", {"gender": "female"}, models) == ("kokoro-v1.0", "af_heart")
+    assert svc.app_voices.pick_base("Hello there, how are you?", {"gender": "male"}, models) == ("kokoro-v1.0", "am_michael")
+    assert svc.app_voices.pick_base("Γεια σου κόσμε", {}, models) is None  # nothing here reads Greek
     # Supertonic 3 reads Russian too, and ranks above Piper.
     supertonic_dir(tmp_path)
     models = _models(svc)
-    assert svc.pick_base("Привет, как дела?", {"gender": "male"}, models) == ("supertonic-3", "M1")
-    assert svc.pick_base("Γεια σου κόσμε", {}, models) == ("supertonic-3", "F1")
+    assert svc.app_voices.pick_base("Привет, как дела?", {"gender": "male"}, models) == ("supertonic-3", "M1")
+    assert svc.app_voices.pick_base("Γεια σου κόσμε", {}, models) == ("supertonic-3", "F1")
     # The recording's own choice wins while that model is here.
     chosen = {"base_model": "piper-ru_RU-irina-medium", "base_voice": "x"}
-    assert svc.pick_base("Hello", chosen, models) == ("piper-ru_RU-irina-medium", "x")
-    assert svc.pick_base("Hello", {"base_model": "gone"}, models)[0] == "kokoro-v1.0"
+    assert svc.app_voices.pick_base("Hello", chosen, models) == ("piper-ru_RU-irina-medium", "x")
+    assert svc.app_voices.pick_base("Hello", {"base_model": "gone"}, models)[0] == "kokoro-v1.0"
 
 
 @pytest.fixture
@@ -311,7 +314,7 @@ def workers(svc, monkeypatch):
             return httpx.Response(200, content=b"CONVERTED", headers={"content-type": "audio/mpeg"})
         return httpx.Response(404)
 
-    monkeypatch.setattr(svc.httpx, "AsyncClient",
+    monkeypatch.setattr(httpx, "AsyncClient",
                         lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     return calls
 
@@ -330,7 +333,7 @@ def test_openvoice_speech_reads_then_converts(client, svc, tmp_path, workers, no
     assert b"piper-ru_RU-irina-medium/" in form and b'name="response_format"\r\n\r\nopus' in form
     # Both stay loaded although the pool holds one: the converter is never
     # evicted for its own reader.
-    assert set(svc.state.loaded) == {"OpenVoiceV2-converter", "piper-ru_RU-irina-medium"}
+    assert set(svc.app_speech_models.state.loaded) == {"OpenVoiceV2-converter", "piper-ru_RU-irina-medium"}
     started = [p.cmd for p in FakeProc.started]
     assert all(c[c.index("--engine") + 1] in ("openvoice", "piper") for c in started)
 
@@ -352,7 +355,7 @@ def test_a_chatterbox_request_goes_straight_to_its_worker(client, svc, tmp_path,
         forwarded.append((m.name, path, json.loads(raw)))
         return Response(content=b"AUDIO", media_type="audio/mpeg")
 
-    monkeypatch.setattr(svc, "_forward", forward)
+    monkeypatch.setattr(svc.app_gateway, "_forward", forward)
     r = client.post("/v1/audio/speech", headers=AUTH, json={"model": "chatterbox-multilingual", "input": "Hi",
                                                             "voice": "anton", "exaggeration": 0.7})
     assert r.status_code == 200 and r.content == b"AUDIO"
@@ -365,14 +368,14 @@ def test_a_chatterbox_request_goes_straight_to_its_worker(client, svc, tmp_path,
 
 def test_torch_engines_run_and_install_in_their_own_environment(svc, tmp_path, monkeypatch):
     monkeypatch.delenv("MODELS_TORCH_PYTHON", raising=False)
-    monkeypatch.setattr(svc.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)  # no nvidia-smi
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # no nvidia-smi
     monkeypatch.delenv("MODELS_TORCH_INDEX", raising=False)
     venv_python = str(tmp_path / ".engines" / "torch" / "bin" / "python")
-    assert svc.engine_python("chatterbox") == venv_python
-    assert svc.engine_python("piper") == svc.SPEECH_PYTHON
-    cmds = svc.install_commands("chatterbox")
-    assert cmds[0] == [svc.SPEECH_PYTHON, "-m", "venv", str(tmp_path / ".engines" / "torch")]
+    assert svc.app_speech_models.engine_python("chatterbox") == venv_python
+    assert svc.app_speech_models.engine_python("piper") == svc.app_settings.SPEECH_PYTHON
+    cmds = svc.app_routes_engines.install_commands("chatterbox")
+    assert cmds[0] == [svc.app_settings.SPEECH_PYTHON, "-m", "venv", str(tmp_path / ".engines" / "torch")]
     assert cmds[1][:4] == [venv_python, "-m", "pip", "install"]
     assert cmds[1][cmds[1].index("--index-url") + 1] == "https://download.pytorch.org/whl/cpu"
     assert any(r.startswith("torch==2.6.0") for r in cmds[1]) and "librosa==0.11.0" not in cmds[1]
@@ -381,16 +384,16 @@ def test_torch_engines_run_and_install_in_their_own_environment(svc, tmp_path, m
     # Made once; on a Mac torch comes from PyPI.
     Path(venv_python).parent.mkdir(parents=True)
     Path(venv_python).write_text("")
-    monkeypatch.setattr(svc.platform, "system", lambda: "Darwin")
-    cmds = svc.install_commands("openvoice")
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    cmds = svc.app_routes_engines.install_commands("openvoice")
     assert len(cmds) == 1 and "--index-url" not in cmds[0] and cmds[0][0] == venv_python
     monkeypatch.setenv("MODELS_TORCH_PYTHON", "/opt/py/bin/python")
-    assert svc.engine_python("openvoice") == "/opt/py/bin/python"
+    assert svc.app_speech_models.engine_python("openvoice") == "/opt/py/bin/python"
 
 
 def test_an_environment_not_made_yet_has_no_engines(svc, tmp_path, monkeypatch):
     monkeypatch.delenv("MODELS_TORCH_PYTHON", raising=False)
-    found = svc._modules_found(str(tmp_path / "missing" / "bin" / "python"), {"chatterbox": "chatterbox"})
+    found = svc.app_speech_models._modules_found(str(tmp_path / "missing" / "bin" / "python"), {"chatterbox": "chatterbox"})
     assert found == {"chatterbox": False}
 
 
@@ -403,7 +406,7 @@ def test_a_torch_worker_starts_under_its_python_with_the_voices(client, svc, tmp
             super().__init__(cmd, **kwargs)
             seen["env"] = kwargs.get("env") or {}
 
-    monkeypatch.setattr(svc.subprocess, "Popen", Proc)
+    monkeypatch.setattr(subprocess, "Popen", Proc)
     chatterbox_dir(tmp_path)
     assert client.post("/load", headers=AUTH, json={"file": "chatterbox-multilingual"}).status_code == 200
     cmd = FakeProc.started[-1].cmd
@@ -478,23 +481,23 @@ def test_mlx_chatterbox_runs_only_on_apple_silicon(client, svc, tmp_path, monkey
     assert model["voices"] == ["default", "anna"] and model["format"] == "mlx"
     # engines() itself, which the fixture replaced: a copy of the module.
     mod = _load("voice_cloning_engines", "app.py")
-    monkeypatch.setattr(mod, "speech_engines", lambda: {"chatterbox_mlx": True, "mlx": True, "piper": True})
-    monkeypatch.setattr(mod, "llama_installed", lambda: False)
-    monkeypatch.setattr(mod, "mlx_platform", lambda: True)
-    assert mod.engines()["chatterbox_mlx"] is True
-    assert mod.speech_engine_for("mlx-community/chatterbox-4bit", [], "speech") == "chatterbox_mlx"
-    assert mod.speech_engine_for("mlx-community/chatterbox-turbo-4bit", [], "speech") is None
-    monkeypatch.setattr(mod, "mlx_platform", lambda: False)
-    assert set(mod.engines()) == {"llama", "piper"}
-    assert mod.speech_engine_for("mlx-community/chatterbox-4bit", [], "speech") is None
+    monkeypatch.setattr(mod.app_speech_models, "speech_engines", lambda: {"chatterbox_mlx": True, "mlx": True, "piper": True})
+    monkeypatch.setattr(mod.app_engines, "llama_installed", lambda: False)
+    monkeypatch.setattr(mod.app_speech_models, "mlx_platform", lambda: True)
+    assert mod.app_speech_models.engines()["chatterbox_mlx"] is True
+    assert mod.app_hardware_search.speech_engine_for("mlx-community/chatterbox-4bit", [], "speech") == "chatterbox_mlx"
+    assert mod.app_hardware_search.speech_engine_for("mlx-community/chatterbox-turbo-4bit", [], "speech") is None
+    monkeypatch.setattr(mod.app_speech_models, "mlx_platform", lambda: False)
+    assert set(mod.app_speech_models.engines()) == {"llama", "piper"}
+    assert mod.app_hardware_search.speech_engine_for("mlx-community/chatterbox-4bit", [], "speech") is None
     sys.modules.pop("voice_cloning_engines", None)
-    monkeypatch.setattr(svc, "mlx_platform", lambda: False)
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: False)
     assert client.post("/engines/chatterbox_mlx/install", headers=AUTH).status_code == 409
 
 
 def test_the_mlx_package_brings_the_speech_tokenizer(svc, monkeypatch):
-    monkeypatch.setattr(svc, "mlx_platform", lambda: True)
-    packages = svc.speech_packages("mlx-community/chatterbox-4bit", _tree(
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: True)
+    packages = svc.app_speech_models.speech_packages("mlx-community/chatterbox-4bit", _tree(
         ("model.safetensors", 600), ("model.safetensors.index.json", 1), ("tokenizer.json", 1), ("config.json", 1),
         ("conds.safetensors", 1), ("Cangjie5_TC.json", 2), ("ko.wav", 300)))
     assert [(p["name"], p["engine"]) for p in packages] == [("chatterbox-4bit-mlx", "chatterbox_mlx")]
@@ -505,12 +508,12 @@ def test_the_mlx_package_brings_the_speech_tokenizer(svc, monkeypatch):
     assert pkg["save_as"] == {"@mlx-community/S3TokenizerV2/model.safetensors": "s3tokenizer/model.safetensors",
                               "@mlx-community/S3TokenizerV2/config.json": "s3tokenizer/config.json"}
     assert pkg["size_bytes"] == 606 + 494868984 + 126  # the sample clip stays behind
-    assert svc.speech_packages("mlx-community/chatterbox-turbo-4bit", _tree(
+    assert svc.app_speech_models.speech_packages("mlx-community/chatterbox-turbo-4bit", _tree(
         ("model.safetensors", 1), ("tokenizer.json", 1), ("config.json", 1))) == []
 
 
 def test_a_package_fetches_files_of_another_repo(client, svc, tmp_path, monkeypatch):
-    monkeypatch.setattr(svc, "mlx_platform", lambda: True)
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: True)
     files = {"mlx-community/chatterbox-4bit": {"model.safetensors": b"w" * 6, "tokenizer.json": b"{}",
                                                "config.json": b'{"model_type": "chatterbox"}'},
              "mlx-community/S3TokenizerV2": {"model.safetensors": b"s" * 5, "config.json": b"{}"}}
@@ -525,7 +528,7 @@ def test_a_package_fetches_files_of_another_repo(client, svc, tmp_path, monkeypa
         asked.append((repo, src))
         return httpx.Response(200, content=files[repo][src])
 
-    monkeypatch.setattr(svc, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(svc.app_core, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
     r = client.post("/download", headers=AUTH, json={"repo": "mlx-community/chatterbox-4bit",
                                                      "package": "chatterbox-4bit-mlx"})
     assert r.status_code == 200, r.text
@@ -539,17 +542,17 @@ def test_a_package_fetches_files_of_another_repo(client, svc, tmp_path, monkeypa
 
 def test_the_mlx_environment_is_its_own(svc, tmp_path, monkeypatch):
     monkeypatch.delenv("MODELS_MLX_AUDIO_PYTHON", raising=False)
-    monkeypatch.setattr(svc.platform, "system", lambda: "Linux")  # no torch index for it anyway
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(platform, "system", lambda: "Linux")  # no torch index for it anyway
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     python = str(tmp_path / ".engines" / "mlx-audio" / "bin" / "python")
-    assert svc.engine_python("chatterbox_mlx") == python
-    cmds = svc.install_commands("chatterbox_mlx")
-    assert cmds[0] == [svc.SPEECH_PYTHON, "-m", "venv", str(tmp_path / ".engines" / "mlx-audio")]
+    assert svc.app_speech_models.engine_python("chatterbox_mlx") == python
+    cmds = svc.app_routes_engines.install_commands("chatterbox_mlx")
+    assert cmds[0] == [svc.app_settings.SPEECH_PYTHON, "-m", "venv", str(tmp_path / ".engines" / "mlx-audio")]
     assert len(cmds) == 2 and "--index-url" not in cmds[1]
     assert "mlx-audio>=0.5.8,<0.6" in cmds[1] and "fastapi>=0.110,<1" in cmds[1]
     monkeypatch.setenv("MODELS_MLX_AUDIO_PYTHON", "/opt/mlx/bin/python")
-    assert svc.engine_python("chatterbox_mlx") == "/opt/mlx/bin/python"
-    assert svc.install_commands("chatterbox_mlx")[0][0] == "/opt/mlx/bin/python"
+    assert svc.app_speech_models.engine_python("chatterbox_mlx") == "/opt/mlx/bin/python"
+    assert svc.app_routes_engines.install_commands("chatterbox_mlx")[0][0] == "/opt/mlx/bin/python"
 
 
 # ── what both Chatterbox engines share ───────────────────────────────────────
@@ -623,11 +626,11 @@ def test_an_unknown_voice_reads_in_the_models_own(worker, tmp_path, monkeypatch)
 def _cleanup_ready(svc, tmp_path, monkeypatch, *, apple=True, ran=None):
     """Engines installed, weights in place, and voice_enhance.py replaced
     by a stand-in that writes ``CLEANED`` where the cleaned sample goes."""
-    monkeypatch.setattr(svc, "mlx_platform", lambda: apple)
-    monkeypatch.setattr(svc, "engines", lambda: {"deepfilternet": apple, "resemble_enhance": True})
-    for engine, (_repo, files) in svc.CLEANUP_WEIGHTS.items():
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: apple)
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: {"deepfilternet": apple, "resemble_enhance": True})
+    for engine, (_repo, files) in svc.app_voices.CLEANUP_WEIGHTS.items():
         for dest in files.values():
-            target = svc.cleanup_weights_dir(engine) / dest
+            target = svc.app_voices.cleanup_weights_dir(engine) / dest
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"w")
     ran = [] if ran is None else ran
@@ -635,9 +638,9 @@ def _cleanup_ready(svc, tmp_path, monkeypatch, *, apple=True, ran=None):
     def fake_run(cmd, **kw):
         ran.append(cmd)
         Path(cmd[-1]).write_bytes(b"CLEANED:" + Path(cmd[-2]).read_bytes()[:4])
-        return svc.subprocess.CompletedProcess(cmd, 0, stdout='{"seconds": 1.5, "rate": 48000}\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"seconds": 1.5, "rate": 48000}\n', stderr="")
 
-    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     return ran
 
 
@@ -715,7 +718,7 @@ def test_a_failed_cleanup_leaves_the_sample_and_says_why(client, svc, tmp_path, 
     _record(client, "anton")
     d = tmp_path / ".voices" / "anton"
     before = (d / "sample.wav").read_bytes()
-    monkeypatch.setattr(svc.subprocess, "run", lambda cmd, **kw: svc.subprocess.CompletedProcess(
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
         cmd, 1, stdout="", stderr="Traceback\nRuntimeError: out of memory\n"))
     job = _wait_job(client, client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "restore"}).json()["job_id"])
     assert job["status"] == "error" and "out of memory" in job["error"]
@@ -725,10 +728,10 @@ def test_a_failed_cleanup_leaves_the_sample_and_says_why(client, svc, tmp_path, 
 
 def test_a_cleanup_installs_its_engine_and_fetches_its_weights(client, svc, tmp_path, monkeypatch, no_pyav):
     ran = _cleanup_ready(svc, tmp_path, monkeypatch)
-    shutil_root = svc.cleanup_weights_dir("deepfilternet")
+    shutil_root = svc.app_voices.cleanup_weights_dir("deepfilternet")
     (shutil_root / "model.safetensors").unlink()
     installed = {"deepfilternet": False}
-    monkeypatch.setattr(svc, "engines", lambda: {"deepfilternet": installed["deepfilternet"]})
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: {"deepfilternet": installed["deepfilternet"]})
 
     def install(job_id, engine):
         installed[engine] = True
@@ -741,25 +744,25 @@ def test_a_cleanup_installs_its_engine_and_fetches_its_weights(client, svc, tmp_
         dest.write_bytes(b"w")
         return 1
 
-    monkeypatch.setattr(svc, "install_steps", install)
-    monkeypatch.setattr(svc, "_fetch", fetch)
+    monkeypatch.setattr(svc.app_routes_engines, "install_steps", install)
+    monkeypatch.setattr(svc.app_core, "_fetch", fetch)
     _record(client, "anton")
     job = _wait_job(client, client.post("/voices/anton/cleanup", headers=AUTH, json={"mode": "denoise"}).json()["job_id"])
     assert job["status"] == "done" and installed["deepfilternet"] and ran
-    assert fetched == [f"{svc.HF_BASE}/mlx-community/DeepFilterNet-mlx/resolve/main/v3/model.safetensors"]
+    assert fetched == [f"{svc.app_settings.HF_BASE}/mlx-community/DeepFilterNet-mlx/resolve/main/v3/model.safetensors"]
 
 
 def test_mlx_cleanup_and_engines_stay_off_other_machines(svc, monkeypatch):
-    monkeypatch.setattr(svc, "mlx_platform", lambda: False)
-    assert svc.cleanup_engine("denoise") == "resemble_enhance"
-    assert svc.cleanup_engine("restore") == "resemble_enhance"
-    assert "deepfilternet" in svc.APPLE_ENGINES
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: False)
+    assert svc.app_voices.cleanup_engine("denoise") == "resemble_enhance"
+    assert svc.app_voices.cleanup_engine("restore") == "resemble_enhance"
+    assert "deepfilternet" in svc.app_speech_models.APPLE_ENGINES
     # resemble-enhance's own pins (deepspeed, torch 2.1, gradio) stay out.
-    cmds = svc.install_commands("resemble_enhance")
+    cmds = svc.app_routes_engines.install_commands("resemble_enhance")
     assert cmds[-1][-2:] == ["--no-deps", "resemble-enhance==0.0.1"]
     assert not any("deepspeed" in part or "gradio" in part for cmd in cmds for part in cmd)
-    assert svc.engine_python("resemble_enhance") == svc.engine_python("chatterbox")
-    assert svc.engine_python("deepfilternet") == svc.engine_python("chatterbox_mlx")
+    assert svc.app_speech_models.engine_python("resemble_enhance") == svc.app_speech_models.engine_python("chatterbox")
+    assert svc.app_speech_models.engine_python("deepfilternet") == svc.app_speech_models.engine_python("chatterbox_mlx")
 
 
 def test_voice_enhance_refuses_what_an_engine_cannot_do(tmp_path):
@@ -834,7 +837,7 @@ def test_chatterbox_hears_the_sample_from_its_best_part(worker, tmp_path, monkey
 
 def test_a_voice_says_which_part_chatterbox_listens_to(client, svc, tmp_path, monkeypatch):
     import numpy as np
-    worker = svc._worker()
+    worker = svc.app_speech_models._worker()
     sample = worker.wav_bytes(np.concatenate([np.zeros(4 * 24000, dtype=np.float32), _speechlike(14, seed=5)]), 24000)
     monkeypatch.setattr(worker, "prepare_sample", lambda data: (sample, 18.0))
     voice = _record(client, "anna").json()
