@@ -496,7 +496,8 @@ async def get_view_clip(view_id: str, name: str):
 # an arbitrary host.
 
 @router.api_route("/{view_id}/proxy/{path:path}",
-                  methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+                  methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+                  include_in_schema=False)
 async def view_proxy(view_id: str, path: str, request: Request):
     view = get_view(view_id)
     if view is None:

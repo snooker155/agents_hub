@@ -261,7 +261,7 @@ def _authorized(dep: ProjectDeployment, request: Request) -> bool:
     return deployments.share_key_matches(dep, presented)
 
 
-@apps_router.api_route("/{slug}", methods=["GET", "HEAD"])
+@apps_router.api_route("/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
 async def app_root_redirect(slug: str, request: Request):
     query = f"?{request.url.query}" if request.url.query else ""
     return RedirectResponse(url=f"/apps/{slug}/{query}", status_code=307)
@@ -270,6 +270,7 @@ async def app_root_redirect(slug: str, request: Request):
 @apps_router.api_route(
     "/{slug}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
 )
 async def app_proxy(slug: str, path: str, request: Request):
     dep = dstore.by_slug(slug)
