@@ -8,10 +8,13 @@ reattaching on resume and the depth limit.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from flow.entities.containers import _nested
 from flow.registry import FlowEntitySpec
+
+log = logging.getLogger(__name__)
 
 SPEC = FlowEntitySpec(
     id="run_team",
@@ -51,7 +54,7 @@ def _result(rec: Dict[str, Any]) -> str:
         if messages:
             return str(messages[-1].content)
     except Exception:  # noqa: BLE001 - an empty answer is still an answer
-        pass
+        log.debug("team message fallback failed", exc_info=True)
     return ""
 
 

@@ -12,6 +12,7 @@ ids, the loaded flow) in closures and returns a configured driver.
 """
 from __future__ import annotations
 
+import logging
 import argparse
 import asyncio
 import os
@@ -35,6 +36,8 @@ from flow.engine import (
 )
 from flow.state import RunContext, StateMutationError
 from flow.dispatch import DispatchResult
+
+log = logging.getLogger(__name__)
 
 
 class _NodeStopped(RuntimeError):
@@ -184,8 +187,8 @@ def _run_agent_node(
             state="active",
             pid=os.getpid(),
         )["instance_id"]
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a node without an instance record still runs
+        log.debug("flow node instance create failed", exc_info=True)
 
     open_run(
         run_id, agent_id, pid=os.getpid(),
@@ -198,8 +201,8 @@ def _run_agent_node(
 
     try:
         update_run(run_id, {"input": prompt})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - recording the input is best effort
+        log.debug("run input update failed", exc_info=True)
 
     with open(log_path, "w", encoding="utf-8") as _f:
         _f.write(f"--- Node run started at {_utc_now_iso()} ---\nAgent: {agent_id}\n\n=== EXECUTION ===\n")
@@ -370,8 +373,8 @@ def build_task_driver(
         treats a stale heartbeat, not a missing pid, as death."""
         try:
             run_store.update_flow_run(run_id, {"heartbeat_at": _utc_now_iso()})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a missed heartbeat must not fail the run
+            log.debug("heartbeat update failed", exc_info=True)
 
     def _make_run_context(node_id: str) -> RunContext:
         return RunContext(

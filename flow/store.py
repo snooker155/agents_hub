@@ -26,6 +26,7 @@ loaded into the store keyed by id, and the source renamed to ``.migrated``
 """
 from __future__ import annotations
 
+import logging
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -35,6 +36,8 @@ import yaml
 from common import db, review as review_mod
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
+
+log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Legacy locations only: read during the one-time import, never written again.
@@ -508,8 +511,8 @@ def _notify_flows_changed(flow_id: str | None = None) -> None:
     try:
         from common.session_broker import notify_change
         notify_change("flows", flow_id=flow_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a change notification must not fail the write that caused it
+        log.debug("flows change notification failed", exc_info=True)
 
 
 def save_flow(flow: Dict[str, Any]) -> None:

@@ -5,6 +5,7 @@ Helpers that tie a chat message exchange to the run/session bookkeeping the rest
 of the dashboard reads: each message becomes a row in the ``runs`` table with a
 log file so it appears in the Sessions list, attached to the chat's instance.
 """
+import logging
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -21,6 +22,8 @@ from managers.run_manager import (
 )
 from chat.models import ChatRequest
 from common.session_service import get_or_create_chat_session
+
+log = logging.getLogger(__name__)
 
 
 def utc_iso() -> str:
@@ -106,8 +109,8 @@ def get_pool_id(agent_id: str, workspace: str | None = None) -> str | None:
         pools = effective_memory_pools(spec, workspace) if spec else []
         if pools:
             return pools[0]
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - no personal pool means the turn runs without memory
+        log.debug("memory pool resolution failed", exc_info=True)
     return None
 
 
@@ -119,14 +122,14 @@ def auto_journal(agent_id: str, pool_id: str | None, user_message: str, response
         from memory.tool import silent_journal_append, silent_interaction_episode
         silent_journal_append(pool_id, agent_id, user_message, response, run_id=run_id)
         silent_interaction_episode(pool_id, agent_id, user_message, response, run_id=run_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - memory journaling is fire and forget
+        log.debug("memory journal append failed", exc_info=True)
     # Auto-extraction is off by default; opt-in via GRAPH_AUTO_EXTRACT env flag.
     try:
         from memory.graph_extract import silent_graph_extract
         silent_graph_extract(pool_id, user_message, response)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - graph extraction is optional and fire and forget
+        log.debug("graph extraction failed", exc_info=True)
 
 
 def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
@@ -151,7 +154,8 @@ def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
             and r.get("session_type") == "chat"
             and str(r.get("status")) == "completed"
         ]
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable run history means no history
+        log.debug("run history read failed", exc_info=True)
         return []
     runs.sort(key=lambda r: str(r.get("started_at") or r.get("created_at") or ""))
 
@@ -186,7 +190,8 @@ def agent_overrides(agent_id: str) -> dict:
     try:
         spec = registry.get_agent(agent_id)
         return spec.model_overrides() if spec else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - no override means the agent defaults
+        log.debug("model overrides read failed", exc_info=True)
         return {}
 
 
@@ -225,7 +230,8 @@ def load_flow_definition(flow_id: str) -> dict:
     from flow import store as flow_store
     try:
         flow = flow_store.get_flow(flow_id)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a store failure becomes a 500 with its message
+        log.debug("flow read failed", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to read flow: {e}")
     if not flow:
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
@@ -254,7 +260,8 @@ def create_chat_run(request: ChatRequest, **run_extra):
             workspace=request.workspace,
             agent_id=request.agent_id,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a turn without a session still runs
+        log.debug("chat session create failed", exc_info=True)
         session_id = None
 
     msg_id = str(uuid4())[:8]
@@ -313,8 +320,8 @@ def create_chat_run(request: ChatRequest, **run_extra):
         _cap_spec = _cap_get_agent(request.agent_id)
         if _cap_spec is not None:
             check_run_channel(request.agent_id, list(_cap_spec.tools or []), channel)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the channel exposure check is warn only and must not block a turn
+        log.debug("channel capability check failed", exc_info=True)
 
     # One chat instance per conversation: the same live copy answers every
     # message in the thread, so its instance page carries the whole exchange.
@@ -361,8 +368,8 @@ def create_chat_run(request: ChatRequest, **run_extra):
                 reuse_session=not request.instance_id,
             )
             instance_id = instance["instance_id"]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the turn runs without an instance record
+            log.debug("chat instance create failed", exc_info=True)
 
     # The version this turn was asked to run (the request's own pin; a
     # service's pin is already in run_extra above) and its overrides, so the

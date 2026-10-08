@@ -86,8 +86,8 @@ def collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
                     _proj = _pstore.get(str(pid))
                     if _proj:
                         project_name = project_folder_name(_proj.name)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - without the project folder the workspace root is scanned
+                    _log.debug("project folder lookup failed", exc_info=True)
         root = resolve_project_root(ws_name, project_name or None)
         started_at = datetime.fromisoformat(started_at_iso)
         if started_at.tzinfo is None:
@@ -98,7 +98,7 @@ def collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
                 continue
             try:
                 rel = p.relative_to(root).as_posix()
-            except Exception:
+            except ValueError:
                 continue
             if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _INTERNAL_PREFIXES):
                 continue
@@ -106,11 +106,12 @@ def collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
                 mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
                 if mtime >= started_at:
                     files.append(rel)
-            except Exception:
-                pass
+            except OSError:
+                _log.debug("file stat failed", exc_info=True)
         files.sort()
         return files
-    except Exception:
+    except Exception:  # noqa: BLE001 - changed-file collection is best effort and falls back to no files
+        _log.debug("changed files collection failed", exc_info=True)
         return []
 
 
@@ -247,8 +248,8 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
                         f"{'=' * 60}\n\n"
                         f"{instruction}"
                     )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the parent layer is optional, the instruction stands without it
+            _log.debug("parent task context failed", exc_info=True)
 
         # Results of prerequisite tasks. `depends` is the explicit signal that
         # this task consumes another task's output — only those results are
@@ -282,8 +283,8 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
                     f"\nUse these results as input where relevant. Your task is a "
                     f"separate unit of work, not a continuation of them."
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the prerequisite layer is optional, the instruction stands without it
+            _log.debug("prerequisite results failed", exc_info=True)
 
         # Append previous agent output on this same task (re-run scenario).
         # Skip orchestrator results — they are assignment summaries, not work output.
@@ -305,8 +306,8 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
                     f"{'=' * 60}\n"
                     f"\nContinue the work based on the above output."
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the previous-output layer is optional, the instruction stands without it
+            _log.debug("previous output failed", exc_info=True)
 
         # The workspace files the task works from: copied into the run's
         # working directory when there is one, named in the prompt either way.
@@ -327,8 +328,8 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
                 instruction = f"{instruction}\n\n{outcome_block}"
         except Exception:  # noqa: BLE001 - best-effort layer like the others, the instruction stands without it
             _log.debug("outcome sections failed for task %s", task_id, exc_info=True)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the whole instruction build is best effort, the base instruction is returned
+        _log.debug("instruction build failed", exc_info=True)
 
     return instruction or f"Process task {task_id}"
 
@@ -368,5 +369,5 @@ def persist_task_result(
                 UUID(task_id), text,
                 files=changed_files, run_id=run_id, agent_id=agent_id or None,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - saving the result is best effort and must not fail the finished run
+        _log.debug("task result save failed", exc_info=True)

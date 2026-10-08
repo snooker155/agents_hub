@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type
 
 from flow import registry as flow_registry
-from flow.state import FlowState, NodeResult, RunContext
+from flow.state import FlowState, NodeResult, RunContext, StateMutationError
 
 
 # -------------------- helpers --------------------
@@ -268,7 +268,7 @@ class EntityNode(FlowEntity):
                     written[k] = v
             else:
                 written = state.apply(outputs, payload)
-        except Exception as e:  # StateMutationError or similar → fail the node
+        except StateMutationError as e:
             return DispatchResult(ok=False, error=str(e))
 
         if not text:
@@ -316,7 +316,7 @@ class ContainerEntity(EntityNode):
         output_key = (list(outputs) or ["result"])[0]
         try:
             written = state.apply([output_key], {output_key: result})
-        except Exception as e:  # StateMutationError or similar
+        except StateMutationError as e:
             return DispatchResult(ok=False, error=str(e))
         child_id = str(payload.get("child_run_id") or "")
         child_kind = str(payload.get("child_kind") or "")

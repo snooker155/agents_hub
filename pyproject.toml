@@ -85,7 +85,6 @@ ignore = [
 # unreviewed blind excepts, so both rules stay ignored there until someone
 # does the same narrowing pass for that package; remove a line here once its
 # package is clean, and the rules start applying to it too.
-"chat/**" = ["BLE001", "S110"]
 "cli/**" = ["BLE001", "S110"]
 "clients/**" = ["BLE001", "S110"]
 "connections/**" = ["BLE001", "S110"]
@@ -93,7 +92,6 @@ ignore = [
 "dashboard/**" = ["BLE001", "S110"]
 "evals/**" = ["BLE001", "S110"]
 "examples/**" = ["BLE001", "S110"]
-"flow/**" = ["BLE001", "S110"]
 "instances/**" = ["BLE001", "S110"]
 "loops/**" = ["BLE001", "S110"]
 "plans/**" = ["BLE001", "S110"]
@@ -101,7 +99,6 @@ ignore = [
 "providers/**" = ["BLE001", "S110"]
 "reasoning/**" = ["BLE001", "S110"]
 "runtime/**" = ["BLE001", "S110"]
-"tasks/**" = ["BLE001", "S110"]
 "teams/**" = ["BLE001", "S110"]
 "views/**" = ["BLE001", "S110"]
 # Tests exercise failure paths deliberately (forcing an exception to confirm

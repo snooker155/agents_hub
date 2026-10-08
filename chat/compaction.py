@@ -20,10 +20,13 @@ where the middle used to be.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from chat.context import HISTORY_CHAR_BUDGET as FALLBACK_BUDGET_CHARS
+
+log = logging.getLogger(__name__)
 
 #: Share of the model's context window the conversation may occupy before it is
 #: folded. The rest is headroom for the system prompt's own growth, this turn's
@@ -82,7 +85,8 @@ def history_budget_chars(provider: str, model: str) -> int:
     try:
         from providers.context_windows import get_model_context_window
         window = int(get_model_context_window(provider or "", model or "") or 0)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unknown window falls back to the flat budget
+        log.debug("context window lookup failed", exc_info=True)
         window = 0
     if window > 0:
         return int(window * BUDGET_FRACTION * CHARS_PER_TOKEN)
@@ -267,8 +271,8 @@ def summarize(llm: Any, previous: str, folded: list) -> tuple[str, bool]:
         text = message_text(reply).strip()
         if text:
             return text, False
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - any summariser failure falls back to the heuristic summary
+        log.debug("summary model call failed", exc_info=True)
     return heuristic_summary(previous, folded), True
 
 
@@ -291,7 +295,8 @@ def summarizer_llm(agent: Any):
             base_url=getattr(agent, "base_url", None),
             streaming=False,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - no summary model means the heuristic summary is used
+        log.debug("summary model could not be built", exc_info=True)
         return None
 
 
@@ -401,7 +406,8 @@ def compact_for_turn(
 
     try:
         stored = get_session_summary(session_id) if session_id else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable stored summary is treated as none
+        log.debug("stored summary read failed", exc_info=True)
         stored = {}
     summary = str((stored or {}).get("text") or "")
     covers_until = realign_covers_until(
@@ -429,15 +435,16 @@ def compact_for_turn(
             else (getattr(agent, "provider", "") or ""),
             force=force,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - compaction never raises, history is left as it was
+        log.debug("compaction failed", exc_info=True)
         return Compaction(messages=list(history), summary="", covers_until=0)
 
     if result.changed and session_id:
         try:
             set_session_summary(session_id, result.summary, result.covers_until,
                                 anchor=result.anchor)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a summary that cannot be saved is refolded next turn
+            log.debug("summary save failed", exc_info=True)
     return result
 
 

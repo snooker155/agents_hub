@@ -298,8 +298,8 @@ def update_task(
             if new_status in _RESET_STATUSES:
                 try:
                     delete_task_result_file(task_id)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a missing result file must not block the status change
+                    log.debug("task result file delete failed", exc_info=True)
 
     # Load current task to detect changes for activity log
     current = store.get(task_id)
@@ -577,7 +577,8 @@ def _execution_mode(workspace: Optional[str]) -> str:
             .get("orchestrator", {})
             .get("execution_mode", "subprocess")
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace metadata means subprocess mode
+        log.debug("execution mode lookup failed", exc_info=True)
         return "subprocess"
 
 
@@ -597,7 +598,8 @@ def _max_parallel_subtasks(workspace: Optional[str]) -> int:
             .get("max_parallel_subtasks", 1)
         )
         return max(1, int(raw))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace metadata means one subtask at a time
+        log.debug("max parallel subtasks lookup failed", exc_info=True)
         return 1
 
 
@@ -630,9 +632,10 @@ def _start_orchestrator_on_subtask(task: Task, *, store: TaskStore) -> bool:
         )
         notify_change("tasks", task_id=str(task.id))
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - any launch failure releases the claim so the subtask can retry
         # Launch failed after we claimed it — release the claim so it can be
         # retried on the next promotion pass instead of stranding the subtask.
+        log.debug("orchestrator launch failed", exc_info=True)
         clear_agent(task.id, store=store)
         store.update(task.id, status=TaskStatus.todo)
         return False
@@ -1117,8 +1120,8 @@ def park_task_awaiting_approval(
              if is_budget else f"Agent wants to call {record['tool']}"),
             run_id=record["run_id"], agent_id=record["agent_id"],
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the activity log entry is a courtesy to the parked task
+        log.debug("approval activity log failed", exc_info=True)
     if is_budget:
         _notify_budget_park(tid, record, store=store)
         return updated
@@ -1135,8 +1138,8 @@ def park_task_awaiting_approval(
             workspace=str(getattr(current, "workspace", "") or "") or None,
             channels=["dashboard"],
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the notification is a courtesy to the parked task
+        log.debug("approval notification failed", exc_info=True)
     return updated
 
 
@@ -1161,7 +1164,7 @@ def _notify_budget_park(tid: UUID, record: Dict[str, Any], *, store: TaskStore) 
             channels=["dashboard"],
         )
     except Exception:  # noqa: BLE001 - best effort, the park stands either way
-        pass
+        log.debug("budget park notification failed", exc_info=True)
 
 
 def resolve_budget_pause(
@@ -1194,8 +1197,8 @@ def resolve_budget_pause(
     try:
         append_task_activity_log(tid, "budget_stop", reason,
                                  run_id=str(pending.get("run_id") or ""))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the activity log entry is a courtesy to the stopped task
+        log.debug("budget stop activity log failed", exc_info=True)
     return get_task(tid, store=store)
 
 

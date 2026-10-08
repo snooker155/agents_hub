@@ -18,11 +18,14 @@ entity kind shares (runtime/entity_launch.py). See docs/workers.md.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT  # noqa: F401 - PROJECT_ROOT re-exported
 from managers.run_manager import _utc_now_iso
+
+log = logging.getLogger(__name__)
 
 #: The agent id a ``human_interrupt`` node parks its task under. A flow node is
 #: not an agent, so this names the *kind* of pause rather than something the
@@ -35,8 +38,8 @@ def _set_flow_running(flow_id: str, running: bool) -> None:
     try:
         from flow import store as flow_store
         flow_store.set_running(flow_id, running)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the running marker is cosmetic and must not fail a launch
+        log.debug("running marker update failed", exc_info=True)
 
 
 def start_flow_run(
@@ -82,8 +85,8 @@ def start_flow_run(
     )
     try:
         _ts.update_task(task_id, session_id=session_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the task session link is best effort
+        log.debug("task session link failed", exc_info=True)
 
     # run_id is the flow-run id (passed to the subprocess as --run-id and used as
     # flow_run_id / run_group for the per-node runs and log events). A flow is not
@@ -120,8 +123,8 @@ def start_flow_run(
             workspace=ws_name, object_type="run", object_id=run_id,
             details={"flow_id": flow_id, "task_id": str(task_id)},
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the audit entry must not fail a launch
+        log.debug("flow launch audit failed", exc_info=True)
 
     cli_args = [
         "--flow-id", flow_id,
@@ -182,8 +185,8 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
             task_id = str(spec.get("task_id") or "")
             if task_id:
                 _ts.update_task(UUID(task_id), status=_ts.TaskStatus.in_progress, pending_question=None)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - resume status update is best effort, the flow already restarted
+            log.debug("resume task update failed", exc_info=True)
 
 
 class FlowResumeError(Exception):
@@ -365,8 +368,8 @@ def trigger_flow(
         _ts.append_task_activity_log(
             task.id, "flow_triggered", f"Flow triggered ({created_by})", flow_id=flow_id
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the activity entry is a courtesy to the new task
+        log.debug("flow trigger activity log failed", exc_info=True)
 
     params: Dict[str, Any] = {
         "workspace": ws_name,
@@ -379,8 +382,8 @@ def trigger_flow(
     run_id, session_id = start_flow_run(str(task.id), flow_id, params)
     try:
         _ts.assign_agent(task.id, flow.get("name") or flow_id, params, run_id=run_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the run is already going, the task just shows no executor
+        log.debug("executor assignment failed", exc_info=True)
     return {
         "task_id": str(task.id),
         "run_id": run_id,

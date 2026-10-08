@@ -13,6 +13,7 @@ for a provider cache to recognise. The text rendering stays for the callers that
 do not build a prompt for an agent executor, and for reading back sessions that
 were recorded the old way.
 """
+import logging
 import re
 
 from chat.models import ChatRequest
@@ -23,6 +24,8 @@ from common.workspace_context import (
     normalize_project_id,
     workspace_name_from_path,
 )
+
+log = logging.getLogger(__name__)
 
 # Markers used by ``history_block_lines`` / ``build_chat_context`` to fold prior
 # turns into a single prompt string; ``split_embedded_history`` reads them back.
@@ -251,7 +254,8 @@ def resolve_project(request: ChatRequest):
         from common.paths import PROJECTS_FILE
         from projects.storage import ProjectStore
         return ProjectStore(path=PROJECTS_FILE).get(pid)
-    except Exception:
+    except Exception:  # noqa: BLE001 - callers fall back to whole-workspace scope
+        log.debug("project lookup failed", exc_info=True)
         return None
 
 
@@ -290,7 +294,8 @@ def resolve_workspace_abs(request: ChatRequest) -> str | None:
                 proj.workspace or request.workspace, project_folder_name(proj.name)
             ))
         return str(create_workspace_folder(request.workspace))
-    except Exception:
+    except Exception:  # noqa: BLE001 - callers fall back to the default workspace folder
+        log.debug("workspace folder resolution failed", exc_info=True)
         return None
 
 

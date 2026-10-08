@@ -26,6 +26,7 @@ filter on; the checkpoint has a column of its own.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from typing import Any, Dict, List, Optional
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from common.paths import AGENTS_HUB_ROOT
+
+log = logging.getLogger(__name__)
 
 FLOW_LOGS_DIR = AGENTS_HUB_ROOT / "flow_logs"
 
@@ -53,7 +56,8 @@ def _pid_alive(pid: Optional[int]) -> bool:
         os.kill(int(pid), 0)
     except OSError:
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 - any other probe error is treated as alive
+        log.debug("pid probe failed", exc_info=True)
         return True
     return True
 
@@ -76,12 +80,13 @@ def append_flow_log(flow_id: str, run_group: str, payload: Dict[str, Any]) -> No
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
-        except Exception:
+        except (OSError, ValueError):
+            log.debug("flow log unreadable, starting a fresh one", exc_info=True)
             existing = []
         existing.append(payload)
         path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - flow log writing is best effort and must not fail a run
+        log.debug("flow log append failed", exc_info=True)
 
 
 def log_flow_event(
@@ -131,12 +136,14 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     events.extend(data)
-            except Exception:
+            except (OSError, ValueError):
+                log.debug("flow log file skipped", exc_info=True)
                 continue
 
     try:
         remote_keys = blobs.list(f"flow_logs/{flow_id}/")
-    except Exception:
+    except Exception:  # noqa: BLE001 - a blob store failure leaves local logs only
+        log.debug("remote flow logs listing failed", exc_info=True)
         remote_keys = []
     for key in remote_keys:
         name = key.rsplit("/", 1)[-1]
@@ -149,7 +156,8 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 events.extend(data)
-        except Exception:
+        except (OSError, ValueError):
+            log.debug("remote flow log skipped", exc_info=True)
             continue
 
     legacy = FLOW_LOGS_DIR / f"{flow_id}.json"
@@ -158,8 +166,8 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
             data = json.loads(legacy.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 events.extend(data)
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            log.debug("legacy flow log skipped", exc_info=True)
     events.sort(key=lambda e: e.get("timestamp") or "")
     return events
 
@@ -248,8 +256,8 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
                     "type": "flow_stopped",
                     "message": "run record reconciled — process no longer alive",
                 }, kind="task")
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the reconcile log entry is a courtesy
+                log.debug("reconcile log entry failed", exc_info=True)
             reaped = True
             continue
         active.append(r)
@@ -260,8 +268,8 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
         try:
             from flow import store as _flow_store
             _flow_store.set_running(flow_id, False)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - clearing the running marker is best effort
+            log.debug("running marker clear failed", exc_info=True)
     return active
 
 
@@ -363,5 +371,5 @@ def close_flow_run(
         try:
             from common import blobs
             blobs.mirror(blobs.rel(log_file))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - log mirroring is best effort and must not fail closing a run
+            log.debug("flow log mirror failed", exc_info=True)

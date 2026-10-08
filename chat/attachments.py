@@ -163,7 +163,7 @@ def materialize_attachments(request: ChatRequest) -> None:
         if att.content_b64:
             try:
                 binary_bytes = base64.b64decode(att.content_b64, validate=False)
-            except Exception as e:
+            except ValueError as e:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Attachment '{att.filename}' has invalid base64: {e}",
@@ -204,7 +204,7 @@ def materialize_attachments(request: ChatRequest) -> None:
                 else:
                     target.write_text(att.content or "", encoding="utf-8")
                 att.stored_workspace_path = target.relative_to(workspace_root).as_posix()
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 raise HTTPException(status_code=500, detail=f"Failed to store attachment '{att.filename}': {e}")
             data = binary_bytes if binary_bytes is not None else (att.content or "").encode("utf-8")
             _store_upload_as_file(request, att, data)

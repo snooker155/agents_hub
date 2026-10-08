@@ -7,12 +7,15 @@ final result into a :class:`StreamDriveResult`. Used by both the single-agent
 pipeline and each flow node, so the queue-draining / stop-polling logic lives in
 one place; each caller owns its own finalization (logs, run records, journaling).
 """
+import logging
 import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
 from managers.run_manager import get_run_by_id as get_run
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -176,7 +179,7 @@ async def drive_streaming_run(
         cancelled_loop = pop_cancelled_summary(run_id)
         if cancelled_loop:
             result.loop = cancelled_loop
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any agent failure becomes the turn's error and refusal
         final_error = str(e)
         from chat.refusals import refusal_of
         result.refusal = refusal_of(e)
@@ -203,7 +206,8 @@ async def drive_streaming_run(
         from common.entity_links import entity_payloads
         try:
             result.entities = entity_payloads(entity_sink.records())
-        except Exception:
+        except Exception:  # noqa: BLE001 - links are an extra, the reply stands without them
+            log.debug("entity links failed", exc_info=True)
             result.entities = []
     if citation_sink is not None:
         result.citations = citation_sink.payloads()
@@ -262,7 +266,8 @@ async def drive_streaming_run(
     if response_obj is not None:
         try:
             structured_response = response_obj.to_payload() if hasattr(response_obj, "to_payload") else None
-        except Exception:
+        except Exception:  # noqa: BLE001 - a response without a payload is stored as plain text
+            log.debug("structured response payload failed", exc_info=True)
             structured_response = None
     # Canonical structured payload (see common.run_payloads): the input context
     # is stored as blocks, the response as {text, structured}, and the trace as
