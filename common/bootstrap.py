@@ -244,7 +244,7 @@ def _sync_system_agents() -> list[str]:
     except ImportError:
         check_combination = None  # type: ignore[assignment]
 
-        def _recognised(_tool_id: str) -> bool:  # without the model, nothing can be called retired
+        def _recognised(tool_id: str) -> bool:  # without the model, nothing can be called retired
             return True
 
     changed: list[str] = []

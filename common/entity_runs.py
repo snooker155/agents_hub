@@ -183,7 +183,7 @@ def _check_status(existing: Optional[Mapping[str, Any]], rec: Mapping[str, Any],
     """Refuse a status move the transition table forbids."""
     if existing is None or "status" not in rec:
         return
-    run_status.check_transition(existing.get("status"), rec.get("status"), run_id=run_id)
+    run_status.check_transition(existing.get("status"), rec["status"], run_id=run_id)
 
 
 # ── Notification ─────────────────────────────────────────────────────────────

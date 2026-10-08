@@ -230,8 +230,8 @@ def _row_to_user(row) -> Dict[str, Any]:
         "has_password": bool(col("password_hash")),
         # Own monthly spend limit (common/user_budget.py); None follows the
         # hub default, 0 is unlimited.
-        "spend_limit_usd": (float(col("spend_limit_usd"))
-                            if col("spend_limit_usd") is not None else None),
+        "spend_limit_usd": (float(spend_limit) if (spend_limit := col("spend_limit_usd")) is not None
+                            else None),
     }
 
 

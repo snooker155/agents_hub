@@ -42,7 +42,7 @@ _delegation_run_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextV
 )
 
 # (depth_token, run_id_token, depth) returned by delegation_scope / consumed by reset_scope.
-ScopeTokens = Tuple[object, object, int]
+ScopeTokens = Tuple["contextvars.Token[int]", "contextvars.Token[Optional[str]]", int]
 
 
 def set_emitter(emitter: Optional[StreamEmitter]):

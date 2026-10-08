@@ -76,7 +76,7 @@ def _read_json(path: Path) -> Optional[Any]:
 
 
 def _is_corrupt(value: Any) -> bool:
-    return isinstance(value, tuple) and value and value[0] == "ERROR"
+    return bool(isinstance(value, tuple) and value and value[0] == "ERROR")
 
 
 def _dumps(value: Any) -> str:

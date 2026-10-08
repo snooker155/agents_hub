@@ -191,8 +191,8 @@ def _load_py(mg: Migration) -> Callable[[Any, str], None]:
         raise RuntimeError(f"cannot load migration {mg.path.name}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    upgrade = getattr(module, "upgrade", None)
-    if not callable(upgrade):
+    upgrade: Optional[Callable[[Any, str], None]] = getattr(module, "upgrade", None)
+    if upgrade is None or not callable(upgrade):
         raise RuntimeError(f"migration {mg.path.name} has no upgrade(conn, dialect)")
     return upgrade
 

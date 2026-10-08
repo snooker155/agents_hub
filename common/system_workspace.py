@@ -860,13 +860,13 @@ def _loop_status() -> Dict[str, Any]:
                            "scheduled": False, "recurrence": None, "every_hours": None,
                            "next_run_at": None, "last_run": _last_run()}
     try:
-        from plans.models import JobStatus
         from plans import service as plans_service
         job = plans_service.get_job(JOB_ID)
     except Exception:  # noqa: BLE001 - no plan store, no schedule to report
         log.debug("job lookup failed", exc_info=True)
         job = None
     if job is not None:
+        from plans.models import JobStatus
         scheduled = job.status == JobStatus.scheduled
         out.update(scheduled=scheduled, recurrence=job.cron, every_hours=every_hours_of(job.cron),
                    next_run_at=job.run_at.isoformat() if scheduled and job.run_at else None)

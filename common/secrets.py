@@ -752,8 +752,8 @@ def env_for_flow(workspace: str, flow_id: Optional[str],
 # ``activate`` binds the run's scope to the current context instead, and
 # ``get`` resolves one name against it, through the same allowlist.
 
-_ACTIVE: ContextVar[Optional[Tuple[str, str, str]]] = ContextVar("agents_hub_secret_scope",
-                                                                  default=None)
+_ACTIVE: ContextVar[Optional[Tuple[str, str, str, Tuple[str, ...]]]] = ContextVar(
+    "agents_hub_secret_scope", default=None)
 
 
 @contextmanager

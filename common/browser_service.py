@@ -349,12 +349,12 @@ def start_local(token: str, port: int) -> Dict[str, Any]:
 
 def stop_local() -> bool:
     state = _read_state()
-    pid = state.get("pid")
+    pid = int(state.get("pid") or 0)
     if not _pid_alive(pid):
         _write_state({})
         return False
     try:
-        os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
     deadline = time.monotonic() + 10
@@ -362,7 +362,7 @@ def stop_local() -> bool:
         time.sleep(0.2)
     if _pid_alive(pid):
         try:
-            os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
     _write_state({})

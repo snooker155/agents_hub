@@ -147,7 +147,7 @@ class _ClientState:
     ring: Deque[dict] = field(default_factory=lambda: deque(maxlen=RING_BUFFER_MAX))
     # channel → the token event currently sitting in the queue for it, eligible
     # to absorb the next token instead of getting a frame of its own.
-    pending_token: Dict[str, dict] = field(default_factory=dict)
+    pending_token: Dict[Any, dict] = field(default_factory=dict)
     # Events dropped since the last one actually delivered; flushed as a single
     # `lagged` meta frame ahead of the next delivery.
     dropped: int = 0

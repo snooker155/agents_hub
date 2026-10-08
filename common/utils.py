@@ -1,8 +1,7 @@
 import json
 import pathlib
 import subprocess
-from typing import Any, Dict, List, Tuple
-from common.config import Paths
+from typing import Any, List, Tuple
 import fnmatch
 
 TEXT_EXTS = {
@@ -59,21 +58,6 @@ def run_cmd(cmd: List[str], cwd: str | None=None, timeout: int=30) -> Tuple[int,
         return r.returncode, out.strip()
     except (OSError, subprocess.SubprocessError) as e:
         return 1, f"[exec error] {e}"
-
-def append_log_md(section: str, text: str, md_path=None):
-    if md_path is None:
-        md_path = Paths().logs + "/interaction_log.md"
-    cur = read(md_path)
-    cur += f"\n\n## {section}\n{text.strip()}\n"
-    write(md_path, cur or f"# Внешний контекст проекта\n\n## {section}\n{text.strip()}\n")
-
-def append_log_json(event: Dict[str,Any], json_path=None):
-    if json_path is None:
-        json_path = Paths().logs + "/interaction_log.json"
-    data = load_json(json_path, default=[])
-    data.append(event)
-    save_json(json_path, data)
-    return data
 
 def is_text_path(path: pathlib.Path) -> bool:
     if path.suffix.lower() in TEXT_EXTS:

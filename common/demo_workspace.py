@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from uuid import UUID
 from typing import Any, Dict, List
 
 log = logging.getLogger(__name__)
@@ -123,9 +124,10 @@ def _seed_pulse(seed: Dict[str, Any]) -> None:
 
     now = datetime.now(timezone.utc)
     for tick in seed.get("ticks") or []:
-        job_id = jobs.get(str(tick.get("agent_id") or ""))
-        if not job_id:
+        job_ref = jobs.get(str(tick.get("agent_id") or ""))
+        if not job_ref:
             continue
+        job_id = UUID(str(job_ref))
         at = now - timedelta(hours=float(tick.get("hours_ago") or 0))
         outcome = str(tick.get("outcome") or "quiet")
         started = outcome in ("acted", "quiet", "blocked", "error")

@@ -720,22 +720,22 @@ def truncate_all_tables(conn: Optional[Any] = None) -> List[str]:
     Postgres, where a fresh file is not an option). Returns the table names.
     Sequences restart, so autoincrement columns count from 1 again like in a
     fresh database. Never called by the application."""
-    conn = conn or get_conn()
+    db = conn if conn is not None else get_conn()
     if dialect() == "postgres":
-        rows = conn.execute(
+        rows = db.execute(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
         ).fetchall()
         names = [str(r[0]) for r in rows]
         if names:
-            conn.execute("TRUNCATE " + ", ".join(names) + " RESTART IDENTITY")
+            db.execute("TRUNCATE " + ", ".join(names) + " RESTART IDENTITY")
         return names
-    rows = conn.execute(
+    rows = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     names = [str(r[0]) for r in rows]
     for name in names:
-        conn.execute(f"DELETE FROM {name}")
+        db.execute(f"DELETE FROM {name}")
     return names
 
 

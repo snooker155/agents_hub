@@ -1,0 +1,8 @@
+{
+  "include": ["common"],
+  "exclude": ["**/node_modules", "**/__pycache__", "chroma_db", "site", "dashboard/frontend", ".agents_hub"],
+  "extraPaths": ["dashboard/backend"],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingModuleSource": "none"
+}

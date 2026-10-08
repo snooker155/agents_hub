@@ -30,7 +30,7 @@ jobs:
           # and go through cli.main, which reaches for rich and requests too).
           # It is universal, so it installs the same on any supported version.
           pip install -r requirements.lock
-          pip install pytest pytest-xdist ruff
+          pip install pytest pytest-xdist ruff pyright
 
       - name: Blind excepts (no new ones beyond the baseline)
         # --isolated so the per-file-ignores in pyproject.toml do not hide the
@@ -41,6 +41,9 @@ jobs:
 
       - name: Lint (ruff)
         run: ruff check .
+
+      - name: Types (pyright, the packages pyrightconfig.json lists)
+        run: pyright
 
       - name: One version everywhere
         # pyproject.toml, the frontend's package.json and the Helm chart name

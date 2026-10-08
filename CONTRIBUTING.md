@@ -83,6 +83,13 @@ When you do narrow one, re-record the baseline so the count drops with it:
 python scripts/ci/ruff_baseline.py record
 ```
 
+**Types (pyright):** `pyrightconfig.json` lists the packages pyright checks in
+basic mode (`common/` today), and CI runs `pyright` on them. The same deal as
+the blind excepts: a package joins the list once it is clean, and stays clean.
+Run `pip install pyright && pyright` before pushing a change under one of the
+listed packages; to add a package, append it to `include` and fix what pyright
+reports there first.
+
 ## Adding an agent tool
 
 A tool is a LangChain `@tool` function in `tools/`. It shows up in four places, and the tests check that they agree: the function, the catalog entry the dashboard reads, the capability grant, and the agent's tool list. Read `tools/calculator.py` for the smallest complete example and `tools/capabilities.py` for the security model.

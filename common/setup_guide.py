@@ -129,7 +129,8 @@ def usable_providers() -> List[str]:
         catalog = load_catalog_raw() or {}
         for b in list_backends():
             bid = str(b.get("id") or "")
-            entry = catalog.get(bid) if isinstance(catalog.get(bid), dict) else {}
+            found = catalog.get(bid)
+            entry: Dict[str, Any] = found if isinstance(found, dict) else {}
             enabled = any(isinstance(m, dict) and m.get("enabled") for m in entry.get("models") or [])
             if bid and (b.get("default_model") or enabled):
                 out.append(bid)
