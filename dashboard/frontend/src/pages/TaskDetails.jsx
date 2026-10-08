@@ -1,585 +1,40 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/workspace';
-import { useLiveRefetch } from '../components/stream';
 import {
-  ChevronLeft, Clock, AlertCircle, Terminal,
-  Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
-  User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
-  ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare, ShieldQuestion, Calendar, Workflow, Users, RotateCw, DollarSign,
+  AlertCircle, CheckSquare, Clock, FileText, Folder, History, Layers, Loader, Pause, Play,
+  Split, Square, Terminal, ThumbsDown, ThumbsUp, Trash2,
 } from 'lucide-react';
-import DateInput from '../components/DateInput';
-import {
-  getTask, getAgents, assignAgent, approveAssignment, rejectAssignment, stopAgent, getMessageLogs,
-  runDecomposer, getTaskExecutionLog, deleteTask, updateTask, createTask, getProjects,
-  getTaskActivityLog, getTaskResult, getSettings, getTaskFileContent, getTaskFileRawUrl,
-  answerTask, approveTaskCall, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
-  listFlows, getTeams, getLoops,
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import api, {
+  answerTask, approveAssignment, approveTaskCall, assignAgent, deleteTask, getAgents, getLoops,
+  getMessageInsights, getMessageLogs, getProjects, getSettings, getTask, getTaskActivityLog,
+  getTaskExecutionLog, getTaskFileContent, getTaskResult, getTeams, listFlows,
+  pauseTaskContainer, rejectAssignment, resumeTaskContainer, runDecomposer, stopAgent,
+  updateTask,
 } from '../api';
-import api from '../api';
-import MarkdownRenderer from '../components/MarkdownRenderer';
-import SystemPatchCard from '../components/SystemPatchCard';
-import { parseSystemPatch } from '../components/systemPatch';
-import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
-import LiveRunStream from '../components/LiveRunStream';
-import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
-import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
-import TaskFilesCard from '../components/files/TaskFilesCard';
-
-import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
-import { useI18n } from '../i18n';
-import { useToast, errorDetail } from '../components/toast';
+import LiveRunStream from '../components/LiveRunStream';
+import { PageContainer, PageHeader } from '../components/PageLayout';
 import PageLoader from '../components/PageLoader';
+import TaskFilesCard from '../components/files/TaskFilesCard';
+import { useLiveRefetch } from '../components/stream';
+import { AddSubtaskModal } from '../components/task/SubtaskParts';
+import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
+import { TaskAssignModal } from '../components/task/TaskAssignModal';
+import {
+  DueDateField, PriorityDropdown, ProjectSelector, StatusDropdown, WorkspaceBadge,
+} from '../components/task/TaskFields';
+import { TaskFilesTab } from '../components/task/TaskFilesTab';
+import { TaskMetaRow } from '../components/task/TaskMetaRow';
+import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
+import { AwaitingInputCard, BudgetPauseCard, ToolApprovalCard } from '../components/task/TaskPendingCards';
+import {
+  ActivityTab, ExecutionTab, LogsTab, ResultsTab, SubtasksTab,
+} from '../components/task/TaskTabPanels';
+import { buildFileTree, parentDirPaths } from '../components/task/taskUtils';
+import { errorDetail, useToast } from '../components/toast';
+import { useWorkspace } from '../components/workspace';
+import { useI18n } from '../i18n';
 
-// ─── Executor display (agent / flow / team / loop) ──────────────────────────
-// task.executor (tasks.models.Executor) is the source of truth for what is
-// running a task; a task from before that field existed falls back to the
-// compatibility assigned_agent_type string, read as a plain agent.
-const EXECUTOR_KIND_ICON = { agent: User, flow: Workflow, team: Users, loop: RotateCw };
-function executorLabel(task) {
-  const ex = task?.executor;
-  const kind = ex?.kind || 'agent';
-  const id = ex?.id || task?.assigned_agent_type || '';
-  return { kind, id, Icon: EXECUTOR_KIND_ICON[kind] || User };
-}
-const fmtUsd = (n) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-// ─── File tree helpers (shared shape with WorkspaceDetails) ─────────────────────
-const buildFileTree = (paths) => {
-  const root = { type: 'dir', children: {} };
-  (paths || []).forEach((rawPath) => {
-    const cleanPath = String(rawPath || '').trim();
-    if (!cleanPath) return;
-    const parts = cleanPath.split('/').filter(Boolean);
-    let node = root;
-    parts.forEach((part, idx) => {
-      const isFile = idx === parts.length - 1;
-      if (!node.children[part]) {
-        node.children[part] = isFile
-          ? { type: 'file', name: part, path: parts.join('/') }
-          : { type: 'dir', name: part, children: {} };
-      }
-      node = node.children[part];
-    });
-  });
-
-  const toArray = (node, parentPath = '') => (
-    Object.keys(node.children || {})
-      .sort((a, b) => {
-        const aNode = node.children[a];
-        const bNode = node.children[b];
-        if (aNode.type !== bNode.type) return aNode.type === 'dir' ? -1 : 1;
-        return a.localeCompare(b);
-      })
-      .map((name) => {
-        const child = node.children[name];
-        const fullPath = parentPath ? `${parentPath}/${name}` : name;
-        if (child.type === 'dir') {
-          return { type: 'dir', name, path: fullPath, children: toArray(child, fullPath) };
-        }
-        return { type: 'file', name, path: child.path || fullPath };
-      })
-  );
-
-  return toArray(root);
-};
-
-const parentDirPaths = (filePath) => {
-  const parts = String(filePath || '').split('/').filter(Boolean);
-  const dirs = [];
-  for (let i = 1; i < parts.length; i += 1) {
-    dirs.push(parts.slice(0, i).join('/'));
-  }
-  return dirs;
-};
-
-const isMarkdownPath = (p) => /\.(md|markdown|mdx)$/i.test(String(p || ''));
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-const ALL_STATUSES = [
-  { value: 'todo',        bg: 'bg-gray-100',    text: 'text-gray-600',   dot: 'bg-gray-400' },
-  { value: 'ready',       bg: 'bg-blue-100',    text: 'text-blue-700',   dot: 'bg-blue-500' },
-  { value: 'pending',     bg: 'bg-amber-100',   text: 'text-amber-700',  dot: 'bg-amber-500', readonly: true },
-  { value: 'in_progress', bg: 'bg-yellow-100',  text: 'text-yellow-700', dot: 'bg-yellow-500' },
-  { value: 'blocked',     bg: 'bg-red-100',     text: 'text-red-700',    dot: 'bg-red-500' },
-  { value: 'awaiting_input', bg: 'bg-amber-100', text: 'text-amber-700',  dot: 'bg-amber-500', readonly: true },
-  { value: 'awaiting_approval', bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500', readonly: true },
-  { value: 'stopped',     bg: 'bg-gray-100',    text: 'text-gray-500',   dot: 'bg-gray-400' },
-  { value: 'resolved',    bg: 'bg-purple-100',  text: 'text-purple-700', dot: 'bg-purple-500' },
-  { value: 'reviewing',   bg: 'bg-cyan-100',    text: 'text-cyan-700',   dot: 'bg-cyan-500',  readonly: true },
-  { value: 'reviewed',    bg: 'bg-teal-100',    text: 'text-teal-700',   dot: 'bg-teal-500' },
-  { value: 'done',        bg: 'bg-green-100',   text: 'text-green-700',  dot: 'bg-green-500' },
-];
-
-const PRIORITIES = [
-  { value: 'critical', color: 'text-red-600',    bg: 'bg-red-50',     border: 'border-red-200' },
-  { value: 'high',     color: 'text-orange-600', bg: 'bg-orange-50',  border: 'border-orange-200' },
-  { value: 'medium',   color: 'text-yellow-600', bg: 'bg-yellow-50',  border: 'border-yellow-200' },
-  { value: 'low',      color: 'text-blue-500',   bg: 'bg-blue-50',    border: 'border-blue-200' },
-];
-
-const statusCfg = (status) =>
-  ALL_STATUSES.find(s => s.value === status) || ALL_STATUSES[0];
-
-const priorityCfg = (p) =>
-  PRIORITIES.find(x => x.value === p);
-
-// ─── Small helpers ────────────────────────────────────────────────────────────
-function StatusBadge({ status, size = 'sm' }) {
-  const { t } = useI18n();
-  const s = statusCfg(status);
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium ${
-      size === 'xs' ? 'text-xs' : 'text-sm'
-    } ${s.bg} ${s.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-      {t(`taskStatus.${s.value}`)}
-    </span>
-  );
-}
-
-function PriorityBadge({ priority }) {
-  const { t } = useI18n();
-  if (!priority) return null;
-  const p = priorityCfg(priority);
-  if (!p) return null;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium ${p.color} ${p.bg} ${p.border}`}>
-      <Flag className="w-3 h-3" />
-      {t(`priority.${p.value}`)}
-    </span>
-  );
-}
-
-// Status dropdown with click-outside close
-function StatusDropdown({ current, onChange }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const s = statusCfg(current);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border ${s.bg} ${s.text} border-transparent hover:border-current transition-colors`}
-      >
-        <span className={`w-2 h-2 rounded-full ${s.dot}`} />
-        {t(`taskStatus.${s.value}`)}
-        <ChevronDown className="w-3.5 h-3.5 ml-0.5" />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
-          {ALL_STATUSES.filter(opt => !opt.readonly).map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 ${opt.value === current ? 'font-semibold' : ''}`}
-            >
-              <span className={`w-2 h-2 rounded-full ${opt.dot}`} />
-              {t(`taskStatus.${opt.value}`)}
-              {opt.value === current && <Check className="w-3.5 h-3.5 ml-auto text-indigo-600" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Priority dropdown
-function PriorityDropdown({ current, onChange }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const p = priorityCfg(current);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
-          p ? `${p.color} ${p.bg} ${p.border}` : 'text-gray-500 bg-gray-50 border-gray-200'
-        } hover:opacity-80 transition-opacity`}
-      >
-        <Flag className="w-3 h-3" />
-        {p ? t(`priority.${p.value}`) : t('taskDetails.noPriority')}
-        <ChevronDown className="w-3 h-3" />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
-          <button
-            onClick={() => { onChange(null); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-500 hover:bg-gray-50"
-          >
-            <Flag className="w-3 h-3" />
-            {t('taskDetails.noPriority')}
-            {!current && <Check className="w-3 h-3 ml-auto text-indigo-600" />}
-          </button>
-          {PRIORITIES.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-50 ${opt.color}`}
-            >
-              <Flag className="w-3 h-3" />
-              {t(`priority.${opt.value}`)}
-              {opt.value === current && <Check className="w-3 h-3 ml-auto text-indigo-600" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Workspace link badge
-function WorkspaceBadge({ current }) {
-  const { t } = useI18n();
-  const navigate = useNavigate();
-  if (!current) return null;
-  return (
-    <button
-      onClick={() => navigate(`/workspaces/${encodeURIComponent(current)}`)}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-indigo-200 bg-indigo-50 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
-      title={t('taskDetails.openWorkspace')}
-    >
-      <Folder className="w-3 h-3" />
-      {current}
-    </button>
-  );
-}
-
-// Project selector dropdown
-function ProjectSelector({ current, projects, onChange }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const navigate = useNavigate();
-  const currentProject = projects.find(p => p.id === current);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative inline-flex items-center border border-indigo-200 bg-indigo-50 rounded-lg overflow-visible text-xs font-medium text-indigo-700">
-      {currentProject ? (
-        <button
-          onClick={() => navigate(`/projects/${currentProject.id}`)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-indigo-100 transition-colors"
-          title={t('taskDetails.openProject')}
-        >
-          <Folder className="w-3 h-3" />
-          {currentProject.name}
-        </button>
-      ) : (
-        <span className="flex items-center gap-1.5 px-2.5 py-1.5 text-indigo-400">
-          <Folder className="w-3 h-3" />
-          {t('taskDetails.noProject')}
-        </span>
-      )}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="px-1.5 py-1.5 border-l border-indigo-200 hover:bg-indigo-100 transition-colors"
-        title={t('taskDetails.changeProject')}
-      >
-        <ChevronDown className="w-3 h-3" />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 max-h-52 overflow-auto">
-          <button
-            onClick={() => { onChange(null); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-500 hover:bg-gray-50"
-          >
-            No project
-            {!current && <Check className="w-3 h-3 ml-auto text-indigo-600" />}
-          </button>
-          {projects.map(p => (
-            <button
-              key={p.id}
-              onClick={() => { onChange(p.id); setOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-50 text-gray-700"
-            >
-              <span className="truncate">{p.name}</span>
-              {p.id === current && <Check className="w-3 h-3 ml-auto text-indigo-600 flex-shrink-0" />}
-            </button>
-          ))}
-          {projects.length === 0 && (
-            <p className="px-3 py-2 text-xs text-gray-400 italic">{t('taskDetails.noProjectsFound')}</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Due date field: a badge that opens a date picker; turns red once overdue.
-// `overdue` comes from the task record (the backend already derives it from
-// due_at + status), so this never computes against the current time itself.
-function DueDateField({ current, overdue, onChange }) {
-  const { t, language } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const label = current
-    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(current))
-    : t('taskDetails.noDueDate');
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-opacity hover:opacity-80 ${
-          overdue ? 'text-red-600 bg-red-50 border-red-200' : current ? 'text-gray-600 bg-gray-50 border-gray-200' : 'text-gray-400 bg-gray-50 border-gray-200'
-        }`}
-        title={t('taskDetails.dueDate')}
-      >
-        <Calendar className="w-3 h-3" />
-        {label}
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-2">
-          <DateInput
-            mode="datetime"
-            valueFormat="iso"
-            value={current || ''}
-            onChange={(v) => onChange(v || null)}
-            className="border border-gray-300 rounded-md px-2 py-1 text-sm"
-          />
-          {current && (
-            <button
-              onClick={() => { onChange(null); setOpen(false); }}
-              className="mt-2 w-full text-xs text-gray-500 hover:text-gray-700 text-center"
-            >
-              {t('common.clear')}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Add Subtask Modal ────────────────────────────────────────────────────────
-function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel }) {
-  const { t } = useI18n();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [loading, setLoading] = useState(false);
-  const inputRef = useRef(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setLoading(true);
-    try {
-      await createTask({
-        title: title.trim(),
-        description,
-        parent_id: parentId,
-        workspace_name: parentWorkspace || '',
-        should_decompose: false,
-      });
-      onCreated();
-    } catch (err) {
-      alert(`${t('taskDetails.errors.createSubtask')}: ` + (err.response?.data?.detail || err.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-gray-800">{t('taskDetails.addSubtask')}</h3>
-          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskDetails.title')}</label>
-            <input
-              ref={inputRef}
-              type="text"
-              required
-              placeholder={t('taskDetails.subtaskTitle')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskDetails.description')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
-            <textarea
-              rows={3}
-              placeholder={t('taskDetails.describeWhatNeedsToBe')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-            />
-          </div>
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">
-              {t('taskDetails.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={loading || !title.trim()}
-              className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {loading ? t('taskDetails.adding') : t('taskDetails.addSubtask')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ─── Subtask row ──────────────────────────────────────────────────────────────
-function SubtaskRow({ st, onDelete, onStatusChange, onAssign, deleting }) {
-  const { t } = useI18n();
-  const navigate = useNavigate();
-
-  return (
-    <div className="flex items-start gap-3 p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors">
-      {/* Status toggle */}
-      <div className="pt-0.5 flex-shrink-0">
-        <StatusDropdown current={st.status} onChange={(v) => onStatusChange(st.id, v)} />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => navigate(`/tasks/${st.id}`)}>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900 truncate">{st.title}</span>
-          {st.priority && <PriorityBadge priority={st.priority} />}
-        </div>
-        {st.description && (
-          <p className="text-xs text-gray-500 truncate mt-0.5">{st.description}</p>
-        )}
-        {st.assigned_agent_type && (
-          <span className="inline-flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-            {(() => { const { Icon } = executorLabel(st); return <Icon className="w-3 h-3" />; })()}
-            {executorLabel(st).id}
-            {st.agent_state && st.agent_state !== 'none' && (
-              <span className={`ml-1 px-1 py-0.5 rounded text-xs ${
-                st.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
-                st.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
-                st.agent_state === 'pending_approval' ? 'bg-amber-100 text-amber-700' :
-                st.agent_state === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>{st.agent_state === 'pending_approval' ? t('taskDetails.awaitingApproval') : st.agent_state}</span>
-            )}
-          </span>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <button
-          onClick={() => navigate(`/tasks/${st.id}`)}
-          className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
-          title={t('taskDetails.openDetails')}
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => onAssign(st)}
-          className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-          title={t('taskDetails.assignAgent')}
-        >
-          <UserPlus className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => onDelete(st.id)}
-          disabled={deleting}
-          className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-          title={t('taskDetails.delete')}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Result block ─────────────────────────────────────────────────────────────
-// One agent result with its own Rendered / Raw view toggle.
-function ResultBlock({ entry }) {
-  const { t } = useI18n();
-  const [view, setView] = useState('rendered');
-  const text = String(entry.result ?? '');
-  // A result the system loop wrote leads with a machine readable marker line;
-  // the card built from it goes above the diff, and the marker itself is
-  // stripped so it never renders as literal markdown text.
-  const patch = useMemo(() => parseSystemPatch(text), [text]);
-  const renderedText = patch ? patch.body : text;
-  return (
-    <div className="border border-indigo-100 rounded-lg p-3 bg-indigo-50">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-xs font-medium text-indigo-600">{entry.agent_id || 'Agent'}</span>
-        {entry.timestamp && (
-          <span className="text-xs text-gray-400">{new Date(entry.timestamp).toLocaleString()}</span>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="flex rounded-lg border border-indigo-200 overflow-hidden text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setView('rendered')}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${view === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-            >
-              <Eye className="w-3.5 h-3.5" /> {t('taskDetails.rendered')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setView('raw')}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-indigo-200 ${view === 'raw' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-            >
-              <Code2 className="w-3.5 h-3.5" /> {t('taskDetails.raw')}
-            </button>
-          </div>
-          {entry.run_id && (
-            <span className="text-xs text-gray-300 font-mono">{entry.run_id.slice(0, 8)}</span>
-          )}
-        </div>
-      </div>
-      {view === 'rendered' ? (
-        <div className="bg-white rounded-md p-3 border border-indigo-100">
-          {patch && <SystemPatchCard meta={patch.meta} />}
-          <MarkdownRenderer content={renderedText} />
-        </div>
-      ) : (
-        <pre className="text-xs text-gray-700 whitespace-pre-wrap">{text}</pre>
-      )}
-    </div>
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 const TaskDetails = () => {
   const { t } = useI18n();
   const toast = useToast();
@@ -887,51 +342,6 @@ const TaskDetails = () => {
     }
   }, [workspaceFiles, loadFileContent, selectedFilePath]);
 
-  const renderFileNodes = (nodes, depth = 0) => nodes.map((node) => {
-    if (node.type === 'dir') {
-      const open = expandedFolders.has(node.path);
-      return (
-        <div key={node.path}>
-          <button
-            type="button"
-            onClick={() => toggleFolder(node.path)}
-            className="w-full flex items-center gap-1.5 px-2 py-1 text-sm text-gray-700 hover:bg-gray-50 rounded text-left"
-            style={{ paddingLeft: `${depth * 14 + 8}px` }}
-            title={node.path}
-          >
-            {open ? <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
-            {open ? <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" /> : <Folder className="w-4 h-4 text-amber-500 shrink-0" />}
-            <span className="truncate">{node.name}</span>
-          </button>
-          {open && node.children?.length > 0 && renderFileNodes(node.children, depth + 1)}
-        </div>
-      );
-    }
-    const isSelected = node.path === selectedFilePath;
-    return (
-      <button
-        key={node.path}
-        type="button"
-        onClick={() => {
-          setExpandedFolders((prev) => {
-            const next = new Set(prev);
-            parentDirPaths(node.path).forEach((dir) => next.add(dir));
-            return next;
-          });
-          loadFileContent(node.path);
-        }}
-        className={`w-full flex items-center gap-1.5 px-2 py-1 text-sm rounded text-left ${
-          isSelected ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-50'
-        }`}
-        style={{ paddingLeft: `${depth * 14 + 28}px` }}
-        title={node.path}
-      >
-        <FileText className="w-4 h-4 text-gray-400 shrink-0" />
-        <span className="truncate">{node.name}</span>
-      </button>
-    );
-  });
-
   // ── Patch helper ─────────────────────────────────────────────────────────
   const patch = async (fields, taskId = id) => {
     setSaving(true);
@@ -1208,76 +618,7 @@ const TaskDetails = () => {
         </div>
 
         {/* Meta row */}
-        <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-2">
-          {/* Parent task info */}
-          {parentTask && (
-            <Link
-              to={`/tasks/${parentTask.id}`}
-              className="flex items-center gap-3 group hover:no-underline"
-            >
-              <div className="flex items-center gap-1.5 text-xs text-gray-400 flex-shrink-0">
-                <GitBranch className="w-3.5 h-3.5" />
-                {t('taskDetails.parentTask')}
-              </div>
-              <div className="flex items-center gap-2 min-w-0">
-                <StatusBadge status={parentTask.status} size="xs" />
-                <span className="text-sm font-medium text-gray-700 group-hover:text-indigo-600 truncate transition-colors">
-                  {parentTask.title}
-                </span>
-                {parentTask.priority && <PriorityBadge priority={parentTask.priority} />}
-                {parentTask.assigned_agent_type && (
-                  <span className="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
-                    {(() => { const { Icon } = executorLabel(parentTask); return <Icon className="w-3 h-3" />; })()}
-                    {executorLabel(parentTask).id}
-                  </span>
-                )}
-              </div>
-              <ExternalLink className="w-3.5 h-3.5 text-gray-300 group-hover:text-indigo-500 ml-auto flex-shrink-0 transition-colors" />
-            </Link>
-          )}
-          {/* Dependencies — tasks that must complete before this one runs */}
-          {depTasks.length > 0 && (
-            <div className="flex items-start gap-3">
-              <div className="flex items-center gap-1.5 text-xs text-gray-400 flex-shrink-0 mt-0.5">
-                <GitBranch className="w-3.5 h-3.5" />
-                {t('taskDetails.dependsOn')}
-              </div>
-              <div className="flex flex-col gap-1 min-w-0">
-                {depTasks.map(dep => (
-                  <Link key={dep.id} to={`/tasks/${dep.id}`} className="flex items-center gap-2 group hover:no-underline min-w-0">
-                    <StatusBadge status={dep.status} size="xs" />
-                    {dep.key && <span className="text-xs font-semibold text-gray-400 flex-shrink-0">{dep.key}</span>}
-                    <span className="text-sm font-medium text-gray-700 group-hover:text-indigo-600 truncate transition-colors">
-                      {dep.title}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="flex items-center gap-4 flex-wrap">
-          {task.key && <span className="text-xs text-gray-400">{t('taskDetails.key')} <span className="font-semibold text-gray-500">{task.key}</span></span>}
-          <span className="text-xs text-gray-400">{t('taskDetails.id')} <span className="">{task.id}</span></span>
-          <span className="text-xs text-gray-400">{t('taskDetails.createdAt')}: {new Date(task.created_at).toLocaleString()}</span>
-          {task.assigned_agent_type && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3.5 h-3.5" />; })()} {executorLabel(task).id}
-              {executorLabel(task).kind !== 'agent' && (
-                <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-100">
-                  {executorLabel(task).kind}
-                </span>
-              )}
-              <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
-                task.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
-                task.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
-                task.agent_state === 'pending_approval' ? 'bg-amber-100 text-amber-700' :
-                task.agent_state === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>{task.agent_state === 'pending_approval' ? t('taskDetails.awaitingApproval') : task.agent_state}</span>
-            </span>
-          )}
-          </div>
-        </div>
+        <TaskMetaRow depTasks={depTasks} parentTask={parentTask} task={task} />
 
         {/* Subtask progress bar */}
         {subtasks.length > 0 && (
@@ -1304,53 +645,13 @@ const TaskDetails = () => {
 
         {/* Awaiting input — the agent paused to ask a question */}
         {task.status === 'awaiting_input' && (
-          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
-              <HelpCircle className="w-4 h-4" /> {t('taskDetails.theAgentNeedsYourInput')}
-            </p>
-            <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">
-              {task.pending_question?.question || t('taskDetails.waitingForAnswer')}
-            </p>
-            {Array.isArray(task.pending_question?.choices) && task.pending_question.choices.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-3">
-                {task.pending_question.choices.map((c, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    disabled={answerSubmitting}
-                    onClick={() => { setAnswerDraft(c); }}
-                    className={`px-3 py-1 rounded-full border text-sm transition-colors disabled:opacity-50 ${
-                      answerDraft === c
-                        ? 'border-amber-500 bg-amber-200 text-amber-900'
-                        : 'border-amber-300 bg-white text-amber-800 hover:bg-amber-100'
-                    }`}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2 mt-3">
-              <textarea
-                value={answerDraft}
-                onChange={(e) => setAnswerDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleAnswerTask(); }
-                }}
-                rows={2}
-                placeholder={t('taskDetails.typeYourAnswerCtrlEnter')}
-                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none resize-y"
-              />
-              <button
-                type="button"
-                disabled={answerSubmitting || !answerDraft.trim()}
-                onClick={handleAnswerTask}
-                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
-              >
-                {answerSubmitting ? t('taskDetails.sending') : t('taskDetails.sendAndResume')}
-              </button>
-            </div>
-          </div>
+          <AwaitingInputCard
+            answerDraft={answerDraft}
+            answerSubmitting={answerSubmitting}
+            handleAnswerTask={handleAnswerTask}
+            setAnswerDraft={setAnswerDraft}
+            task={task}
+          />
         )}
 
         {/* Awaiting approval — either a tool call that needs a human yes, or a
@@ -1359,89 +660,21 @@ const TaskDetails = () => {
             two share one status but ask a different question, so they get
             different cards rather than one trying to cover both. */}
         {task.status === 'awaiting_approval' && task.pending_approval?.kind === 'budget' ? (
-          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
-              <DollarSign className="w-4 h-4" /> {t('taskDetails.pausedAtMoneyCap')}
-            </p>
-            <p className="text-sm text-amber-900 mt-1">
-              {t('taskDetails.budgetPauseDetail', {
-                spent: fmtUsd(task.pending_approval?.spent_usd),
-                limit: fmtUsd(task.pending_approval?.limit_usd),
-              })}
-            </p>
-            {task.pending_approval?.reason && (
-              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
-            )}
-            <div className="flex items-center gap-2 mt-3">
-              <label className="text-xs font-medium text-amber-700 uppercase tracking-wide">{t('taskDetails.newCapUsd')}</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={budgetCapDraft}
-                onChange={(e) => setBudgetCapDraft(e.target.value)}
-                className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none"
-              />
-              <button
-                type="button"
-                disabled={approvalSubmitting || !budgetCapDraft || Number(budgetCapDraft) <= Number(task.pending_approval?.spent_usd || 0)}
-                onClick={() => handleBudgetDecision(true)}
-                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
-              >
-                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.continueTask')}
-              </button>
-              <button
-                type="button"
-                disabled={approvalSubmitting}
-                onClick={() => handleBudgetDecision(false)}
-                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
-              >
-                {t('taskDetails.stopTask')}
-              </button>
-            </div>
-          </div>
+          <BudgetPauseCard
+            approvalSubmitting={approvalSubmitting}
+            budgetCapDraft={budgetCapDraft}
+            handleBudgetDecision={handleBudgetDecision}
+            setBudgetCapDraft={setBudgetCapDraft}
+            task={task}
+          />
         ) : task.status === 'awaiting_approval' && (
-          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
-              <ShieldQuestion className="w-4 h-4" /> {t('taskDetails.theAgentNeedsApproval')}
-            </p>
-            <p className="text-sm text-amber-900 mt-1">
-              <code className="px-1.5 py-0.5 rounded bg-amber-100 font-mono text-xs">
-                {task.pending_approval?.tool || '—'}
-              </code>
-            </p>
-            {task.pending_approval?.reason && (
-              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
-            )}
-            <pre className="mt-2 p-2 bg-white border border-amber-200 rounded text-xs text-gray-800 overflow-x-auto">
-              {JSON.stringify(task.pending_approval?.input ?? {}, null, 2)}
-            </pre>
-            <div className="flex items-center gap-2 mt-3">
-              <input
-                type="text"
-                value={approvalNote}
-                onChange={(e) => setApprovalNote(e.target.value)}
-                placeholder={t('taskDetails.approvalNotePlaceholder')}
-                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none"
-              />
-              <button
-                type="button"
-                disabled={approvalSubmitting}
-                onClick={() => handleApprovalDecision(true)}
-                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
-              >
-                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.approveCall')}
-              </button>
-              <button
-                type="button"
-                disabled={approvalSubmitting}
-                onClick={() => handleApprovalDecision(false)}
-                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
-              >
-                {t('taskDetails.denyCall')}
-              </button>
-            </div>
-          </div>
+          <ToolApprovalCard
+            approvalNote={approvalNote}
+            approvalSubmitting={approvalSubmitting}
+            handleApprovalDecision={handleApprovalDecision}
+            setApprovalNote={setApprovalNote}
+            task={task}
+          />
         )}
       </div>
 
@@ -1501,239 +734,63 @@ const TaskDetails = () => {
 
       {/* ── Subtasks tab ── */}
       {activeTab === 'subtasks' && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-gray-800">{t('taskDetails.subtasks')}</h3>
-            <button
-              onClick={() => setShowAddSubtask(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-            >
-              <Plus className="w-4 h-4" /> {t('taskDetails.addSubtask')}
-            </button>
-          </div>
-
-          {subtasks.length > 0 ? (
-            <div className="space-y-2 mt-3">
-              {subtasks.map(st => (
-                <SubtaskRow
-                  key={st.id}
-                  st={st}
-                  agents={agents}
-                  onDelete={handleDeleteSubtask}
-                  onStatusChange={(stId, v) => patch({ status: v }, stId)}
-                  onAssign={(st) => openAssign(st)}
-                  deleting={!!deletingSubtasks[st.id]}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 italic mt-3">
-              No subtasks yet. Add one manually or use "Decompose" to auto-generate them.
-            </p>
-          )}
-        </div>
+        <SubtasksTab
+          agents={agents}
+          deletingSubtasks={deletingSubtasks}
+          handleDeleteSubtask={handleDeleteSubtask}
+          openAssign={openAssign}
+          patch={patch}
+          setShowAddSubtask={setShowAddSubtask}
+          subtasks={subtasks}
+        />
       )}
 
       {/* ── Execution tab ── */}
       {activeTab === 'execution' && (
-        <div className="flex flex-col gap-6">
-          {/* Execution flow pane — same agent-process view as the Chat page */}
-          <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-            <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-              <h3 className="text-base font-semibold text-gray-800">{t('taskDetails.executionFlow')}</h3>
-              {flowRuns.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  <TokenPill
-                    label={t('taskDetails.taskIn')}
-                    value={flowRuns.reduce((s, mr) => s + (Number(mr.inbound_tokens) || 0), 0)}
-                  />
-                  <TokenPill
-                    label={t('taskDetails.taskOut')}
-                    value={flowRuns.reduce((s, mr) => s + (Number(mr.outbound_tokens) || 0), 0)}
-                  />
-                  <TokenPill
-                    label={t('taskDetails.taskTotal')}
-                    value={flowRuns.reduce((s, mr) => s + (Number(mr.total_tokens) || ((Number(mr.inbound_tokens) || 0) + (Number(mr.outbound_tokens) || 0))), 0)}
-                  />
-                </div>
-              )}
-            </div>
-            {flowLoading ? (
-              <PageLoader size="sm" label={t('taskDetails.loadingExecutionFlow')} />
-            ) : flowRuns.length > 0 ? (
-              <div
-                ref={flowScrollRef}
-                className="overflow-auto pr-1"
-                style={{ height: flowHeight ? `${flowHeight}px` : 'calc(100vh - 240px)' }}
-              >
-                <ProcessGraph
-                  key={flowRuns.map((mr, idx) => `${mr.message_id || mr.run_id || idx}`).join('|')}
-                  messageRuns={flowRuns}
-                  titleByAgent
-                />
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400 italic">{t('taskDetails.noAgentRunsRecordedYet')}</p>
-            )}
-          </div>
-        </div>
+        <ExecutionTab
+          flowHeight={flowHeight}
+          flowLoading={flowLoading}
+          flowRuns={flowRuns}
+          flowScrollRef={flowScrollRef}
+        />
       )}
 
       {/* ── Activity tab ── */}
       {activeTab === 'activity' && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-gray-800 mb-4">{t('taskDetails.taskActivity')}</h3>
-          {activityItems.length > 0 ? (
-            <div className="space-y-3">
-              {activityItems.map((item, idx) => {
-                const ts = item?.timestamp ? new Date(item.timestamp).toLocaleString() : t('taskDetails.unknownTime');
-                const text = item?.message || item?.type || t('taskDetails.activityUpdate');
-                return (
-                  <div key={`${item?.timestamp || 't'}-${idx}`} className="border-l-2 border-indigo-200 pl-3 py-1">
-                    <div className="text-xs text-gray-400">{ts}</div>
-                    <div className="text-sm text-gray-700">{text}</div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 italic">{t('taskDetails.noActivityEntriesYet')}</p>
-          )}
-        </div>
+        <ActivityTab activityItems={activityItems} />
       )}
 
       {/* ── Results tab ── */}
       {activeTab === 'results' && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-gray-800">{t('taskDetails.agentResults')}</h3>
-            {activeRunId && <span className="text-xs text-gray-400">{t('taskDetails.run')}: {activeRunId}</span>}
-          </div>
-          {hasResults ? (
-            <div className="space-y-3">
-              {[...taskResults].reverse().map((entry, idx) => (
-                <ResultBlock key={entry.run_id || idx} entry={entry} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 italic">{t('taskDetails.noResultsCapturedForThis')}</p>
-          )}
-        </div>
+        <ResultsTab activeRunId={activeRunId} hasResults={hasResults} taskResults={taskResults} />
       )}
 
       {/* ── Logs tab ── */}
       {activeTab === 'logs' && (
-        <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col h-[500px]">
-          <div className="bg-gray-800 px-4 py-2.5 flex items-center justify-between">
-            <span className="flex items-center gap-2 text-gray-300 text-sm font-medium">
-              <Terminal className="w-4 h-4" /> {t('taskDetails.agentLogs')}
-            </span>
-            {activeRunId && (
-              <span className="text-xs text-gray-500">{t('taskDetails.run')}: {activeRunId.slice(0, 8)}</span>
-            )}
-          </div>
-          <div className="p-4 flex-1 overflow-auto text-xs text-green-400 bg-black leading-relaxed">
-            {logs
-              ? <pre className="whitespace-pre-wrap">{logs}</pre>
-              : <p className="text-gray-600 italic">{t('taskDetails.noLogsAvailable')}</p>
-            }
-          </div>
-        </div>
+        <LogsTab activeRunId={activeRunId} logs={logs} />
       )}
 
       {/* ── Files tab ── */}
       {activeTab === 'files' && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <Folder className="w-5 h-5" /> {t('taskDetails.filesChangedByTask')}
-          </h3>
-          {workspaceFiles.length ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[500px]">
-              {/* Tree */}
-              <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 overflow-y-auto min-h-0">
-                {renderFileNodes(fileTree)}
-              </div>
-              {/* Preview */}
-              <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
-                <div className="px-4 py-2 border-b bg-gray-50 flex items-center justify-between gap-2 shrink-0">
-                  <div className="min-w-0">
-                    <div className="text-xs text-gray-500">{t('taskDetails.selectedFile')}</div>
-                    <div className="text-sm text-gray-700 truncate flex items-center gap-2">
-                      <span className="truncate">{selectedFilePath || '-'}</span>
-                      {selectedFileIsPdf && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-600 shrink-0">
-                          <FileText className="w-2.5 h-2.5" /> {t('taskDetails.pdf')}
-                        </span>
-                      )}
-                    </div>
-                    {selectedFileSize > 0 && (
-                      <div className="text-xs text-gray-400 mt-0.5">{t('taskDetails.bytes', { count: selectedFileSize })}</div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {selectedFileIsPdf && (
-                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setPdfViewMode('render')}
-                          className={`px-2.5 py-1 transition-colors ${pdfViewMode === 'render' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          {t('taskDetails.render')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPdfViewMode('text')}
-                          className={`px-2.5 py-1 transition-colors border-l border-gray-200 ${pdfViewMode === 'text' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          {t('taskDetails.text')}
-                        </button>
-                      </div>
-                    )}
-                    {!selectedFileIsPdf && isMarkdownPath(selectedFilePath) && (
-                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setMdViewMode('rendered')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${mdViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          <Eye className="w-3.5 h-3.5" /> {t('taskDetails.rendered')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setMdViewMode('raw')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${mdViewMode === 'raw' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          <Code2 className="w-3.5 h-3.5" /> {t('taskDetails.raw')}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
-                  {fileContentLoading ? (
-                    <PageLoader size="sm" label={t('taskDetails.loadingFileContent')} />
-                  ) : fileContentError ? (
-                    <p className="text-sm text-red-600 p-4">{fileContentError}</p>
-                  ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (
-                    <iframe
-                      title={selectedFilePath}
-                      src={getTaskFileRawUrl(id, selectedFilePath)}
-                      className="w-full h-full border-0"
-                    />
-                  ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
-                    <MarkdownRenderer content={selectedFileContent} />
-                  ) : selectedFilePath ? (
-                    <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
-                  ) : (
-                    <p className="text-sm text-gray-500">{t('taskDetails.selectAFileToPreview')}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 italic">{t('taskDetails.noFilesWereCreatedOr')}</p>
-          )}
-        </div>
+        <TaskFilesTab
+          expandedFolders={expandedFolders}
+          fileContentError={fileContentError}
+          fileContentLoading={fileContentLoading}
+          fileTree={fileTree}
+          id={id}
+          loadFileContent={loadFileContent}
+          mdViewMode={mdViewMode}
+          pdfViewMode={pdfViewMode}
+          selectedFileContent={selectedFileContent}
+          selectedFileIsPdf={selectedFileIsPdf}
+          selectedFilePath={selectedFilePath}
+          selectedFileSize={selectedFileSize}
+          setExpandedFolders={setExpandedFolders}
+          setMdViewMode={setMdViewMode}
+          setPdfViewMode={setPdfViewMode}
+          toggleFolder={toggleFolder}
+          workspaceFiles={workspaceFiles}
+        />
       )}
 
       {/* ── Add Subtask Modal ── */}
@@ -1748,138 +805,28 @@ const TaskDetails = () => {
 
       {/* ── Assign Agent Modal ── */}
       {showAssignModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">
-                {assignTarget ? t('taskDetails.assignAgentTo', { title: assignTarget.title }) : t('taskDetails.assignAgentToTask')}
-              </h3>
-              <button onClick={() => { setShowAssignModal(false); setAssignTarget(null); }} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Executor kind: agent / flow / team / loop */}
-            <div className="flex items-center bg-gray-100 rounded-lg p-1 mb-3">
-              {[
-                { kind: 'agent', Icon: User, label: t('taskDetails.assignAgent') },
-                { kind: 'flow', Icon: Workflow, label: t('taskBoard.flow') },
-                { kind: 'team', Icon: Users, label: 'Team' },
-                { kind: 'loop', Icon: RotateCw, label: 'Loop' },
-              ].map(({ kind, Icon, label }) => (
-                <button
-                  key={kind}
-                  type="button"
-                  onClick={() => setExecutorKind(kind)}
-                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    executorKind === kind ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />{label}
-                </button>
-              ))}
-            </div>
-
-            {executorKind === 'agent' && (
-              <div className="mb-2 flex items-center gap-3 text-xs text-gray-400">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {t('taskDetails.nodeRunning')}</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> {t('taskDetails.noNode')}</span>
-                {taskAssignmentMode === 'nodes_only' && (
-                  <span className="ml-auto text-amber-600 font-medium">{t('taskDetails.nodesOnlyModeAgentsWithout')}</span>
-                )}
-              </div>
-            )}
-
-            {executorKind === 'agent' && (
-              <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
-                {agents.length === 0 && (
-                  <p className="text-sm text-gray-400 italic py-2">{t('taskDetails.noAgentsAvailableForThis')}</p>
-                )}
-                {agents.map(a => {
-                  const hasNode = a.has_running_node;
-                  const disabled = taskAssignmentMode === 'nodes_only' && !hasNode;
-                  const selected = selectedAgent === a.id;
-                  return (
-                    <button
-                      key={a.id}
-                      onClick={() => !disabled && setSelectedAgent(a.id)}
-                      disabled={disabled}
-                      title={disabled ? t('taskDetails.noRunningNodeHint') : undefined}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
-                        disabled
-                          ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
-                          : selected
-                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
-                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
-                      }`}
-                    >
-                      <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-0.5 ${hasNode ? 'bg-green-500' : 'bg-gray-300'}`} />
-                      <span className="flex-1 min-w-0">
-                        <span className={`block text-sm font-medium ${selected ? 'text-indigo-700' : 'text-gray-800'}`}>
-                          {a.name}
-                        </span>
-                        <span className="block text-xs text-gray-400 truncate">{a.id}{!hasNode && ` · ${t('taskDetails.noRunningNode')}`}</span>
-                      </span>
-                      {selected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {executorKind !== 'agent' && (() => {
-              const catalog = { flow: flows, team: teams, loop: loops }[executorKind];
-              const idKey = { flow: 'id', team: 'team_id', loop: 'loop_id' }[executorKind];
-              const nameKey = 'name';
-              const selected = { flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
-              const setSelected = { flow: setSelectedFlow, team: setSelectedTeam, loop: setSelectedLoop }[executorKind];
-              return (
-                <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
-                  {catalog.length === 0 && (
-                    <p className="text-sm text-gray-400 italic py-2">
-                      {catalogsLoaded ? t('taskDetails.noAgentsAvailableForThis') : '…'}
-                    </p>
-                  )}
-                  {catalog.map(item => {
-                    const itemId = item[idKey];
-                    const isSelected = selected === itemId;
-                    return (
-                      <button
-                        key={itemId}
-                        onClick={() => setSelected(itemId)}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
-                          isSelected
-                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
-                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
-                        }`}
-                      >
-                        <span className="flex-1 min-w-0">
-                          <span className={`block text-sm font-medium ${isSelected ? 'text-indigo-700' : 'text-gray-800'}`}>
-                            {item[nameKey] || itemId}
-                          </span>
-                          <span className="block text-xs text-gray-400 truncate">{itemId}</span>
-                        </span>
-                        {isSelected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => { setShowAssignModal(false); setAssignTarget(null); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
-              >{t('taskDetails.cancel')}</button>
-              <button
-                onClick={handleAssignAgent}
-                disabled={!{ agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind]}
-                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-              >{t('taskDetails.startExecution')}</button>
-            </div>
-          </div>
-        </div>
+        <TaskAssignModal
+          agents={agents}
+          assignTarget={assignTarget}
+          catalogsLoaded={catalogsLoaded}
+          executorKind={executorKind}
+          flows={flows}
+          handleAssignAgent={handleAssignAgent}
+          loops={loops}
+          selectedAgent={selectedAgent}
+          selectedFlow={selectedFlow}
+          selectedLoop={selectedLoop}
+          selectedTeam={selectedTeam}
+          setAssignTarget={setAssignTarget}
+          setExecutorKind={setExecutorKind}
+          setSelectedAgent={setSelectedAgent}
+          setSelectedFlow={setSelectedFlow}
+          setSelectedLoop={setSelectedLoop}
+          setSelectedTeam={setSelectedTeam}
+          setShowAssignModal={setShowAssignModal}
+          taskAssignmentMode={taskAssignmentMode}
+          teams={teams}
+        />
       )}
     </PageContainer>
   );
