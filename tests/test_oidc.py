@@ -2,7 +2,7 @@
 
 The provider is three dictionaries and an RSA key: a discovery document, a
 JWKS, and a token endpoint that signs whatever id token the test queued for
-the next exchange. ``common/oidc.py`` keeps its HTTP calls in two small
+the next exchange. ``ee/oidc.py`` keeps its HTTP calls in two small
 functions precisely so they can be swapped for these; everything else (the
 signed state cookie, PKCE, verification, account linking, group mappings,
 the session) runs for real.
@@ -58,7 +58,7 @@ class FakeProvider:
         from authlib.jose import jwt
         return jwt.encode({"alg": "RS256", "kid": self.kid}, claims, self.key).decode("ascii")
 
-    # the two HTTP functions of common/oidc.py
+    # the two HTTP functions of ee/oidc.py
     def get_json(self, url: str):
         if url == f"{ISSUER}/.well-known/openid-configuration":
             return self.discovery
@@ -93,7 +93,7 @@ class FakeProvider:
 
 @pytest.fixture
 def provider(monkeypatch):
-    from common import oidc
+    from ee import oidc
     from common.config import settings
     fake = FakeProvider()
     oidc.reset_caches()
@@ -234,7 +234,7 @@ def test_callback_without_the_cookie_is_refused(provider, client):
 
 
 def test_a_forged_cookie_is_refused(provider, client):
-    from common import oidc
+    from ee import oidc
     start = client.get("/api/auth/oidc/start")
     back = provider.authorize(start.headers["location"])
     forged = oidc.sign_state({"state": back["state"]}).split(".")[0] + ".AAAA"
@@ -418,7 +418,7 @@ def test_a_code_is_exchanged_with_the_verifier_and_the_secret(provider, client):
 
 
 def test_key_rotation_refetches_the_jwks(provider, client):
-    from common import oidc
+    from ee import oidc
     _sign_in(client, provider, {"sub": "j-sub", "preferred_username": "jo"})
     # Rotate: a new key with a new id; the cached set does not know it.
     from authlib.jose import JsonWebKey
@@ -436,7 +436,7 @@ def test_key_rotation_refetches_the_jwks(provider, client):
 
 
 def test_claim_helpers():
-    from common import oidc
+    from ee import oidc
     assert oidc.claim_at({"a": {"b": [1]}}, "a.b") == [1]
     assert oidc.claim_at({"a.b": 2}, "a.b") == 2
     assert oidc.claim_at({}, "a.b") is oidc._MISSING
@@ -453,7 +453,8 @@ def test_groups_overage_is_detected_and_reported(provider, client):
     """Entra ID drops the groups claim past its cap and sends a Graph pointer
     instead. The hub follows nothing: the person's groups stay as they were,
     and the login row says why."""
-    from common import db, groups, identity, oidc
+    from common import db, groups, identity
+    from ee import oidc
     _bootstrap_admin(client)
     groups.add_mapping("devs", target="workspace", role="editor", workspace="w1")
     first = _sign_in(client, provider, {"sub": "carol-sub", "preferred_username": "carol",

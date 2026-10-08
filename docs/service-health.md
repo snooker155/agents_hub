@@ -77,7 +77,10 @@ load balancer that needs to probe the service.
   `agents_hub_run_start_seconds` (a summary, the SLO window's p95 quantile),
   `agents_hub_slo_breach{objective=}` (1 in breach, 0 ok, omitted while there
   is not yet enough data; see [slo](slo.md)), and
-  `agents_hub_info{role=,instance=}`.
+  `agents_hub_info{role=,instance=}`. The metrics operators ask for (runs
+  finished by agent and status, tokens and cost by model, a run duration
+  histogram, tool calls by tool) and the Grafana dashboard are in
+  [observability](observability.md).
 
 ## Exporting runs as spans
 
@@ -96,6 +99,11 @@ duration and, when the price catalog can compute one, `cost_usd`. That
 mirroring is deliberate: pointing one deployment's export at another
 deployment's ingest endpoint records the same run there, the same way a real
 collector forwarding to a second backend would.
+
+Under the run's span the export carries one child span per model call and per
+tool call, and the hub can also push its metrics as OTLP; the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` work as
+fallbacks. All of it is in [observability](observability.md).
 
 ## The usual diagnoses
 
@@ -142,6 +150,17 @@ dev defaults. With `*` the hub allows any origin but without credentials
 and `token` mode, and a warning in `multi` mode, where any site can call the
 API with a token stolen from a person. Fix: set `ALLOW_ORIGINS` to the
 dashboard's origins, comma separated.
+
+### Check: security
+
+The settings the hardening list in `SECURITY.md` (repository root) asks for,
+read together. A warning for each of: `CAPABILITY_GUARD` set to
+anything but `block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty
+(runs then receive none of them); `token` or `multi` mode with
+`AGENT_EXECUTION_MODE=local`, where every person's runs have the host's own
+permissions. `single` mode with local runs is the one person laptop case and
+reads ok. Fix: the setting the warning names, in `.env` or on the Settings
+page. The [threat model](threat-model.md) says why each matters.
 
 ### Check: stale runs
 

@@ -180,11 +180,23 @@ def test_voice_from_a_cloud_provider_picks_its_models_and_voice():
 
 
 def test_without_a_cloud_provider_the_voice_defaults_to_the_browser():
-    plan = W.Plan(fresh=True)
+    plan = W.Plan(fresh=True, quick=False)
     W.step_voice(_asker({}), plan)
     assert plan.voice == {"mode": "browser"}
     with pytest.raises(SetupError, match="expected one of"):
         W.step_voice(_asker({"voice": {"mode": "cloud"}}), W.Plan(fresh=True))
+
+
+def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
+    plan = W.Plan(fresh=True)
+    W.step_voice(_asker({}), plan)
+    W.step_features(_asker({}), plan)
+    assert plan.voice == {} and "DEMO_WORKSPACE" not in plan.env
+    # An answers file that names them still applies them.
+    answered = W.Plan(fresh=True)
+    W.step_voice(_asker({"voice": {"mode": "browser"}}), answered)
+    W.step_features(_asker({"demo": True}), answered)
+    assert answered.voice == {"mode": "browser"} and answered.env["DEMO_WORKSPACE"] == "1"
 
 
 def test_voice_on_the_hub_runtime_lists_engines_and_downloads():

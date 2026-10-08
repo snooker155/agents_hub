@@ -415,6 +415,7 @@ export type ChatRequest = {
   "conversation_title"?: string | null;
   "attachments"?: ChatAttachment[];
   "references"?: ChatReference[];
+  "voice"?: boolean;
   "source"?: string | null;
   "client_id"?: string | null;
   "client_turn_id"?: string | null;
@@ -737,6 +738,12 @@ export type FinalizeTaskBody = {
   "exit_code": number;
 };
 
+export type FirstModel = {
+  "provider": string;
+  "api_key"?: string;
+  "base_url"?: string;
+};
+
 export type FlowCreate = {
   "name": string;
   "description"?: string;
@@ -929,6 +936,13 @@ export type GuardrailUpdate = {
   "model"?: string | null;
 };
 
+export type GuideAction = {
+  "action": string;
+  "step"?: string | null;
+  "mode"?: string | null;
+  "tour_done"?: boolean | null;
+};
+
 export type HTTPValidationError = {
   "detail"?: ValidationError[];
 };
@@ -970,6 +984,26 @@ export type InspectRequest = {
 export type InstallBody = {
   "workspace"?: string | null;
   "dry_run"?: boolean;
+};
+
+export type InstallCreate = {
+  "status"?: string | null;
+  "workspace"?: string | null;
+  "agent_id"?: string | null;
+  "name"?: string | null;
+  "org_id": string;
+};
+
+export type InstallLink = {
+  "workspace"?: string | null;
+  "agent_id"?: string | null;
+};
+
+export type InstallUpdate = {
+  "status"?: string | null;
+  "workspace"?: string | null;
+  "agent_id"?: string | null;
+  "name"?: string | null;
 };
 
 export type InstallationBinding = {
@@ -1413,6 +1447,11 @@ export type PullBody = {
 
 export type QueryRequest = {
   "sql": string;
+};
+
+export type ReadySetBody = {
+  "workspace"?: string;
+  "dry_run"?: boolean;
 };
 
 export type RecheckRequest = {
@@ -2421,6 +2460,9 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/definition/chat/stop": {
     post: { response: unknown };
   };
+  "/api/agents/{agent_id}/definition/edits": {
+    delete: { response: unknown };
+  };
   "/api/agents/{agent_id}/delegates": {
     get: { response: unknown };
     post: { body: AgentDelegatesUpdate; response: unknown };
@@ -2754,8 +2796,14 @@ export interface ApiPaths {
   "/api/channels/slack/events": {
     post: { response: unknown };
   };
+  "/api/channels/slack/install": {
+    get: { response: unknown };
+  };
   "/api/channels/slack/interactions": {
     post: { response: unknown };
+  };
+  "/api/channels/slack/oauth": {
+    get: { response: unknown };
   };
   "/api/channels/teams/messages": {
     post: { response: unknown };
@@ -2948,6 +2996,32 @@ export interface ApiPaths {
   };
   "/api/deployments/apps": {
     get: { response: unknown };
+  };
+  "/api/distribution": {
+    get: { response: unknown };
+  };
+  "/api/distribution/obsidian-plugin.zip": {
+    get: { response: unknown };
+  };
+  "/api/distribution/slack/install-link": {
+    post: { body: InstallLink; response: unknown };
+  };
+  "/api/distribution/slack/manifest": {
+    get: { response: unknown };
+  };
+  "/api/distribution/teams/app-package": {
+    get: { response: unknown };
+  };
+  "/api/distribution/teams/manifest": {
+    get: { response: unknown };
+  };
+  "/api/distribution/{channel}/installs": {
+    get: { response: unknown };
+    post: { body: InstallCreate; response: unknown };
+  };
+  "/api/distribution/{channel}/installs/{org_id}": {
+    patch: { body: InstallUpdate; response: unknown };
+    delete: { response: unknown };
   };
   "/api/docs/{doc_id}": {
     get: { response: unknown };
@@ -3501,6 +3575,13 @@ export interface ApiPaths {
   };
   "/api/models/local/runtime/ollama/import": {
     post: { body: OllamaImportBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/ready-set": {
+    get: { response: Record<string, unknown> };
+    post: { body: ReadySetBody; response: Record<string, unknown> };
+  };
+  "/api/models/local/runtime/ready-set/cancel": {
+    post: { response: Record<string, unknown> };
   };
   "/api/models/local/runtime/restart": {
     post: { response: Record<string, unknown> };
@@ -4084,6 +4165,13 @@ export interface ApiPaths {
   "/api/settings/workspace": {
     get: { response: unknown };
     put: { body: WorkspaceContextUpdate; response: unknown };
+  };
+  "/api/setup-guide": {
+    get: { response: unknown };
+    post: { body: GuideAction; response: unknown };
+  };
+  "/api/setup-guide/model": {
+    post: { body: FirstModel; response: unknown };
   };
   "/api/shared-memory": {
     get: { response: unknown };
@@ -4840,6 +4928,11 @@ export interface ApiPaths {
   };
   "/v1/chat/completions": {
     post: { response: unknown };
+  };
+  "/v1/mcp": {
+    get: { response: unknown };
+    post: { response: unknown };
+    delete: { response: unknown };
   };
   "/v1/models": {
     get: { response: unknown };

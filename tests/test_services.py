@@ -284,8 +284,8 @@ def test_reconcile_replaces_idle_replicas_on_old_code(monkeypatch):
     counts = supervisor.reconcile_service(svc)
     # The idle ones go, the busy one finishes first; the minimum is refilled
     # from current code.
-    assert sorted(stopped) == sorted([(idle_old["instance_id"], "code changed"),
-                                      (unstamped["instance_id"], "code changed")])
+    assert sorted(stopped) == sorted([(idle_old["instance_id"], "code or provider settings changed"),
+                                      (unstamped["instance_id"], "code or provider settings changed")])
     assert counts["stopped"] == 2 and counts["started"] == 1 and started == ["below minimum"]
     live = replicas.live_replicas(svc)
     assert {r["instance_id"] for r in live if replicas.is_stale(r)} == {busy_old["instance_id"]}

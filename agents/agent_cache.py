@@ -105,7 +105,8 @@ def compute_fingerprint(
     from common.paths import PROJECT_ROOT
     from common.workspace_context import resolve_active_project
 
-    defn = Path(definitions_dir) / agent_id
+    from agents.prompt_assembly import part_paths
+
     parts = [
         "v1",
         agent_id,
@@ -113,14 +114,15 @@ def compute_fingerprint(
         _overrides_repr(override_params),
         "proj:" + ("1" if resolve_active_project() else "0"),
     ]
-    for fname in ("instructions.md", "capabilities.md", "usage.md"):
-        parts.append(f"{fname}={_stat_sig(defn / fname)}")
+    # Both layers of the folder (the shipped one and the edits shadowing it).
+    for path in part_paths(agent_id, definitions_dir):
+        parts.append(f"{path}={_stat_sig(path)}")
     # A child's prompt also holds its unpinned ancestors' text
     # (agents/inheritance.py), so their files key the cache too.
     from agents.inheritance import prompt_folder_ids
     for ancestor in prompt_folder_ids(agent_id):
-        for fname in ("instructions.md", "capabilities.md", "usage.md"):
-            parts.append(f"{ancestor}/{fname}={_stat_sig(Path(definitions_dir) / ancestor / fname)}")
+        for path in part_paths(ancestor, definitions_dir):
+            parts.append(f"{ancestor}:{path}={_stat_sig(path)}")
     parts.append("agents=" + DocStore("agents").signature())
     parts.append("ws=" + DocStore("workspaces").signature())
     parts.append("proc=" + DocStore("procedures").signature())

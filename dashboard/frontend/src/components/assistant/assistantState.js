@@ -181,6 +181,15 @@ export function isScreenLink(href) {
   return typeof href === 'string' && href.startsWith('/') && !href.startsWith('//');
 }
 
+/** The `path` a `show_on_screen` tool call named, from its input (an object or a JSON string). */
+export function screenToolPath(input) {
+  let data = input;
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch { return ''; }
+  }
+  return (data && typeof data === 'object' && typeof data.path === 'string') ? data.path : '';
+}
+
 /** The agent a delegation step hands work to, from its tool input. */
 export function delegateOf(input) {
   let data = input;

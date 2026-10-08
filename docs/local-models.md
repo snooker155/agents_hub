@@ -156,6 +156,31 @@ variables: `MODELS_PORT`, `LLAMA_SERVER_BIN`, `MODELS_BASE_PORT` (8300, the
 first llama-server port), `MODELS_MAX_LOADED` (2), `MODELS_LOAD_TIMEOUT`
 (120 s), `HF_TOKEN`. See `deploy/models/README.md`.
 
+## Ready local set
+
+The top card of the Local tab goes local in one action: it starts the hub's
+runtime, installs the llama.cpp engine, downloads one chat model sized to this
+machine's memory and loads it (which registers it in the model catalog),
+installs Whisper and downloads its model, installs Kokoro and downloads its
+model, and sets them as the workspace's transcription and speech models where
+the workspace has none. The chat model becomes the global default only when no
+other provider is usable.
+
+It runs as one background job (kind `local_set`) on the shared job list, with
+each step shown as to do, running, done or already there. Pressing it again is
+safe: every step first looks at what is there and skips it, and a download
+continues from its `.part` file. Cancel stops after the current wait; a
+download or install already started goes on in the runtime and is found done
+next time. Only an administrator starts it.
+
+The chat model is the largest rung of one ladder (`CHAT_LADDER` in
+`providers/local_set.py`, Qwen3 0.6B, 1.7B, 4B, 8B, 14B) that fits the memory
+the runtime reports (the GPU's, else 80 % of RAM) with room for the context.
+The assistant's guided setup calls the same action as `setup_step`
+`local_set`. `GET /api/models/local/runtime/ready-set` gives the plan and the
+latest run, `POST` starts it (`{"dry_run": true}` only describes it), and
+`POST /api/models/local/runtime/ready-set/cancel` cancels.
+
 ## Finding a model
 
 When the repository is not known, **Search Hugging Face** on the Local tab

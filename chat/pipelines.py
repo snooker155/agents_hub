@@ -439,6 +439,8 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
             if drive.budget:
                 done_event["error_code"] = "budget"
                 done_event["budget"] = drive.budget
+            if drive.refusal:
+                done_event["refusal"] = _with_agent(drive.refusal, request.agent_id)
             if undelivered:
                 done_event["undelivered"] = undelivered
             outcome.done = done_event
@@ -454,6 +456,10 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
         update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": str(e)})
         outcome.done = {"type": "done", "ok": False, "response": f"Error: {e}", "error": str(e),
                         "run_id": run_id, "agent_id": request.agent_id}
+        from chat.refusals import refusal_of
+        refusal = refusal_of(e, agent_id=request.agent_id)
+        if refusal:
+            outcome.done["refusal"] = refusal
 
 
 def _open_receiving_step(step: _AgentStep, intent: handoff_mod.HandoffIntent,
@@ -480,19 +486,27 @@ def _open_receiving_step(step: _AgentStep, intent: handoff_mod.HandoffIntent,
     )
 
 
-def _close_unstarted(step: _AgentStep, *, status: str, error: str) -> dict:
+def _with_agent(refusal: dict, agent_id: str) -> dict:
+    """A refusal that does not name an agent yet, named after the one that ran."""
+    return refusal if refusal.get("agent_id") else {**refusal, "agent_id": agent_id}
+
+
+def _close_unstarted(step: _AgentStep, *, status: str, error: str, refusal: dict | None = None) -> dict:
     """Close a receiving run that never started (a stop, a budget cap) and
     return the ``done`` event that ends the turn on it."""
     run_id, _msg_id, log_file, log_lines, session_id = step.run
     finished = utc_iso()
     _write_log(log_file, log_lines + [f"({error})", "", f"Finished: {finished}", f"Status  : {status}"])
     update_run(run_id, {"status": status, "finished_at": finished, "exit_code": 1, "error": error})
-    return {
+    done = {
         "type": "done", "ok": False,
         "response": "Stopped by user" if status == "stopped" else f"Error: {error}",
         "error": error, "run_id": run_id, "session_id": session_id,
         "agent_id": step.request.agent_id,
     }
+    if refusal:
+        done["refusal"] = _with_agent(refusal, step.request.agent_id)
+    return done
 
 
 async def _run_chat_pipeline(request: ChatRequest):
@@ -602,7 +616,8 @@ async def _run_chat_pipeline(request: ChatRequest):
             try:
                 check_budget(ws_name)
             except BudgetExceededError as e:
-                closing = _close_unstarted(next_step, status="failed", error=str(e))
+                from chat.refusals import refusal_of
+                closing = _close_unstarted(next_step, status="failed", error=str(e), refusal=refusal_of(e))
             if closing is None:
                 from managers.run_manager import get_run_by_id
                 if (get_run_by_id(next_run_id) or {}).get("status") in ("stop", "stopped"):

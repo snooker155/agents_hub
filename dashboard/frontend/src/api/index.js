@@ -283,8 +283,9 @@ export const removeWorkspaceMember = (name, userId) =>
 export const getSystemHealth = () => api.get('/health');
 
 // One document of the documentation corpus the agents read (docs/index.json),
-// e.g. 'changelog'. Returns { id, title, content, truncated }.
-export const getDoc = (id) => api.get(`/docs/${id}`);
+// e.g. 'changelog'. Returns { id, title, content, lang, truncated }.
+// lang defaults to the current UI language ('en', 'ru', or 'de'); the backend falls back to English.
+export const getDoc = (id, lang = '') => api.get(`/docs/${id}`, { params: { ...(lang ? { lang } : {}) } });
 
 /**
  * Drain one `text/event-stream` response, calling `onEvent` per `data:` frame.
@@ -414,6 +415,8 @@ export const serviceChatUrl = () => '/health/chat';
 
 export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
 export const updateAgentDefinition = (id, data) => api.put(`/agents/${id}/definition`, data);
+// A system agent's edited prompt files dropped, back to the shipped text.
+export const restoreShippedDefinition = (id) => api.delete(`/agents/${id}/definition/edits`);
 // The agent's own definition chat — same shape as the entity build chats.
 export const getAgentDefinitionChat = (id) => api.get(`/agents/${id}/definition/chat`);
 export const clearAgentDefinitionChat = (id) => api.delete(`/agents/${id}/definition/chat`);

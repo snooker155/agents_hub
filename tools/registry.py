@@ -507,9 +507,11 @@ def _hub_lookup_specs() -> List[ToolSpec]:
     from tools.hub_action import HUB_ACTION_TOOLS
     from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
     from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+    from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
+    from tools.setup_guide import SETUP_GUIDE_TOOLS
     return [spec_from_tool(t, category="service_ops")
             for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS,
-                      *ASSISTANT_CONVERSATION_TOOLS)]
+                      *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS, *PROACTIVE_SETUP_TOOLS)]
 
 
 def _system_ops_specs() -> List[ToolSpec]:

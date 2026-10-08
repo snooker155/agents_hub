@@ -58,6 +58,8 @@ Under those runtime layers, the backend works with several domain modules:
   Entrypoints a subprocess actually executes — `agent_run.py`, `instance_run.py`, `flow_run.py`, plus the direct HTTP port of a resident instance and the Docker runner.
 - `common/`
   The database core (`db.py`: SQLite by default, Postgres by `AGENTS_HUB_DATABASE_URL`; `common/migrations/`, `db_migrate.py`, `db_transfer.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, budgets, optional auth, and the sinks that route a run's side effects (stream, artifacts, views, graph).
+- `ee/`
+  The part kept apart for a separate edition: single sign-on (`ee/oidc.py`, the protocol; `ee/routes/oidc.py`) and SCIM provisioning (`ee/scim.py`, `ee/routes/scim.py`). The core never imports it except behind `common/edition.py`'s `enterprise_available()`, so a tree without it is a complete product. The signed round-trip cookie both single sign-on and the GitHub connection use is core (`common/signed_state.py`).
 - `instances/`
   Live agent copies: the single registration point every execution channel calls, the instance store, the carrier of a resident instance (the process or container the agent page's Run starts, `carrier.py`, running `runtime/instance_run.py`), the per-instance mailbox with its conversations and wake-up, and the server-side rebuild of a copy's conversation history.
 - `chat/`

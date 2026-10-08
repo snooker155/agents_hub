@@ -131,6 +131,10 @@ export default {
       app_token: "App-Token (xapp)",
       signing_secret: "Signing Secret",
       mode: "Transport",
+      client_id: "OAuth-Client-ID",
+      client_secret: "OAuth-Client-Secret",
+      distribution: "Verteilung",
+      app_name: "App-Name",
     },
     discord: {
       bot_token: "Bot-Token",
@@ -140,6 +144,13 @@ export default {
       app_id: "Microsoft App ID",
       app_password: "App-Passwort",
       tenant_id: "Mandanten-Id",
+      distribution: "Verteilung",
+      app_name: "App-Name",
+      developer_name: "Herausgeber",
+      website_url: "Website",
+      privacy_url: "URL der Datenschutzerklärung",
+      terms_url: "URL der Nutzungsbedingungen",
+      app_version: "App-Version",
     },
     mail: {
       auth_mode: "Anmeldung",
@@ -190,9 +201,13 @@ export default {
   fieldHints: {
     slack: {
       mode: "socket hält einen Websocket offen (keine öffentliche URL nötig); events erwartet, dass Slack die eingehende URL aufruft.",
+      distribution: "Privat: nur Installationen, die Sie auf der Seite Verteilung starten; öffentlich: jeder kann installieren, und Sie bestätigen jede einzelne.",
+      client_id: "Aus Basic Information der Slack-App. Nötig für „Zu Slack hinzufügen“.",
     },
     teams: {
       tenant_id: "Nur für Bots mit einem Mandanten.",
+      distribution: "Privat: nur Organisationen, die Sie hinzufügen; öffentlich: jede Organisation kann installieren, und Sie bestätigen jede einzelne.",
+      app_name: "Wird im App-Paket für Teams angezeigt.",
     },
     mail: {
       auth_mode: "password nutzt die Felder unten; google meldet sich mit dem auf dem Google-Tab verbundenen Konto an (Mit Gmail verbinden), leere Hosts, Benutzer und Absenderadresse bedeuten Gmail und dieses Konto.",
@@ -266,6 +281,12 @@ export default {
   },
   // Labels of select options, by channel and field (ChannelConnector.jsx).
   options: {
+    slack: {
+      distribution: { private: "Privat: nur Installationen, die Sie starten", public: "Öffentlich: jeder kann installieren, Sie bestätigen" },
+    },
+    teams: {
+      distribution: { private: "Privat: nur Installationen, die Sie starten", public: "Öffentlich: jeder kann installieren, Sie bestätigen" },
+    },
     mail: {
       auth_mode: { password: "Passwort", google: "Verbundenes Google-Konto" },
     },

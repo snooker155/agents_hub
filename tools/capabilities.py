@@ -49,6 +49,12 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "hub_action",
+    # schedule_pulse (proactive/from_phrase.py) switches a pulse on once: a
+    # job and an agent exist after it ran.
+    "schedule_pulse",
+    # The guided setup's changes (common/setup_ops.py): a default model, a
+    # voice or the demo workspace, each already made once it ran.
+    "setup_step",
     # The system workspace's repository copy (tools/system_ops.py): a commit,
     # a written task result and a branch deletion have each already happened.
     "system_commit", "system_attach_patch", "system_prune_branches",
@@ -217,6 +223,10 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # (tools/assistant_conversations.py): titles and the person's own
     # messages in their own thread, never an answer or a tool's output.
     "assistant_conversations": frozenset({READS_PRIVATE}),
+    # The guided setup (common/setup_guide.py): which steps are done, provider
+    # names, counts and model ids read from the install, never a key or a
+    # record's content.
+    "setup_guide": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
 
     # ── system workspace (tools/system_ops.py) ───────────────────────────────
@@ -567,6 +577,13 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # hub_action (chat/actions.py) stops, pauses or resumes one record after a
     # person's yes on its card; it returns the new state, nothing read.
     "hub_action",
+    # setup_step (common/setup_ops.py) sets the default model, the assistant's
+    # voice or the demo after a person's yes; it returns a sentence, nothing
+    # read. show_on_screen only names a dashboard page for the person's screen.
+    "setup_step", "show_on_screen",
+    # schedule_pulse (proactive/from_phrase.py) saves a schedule and an
+    # instruction after a person's yes and returns the schedule in words.
+    "schedule_pulse",
 
     # ── system workspace: the repository copy ────────────────────────────────
     # system_repo_sync fetches the local repository into the local copy and
@@ -1013,6 +1030,9 @@ UNTRUSTED_CHANNELS: FrozenSet[str] = frozenset({
     # The chat channels of connectors/channels (a run's ``source``) and the
     # issue trackers of connectors/trackers.
     "discord", "teams", "mail", "tracker_sync",
+    # An MCP client (Claude Code, Cursor) forwards whatever its own agent read:
+    # a repository, a web page, a ticket (dashboard/backend/routes/mcp_server.py).
+    "mcp",
 })
 
 

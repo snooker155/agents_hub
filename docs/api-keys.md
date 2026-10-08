@@ -57,6 +57,10 @@ revoked or its owner goes away.
   named account on the far one, the same as the CLI does. Nothing to change
   in `a2a/client.py` for this: it builds only the JSON-RPC envelope and
   carries no transport of its own, the way it always has.
+- **An MCP client.** Claude Code, Cursor and other clients send the key as
+  `Authorization: Bearer ahk_...` to the hub's `/v1/mcp` (see
+  [the hub as an MCP server](hub-as-mcp-server.md)); `ah mcp connect` writes
+  that setup.
 - **CI.** Put a key in the job's secret store as `AGENTS_HUB_API_KEY` and
   every `ah` command, and any direct call to `common.auth.auth_headers()`,
   authenticates as whichever account it was cut for, scoped to whatever

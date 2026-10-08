@@ -61,6 +61,32 @@ to the window's end rather than to the next cron slot, so a pulse quiet from
 on the Pulse card passes the quiet hours, since a person asked, but still obeys
 the budget, the tick limit and the busy gate.
 
+## From a phrase
+
+The [assistant](assistant.md) sets a pulse up from a sentence: "every morning
+at 8 tell me the weather and my calendar", "каждое утро в 8 присылай сводку",
+"jeden Montag um 7 Uhr eine Übersicht". Its `schedule_pulse` tool takes the
+instruction, the person's words for the time, the timezone, where the result
+goes and optionally an existing agent, and shows a card with the schedule in
+plain words ("Every day at 08:00 Europe/Berlin") before anything is saved.
+
+- **Schedule.** The hub reads common English, Russian and German phrases
+  itself (`proactive/schedule_parse.py`): every morning or evening, a time of
+  day, every weekday, weekends, named weekdays, a day of the month, every N
+  minutes or hours. A phrase it does not know is turned into a cron
+  expression by the model, which is validated; nothing ticks more often than
+  every five minutes.
+- **Timezone.** The one the model passes, else the server's.
+- **Delivery.** The inbox (which is where the assistant's notifications are),
+  plus Telegram or another channel when it is connected in the workspace.
+- **Agent.** The agent you name. Without one, the pulse gets an agent of its
+  own, a child of the Main Agent in the current workspace, because a profile
+  belongs to one agent and the assistant is shared. A named agent that already
+  has a pulse is told so on the card: the new schedule replaces it.
+- **Saving** goes through the same path as the Pulse tab, so the capability
+  guard, the heartbeat job and the limits apply. The tool needs the editor
+  role in the workspace and is audited as `assistant.pulse.create`.
+
 ## Budgets and limits
 
 Each tick that starts a task is priced when its run finishes

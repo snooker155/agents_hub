@@ -9,8 +9,9 @@ import api from './index';
 
 const enc = encodeURIComponent;
 
-// { agents, flows, skills, mcp_servers, mcp_catalog, settings }
-export const getRegistry = () => api.get('/registry');
+// { agents, flows, skills, mcp_servers, mcp_catalog, settings }. A workspace
+// other than default gets only its own items; default (or none) gets the hub.
+export const getRegistry = (workspace) => api.get('/registry', { params: workspace ? { workspace } : {} });
 
 // ── Agent review ─────────────────────────────────────────────────────────────
 

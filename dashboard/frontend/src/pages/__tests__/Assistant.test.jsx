@@ -25,6 +25,20 @@ const assistantApi = vi.hoisted(() => {
 });
 vi.mock('../../api/assistant', () => assistantApi);
 
+// The guided setup (useSetupGuide): inactive by default, so none of the
+// tests above have to think about it. The kickoff tests below override it.
+const INACTIVE_GUIDE = {
+  active: false, started_at: null, finished_at: null, dismissed_at: null,
+  mode: '', admin: true, multi: false, needs_model: false,
+  steps: [], done: 0, total: 0, next: null, complete: false, work: null,
+};
+const setupGuideApi = vi.hoisted(() => ({
+  getSetupGuide: vi.fn(),
+  setupGuideAction: vi.fn(),
+  connectFirstModel: vi.fn(),
+}));
+vi.mock('../../api/setupGuide', () => setupGuideApi);
+
 const recorder = vi.hoisted(() => ({
   start: vi.fn(() => Promise.resolve()),
   stop: vi.fn(() => Promise.resolve({ blob: new Blob(['x'], { type: 'audio/webm' }), type: 'audio/webm', seconds: 2 })),
@@ -65,8 +79,10 @@ describe('the Assistant page', () => {
     vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     localStorage.removeItem(PREFS_KEY);
     Object.values(assistantApi).forEach((fn) => fn?.mockReset?.());
+    Object.values(setupGuideApi).forEach((fn) => fn?.mockReset?.());
     assistantApi.getAssistant.mockResolvedValue({ data: META });
     assistantApi.speakAssistant.mockResolvedValue(null);
+    setupGuideApi.getSetupGuide.mockResolvedValue({ data: INACTIVE_GUIDE });
     ['start', 'stop', 'tune', 'reset'].forEach((k) => ear[k].mockClear());
     ear.start.mockImplementation(() => Promise.resolve(true));
     ear.micAllowed.mockImplementation(() => Promise.resolve(false));
@@ -361,5 +377,57 @@ describe('the Assistant page', () => {
     );
     await waitFor(() => expect(assistantApi.streamAssistantTurn).toHaveBeenCalledTimes(1));
     expect(assistantApi.streamAssistantTurn.mock.calls[0][0].body).toMatchObject({ message: 'show the costs', voice: true });
+  });
+
+  // ── the guided setup's hand over (docs/assistant.md "Guided setup") ─────────
+
+  it('a text kickoff from the welcome window sends the hand-over message as a plain turn', async () => {
+    assistantApi.streamAssistantTurn.mockImplementation(async ({ body, onEvent }) => {
+      expect(body).toMatchObject({ message: 'Help me set up the hub, step by step.', voice: false });
+      onEvent({ type: 'run', run_id: 'r1' });
+      onEvent({ type: 'message', content: "Let's connect a model first.", run_id: 'r1' });
+    });
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/assistant', state: { setup: { mode: 'text', kickoff: true } } }]}>
+        <I18nProvider><Assistant /></I18nProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(assistantApi.streamAssistantTurn).toHaveBeenCalledTimes(1));
+    await screen.findByText("Let's connect a model first.");
+    // Text mode leaves the voice prefs alone: nothing is read aloud.
+    expect(assistantApi.speakAssistant).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) || '{}').listen).not.toBe('conversation');
+  });
+
+  it('a voice kickoff starts a conversation and speaks the reply, without marking the kickoff itself as spoken', async () => {
+    assistantApi.getAssistant.mockResolvedValue({
+      data: {
+        ...META,
+        voice: {
+          max_seconds: 120, transcription: { provider: 'openai', model: 'stt' },
+          speech: { provider: 'openai', model: 'tts', voice: '', voices: [] },
+        },
+      },
+    });
+    assistantApi.streamAssistantTurn.mockImplementation(async ({ body, onEvent }) => {
+      expect(body).toMatchObject({ message: 'Help me set up the hub, step by step.', voice: false });
+      onEvent({ type: 'run', run_id: 'r1' });
+      // A beat, as a real network reply would take: enough for the speaker's
+      // own "does the hub have a voice" effect to settle before it is asked
+      // to say anything (see useSpeaker's `useBrowser` effect).
+      await new Promise((r) => setTimeout(r, 20));
+      onEvent({ type: 'message', content: "Let's connect a model first.", run_id: 'r1' });
+    });
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/assistant', state: { setup: { mode: 'voice', kickoff: true } } }]}>
+        <I18nProvider><Assistant /></I18nProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(assistantApi.streamAssistantTurn).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(assistantApi.speakAssistant).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: 'r1', text: "Let's connect a model first." }), expect.anything(),
+    ));
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)).listen).toBe('conversation');
+    await waitFor(() => expect(ear.start).toHaveBeenCalled());
   });
 });

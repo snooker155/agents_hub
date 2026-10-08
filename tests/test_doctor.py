@@ -62,9 +62,24 @@ def test_run_doctor_returns_every_check_in_the_contract_shape(monkeypatch):
     ids = [c["id"] for c in result["checks"]]
     assert ids == [cid for cid, _t, _f in doctor.CHECKS]
     for c in result["checks"]:
-        assert set(c) == {"id", "title", "status", "summary", "detail", "doc", "anchor"}
+        assert set(c) == {"id", "title", "status", "summary", "summary_i18n", "detail", "doc",
+                          "anchor"}
         assert c["status"] in {"ok", "warn", "fail", "skip"}
         assert isinstance(c["detail"], dict) and c["summary"]
+        assert type(c["summary"]) is str
+        i18n = c["summary_i18n"]
+        assert i18n.get("key") or i18n.get("parts"), c["id"]
+
+
+def test_msg_reads_as_english_and_carries_its_key():
+    msg = doctor.Msg("disk.free", "3.0 GB free under the state directory.", gb="3.0")
+    assert msg == "3.0 GB free under the state directory."
+    assert msg.i18n() == {"key": "disk.free", "params": {"gb": "3.0"}}
+    joined = doctor.Msg.joined([doctor.Msg("a.one", "first thing", n=1),
+                                doctor.Msg("a.two", "second thing")])
+    assert joined == "First thing; second thing."
+    assert joined.i18n() == {"parts": [{"key": "a.one", "params": {"n": 1}},
+                                       {"key": "a.two", "params": {}}]}
 
 
 # ── the checks, one by one ───────────────────────────────────────────────────
@@ -390,3 +405,31 @@ def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch)
     monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, closed])
     status, summary, _detail = doc.check_skills(_snap())
     assert status == "warn" and "license" in summary
+
+
+def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
+    import agents.capability_guard as guard
+    import common.config as config
+    from common import db, identity, secrets
+    monkeypatch.setattr(identity, "current_mode", lambda: "single")
+    monkeypatch.setattr(config, "agent_execution_mode", lambda: "local")
+    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
+    monkeypatch.setattr(secrets, "key_configured", lambda: False)
+    status, summary, detail = doctor.check_security(_snap())
+    assert status == "ok" and detail["secrets_stored"] == 0
+
+    monkeypatch.setattr(guard, "guard_mode", lambda: "warn")
+    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
+    db.get_conn().execute(
+        "INSERT INTO secrets (secret_id, workspace, name, agent_id, user_id, ciphertext, key_version, hint,"
+        " created_by, created_at, updated_at) VALUES ('s1', 'default', 'TOKEN', '', '', 'x', 1, '', '', '', '')")
+    status, summary, detail = doctor.check_security(_snap())
+    assert status == "warn"
+    assert "CAPABILITY_GUARD is warn" in summary
+    assert "1 secret(s) stored" in summary
+    assert "multi mode with AGENT_EXECUTION_MODE=local" in summary
+
+    monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
+    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
+    monkeypatch.setattr(secrets, "key_configured", lambda: True)
+    assert doctor.check_security(_snap())[0] == "ok"

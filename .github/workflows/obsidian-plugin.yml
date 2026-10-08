@@ -1,0 +1,49 @@
+name: obsidian-plugin
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "clients/obsidian-agents-hub/**"
+      - ".github/workflows/obsidian-plugin.yml"
+    tags: ["obsidian-*"]
+  pull_request:
+    paths:
+      - "clients/obsidian-agents-hub/**"
+      - ".github/workflows/obsidian-plugin.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/obsidian-agents-hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check main.js
+      - run: npm test
+
+  release:
+    # Obsidian's catalog installs from a release whose assets are the three
+    # finished files, so the tag build just zips and attaches them.
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/obsidian-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: clients/obsidian-agents-hub
+    steps:
+      - uses: actions/checkout@v4
+      - run: zip agents-hub.zip main.js manifest.json styles.css
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            clients/obsidian-agents-hub/main.js
+            clients/obsidian-agents-hub/manifest.json
+            clients/obsidian-agents-hub/styles.css
+            clients/obsidian-agents-hub/agents-hub.zip

@@ -651,5 +651,37 @@ export default {
       ]
     },
     "callout": "Ein eingehender Webhook, der einen Task anlegt, hat keinen offenen Fallback: Ist für einen Workspace kein eingehendes Secret konfiguriert, lässt er sich überhaupt nicht ansprechen."
+  },
+  "assistant": {
+    "nav": "Assistent",
+    "title": "Ihr Assistent",
+    "lead": "Ein Assistent für den ganzen Dienst, per Sprache oder Text, auf der Seite [Assistent](/assistant). Er beantwortet Fragen zum Hub, nimmt kleine Änderungen nach Ihrer Bestätigung auf einer Karte vor und führt nach der Installation durch die Einrichtung.",
+    "s0": {
+      "h": "Ein Gespräch pro Person",
+      "p": "Jede Person hat ihr eigenes Gespräch. Ein Zug läuft in einem Workspace, zu dem die Person gehört, und ein Gespräch bleibt in dem Workspace, in dem es begonnen hat.",
+      "points": [
+        "Der Assistent erweitert den Main Agent: dieselben Werkzeuge und dazu eigene Abfragen.",
+        "Administratoren erhalten zusätzlich ein Dienstgespräch mit Werkzeugen für den Zustand des Dienstes."
+      ]
+    },
+    "s1": {
+      "h": "Was er nachschlagen und ändern kann",
+      "p": "`hub_lookup` liest Runs, Sitzungen, Ausgaben, Budgets, Modelle, Agenten, Benachrichtigungen, Freigaben und die Einträge jeder Seite. `hub_action` führt eine Aktion an einem Eintrag aus, etwa eine Instanz pausieren, und zeigt immer zuerst eine Karte.",
+      "points": [
+        "Ein Satz wie „jeden Morgen um 8 eine Zusammenfassung schicken“ wird nach Ihrem Ja zu einem geplanten Puls.",
+        "Schlüssel eines Anbieters geben Sie selbst in eine Karte ein, nie in das Gespräch."
+      ]
+    },
+    "s2": {
+      "h": "Sprache",
+      "p": "Zum Sprechen drücken, Gesprächsmodus oder ein Weckwort. Sprache läuft über die Erkennungs- und Sprachmodelle des Workspace, sonst über die des Browsers. Ein gesprochenes Ja beantwortet eine wartende Karte.",
+      "points": [
+        "Sprache und die Installation der App auf dem Telefon brauchen HTTPS."
+      ]
+    },
+    "s3": {
+      "h": "Limits",
+      "p": "Jeder Zug ist ein Run mit dem Namen der Person und zählt zu ihrem Monatslimit. Ist ein Limit oder das Budget des Workspace aufgebraucht, wird der Zug mit einer Karte abgelehnt, die sagt, welches."
+    }
   }
 };

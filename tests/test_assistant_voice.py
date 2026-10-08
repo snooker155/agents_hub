@@ -271,6 +271,15 @@ def test_over_the_limit_nothing_is_transcribed(multi, client, speech_models, htt
     assert http == []
 
 
+def test_the_browser_timezone_reaches_the_turn_and_junk_does_not(multi, client, fake_agent):
+    # "every morning at 8" is the person's morning: schedule_pulse reads it here.
+    _, admin = _admin(client)
+    _turn(client, admin, "hi", timezone="Europe/Berlin")
+    assert "Person's timezone (browser): Europe/Berlin" in fake_agent.prompts[-1]
+    _turn(client, admin, "hi", timezone="../../etc/passwd")
+    assert "Person's timezone" not in fake_agent.prompts[-1]
+
+
 # ── speak ────────────────────────────────────────────────────────────────────
 
 def test_a_spoken_turn_is_read_back_and_charged_on_its_run(multi, client, speech_models, http, fake_agent):

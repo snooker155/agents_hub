@@ -49,6 +49,9 @@ def base_subprocess_env(
     env["AGENT_WORKSPACE"] = workspace_name
     if settings.openai_api_key:
         env["OPENAI_API_KEY"] = settings.openai_api_key
+    # A provider key saved since the backend started (common/provider_env.py).
+    from common import provider_env
+    provider_env.overlay(env)
     # The credential the child calls back with (its relays and, from a
     # container, its run state): a run token of its own that reaches only those
     # routes (common/run_tokens.py, common/auth.py RELAY_ROUTES). The shared API

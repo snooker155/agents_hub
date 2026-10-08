@@ -43,6 +43,8 @@ from rich.table import Table
 from rich import box
 
 from cli.onboard import probe as P
+# The voice choices, shared with the assistant's guided setup in the hub.
+from cli.onboard.presets import HUB_LOCAL, VOICE_CLOUD, VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION
 from cli.onboard.ui import Asker, SetupError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -222,7 +224,7 @@ def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional
         return True
 
     plan.quick = not advanced and a.choose("flow", "How many questions?", [
-        ("quick", "QuickStart", "sensible defaults, only what cannot be guessed"),
+        ("quick", "QuickStart", "only what cannot be guessed; the assistant sets up the rest with you"),
         ("advanced", "Advanced", "every choice: ports, SSO, execution, web search, RAG, extra services"),
     ], default="quick") == "quick"
 
@@ -631,40 +633,6 @@ def step_providers(a: Asker, plan: Plan) -> None:
 # Step 5: the assistant's voice
 # ---------------------------------------------------------------------------
 
-#: Cloud models the assistant hears and speaks with, per provider: the speech
-#: and transcription models, their prices (per 1000 characters, per call) and
-#: the voices to pick from, the first one the default.
-VOICE_CLOUD = {
-    "openai": {"speech": "gpt-4o-mini-tts", "transcription": "gpt-4o-mini-transcribe",
-               "speech_price": 0.015, "transcription_price": 0.003,
-               "voices": ["alloy", "nova", "coral", "sage", "onyx", "echo", "shimmer", "verse"]},
-    "google": {"speech": "gemini-2.5-flash-preview-tts", "transcription": "gemini-2.5-flash",
-               "speech_price": None, "transcription_price": None,
-               "voices": ["Kore", "Puck", "Charon", "Aoede", "Leda", "Zephyr"]},
-}
-
-#: Speech models the hub's own runtime can download, as on the Models page's
-#: Local tab (speechPresets.js): (id, label, size, repo, package, engine).
-VOICE_LOCAL_SPEECH = [
-    ("piper-ru", "Piper, Russian (Irina)", "about 60 MB", "rhasspy/piper-voices", "piper-ru_RU-irina-medium", "piper"),
-    ("piper-en", "Piper, English (Lessac)", "about 60 MB", "rhasspy/piper-voices", "piper-en_US-lessac-medium", "piper"),
-    ("piper-de", "Piper, German (Thorsten)", "about 60 MB", "rhasspy/piper-voices", "piper-de_DE-thorsten-medium", "piper"),
-    ("kokoro", "Kokoro 82M, many voices (English, French, Spanish, Italian, Japanese, Chinese)",
-     "about 330 MB", "fastrtc/kokoro-onnx", "kokoro-v1.0", "kokoro"),
-    ("supertonic", "Supertonic 3, ten voices in 31 languages (Russian, German, English among them)",
-     "about 400 MB", "Supertone/supertonic-3", "supertonic-3", "supertonic"),
-    ("kitten", "Kitten TTS nano, eight English voices", "about 28 MB",
-     "KittenML/kitten-tts-nano-0.8-int8", "kitten-tts-nano-0.8-int8", "kitten"),
-]
-#: The same for hearing: (id, label, size, repo, package).
-VOICE_LOCAL_TRANSCRIPTION = [
-    ("whisper-small", "Whisper small", "about 480 MB, fast on a CPU",
-     "Systran/faster-whisper-small", "faster-whisper-small"),
-    ("whisper-turbo", "Whisper large-v3 turbo", "about 1.6 GB, more accurate",
-     "deepdml/faster-whisper-large-v3-turbo-ct2", "faster-whisper-large-v3-turbo-ct2"),
-]
-HUB_LOCAL = "hub-local"
-
 
 def _local_speech_default() -> str:
     lang = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
@@ -678,6 +646,10 @@ def step_voice(a: Asker, plan: Plan) -> None:
     a.section(5, STEPS, "Assistant voice",
               "What the assistant hears you with and reads its answers aloud with "
               "(the Special models tab of the Models page, default workspace).")
+    if plan.quick and not a.answered("voice.mode"):
+        a.note("Left to the assistant: it offers a voice on its first run in the dashboard, and the "
+               "browser's own voice works until then.")
+        return
     cloud = [p for p in VOICE_CLOUD if p in plan.providers or _configured(plan, p)]
     options = []
     if cloud:
@@ -878,9 +850,13 @@ def _apply_voice_http(a: Asker, plan: Plan, session: Optional[str]) -> None:
 
 def step_features(a: Asker, plan: Plan) -> None:
     a.section(6, STEPS, "Features")
-    demo = a.confirm("demo", "Seed the demo workspace on the first start (four agents, chats, views)?",
-                     plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
-    plan.env["DEMO_WORKSPACE"] = "1" if demo else "0"
+    if not plan.quick or a.answered("demo"):
+        demo = a.confirm("demo", "Seed the demo workspace on the first start (four agents, chats, views)?",
+                         plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
+        plan.env["DEMO_WORKSPACE"] = "1" if demo else "0"
+    else:
+        a.note("Web search, the demo workspace, channels and the rest: the assistant offers them in the "
+               "dashboard, one at a time.")
 
     if plan.shape in ("docker", "compose"):
         plan.web_port = plan.cur("WEB_PORT", "8080")
@@ -1276,6 +1252,12 @@ def _farewell(a: Asker, plan: Plan, started: bool) -> None:
               "ah doctor                 check every part" if plan.shape == "local" else
               "docker compose logs -f backend",
               "ah setup                  change any of this later"]
+    # From here the assistant leads (common/setup_guide.py): the welcome window
+    # hands over to it, or asks for a model key first when none was given.
+    lines += ["", "In the dashboard, choose Talk or Type in the welcome window: the assistant takes you",
+              "through the rest of the setup (the default model, its voice, web search, channels, a first",
+              "agent and task)." if plan.providers else
+              "through the rest. It asks for a model key first, since none was given here."]
     a.panel("\n".join(lines), title="Next", style="green")
 
 

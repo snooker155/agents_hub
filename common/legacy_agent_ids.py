@@ -285,14 +285,14 @@ def _apply(docs: List[Dict[str, Any]], rows: List[Dict[str, Any]]) -> None:
 
 
 def _copy_definition_folders(mapping: Mapping[str, str]) -> List[str]:
-    """An install whose definitions folder still has only the old id (a volume
-    or a local edit that kept it) gets a copy under the new id. Never removes
-    anything and never overwrites a folder that exists."""
-    from agents.prompt_assembly import DEFINITIONS_DIR
+    """An install whose written definitions folder still has only the old id
+    (an edit made before the rename) gets a copy under the new id. Never
+    removes anything and never overwrites a folder that exists."""
+    from agents.prompt_assembly import agent_dir
 
     copied: List[str] = []
     for old, new in mapping.items():
-        src, dst = DEFINITIONS_DIR / old, DEFINITIONS_DIR / new
+        src, dst = agent_dir(old), agent_dir(new)
         if src.is_dir() and not dst.exists():
             try:
                 shutil.copytree(src, dst)

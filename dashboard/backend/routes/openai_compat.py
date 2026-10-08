@@ -369,7 +369,8 @@ def _usage_for(message: Any, messages: List[Any], completion_text: str) -> Dict[
 def _account(principal: Any, served: Dict[str, Any], usage: Dict[str, Any], *,
              started: float, stream: bool, status: str, error: Optional[str],
              tools: int, object_type: str = "model", workspace: Optional[str] = None,
-             details: Optional[Dict[str, Any]] = None) -> None:
+             details: Optional[Dict[str, Any]] = None,
+             path: str = "/v1/chat/completions") -> None:
     """One usage row and one audit row. Neither may break the response.
 
     An agent model is counted under the model its run actually used (so the
@@ -390,7 +391,7 @@ def _account(principal: Any, served: Dict[str, Any], usage: Dict[str, Any], *,
         from common import audit
         audit.record(
             "model.serve", principal=principal, object_type=object_type, object_id=served["id"],
-            workspace=workspace, method="POST", path="/v1/chat/completions",
+            workspace=workspace, method="POST", path=path,
             result="ok" if status == "ok" else "error",
             details={"prompt_tokens": usage.get("prompt_tokens", 0),
                      "completion_tokens": usage.get("completion_tokens", 0),
@@ -484,11 +485,12 @@ def _agent_spec(model: str) -> Any:
     return spec
 
 
-def _agent_workspace(request: Request, principal: Any, spec: Any) -> str:
+def _agent_workspace(request: Request, principal: Any, spec: Any,
+                     named: Optional[str] = None) -> str:
     """Where an agent model runs, and whether this caller may run it there.
 
-    The header, else a key's one workspace, else the agent's owner workspace,
-    else ``default``. A workspace outside a key's scope, one the caller is not
+    ``named`` (the MCP server's ``workspace`` argument), else the header, else
+    a key's one workspace, else the agent's owner workspace, else ``default``. A workspace outside a key's scope, one the caller is not
     an editor of (``multi``), one that does not exist, or one the agent is
     not available in, is refused before anything runs.
     """
@@ -496,7 +498,7 @@ def _agent_workspace(request: Request, principal: Any, spec: Any) -> str:
     from common.auth import WS_EDITOR
     from widgets.agents import usable_in
 
-    workspace = _header_workspace(request)
+    workspace = (named or "").strip() or _header_workspace(request)
     scope = getattr(principal, "scope", None)
     if not workspace and scope is not None and len(scope) == 1:
         workspace = scope[0]

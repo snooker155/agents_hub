@@ -45,6 +45,10 @@ export default function ChatMessageList() {
     convId: currentConvId, lastUserId, messages: renderedMessages, stuckHint: t('chat.pinnedPromptHint'),
   });
   const renderMessage = (msg, idx) => {
+    // A refused turn is retried with the message that started it.
+    const retryText = msg.refusal
+      ? [...renderedMessages.slice(0, idx)].reverse().find((m) => m.role === 'user')?.content
+      : null;
     const msgAgentName = msg.role !== 'user'
       ? (currentConv?.origin === 'assistant' ? t('chat.assistantThread.badge')
         : msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
@@ -104,6 +108,7 @@ export default function ChatMessageList() {
           agentName={msgAgentName}
           artifactsByPath={artifacts}
           onAction={sendMessage}
+          onRetry={retryText ? () => sendMessage(retryText) : undefined}
         />
       </React.Fragment>
     );

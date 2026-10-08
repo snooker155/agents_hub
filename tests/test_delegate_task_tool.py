@@ -528,3 +528,26 @@ def test_delegation_status_reads_the_run_the_task_and_the_result(registry, paren
     assert snap["run"]["status"] == "completed"
     assert snap["task"]["id"] == launched["task"]["id"]
     assert snap["output"] == "the answer"
+
+
+@pytest.mark.parametrize("role,path", [("all", "spawned"), ("api", "queued")])
+def test_a_container_delegation_reaches_a_launcher_in_either_role(registry, parent, monkeypatch, role, path):
+    """What the backend does with a delegation a run container posted: in the
+    ``all`` role it spawns the delegate itself (no queue, so nothing needs to
+    drain one), in the ``api`` role it puts it on the launch queue."""
+    from agents import agent_launcher
+    from common.config import settings
+    from tasks.delegate import launch_delegation
+
+    monkeypatch.delenv("AGENTS_HUB_ROLE", raising=False)
+    monkeypatch.setattr(settings, "role", role, raising=False)
+    seen = []
+    monkeypatch.setattr(agent_launcher, "prepare_run",
+                        lambda task_id, agent_id, params=None, run_id=None: {"run_id": run_id, "session_id": None})
+    monkeypatch.setattr(agent_launcher, "launch_prepared", lambda spec: seen.append(("spawned", spec["run_id"])))
+    monkeypatch.setattr(agent_launcher, "enqueue_prepared", lambda spec: seen.append(("queued", spec["run_id"])))
+
+    out = launch_delegation(str(parent.id), {"agent_id": "worker", "input": "part", "depth": 0, "env": {}})
+
+    assert out["ok"] is True, out
+    assert seen == [(path, out["run"]["run_id"])]

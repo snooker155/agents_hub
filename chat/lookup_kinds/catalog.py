@@ -239,6 +239,65 @@ register_action(HubAction(
     "Disable MCP server {label} in {workspace}: agents stop seeing its tools until it is re-enabled."))
 
 
+# ── catalog installations of the Slack and Teams apps (docs/distribution.md) ──
+
+def _install_stores(ctx: SimpleNamespace):
+    """``(channel, bot workspace, store)`` for every bot whose installations
+    this person may see: the default's when default is visible, and each
+    visible workspace's own bot."""
+    from connectors.channels import registry
+    for channel in ("slack", "teams"):
+        spec = registry.get(channel)
+        if spec is None:
+            continue
+        for ws in ctx.workspaces:
+            if ws == "default" or spec.store.defines(ws):
+                yield channel, ws, spec.store.for_workspace(ws)
+
+
+def _install_id(channel: str, bot_ws: str, org_id: str) -> str:
+    return f"{channel}:{bot_ws}:{org_id}"
+
+
+def _list_installs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for channel, bot_ws, store in _install_stores(ctx):
+        for inst in store.public_installs():
+            if not lookup.matches(query, inst.get("name"), inst.get("org_id"), channel,
+                                  inst.get("status")):
+                continue
+            rows.append(lookup.row(
+                _install_id(channel, bot_ws, inst["org_id"]), inst.get("name") or inst["org_id"],
+                " · ".join(x for x in [channel, inst.get("status"),
+                                       f"agent {inst['agent_id']}" if inst.get("agent_id") else "",
+                                       lookup.short_time(inst.get("installed_at"))] if x),
+                "/distribution", workspace=bot_ws if ctx.workspace is None else None,
+                at=inst.get("installed_at")))
+    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def _install_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
+    channel, _, rest = entity_id.partition(":")
+    bot_ws, _, org_id = rest.partition(":")
+    for ch, ws, store in _install_stores(ctx):
+        if ch != channel or ws != bot_ws:
+            continue
+        inst = next((i for i in store.public_installs() if i.get("org_id") == org_id), None)
+        if inst is None:
+            return None
+        fields = {"channel": channel, "bot_workspace": bot_ws, **inst}
+        return {"title": inst.get("name") or org_id, "fields": fields, "url": "/distribution"}
+    return None
+
+
+lookup.register(lookup.LookupKind(
+    "distribution_install",
+    "organisations that installed the hub's Slack or Teams app from a catalog: pending or "
+    "approved, and the workspace and agent their chats run in",
+    _list_installs, _install_card, ("/distribution",), aliases=("slack_install", "teams_install")))
+
+
 # ── the embeddable widget ────────────────────────────────────────────────────
 
 def _list_widgets(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:

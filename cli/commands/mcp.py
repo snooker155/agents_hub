@@ -135,6 +135,91 @@ def mcp_tools(
     console.print(f"[dim]{len(tools)} tool(s)[/dim]")
 
 
+# ── The other direction: this hub as an MCP server (docs/hub-as-mcp-server.md)
+
+def _mcp_url() -> str:
+    """Where an MCP client on this machine reaches the hub's /v1/mcp: the address
+    the CLI talks to, else the hub's public URL, else the local default."""
+    import os
+    base = os.environ.get("AGENTS_HUB_URL", "").strip()
+    if not base:
+        overview = call(hub().request, "GET", "/api/distribution") or {}
+        if overview.get("public_url_configured"):
+            base = str(overview.get("public_url") or "")
+    if not base:
+        base = f"http://localhost:{os.environ.get('DASHBOARD_PORT', '8000')}"
+    return base.rstrip("/") + "/v1/mcp"
+
+
+def _mcp_headers(key: Optional[str], workspace: Optional[str]) -> dict:
+    import os
+    key = (key or os.environ.get("AGENTS_HUB_API_KEY") or os.environ.get("AGENTS_HUB_API_TOKEN") or "").strip()
+    headers = {}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    if workspace:
+        headers["X-Agents-Hub-Workspace"] = workspace
+    return headers
+
+
+@mcp_app.command("connect")
+def mcp_connect(
+    client: str = typer.Argument(..., help="claude-code, cursor, vscode, windsurf, claude-desktop, codex, gemini or other."),
+    key: Optional[str] = typer.Option(None, "--key", help="API key; defaults to AGENTS_HUB_API_KEY or AGENTS_HUB_API_TOKEN. A hub in single mode needs none."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Pin the client to one workspace."),
+    write: bool = typer.Option(False, "--write", help="Install it: run `claude mcp add` or `code --add-mcp`, or merge the entry into the client's config file."),
+    project: bool = typer.Option(False, "--project", help="With --write: the config file in this folder (cursor, vscode, gemini) instead of the user-wide one."),
+):
+    """Connect an MCP client (Claude Code, Cursor, VS Code, Windsurf, Claude
+    Desktop, Codex, Gemini CLI or any other) to this hub."""
+    import shlex
+    import subprocess
+
+    from cli import mcp_clients
+
+    if client not in mcp_clients.CLIENTS:
+        console.print(f"[red]Error:[/red] client is one of {', '.join(mcp_clients.CLIENTS)}")
+        raise typer.Exit(1)
+    url = _mcp_url()
+    headers = _mcp_headers(key, workspace)
+    if not write:
+        text = mcp_clients.snippet(client, url, headers)
+        if client in mcp_clients.JSON_CLIENTS:
+            console.print_json(text)
+        else:
+            console.print(text, soft_wrap=True, highlight=False, markup=False)
+        return
+
+    run_argv = None
+    if client == "claude-code":
+        run_argv = mcp_clients.claude_code_argv(url, headers)
+    elif client == "vscode" and not project:
+        run_argv = mcp_clients.vscode_add_argv(url, headers)
+    if run_argv:
+        try:
+            done = subprocess.run(run_argv, check=False)
+        except FileNotFoundError:
+            console.print(f"[red]Error:[/red] the {run_argv[0]} command is not on PATH; run without --write to copy the line.")
+            raise typer.Exit(1)
+        if done.returncode:
+            console.print(f"[dim]{' '.join(shlex.quote(a) for a in run_argv)}[/dim]", highlight=False)
+        raise typer.Exit(done.returncode)
+
+    path = mcp_clients.config_path(client, project=project)
+    if path is None:
+        where = "per project" if project else "user-wide"
+        console.print(f"[red]Error:[/red] {mcp_clients.CLIENTS[client]} has no {where} config file "
+                      "this command can write; run without --write and paste the snippet.")
+        raise typer.Exit(1)
+    try:
+        mcp_clients.merge(client, path, url, headers)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+    console.print(f"Wrote {mcp_clients.SERVER_NAME} to {path}. Restart {mcp_clients.CLIENTS[client]} "
+                  "or reload its MCP servers.", highlight=False)
+
+
 # ── The hub-wide allowlist catalog (dashboard/backend/routes/registry.py) ────
 #
 # Separate from the commands above: those manage what one workspace attached,

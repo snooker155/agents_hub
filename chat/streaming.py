@@ -49,6 +49,9 @@ class StreamDriveResult:
     # (agents.callbacks.guards.RunBudgetGuard): a chat turn has no task to
     # park, so the cap ends it as a failure the reply names.
     budget: dict | None = None
+    # The structured refusal behind a failed turn (chat/refusals.py): the guard
+    # or the limit that stopped it, for the UI to turn into a card with a button.
+    refusal: dict | None = None
 
 
 def budget_pause(agent_result) -> dict | None:
@@ -157,6 +160,9 @@ async def drive_streaming_run(
             final_error = str(budget_pending.get("reason") or "The turn reached its money cap")
             result.budget = {"spent_usd": budget_pending.get("spent_usd"),
                              "limit_usd": budget_pending.get("limit_usd")}
+            from chat.refusals import KIND_TURN, budget_refusal
+            result.refusal = budget_refusal(KIND_TURN, spent_usd=budget_pending.get("spent_usd"),
+                                            limit_usd=budget_pending.get("limit_usd"), message=final_error)
         elif agent_result.ok:
             final_response = str(agent_result.agent_output)
             response_obj = getattr(agent_result, "response", None)
@@ -172,6 +178,8 @@ async def drive_streaming_run(
             result.loop = cancelled_loop
     except Exception as e:
         final_error = str(e)
+        from chat.refusals import refusal_of
+        result.refusal = refusal_of(e)
 
     if not final_response and response_obj is not None:
         # Structured-only reply (e.g. just a buttons block): the answer IS the UI.

@@ -229,6 +229,8 @@ describe('scenes after the Orbit Loader artifact', () => {
 
   // however long the step worked and wherever its round stood, the finale
   // and the fold are over soon enough for the mark to keep up with the run
+  // (35 runs of up to nine seconds each: more than the default timeout on a
+  // busy CI runner, for make-3d above all, which turns every vertex every frame)
   it.each(WORK_STATES)('%s finishes within two seconds of its step ending', (state) => {
     let worst = 0;
     for (let work = 0.2; work < 9; work += 0.25) {
@@ -242,7 +244,7 @@ describe('scenes after the Orbit Loader artifact', () => {
       api.destroy();
     }
     expect(worst).toBeLessThan(2);
-  });
+  }, 30000);
 
   // a clip from a file arrives a moment later (it is loaded the first time)
   const loaded = async (api) => {

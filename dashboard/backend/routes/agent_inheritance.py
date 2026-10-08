@@ -61,11 +61,10 @@ def _detach(agent_id: str) -> None:
     prompt_assembly.write_instructions(def_id, parts["instructions"], definitions_dir=defs_dir)
     for name, writer in (("capabilities", prompt_assembly.write_capabilities),
                          ("usage", prompt_assembly.write_usage)):
-        path = prompt_assembly.agent_dir(def_id, defs_dir) / getattr(prompt_assembly, f"{name.upper()}_FILE")
         if parts[name].strip():
             writer(def_id, parts[name], definitions_dir=defs_dir)
-        elif path.exists():
-            path.unlink()
+        else:
+            prompt_assembly.clear_part(def_id, getattr(prompt_assembly, f"{name.upper()}_FILE"), defs_dir)
 
 
 @router.put("/{agent_id}/extends")

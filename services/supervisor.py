@@ -110,7 +110,7 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
         load = replicas.loads(live)
         for rep in stale:
             if load.get(str(rep["instance_id"]), 0) == 0 and replicas.stop_replica(
-                    service, rep, reason="code changed"):
+                    service, rep, reason="code or provider settings changed"):
                 live.remove(rep)
                 recycled += 1
 

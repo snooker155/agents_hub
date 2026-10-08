@@ -708,6 +708,7 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
     for key in _SETTINGS_OWNED_ELSEWHERE:
         if key not in overrides and key in current:
             cleaned[key] = current[key]
+    previous = dict(current)
     update_workspace_metadata(name, {"settings": cleaned})
     audit.record("workspace.settings", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,
@@ -720,7 +721,20 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
         configure_logging_for_active_workspace()
     except Exception:
         pass
-    return {"overrides": cleaned}
+    out = {"overrides": cleaned}
+    # A first key for a provider switches on one default model with its catalog
+    # price (common/default_model.py); only the default workspace speaks for the hub's default.
+    from common import default_model
+    switched = []
+    for provider in default_model.DEFAULT_MODELS:
+        field = f"{provider}_api_key"
+        if cleaned.get(field) and cleaned.get(field) != previous.get(field):
+            found = default_model.ensure_default(provider, workspace=name, set_global=name == "default")
+            if found:
+                switched.append(found)
+    if switched:
+        out["default_models"] = switched
+    return out
 
 
 # ── Tool policy: the approval gate and the hooks that run around a tool call ──

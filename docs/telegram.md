@@ -8,6 +8,20 @@ phone and notifications arrive where you are.
 A Telegram chat is bound to a workspace and an agent. Messages arriving there
 run that agent, in that workspace, and the reply goes back to the chat.
 
+## Voice messages
+
+A voice note, an audio file or a round video message is downloaded through the
+Bot API and transcribed with the transcription model of the bound workspace,
+the same one the assistant's microphone uses (Models page, Special models tab).
+The bot answers with `Heard: ...` and runs the turn with what was said as the
+message; a caption typed with the recording goes first. The prompt tells the
+agent the message was spoken, so a misheard word reads as one. Without a transcription
+model in the workspace the bot says how to add one (or to press the ready local
+set button on the Local tab, which installs Whisper). The limits are the
+assistant's: `AGENTS_HUB_VOICE_MAX_SECONDS` (120 s) and
+`AGENTS_HUB_VOICE_MAX_BYTES` (8 MB). The transcription is a `voice` run with
+its price, like the assistant's. Answers still go back as text.
+
 ## Notifications
 
 `notify_user` and `schedule_notification` deliver to the dashboard inbox by

@@ -213,7 +213,7 @@ async function main() {
     // A first visit would open the onboarding modal over every shot.
     await context.addInitScript(() => {
       try {
-        localStorage.setItem('agents_hub_onboarding_seen_v2', '1');
+        localStorage.setItem('agents_hub_onboarding_seen_v3', '1');
         localStorage.setItem('agents_hub_tour_done_v1', '1');
         localStorage.setItem('selectedWorkspace', 'demo');
         localStorage.setItem('agents_hub_language', 'en');

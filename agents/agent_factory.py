@@ -257,7 +257,9 @@ class AgentFactory:
     """Factory for creating agents from YAML definitions."""
     
     def __init__(self, definitions_dir: Optional[str] = None):
-        self.definitions_dir = Path(definitions_dir) if definitions_dir else Path(__file__).parent / "definitions"
+        # The shipped folder reads through the state layer (agents/prompt_assembly.py).
+        from agents.prompt_assembly import SYSTEM_DEFINITIONS_DIR
+        self.definitions_dir = Path(definitions_dir) if definitions_dir else SYSTEM_DEFINITIONS_DIR
         self._agent_cache: Dict[str, Any] = {}
     
     def load_definition(self, agent_id: str) -> Dict[str, Any]:
@@ -629,11 +631,16 @@ class AgentFactory:
         from tools.connector_tools import connector_tools
         available.extend(connector_tools())
         # The assistant's view of the hub's records as the person sees them,
-        # the service-wide one and the one-step actions (tools/hub_lookup.py,
-        # tools/hub_action.py): plain per-tool grants.
+        # the service-wide one, the one-step actions and the guided setup
+        # (tools/hub_lookup.py, tools/hub_action.py, tools/setup_guide.py):
+        # plain per-tool grants.
         from tools.hub_action import HUB_ACTION_TOOLS
         from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
         from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+        from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
+        from tools.setup_guide import SETUP_GUIDE_TOOLS
+        available.extend(SETUP_GUIDE_TOOLS)
+        available.extend(PROACTIVE_SETUP_TOOLS)
         available.extend(HUB_LOOKUP_TOOLS)
         available.extend(ASSISTANT_CONVERSATION_TOOLS)
         available.extend(SERVICE_LOOKUP_TOOLS)

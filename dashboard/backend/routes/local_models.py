@@ -479,6 +479,48 @@ def runtime_job(job_id: str) -> Dict[str, Any]:
         _raise(exc)
 
 
+# ── Ready local set ──────────────────────────────────────────────────────────
+# One action for going local (providers/local_set.py): engine, a chat model
+# sized to this machine, Whisper and Kokoro, as one job on the shared list.
+
+class ReadySetBody(BaseModel):
+    workspace: str = Field(default="default", max_length=200)
+    #: Only say what would happen.
+    dry_run: bool = False
+
+
+@router.get("/runtime/ready-set")
+def ready_set_status() -> Dict[str, Any]:
+    """What the button would do (the chosen model, each step done or not) and
+    the latest run of it."""
+    from providers import local_set
+    return {**local_set.plan(), "job": local_set.latest_job()}
+
+
+@router.post("/runtime/ready-set")
+def ready_set_start(body: ReadySetBody, request: Request) -> Dict[str, Any]:
+    """Start the set as a background job, or return the one running; safe to
+    press again, it skips what is there. An administrator's."""
+    _admin(request)
+    from providers import local_set
+    if not lm.runtime_configured():
+        raise HTTPException(status_code=409, detail="the hub has no model runtime of its own here "
+                                                    "(AGENTS_HUB_MODELS_URL is empty)")
+    if body.dry_run:
+        return {"dry_run": True, **local_set.plan(body.workspace)}
+    return {"job": local_set.start(body.workspace)}
+
+
+@router.post("/runtime/ready-set/cancel")
+def ready_set_cancel(request: Request) -> Dict[str, Any]:
+    _admin(request)
+    from providers import local_set
+    job = local_set.cancel()
+    if job is None:
+        raise HTTPException(status_code=404, detail="no ready set is running")
+    return {"job": job}
+
+
 # ── Recorded voices ──────────────────────────────────────────────────────────
 # Samples for the runtime's voice cloning engines (Chatterbox, OpenVoice).
 # The runtime keeps them all; the hub decides who sees which: a person sees

@@ -717,7 +717,8 @@ html.dark {
 :where(html.dark) .bg-zinc-700,
 :where(html) .dark .dark\:bg-gray-700,
 :where(html) .dark .dark\:bg-slate-700,
-:where(html) .dark .dark\:hover\:bg-gray-700:hover { background-color: var(--neutral-bg-700); }
+:where(html) .dark .dark\:hover\:bg-gray-700:hover,
+:where(html.dark) .hover\:bg-gray-700:hover { background-color: var(--neutral-bg-700); }
 :where(html.dark) .bg-gray-800,
 :where(html.dark) .bg-neutral-800,
 :where(html.dark) .bg-slate-800,

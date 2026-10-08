@@ -142,6 +142,9 @@ def _fresh_database(db, path: Path) -> None:
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
     "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
+    # A developer's own browser service would answer the "not configured" tests.
+    "AGENTS_HUB_BROWSER_URL": ("browser_url", ""),
+    "AGENTS_HUB_BROWSER_TOKEN": ("browser_token", ""),
 }
 
 # Keys a guard resolves live (common.config.agent_execution_mode and
@@ -197,6 +200,37 @@ def guard_defaults(monkeypatch):
     # variables itself, as the RAG tests already do.
     monkeypatch.setenv("RAG_VECTOR_DB", "none")
     monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+
+
+@pytest.fixture(autouse=True)
+def provider_env_isolated(tmp_path, monkeypatch):
+    """Keep the developer's model keys out of the tests, and a key a test
+    saves out of the next one: common/provider_env.py reads a file of the
+    test's own, and the provider variables and ``settings`` fields it copies
+    into the process are put back afterwards."""
+    from common import provider_env
+    from common.config import settings
+    monkeypatch.setattr(provider_env, "ENV_FILE", tmp_path / "provider.env")
+    for field in provider_env._SETTINGS_FIELD.values():
+        if hasattr(settings, field):
+            monkeypatch.setattr(settings, field, getattr(settings, field), raising=False)
+    saved = {key: os.environ.get(key) for key in provider_env.PROVIDER_ENV_KEYS}
+    yield
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def browser_service_isolated(tmp_path, monkeypatch):
+    """Keep the developer's browser service out of the tests: its pid file
+    lives under the real ``.agents_hub``, and while that service runs, every
+    status probe in the suite found it alive and answered for it."""
+    from common import browser_service
+    monkeypatch.setattr(browser_service, "STATE_FILE", tmp_path / "browser_service.json")
+    monkeypatch.setattr(browser_service, "LOG_FILE", tmp_path / "browser_service.log")
 
 
 @pytest.fixture(autouse=True)

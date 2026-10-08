@@ -93,7 +93,7 @@ def notify_workspace(channel: str, workspace: Optional[str], title: str, body: s
     if svc is None:
         return 0
     store = svc.store
-    if not store.is_enabled() or not store.is_configured(*svc.required_fields):
+    if not store.is_enabled() or not svc.configured():
         return 0
     text = title if not body else f"{title}\n\n{body}"
     # A workspace's own bot: every chat of it is that workspace's.

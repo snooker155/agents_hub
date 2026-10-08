@@ -145,7 +145,7 @@ def _signing_key() -> bytes:
 
     Reuses ``AGENTS_HUB_SECRET_KEY`` (``settings.secret_key``) when one is
     configured: the same persistent, per-installation secret
-    ``common/oidc.py``'s sign-in state cookie and ``common/secrets.py``'s
+    ``common/signed_state.py``'s sign-in state cookie and ``common/secrets.py``'s
     encryption at rest already fall back to, so a deployment that has set it
     once gets ticket signing "for free" and does not accumulate one more
     secret to manage. Otherwise a dedicated secret is generated once and kept

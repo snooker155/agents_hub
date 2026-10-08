@@ -651,5 +651,37 @@ export default {
       ]
     },
     "callout": "An inbound webhook that files a task has no open fallback: a workspace with no inbound secret configured cannot be posted to at all."
+  },
+  "assistant": {
+    "nav": "Assistant",
+    "title": "Your assistant",
+    "lead": "One assistant for the whole service, by voice or text, on the [Assistant](/assistant) page. It answers questions about the hub, makes small changes behind a card you confirm, and leads the setup after the install.",
+    "s0": {
+      "h": "One thread per person",
+      "p": "Each person has their own thread. A turn runs in a workspace the person belongs to, and a conversation stays in the workspace it started in.",
+      "points": [
+        "The assistant extends the Main Agent, so it has the same tools plus its own lookups.",
+        "Administrators also get a service thread with health tools and the service lookups."
+      ]
+    },
+    "s1": {
+      "h": "What it can look up and change",
+      "p": "`hub_lookup` reads runs, sessions, spend, budgets, models, agents, notifications, approvals and the records of every page. `hub_action` does one thing to one record, such as pausing an instance, and always shows a card first.",
+      "points": [
+        "A phrase like \"every morning at 8 send me a summary\" becomes a scheduled pulse after your yes.",
+        "Keys for a provider are typed by you into a card, never into the conversation."
+      ]
+    },
+    "s2": {
+      "h": "Voice",
+      "p": "Push to talk, a conversation mode, or a wake phrase. Speech goes through the workspace's transcription and speech models, or the browser's own when none is set. A spoken yes answers a waiting card.",
+      "points": [
+        "Voice and installing the app on a phone need HTTPS."
+      ]
+    },
+    "s3": {
+      "h": "Limits",
+      "p": "Every turn is a run stamped with the person and counts toward their monthly limit. When a limit or the workspace budget is used up, the turn is refused with a card that says which one."
+    }
   }
 };

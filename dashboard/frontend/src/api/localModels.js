@@ -55,6 +55,13 @@ export const searchRuntimeHf = ({ q, purpose, license, sort }) =>
   api.get('/models/local/runtime/hf/search', { params: { q, purpose, license, sort } });
 export const getRuntimeHardware = () => api.get('/models/local/runtime/hardware');
 
+// The ready local set (engine, a chat model sized to this machine, Whisper,
+// Kokoro) as one background job: the plan and the latest run, start (dry_run
+// only describes it), cancel.
+export const getReadySet = () => api.get('/models/local/runtime/ready-set');
+export const startReadySet = (workspace) => api.post('/models/local/runtime/ready-set', workspace ? { workspace } : {});
+export const cancelReadySet = () => api.post('/models/local/runtime/ready-set/cancel');
+
 // Resets the runtime's call counts, which getRuntimeStatus carries as `usage`
 // (per model, caller: hub, endpoint, voice, direct, and kind).
 export const clearRuntimeUsage = () => api.delete('/models/local/runtime/usage');

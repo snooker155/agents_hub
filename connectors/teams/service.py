@@ -14,6 +14,13 @@ inbound activity rather than a fixed API host, so each chat's cursor
 there is nothing to poll. :meth:`_run` still exists, as a wait on the stop
 event, so the base class's lifecycle (status, ``test``) behaves the same as
 a channel that does have one, and a stray ``start()`` call is harmless.
+
+Distributed through the Teams store or an organisation's app catalog
+(docs/distribution.md), the bot hears from many Microsoft tenants. Every
+activity names its tenant, so the chat is filed under that tenant's
+installation; with ``distribution`` set to ``public`` an unknown tenant gets a
+pending installation of its own, which an operator approves on the
+Distribution page before any of its chats is answered.
 """
 from __future__ import annotations
 
@@ -34,6 +41,8 @@ log = logging.getLogger("channels.teams")
 _MAX_FILE_BYTES = 5 * 1024 * 1024
 _SPLIT_LIMIT = 4000
 _FILE_DOWNLOAD_INFO = "application/vnd.microsoft.teams.file.download.info"
+#: The commands the app package lists (routes/distribution.py teams_manifest).
+MANIFEST_COMMANDS = ("help", "reset", "status")
 
 
 def _split(text: str, limit: int = _SPLIT_LIMIT) -> list[str]:
@@ -56,6 +65,13 @@ def _split(text: str, limit: int = _SPLIT_LIMIT) -> list[str]:
     if remaining:
         chunks.append(remaining)
     return chunks
+
+
+def tenant_of(activity: dict[str, Any]) -> str:
+    """The Microsoft tenant an activity comes from, or ``""``."""
+    channel_data = activity.get("channelData") or {}
+    tenant = (channel_data.get("tenant") or {}).get("id")
+    return str(tenant or (activity.get("conversation") or {}).get("tenantId") or "")
 
 
 def _is_mention_of(entity: dict[str, Any], bot_id: Optional[str]) -> bool:
@@ -103,14 +119,31 @@ class TeamsService(ChannelService):
 
     # ── inbound ──────────────────────────────────────────────────────────────
 
+    def _file_tenant(self, chat_key: str, tenant: str) -> None:
+        """File the chat under its tenant's installation, creating a pending
+        one for a tenant the hub has not seen when the app is public."""
+        if not self.store.get_install(tenant):
+            if str(self.store.get("distribution") or "private") != "public":
+                return
+            self.store.upsert_install(tenant, status="pending", via="catalog")
+        self.store.note_chat_org(chat_key, tenant)
+
     async def handle_activity(self, activity: dict[str, Any]) -> None:
-        if (activity.get("type") or "") != "message":
+        kind = activity.get("type") or ""
+        if kind not in ("message", "installationUpdate"):
             return
         conversation = activity.get("conversation") or {}
         chat_key = str(conversation.get("id") or "")
         if not chat_key:
             return
-        if not self.chat_allowed(chat_key):
+        tenant = tenant_of(activity)
+        if tenant:
+            self._file_tenant(chat_key, tenant)
+        if kind != "message":
+            return
+        allowed = self.chat_allowed(chat_key)
+        install = None if allowed else self.store.install_for_chat(chat_key)
+        if not allowed and not (install and install.get("status") == "pending"):
             return
 
         recipient = activity.get("recipient") or {}
@@ -121,6 +154,9 @@ class TeamsService(ChannelService):
         entities = activity.get("entities") or []
         bot_id = recipient.get("id")
         text = strip_mentions(str(activity.get("text") or ""), entities, bot_id)
+        if text.strip().lower() in MANIFEST_COMMANDS:
+            # A command picked from the app's command list arrives bare.
+            text = "/" + text.strip().lower()
         conversation_type = str(conversation.get("conversationType") or "")
         if conversation_type != "personal" and not is_mentioned(entities, bot_id):
             return  # a group chat/channel: only react when mentioned
@@ -132,6 +168,9 @@ class TeamsService(ChannelService):
             "from": sender,
             "activity_id": activity.get("id"),
         })
+        if not allowed:
+            await self._tell_pending(chat_key, reply_to=activity.get("id"))
+            return
 
         attachments = await self._download_attachments(activity.get("attachments") or [])
         self._touch()

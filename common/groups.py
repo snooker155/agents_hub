@@ -2,8 +2,8 @@
 Groups, and the rules that turn a group into access.
 
 A group is an entity of its own so that both single sign-on (the ``groups``
-claim of an id token, ``common/oidc.py``) and SCIM provisioning
-(``dashboard/backend/routes/scim.py``) can say "this person is in these
+claim of an id token, ``ee/oidc.py``) and SCIM provisioning
+(``ee/routes/scim.py``) can say "this person is in these
 groups" and let one piece of code decide what that means. What it means is
 the ``group_mappings`` table: a rule maps a group name either to a global
 role (``target = "role"``: admin or member) or to a membership role in one

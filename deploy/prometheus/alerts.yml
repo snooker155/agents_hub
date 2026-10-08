@@ -49,3 +49,75 @@ groups:
         annotations:
           summary: "Agents Hub: the database has not answered a trivial query in 2m"
           description: "See docs/runbook.md, 'Database locked or Postgres unreachable'."
+
+  # The operator metrics (docs/observability.md). Counters restart from zero
+  # with the process, which rate() and increase() handle.
+  - name: agents-hub-operations
+    rules:
+      - alert: AgentsHubScrapeDown
+        expr: up{job=~".*agents.hub.*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agents Hub: /metrics has not been scraped successfully for 5m"
+          description: "See docs/observability.md and docs/runbook.md."
+
+      - alert: AgentsHubAgentFailing
+        # More than half of an agent's finished runs failed in the last hour,
+        # with enough runs to mean something.
+        expr: >-
+          (sum by (agent) (increase(agents_hub_runs_finished_total{status=~"failed|error"}[1h]))
+            / sum by (agent) (increase(agents_hub_runs_finished_total[1h]))) > 0.5
+          and sum by (agent) (increase(agents_hub_runs_finished_total[1h])) >= 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: agent {{ $labels.agent }} fails more than half of its runs"
+          description: "Look at the agent's recent runs and logs. See docs/runbook.md."
+
+      - alert: AgentsHubRunsSlow
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(agents_hub_run_duration_seconds_bucket[30m]))) > 600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: the 95th percentile of run duration is over 10 minutes"
+          description: "See docs/observability.md, then the slowest agents and models on the Costs page."
+
+      - alert: AgentsHubToolErrors
+        expr: >-
+          sum by (tool) (increase(agents_hub_tool_calls_total{status="error"}[1h])) >= 10
+          and (sum by (tool) (increase(agents_hub_tool_calls_total{status="error"}[1h]))
+            / sum by (tool) (increase(agents_hub_tool_calls_total[1h]))) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: tool {{ $labels.tool }} fails more than half of its calls"
+          description: "A connector or key behind the tool may be broken. See docs/observability.md."
+
+      - alert: AgentsHubSpendSpike
+        # An hour's estimated spend over three times the average hour of the
+        # previous day, and over one USD.
+        expr: >-
+          sum(increase(agents_hub_model_cost_usd_total[1h])) > 1
+          and sum(increase(agents_hub_model_cost_usd_total[1h]))
+            > 3 * (sum(increase(agents_hub_model_cost_usd_total[1d] offset 1h)) / 24)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: spend in the last hour is over three times the daily average"
+          description: "See the Costs page and docs/costs.md for budgets and the per-run cap."
+
+      - alert: AgentsHubOutboxDead
+        expr: agents_hub_outbox{state="dead"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: outbound deliveries were given up on"
+          description: "See docs/runbook.md and docs/notifications.md."

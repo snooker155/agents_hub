@@ -15,6 +15,13 @@ the rest (allowlist, commands, the turn itself). Two Slack-specific wrinkles:
 - Slack retries undelivered events, so inbound events are deduped by
   ``client_msg_id`` (falling back to the envelope/event id) over a short
   in-memory window.
+
+A bot distributed through the Slack Marketplace (docs/distribution.md) is
+installed by many Slack teams over OAuth, each with its own bot token and bot
+user (``routes/slack.py`` stores them as the store's installations). An event
+names its team, so the chat is filed under it and every call for that chat
+uses that team's token; a chat of no installed team uses the configured
+``bot_token``, as a single-team bot always did.
 """
 from __future__ import annotations
 
@@ -88,6 +95,22 @@ class SlackService(ChannelService):
     name = "slack"
     required_fields = ("bot_token",)
 
+    def configured(self) -> bool:
+        """A bot token of its own, or the OAuth app that installations get
+        their tokens from."""
+        return bool(self.store.is_configured("bot_token")
+                    or self.store.is_configured("client_id", "client_secret"))
+
+    def _token_for(self, chat_key: Optional[str]) -> str:
+        """The bot token that speaks in ``chat_key``: its team's installation
+        token, else the configured one."""
+        install = self.store.install_for_chat(chat_key) if chat_key else None
+        return str((install or {}).get("bot_token") or self.store.get("bot_token") or "")
+
+    def _bot_user_for(self, team_id: Optional[str]) -> Optional[str]:
+        install = self.store.get_install(team_id) if team_id else None
+        return (install or {}).get("bot_user_id") or self._bot_user_id
+
     def __init__(self, store) -> None:
         super().__init__(store)
         self._bot_user_id: Optional[str] = None
@@ -97,6 +120,12 @@ class SlackService(ChannelService):
 
     async def _connect(self) -> None:
         token = self.store.get("bot_token")
+        if not token and self.store.is_configured("client_id", "client_secret"):
+            # A distributed app with no team of its own: each installation
+            # brings its token, checked when it is stored.
+            installs = self.store.list_installs()
+            self._status["identity"] = f"{len(installs)} installation(s)"
+            return
         if not token:
             raise RuntimeError("bot_token not configured")
         body = await _slack_api(token, "auth.test")
@@ -157,15 +186,17 @@ class SlackService(ChannelService):
                     payload = envelope.get("payload") or {}
                     event = payload.get("event") or {}
                     event_id = payload.get("event_id")
-                    asyncio.create_task(self._safe_handle_event(event, event_id=event_id))
+                    asyncio.create_task(self._safe_handle_event(
+                        event, event_id=event_id, team_id=payload.get("team_id")))
                 elif etype == "interactive":
                     payload = envelope.get("payload") or {}
                     if payload.get("type") == "block_actions":
                         asyncio.create_task(self._safe_handle_block_action(payload))
 
-    async def _safe_handle_event(self, event: dict[str, Any], *, event_id: Optional[str] = None) -> None:
+    async def _safe_handle_event(self, event: dict[str, Any], *, event_id: Optional[str] = None,
+                                 team_id: Optional[str] = None) -> None:
         try:
-            await self.handle_event(event, event_id=event_id)
+            await self.handle_event(event, event_id=event_id, team_id=team_id)
         except Exception as exc:  # noqa: BLE001 - keep the socket loop alive
             log.warning("slack event handling failed: %s", exc)
             self._set_error(exc)
@@ -189,35 +220,44 @@ class SlackService(ChannelService):
 
     # ── inbound dispatch (shared by Socket Mode and the Events API webhook) ──
 
-    async def handle_event(self, event: dict[str, Any], *, event_id: Optional[str] = None) -> None:
+    async def handle_event(self, event: dict[str, Any], *, event_id: Optional[str] = None,
+                           team_id: Optional[str] = None) -> None:
         dedupe_key = event.get("client_msg_id") or event_id
         if self._already_seen(dedupe_key):
             return
 
         etype = event.get("type")
+        if etype in ("app_uninstalled", "tokens_revoked"):
+            # The team removed the app: its token is dead, forget it.
+            if team_id and (etype == "app_uninstalled" or (event.get("tokens") or {}).get("bot")):
+                self.store.remove_install(team_id)
+            return
         if etype not in ("message", "app_mention"):
             return
         if etype == "message" and event.get("subtype") not in (None, "file_share"):
             return
-        if event.get("bot_id") or (self._bot_user_id and event.get("user") == self._bot_user_id):
+        bot_user_id = self._bot_user_for(team_id)
+        if event.get("bot_id") or (bot_user_id and event.get("user") == bot_user_id):
             return
 
         channel = event.get("channel")
         if not channel:
             return
+        if team_id and self.store.get_install(team_id):
+            self.store.note_chat_org(channel, team_id)
 
         text = str(event.get("text") or "")
         channel_type = event.get("channel_type")
         is_dm = (channel_type == "im") if channel_type else str(channel).startswith("D")
         mentioned = etype == "app_mention"
-        if self._bot_user_id and f"<@{self._bot_user_id}>" in text:
+        if bot_user_id and f"<@{bot_user_id}>" in text:
             mentioned = True
-            text = text.replace(f"<@{self._bot_user_id}>", "").strip()
+            text = text.replace(f"<@{bot_user_id}>", "").strip()
         if not is_dm and not mentioned:
             return
 
         thread_ts = event.get("thread_ts") or event.get("ts")
-        attachments = await self._download_files(event.get("files") or [])
+        attachments = await self._download_files(event.get("files") or [], self._token_for(channel))
         await self.handle_message(channel, text, attachments=attachments, thread_ts=thread_ts)
 
     async def handle_block_action(self, payload: dict[str, Any]) -> None:
@@ -236,8 +276,7 @@ class SlackService(ChannelService):
         await self._safe_send(channel, f"➡️ {label or value}", thread_ts=thread_ts)
         await self.handle_message(channel, str(value), thread_ts=thread_ts)
 
-    async def _download_files(self, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        token = self.store.get("bot_token")
+    async def _download_files(self, files: list[dict[str, Any]], token: str) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for f in files:
             url = f.get("url_private_download") or f.get("url_private")
@@ -268,7 +307,7 @@ class SlackService(ChannelService):
     async def _post_message(self, chat_key: str, text: str, *,
                             blocks: Optional[list[dict[str, Any]]] = None,
                             thread_ts: Optional[str] = None) -> None:
-        token = self.store.get("bot_token")
+        token = self._token_for(chat_key)
         if not token:
             raise RuntimeError("bot_token not configured")
         payload: dict[str, Any] = {"channel": chat_key, "text": text}
@@ -312,7 +351,7 @@ class SlackService(ChannelService):
         await self.send_text(chat_key, result.reply, thread_ts=thread_ts)
 
     def send_text_sync(self, chat_key: str, text: str) -> None:
-        token = self.store.get("bot_token")
+        token = self._token_for(chat_key)
         if not token:
             raise RuntimeError("bot_token not configured")
         headers = {"Authorization": f"Bearer {token}"}

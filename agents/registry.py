@@ -10,7 +10,9 @@ is imported once and renamed ``.migrated``) and exposes a small API:
 Validation rules:
 - JSON must contain object with key "agents": [ ... ]
 - Each agent must provide: id, name, type, entrypoint
-- The system prompt lives in agents/definitions/<id>/instructions.md, NOT here
+- The system prompt lives in <definitions>/<id>/instructions.md, NOT here:
+  agents/definitions/ for a system agent's shipped text, .agents_hub/definitions/
+  for everything the hub writes (agents/prompt_assembly.py)
 - type is "langchain" for agents this hub assembles and runs, or "remote" for an
   agent imported from its own repository and reached over HTTP; a remote record
   carries its endpoint, provenance and last readiness report under `remote`
@@ -99,8 +101,8 @@ class AgentSpec:
     name: str
     type: str
     entrypoint: str
-    # definition_id: when set, the agent's prompt/markdown is loaded from
-    # agents/definitions/<definition_id>/ instead of agents/definitions/<id>/.
+    # definition_id: when set, the agent's prompt/markdown is loaded from the
+    # definition folder <definition_id>/ instead of <id>/ (agents/prompt_assembly.py).
     # This lets multiple records (e.g. one per workspace, each with its own
     # model/memory settings) share a single common definition. None means
     # "same as id" (the legacy 1:1 behaviour). Use def_id() to resolve.
@@ -129,7 +131,8 @@ class AgentSpec:
     base_url: Optional[str] = None
     # Execution parameters — flat top-level fields (replaces default_params)
     # NB: system_prompt is intentionally NOT here. The prompt is sourced from
-    # agents/definitions/<id>/instructions.md (+ capabilities.md, usage.md).
+    # <definitions>/<id>/instructions.md (+ capabilities.md, usage.md), see
+    # agents/prompt_assembly.py for the two folders.
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     api_key: Optional[str] = None

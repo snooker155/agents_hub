@@ -323,3 +323,18 @@ Run `git gc` occasionally because the repository is large (currently `.git` is a
 **`README.md`:** The landing page. Keep it short: what the product is, how to install, and links to ARCHITECTURE and docs. Update only for major announcements.
 
 Keep these three in step. When you add a feature, start with a user-facing doc in `docs/`, then update ARCHITECTURE.md if the implementation touches structure.
+
+## Licensing of contributions
+
+Agents Hub is under the Agents Hub Personal Evaluation License (`LICENSE`).
+Section 4 of it covers contributions: by submitting one you grant the
+copyright holder a perpetual, worldwide, irrevocable, royalty-free right to
+use, modify, distribute, sublicense and relicense it, and confirm that you have
+the right to grant it. Forking to propose a contribution is allowed as long as
+the fork keeps the license.
+
+Security issues go through `SECURITY.md`, not a pull request.
+
+Single sign-on and SCIM sit apart in `ee/`, ready for a separate edition.
+Code outside `ee/` must not import from it, except behind
+`common.edition.enterprise_available()` (`tests/test_edition.py` checks this).

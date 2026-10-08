@@ -50,6 +50,10 @@ async def send_message(request: ChatRequest):
     try:
         return await send_chat_message(request)
     except ChatSendError as e:
+        if e.refusal:
+            # Same shape as the assistant's 402: a message plus the structure.
+            raise HTTPException(status_code=e.status, detail={
+                "code": e.refusal.get("code"), "message": e.detail, "refusal": e.refusal})
         raise HTTPException(status_code=e.status, detail=e.detail)
 
 
@@ -141,6 +145,9 @@ async def _publish_failure(channel: str, request: ChatRequest, exc: Exception) -
     from common.session_broker import broker
 
     detail = getattr(exc, "detail", None)
+    refusal = detail.get("refusal") if isinstance(detail, dict) else None
+    if isinstance(detail, dict):
+        detail = detail.get("message")
     error = str(detail if detail is not None else exc) or "the turn failed"
     stamp = {"conversation_id": request.conversation_id, "origin_client": request.client_id}
     if request.client_turn_id:
@@ -150,6 +157,8 @@ async def _publish_failure(channel: str, request: ChatRequest, exc: Exception) -
     status = getattr(exc, "status_code", None)
     if status is not None:
         done["status"] = status
+    if refusal:
+        done["refusal"] = refusal
     try:
         await broker.apublish(channel, done)
         await broker.apublish(channel, {**stamp, "type": "chat_stream_end"})

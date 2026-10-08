@@ -1,6 +1,6 @@
 # Connectors
 
-Services this hub reaches out to. **Connect → Connectors** in the sidebar.
+Services this hub reaches out to. **Integrations → Connectors** in the sidebar.
 
 The other direction from [connections](connections.md), where something of yours
 runs elsewhere and reports in. [Watchers](watchers.md) reach out too, but only

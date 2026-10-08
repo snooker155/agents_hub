@@ -117,6 +117,10 @@ ALWAYS_GATED: frozenset[str] = frozenset({
     # The assistant's one-step changes to the hub's records (chat/actions.py):
     # a person says yes to each one, on its card or aloud.
     "hub_action",
+    # The guided setup's changes to the install (common/setup_ops.py).
+    "setup_step",
+    # A pulse the assistant sets up from a phrase (proactive/from_phrase.py).
+    "schedule_pulse",
 })
 
 #: Tools whose approval card says in a sentence what the call would do:
@@ -124,6 +128,8 @@ ALWAYS_GATED: frozenset[str] = frozenset({
 #: sentence or "" (then the card keeps the generic reason).
 CALL_DESCRIBERS: Dict[str, str] = {
     "hub_action": "tools.hub_action:describe_call",
+    "setup_step": "tools.setup_guide:describe_call",
+    "schedule_pulse": "tools.proactive_setup:describe_call",
 }
 
 

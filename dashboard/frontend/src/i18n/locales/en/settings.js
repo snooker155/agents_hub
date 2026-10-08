@@ -305,6 +305,10 @@ export default {
   confirmDeleteBackend: 'Delete custom backend "{{id}}"? Agents still pointing at it fall back to the default provider.',
   providersIntroBefore: 'This section configures each provider\'s connection (API key and base URL) only. Which models are available, the default model per provider and the global default provider are managed on the',
   providersIntroAfter: 'page.',
+  defaultModelNote: {
+    text: 'Switched on {{model}} at ${{input}} / ${{output}} per 1M tokens as the default for this key. Change it on the',
+    link: 'Models page.',
+  },
   localIntroBefore: 'Configure the connection to your local model servers. Pick which model each one uses on the',
   localIntroAfter: 'page.',
   customIntroBefore: 'Add your own model connection backends: any OpenAI-compatible endpoint (vLLM, TGI, OpenRouter, Together, Groq, a self-hosted gateway) that is neither a built-in cloud provider nor a local server. Each backend becomes a provider on the',

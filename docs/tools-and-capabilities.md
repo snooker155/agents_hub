@@ -72,6 +72,21 @@ local run of that agent is still refused, and its page says so next to the
 checkbox. Turn the setting off to honour the exemption everywhere, or switch
 the guard to `warn`.
 
+## When a chat turn is refused
+
+A turn stopped by the guard shows a card in the chat, not a red error: the
+reason in plain words and, for an editor of the agent's workspace, the button
+**Allow for this agent**. The button records the same per-agent exception as the
+agent editor's switch (`POST /api/agents/{id}/capability-override`, which now
+needs editor on the agent's workspace). A viewer sees the reason and is told to
+ask an editor. The system workspace rule has no button. If the guard is in
+`block` mode and exceptions require a container, the card says the exception
+is saved but the turn still stops until the agent runs in a container. After
+the action, **Try again** sends the same message. The streamed `done` event and
+the 4xx or 402 body carry the structure as `refusal` (`code`
+`capability_guard`, `agent_id`, `rule_id`, `capabilities`, `sources`,
+`override_allowed`), next to the text message.
+
 ## Delegation counts as holding the capability
 
 An agent that cannot itself exfiltrate, but can hand a request to an agent

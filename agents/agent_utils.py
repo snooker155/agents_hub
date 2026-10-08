@@ -240,7 +240,11 @@ _OLLAMA_REASONING_MARKERS = ("qwen3", "deepseek-r1", "qwq", "gpt-oss", "magistra
 
 # Anthropic models on the adaptive-thinking API (budget_tokens is rejected
 # there); older models still need `enabled` + an explicit token budget.
-_ANTHROPIC_ADAPTIVE_MARKERS = ("opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "fable")
+_ANTHROPIC_ADAPTIVE_MARKERS = ("opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5",
+                               "fable", "mythos")
+# Anthropic models that reject a non-default temperature outright (Opus 4.7
+# and later, Sonnet 5 and later, Fable, Mythos): the request leaves it out.
+_ANTHROPIC_NO_SAMPLING_MARKERS = ("opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "fable", "mythos")
 
 
 def build_chat_model(
@@ -369,6 +373,9 @@ def build_chat_model(
             return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, thinking=thinking,
                                  streaming=streaming,
                                  default_request_timeout=req_timeout)
+        if any(m in mdl.lower() for m in _ANTHROPIC_NO_SAMPLING_MARKERS):
+            return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, streaming=streaming,
+                                 default_request_timeout=req_timeout)
         return ChatAnthropic(model=mdl, api_key=key, temperature=_temp(mdl), max_tokens=tok,
                              streaming=streaming,
                              default_request_timeout=req_timeout)
@@ -404,11 +411,18 @@ def build_chat_model(
     # explicitly whenever no gateway is configured; a custom base_url is left
     # alone, since a gateway may reject the option, and StatsCollectorCallback
     # falls back to its own estimate there.
-    if not common["base_url"]:
+    gateway = common["base_url"]
+    if not gateway:
         common["stream_usage"] = True
+        # The same seeding leaves ``OPENAI_BASE_URL=""`` in the environment,
+        # and the OpenAI SDK reads an empty value as the address itself
+        # (``URL('')``): every call then fails with "Connection error". Name
+        # the default address outright so the empty variable is never read.
+        if os.environ.get("OPENAI_BASE_URL") == "":
+            common["base_url"] = "https://api.openai.com/v1"
     common.update(openai_reasoning_kwargs(
         mdl, thinking_level, _temp(mdl),
-        api_key=common["api_key"], base_url=common["base_url"]))
+        api_key=common["api_key"], base_url=gateway))
     return ReasoningChatOpenAI(**common)
 
 

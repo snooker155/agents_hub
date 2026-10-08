@@ -67,6 +67,7 @@ export default {
     transcript: 'Verlauf',
     history: 'Gespräche',
     screen: 'Auf dem Bildschirm',
+    setup: 'Einrichtung',
   },
   transcriptEmpty: 'Hier erscheint die Unterhaltung.',
   clearTranscript: 'Verlauf leeren',
@@ -78,6 +79,12 @@ export default {
     title: 'Vom Assistenten geöffnete Seite',
     open: 'Diese Seite öffnen',
     close: 'Schließen',
+    show: 'Auf dem Bildschirm zeigen',
+  },
+  setup: {
+    kickoff: 'Hilf mir, den Hub Schritt für Schritt einzurichten.',
+    resume: 'Machen wir mit der Einrichtung weiter.',
+    ask: 'Machen wir diesen Schritt: {{title}}.',
   },
   notes: {
     voiceFellBack: 'Das Sprachmodell hat nicht geantwortet, daher liest vorerst der Browser die Antworten vor.',

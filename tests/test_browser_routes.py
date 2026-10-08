@@ -115,6 +115,10 @@ def test_status_and_actions_when_not_configured(single, client, monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "browser_url", "")
     monkeypatch.setattr(settings, "browser_token", "")
+    # Importing the app (the client fixture) loads a developer's .env into the
+    # environment after conftest cleared it.
+    monkeypatch.delenv("AGENTS_HUB_BROWSER_URL", raising=False)
+    monkeypatch.delenv("AGENTS_HUB_BROWSER_TOKEN", raising=False)
     assert client.get("/api/browser/status").json() == {"configured": False, "url": None}
     for method, path in (("get", "/api/browser/sessions"), ("get", "/api/browser/sessions/X/frame"),
                          ("get", "/api/browser/runs/r1/session")):

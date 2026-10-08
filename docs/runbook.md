@@ -3,7 +3,9 @@
 Symptom, how to confirm it, and the fix, for the failures an operator hits
 most often. For the broader symptom list see [troubleshooting](troubleshooting.md);
 for the moving parts' own liveness see [service-health](service-health.md); for
-the SLO numbers these failures usually move see [slo](slo.md).
+the SLO numbers these failures usually move see [slo](slo.md); for the
+Prometheus alerts, the Grafana dashboard and OpenTelemetry export that tell you
+about them see [observability](observability.md).
 
 Every entry below is also worth attaching a [support bundle](#support-bundle)
 to when you file it: `ah support-bundle` or the Health page's **Download
