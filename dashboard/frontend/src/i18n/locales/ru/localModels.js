@@ -72,6 +72,11 @@ export default {
     cancelFailed: 'Не удалось отменить.',
     planModel: 'Чат-модель для этого компьютера: {{label}}, около {{size}}',
     ready: 'Всё уже на месте.',
+    allThere: 'Всё на месте',
+    allThereUnloaded: 'Всё на месте, модель не загружена',
+    unloadedNote: 'Всё скачано и установлено, осталось только загрузить чат-модель в память: это делает кнопка справа.',
+    inProgress: 'Готовится',
+    partly: '{{present}} из {{total}} уже есть',
     stepStatus: { todo: 'Предстоит', running: 'Идёт', done: 'Готово', skipped: 'Уже есть', error: 'Ошибка' },
     steps: {
       runtime: 'Запустить среду моделей',

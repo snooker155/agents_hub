@@ -129,6 +129,7 @@ def _hardware(client: "lm.RuntimeClient") -> Dict[str, Any]:
 def plan(workspace: str = "default") -> Dict[str, Any]:
     """What pressing the button would do, with nothing changed: the chosen
     chat model, and each step as ``todo`` or ``skipped`` (already there).
+    ``ready`` is every step present, ``installed`` every step but ``load``.
     Works with the runtime down (everything is ``todo``)."""
     out: Dict[str, Any] = {"available": lm.runtime_configured(), "steps": [], "chat": None}
     if not out["available"]:
@@ -156,6 +157,9 @@ def plan(workspace: str = "default") -> Dict[str, Any]:
     out["steps"] = [{"id": sid, "label": label, "status": "skipped" if done[sid] else "todo"}
                     for sid, label in STEPS]
     out["ready"] = all(done.values())
+    # Everything is on disk; only loading the chat model (lost on a runtime
+    # restart) may remain. The card folds on this, not on ``ready``.
+    out["installed"] = all(v for k, v in done.items() if k != "load")
     return out
 
 

@@ -60,6 +60,44 @@ describe('ReadySetCard', () => {
     await waitFor(() => expect(cancelReadySet).toHaveBeenCalled());
   });
 
+  it('starts collapsed with a green mark once everything is in place, and opens on click', async () => {
+    const all = Object.fromEntries(STEP_IDS.map((id) => [id, 'skipped']));
+    getReadySet.mockResolvedValue({ data: { ...plan(all), ready: true, installed: true } });
+    const { container } = renderCard();
+    const mark = await screen.findByTestId('ready-set-mark');
+    expect(mark.textContent).toBe('All in place');
+    expect(container.querySelector('[data-testid="ready-set"]').getAttribute('data-open')).toBe('false');
+    expect(container.querySelector('[data-step="chat"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check and finish' })).toBeTruthy();
+    fireEvent.click(screen.getByTestId('ready-set-toggle'));
+    expect(container.querySelector('[data-step="chat"]')).toBeTruthy();
+    expect(screen.getByText('Everything is already in place.')).toBeTruthy();
+  });
+
+  it('stays open with a progress mark while something is missing', async () => {
+    getReadySet.mockResolvedValue({ data: plan({ runtime: 'skipped', engine: 'done' }) });
+    const { container } = renderCard();
+    expect((await screen.findByTestId('ready-set-mark')).textContent).toBe('2 of 7 already there');
+    expect(container.querySelector('[data-testid="ready-set"]').getAttribute('data-open')).toBe('true');
+    fireEvent.click(screen.getByTestId('ready-set-toggle'));
+    expect(container.querySelector('[data-step="chat"]')).toBeNull();
+  });
+
+  it('folds when only loading the chat model remains and shows the live plan, not the old job', async () => {
+    const all = Object.fromEntries(STEP_IDS.map((id) => [id, 'skipped']));
+    const jobSteps = STEP_IDS.map((id) => ({ id, label: id, status: 'done' }));
+    getReadySet.mockResolvedValue({ data: {
+      ...plan({ ...all, load: 'todo' }), ready: false, installed: true,
+      job: { id: 'j0', status: 'done', meta: { steps: jobSteps } },
+    } });
+    const { container } = renderCard();
+    expect((await screen.findByTestId('ready-set-mark')).textContent).toBe('All in place, model not loaded');
+    expect(container.querySelector('[data-testid="ready-set"]').getAttribute('data-open')).toBe('false');
+    fireEvent.click(screen.getByTestId('ready-set-toggle'));
+    expect(container.querySelector('[data-step="load"]').getAttribute('data-status')).toBe('todo');
+    expect(container.querySelector('[data-step="chat"]').getAttribute('data-status')).toBe('skipped');
+  });
+
   it('renders nothing without a runtime', async () => {
     getReadySet.mockResolvedValue({ data: { available: false, steps: [], job: null } });
     const { container } = renderCard();

@@ -72,6 +72,11 @@ export default {
     cancelFailed: 'Could not cancel.',
     planModel: 'Chat model for this machine: {{label}}, about {{size}}',
     ready: 'Everything is already in place.',
+    allThere: 'All in place',
+    allThereUnloaded: 'All in place, model not loaded',
+    unloadedNote: 'Everything is downloaded and installed; only loading the chat model into memory remains, which the button on the right does.',
+    inProgress: 'In progress',
+    partly: '{{present}} of {{total}} already there',
     stepStatus: { todo: 'To do', running: 'Running', done: 'Done', skipped: 'Already there', error: 'Failed' },
     steps: {
       runtime: 'Start the model runtime',

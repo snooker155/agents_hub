@@ -210,7 +210,23 @@ def test_the_dry_run_describes_without_changing(env):
     assert plan["chat"]["id"] == "qwen3-4b"
     status = {s["id"]: s["status"] for s in plan["steps"]}
     assert status["engine"] == "skipped" and status["chat"] == "todo" and plan["ready"] is False
+    assert plan["installed"] is False
     assert runtime.calls == []
+
+
+def test_installed_ignores_only_the_load_step(env, monkeypatch):
+    _use(env, Runtime(ram_gb=8, engines={"llama": True}))
+    monkeypatch.setattr(local_set, "_have", lambda client: {
+        "engines": {"llama": True, "whisper": True, "kokoro": True},
+        "files": {"Qwen3-4B-Q4_K_M.gguf"},
+        "names": {local_set.presets()["transcription"][4], local_set.presets()["speech"][4]},
+    })
+    monkeypatch.setattr(local_set, "_assigned", lambda workspace, pre: True)
+    monkeypatch.setattr(local_set, "_chat_loaded", lambda client, file: False)
+    plan = local_set.plan()
+    status = {s["id"]: s["status"] for s in plan["steps"]}
+    assert status["load"] == "todo" and set(status.values()) == {"todo", "skipped"}
+    assert plan["installed"] is True and plan["ready"] is False
 
 
 def test_the_assistant_can_start_it(env):

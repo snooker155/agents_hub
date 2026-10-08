@@ -72,6 +72,11 @@ export default {
     cancelFailed: 'Abbrechen nicht möglich.',
     planModel: 'Chatmodell für diesen Rechner: {{label}}, etwa {{size}}',
     ready: 'Alles ist schon vorhanden.',
+    allThere: 'Alles vorhanden',
+    allThereUnloaded: 'Alles vorhanden, Modell nicht geladen',
+    unloadedNote: 'Alles ist heruntergeladen und installiert; nur das Laden des Chatmodells in den Speicher fehlt noch, das erledigt der Knopf rechts.',
+    inProgress: 'Wird vorbereitet',
+    partly: '{{present}} von {{total}} schon vorhanden',
     stepStatus: { todo: 'Offen', running: 'Läuft', done: 'Fertig', skipped: 'Schon vorhanden', error: 'Fehlgeschlagen' },
     steps: {
       runtime: 'Modell-Runtime starten',
