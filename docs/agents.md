@@ -54,9 +54,10 @@ HTTP contract without its code ever entering this process.
 but are not seeded: a waterfall delivery team, an event-planning crew, two
 interactive-fiction helpers, and a three-stage job-search pipeline, grouped by
 theme, plus a `misc/` set. None of them sit under `agents/definitions/` — a
-folder there is only ever read for an id `bootstrap/agents.json` already
-seeds or one an operator has imported, so an unconnected folder was dead
-weight rather than a working agent. See `examples/agents/README.md` for what
+folder there holds only a system agent `bootstrap/agents.json` seeds (the
+prompts of agents an operator creates or imports live in
+`.agents_hub/definitions/`), so an unconnected folder was dead weight rather
+than a working agent. See `examples/agents/README.md` for what
 each set demonstrates and the two API calls that bring one into a running hub.
 
 ## System vs. custom

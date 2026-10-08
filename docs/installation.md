@@ -329,9 +329,15 @@ On Path A the same tree lives on the `agents_hub_data` volume, mounted at
 `/data` (`AGENTS_HUB_ROOT`). With `AGENTS_HUB_DATABASE_URL` set the
 database lives in Postgres instead of the file ([scaling](scaling.md),
 `ah db migrate` to move an existing one); the rest of the folder stays
-where it is. Agent prompts are the exception: they live in
-`agents/definitions/<id>/` in the repository, because they are source
-rather than state.
+where it is. Agent prompts are split the same way: the system agents' shipped
+text lives in `agents/definitions/<id>/` in the repository, as git tracks it,
+and the hub never writes there. Every custom agent's `instructions.md`
+(with `capabilities.md` and `usage.md`) and every edit to a system agent's
+prompt go to `.agents_hub/definitions/<id>/`. A file there shadows the shipped
+file of the same name, so an edited system agent keeps its edit across
+upgrades. **Restore shipped text** on the agent's Config tab
+(`DELETE /api/agents/<id>/definition/edits`) gives it back the shipped text and
+keeps the edited one in Versions.
 
 ## Upgrading
 

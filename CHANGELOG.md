@@ -360,6 +360,15 @@ turns that section into the next release.
 
 ### Changed
 
+- Agent prompts the hub writes leave the repository: a new agent's
+  `instructions.md`, `capabilities.md` and `usage.md`, and any edit to a
+  system agent's prompt, go to `.agents_hub/definitions/<id>/`, where a file
+  shadows the shipped one of the same name. `agents/definitions/` holds only
+  the system agents' text as git tracks it and is never written. The Config
+  tab marks a system agent's edited files and offers **Restore shipped text**
+  (`DELETE /api/agents/<id>/definition/edits`), which keeps the edited text in
+  Versions. The demo agents' copies under `agents/definitions/` are gone (the
+  seed writes them).
 - Single sign-on and SCIM live in `ee/oidc.py`, `ee/scim.py` and
   `ee/routes/`; the signed round-trip cookie they share with the GitHub
   connection is core (`common/signed_state.py`). Without `ee/` the backend
@@ -449,6 +458,11 @@ turns that section into the next release.
 
 ### Upgrade notes
 
+- On the first start in a git checkout, prompt files under
+  `agents/definitions/` that git does not track and that belong to a custom
+  agent, or to a system agent edited in the hub, move to
+  `.agents_hub/definitions/`. Edits made in the hub to tracked system files
+  stay where they are; move them by hand if they should survive a checkout.
 - On the first start, a system agent you edited by hand (so no longer synced
   from the seed) has, once, each `delegates` or `handoffs` id that the seed
   now names by role rewritten to the role (`swe_agent` becomes `@coder`).

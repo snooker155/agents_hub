@@ -6,7 +6,7 @@ import { useLiveRefetch } from '../components/stream';
 import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
-import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
+import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
@@ -697,6 +697,29 @@ const AgentDetails = () => {
     }
   };
 
+  // Drops every edit to a system agent's prompt files, unsaved drafts included.
+  const [restoringShipped, setRestoringShipped] = useState(false);
+  const handleRestoreShippedDefinition = async () => {
+    if (!window.confirm(t('agentDetails.shippedText.confirm'))) return;
+    setRestoringShipped(true);
+    try {
+      const { data } = await restoreShippedDefinition(id);
+      setAgentDefinition(data);
+      defDraftDirty.current = {};
+      setDefDraft({
+        instructions: data.instructions || '',
+        capabilities: data.capabilities || '',
+        usage: data.usage || '',
+      });
+      setDefError({});
+      toast.success(t('agentDetails.shippedText.restored'));
+    } catch (error) {
+      toast.error(error.response?.data?.detail || t('agentDetails.shippedText.failed'));
+    } finally {
+      setRestoringShipped(false);
+    }
+  };
+
   const handleResetDefinitionField = (field) => {
     defDraftDirty.current = { ...defDraftDirty.current, [field]: false };
     setDefDraft(prev => ({ ...prev, [field]: agentDefinition[field] || '' }));
@@ -780,6 +803,7 @@ const AgentDetails = () => {
     markMemoryDraftDirty, delegatesMessage, delegatesSaving, descDraft, descSaving,
     episodicEffective, episodicMode, episodicSaving, fetchData, formatCategory,
     handleDefinitionDraftChange, handleEraseMemory, handleResetDefinitionField,
+    handleRestoreShippedDefinition, restoringShipped,
     handleSaveDefinitionField, handleSaveDelegates, handleSaveDescription, handleSaveTools,
     handleSaveWsCapacity, handleToggleDefaultChat, handleToggleShared, handleUpdateMemory,
     sessions, runs, id, isDefaultChat, isUpdatingMemory, liveUpdates, loadingPool, memoryData,

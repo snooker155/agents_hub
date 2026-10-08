@@ -415,6 +415,8 @@ export const serviceChatUrl = () => '/health/chat';
 
 export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
 export const updateAgentDefinition = (id, data) => api.put(`/agents/${id}/definition`, data);
+// A system agent's edited prompt files dropped, back to the shipped text.
+export const restoreShippedDefinition = (id) => api.delete(`/agents/${id}/definition/edits`);
 // The agent's own definition chat — same shape as the entity build chats.
 export const getAgentDefinitionChat = (id) => api.get(`/agents/${id}/definition/chat`);
 export const clearAgentDefinitionChat = (id) => api.delete(`/agents/${id}/definition/chat`);

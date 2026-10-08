@@ -257,7 +257,9 @@ class AgentFactory:
     """Factory for creating agents from YAML definitions."""
     
     def __init__(self, definitions_dir: Optional[str] = None):
-        self.definitions_dir = Path(definitions_dir) if definitions_dir else Path(__file__).parent / "definitions"
+        # The shipped folder reads through the state layer (agents/prompt_assembly.py).
+        from agents.prompt_assembly import SYSTEM_DEFINITIONS_DIR
+        self.definitions_dir = Path(definitions_dir) if definitions_dir else SYSTEM_DEFINITIONS_DIR
         self._agent_cache: Dict[str, Any] = {}
     
     def load_definition(self, agent_id: str) -> Dict[str, Any]:

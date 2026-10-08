@@ -15782,7 +15782,7 @@
     },
     "/api/agents/{agent_id}/definition": {
       "get": {
-        "description": "Return the agent's definition: structured fields + the markdown sources.\n\nThe system prompt no longer lives in JSON \u2014 it is sourced from\n``agents/definitions/<agent_id>/instructions.md`` (with optional\n``capabilities.md`` and ``usage.md``).",
+        "description": "Return the agent's definition: structured fields + the markdown sources.\n\nThe system prompt no longer lives in JSON \u2014 it is sourced from\n``instructions.md`` (with optional ``capabilities.md`` and ``usage.md``)\nin the agent's definition folder: ``.agents_hub/definitions/<id>/`` for a\ncustom agent or an edited system agent, ``agents/definitions/<id>/`` for\na system agent's shipped text (agents/prompt_assembly.py).",
         "parameters": [
           {
             "in": "path",
@@ -15931,6 +15931,46 @@
           }
         },
         "summary": " Stop Chat",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/definition/edits": {
+      "delete": {
+        "description": "Drop the edits shadowing a system agent's shipped prompt files, so it\nruns the text in agents/definitions/ again (agents/prompt_assembly.py).\nThe edited text stays in the version history.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Shipped Definition",
         "tags": [
           "agents"
         ]

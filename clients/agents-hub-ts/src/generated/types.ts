@@ -2460,6 +2460,9 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/definition/chat/stop": {
     post: { response: unknown };
   };
+  "/api/agents/{agent_id}/definition/edits": {
+    delete: { response: unknown };
+  };
   "/api/agents/{agent_id}/delegates": {
     get: { response: unknown };
     post: { body: AgentDelegatesUpdate; response: unknown };

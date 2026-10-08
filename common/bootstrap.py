@@ -549,6 +549,7 @@ def ensure_initial_state() -> dict[str, bool]:
         "agents_file": _seed_agents_file(),
         "default_workspace": _seed_default_workspace(),
     }
+    result["definitions_moved"] = bool(_move_untracked_definitions())
     # Before missing system agents are added: a renamed agent's old record is
     # renamed in place rather than shadowed by a fresh copy of the seed.
     result["legacy_agent_ids_renamed"] = _rename_legacy_agent_ids()
@@ -626,6 +627,25 @@ def _adopt_role_references() -> bool:
     except Exception:  # noqa: BLE001 - startup must not raise; the literal ids keep working
         log.debug("role reference adoption skipped", exc_info=True)
         return False
+
+
+def _move_untracked_definitions() -> list[str]:
+    """Move the prompts the hub used to write into agents/definitions/ (custom
+    agents, edited system agents) to the state folder it writes them to now
+    (agents/prompt_assembly.py). Never raising."""
+    try:
+        from agents.prompt_assembly import move_untracked_definitions
+        from agents.registry import list_agents_raw
+
+        owned = {spec.def_id() for spec in list_agents_raw()
+                 if not spec.system or spec.user_modified}
+        moved = move_untracked_definitions(owned.__contains__)
+    except Exception:  # noqa: BLE001 - startup must not raise; the files stay readable where they are
+        log.debug("agent definitions move skipped", exc_info=True)
+        return []
+    if moved:
+        log.info("agent definitions: moved %d file(s) out of the repository: %s", len(moved), ", ".join(moved))
+    return moved
 
 
 def _rename_legacy_agent_ids() -> bool:

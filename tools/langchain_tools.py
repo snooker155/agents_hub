@@ -1323,7 +1323,7 @@ def create_agent_tool(
 ) -> str:
     """Create a new agent in the system registry.
 
-    The system prompt is written to ``agents/definitions/<agent_id>/instructions.md``
+    The system prompt is written to ``.agents_hub/definitions/<agent_id>/instructions.md``
     rather than stored in agents.json. Structured fields (id, name, tools, capacity)
     are persisted in the registry.
     """
@@ -1532,7 +1532,6 @@ def modify_agent_tool(
         changed: List[str] = []
 
         from agents import prompt_assembly
-        folder = prompt_assembly.agent_dir(agent_id)
 
         if system_prompt is not None:
             update_text = system_prompt.strip()
@@ -1557,21 +1556,19 @@ def modify_agent_tool(
             changed.append("instructions")
 
         if capabilities is not None:
-            path = folder / prompt_assembly.CAPABILITIES_FILE
             if capabilities.strip():
                 prompt_assembly.write_capabilities(agent_id, capabilities)
                 changed.append("capabilities")
-            elif path.exists():
-                path.unlink()
+            elif prompt_assembly.read_capabilities(agent_id):
+                prompt_assembly.clear_part(agent_id, prompt_assembly.CAPABILITIES_FILE)
                 changed.append("capabilities")
 
         if usage is not None:
-            path = folder / prompt_assembly.USAGE_FILE
             if usage.strip():
                 prompt_assembly.write_usage(agent_id, usage)
                 changed.append("usage")
-            elif path.exists():
-                path.unlink()
+            elif prompt_assembly.read_usage(agent_id):
+                prompt_assembly.clear_part(agent_id, prompt_assembly.USAGE_FILE)
                 changed.append("usage")
 
         def _blank_to_none(value: Optional[str]) -> Optional[str]:

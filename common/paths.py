@@ -38,6 +38,11 @@ EPISODES_DIR = AGENTS_HUB_ROOT / "episodes"
 GRAPHS_DIR = AGENTS_HUB_ROOT / "graphs"
 EXTRACTIONS_DIR = AGENTS_HUB_ROOT / "extractions"
 AGENTS_FILE = AGENTS_HUB_ROOT / "agents.json"
+# Agent prompts the hub writes: every custom agent's instructions.md (plus
+# capabilities.md, usage.md) and an operator's edits to a system agent, which
+# shadow the shipped files under agents/definitions/ file by file. The
+# repository folder holds only the system agents' prompts as git tracks them.
+AGENT_DEFINITIONS_DIR = AGENTS_HUB_ROOT / "definitions"
 # User/agent-created flow entities (data records, analogous to agents.json).
 # Code-defined entities live as files under flow/entities/<category>/.
 FLOW_ENTITIES_FILE = AGENTS_HUB_ROOT / "flow_entities.json"
