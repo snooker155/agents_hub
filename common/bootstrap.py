@@ -105,7 +105,7 @@ def _ensure_system_agents() -> list[str]:
         return []
     try:
         import json
-        from agents.registry import get_agent, add_agent, _validate_agent_dict
+        from agents.registry import get_agent
         raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
@@ -118,11 +118,23 @@ def _ensure_system_agents() -> list[str]:
         if not aid or get_agent(aid) is not None:
             continue
         try:
-            add_agent(_validate_agent_dict(ad), user_edit=False)
+            _add_seed_record(ad)
             added.append(aid)
         except Exception:  # noqa: BLE001 - one bad seed record must not stop the rest from being added
             log.debug("could not add system agent %r from the seed", aid, exc_info=True)
     return added
+
+
+def _add_seed_record(ad: dict) -> None:
+    """Store one seed record. A record that ``extends`` another is already in
+    stored form (its own list deltas, agents/inheritance.py), so it is saved
+    as written; any other is a full spec."""
+    from agents.registry import add_agent, save_raw, _validate_agent_dict
+    spec = _validate_agent_dict(ad)
+    if spec.extends:
+        save_raw(spec, user_edit=False)
+    else:
+        add_agent(spec, user_edit=False)
 
 
 def ensure_system_agent(agent_id: str) -> bool:
@@ -149,13 +161,15 @@ def ensure_system_agent(agent_id: str) -> bool:
         return False
     try:
         import json
-        from agents.registry import add_agent, _validate_agent_dict
         raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
         spec = next((a for a in (raw.get("agents") or [])
                      if isinstance(a, dict) and a.get("id") == agent_id), None)
         if not spec:
             return False
-        add_agent(_validate_agent_dict(spec), user_edit=False)
+        parent = spec.get("extends")
+        if parent and parent != agent_id and not ensure_system_agent(str(parent)):
+            return False
+        _add_seed_record(spec)
         return True
     except Exception:  # noqa: BLE001 - on-demand seed must report "unavailable", not 500
         log.debug("could not seed system agent %s on demand", agent_id, exc_info=True)
@@ -170,7 +184,10 @@ def ensure_system_agent(agent_id: str) -> bool:
 # declare it. Everything else (provider, model, temperature, capacity, memory
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
-_SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs")
+_SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
+                      # A shipped child (``assistant``): its parent and its
+                      # own list deltas are part of its design too.
+                      "extends", "list_deltas")
 
 
 def _is_system_seed(ad: dict) -> bool:
@@ -532,6 +549,7 @@ def ensure_initial_state() -> dict[str, bool]:
         "agents_file": _seed_agents_file(),
         "default_workspace": _seed_default_workspace(),
     }
+    result["definitions_moved"] = bool(_move_untracked_definitions())
     # Before missing system agents are added: a renamed agent's old record is
     # renamed in place rather than shadowed by a fresh copy of the seed.
     result["legacy_agent_ids_renamed"] = _rename_legacy_agent_ids()
@@ -609,6 +627,25 @@ def _adopt_role_references() -> bool:
     except Exception:  # noqa: BLE001 - startup must not raise; the literal ids keep working
         log.debug("role reference adoption skipped", exc_info=True)
         return False
+
+
+def _move_untracked_definitions() -> list[str]:
+    """Move the prompts the hub used to write into agents/definitions/ (custom
+    agents, edited system agents) to the state folder it writes them to now
+    (agents/prompt_assembly.py). Never raising."""
+    try:
+        from agents.prompt_assembly import move_untracked_definitions
+        from agents.registry import list_agents_raw
+
+        owned = {spec.def_id() for spec in list_agents_raw()
+                 if not spec.system or spec.user_modified}
+        moved = move_untracked_definitions(owned.__contains__)
+    except Exception:  # noqa: BLE001 - startup must not raise; the files stay readable where they are
+        log.debug("agent definitions move skipped", exc_info=True)
+        return []
+    if moved:
+        log.info("agent definitions: moved %d file(s) out of the repository: %s", len(moved), ", ".join(moved))
+    return moved
 
 
 def _rename_legacy_agent_ids() -> bool:

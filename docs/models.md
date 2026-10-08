@@ -20,6 +20,22 @@ Resolution order, most specific first:
 An agent with nothing pinned inherits, which is usually what you want: change
 the workspace default and the whole workspace moves.
 
+## A first key switches on a model
+
+Saving a provider key (Settings, the welcome window, or the assistant's
+connection card) used to leave a trip to this page before the first run: enable
+a model and set its price. Now, when the provider has no enabled model yet, the
+hub enables one default model for it (`common/default_model.py`, one table:
+`gpt-5.4-mini` for OpenAI, `claude-sonnet-5-5` for Anthropic,
+`gemini-2.5-flash` for Google), fills its catalog price, stars it as the
+provider's default and, if the hub has no global default provider or the
+current one has no key, makes this provider the global default and writes
+`DEFAULT_PROVIDER` and the provider's `*_MODEL` to `.env`. It never overrides a
+choice: a provider with an enabled model is left alone, and a global default
+that has a key stays. A key saved in another workspace enables the model but
+does not touch the global default. Settings shows what was switched on, with
+the price and a link here, and you change it on this page as usual.
+
 ## Pricing
 
 Each model carries three prices in USD per million tokens: **input**, **cached
@@ -42,6 +58,46 @@ edited price is never overwritten by a later discovery, and the page marks it.
 A model can carry its context window, and that number is what the chat's context
 meter draws against. A window of `0` means unknown, and the meter then draws
 nothing rather than inventing a ceiling.
+
+## Temperature
+
+Each model can carry its own temperature, set in its row. An empty field means
+the global temperature and shows it as the placeholder. Resolution, most
+specific first:
+
+1. the agent's own temperature (its model override)
+2. the model's temperature on this page
+3. the global temperature: Settings, Models, Temperature (`LLM_TEMPERATURE` in `.env`,
+   0.0 unless set), applied by the running backend at once
+
+There is no workspace level.
+
+Some models refuse a temperature. OpenAI's reasoning models take none at all
+while they reason, so the field is disabled for gpt-5, gpt-5-mini, gpt-5-nano
+and the o-series. gpt-5.1 and later take one only at reasoning effort `none`,
+which is what an agent with thinking off sends them (below), so for those it
+applies only while thinking is off. Claude takes none while it thinks either.
+
+## Reasoning
+
+The Reasoning column shows two things per model: the effort the provider applies
+when a request names none, and what the hub sends when an agent's thinking
+level is off. They differ because OpenAI's reasoning models keep reasoning when
+nothing is asked for, billed and invisible:
+
+| Family | Provider default | Sent for off |
+|---|---|---|
+| gpt-5, gpt-5-mini, gpt-5-nano | medium | minimal |
+| gpt-5.1 to gpt-5.4 | none | none |
+| gpt-5.5, gpt-5.6 | medium | none |
+| o1, o3, o4 | medium | low (cannot go lower) |
+| gpt-5-pro | high | nothing (cannot go lower) |
+| Claude | off | nothing |
+
+The table was measured against the API (`providers/reasoning_profile.py`);
+providers without one show a dash. A call that never chose a level, such as a
+chat title or an eval judge, sends nothing and keeps the provider default. For
+what a positive level shows in the chat, see [agents](agents.md).
 
 ## Providers
 

@@ -2,8 +2,16 @@ export default {
   serviceName: 'Agents Hub',
   workspaceLabel: 'Пространство:',
   workspaceDefaultAll: 'default (Все)',
+  workspacePersonal: 'Личное',
+  workspacePersonalOf: '{{name}} (личное)',
   expandSidebar: 'Развернуть меню',
   collapseSidebar: 'Свернуть меню',
+  openMenu: 'Открыть меню',
+  closeMenu: 'Закрыть меню',
+  install: {
+    button: 'Установить приложение',
+    iosHint: 'В Safari нажмите «Поделиться», затем «На экран Домой». Хаб будет открываться со своей иконки, на весь экран.',
+  },
   theme: {
     light: 'Светлая',
     dark: 'Тёмная',
@@ -26,6 +34,7 @@ export default {
     global: 'Глобально',
     globalSuffix: '(глобально)',
     defaultSuffix: '(по умолчанию)',
+    inheritedSuffix: '(из {{workspace}})',
     defaultBadge: 'по умолчанию',
     globalBadge: 'глобально',
     legend: 'Индикаторы:',
@@ -35,6 +44,7 @@ export default {
   },
   titles: {
     health: 'Статус',
+    assistant: 'Ассистент',
     chat: 'Чат',
     dashboard: 'Дашборд',
     orchestrator: 'Оркестратор',

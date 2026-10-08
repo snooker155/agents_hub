@@ -5,6 +5,8 @@
 - delete_file: Delete a regular file under the workspace.
 - run_flow_tool: Execute a predefined agent flow.
 - run_agent_tool: Invoke another agent directly.
+- list_models_tool: List the catalog models a delegate can run on.
+- delegate_task_tool: Hand a piece of a tracked task to another agent as a subtask, optionally on another model.
 - list_flows_tool: List available flows.
 - get_flow_tool: Retrieve flow definition.
 - cancel_scheduled: Cancel a scheduled task or notification.

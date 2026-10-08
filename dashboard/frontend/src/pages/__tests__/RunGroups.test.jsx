@@ -94,3 +94,50 @@ describe('RunGroups', () => {
     await waitFor(() => expect(screen.getByText(/no run groups found/i)).toBeInTheDocument());
   });
 });
+
+describe('RunGroups load more', () => {
+  it('asks for the 20 newest groups and loads the next 20 on demand', async () => {
+    listRunGroups.mockImplementation(() => ok({ groups: GROUPS, total: 45, kinds: ['flow', 'team'] }));
+    show();
+    await waitFor(() => expect(listRunGroups).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 20, offset: 0, sort: 'started', order: 'desc' }),
+    ));
+    await waitFor(() => expect(screen.getByText('2 of 45 shown')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load 20 more' }));
+    await waitFor(() => expect(listRunGroups).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 40, offset: 0 }),
+    ));
+  });
+
+  it('loads only what is left and hides the button once everything is shown', async () => {
+    listRunGroups.mockImplementation(() => ok({ groups: GROUPS, total: 3, kinds: ['flow', 'team'] }));
+    show();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Load 1 more' })).toBeInTheDocument());
+    listRunGroups.mockImplementation(() => ok({ groups: GROUPS, total: 2, kinds: ['flow', 'team'] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Load 1 more' }));
+    await waitFor(() => expect(screen.getByText('2 of 2 shown')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /^Load \d+ more$/ })).not.toBeInTheDocument();
+  });
+
+  it('sorts by the chosen field, flips the order and remembers the batch size', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('Nightly build')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'cost' } });
+    await waitFor(() => expect(listRunGroups).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sort: 'cost', order: 'desc', offset: 0 }),
+    ));
+    fireEvent.click(screen.getByRole('button', { name: /^Descending/ }));
+    await waitFor(() => expect(listRunGroups).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sort: 'cost', order: 'asc' }),
+    ));
+    fireEvent.change(screen.getByLabelText('Load by'), { target: { value: '50' } });
+    await waitFor(() => expect(listRunGroups).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 50 }),
+    ));
+    expect(JSON.parse(localStorage.getItem('listPaging:runGroups'))).toEqual(
+      { pageSize: 50, sort: 'cost', order: 'asc' },
+    );
+  });
+});

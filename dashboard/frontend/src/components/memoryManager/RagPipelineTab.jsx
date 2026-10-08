@@ -15,7 +15,7 @@ import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
 import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
 import { StatusBadge } from './StatusBadge';
-import { fmt } from './helpers';
+import { fmt, poolName } from './helpers';
 
 const PROVIDER_LABELS = {
   none: null, openai: 'OpenAI', 'sentence-transformers': 'Sentence-Transformers',
@@ -199,11 +199,11 @@ function RagPipelineTab({ memories, workspaceFilter }) {
           <div className="flex-1 min-w-48">
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.targetMemoryPool')}</label>
             <select value={poolId} onChange={e => setPoolId(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
               {memories.length === 0 ? (
                 <option value="">{t('memoryManager.noPoolsCreateOneFirst')}</option>
               ) : (
-                memories.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                memories.map(m => <option key={m.id} value={m.id}>{poolName(m, t, !workspaceFilter)}</option>)
               )}
             </select>
           </div>

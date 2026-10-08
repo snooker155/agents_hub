@@ -85,6 +85,10 @@ class EntityChatRoute:
     tap: Optional[Callable[[Any], Optional[Callable[[dict], Any]]]] = None
     #: Extra keys merged into the GET response (memory's open-pool card).
     meta_extra: Optional[Callable[[Any], Dict[str, Any]]] = None
+    #: Answers a send without running a turn, when it returns events: the
+    #: assistant settles a waiting card with a spoken "yes" this way
+    #: (routes/assistant.py). None (the common case) runs the turn.
+    respond: Optional[Callable[[Any, str], Optional[List[dict]]]] = None
 
 
 def build_entity_chat_router(route: EntityChatRoute) -> APIRouter:
@@ -137,6 +141,16 @@ def build_entity_chat_router(route: EntityChatRoute) -> APIRouter:
         user_message = str(body.get("message") or "").strip()
         if not user_message:
             raise HTTPException(status_code=400, detail="Empty message")
+
+        answered = route.respond(ctx, user_message) if route.respond else None
+        if answered is not None:
+            async def answer_stream():
+                yield sse({"type": "meta", "kind": kind, "id": ctx.entity_id})
+                for event in answered:
+                    yield sse(event)
+
+            return StreamingResponse(answer_stream(), media_type="text/event-stream",
+                                     headers=SSE_HEADERS)
 
         chat_spec = route.spec(ctx)
         summarize = route.summarize(ctx) if route.summarize else None

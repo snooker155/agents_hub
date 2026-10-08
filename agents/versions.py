@@ -504,16 +504,14 @@ def _write_definition_files(def_id: str, defn: Dict[str, Any], *, allow_empty: b
     if instructions.strip() or allow_empty:
         prompt_assembly.write_instructions(def_id, instructions)
 
-    caps_path = prompt_assembly.agent_dir(def_id) / prompt_assembly.CAPABILITIES_FILE
     capabilities = defn.get("capabilities") or ""
     if capabilities.strip():
         prompt_assembly.write_capabilities(def_id, capabilities)
-    elif caps_path.exists():
-        caps_path.unlink()
+    else:
+        prompt_assembly.clear_part(def_id, prompt_assembly.CAPABILITIES_FILE)
 
-    usage_path = prompt_assembly.agent_dir(def_id) / prompt_assembly.USAGE_FILE
     usage = defn.get("usage") or ""
     if usage.strip():
         prompt_assembly.write_usage(def_id, usage)
-    elif usage_path.exists():
-        usage_path.unlink()
+    else:
+        prompt_assembly.clear_part(def_id, prompt_assembly.USAGE_FILE)

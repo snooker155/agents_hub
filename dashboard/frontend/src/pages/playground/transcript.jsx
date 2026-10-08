@@ -5,6 +5,7 @@ import {
   Loader, Mail, Radio, Terminal, XCircle, Zap,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
+import ToolStatusMark from '../../components/ToolStatusMark';
 import {
   SPEECH_ARGS, formatArgs, initials, shortText, speechOf, toneFor,
 } from './cast';
@@ -165,6 +166,7 @@ function ActionCard({ action, resolutions, pending }) {
         type="button" onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
       >
+        <ToolStatusMark status={pending ? 'running' : refused ? 'error' : resolutions.length ? 'ok' : 'unknown'} />
         <Terminal className={`w-3.5 h-3.5 shrink-0 ${refused ? 'text-red-500' : 'text-amber-500'}`} />
         <span className={`text-sm font-semibold shrink-0 ${refused ? 'text-red-700' : 'text-gray-600'}`}>
           {action.action || t('playground.transcript.action')}

@@ -1,8 +1,12 @@
 export default {
   welcomeToAgentsHub: 'Willkommen bei Agents Hub',
-  subtitle: 'Vom Start bis zum ersten Agentenlauf. Erledigen Sie diese Schritte: Der Status aktualisiert sich live.',
   close: 'Schließen',
-  skipForNow: 'Überspringen',
-  openGuide: 'Schnellstart öffnen',
+  needsModelSubtitle: 'Verbinden Sie zuerst ein Modell, damit der Assistent etwas zum Denken hat.',
+  handoverSubtitle: 'Den Rest führt Sie der Assistent Schritt für Schritt durch.',
+  chooseWay: 'Wie möchten Sie mit ihm sprechen?',
+  talkToAssistant: 'Mit dem Assistenten sprechen',
+  typeToAssistant: 'Dem Assistenten schreiben',
   startTour: 'Tour starten',
+  openGuide: 'Schnellstart öffnen',
+  skipForNow: 'Überspringen',
 };

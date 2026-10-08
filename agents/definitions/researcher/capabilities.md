@@ -9,6 +9,7 @@ Memory:
 The web, indirectly:
 - `run_agent_tool`: delegates to the Web Search Agent, which searches and reads pages and hands
   back findings with URLs. This agent holds no web tools of its own.
+- `list_models_tool`: the catalog models a delegation can run on (`model` on `run_agent_tool`).
 
 Computation:
 - `calculator`: exact arithmetic when figures matter.

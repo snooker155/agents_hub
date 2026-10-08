@@ -225,7 +225,7 @@ export default function ProjectManager() {
             placeholder={t('projectManager.searchProjects')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 w-56"
+            className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
           />
         </div>
         <div className="flex gap-1">
@@ -369,7 +369,7 @@ export default function ProjectManager() {
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.projectName')}</label>
                   <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     placeholder={t('projectManager.myProject')}
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -378,7 +378,7 @@ export default function ProjectManager() {
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.description')}</label>
                   <textarea
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none"
                     rows={2}
                     placeholder={t('projectManager.whatIsThisProjectAbout')}
                     value={form.description}
@@ -388,7 +388,7 @@ export default function ProjectManager() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.type')}</label>
                   <select
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     value={form.type}
                     onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
                   >
@@ -407,7 +407,7 @@ export default function ProjectManager() {
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.tagsCommaSeparated')}</label>
                   <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     placeholder={t('projectManager.pythonApiMl')}
                     value={form.tags}
                     onChange={e => setForm(f => ({ ...f, tags: e.target.value }))}

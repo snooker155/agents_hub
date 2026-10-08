@@ -47,18 +47,16 @@ def _scope(workspace: Optional[str]) -> Optional[str]:
 
 
 def _providers() -> Dict[str, Any]:
-    from common.config import settings
+    # Read live (common/provider_env.py): a key saved on the Settings page or
+    # in the welcome window counts at once, not after a restart.
+    from common import provider_env
 
-    keys = [name for name, value in (
-        ("openai", settings.openai_api_key),
-        ("anthropic", settings.anthropic_api_key),
-        ("google", settings.google_api_key),
-    ) if value]
-    local = [name for name, value in (
-        ("ollama", getattr(settings, "ollama_model", "")),
-        ("lmstudio", getattr(settings, "lmstudio_model", "")),
-    ) if value]
-    return {"default_provider": settings.default_provider or "",
+    env = provider_env.live()
+    keys = [name for name, var in (
+        ("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"), ("google", "GOOGLE_API_KEY"),
+    ) if env.get(var)]
+    local = [name for name, var in (("ollama", "OLLAMA_MODEL"), ("lmstudio", "LMSTUDIO_MODEL")) if env.get(var)]
+    return {"default_provider": env.get("DEFAULT_PROVIDER", ""),
             "keys_set": keys, "local_models": local}
 
 

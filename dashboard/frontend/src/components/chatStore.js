@@ -236,7 +236,14 @@ export function useConversationStore(currentConvId, { paused = false } = {}) {
     }));
   }, []);
 
-  const busy = useCallback((chatId) => pausedRef.current || dirtyRef.current.has(chatId), []);
+  // `paused` is either a flag for the whole tab or a test per conversation
+  // (the Chat page passes one: only a conversation with a turn running here
+  // has to wait).
+  const busy = useCallback((chatId) => {
+    const paused = pausedRef.current;
+    const held = typeof paused === 'function' ? paused(chatId) : paused;
+    return Boolean(held) || dirtyRef.current.has(chatId);
+  }, []);
 
   // A reload while this tab has a turn running, or changes not yet written,
   // would throw them away — so it waits and is retried until the tab is free.
@@ -312,6 +319,9 @@ export function useConversationStore(currentConvId, { paused = false } = {}) {
     let dirty = false;
     for (const conv of conversations) {
       if (!conv?.id || conv._hydrated === false) continue;
+      // The Assistant's threads are its own records, shown here as text:
+      // never written back (routes/chats.py refuses it).
+      if (conv.origin === 'assistant') continue;
       if (seenRef.current.get(conv.id) === conv) continue;
       seenRef.current.set(conv.id, conv);
       dirtyRef.current.add(conv.id);

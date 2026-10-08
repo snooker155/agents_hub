@@ -183,7 +183,9 @@ run does, and writes nothing until you confirm a review of every value:
 1. **Install**: this checkout (Path C), Docker from the published images
    (Path A, into a folder of your choice), Compose from this checkout
    (Path B), or a hub that already runs somewhere else. Then QuickStart
-   (sensible defaults, only what cannot be guessed) or Advanced.
+   (only what cannot be guessed: the assistant sets up the rest with you, see
+   [after the install](#after-the-install-the-assistant-takes-over)) or
+   Advanced.
 2. **Database**: SQLite; Postgres in a Docker container setup starts for you
    (on this machine) or in the same stack (the Docker paths, the `postgres`
    profile); or a Postgres you already have, tested before it is accepted.
@@ -198,17 +200,51 @@ run does, and writes nothing until you confirm a review of every value:
    (balanced, strongest, fastest), from the whole list, or typed. On this
    machine the presets are also enabled in the [Models](models.md) catalog
    with the default starred.
-5. **Features**: the demo workspace; in Advanced the dashboard port, where
-   agents run, web search, RAG, and for Compose the browser, Redis and the
-   local model runtime.
-6. **Review** of every setting it will write (secrets masked) and every
+5. **Assistant voice**: what the [assistant](assistant.md#voice) hears you
+   with and reads its answers aloud with, saved as the `default` workspace's
+   transcription and speech models (every personal workspace falls back to
+   them). A cloud provider chosen in step 4 (OpenAI: `gpt-4o-mini-tts` and
+   `gpt-4o-mini-transcribe` with their prices; Google: Gemini TTS and Gemini
+   Flash) with one of its voices; the hub's own model runtime (Whisper small
+   or large-v3 turbo to hear, Piper in Russian, English or German, Kokoro,
+   Supertonic in 31 languages or Kitten in English to speak; free, 0.5 to 2 GB to download); the browser only (its own
+   recognition and voice, nothing on the server); or not now. QuickStart
+   leaves this to the assistant.
+6. **Features**: in Advanced the demo workspace, the dashboard port, where
+   agents run, web search, RAG, and for Compose the browser and Redis.
+   QuickStart leaves the demo and web search to the assistant.
+7. **Review** of every setting it will write (secrets masked) and every
    action it will take.
-7. **Apply**: installs missing Python extras, starts Postgres, writes
+8. **Apply**: installs missing Python extras, starts Postgres, writes
    `.env` (the previous one is kept as `.env.bak-<time>`), creates the
-   accounts, fills the catalog, and offers to start the hub (`ah up`, or
-   `docker compose up -d` followed by creating the accounts through the
-   API). After a Docker setup it can point `ah` at the stack with a personal
-   API key of the new administrator.
+   accounts, fills the catalog, sets the assistant's voice, and offers to
+   start the hub (`ah up`, or `docker compose up -d` followed by creating the
+   accounts and setting the voice through the API). For a voice on the hub's
+   runtime it starts the runtime, installs the engines it lacks and
+   downloads the models it does not have, following each job to the end; in
+   Docker that waits for the stack, so without starting it the voice is left
+   for a later run or the Models page. After a Docker setup it can point
+   `ah` at the stack with a personal API key of the new administrator.
+
+An answers file that names `voice.mode` or `demo` still applies them in
+QuickStart.
+
+### After the install: the assistant takes over
+
+The console (or the browser) does only what the assistant cannot do for
+itself: an account and one model to think with. When the dashboard opens for
+the first time, the welcome window either asks for that model (a key of
+OpenAI, Anthropic or Google, or a model server already running on this
+machine, checked with the provider before it is saved) or, once there is one,
+offers **Talk to the assistant** or **Type to the assistant**. From there the
+[assistant](assistant.md#guided-setup) leads the rest of the setup one step at
+a time, by voice or by text: the default model, its own voice, web search,
+the demo workspace, the team, the hub's health, then a first chat, a channel,
+accounts, an agent of your own, a task and something that runs on its own. It
+makes each change after your yes on a card, keys are typed into a card, never
+said or typed into the conversation, and the page of each step opens beside
+the conversation. A **Setup** pill in the header shows how far it has got and
+brings you back to it.
 
 `./install.sh` runs it by itself on a first install from a terminal
 (`--no-setup` skips it, `--setup` runs it on a re-install). Run it again
@@ -236,12 +272,16 @@ default, and a missing required answer stops with its name:
   "admin": {"username": "admin", "password": "change-me-now"},
   "users": [{"username": "dana", "role": "member"}],
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
+  "voice": {"mode": "local", "speech": "piper-en", "transcription": "whisper-small"},
   "demo": false,
   "start": true
 }
 ```
 
-Passwords left out are generated and printed once at the end. The remote
+`voice.mode` is `cloud` (with `voice.provider` when two fit and
+`voice.voice`), `local` (`voice.speech`: `piper-ru`, `piper-en`, `piper-de`,
+`kokoro`, `supertonic` or `kitten`; `voice.transcription`: `whisper-small` or `whisper-turbo`),
+`browser` or `skip`. Passwords left out are generated and printed once at the end. The remote
 shape saves the hub's address and a credential in the CLI's own state file
 (`~/.config/agents-hub/cli.json`); `AGENTS_HUB_URL` in the environment still
 wins over it.
@@ -289,9 +329,15 @@ On Path A the same tree lives on the `agents_hub_data` volume, mounted at
 `/data` (`AGENTS_HUB_ROOT`). With `AGENTS_HUB_DATABASE_URL` set the
 database lives in Postgres instead of the file ([scaling](scaling.md),
 `ah db migrate` to move an existing one); the rest of the folder stays
-where it is. Agent prompts are the exception: they live in
-`agents/definitions/<id>/` in the repository, because they are source
-rather than state.
+where it is. Agent prompts are split the same way: the system agents' shipped
+text lives in `agents/definitions/<id>/` in the repository, as git tracks it,
+and the hub never writes there. Every custom agent's `instructions.md`
+(with `capabilities.md` and `usage.md`) and every edit to a system agent's
+prompt go to `.agents_hub/definitions/<id>/`. A file there shadows the shipped
+file of the same name, so an edited system agent keeps its edit across
+upgrades. **Restore shipped text** on the agent's Config tab
+(`DELETE /api/agents/<id>/definition/edits`) gives it back the shipped text and
+keeps the edited one in Versions.
 
 ## Upgrading
 

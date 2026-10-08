@@ -9,6 +9,7 @@ import {
   framesForRun, isStreamRequest, pickRunId, replayStream, resolveGet,
   resolveWrite, sharedStreamFrames,
 } from './resolver';
+import { ASSISTANT_DEMO_FRAMES, ASSISTANT_DEMO_NO_MODEL, ASSISTANT_DEMO_THREAD } from './assistantDemo';
 
 const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
@@ -69,6 +70,24 @@ export function createHandlers({ fixtures = {}, streams = {} } = {}) {
             { headers: SSE_HEADERS },
           );
         }
+      }
+
+      // The Assistant page: a recorded thread, one fixed reply, and no speech
+      // models, so the page falls back to the browser's voice.
+      if (/\/api\/assistant(\/.*)?$/.test(url.pathname)) {
+        if (/\/(transcribe|speak)$/.test(url.pathname)) {
+          return HttpResponse.json(ASSISTANT_DEMO_NO_MODEL, { status: 409 });
+        }
+        if (/\/api\/assistant$/.test(url.pathname) && method === 'GET') {
+          return HttpResponse.json(ASSISTANT_DEMO_THREAD);
+        }
+        if (/\/api\/assistant$/.test(url.pathname) && method === 'POST') {
+          return new HttpResponse(
+            replayStream(framesForRun({ 'demo-assistant': ASSISTANT_DEMO_FRAMES }, 'demo-assistant')),
+            { headers: SSE_HEADERS },
+          );
+        }
+        return HttpResponse.json(resolveWrite(method, await readBody(request)));
       }
 
       if (isStreamRequest(method, url.pathname)) {

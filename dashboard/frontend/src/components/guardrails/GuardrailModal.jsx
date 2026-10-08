@@ -104,7 +104,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
     }
   };
 
-  const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none';
   const labelCls = 'block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider';
 
   return (
@@ -179,7 +179,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
                 <label key={flag} className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
                   <input type="checkbox" checked={(config.flags || []).includes(flag)}
                     onChange={() => toggleFlag(flag)}
-                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600" />
                   {t(`guardrails.config.flag${flag[0]}${flag.slice(1).toLowerCase()}`)}
                 </label>
               ))}
@@ -205,7 +205,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
                 <label key={d} className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
                   <input type="checkbox" checked={(config.detectors || []).includes(d)}
                     onChange={() => toggleDetector(d)}
-                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600" />
                   {t(`guardrails.config.detector${d.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())}`)}
                 </label>
               ))}
@@ -242,7 +242,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input type="checkbox" checked={failClosed} onChange={(e) => setFailClosed(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
               {t('guardrails.failClosed')}
             </label>
             <p className="text-[11px] text-gray-400">{t('guardrails.failClosedHint')}</p>
@@ -258,7 +258,7 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer self-end pb-2">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
             {t('guardrails.enabled')}
           </label>
         </div>

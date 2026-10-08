@@ -172,7 +172,7 @@ else first, then delete.
 
 ## The Environments page
 
-`/environments`, under Infrastructure. A table of environments for the
+`/environments`, under Records and admin (full menu). A table of environments for the
 current workspace (name, scope, mode, network type, limits, default and
 archived badges, usage counts), a create/edit form, and row actions: make
 default, archive, delete (disabled with a tooltip while something uses it),

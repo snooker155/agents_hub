@@ -31,9 +31,10 @@ const WIDTHS = {
   full: 'max-w-none',
 };
 
+// A phone gets a tighter gutter: 24px a side is an eighth of its width.
 const PADDING = {
-  default: 'px-6 py-6',
-  narrow: 'px-6 py-6',
+  default: 'px-4 py-4 sm:px-6 sm:py-6',
+  narrow: 'px-4 py-4 sm:px-6 sm:py-6',
   full: '',
 };
 
@@ -170,8 +171,10 @@ export const PageHeader = ({
           </div>
         </div>
       </div>
+      {/* max-w-full: when the actions drop under the title on a narrow
+          screen, they wrap within it instead of running off the side. */}
       {actions && (
-        <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>
+        <div className="flex items-center gap-2 flex-wrap shrink-0 max-w-full">{actions}</div>
       )}
     </div>
     {children}
@@ -194,7 +197,7 @@ export const AppBar = ({
   const { t } = useI18n();
   const back = backLabel ?? t('common.back');
   return (
-  <div className="flex h-14 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-6">
+  <div className="flex h-14 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-3 sm:px-6">
     <div className="flex min-w-0 flex-1 items-center gap-2">
       {backTo && (
         <>

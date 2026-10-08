@@ -242,6 +242,11 @@ The same happens for an agent the turn delegates to, and when the turn runs on
 a service replica: the replica records and reads the waiting call through the
 run state transport, the way it takes steering messages.
 
+In the [assistant](assistant.md#voice)'s thread a card can also be answered
+by voice: a short spoken yes or no while the card waits settles it, and its
+audit row carries `"via": "voice"`. A connection card never is: its secret is
+typed into the card.
+
 Telegram, the widget, channels and `/v1` have nobody in front of a card, so
 there the gate refuses the call and tells the agent to say exactly what it
 wanted to run and wait. That is advisory: it stops the call, but the

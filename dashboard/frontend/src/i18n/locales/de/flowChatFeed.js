@@ -34,4 +34,9 @@ export default {
     env_params: 'Parameter',
     limits: 'Limit',
   },
+  // Wohin ein remember- oder forget-Schritt geschrieben hat: „Im persönlichen Speicher gesichert · dev".
+  memory: {
+    remember: { personal: 'Im persönlichen Speicher gesichert · {{workspace}}', pool: 'Im Speicher „{{pool}}" gesichert · {{workspace}}' },
+    forget: { personal: 'Aus dem persönlichen Speicher entfernt · {{workspace}}', pool: 'Aus dem Speicher „{{pool}}" entfernt · {{workspace}}' },
+  },
 };

@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Gamepad2, Plus, Trash2, Loader, Users, X, Save, AlertTriangle, Radio, History,
-  Sparkles, Wrench, CheckCircle2,
+  Sparkles, CheckCircle2,
 } from 'lucide-react';
 import {
   getSimEnvironments, getScenarios, createScenario, deleteScenario,
   streamGenerateScenario,
 } from '../api';
 import { toolInline } from '../components/toolFormatters';
+import ToolStatusMark from '../components/ToolStatusMark';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { isLiveRun } from './playground/status';
@@ -280,11 +281,7 @@ function GenerateStep({ step }) {
   const failed = step.status === 'error';
   return (
     <div className={`flex items-start gap-1.5 text-[11px] ${failed ? 'text-red-600' : 'text-gray-500'}`}>
-      {failed
-        ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        : step.status === 'done'
-          ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-green-500 shrink-0" />
-          : <Wrench className="w-3.5 h-3.5 mt-0.5 text-indigo-400 shrink-0" />}
+      <ToolStatusMark status={failed ? 'error' : step.status === 'done' ? 'ok' : 'running'} className="mt-1" />
       <div className="min-w-0">
         <span className="font-mono">{step.tool}</span>
         {inline ? <span className="text-gray-400"> · {inline}</span> : null}
@@ -372,7 +369,7 @@ function GenerateScenarioModal({ workspace, onClose, onCreated }) {
               tool: ev.tool || '', input: ev.input, status: 'running',
             }]);
           } else if (ev.type === 'tool_end') {
-            settle({ status: 'done' });
+            settle({ status: ev.status === 'error' ? 'error' : 'done' });
           } else if (ev.type === 'tool_error') {
             settle({ status: 'error', error: ev.error || '' });
           } else if (ev.type === 'result') {

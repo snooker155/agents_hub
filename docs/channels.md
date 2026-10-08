@@ -1,7 +1,7 @@
 # Chat channels
 
 Slack, Discord, Microsoft Teams and mail, the places a person already talks
-in, bound to agents the way a [Telegram](telegram.md) chat is. **Connect →
+in, bound to agents the way a [Telegram](telegram.md) chat is. **Integrations →
 Connectors** in the sidebar, one tab per channel.
 
 Telegram was the first channel and has its own tab and routes. The four here
@@ -72,6 +72,9 @@ Replies go to the thread. Files shared with a message become attachments,
 buttons, and a press is fed back as the user's next message. Scopes:
 `chat:write`, `channels:history`, `im:history`, `files:read`,
 `app_mentions:read`. Test calls `auth.test`.
+
+Several Slack workspaces can install one Slack app over OAuth, and a Teams
+app can be distributed to many tenants: see [distribution](distribution.md).
 
 ## Discord
 

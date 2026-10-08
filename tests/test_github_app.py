@@ -401,8 +401,8 @@ def test_callback_without_the_cookie_is_refused(github, single, client):
 
 
 def test_an_oidc_cookie_does_not_pass_for_a_github_one(github, single, client):
-    from common import oidc
-    cookie = oidc.sign_state({"state": "s", "exp": int(time.time()) + 60, "uid": "local"})
+    from common import signed_state
+    cookie = signed_state.sign_state({"state": "s", "exp": int(time.time()) + 60, "uid": "local"})
     client.cookies.set("ah_github", cookie, path="/api/external/github")
     github.codes["the-code"] = "mallory"
     response = client.get("/api/external/github/callback",

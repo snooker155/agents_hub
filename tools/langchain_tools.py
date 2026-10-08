@@ -401,10 +401,20 @@ class InvokeAgentInput(BaseModel):
             "workspace and away from its files."
         ),
     )
+    model: Optional[str] = Field(
+        None,
+        description=(
+            "A catalog model for this delegation, as `provider/model` from "
+            "list_models_tool (a bare model id works when unambiguous). Empty: the "
+            "agent's own model. Pick a cheaper model for a simple or mechanical "
+            "piece of work, a stronger one for a hard one."
+        ),
+    )
 
 
 @tool("run_agent_tool", args_schema=InvokeAgentInput)
-def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -> str:
+def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
+                   model: Optional[str] = None) -> str:
     """Delegate a request to another agent and get its result back, without a task.
 
     Runs `agent_id` on the given `input` synchronously, to completion, and returns
@@ -420,6 +430,11 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
     continue the work (e.g. a reviewer or follow-up specialist), call
     run_agent_tool again with that agent and an input built from this output.
     Each run has already finished when the tool returns — never poll or wait.
+
+    `model` runs the agent on another catalog model for this call only
+    (`provider/model` from list_models_tool). Leave it empty to keep the agent's
+    own; set a cheaper one when the piece of work is simple (a lookup, a
+    reformat, a summary of given text) to save tokens.
 
     You may target your OWN agent id here when self-delegation is enabled for you
     (list_agents_tool marks your entry with `self_delegation: true`). This is how
@@ -480,6 +495,17 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
         blocked = _delegation_blocked(agent_id)
         if blocked:
             return _json_err(blocked, code="forbidden", extra={"agent_id": agent_id})
+        # The model for this call only, checked against the catalog exactly as
+        # delegate_task_tool does (tools/delegation.py).
+        model_params: Dict[str, str] = {}
+        if model and str(model).strip():
+            from tools.delegation import enabled_models, resolve_model
+            try:
+                provider_id, model_id = resolve_model(str(model))
+            except ValueError as exc:
+                return _json_err(str(exc), code="bad_model",
+                                 extra={"models": [m["id"] for m in enabled_models()]})
+            model_params = {"provider": provider_id, "model": model_id}
 
         from agents.agent_factory import create_agent
         from agents.agent_invoke import invoke_agent
@@ -515,6 +541,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             f"=== Chat message  run_id={run_id} ===",
             f"Started   : {started}",
             f"Agent     : {agent_id}",
+            *([f"Model     : {model_params['provider']}/{model_params['model']}"] if model_params else []),
             f"Workspace : {ws or '—'}",
             f"Session ID: {session_id or '—'}",
             "Origin    : delegation (run_agent_tool)",
@@ -553,7 +580,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                                    _parent_scope[2] if _parent_scope else None)
         _scope.__enter__()
         try:
-            worker = create_agent(agent_id, workspace=ws_path)
+            worker = create_agent(agent_id, workspace=ws_path, **model_params)
         except Exception as e:
             _scope.__exit__(None, None, None)
             # Close the record here, or a build failure leaves it "running" forever.
@@ -691,6 +718,8 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 ),
                 "output": output,
                 "session_id": session_id,
+                "provider": worker.provider or "",
+                "model": worker.model or "",
                 "agent": spec.to_dict(),
                 "workspace": ws or None,
                 "succeeded": True,
@@ -1294,7 +1323,7 @@ def create_agent_tool(
 ) -> str:
     """Create a new agent in the system registry.
 
-    The system prompt is written to ``agents/definitions/<agent_id>/instructions.md``
+    The system prompt is written to ``.agents_hub/definitions/<agent_id>/instructions.md``
     rather than stored in agents.json. Structured fields (id, name, tools, capacity)
     are persisted in the registry.
     """
@@ -1503,7 +1532,6 @@ def modify_agent_tool(
         changed: List[str] = []
 
         from agents import prompt_assembly
-        folder = prompt_assembly.agent_dir(agent_id)
 
         if system_prompt is not None:
             update_text = system_prompt.strip()
@@ -1528,21 +1556,19 @@ def modify_agent_tool(
             changed.append("instructions")
 
         if capabilities is not None:
-            path = folder / prompt_assembly.CAPABILITIES_FILE
             if capabilities.strip():
                 prompt_assembly.write_capabilities(agent_id, capabilities)
                 changed.append("capabilities")
-            elif path.exists():
-                path.unlink()
+            elif prompt_assembly.read_capabilities(agent_id):
+                prompt_assembly.clear_part(agent_id, prompt_assembly.CAPABILITIES_FILE)
                 changed.append("capabilities")
 
         if usage is not None:
-            path = folder / prompt_assembly.USAGE_FILE
             if usage.strip():
                 prompt_assembly.write_usage(agent_id, usage)
                 changed.append("usage")
-            elif path.exists():
-                path.unlink()
+            elif prompt_assembly.read_usage(agent_id):
+                prompt_assembly.clear_part(agent_id, prompt_assembly.USAGE_FILE)
                 changed.append("usage")
 
         def _blank_to_none(value: Optional[str]) -> Optional[str]:

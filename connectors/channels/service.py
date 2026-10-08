@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import contextvars
 import logging
+import uuid
 from typing import Any, Iterator, Optional
 
 from .commands import handle_command, unbound_reply
@@ -37,6 +38,11 @@ from .store import DEFAULT_WORKSPACE, ChannelStore
 from .turns import TurnResult, run_turn, wake_unanswered_async
 
 log = logging.getLogger("channels.service")
+
+#: What a chat hears while its organisation's catalog installation waits for
+#: an operator's approval.
+PENDING_REPLY = ("Thanks for installing. This hub's operator has not approved your "
+                 "organisation yet; the bot will answer once they do.")
 
 
 def _utc_iso() -> str:
@@ -79,10 +85,14 @@ class ChannelService:
     def is_running(self) -> bool:
         return bool(self._task and not self._task.done())
 
+    def configured(self) -> bool:
+        """Whether the credentials the service needs are saved."""
+        return self.store.is_configured(*self.required_fields)
+
     def wanted(self) -> bool:
         """Whether the loop should run at all: enabled and configured."""
         try:
-            return bool(self.store.is_enabled() and self.store.is_configured(*self.required_fields))
+            return bool(self.store.is_enabled() and self.configured())
         except Exception:  # noqa: BLE001 - a store failure reads as "not wanted"
             return False
 
@@ -130,7 +140,7 @@ class ChannelService:
     async def start(self) -> None:
         if self.is_running():
             return
-        if not self.store.is_configured(*self.required_fields):
+        if not self.configured():
             self._status["last_error"] = "not configured"
             return
         if not self.store.is_enabled():
@@ -243,8 +253,12 @@ class ChannelService:
         return lock
 
     def chat_allowed(self, chat_key: str) -> bool:
-        """Gate every inbound message on the allowlist; log once per chat."""
+        """Gate every inbound message on the allowlist, or on the approved
+        catalog installation of the chat's organisation; log once per chat."""
         if self.store.is_allowed(chat_key):
+            return True
+        install = self.store.install_for_chat(chat_key)
+        if install and install.get("status") == "approved":
             return True
         if chat_key not in self._logged_disallowed:
             self._logged_disallowed.add(chat_key)
@@ -264,7 +278,9 @@ class ChannelService:
         chat_key = str(chat_key)
         text = (text or "").strip()
         if not self.chat_allowed(chat_key):
+            await self._tell_pending(chat_key, **send_kwargs)
             return None
+        self._bind_from_install(chat_key, title)
 
         reply = handle_command(self.store, chat_key, text, title=title, workspace=self.own_workspace)
         if reply is not None:
@@ -300,6 +316,37 @@ class ChannelService:
                 log.warning("%s send_result failed for chat %s: %s", self.name, chat_key, exc)
                 await self._safe_send(chat_key, result.reply, **send_kwargs)
             return result
+
+    # ── catalog installations (docs/distribution.md) ────────────────────────
+
+    async def _tell_pending(self, chat_key: str, **send_kwargs: Any) -> None:
+        """A chat of an organisation that installed the bot from a catalog
+        but is not approved yet hears why nothing answers, once per process."""
+        install = self.store.install_for_chat(chat_key)
+        if not install or install.get("status") != "pending":
+            return
+        marker = f"pending:{chat_key}"
+        if marker in self._logged_disallowed:
+            return
+        self._logged_disallowed.add(marker)
+        await self._safe_send(chat_key, PENDING_REPLY, **send_kwargs)
+
+    def _bind_from_install(self, chat_key: str, title: Optional[str]) -> None:
+        """A chat of an approved organisation with no binding of its own gets
+        the installation's workspace and agent. A binding the operator made
+        on the Connectors page is never touched."""
+        if self.store.get_binding(chat_key) is not None:
+            return
+        install = self.store.install_for_chat(chat_key)
+        if not install or install.get("status") != "approved":
+            return
+        workspace = self.own_workspace or install.get("workspace") or None
+        agent_id = str(install.get("agent_id") or "")
+        if not workspace or not agent_id:
+            return
+        self.store.upsert_binding(chat_key=chat_key, agent_id=agent_id, workspace=workspace,
+                                  conversation_id=str(uuid.uuid4()), title=title,
+                                  from_install=True)
 
     async def _safe_send(self, chat_key: str, text: str, **kwargs: Any) -> None:
         try:

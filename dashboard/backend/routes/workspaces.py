@@ -143,6 +143,12 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
+def _person_label(user_id: str) -> str:
+    """Whose personal workspace this is, for the picker."""
+    user = identity.get_user(user_id) if identity.current_mode() == "multi" else None
+    return (user or {}).get("display_name") or (user or {}).get("username") or user_id
+
+
 @router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces(request: Request):
     roots = list_workspace_folders()
@@ -153,6 +159,13 @@ async def list_workspaces(request: Request):
             roots = [p]
         except Exception:
             pass
+
+    # A person in multi mode gets their personal workspace the first time they
+    # look (common/personal_workspace.py); listed first, as theirs.
+    from common import personal_workspace
+    own_personal = personal_workspace.ensure_for_principal(identity.request_principal(request))
+    if own_personal and all(p.name != own_personal for p in roots):
+        roots = list_workspace_folders()
 
     # Under AUTH_MODE=multi a user sees the workspaces they are a member of and
     # nothing else; an admin sees all of them. A no-op in the single-operator
@@ -167,20 +180,47 @@ async def list_workspaces(request: Request):
         # `path` stays the entry under the workspaces root so it keeps naming the
         # workspace; `target` is where an attached one actually lives.
         attached = p.is_symlink()
+        personal_of = personal_workspace.owner_of(name)
         items.append({
             "name": name,
             "path": str(p),
             "tasks_count": len(ws_tasks),
             "attached": attached,
             "target": str(p.resolve()) if attached else None,
+            "personal": bool(personal_of),
+            "personal_of": personal_of,
+            "personal_label": _person_label(personal_of) if personal_of else None,
+            "own_personal": bool(own_personal) and name == own_personal,
         })
+
+    def _order(item):
+        # The caller's own personal workspace, then default, then the rest by
+        # name, other people's personal ones (an admin sees them) last.
+        if item["own_personal"]:
+            return (0, "")
+        if item["name"] == "default":
+            return (1, "")
+        return (3 if item["personal"] else 2, item["name"])
+
+    items.sort(key=_order)
     return items
+
+
+def _refuse_personal_name(name: Optional[str]) -> None:
+    """Names under ``personal-`` belong to personal workspaces, which only
+    common/personal_workspace.py creates."""
+    from common import personal_workspace
+    if name and personal_workspace.is_reserved_name(name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{personal_workspace.PREFIX}' is reserved for personal workspaces")
 
 
 @router.post("")
 async def create_workspace(payload: WorkspaceCreate):
     if payload.name and not _is_safe_workspace_name(payload.name):
         raise HTTPException(status_code=400, detail=f"'{payload.name}' is not a valid workspace name")
+    _refuse_personal_name(payload.name)
     try:
         p = create_workspace_folder(payload.name)
         # Let live listeners (e.g. the header workspace picker) refresh their list.
@@ -201,6 +241,8 @@ async def attach_workspace(payload: WorkspaceAttach):
     the backend runs in a container that means a path inside the container — bind
     mount the host directory first, and pass the in-container path.
     """
+    # The workspace takes the target folder's own name (workspace/storage.py).
+    _refuse_personal_name(Path(str(payload.path or "")).name)
     try:
         link = attach_workspace_folder(payload.path, payload.name)
     except ValueError as e:
@@ -243,6 +285,9 @@ async def get_workspace(name: str):
 async def delete_workspace(name: str):
     if name == "default":
         raise HTTPException(status_code=403, detail="The default workspace cannot be deleted")
+    from common import personal_workspace
+    if personal_workspace.is_personal(name):
+        raise HTTPException(status_code=403, detail="A personal workspace cannot be deleted")
     # Detaching only drops the link; the directory behind an attached workspace
     # is the user's and is never deleted from here.
     was_attached = is_attached_workspace(name)
@@ -515,6 +560,36 @@ async def get_workspace_model(name: str):
     - workspace_default: default model resolved from workspace settings
     - override: explicitly set via UI picker (provider='global' forces global over workspace_default)
     """
+    return _model_state(name, get_workspace_metadata(name))
+
+
+@router.get("/{name}/summary")
+async def get_workspace_summary(name: str):
+    """What every page shows about the selected workspace, in one answer.
+
+    The header (model picker, "Isolated" badge), the palette and the chat
+    page each used to ask on their own: ``/{name}`` (which also builds the
+    task list), ``/{name}/model``, ``/{name}/isolation`` and
+    ``/{name}/settings-overrides``. Readable by any member: it carries only
+    the isolation switch and the palette, not the owner scoped settings
+    around them.
+    """
+    from memory import personal
+    root = _require_workspace_folder(name)
+    metadata = get_workspace_metadata(root.name) or {}
+    settings = metadata.get("settings") or {}
+    palette = settings.get("palette")
+    return {
+        "name": root.name,
+        "allowed_agents": metadata.get("allowed_agents") or [],
+        "personal_memory_enabled": personal.workspace_enabled(root.name),
+        "isolated": bool(settings.get("isolated")),
+        "palette": palette if isinstance(palette, dict) else None,
+        "model": _model_state(root.name, metadata),
+    }
+
+
+def _model_state(name: str, metadata: dict) -> dict:
     from pathlib import Path as _Path
     from common.config import settings as _cfg
 
@@ -540,9 +615,10 @@ async def get_workspace_model(name: str):
     }
     global_model = provider_model_map.get(global_provider) or ""
 
-    metadata = get_workspace_metadata(name)
     override = metadata.get("model_override") or {}
     ws_default = get_workspace_default_model_config(metadata)
+    from common.personal_workspace import model_source
+    source = model_source(name)
     return {
         "global_default": {
             "provider": global_provider,
@@ -551,6 +627,8 @@ async def get_workspace_model(name: str):
         "workspace_default": {
             "provider": ws_default.get("provider", ""),
             "model": ws_default.get("model", ""),
+            # Set when a personal workspace runs with default's model.
+            "inherited_from": source if source != name else None,
         },
         "override": {
             "provider": override.get("provider", ""),
@@ -630,6 +708,7 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
     for key in _SETTINGS_OWNED_ELSEWHERE:
         if key not in overrides and key in current:
             cleaned[key] = current[key]
+    previous = dict(current)
     update_workspace_metadata(name, {"settings": cleaned})
     audit.record("workspace.settings", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,
@@ -642,7 +721,20 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
         configure_logging_for_active_workspace()
     except Exception:
         pass
-    return {"overrides": cleaned}
+    out = {"overrides": cleaned}
+    # A first key for a provider switches on one default model with its catalog
+    # price (common/default_model.py); only the default workspace speaks for the hub's default.
+    from common import default_model
+    switched = []
+    for provider in default_model.DEFAULT_MODELS:
+        field = f"{provider}_api_key"
+        if cleaned.get(field) and cleaned.get(field) != previous.get(field):
+            found = default_model.ensure_default(provider, workspace=name, set_global=name == "default")
+            if found:
+                switched.append(found)
+    if switched:
+        out["default_models"] = switched
+    return out
 
 
 # ── Tool policy: the approval gate and the hooks that run around a tool call ──
@@ -986,6 +1078,71 @@ async def get_workspace_special_models(name: str):
     the purposes, providers and model suggestions for the form."""
     _require_workspace_folder(name)
     return _special_models_payload(name)
+
+
+@router.get("/{name}/special-models/discover")
+async def discover_workspace_special_models(name: str, purpose: str, provider: str):
+    """The models ``provider`` has that fit ``purpose``, asked with this
+    workspace's connection settings. Nothing is stored: the form offers them."""
+    import asyncio
+    from providers import special
+    _require_workspace_folder(name)
+    try:
+        return await asyncio.to_thread(special.discover, purpose, provider, name)
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{name}/special-models/voices")
+async def workspace_special_model_voices(name: str, request: Request, provider: str, model: str = "",
+                                         purpose: str = "speech"):
+    """The voices of one model the form holds, so picking a model offers
+    them: the model's own (the hub runtime reads them from its files; of a
+    cloning model's recorded voices, the person's own and the shared
+    ones), else the ones known for the provider's API shape, with their
+    languages."""
+    import asyncio
+    from providers import special
+    _require_workspace_folder(name)
+    try:
+        return await asyncio.to_thread(special.voices_for, purpose, provider, model,
+                                       identity.request_principal(request))
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{name}/special-models/sample")
+async def workspace_special_model_sample(name: str, payload: dict):
+    """A short line read by a speech model the form holds (saved or not),
+    as audio: in the voice's own language, else in ``language`` (the
+    page's). Writers only, like the check: it runs the model, and a cloud
+    model charges for it (a fraction of a cent, not counted on a run). The
+    line and its language come in ``X-Sample-Text`` (URL-encoded) and
+    ``X-Sample-Language``."""
+    import asyncio
+    from urllib.parse import quote
+    from fastapi import Response
+    from providers import special
+    _ensure_writable_workspace(name)
+    try:
+        audio, lang, text = await asyncio.to_thread(
+            special.voice_sample, payload, name, str(payload.get("language") or "") or None)
+    except special.SpecialModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=audio.data, media_type=audio.mime_type,
+                    headers={"Cache-Control": "no-store", "X-Sample-Language": lang,
+                             "X-Sample-Text": quote(text)})
+
+
+@router.post("/{name}/special-models/check")
+async def check_workspace_special_model(name: str, payload: dict):
+    """Whether one model the form holds (saved or not) can be reached with
+    this workspace's connection settings, without running it. Writers only:
+    it sends requests to the address typed in, with the stored headers."""
+    import asyncio
+    from providers import special
+    _ensure_writable_workspace(name)
+    return await asyncio.to_thread(special.check, payload, name)
 
 
 @router.put("/{name}/special-models")

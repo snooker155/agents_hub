@@ -119,7 +119,7 @@ function MemoryFileCard({ file, poolId }) {
   );
 }
 
-function MemoryPoolDetails({ pool }) {
+function MemoryPoolDetails({ pool, withWorkspace = false }) {
   const { t } = useI18n();
   const files = pool.files || [];
   const rawFiles      = files.filter(f => !f.rag_status || f.rag_status === 'raw');
@@ -142,7 +142,7 @@ function MemoryPoolDetails({ pool }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Link2 className="w-4 h-4 text-indigo-500 shrink-0" />
-              <h3 className="font-bold text-gray-900">{poolName(pool, t)}</h3>
+              <h3 className="font-bold text-gray-900">{poolName(pool, t, withWorkspace)}</h3>
               <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
                 <CheckCircle className="w-3 h-3" /> {t('agentDetails.connected')}
               </span>

@@ -1,7 +1,7 @@
 import { ChatColumn, FILL_COLUMN } from '../ChatColumn';
 import EntityChat from '../EntityChat';
 import SystemAgentWarning from './SystemAgentWarning';
-import { BookOpen, FileCode, GitBranch, Loader, Save, Terminal, Zap } from 'lucide-react';
+import { BookOpen, FileCode, GitBranch, Loader, RotateCcw, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
 
 /** The definition: the prompt files alone. Versions, guardrails, the pulse and
@@ -10,13 +10,36 @@ export default function ConfigTab() {
   const {
     agent, agentDefinition, defChat, defDraft, defError, defSaving,
     definitionChat, handleDefinitionDraftChange,
-    handleResetDefinitionField, handleSaveDefinitionField, setActiveTab, t,
+    handleResetDefinitionField, handleRestoreShippedDefinition, handleSaveDefinitionField,
+    restoringShipped, setActiveTab, t,
   } = useAgentPage();
+  const customizedParts = agentDefinition.customized_parts || [];
   return (
         <>
         <div className={defChat.gridClass}>
           <div className={`space-y-6 ${defChat.mainClass}`}>
           {agent.system && <SystemAgentWarning scope="config" />}
+          {agentDefinition.customized && (
+            <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900">{t('agentDetails.shippedText.title')}</p>
+                <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                  {t('agentDetails.shippedText.body', { files: customizedParts.map((p) => `${p}.md`).join(', ') })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRestoreShippedDefinition}
+                disabled={restoringShipped}
+                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
+              >
+                {restoringShipped
+                  ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  : <RotateCcw className="w-3.5 h-3.5 mr-1" />}
+                {t('agentDetails.shippedText.restore')}
+              </button>
+            </div>
+          )}
           {agent.extends && (
             <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
               <p className="text-xs text-indigo-700 flex items-center gap-2">
@@ -52,6 +75,7 @@ export default function ConfigTab() {
                       <Icon className="w-5 h-5 mr-2 text-indigo-600" />
                       {label}
                       {required && <span className="ml-2 text-[10px] uppercase tracking-wide font-bold text-red-500">{t('agentDetails.required')}</span>}
+                      {customizedParts.includes(key) && <span className="ml-2 text-[10px] uppercase tracking-wide font-bold text-amber-600">{t('agentDetails.shippedText.edited')}</span>}
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">{desc}</p>
                   </div>
@@ -78,7 +102,7 @@ export default function ConfigTab() {
                   value={draft}
                   onChange={e => handleDefinitionDraftChange(key, e.target.value)}
                   spellCheck={false}
-                  className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none"
                   placeholder={required ? t('agentDetails.definitionRequired') : t('agentDetails.definitionOptional')}
                 />
                 {error && (

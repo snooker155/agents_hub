@@ -165,3 +165,106 @@ def test_written_env_is_accepted_by_the_service_settings(tmp_path, fake_probe, m
     s = Settings(_env_file=str(target / ".env"))
     assert s.demo_workspace is False
     assert s.auth_mode == "multi"
+
+
+# ---- the assistant's voice -------------------------------------------------
+
+
+def test_voice_from_a_cloud_provider_picks_its_models_and_voice():
+    plan = W.Plan(providers={"openai": {"model": "gpt-5.4", "models": [], "presets": {}}})
+    W.step_voice(_asker({"voice": {"mode": "cloud", "voice": "nova"}}), plan)
+    assert plan.voice["speech"] == {"provider": "openai", "model": "gpt-4o-mini-tts", "price_usd": 0.015,
+                                    "options": {"voice": "nova"}}
+    assert plan.voice["transcription"]["model"] == "gpt-4o-mini-transcribe"
+    assert any("speech model to openai/gpt-4o-mini-tts" in line for line in W.actions(plan))
+
+
+def test_without_a_cloud_provider_the_voice_defaults_to_the_browser():
+    plan = W.Plan(fresh=True, quick=False)
+    W.step_voice(_asker({}), plan)
+    assert plan.voice == {"mode": "browser"}
+    with pytest.raises(SetupError, match="expected one of"):
+        W.step_voice(_asker({"voice": {"mode": "cloud"}}), W.Plan(fresh=True))
+
+
+def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
+    plan = W.Plan(fresh=True)
+    W.step_voice(_asker({}), plan)
+    W.step_features(_asker({}), plan)
+    assert plan.voice == {} and "DEMO_WORKSPACE" not in plan.env
+    # An answers file that names them still applies them.
+    answered = W.Plan(fresh=True)
+    W.step_voice(_asker({"voice": {"mode": "browser"}}), answered)
+    W.step_features(_asker({"demo": True}), answered)
+    assert answered.voice == {"mode": "browser"} and answered.env["DEMO_WORKSPACE"] == "1"
+
+
+def test_voice_on_the_hub_runtime_lists_engines_and_downloads():
+    plan = W.Plan(fresh=True)
+    W.step_voice(_asker({"voice": {"mode": "local", "speech": "kokoro", "transcription": "whisper-small"}}), plan)
+    assert plan.voice["speech"] == {"provider": "hub-local", "model": "kokoro-v1.0", "options": {}}
+    assert plan.voice["engines"] == ["whisper", "kokoro"]
+    assert [p for _, p, _ in plan.voice["packages"]] == ["faster-whisper-small", "kokoro-v1.0"]
+    assert any(line.startswith("install the whisper and kokoro engines") for line in W.actions(plan))
+
+
+def test_voice_is_saved_in_the_default_workspace_keeping_its_other_models():
+    from providers import special
+    from workspace import create_workspace_folder
+    create_workspace_folder("default")
+    special.save("default", {"image": {"provider": "openai", "model": "gpt-image-1"}})
+    plan = W.Plan(providers={"openai": {"model": "gpt-5.4", "models": [], "presets": {}}})
+    a = _asker({"voice": {"mode": "cloud", "voice": "onyx"}})
+    W.step_voice(a, plan)
+    W._apply_voice_local(a, plan)
+    stored = special.stored("default")
+    assert stored["image"]["model"] == "gpt-image-1"
+    assert stored["speech"]["options"] == {"voice": "onyx"} and stored["transcription"]["price_usd"] == 0.003
+
+
+def test_a_stack_in_docker_gets_the_runtime_work_and_the_models_over_its_api(monkeypatch):
+    import requests
+    calls = []
+    jobs = {"j1": [{"status": "running", "percent": 40}, {"status": "done"}], "j2": [{"status": "done"}]}
+
+    class _R:
+        def __init__(self, body):
+            self.ok, self.status_code, self.text = True, 200, ""
+            self._body = body
+            self.content = b"{}"
+
+        def json(self):
+            return self._body
+
+    def fake(method, url, headers=None, timeout=None, json=None):
+        path = url.split("8080", 1)[1]
+        calls.append((method, path, json, headers))
+        if path == "/api/models/local/runtime":
+            return _R({"ok": True, "engines": {"whisper": True, "kokoro": False},
+                       "models": [{"name": "faster-whisper-small"}]})
+        if path.endswith("/engines/kokoro/install"):
+            return _R({"job_id": "j1"})
+        if path.endswith("/download"):
+            return _R({"job_id": "j2"})
+        if "/jobs/" in path:
+            return _R(jobs[path.rsplit("/", 1)[1]].pop(0))
+        if method == "GET":
+            return _R({"own": {"image": {"provider": "openai", "model": "gpt-image-1"}}})
+        return _R({})
+
+    monkeypatch.setattr(requests, "request", fake)
+    monkeypatch.setattr(W.time, "sleep", lambda s: None)
+    plan = W.Plan(shape="docker", auth="token", env={"AGENTS_HUB_API_TOKEN": "tok"})
+    a = _asker({"voice": {"mode": "local", "speech": "kokoro", "transcription": "whisper-small"}})
+    W.step_voice(a, plan)
+    W._apply_voice_http(a, plan, None)
+
+    sent = [(m, p) for m, p, _, _ in calls]
+    assert ("POST", "/api/models/local/runtime/engines/whisper/install") not in sent  # already there
+    assert ("POST", "/api/models/local/runtime/engines/kokoro/install") in sent
+    downloads = [j for m, p, j, _ in calls if p.endswith("/download")]
+    assert downloads == [{"repo": "fastrtc/kokoro-onnx", "package": "kokoro-v1.0"}]  # whisper was there
+    [put] = [j for m, p, j, _ in calls if m == "PUT"]
+    assert put["image"]["model"] == "gpt-image-1"
+    assert put["speech"]["model"] == "kokoro-v1.0" and put["transcription"]["provider"] == "hub-local"
+    assert all(h == {"Authorization": "Bearer tok"} for *_, h in calls)

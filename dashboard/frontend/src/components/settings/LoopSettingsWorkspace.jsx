@@ -3,7 +3,7 @@ import { CheckCircle, Save } from 'lucide-react';
 import { getWorkspaceLoopSettings, updateWorkspaceLoopSettings } from '../../api/loopSettings';
 import { useI18n } from '../../i18n';
 
-const fieldCls = 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+const fieldCls = 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none';
 
 // Loop settings key -> its i18n sub-namespace (dot path under
 // `loopSettings.fields`) and, for a number, its input step and range. The

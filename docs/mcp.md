@@ -3,7 +3,7 @@
 An MCP server is somebody else's tool collection, speaking the Model Context
 Protocol: a filesystem bridge, a ticket system, an internal service that already
 talks the protocol. Attach one and its tools become ordinary hub tools an agent
-can be granted. **Connect → MCP servers** in the sidebar.
+can be granted. **Integrations → MCP servers** in the sidebar.
 
 The same direction as [connectors](connectors.md): this hub reaches out to
 something you already run. The difference is what comes back. A connector is a
@@ -14,6 +14,10 @@ that attaching a Telegram bot does not.
 Configured per [workspace](workspaces.md). A server attached to one workspace is
 invisible to agents built in another, because the configuration lives inside the
 workspace record rather than beside it.
+
+This page is about the hub as an MCP client. For the other direction, the hub
+serving its agents to Claude Code, Cursor and other clients, see
+[the hub as an MCP server](hub-as-mcp-server.md).
 
 ## In the dashboard
 

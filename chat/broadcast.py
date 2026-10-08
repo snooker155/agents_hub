@@ -28,14 +28,39 @@ Three points are deliberate:
 """
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Optional
 
 from common import live_runs
 
+log = logging.getLogger(__name__)
+
 
 def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def announce_running_change(conversation_id: Optional[str]) -> None:
+    """Tell every open Chat page that a conversation's turn began or ended, so
+    the list can mark the conversations being answered (GET /api/chats/running
+    says which; the event names none, since not every page may see every chat).
+
+    Not from a service replica: its turns are announced by the backend it
+    posts their events to (routes/instances.py), which is the one that keeps
+    them (common/live_runs.record_conversation_event).
+    """
+    if not conversation_id:
+        return
+    from instances.registry import ENV_INSTANCE_ID
+    if os.environ.get(ENV_INSTANCE_ID):
+        return
+    try:
+        from common.session_broker import notify_change
+        notify_change("chat_turns")
+    except Exception:  # noqa: BLE001 - a mark in a list is an extra, never the turn
+        log.debug("could not announce a running change", exc_info=True)
 
 
 def channel_for(conversation_id: Optional[str]) -> Optional[str]:
@@ -79,7 +104,7 @@ def _publish_now(channel: Optional[str], event: Dict[str, Any]) -> None:
         pass
 
 
-def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> None:
+def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
     """Record a completed turn in the stored chat, unless the browser did.
 
     Only for the web chat, and only for a conversation the dashboard already
@@ -87,25 +112,26 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> None:
     and is rebuilt from the runs behind it; an instance delivery has no
     conversation page at all. Writing either into the chat store would fill the
     sidebar with conversations nothing opens, or append a second copy of a
-    transcript that is reconstructed anyway.
+    transcript that is reconstructed anyway. Returns whether anything was written.
     """
     from common import chat_store
 
     if (getattr(request, "source", None) or "chat") != "chat":
-        return
+        return False
     run_id = str(event.get("run_id") or "")
     response = str(event.get("response") or "")
     if not run_id or not response.strip() or not event.get("ok"):
-        return
+        return False
     user_message = str(getattr(request, "message", "") or "")
     # A turn that changed hands (chat/handoff.py) is one bubble per agent: each
     # handing agent's reply, then the answer, which carries the handoff that
     # brought it (the chat draws the divider from it). The user's message goes
     # in front of the first bubble only.
     handoffs = [h for h in (event.get("handoffs") or []) if isinstance(h, dict)]
+    written = False
     try:
         for i, h in enumerate(handoffs):
-            chat_store.append_turn(
+            written |= chat_store.append_turn(
                 conversation_id,
                 run_id=str(h.get("run_id") or ""),
                 user_message=user_message if i == 0 else "",
@@ -120,7 +146,7 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> None:
         extra = {k: event[k] for k in ("citations", "entities") if event.get(k)}
         if handoffs:
             extra["handoff"] = handoffs[-1]
-        chat_store.append_turn(
+        written |= chat_store.append_turn(
             conversation_id,
             run_id=run_id,
             user_message="" if handoffs else user_message,
@@ -135,6 +161,7 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> None:
             chat_store.set_agent(conversation_id, str(event["agent_id"]))
     except Exception:  # noqa: BLE001 - the safety net must never fail the turn it records
         pass
+    return written
 
 
 async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
@@ -151,7 +178,11 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
 
     turn_id = live_runs.start_turn(conversation_id=conversation_id,
                                    user_message=user_message, source=source)
+    announce_running_change(conversation_id)
     stamp = {"conversation_id": conversation_id, "origin_client": origin_client}
+    client_turn_id = getattr(request, "client_turn_id", None)
+    if client_turn_id:
+        stamp["client_turn_id"] = client_turn_id
 
     await _publish(channel, {
         **stamp,
@@ -170,25 +201,34 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
             live_runs.record(turn_id, event)
             await _publish(channel, {**event, **stamp})
             if event.get("type") == "done" and conversation_id:
-                _persist_turn(conversation_id, request, event)
+                if _persist_turn(conversation_id, request, event):
+                    # A page with the chat open reloads it, as after any other
+                    # save; the page still writing this turn waits until it is
+                    # done (components/chatStore.js).
+                    await _publish(channel, {"type": "chat_saved", "chat_id": conversation_id,
+                                             "conversation_id": conversation_id,
+                                             "origin_client": None})
             yield event
     except GeneratorExit:
         # The caller walked away — its browser navigated off the page. Whoever
         # else is watching is told, without awaiting (see _publish_now).
         live_runs.finish(turn_id, status="finished")
+        announce_running_change(conversation_id)
         _publish_now(channel, end_event)
         raise
     except Exception as e:
         live_runs.finish(turn_id, status="failed", error=str(e))
+        announce_running_change(conversation_id)
         await _publish(channel, {**stamp, "type": "done", "ok": False, "error": str(e)})
         await _publish(channel, end_event)
         raise
     else:
         live_runs.finish(turn_id, status="finished")
+        announce_running_change(conversation_id)
         # The sentinel says the turn is over whatever happened, so a follower can
         # stop showing it as live without waiting on a terminal event it might
         # never get.
         await _publish(channel, end_event)
 
 
-__all__ = ["broadcast_turn", "channel_for"]
+__all__ = ["announce_running_change", "broadcast_turn", "channel_for"]

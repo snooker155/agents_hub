@@ -70,6 +70,11 @@ class Asker:
         """A hidden value. Empty keeps ``current`` (shown masked) when there is one."""
         raise NotImplementedError
 
+    def answered(self, key: str) -> bool:
+        """Whether an answer for ``key`` was given in advance (an answers file),
+        so a question QuickStart leaves out is still applied when one was."""
+        return False
+
     def confirm(self, key: str, question: str, default: bool = True) -> bool:
         raise NotImplementedError
 
@@ -187,6 +192,9 @@ class AnswersAsker(Asker):
             else:
                 return self._MISSING
         return node
+
+    def answered(self, key: str) -> bool:
+        return self._get(key) is not self._MISSING
 
     def _echo(self, question: str, value: Any) -> None:
         self.console.print(f"  [dim]{question}[/dim] {value}")

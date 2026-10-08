@@ -63,7 +63,7 @@ function fmtDate(iso) {
   }
 }
 
-const field = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+const field = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none';
 const label = 'block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1';
 
 function envToText(env) {

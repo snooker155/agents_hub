@@ -59,6 +59,16 @@ features:
 
 <div class="shot">
 
+[![The Assistant page, the live mark over the latest answer, the talk button and the transcript beside it](/screenshots/assistant.png)](/screenshots/assistant.png)
+
+**Assistant.** The whole service through one agent, by voice or text. Hold the
+button and speak, hear the first paragraph of the answer, and open the pages it
+links beside the conversation.
+
+</div>
+
+<div class="shot">
+
 [![The Agents page, a grid of agent cards with their tools, instances, services and sessions](/screenshots/agents.png)](/screenshots/agents.png)
 
 **Agents.** Every agent is a folder of layered markdown. Tools are granted by

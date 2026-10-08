@@ -3,10 +3,7 @@ export default {
   description: 'Jede laufende Kopie jedes Agenten — auch die, die im Standby warten.',
   descriptionInWorkspace: 'Laufende Agentenkopien im Workspace „{{workspace}}".',
   loading: 'Instanzen werden geladen…',
-  showing: '{{shown}} von {{total}}',
   groupCount: '{{live}} aktiv · {{total}} gesamt',
-  loadMore_one: '1 weitere laden',
-  loadMore_other: '{{count}} weitere laden',
   empty: {
     title: 'Noch keine Instanzen',
     hint: 'Eine Kopie erscheint hier, sobald ein Agent zu arbeiten beginnt, aus einer Aufgabe, einem Chat, einer residenten Instanz oder einem Flow.',

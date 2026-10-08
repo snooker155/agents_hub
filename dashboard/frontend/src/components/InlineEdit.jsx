@@ -62,7 +62,7 @@ export default function InlineEdit({ value, onSave, multiline = false, className
       {multiline ? (
         <textarea
           ref={ref}
-          className={`border border-indigo-300 rounded px-2 py-1 text-sm resize-none w-full focus:outline-none focus:ring-1 focus:ring-indigo-400 ${className}`}
+          className={`border border-indigo-300 rounded px-2 py-1 text-sm resize-none w-full focus:outline-none ${className}`}
           rows={4}
           value={draft}
           onChange={e => setDraft(e.target.value)}
@@ -72,7 +72,7 @@ export default function InlineEdit({ value, onSave, multiline = false, className
         <input
           ref={ref}
           type="text"
-          className={`border border-indigo-300 rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-indigo-400 ${className}`}
+          className={`border border-indigo-300 rounded px-2 py-1 text-sm w-full focus:outline-none ${className}`}
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') cancel(); }}

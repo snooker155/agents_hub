@@ -17,6 +17,8 @@ import RunStatusBadge from '../components/RunStatusBadge';
 import { useI18n, statusLabel } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 // ---- helpers ----------------------------------------------------------------
 
 
@@ -32,11 +34,6 @@ function duration(started, finished) {
 
 // ---- Main page --------------------------------------------------------------
 
-// One window of sessions per request — large enough for a single round-trip
-// in the common case, small enough that the first paint never waits on the
-// whole table.
-const PAGE_SIZE = 200;
-
 export default function Sessions() {
   const { t } = useI18n();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
@@ -44,7 +41,6 @@ export default function Sessions() {
 
   const [sessions, setSessions]     = useState([]);
   const [totalSessions, setTotalSessions] = useState(0);
-  const [offset, setOffset]         = useState(0);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading]       = useState(true);
 
@@ -71,12 +67,24 @@ export default function Sessions() {
     ? 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1fr_0.7fr_0.7fr_0.6fr_140px]'
     : 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_0.7fr_0.7fr_0.6fr_140px]';
 
+  // Sort keys the backend orders by (common/session_service.py); the
+  // workspace one only where the Workspace column is shown.
+  const sortKeys = isDefaultWorkspace
+    ? ['created', 'title', 'messages', 'workspace']
+    : ['created', 'title', 'messages'];
+  const paging = useListPaging('sessions', {
+    sorts: sortKeys,
+    defaultSort: 'created',
+    resetOn: [effectiveWorkspace, filterStatus, filterFlow, filterFrom, filterTo],
+  });
+  const pageParams = paging.params;
+
   // The backend filters, orders and pages in SQL and answers {items, total, ...};
-  // the page asks for one window and grows it on demand.
+  // the page asks for the one page on screen.
   const [refreshing, setRefreshing] = useState(false);
-  const fetchSessions = useCallback(async (nextOffset = 0, append = false) => {
+  const fetchSessions = useCallback(async () => {
     try {
-      const params = { limit: PAGE_SIZE, offset: nextOffset };
+      const params = { ...pageParams };
       if (effectiveWorkspace) params.workspace = effectiveWorkspace;
       if (filterStatus) params.status = filterStatus;
       if (filterFrom)   params.from_date = filterFrom;
@@ -86,15 +94,14 @@ export default function Sessions() {
       const res = await getSessions(params);
       const data = res.data || {};
       const items = Array.isArray(data) ? data : (data.items || []);
-      setSessions(prev => (append ? [...prev, ...items] : items));
+      setSessions(items);
       setTotalSessions(Array.isArray(data) ? items.length : (data.total || 0));
-      setOffset(nextOffset);
     } catch (err) {
       console.error('Failed to load sessions', err);
     } finally {
       setLoading(false);
     }
-  }, [effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow]);
+  }, [effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow, pageParams]);
 
   useEffect(() => { setFilterWorkspace(selectedWorkspace || ''); }, [selectedWorkspace]);
 
@@ -104,9 +111,9 @@ export default function Sessions() {
 
   useEffect(() => {
     setLoading(true);
-    fetchSessions(0, false);
+    fetchSessions();
   }, [fetchSessions, liveUpdates]);
-  useLiveRefetch(() => fetchSessions(0, false), { type: 'sessions.changed', enabled: liveUpdates });
+  useLiveRefetch(() => fetchSessions(), { type: 'sessions.changed', enabled: liveUpdates });
 
   useEffect(() => {
     const visible = new Set(sessions.map(s => s.session_id));
@@ -206,7 +213,7 @@ export default function Sessions() {
             {t('sessions.deleteSelected')}
           </button>
           <button
-            onClick={() => { setRefreshing(true); fetchSessions(0, false).finally(() => setRefreshing(false)); }}
+            onClick={() => { setRefreshing(true); fetchSessions().finally(() => setRefreshing(false)); }}
             disabled={refreshing}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-60"
           >
@@ -223,7 +230,7 @@ export default function Sessions() {
             <div className="flex-1 min-w-[160px]">
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.workspace')}</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
                 value={filterWorkspace}
                 onChange={e => setFilterWorkspace(e.target.value)}
               >
@@ -236,7 +243,7 @@ export default function Sessions() {
           <div className="flex-1 min-w-[140px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.status')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
             >
@@ -248,7 +255,7 @@ export default function Sessions() {
           <div className="flex-1 min-w-[140px]">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.type')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterFlow}
               onChange={e => setFilterFlow(e.target.value)}
             >
@@ -263,7 +270,7 @@ export default function Sessions() {
             <DateInput
               mode="datetime"
               valueFormat="iso"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterFrom}
               onChange={setFilterFrom}
             />
@@ -274,11 +281,13 @@ export default function Sessions() {
             <DateInput
               mode="datetime"
               valueFormat="iso"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none"
               value={filterTo}
               onChange={setFilterTo}
             />
           </div>
+
+          <ListPagingControls paging={paging} options={sortKeys} />
 
           {hasFilters && (
             <button
@@ -293,7 +302,7 @@ export default function Sessions() {
 
       {/* Sessions list */}
       <div className="space-y-4">
-        {loading ? (
+        {loading && !sessions.length ? (
           <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : sessions.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
@@ -310,7 +319,7 @@ export default function Sessions() {
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                 />
               </div>
               <div>{t('sessions.session')}</div>
@@ -337,7 +346,7 @@ export default function Sessions() {
                       checked={!!selectedIds[session.session_id]}
                       onChange={() => setSelectedIds(prev => ({ ...prev, [session.session_id]: !prev[session.session_id] }))}
                       onClick={e => e.stopPropagation()}
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                     />
                   </div>
 
@@ -416,24 +425,11 @@ export default function Sessions() {
                 </div>
               ))}
             </div>
-            {sessions.length < totalSessions && (
-              <button
-                type="button"
-                onClick={() => fetchSessions(offset + PAGE_SIZE, true)}
-                className="w-full py-2.5 text-sm text-indigo-600 hover:bg-indigo-50 border-t border-gray-100"
-              >
-                {t('sessions.loadMore', { count: totalSessions - sessions.length })}
-              </button>
-            )}
           </div>
         )}
       </div>
 
-      {!loading && sessions.length > 0 && (
-        <p className="text-xs text-gray-400 text-right">
-          {t('sessions.shownOfTotal', { shown: sessions.length, total: totalSessions })}
-        </p>
-      )}
+      <ListLoadMore paging={paging} shown={sessions.length} total={totalSessions} loading={loading} />
     </PageContainer>
   );
 }

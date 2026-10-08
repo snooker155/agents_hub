@@ -179,6 +179,20 @@ def test_ensure_demo_workspace_is_idempotent():
     assert len(demo_tasks) == 6  # not duplicated by the second call
 
 
+def test_a_present_demo_gets_back_a_missing_prompt(isolated_definitions):
+    """An install seeded while the prompts lived in agents/definitions/ keeps
+    its demo agents and gets their instructions written again."""
+    import shutil
+
+    from agents.prompt_assembly import has_definition
+    from common.demo_workspace import ensure_demo_workspace
+
+    assert ensure_demo_workspace() is True
+    shutil.rmtree(isolated_definitions / "demo_writer")
+    assert ensure_demo_workspace() is False
+    assert has_definition("demo_writer")
+
+
 def test_capability_guard_accepts_the_demo_agents():
     from agents.registry import get_agent
     from common.demo_workspace import DEMO_AGENT_IDS, ensure_demo_workspace

@@ -38,5 +38,4 @@ export default {
   },
   childRuns: 'Runs in this group',
   noChildRuns: 'No agent runs recorded for this group yet.',
-  shownOfTotal: 'Showing {{shown}} of {{total}}',
 };

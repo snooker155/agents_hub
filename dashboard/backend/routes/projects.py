@@ -35,7 +35,7 @@ from projects.models import Project, RepoConfig
 from projects.storage import ProjectStore
 from common.paths import PROJECTS_FILE, PROJECT_ROOT, AGENTS_HUB_ROOT
 from chat.errors import error_event as _error_event
-from chat.entity_chat import EntityChatSpec
+from chat.entity_chat import EntityChatSpec, settle_tool_step
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 from projects import git_service, planner_service, proxy_service
 from projects.errors import ServiceError
@@ -1124,6 +1124,8 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
         recorded = list(getattr(queue, "recorded", []))
         turn_items = [{"k": "user", "text": user_message}]
         for ev in recorded:
+            if settle_tool_step(turn_items, ev):
+                continue
             item = _trace_item_for(ev)
             if item:
                 turn_items.append(item)
@@ -1454,6 +1456,8 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
         recorded = list(getattr(queue, "recorded", []))
         turn_items = [{"k": "user", "text": user_message}]
         for ev in recorded:
+            if settle_tool_step(turn_items, ev):
+                continue
             item = _trace_item_for(ev)
             if item:
                 turn_items.append(item)

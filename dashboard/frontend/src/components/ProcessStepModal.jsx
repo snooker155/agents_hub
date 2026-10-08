@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import ObjectTree from './ObjectTree';
+import ToolStatusMark from './ToolStatusMark';
+import { toolStatus } from './toolStatus';
 import PolicyBadge from './PolicyBadge';
 import { parseToolOutput } from './toolFormatters';
 import { useI18n } from '../i18n';
@@ -49,8 +51,15 @@ function ParsedSection({ title, raw, tone }) {
 export function ToolCallDetail({ tc }) {
   const { t } = useI18n();
   const echo = tc.tool === 'think' || tc.tool === 'plan';
+  const status = toolStatus(tc);
   return (
     <div className="space-y-4">
+      {!echo && (
+        <div className="flex items-center gap-2 text-xs text-gray-600" data-testid="tool-call-status">
+          <ToolStatusMark status={status} />
+          <span>{t(`chat.toolStatus.${status}`)}</span>
+        </div>
+      )}
       {tc.evaluated_permission && (
         <div className="flex items-center gap-2 text-xs text-gray-500" data-testid="tool-call-policy">
           <span>{t('policyTrail.detail')}</span>
@@ -61,7 +70,7 @@ export function ToolCallDetail({ tc }) {
         <ParsedSection title={t('processGraph.input')} raw={tc.input} tone="text-gray-700" />
       )}
       {(tc.output || (echo && tc.input)) ? (
-        <ParsedSection title={t('processGraph.output')} raw={tc.output || tc.input} tone="text-emerald-700" />
+        <ParsedSection title={t('processGraph.output')} raw={tc.output || tc.input} tone={status === 'error' ? 'text-red-700' : 'text-emerald-700'} />
       ) : (
         <p className="text-xs text-gray-400 italic">{t('processGraph.noOutput')}</p>
       )}

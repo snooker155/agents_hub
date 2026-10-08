@@ -47,6 +47,14 @@ export default {
     updateFailed: 'Das Konto konnte nicht geändert werden.',
     deleteFailed: 'Das Konto konnte nicht gelöscht werden.',
     passwordFailed: 'Das Passwort konnte nicht gesetzt werden.',
+    limit: 'Limit pro Monat',
+    limitOf: '{{spent}} von {{limit}}',
+    limitNone: '{{spent}}, kein Limit',
+    limitFromDefault: 'Standard',
+    limitPrompt: 'Monatliches Ausgabenlimit für {{name}} in USD. 0 heißt kein Limit; leer lassen, um dem Standard zu folgen.',
+    limitInvalid: 'Ein Limit ist ein Dollarbetrag, 0 oder mehr.',
+    defaultLimit: 'Standardlimit pro Person, USD pro Monat',
+    defaultLimitHint: 'Gilt für alle ohne eigenes Limit. 0 heißt kein Limit. Ist es erreicht, werden Läufe und Chat-Züge abgelehnt.',
   },
 
   members: {

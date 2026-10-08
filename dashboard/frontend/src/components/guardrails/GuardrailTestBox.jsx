@@ -46,7 +46,7 @@ function SequenceTestBox({ guardrail }) {
       <p className="text-[11px] text-gray-400">{t('guardrails.testBox.callsHint')}</p>
       <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)}
         aria-label={t('guardrails.testBox.callsLabel')}
-        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none" />
       <button onClick={run} disabled={running || !text.trim()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
         {running ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
@@ -112,7 +112,7 @@ function TextTestBox({ guardrail }) {
       </div>
       <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)}
         placeholder={t('guardrails.testBox.textPlaceholder')}
-        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" />
       <button onClick={run} disabled={running || !text.trim()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
         {running ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}

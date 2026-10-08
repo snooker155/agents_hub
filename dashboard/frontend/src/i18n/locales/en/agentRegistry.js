@@ -1,6 +1,7 @@
 export default {
   title: 'Agent registry',
   description: 'Every agent and MCP server across every workspace, who made it, and whether it is cleared to be shared.',
+  descriptionWorkspace: 'This workspace\'s agents, flows, skills and MCP servers: who made each one and whether it is cleared to be shared.',
   refresh: 'Refresh',
   loading: 'Loading the registry…',
   search: 'Search…',

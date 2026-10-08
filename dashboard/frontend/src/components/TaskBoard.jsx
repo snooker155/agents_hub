@@ -462,7 +462,7 @@ function AssignAgentModal({ task, agents, flows, onClose, onAssigned }) {
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskBoard.selectAgent')}</label>
             <select
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
               value={selectedAgent}
               onChange={e => setSelectedAgent(e.target.value)}
             >
@@ -476,7 +476,7 @@ function AssignAgentModal({ task, agents, flows, onClose, onAssigned }) {
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskBoard.selectFlow')}</label>
             <select
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
               value={selectedFlow}
               onChange={e => setSelectedFlow(e.target.value)}
             >

@@ -24,7 +24,7 @@ Three modes, chosen with ``AUTH_MODE`` (see docs/identity.md):
     Named users with passwords, sessions, a global role (``admin`` /
     ``member``) and per-workspace membership roles (``owner`` / ``editor`` /
     ``viewer``). Stage 3 adds, on top of the same tables: accounts linked to
-    an external identity (single sign-on, ``common/oidc.py``, or SCIM
+    an external identity (single sign-on, ``ee/oidc.py``, or SCIM
     provisioning), groups and the rules that turn them into roles
     (``common/groups.py``), personal API keys that act as their owner
     (``common/api_keys.py``), session metadata and revocation, a login
@@ -152,7 +152,10 @@ def mode_features() -> Dict[str, bool]:
     """
     mode = current_mode()
     from common.config import settings
-    oidc = bool((getattr(settings, "auth_oidc_issuer", "") or "").strip())
+    from common.edition import enterprise_available
+    # Single sign-on and SCIM live in ee/; without it they are not offered.
+    enterprise = enterprise_available()
+    oidc = enterprise and bool((getattr(settings, "auth_oidc_issuer", "") or "").strip())
     return {
         "login": mode == MULTI,
         "users": mode == MULTI,
@@ -165,7 +168,7 @@ def mode_features() -> Dict[str, bool]:
         "api_keys": mode == MULTI,
         "groups": mode == MULTI,
         "audit": mode != SINGLE,
-        "scim": mode == MULTI and bool((getattr(settings, "auth_scim_token", "") or "").strip()),
+        "scim": mode == MULTI and enterprise and bool((getattr(settings, "auth_scim_token", "") or "").strip()),
     }
 
 
@@ -225,6 +228,10 @@ def _row_to_user(row) -> Dict[str, Any]:
         # Whether a password login is possible at all: an account provisioned
         # by SSO or SCIM has no password until an admin sets one.
         "has_password": bool(col("password_hash")),
+        # Own monthly spend limit (common/user_budget.py); None follows the
+        # hub default, 0 is unlimited.
+        "spend_limit_usd": (float(col("spend_limit_usd"))
+                            if col("spend_limit_usd") is not None else None),
     }
 
 
@@ -441,6 +448,22 @@ def upsert_external_user(issuer: str, subject: str, *, username: str = "",
     return user
 
 
+def set_spend_limit(user_id: str, limit_usd: Optional[float]) -> Optional[Dict[str, Any]]:
+    """Set a person's own monthly spend limit (``None`` = follow the hub
+    default, ``0`` = unlimited). Returns the updated user, None when unknown."""
+    if limit_usd is not None:
+        limit_usd = float(limit_usd)
+        if limit_usd < 0:
+            raise ValueError("a spend limit cannot be negative")
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET spend_limit_usd = ?, updated_at = ? WHERE user_id = ?",
+            (limit_usd, _iso(_now()), str(user_id)))
+        if not cursor.rowcount:
+            return None
+    return get_user(user_id)
+
+
 def set_password(user_id: str, password: str) -> bool:
     """Set a user's password and drop every session they held.
 
@@ -508,7 +531,7 @@ def open_session(user_id: str, *, kind: str = SESSION_PASSWORD, ip: Optional[str
     Returns ``{token, expires_at, session_id, user}`` or None for an unknown
     or disabled account. The credential check happens before this: a
     verified password (:func:`login`), a verified id token
-    (``common/oidc.py``), or the bootstrap.
+    (``ee/oidc.py``), or the bootstrap.
     """
     row = db.get_conn().execute("SELECT * FROM users WHERE user_id = ?",
                                 (str(user_id),)).fetchone()
@@ -1148,7 +1171,7 @@ __all__ = [
     "remove_member", "request_principal", "require_role", "reset_current_user",
     "revoke_other_sessions", "revoke_session",
     "service_token", "session_for_token", "set_current_user", "set_member",
-    "set_password", "set_preferences",
+    "set_password", "set_preferences", "set_spend_limit",
     "update_user", "upsert_external_user", "user_count", "user_for_session",
     "verify_password", "workspace_roles_for_user", "workspaces_for_user",
     "required_workspace_role",

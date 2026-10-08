@@ -191,7 +191,7 @@ const WebLogs = () => {
         <select
           value={filters.kind}
           onChange={(e) => applyFilter({ kind: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
         >
           <option value="">{t('webLogs.allCalls')}</option>
           <option value="search">{t('webLogs.searches')}</option>
@@ -200,7 +200,7 @@ const WebLogs = () => {
         <select
           value={filters.status}
           onChange={(e) => applyFilter({ status: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
         >
           <option value="">{t('webLogs.anyOutcome')}</option>
           <option value="ok">{t('webLogs.succeeded')}</option>
@@ -212,7 +212,7 @@ const WebLogs = () => {
         <select
           value={filters.min_severity}
           onChange={(e) => applyFilter({ min_severity: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
         >
           <option value="">{t('webLogs.anySeverity')}</option>
           <option value="low">{t('webLogs.flaggedLowAndUp')}</option>
@@ -225,7 +225,7 @@ const WebLogs = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('webLogs.searchQueryUrlAgentOr')}
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
           />
         </form>
         <span className="text-xs text-gray-400">{t('webLogs.matching', { count: total })}</span>

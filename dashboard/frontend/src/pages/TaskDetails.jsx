@@ -427,7 +427,7 @@ function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel }) {
               type="text"
               required
               placeholder={t('taskDetails.subtaskTitle')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               value={title}
               onChange={e => setTitle(e.target.value)}
             />
@@ -437,7 +437,7 @@ function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel }) {
             <textarea
               rows={3}
               placeholder={t('taskDetails.describeWhatNeedsToBe')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"
               value={description}
               onChange={e => setDescription(e.target.value)}
             />
@@ -1339,7 +1339,7 @@ const TaskDetails = () => {
                 }}
                 rows={2}
                 placeholder={t('taskDetails.typeYourAnswerCtrlEnter')}
-                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300 resize-y"
+                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none resize-y"
               />
               <button
                 type="button"
@@ -1380,7 +1380,7 @@ const TaskDetails = () => {
                 step="0.01"
                 value={budgetCapDraft}
                 onChange={(e) => setBudgetCapDraft(e.target.value)}
-                className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+                className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none"
               />
               <button
                 type="button"
@@ -1422,7 +1422,7 @@ const TaskDetails = () => {
                 value={approvalNote}
                 onChange={(e) => setApprovalNote(e.target.value)}
                 placeholder={t('taskDetails.approvalNotePlaceholder')}
-                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none"
               />
               <button
                 type="button"

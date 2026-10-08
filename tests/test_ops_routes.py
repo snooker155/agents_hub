@@ -158,3 +158,16 @@ def test_metrics_contains_the_documented_metric_names(client):
         "agents_hub_tokens_total", "agents_hub_database_up", "agents_hub_info",
     ):
         assert f"# TYPE {name} gauge" in text, f"missing metric {name}"
+
+
+# ── /api/health features ─────────────────────────────────────────────────────
+
+def test_health_reports_cluster_only_outside_role_all(monkeypatch, client):
+    # The sidebar offers the Cluster page only when there are separate api and
+    # worker processes to show (dashboard/frontend/src/components/navMenu.js).
+    from common.config import settings
+    monkeypatch.delenv("AGENTS_HUB_ROLE", raising=False)
+    monkeypatch.setattr(settings, "role", "all", raising=False)
+    assert client.get("/api/health").json()["features"]["cluster"] is False
+    monkeypatch.setenv("AGENTS_HUB_ROLE", "api")
+    assert client.get("/api/health").json()["features"]["cluster"] is True

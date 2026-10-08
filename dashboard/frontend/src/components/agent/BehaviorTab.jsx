@@ -181,7 +181,7 @@ export default function BehaviorTab() {
                             setReasoningSettings(next);
                             updateAgentReasoning(id, { plan_format: e.target.value }).catch(() => {});
                           }}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none bg-white"
                         >
                           {PLAN_FORMATS.map(f => (
                             <option key={f.value} value={f.value}>{f.label} — {f.desc}</option>

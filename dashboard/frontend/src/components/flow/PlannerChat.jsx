@@ -205,7 +205,7 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
       <div className="border-t border-gray-100 p-3">
         <ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} className="mb-2" />
         <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-2.5
-          focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100 shadow-sm transition-all">
+          shadow-sm transition-all">
           <textarea
             ref={textareaRef}
             rows={1}

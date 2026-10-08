@@ -67,6 +67,10 @@ class ChatRequest(BaseModel):
     # scenario, loop, flow, team, agent or scheduled job the user picked in the
     # composer. Rendered into the prompt for this turn only.
     references: List[ChatReference] = []
+    # The message was spoken and transcribed (a Telegram voice note, see
+    # connectors/telegram/telegram_voice.py): the prompt says so, so the agent
+    # reads a misheard word as one rather than taking it literally.
+    voice: bool = False
     # Where this exchange originated, recorded as the run's ``message_origin`` so
     # the Messages list can distinguish e.g. Telegram runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.
@@ -75,6 +79,11 @@ class ChatRequest(BaseModel):
     # client id, so the server can deliver this run's events over the browser's
     # single existing /api/stream connection instead of a dedicated stream.
     client_id: Optional[str] = None
+    # The caller's own name for this turn, stamped on every event published to
+    # the conversation's channel. A tab following its turns over that channel
+    # (several conversations at once, each with its own turn) tells its turns
+    # apart by it, and a stopped turn's last events from the next one.
+    client_turn_id: Optional[str] = None
     # The Visualization Studio binds a conversation to one live view. When set,
     # the pipeline exposes it to the view mutation tools (via current_view_id)
     # and injects a compact scene-context note so the agent knows what it edits.

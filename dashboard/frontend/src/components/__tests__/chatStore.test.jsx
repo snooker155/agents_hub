@@ -97,6 +97,18 @@ describe('useConversationStore', () => {
     vi.useRealTimers();
   });
 
+  it('never writes a conversation with the Assistant: it is that page\'s record', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useConversationStore(null));
+    await act(async () => {});
+
+    act(() => { result.current.setConversations([{ ...CONV, id: 'assistant~user-local~s0', origin: 'assistant' }]); });
+    await settle();
+
+    expect(saveChat).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it('strips the live-turn fields and keeps the trail, clipped', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useConversationStore(null));
@@ -288,5 +300,16 @@ describe('useConversationStore', () => {
 
     renderHook(() => useConversationStore(null));
     await waitFor(() => expect(importChats).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('stored refusals', () => {
+  it('keeps a refusal on a saved message, so the card comes back after a reload', async () => {
+    const { stripForStorage } = await import('../chatStore');
+    const refusal = { code: 'budget', kind: 'workspace', agent_id: 'a1' };
+    const conv = { id: 'c1', messages: [{ role: 'assistant', error: true, refusal, running_tool: 'x' }] };
+    const [msg] = stripForStorage(conv).messages;
+    expect(msg.refusal).toEqual(refusal);
+    expect(msg.running_tool).toBeUndefined();
   });
 });

@@ -5,8 +5,8 @@ import { I18nProvider } from '../../../i18n';
 import LiveMark from '../LiveMark';
 import useSteadyState from '../useSteadyState';
 import { CX, CY, LOGO_SATS, LOGO_SPOKES, POSES, STATES, mixPose, poseFor, spokeLines } from '../poses';
-import { stateForTool, stateForTurn } from '../activity';
-import { SCENE_STATES, isScene, mountScene } from '../scenes';
+import { UNKNOWN_TOOL_STATES, stateForTool, stateForTurn } from '../activity';
+import { REBUILD_STATES, RELAY_STATES, SCENE_STATES, SEARCH_STATES, WORK_STATES, isScene, mountScene } from '../scenes';
 import { MessageBubble } from '../../chat/MessageBubble';
 
 const xy = (s) => [CX + s.d * Math.cos(s.a), CY + s.d * Math.sin(s.a)];
@@ -70,9 +70,68 @@ describe('what the mark shows for a step', () => {
     ['create_agent_tool', 'make-agent'], ['delegate_task_tool', 'delegate'], ['run_agent_tool', 'delegate'],
     ['run_code', 'code'], ['run_shell', 'code'], ['system_run_tests', 'code'],
     ['get_task', 'read'], ['list_flows_tool', 'read'], ['view_get', 'read'],
-    ['stop_team_run_tool', 'working'], ['ask_user', 'working'], ['', 'working'],
+    ['stop_team_run_tool', 'working'], ['delete_file', 'working'], ['clear_graph', 'working'], ['', 'working'],
+    ['service_health', 'search-errors'], ['costs_summary', 'search-db'], ['costs_report', 'search-db'],
+    ['remember', 'mark-goodrop'], ['recall', 'search-memory'], ['recall_episodes', 'search-memory'],
+    ['create_task', 'write-file'], ['schedule_task', 'mark-gclock'], ['update_scheduled', 'mark-gclock'],
+    ['ask_special_model', 'relay-ask'], ['generate_image', 'mark-spiro'], ['generate_video', 'mark-spiro'],
+    ['synthesize_speech', 'speak'], ['notify_user', 'mark-antenna'], ['transcribe_audio', 'listen'],
+    // the hub relay stories
+    ['ask_user', 'relay-ask'], ['wait_for_agent_tool', 'relay-stream'], ['reject_assignment_tool', 'relay-handoff'],
+    ['assign_agent_tool', 'relay-lead'], ['run_eval_tool', 'relay-delegate'], ['add_subtask', 'relay-team'],
+    ['tracker_transition', 'relay-flow'], ['deploy_project', 'relay-deploy'], ['restart_instance', 'relay-deploy'],
+    // the rebuilds of the mark
+    ['think', 'mark-graph'], ['system_prune_branches', 'mark-graph'], ['google_calendar_list', 'mark-3dclock'],
+    ['list_scheduled', 'mark-gclock'], ['get_agent_status_tool', 'mark-arcs'], ['write_memory', 'mark-goodrop'],
+    ['notion_import', 'mark-capture'], ['mesh_export', 'mark-net'], ['validate_flow_tool', 'mark-venn'],
+    ['create_eval_tool', 'mark-venn'], ['list_evals_tool', 'read'], ['tracker_sync', 'mark-ring'],
+    ['wake_agent', 'mark-recall'], ['clone_agent', 'mark-replicate'], ['channel_send', 'mark-antenna'],
+    ['view_revert', 'mark-invert'], ['calculator', 'mark-gears'], ['run_loop_tool', 'mark-cycle'],
+    ['delete_loop_tool', 'working'], ['extract_from_text', 'mark-fission'], ['summarize_thread', 'mark-fusion'],
+    ['mesh_merge', 'make-3d'], ['consolidate_memory', 'search-memory'], ['dedupe_rows', 'mark-goomerge'],
+    ['translate_text', 'mark-goopour'], ['download_model', 'mark-load'], ['sleep', 'mark-hgframe'],
+    ['retry_step', 'mark-hggrains'], ['dispatch_job', 'mark-gplanet'], ['fire_trigger', 'mark-gchain'],
+    ['generate_audio', 'mark-strings'], ['graph_set_layout', 'mark-shapes'], ['switch_model', 'mark-flow'],
+    ['toggle_watcher', 'mark-tetra'], ['create_world_tool', 'mark-3dmorph'], ['sim_configure', 'mark-3d'],
+    ['create_workspace', 'make-team'], ['add_workspace_agent', 'make-team'], ['get_workspace', 'read'],
+    ['delete_workspace', 'working'], ['remove_workspace_agent', 'working'],
+    ['list_sessions', 'search-history'], ['run_diagnostics', 'code'],
   ])('%s → %s', (tool, state) => {
     expect(stateForTool(tool)).toBe(state);
+  });
+
+  it.each([
+    ['run', 'search-history'], ['session', 'search-history'], ['audit', 'search-history'],
+    ['health', 'search-errors'], ['notification', 'search-mail'], ['model', 'search-tools'],
+    ['skill', 'search-tools'], ['view', 'search-files'], ['agent', 'search-db'], ['cost', 'search-db'],
+    ['budget', 'search-db'], ['', 'read'],
+  ])('a lookup of %s → %s', (kind, state) => {
+    expect(stateForTool('hub_lookup', { kind })).toBe(state);
+    expect(stateForTool('service_lookup', JSON.stringify({ kind }))).toBe(state);
+  });
+
+  it('reads a one-step action by its verb and kind', () => {
+    expect(stateForTool('hub_action', { kind: 'loop', action: 'start' })).toBe('mark-cycle');
+    expect(stateForTool('hub_action', { kind: 'instance', action: 'restart' })).toBe('relay-deploy');
+    expect(stateForTool('hub_action', { kind: 'watcher', action: 'pause' })).toBe('mark-tetra');
+    expect(stateForTool('hub_action', { kind: 'scenario', action: 'resume' })).toBe('run-flow');
+    expect(stateForTool('hub_action', { kind: 'team', action: 'start' })).toBe('run-team');
+    expect(stateForTool('hub_action', { kind: 'pulse', action: 'resume' })).toBe('delegate');
+    expect(stateForTool('hub_action', { kind: 'instance', action: 'stop' })).toBe('working');
+    expect(stateForTool('hub_action', 'not json')).toBe('working');
+  });
+
+  it('gives a tool no rule knows one of the rebuilds that stand for nothing, the same one each time', () => {
+    const names = ['frobnicate', 'mcp__acme__do_thing', 'zz_unknown', 'quux'];
+    names.forEach((n) => {
+      expect(UNKNOWN_TOOL_STATES).toContain(stateForTool(n));
+      expect(stateForTool(n)).toBe(stateForTool(n));
+    });
+    expect(new Set(names.map((n) => stateForTool(n))).size).toBeGreaterThan(1);
+  });
+
+  it('passes the input of a turn\'s tool on', () => {
+    expect(stateForTurn({ tool: 'hub_lookup', input: { kind: 'cost' } })).toBe('search-db');
   });
 
   it('puts a waiting approval first, then the tool, the thought and the text', () => {
@@ -144,13 +203,15 @@ describe('scenes after the Orbit Loader artifact', () => {
     });
   };
 
-  it('knows 22 scenes, and none of them is a pose', () => {
-    expect(SCENE_STATES).toHaveLength(22);
+  it('knows 63 scenes, and none of them is a pose', () => {
+    expect(SCENE_STATES).toHaveLength(63);
+    expect(RELAY_STATES).toHaveLength(8);
+    expect(REBUILD_STATES).toHaveLength(33);
     expect(SCENE_STATES.every(isScene)).toBe(true);
     expect(isScene('think')).toBe(false);
   });
 
-  it.each(SCENE_STATES)('%s starts as the mark, works for as long as it is wanted, then finishes and is the mark again', (state) => {
+  it.each([...SEARCH_STATES, ...WORK_STATES])('%s starts as the mark, works for as long as it is wanted, then finishes and is the mark again', (state) => {
     const g = host();
     const api = mountScene(state, g);
     isMark(g);
@@ -164,6 +225,76 @@ describe('scenes after the Orbit Loader artifact', () => {
     expect(broken(g)).toEqual([]);
     api.destroy();
     expect(g.childNodes).toHaveLength(0);
+  });
+
+  // however long the step worked and wherever its round stood, the finale
+  // and the fold are over soon enough for the mark to keep up with the run
+  // (35 runs of up to nine seconds each: more than the default timeout on a
+  // busy CI runner, for make-3d above all, which turns every vertex every frame)
+  it.each(WORK_STATES)('%s finishes within two seconds of its step ending', (state) => {
+    let worst = 0;
+    for (let work = 0.2; work < 9; work += 0.25) {
+      const g = host();
+      const api = mountScene(state, g);
+      run(api, work, state);
+      let t = 0;
+      while (api.update(DT, null) !== 'done') t += DT;
+      worst = Math.max(worst, t);
+      isMark(g);
+      api.destroy();
+    }
+    expect(worst).toBeLessThan(2);
+  }, 30000);
+
+  // a clip from a file arrives a moment later (it is loaded the first time)
+  const loaded = async (api) => {
+    for (let i = 0; i < 50 && api.phase === 'load'; i += 1) await new Promise((r) => { setTimeout(r, 5); });
+  };
+
+  it.each([...RELAY_STATES, ...REBUILD_STATES])('clip %s starts as the mark, plays round while wanted, then fades back into the mark', async (state) => {
+    const g = host();
+    const api = mountScene(state, g);
+    isMark(g);
+    // the controller asks for nothing while the file loads but keeps the mark
+    for (let i = 0; i < 50 && api.phase === 'load'; i += 1) {
+      await new Promise((r) => { setTimeout(r, 5); });
+      expect(api.update(DT, state)).toBe('running');
+    }
+    expect(api.phase).toBe('intro');
+    const clip = g.querySelector('.clip');
+    expect(clip.childNodes.length).toBeGreaterThan(0);
+    expect(run(api, 20, state)).toBe('running');
+    expect(api.phase).toBe('work');
+    expect(Number(clip.getAttribute('opacity'))).toBeCloseTo(1, 3);
+    expect(broken(g)).toEqual([]);
+    // the step ends: a round played out or a fade, never a clip's full length
+    expect(run(api, 2.2, null)).toBe('done');
+    expect(Number(clip.getAttribute('opacity'))).toBe(0);
+    isMark(g);
+    api.destroy();
+    expect(g.childNodes).toHaveLength(0);
+  });
+
+  it('a clip whose step ends before its file has arrived is the mark and done at once', () => {
+    const g = host();
+    const api = mountScene('relay-stream', g);
+    expect(api.phase).toBe('load');
+    expect(api.update(DT, null)).toBe('done');
+    isMark(g);
+  });
+
+  it('gives every copy of a liquid clip its own filter', async () => {
+    const a = mountScene('mark-goo', host());
+    const b = mountScene('mark-goo', host());
+    await loaded(a);
+    await loaded(b);
+    const filters = [...document.querySelectorAll('.clip filter')].map((f) => f.id);
+    expect(new Set(filters).size).toBe(filters.length);
+    expect(filters.length).toBeGreaterThanOrEqual(2);
+    const used = [...document.querySelectorAll('.clip [filter]')].map((el) => el.getAttribute('filter'));
+    used.forEach((u) => expect(filters.map((f) => `url(#${f})`)).toContain(u));
+    a.destroy();
+    b.destroy();
   });
 
   it('goes from one search to the next without the mark: the lens never leaves', () => {
@@ -182,6 +313,14 @@ describe('scenes after the Orbit Loader artifact', () => {
     expect(api.phase).toBe('scan');
     // the old fields are gone once faded: one field under the lens again
     expect(g.querySelectorAll('.srch-zoom > g')).toHaveLength(1);
+  });
+
+  it('ends a search no search follows quickly, so the mark keeps up with the answer', () => {
+    const g = host();
+    const api = mountScene('search-web', g);
+    run(api, 3, 'search-web');
+    expect(run(api, 1.6, 'speak')).toBe('done');
+    isMark(g);
   });
 
   // a <use> copy loses the page's styles in Safari and Firefox and comes out black
@@ -245,6 +384,41 @@ describe('LiveMark', () => {
     expect(container.querySelectorAll('circle')).toHaveLength(4);
     expect(container.querySelectorAll('line')).toHaveLength(3);
     expect(container.querySelector('line').getAttribute('opacity')).toBe('0.550');
+  });
+
+  it('steps back once for a clip that needs room, stays back while it works, and comes forward to answer', async () => {
+    // frames by hand: each call of `frames` runs the loop for that many seconds
+    let queued = [];
+    let clock = 0;
+    vi.stubGlobal('requestAnimationFrame', (cb) => { queued.push(cb); return queued.length; });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const frames = (secs) => act(() => {
+      for (let t = 0; t < secs; t += 1 / 30) {
+        clock += 1000 / 30;
+        const run = queued;
+        queued = [];
+        run.forEach((cb) => cb(clock));
+      }
+    });
+    const scale = (c) => c.querySelector('svg > g').getAttribute('transform') || '';
+    // a new state reaches the mark through useSteadyState's timer
+    const settle = () => act(async () => { await new Promise((r) => { setTimeout(r, 5); }); });
+    try {
+      const { container, rerender } = wrap(<LiveMark state="mark-3d" minHold={0} />);
+      frames(2);
+      expect(scale(container)).toContain('scale(0.800)');
+      rerender(<I18nProvider><MemoryRouter><LiveMark state="working" minHold={0} /></MemoryRouter></I18nProvider>);
+      await settle();
+      frames(2);
+      expect(container.querySelector('svg').getAttribute('data-state')).toBe('working');
+      expect(scale(container)).toContain('scale(0.800)');
+      rerender(<I18nProvider><MemoryRouter><LiveMark state="speak" minHold={0} /></MemoryRouter></I18nProvider>);
+      await settle();
+      frames(2);
+      expect(scale(container)).toBe('');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('uses the crop of logo.svg for frame="logo"', () => {

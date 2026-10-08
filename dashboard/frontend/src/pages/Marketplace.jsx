@@ -160,7 +160,7 @@ const Marketplace = () => {
                 placeholder={tab === 'flows' ? t('marketplace.searchFlows') : t('marketplace.searchAgents')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-64"
+                className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-64"
               />
             </div>
           )}

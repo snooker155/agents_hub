@@ -16,6 +16,7 @@ holds the common pieces once:
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Any, Dict, List, Optional
@@ -42,6 +43,29 @@ def content_text(content: Any) -> str:
                     parts.append(block["text"])
         return "".join(parts)
     return ""
+
+
+def tool_status(output: Any) -> str:
+    """``"error"`` when a finished tool call failed, ``"ok"`` otherwise.
+
+    A call fails when the tool raised (LangChain then hands back a ToolMessage
+    with ``status="error"``), returned the ``{"ok": false, ...}`` envelope
+    (tools/_json.py), or answered with a bare ``Error:`` line.
+    """
+    if getattr(output, "status", None) == "error":
+        return "error"
+    content = getattr(output, "content", output)
+    text = (content if isinstance(content, str) else content_text(content)).lstrip()
+    if text.startswith(("ERROR:", "Error:")):
+        return "error"
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return "ok"
+        if isinstance(data, dict) and data.get("ok") is False:
+            return "error"
+    return "ok"
 
 
 def token_text(token: Any, chunk: Any = None) -> str:
@@ -324,6 +348,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
         return (serialized or {}).get("name") if isinstance(serialized, dict) else None
 
     def _start(self, model_name: Optional[str]) -> None:
+        self._llm_started = time.perf_counter()  # the call's duration, for the exported spans
+        self._llm_model = model_name or ""
         line = f"[llm_start] model={model_name or 'unknown'}"
         self.thinking_history.append(line)
         self._emit_thinking(line)
@@ -421,6 +447,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                 "history": self._last_prompt_struct.get("history", []),
                 "user_message": self._last_prompt_struct.get("user_message", ""),
                 "response": self._response_text(response),
+                "duration_ms": int((time.perf_counter() - getattr(self, "_llm_started", time.perf_counter())) * 1000),
+                "model": getattr(self, "_llm_model", ""),
                 "token_usage": {
                     "inbound_tokens": p,
                     "outbound_tokens": c,
@@ -470,18 +498,22 @@ class StatsCollectorCallback(BaseCallbackHandler):
     def on_tool_end(self, output, **_):
         output_full = str(output)
         if self._pending_tool is not None:
-            entry = self._with_verdict({**self._pending_tool, "output": output_full})
+            entry = self._with_verdict({**self._pending_tool, "output": output_full,
+                                        "status": tool_status(output)})
             from agents.tool_spill import spill_fields  # the file a long result went to
             entry.update(spill_fields(output_full))
-            self._mark_tool(entry, ok=True)
+            self._mark_tool(entry, ok=entry["status"] == "ok")
+            entry["duration_ms"] = int((time.perf_counter() - entry.get("_started", time.perf_counter())) * 1000)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
             self._emit_tool_end(entry)
 
     def on_tool_error(self, error, **_):
         if self._pending_tool is not None:
-            entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}"})
+            entry = self._with_verdict({**self._pending_tool, "output": f"ERROR: {error}",
+                                        "status": "error"})
             self._mark_tool(entry, ok=False)
+            entry["duration_ms"] = int((time.perf_counter() - entry.get("_started", time.perf_counter())) * 1000)
             self.tool_history.append({k: v for k, v in entry.items() if not k.startswith("_")})
             self._pending_tool = None
             self._emit_tool_end(entry)

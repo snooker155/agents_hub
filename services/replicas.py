@@ -91,6 +91,19 @@ def conversation_holder(service_id: str, replica_ids: List[str],
     return inbox.pending_holder(replica_ids, conversation_id)
 
 
+def is_stale(replica: Dict[str, Any]) -> bool:
+    """Whether ``replica`` was started from other code than this process runs
+    (common/code_version.py), or with other model provider settings than the
+    ones in force (common/provider_env.py: a key added on the Settings page
+    or by the guided setup). One started before replicas were stamped has no
+    code stamp and counts as stale."""
+    from common import code_version, provider_env
+    if replica.get("carrier_code") != code_version.current():
+        return True
+    given = replica.get("carrier_env")
+    return bool(given) and given != provider_env.stamp()
+
+
 def idle_seconds(replica: Dict[str, Any]) -> float:
     ts = replica.get("last_activity_at") or replica.get("started_at")
     if not ts:
@@ -153,6 +166,10 @@ def pick(service: Dict[str, Any], *, conversation_id: Optional[str] = None,
     grow (``allow_start``); else the least loaded live one, where the message
     waits. Raises :class:`ServiceUnavailable` when there is no replica and
     none may be started (a paused service, or a maximum of zero).
+
+    A replica on old code (:func:`is_stale`) gets a new conversation only
+    when no current one has a free slot and none may be started: the
+    supervisor replaces it once it is idle.
     """
     if service.get("status") != store.STATUS_ACTIVE:
         raise ServiceUnavailable(f"Service '{service.get('name')}' is paused")
@@ -165,11 +182,15 @@ def pick(service: Dict[str, Any], *, conversation_id: Optional[str] = None,
     concurrency = int(service.get("concurrency") or 4)
     ranked = sorted(replicas, key=lambda r: (load.get(str(r["instance_id"]), 0),
                                              r.get("state") != "standby"))
-    for r in ranked:
-        if load.get(str(r["instance_id"]), 0) < concurrency:
+    stale = {str(r["instance_id"]) for r in replicas if is_stale(r)}
+    free = [r for r in ranked if load.get(str(r["instance_id"]), 0) < concurrency]
+    for r in free:
+        if str(r["instance_id"]) not in stale:
             return r
     if allow_start and len(replicas) < int(service.get("replicas_max") or 0):
         return start_replica(service, reason="on demand")
+    if free:
+        return free[0]
     if ranked:
         return ranked[0]
     raise ServiceUnavailable(

@@ -8,7 +8,8 @@ import { listRunSteering, steerRun } from '../api/steering';
 import { flattenModelCatalog, getModelsCatalog } from '../api/agentLoop';
 import { BrowserToolbar, BrowserViewport, useBrowserSession } from './browser';
 import { steerCaption } from './chat/steering';
-import { policyVerdict } from './policyVerdict';
+import ToolStatusMark from './ToolStatusMark';
+import { toolOutcome, toolStatus } from './toolStatus';
 
 /*
  * Live view of agent runs happening on one session channel.
@@ -123,14 +124,14 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
       case 'tool_start':
         upsert(eventRunId, (r) => ({
           ...r,
-          tools: [...r.tools, { step: ev.step, tool: ev.tool, input: ev.input || '', output: null, error: null }],
+          tools: [...r.tools, { step: ev.step, tool: ev.tool, input: ev.input || '', output: null, error: null, running: true }],
         }));
         break;
       case 'tool_end':
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return r;
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '', ...policyVerdict(ev) };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '', running: false, ...toolOutcome(ev) };
           return { ...r, tools };
         });
         break;
@@ -138,7 +139,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => {
           if (!r.tools.length) return { ...r, errors: [...r.errors, String(ev.error || '')] };
           const tools = [...r.tools];
-          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || ''), ...policyVerdict(ev) };
+          tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || ''), running: false, status: 'error', ...toolOutcome(ev) };
           return { ...r, tools };
         });
         break;
@@ -170,6 +171,7 @@ function ToolRow({ tool }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const hasDetail = !!(tool.input || tool.output || tool.error);
+  const status = toolStatus(tool);
   return (
     <div className="text-xs">
       <button
@@ -180,9 +182,10 @@ function ToolRow({ tool }) {
         {hasDetail
           ? (open ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />)
           : <span className="w-3" />}
-        <Wrench className={`w-3 h-3 ${tool.error ? 'text-red-500' : 'text-indigo-500'}`} />
+        <ToolStatusMark entry={tool} />
+        <Wrench className={`w-3 h-3 ${status === 'error' ? 'text-red-500' : 'text-indigo-500'}`} />
         <span className="font-mono text-gray-700">{tool.tool}</span>
-        {tool.output === null && !tool.error && (
+        {status === 'running' && (
           <span className="text-[10px] text-indigo-500 animate-pulse">{t('liveRunStream.running')}</span>
         )}
       </button>
@@ -449,7 +452,7 @@ function RunSteer({ runId, done }) {
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 aria-label={t('steering.modelLabel')}
-                className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:border-indigo-400"
+                className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none"
               >
                 <option value="">{models.length ? t('steering.modelPlaceholder') : t('steering.noModels')}</option>
                 {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
@@ -464,7 +467,7 @@ function RunSteer({ runId, done }) {
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
               }}
               placeholder={t('steering.inputPlaceholder')}
-              className="flex-1 resize-none rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:border-indigo-400"
+              className="flex-1 resize-none rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none"
             />
             )}
             <button

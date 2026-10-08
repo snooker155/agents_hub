@@ -351,6 +351,9 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         inner_cmd.extend(["--http-port", str(http_port)])
 
     env = os.environ.copy()
+    # A provider key saved since the backend started (common/provider_env.py).
+    from common import provider_env
+    provider_env.overlay(env)
     from common.workspace_context import normalize_workspace_name
     env["AGENT_WORKSPACE"] = normalize_workspace_name(workspace) or "default"
     # The carrier relays its turns' events back with a token of its own that
@@ -402,9 +405,16 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         pid = proc.pid
 
     now = _now()
+    from common import code_version
     updates: Dict[str, Any] = {
         "carrier_mode": mode,
         "carrier_host": socket.gethostname(),
+        # The code the carrier was started from: a service replica whose
+        # stamp is not the backend's is replaced (services/supervisor.py).
+        "carrier_code": code_version.current(),
+        # And the provider settings it was given: one started before a key
+        # changed is replaced the same way.
+        "carrier_env": provider_env.stamp(),
         "carrier_status": "starting",
         "carrier_started_at": now,
         "carrier_finished_at": None,
@@ -558,9 +568,11 @@ def update_from_process(instance_id: str, carrier_status: str, *,
     return inst
 
 
-def heartbeat(instance_id: str) -> None:
+def heartbeat(instance_id: str, **fields: Any) -> None:
+    """Stamp the instance's heartbeat, with whatever else the carrier
+    reports on each beat (``fields``, e.g. its agent build counts)."""
     try:
-        store.update(instance_id, heartbeat_at=_now())
+        store.update(instance_id, heartbeat_at=_now(), **fields)
     except Exception:  # noqa: BLE001 - a missed beat is retried on the next one
         log.debug("heartbeat failed for %s", instance_id, exc_info=True)
 

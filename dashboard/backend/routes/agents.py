@@ -315,8 +315,10 @@ async def get_agent_definition(agent_id: str):
     """Return the agent's definition: structured fields + the markdown sources.
 
     The system prompt no longer lives in JSON — it is sourced from
-    ``agents/definitions/<agent_id>/instructions.md`` (with optional
-    ``capabilities.md`` and ``usage.md``).
+    ``instructions.md`` (with optional ``capabilities.md`` and ``usage.md``)
+    in the agent's definition folder: ``.agents_hub/definitions/<id>/`` for a
+    custom agent or an edited system agent, ``agents/definitions/<id>/`` for
+    a system agent's shipped text (agents/prompt_assembly.py).
     """
     spec = registry.get_agent(agent_id)
     if not spec:
@@ -327,7 +329,8 @@ async def get_agent_definition(agent_id: str):
     # The prompt may live in a shared definition folder (definition_id) rather
     # than under the agent's own id.
     def_id = spec.def_id()
-    folder = prompt_assembly.agent_dir(def_id, definitions_dir=defs_dir)
+    source_path = prompt_assembly.part_path(def_id, prompt_assembly.INSTRUCTIONS_FILE, defs_dir)
+    folder = source_path.parent if source_path else prompt_assembly.agent_dir(def_id, definitions_dir=defs_dir)
 
     instructions = prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir)
     capabilities = prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir)
@@ -346,10 +349,21 @@ async def get_agent_definition(agent_id: str):
     elif instructions:
         assembled = prompt_assembly.assemble_prompt(def_id, definitions_dir=defs_dir)
 
+    # A system agent's shipped text and the edits shadowing it, file by file.
+    system_definition = prompt_assembly.is_system_definition(def_id, defs_dir)
+    edits_dir = prompt_assembly.agent_dir(def_id, definitions_dir=defs_dir)
+    customized_parts = [
+        name.removesuffix(".md") for name in prompt_assembly.PART_FILES
+        if system_definition and (edits_dir / name).is_file()
+    ]
+
     return {
         "agent_id": spec.id,
         "source": "markdown" if (instructions or spec.extends) else "missing",
         "definition_dir": str(folder),
+        "system_definition": system_definition,
+        "customized": bool(customized_parts),
+        "customized_parts": customized_parts,
         "system_prompt": assembled,
         "instructions": instructions,
         "capabilities": capabilities,
@@ -420,17 +434,15 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
         else:
             raise HTTPException(status_code=400, detail="instructions.md cannot be empty")
     if data.capabilities is not None:
-        path = prompt_assembly.agent_dir(def_id, defs_dir) / prompt_assembly.CAPABILITIES_FILE
         if data.capabilities.strip():
             prompt_assembly.write_capabilities(def_id, data.capabilities, definitions_dir=defs_dir)
-        elif path.exists():
-            path.unlink()
+        else:
+            prompt_assembly.clear_part(def_id, prompt_assembly.CAPABILITIES_FILE, defs_dir)
     if data.usage is not None:
-        path = prompt_assembly.agent_dir(def_id, defs_dir) / prompt_assembly.USAGE_FILE
         if data.usage.strip():
             prompt_assembly.write_usage(def_id, data.usage, definitions_dir=defs_dir)
-        elif path.exists():
-            path.unlink()
+        else:
+            prompt_assembly.clear_part(def_id, prompt_assembly.USAGE_FILE, defs_dir)
 
     # A published, approved agent's definition changing is exactly the case
     # the review gate exists for: whatever passed review before may not
@@ -443,6 +455,33 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
         except ValueError:
             pass
 
+    return await get_agent_definition(agent_id)
+
+
+@router.delete("/{agent_id}/definition/edits")
+async def restore_shipped_definition(agent_id: str):
+    """Drop the edits shadowing a system agent's shipped prompt files, so it
+    runs the text in agents/definitions/ again (agents/prompt_assembly.py).
+    The edited text stays in the version history."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    defs_dir = get_factory().definitions_dir
+    def_id = spec.def_id()
+    if not prompt_assembly.is_system_definition(def_id, defs_dir):
+        raise HTTPException(status_code=400, detail="Only a system agent has shipped text to restore")
+    if prompt_assembly.is_customized(def_id, defs_dir):
+        shipped = prompt_assembly.SYSTEM_DEFINITIONS_DIR / def_id
+        agent_versions.snapshot_if_changed(
+            agent_id,
+            next_definition={
+                name.removesuffix(".md"): (shipped / name).read_text(encoding="utf-8").strip()
+                if (shipped / name).is_file() else ""
+                for name in prompt_assembly.PART_FILES
+            },
+            actor="dashboard", note="shipped text restored",
+        )
+        prompt_assembly.delete_definition(def_id, definitions_dir=defs_dir)
     return await get_agent_definition(agent_id)
 
 
@@ -1156,16 +1195,29 @@ async def get_agent_auto_tools(agent_id: str, workspace: Optional[str] = None):
     return {"agent_id": agent_id, "workspace": ws, "tools": auto_injected_tools(spec, ws)}
 
 
+def _can_edit_agent(request: Request, spec) -> bool:
+    """Whether the caller holds editor on the agent's workspace (always true
+    outside multi): the chat's refusal card shows its button only to them."""
+    from common import identity
+    from common.auth import WS_EDITOR
+    try:
+        identity.require_role(identity.request_principal(request),
+                              workspace=getattr(spec, "owner_workspace", None) or "default", role=WS_EDITOR)
+    except HTTPException:
+        return False
+    return True
+
+
 @router.get("/{agent_id}/capability-override")
-async def get_agent_capability_override(agent_id: str):
+async def get_agent_capability_override(request: Request, agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return _capability_override_state(spec)
+    return {**_capability_override_state(spec), "can_edit": _can_edit_agent(request, spec)}
 
 
 @router.post("/{agent_id}/capability-override")
-async def update_agent_capability_override(agent_id: str, data: AgentCapabilityOverrideUpdate):
+async def update_agent_capability_override(request: Request, agent_id: str, data: AgentCapabilityOverrideUpdate):
     """Accept, for this one agent, a tool combination the capability guard
     would otherwise refuse (tools/capabilities.py, the lethal trifecta).
 
@@ -1178,6 +1230,8 @@ async def update_agent_capability_override(agent_id: str, data: AgentCapabilityO
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if not _can_edit_agent(request, spec):
+        raise HTTPException(status_code=403, detail="Editor access to the agent's workspace is required")
     if data.capability_override and is_system_workspace_agent(agent_id, spec.owner_workspace):
         # The system workspace rule is never softened (docs/system-workspace.md).
         raise HTTPException(status_code=400, detail="A system workspace agent cannot carry a capability override")

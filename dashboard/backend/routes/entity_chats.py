@@ -40,13 +40,18 @@ def _store():
 
 
 def _require_own(kind: str, entity_id: str) -> None:
-    """A chat keyed on a person (the Help panel's ``("help", "user-<id>")``)
-    is that person's alone: anyone else gets the same 404 as a thread that
-    does not exist, so a key cannot be probed. Every other kind is keyed on
-    a shared record and stays as open as the record itself."""
+    """A chat keyed on a person (the Help panel's ``("help", "user-<id>")``,
+    the assistant's ``("assistant", "user-<id>")`` and an administrator's
+    ``("assistant", "service-<id>")``) is that person's alone: anyone else gets
+    the same 404 as a thread that does not exist, so a key cannot be probed.
+    Every other kind is keyed on a shared record and stays as open as the
+    record itself."""
+    from routes.assistant import ASSISTANT_CHAT_KIND, own_thread_ids
     from routes.help_chat import HELP_CHAT_KIND, help_chat_id
 
     if kind == HELP_CHAT_KIND and entity_id != help_chat_id():
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    if kind == ASSISTANT_CHAT_KIND and entity_id not in own_thread_ids():
         raise HTTPException(status_code=404, detail="Chat session not found")
 
 

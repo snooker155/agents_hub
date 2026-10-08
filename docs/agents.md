@@ -23,6 +23,22 @@ never by default. See [tools-and-capabilities](tools-and-capabilities.md).
 **The model** can be inherited from the workspace or pinned per agent, along
 with temperature, max tokens and reasoning settings.
 
+The thinking level (off, low, medium, high) turns on the model's own
+reasoning, which the chat shows as a thought above the answer. How much of it
+reaches the chat depends on the provider. Claude, gpt-oss, qwen3, deepseek-r1
+and other open models return their reasoning in full. OpenAI's o-series and
+gpt-5 models never return it, only a summary of it, and only on the Responses
+API: with a thinking level set, such a model is sent there with a summary
+requested. OpenAI leaves short reasoning unsummarised, so a quick step can
+come back with no thought at all. Behind a gateway (`OPENAI_BASE_URL`) the
+model stays on chat completions, which carry no reasoning text. An
+organisation OpenAI has not verified is refused summaries; the request is then
+repeated without one, and the run goes on with no thought shown.
+
+Off holds the model to the lowest reasoning it accepts. OpenAI's reasoning
+models otherwise reason at their own default, medium on most families; the
+[models](models.md) page shows each model's default and what off sends.
+
 **Memory** is assigned per workspace, not on the agent. See [memory](memory.md).
 
 ## Where agents come from
@@ -38,9 +54,10 @@ HTTP contract without its code ever entering this process.
 but are not seeded: a waterfall delivery team, an event-planning crew, two
 interactive-fiction helpers, and a three-stage job-search pipeline, grouped by
 theme, plus a `misc/` set. None of them sit under `agents/definitions/` — a
-folder there is only ever read for an id `bootstrap/agents.json` already
-seeds or one an operator has imported, so an unconnected folder was dead
-weight rather than a working agent. See `examples/agents/README.md` for what
+folder there holds only a system agent `bootstrap/agents.json` seeds (the
+prompts of agents an operator creates or imports live in
+`.agents_hub/definitions/`), so an unconnected folder was dead weight rather
+than a working agent. See `examples/agents/README.md` for what
 each set demonstrates and the two API calls that bring one into a running hub.
 
 ## System vs. custom

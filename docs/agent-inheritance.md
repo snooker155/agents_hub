@@ -6,8 +6,9 @@ rest, and declare only what is different. The system agents
 for a finance or medical specialist that still queries the connected data the
 same way, `verifier` for a reviewer that checks a different kind of claim,
 `sourcer` and `screener` for a recruiting or vendor-sourcing pair — and any
-agent can be a parent, system or custom, with one rule: **a system agent can
-be a parent, never a child.**
+agent can be a parent, system or custom, with one rule: **a system agent is
+a child only of another system agent** (the shipped `assistant` extends
+`main-agent`); your own agents can never make a system agent their child.
 
 Inheritance is resolved live, every time the agent runs or its definition is
 read: a child always reflects the parent's current state, not a copy taken
@@ -160,7 +161,8 @@ stay the child's own regardless of what the parent does later.
   level is refused.
 - A cycle (an agent extending something that already extends it, directly or
   through the chain) is refused.
-- A system agent can be a parent; it can never itself get `extends`.
+- A system agent can be a parent; it gets `extends` only to another system
+  agent, which only the shipped seed does (`assistant` extends `main-agent`).
 - A parent with children cannot be deleted (409, naming the children) — detach
   or delete them first.
 

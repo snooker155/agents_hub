@@ -27,6 +27,7 @@ import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
 import CronHint from '../components/CronHint';
+import { poolName } from '../components/memoryManager/helpers';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -281,7 +282,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.title')}</label>
           <input
             type="text"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder={kind === 'agent_task' ? t('plan.taskTitle') : t('plan.reminderTitle')}
@@ -294,7 +295,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
           </label>
           <textarea
             rows={3}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={message}
             onChange={e => setMessage(e.target.value)}
             placeholder={kind === 'agent_task' ? t('plan.taskPlaceholder') : t('plan.notificationPlaceholder')}
@@ -306,7 +307,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.when')}</label>
             <DateInput
               mode="datetime"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={runAt}
               onChange={setRunAt}
             />
@@ -314,7 +315,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
           <div className="w-36">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.repeat')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={recurrence}
               onChange={e => setRecurrence(e.target.value)}
             >
@@ -330,7 +331,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.cronExpression')}</label>
                 <input
                   type="text"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                   value={cron}
                   onChange={e => setCron(e.target.value)}
                   placeholder="0 9 * * 1-5"
@@ -342,7 +343,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.timezone')}</label>
               <input
                 type="text"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 value={tz}
                 onChange={e => setTz(e.target.value)}
                 placeholder="Europe/Berlin"
@@ -359,7 +360,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.agent')}</label>
             <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
               value={agentId}
               onChange={e => setAgentId(e.target.value)}
             >
@@ -374,7 +375,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.flow')}</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 value={flowId}
                 onChange={e => setFlowId(e.target.value)}
               >
@@ -387,7 +388,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.maxConcurrent')}</label>
                 <input
                   type="number" min="0"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   value={maxConcurrent}
                   onChange={e => setMaxConcurrent(e.target.value)}
                 />
@@ -397,7 +398,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.seedJsonOptional')}</label>
               <textarea
                 rows={3}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                 value={seedText}
                 onChange={e => setSeedText(e.target.value)}
                 placeholder='{"key": "value"}'
@@ -412,19 +413,19 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
             <div className="flex-1">
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.consolidatePool')}</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 value={consolidatePoolId}
                 onChange={e => setConsolidatePoolId(e.target.value)}
               >
                 <option value="">{t('plan.selectAPool')}</option>
-                {(pools || []).map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+                {(pools || []).map(p => <option key={p.id} value={p.id}>{poolName(p, t, !workspace) || p.id}</option>)}
               </select>
             </div>
             <div className="w-40">
               <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.consolidateSessionLimit')}</label>
               <input
                 type="number" min="1" max="50"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 value={consolidateSessionLimit}
                 onChange={e => setConsolidateSessionLimit(e.target.value)}
               />
@@ -439,7 +440,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
               checked={tgReady && toTelegram}
               disabled={!tgReady}
               onChange={e => setToTelegram(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 disabled:opacity-50"
             />
             <Send className="w-4 h-4" />
             <span className="font-medium">{t('plan.alsoSendToTelegram')}</span>
@@ -635,7 +636,7 @@ export default function Plan() {
               type="checkbox"
               checked={showFinished}
               onChange={e => setShowFinished(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600"
             />
             {t('plan.showFiredCancelled')}
           </label>

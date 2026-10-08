@@ -131,6 +131,10 @@ export default {
       app_token: "App token (xapp)",
       signing_secret: "Signing secret",
       mode: "Транспорт",
+      client_id: "OAuth client ID",
+      client_secret: "OAuth client secret",
+      distribution: "Распространение",
+      app_name: "Название приложения",
     },
     discord: {
       bot_token: "Токен бота",
@@ -140,6 +144,13 @@ export default {
       app_id: "Microsoft App ID",
       app_password: "Пароль приложения",
       tenant_id: "Идентификатор тенанта",
+      distribution: "Распространение",
+      app_name: "Название приложения",
+      developer_name: "Издатель",
+      website_url: "Сайт",
+      privacy_url: "Адрес политики конфиденциальности",
+      terms_url: "Адрес условий использования",
+      app_version: "Версия приложения",
     },
     mail: {
       auth_mode: "Вход",
@@ -190,16 +201,17 @@ export default {
   fieldHints: {
     slack: {
       mode: "socket держит открытый websocket (публичный URL не нужен); events ждёт, что Slack вызовет входящий URL.",
+      distribution: "Закрытое: только установки, которые вы начинаете на странице «Дистрибуция»; открытое: ставить может кто угодно, а вы подтверждаете каждую.",
+      client_id: "Из раздела Basic Information приложения Slack. Нужен для кнопки «Добавить в Slack».",
     },
     teams: {
       tenant_id: "Только для однотенантных ботов.",
+      distribution: "Закрытое: только добавленные вами организации; открытое: установить может любая организация, а вы подтверждаете каждую.",
+      app_name: "Показывается в пакете приложения для Teams.",
     },
     mail: {
       auth_mode: "password берёт поля ниже; google входит аккаунтом, подключённым на вкладке Google (Подключить с Gmail), а пустые хосты, пользователь и адрес отправителя означают Gmail и этот аккаунт.",
       from_address: "Адрес, с которого уходят ответы; письма с него игнорируются.",
-    },
-    jira: {
-      base_url: "Например https://acme.atlassian.net",
     },
     microsoft: {
       default_user: "Пользователь, чей календарь читают инструменты, если вызов не указал другого, например anna@contoso.com",
@@ -269,6 +281,12 @@ export default {
   },
   // Labels of select options, by channel and field (ChannelConnector.jsx).
   options: {
+    slack: {
+      distribution: { private: "Закрытое: только установки, которые вы начинаете", public: "Открытое: ставить может кто угодно, вы подтверждаете" },
+    },
+    teams: {
+      distribution: { private: "Закрытое: только установки, которые вы начинаете", public: "Открытое: ставить может кто угодно, вы подтверждаете" },
+    },
     mail: {
       auth_mode: { password: "Пароль", google: "Подключённый Google-аккаунт" },
     },

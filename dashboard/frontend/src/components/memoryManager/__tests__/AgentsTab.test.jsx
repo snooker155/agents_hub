@@ -22,9 +22,9 @@ const MEMORIES = [
   { id: 'pers-1', name: 'Personal memory: you', kind: 'personal', workspace: 'default', notes: [], structured_data: {} },
 ];
 
-const show = () => render(
+const show = (workspaceFilter = 'default') => render(
   <I18nProvider>
-    <AgentsTab memories={MEMORIES} workspaceFilter="default" />
+    <AgentsTab memories={MEMORIES} workspaceFilter={workspaceFilter} />
   </I18nProvider>,
 );
 
@@ -58,15 +58,22 @@ describe('AgentsTab', () => {
 
   it('counts the agents that reach the personal pool through the personal memory switch', async () => {
     show();
-    await waitFor(() => expect(screen.getByText('Main').closest('tr').textContent).toMatch(/Personal memory: you/));
+    await waitFor(() => expect(screen.getByText('Main').closest('tr').textContent).toMatch(/My personal memory/));
     expect(screen.getByText('Main').closest('tr').textContent).toMatch(/Connected \(personal\)/);
     // Scout keeps its own pool as the primary one and has the personal one too.
     const scout = screen.getByText('Scout').closest('tr').textContent;
     expect(scout).toMatch(/Team pool/);
-    expect(scout).toMatch(/\+ Personal memory: you \(personal\)/);
+    expect(scout).toMatch(/\+ My personal memory \(personal\)/);
     expect(scout).toMatch(/Connected ×2 \(personal\)/);
-    const usage = screen.getAllByText('Personal memory: you').find((el) => !el.closest('tr')).parentElement.parentElement;
+    const usage = screen.getAllByText('My personal memory').find((el) => !el.closest('tr')).parentElement.parentElement;
     expect(usage.textContent).toMatch(/2 agents/);
+  });
+
+  // The default workspace (no filter) lists every workspace's pools, so a
+  // personal pool names the workspace it belongs to.
+  it('names the workspace of the personal pool in the default workspace', async () => {
+    show(null);
+    await waitFor(() => expect(screen.getByText('Main').closest('tr').textContent).toMatch(/My personal memory · default/));
   });
 
   it('counts nobody on the personal pool when the workspace has it off', async () => {

@@ -67,7 +67,9 @@ export default function ModelDetail() {
   const data = loading ? null : result.data;
   const error = loading ? null : result.error;
   const [view, setView] = useState(readLocalModelView);
-  const [pickedId, setPickedId] = useState(null);
+  // undefined until the person picks: the first block is shown. null after
+  // a click outside every block: nothing is selected.
+  const [pickedId, setPickedId] = useState(undefined);
   const touchedView = useRef(false);
 
   // The account's saved view, when there is one, wins over this browser's,
@@ -92,7 +94,9 @@ export default function ModelDetail() {
   // Start on the first block so the table is not empty on arrival, and fall
   // back to it when a reload no longer has the block that was picked.
   const selected = useMemo(
-    () => graph.nodes.find((n) => n.id === pickedId) || graph.nodes[0] || null,
+    () => (pickedId === null
+      ? null
+      : graph.nodes.find((n) => n.id === pickedId) || graph.nodes[0] || null),
     [graph, pickedId],
   );
   const selectedId = selected?.id ?? null;
@@ -153,7 +157,8 @@ export default function ModelDetail() {
             </div>
           ) : (
             <>
-              <div className="h-[560px] overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+              {/* A horizontal strip: the chain in one row, other blocks under it. */}
+              <div className="h-[320px] overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
                 <Suspense
                   fallback={(
                     <div className="h-full text-sm text-gray-500"><PageLoader /></div>

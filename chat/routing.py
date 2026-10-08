@@ -96,6 +96,23 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
     user_id = identity.current_user_id() or None
     key_id = api_keys.current_key_id()
 
+    stamp: Dict[str, Any] = {"conversation_id": conv,
+                             "origin_client": getattr(request, "client_id", None)}
+    if getattr(request, "client_turn_id", None):
+        stamp["client_turn_id"] = request.client_turn_id
+
+    async def _failed(event: Dict[str, Any]) -> Dict[str, Any]:
+        """A failure the relay decides itself, put on the conversation's
+        channel too. A replica's own events are there already; this one would
+        otherwise reach only the caller, and a tab following the turn on the
+        channel (or a second tab with the chat open) would wait for good."""
+        try:
+            await broker.apublish(channel, {**event, **stamp})
+            await broker.apublish(channel, {**stamp, "type": "chat_stream_end"})
+        except Exception:  # noqa: BLE001 - the caller still gets the failure
+            log.debug("chat routing: could not publish the failure", exc_info=True)
+        return event
+
     client_id, queue = broker.open_client([channel])
     msg_id: Optional[str] = None
     run_id: Optional[str] = None
@@ -104,11 +121,11 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
             service, replica = await asyncio.to_thread(
                 service_routing.choose, request.workspace, agent_id, conversation_id=conv)
         except ServiceUnavailable as exc:
-            yield _failure(request, str(exc), status=503)
+            yield await _failed(_failure(request, str(exc), status=503))
             return
         except Exception as exc:  # noqa: BLE001 - a replica that cannot start is the turn's failure
             log.warning("chat routing: no replica for %s/%s", request.workspace, agent_id, exc_info=True)
-            yield _failure(request, f"could not start a replica: {exc}", status=503)
+            yield await _failed(_failure(request, f"could not start a replica: {exc}", status=503))
             return
         replica_id = str(replica["instance_id"])
         service, replica, msg_id = await asyncio.to_thread(
@@ -159,19 +176,19 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                 if reply is not None:
                     run_id = run_id or reply.get("run_id")
                     if reply.get("status") == "failed" and not reply.get("run_id"):
-                        yield _failure(request, str(reply.get("error") or "the turn failed"),
-                                       run_id=run_id)
+                        yield await _failed(_failure(request, str(reply.get("error") or "the turn failed"),
+                                                            run_id=run_id))
                         return
                 gone = await asyncio.to_thread(_replica_gone, replica_id)
                 if gone and not started:
                     await asyncio.to_thread(inbox.mark_error, msg_id, gone)
-                    yield _failure(request, gone, status=503, run_id=run_id)
+                    yield await _failed(_failure(request, gone, status=503, run_id=run_id))
                     return
             if now >= deadline:
                 if not started:
                     error = f"the replica did not pick the turn up within {int(timeouts['start'])}s"
                     await asyncio.to_thread(inbox.mark_error, msg_id, error)
-                    yield _failure(request, error, status=504, run_id=run_id)
+                    yield await _failed(_failure(request, error, status=504, run_id=run_id))
                     return
                 if not got_done:
                     error = f"the agent did not answer within {int(timeouts['idle'])}s"
@@ -181,7 +198,7 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                             await asyncio.to_thread(stop_run_by_id, run_id)
                         except Exception:  # noqa: BLE001 - the stop is a courtesy; the timeout stands
                             log.debug("could not stop run %s after the timeout", run_id, exc_info=True)
-                    yield _failure(request, error, status=504, run_id=run_id)
+                    yield await _failed(_failure(request, error, status=504, run_id=run_id))
                 return
     finally:
         broker.close_client(client_id)

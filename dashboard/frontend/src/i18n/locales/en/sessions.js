@@ -28,7 +28,4 @@ export default {
   confirmBulkDelete: 'Delete {{count}} selected sessions?',
   deleteFailed: 'Failed to delete session',
   bulkDeletePartial: 'Some deletions failed ({{count}}). Example: {{id}} ({{reason}})',
-  loadMore_one: 'Load 1 more',
-  loadMore_other: 'Load {{count}} more',
-  shownOfTotal: '{{shown}} of {{total}} shown',
 };

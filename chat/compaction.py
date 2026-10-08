@@ -323,6 +323,7 @@ def compact_history(
     provider: str = "",
     force: bool = False,
     min_tail: int = MIN_TAIL_MESSAGES,
+    target_chars: Optional[int] = None,
 ) -> Compaction:
     """Fold the older half of a history into a summary when it no longer fits.
 
@@ -331,6 +332,9 @@ def compact_history(
     weighed, and a new fold extends the same summary rather than starting over.
     ``force`` compacts regardless of the budget — the retry after a context
     overflow, where the provider has already said what the arithmetic could not.
+    ``target_chars`` is how much a fold leaves verbatim, when it should be less
+    than the budget allows: a fold well under the budget is not due again on the
+    very next turn.
     """
     messages = list(messages or [])
     covers_until = max(0, min(int(covers_until or 0), len(messages)))
@@ -353,8 +357,8 @@ def compact_history(
     if (not force and used <= budget_chars) or not tail:
         return _result(summary, covers_until, 0, False)
 
-    target = max(budget_chars - len(system_prompt or "") - SUMMARY_RESERVE_CHARS,
-                 budget_chars // 4)
+    target = target_chars if target_chars is not None else max(
+        budget_chars - len(system_prompt or "") - SUMMARY_RESERVE_CHARS, budget_chars // 4)
     keep = _keep_count(tail, target, min_tail)
     folded = tail[:len(tail) - keep]
     if not folded:

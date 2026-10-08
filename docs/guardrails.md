@@ -56,7 +56,7 @@ Every block and every warning is written to the guardrail event log with the run
 
 ## Managing guardrails
 
-The **Guardrails** page (Infrastructure) lists them with stage, kind, action, scope and state, a form per kind (for a sequence guardrail: the rule type and its tools, arguments and limit), a test box on every row that runs the guardrail against pasted text, or pasted tool calls for a sequence guardrail, without recording anything, and the recent events. On an agent's **Guardrails** tab, the card shows which guardrails already apply to the agent and lets it opt into the `selected` ones.
+The **Guardrails** page (Records and admin, full menu) lists them with stage, kind, action, scope and state, a form per kind (for a sequence guardrail: the rule type and its tools, arguments and limit), a test box on every row that runs the guardrail against pasted text, or pasted tool calls for a sequence guardrail, without recording anything, and the recent events. On an agent's **Guardrails** tab, the card shows which guardrails already apply to the agent and lets it opt into the `selected` ones.
 
 API:
 

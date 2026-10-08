@@ -2,8 +2,16 @@ export default {
   serviceName: 'Agents Hub',
   workspaceLabel: 'Workspace:',
   workspaceDefaultAll: 'default (All)',
+  workspacePersonal: 'Personal',
+  workspacePersonalOf: '{{name}} (personal)',
   expandSidebar: 'Expand sidebar',
   collapseSidebar: 'Collapse sidebar',
+  openMenu: 'Open menu',
+  closeMenu: 'Close menu',
+  install: {
+    button: 'Install app',
+    iosHint: 'In Safari, tap Share, then Add to Home Screen. The hub opens from its own icon, full screen.',
+  },
   theme: {
     light: 'Light',
     dark: 'Dark',
@@ -26,6 +34,7 @@ export default {
     global: 'Global',
     globalSuffix: '(global)',
     defaultSuffix: '(default)',
+    inheritedSuffix: '(from {{workspace}})',
     defaultBadge: 'default',
     globalBadge: 'global',
     legend: 'Dots:',
@@ -35,6 +44,7 @@ export default {
   },
   titles: {
     health: 'Status',
+    assistant: 'Assistant',
     chat: 'Chat',
     dashboard: 'Dashboard',
     orchestrator: 'Orchestrator',

@@ -133,7 +133,7 @@ export default function Registry() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t('registry.searchEntities')}
-              className="w-64 rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-cyan-300"
+              className="w-64 rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none"
             />
           </div>
         }

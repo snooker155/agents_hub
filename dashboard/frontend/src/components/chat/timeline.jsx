@@ -4,6 +4,8 @@
  */
 import { SKILL_TOOL, shortText } from '../processUtils';
 import { useI18n } from '../../i18n';
+import ToolStatusMark from '../ToolStatusMark';
+import { toolStatus } from '../toolStatus';
 import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
 import { GraphNodeStep, ReasoningStep } from './reasoning';
@@ -18,6 +20,7 @@ function TimelineToolCard({ entry }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isSkill = entry.tool === SKILL_TOOL;
+  const failed = toolStatus(entry) === 'error';
   return (
     <div className={`rounded-lg border ${isSkill ? 'border-violet-200 bg-violet-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
       <button
@@ -25,15 +28,9 @@ function TimelineToolCard({ entry }) {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-1.5 px-3 py-2 text-left"
       >
+        <ToolStatusMark entry={entry} />
         {isSkill ? <Zap className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" /> : <Terminal className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />}
         <span className={`text-xs font-semibold ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{entry.tool || 'tool'}</span>
-        {entry.running && (
-          <span className="flex gap-1 ml-1">
-            {[0, 150, 300].map((d) => (
-              <span key={d} className="w-1 h-1 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
-            ))}
-          </span>
-        )}
         {!open && entry.input && (
           <span className="text-[11px] text-gray-400 truncate flex-1">{shortText(entry.input, 80)}</span>
         )}
@@ -47,8 +44,8 @@ function TimelineToolCard({ entry }) {
             </div>
           )}
           {entry.output != null && (
-            <div className="text-[11px] text-emerald-800 whitespace-pre-wrap break-all">
-              <span className="text-emerald-600">{t('chat.out2')}</span> {shortText(entry.output, 1000)}
+            <div className={`text-[11px] whitespace-pre-wrap break-all ${failed ? 'text-red-700' : 'text-emerald-800'}`}>
+              <span className={failed ? 'text-red-500' : 'text-emerald-600'}>{t('chat.out2')}</span> {shortText(entry.output, 1000)}
             </div>
           )}
         </div>

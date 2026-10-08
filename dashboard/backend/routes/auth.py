@@ -11,6 +11,8 @@ Identity API: the auth mode, sessions, users and workspace membership.
 - ``PATCH  /api/auth/users/{id}``           role / display name / disabled (admin)
 - ``DELETE /api/auth/users/{id}``           remove one (admin)
 - ``POST   /api/auth/users/{id}/password``  reset a password (admin)
+- ``GET    /api/auth/spend-limits``         limits and month spend per person (admin)
+- ``PUT    /api/auth/spend-limits/default`` the hub default limit (admin)
 - ``GET|PUT|DELETE /api/workspaces/{name}/members``  membership (owner or admin)
 
 The three public routes are the ones ``common.auth.PUBLIC_AUTH_ROUTES`` exempts
@@ -65,6 +67,13 @@ class UserPatch(BaseModel):
     display_name: Optional[str] = None
     disabled: Optional[bool] = None
     email: Optional[str] = None
+    # Own monthly spend limit (common/user_budget.py). Sent as null it clears
+    # the person's own value, so the hub default applies; 0 is unlimited.
+    spend_limit_usd: Optional[float] = None
+
+
+class DefaultSpendLimit(BaseModel):
+    limit_usd: float = Field(ge=0)
 
 
 class PasswordReset(BaseModel):
@@ -80,6 +89,17 @@ class MemberPut(BaseModel):
 
 def _principal(request: Request):
     return identity.request_principal(request)
+
+
+def _ensure_personal_workspace(user_id: str) -> None:
+    """A person signing in has a workspace of their own (common/personal_workspace.py)."""
+    import logging
+    from common import personal_workspace
+    try:
+        personal_workspace.ensure_personal_workspace(user_id)
+    except Exception:  # noqa: BLE001 - logged; the sign-in goes on without it
+        logging.getLogger(__name__).warning(
+            "personal workspace for %s could not be ensured", user_id, exc_info=True)
 
 
 def _require_multi() -> None:
@@ -136,6 +156,7 @@ async def bootstrap(request: Request, payload: BootstrapRequest):
     session = identity.open_session(
         user["id"], kind=identity.SESSION_BOOTSTRAP, ip=identity.client_ip(request),
         user_agent=request.headers.get("user-agent"))
+    _ensure_personal_workspace(user["id"])
     audit.record("auth.bootstrap", actor={"actor_id": user["id"], "actor_kind": "user",
                                           "actor_name": user["username"]},
                  object_type="user", object_id=user["id"], ip=identity.client_ip(request))
@@ -166,6 +187,7 @@ async def login(request: Request, payload: LoginRequest):
                      result="denied", ip=ip)
         raise HTTPException(status_code=401, detail="Wrong username or password")
     user = session["user"]
+    _ensure_personal_workspace(user["id"])
     audit.record("auth.login", actor={"actor_id": user["id"], "actor_kind": "user",
                                       "actor_name": user["username"]},
                  object_type="session", object_id=session.get("session_id"), ip=ip,
@@ -223,6 +245,8 @@ async def me(request: Request):
         raise HTTPException(status_code=401, detail="Authentication required")
     payload = identity.principal_dict(principal)
     if identity.current_mode() == MULTI and principal.kind == "user":
+        from common import personal_workspace
+        payload["personal_workspace"] = personal_workspace.ensure_for_principal(principal)
         payload["workspaces"] = identity.workspaces_for_user(principal.id)
         payload["workspace_roles"] = identity.workspace_roles_for_user(principal.id)
         user = identity.get_user(principal.id) or {}
@@ -269,15 +293,55 @@ async def patch_user(request: Request, user_id: str, payload: UserPatch):
         user = identity.update_user(user_id, role=payload.role,
                                     display_name=payload.display_name,
                                     disabled=payload.disabled, email=payload.email)
+        if user is not None and "spend_limit_usd" in payload.model_fields_set:
+            user = identity.set_spend_limit(user_id, payload.spend_limit_usd)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if user is None:
         raise HTTPException(status_code=404, detail="No such user")
     changes = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "spend_limit_usd" in payload.model_fields_set:
+        changes["spend_limit_usd"] = payload.spend_limit_usd
     audit.record("user.role" if "role" in changes else "user.update",
                  principal=_principal(request), object_type="user", object_id=user_id,
                  ip=identity.client_ip(request), details=changes)
     return user
+
+
+# ── spend limits per person (admin) ──────────────────────────────────────────
+
+@router.get("/api/auth/spend-limits")
+async def get_spend_limits(request: Request):
+    """The hub default limit and, per person, their limit, its source and
+    this month's spend (common/user_budget.py)."""
+    _require_multi()
+    identity.require_role(_principal(request), admin=True)
+    from common import user_budget
+    return {
+        "period": user_budget.PERIOD,
+        "default_limit_usd": user_budget.default_limit(),
+        "users": {u["id"]: user_budget.user_budget_status(u["id"]) for u in identity.list_users()},
+    }
+
+
+@router.put("/api/auth/spend-limits/default")
+async def put_default_spend_limit(request: Request, payload: DefaultSpendLimit):
+    """Set the monthly limit of every person without one of their own.
+    Written to ``.env`` for the next start and applied to this process now."""
+    _require_multi()
+    identity.require_role(_principal(request), admin=True)
+    import os
+    from common import user_budget
+    from common.config import settings
+    from routes.settings import _write_env_key
+    value = round(float(payload.limit_usd), 4)
+    _write_env_key(user_budget.DEFAULT_LIMIT_ENV, str(value))
+    os.environ[user_budget.DEFAULT_LIMIT_ENV] = str(value)
+    settings.user_spend_limit_usd = value
+    audit.record("user.spend_limit_default", principal=_principal(request),
+                 object_type="setting", object_id=user_budget.DEFAULT_LIMIT_ENV,
+                 ip=identity.client_ip(request), details={"limit_usd": value})
+    return {"default_limit_usd": user_budget.default_limit()}
 
 
 @router.delete("/api/auth/users/{user_id}")
@@ -318,11 +382,21 @@ async def get_members(request: Request, name: str) -> List[dict]:
     return identity.list_members(name)
 
 
+def _refuse_personal(name: str) -> None:
+    """A personal workspace has exactly one member, its person, as owner
+    (common/personal_workspace.py): nobody is added, nobody removed."""
+    from common import personal_workspace
+    if personal_workspace.is_personal(name):
+        raise HTTPException(status_code=403,
+                            detail="A personal workspace cannot be shared or change its owner")
+
+
 @router.put("/api/workspaces/{name}/members")
 async def put_member(request: Request, name: str, payload: MemberPut):
     """Add a member or change their role."""
     _require_multi()
     identity.require_role(_principal(request), workspace=name, role=WS_OWNER)
+    _refuse_personal(name)
     if payload.role not in WORKSPACE_ROLES:
         raise HTTPException(status_code=400,
                             detail=f"Unknown role '{payload.role}'")
@@ -341,6 +415,7 @@ async def delete_member(request: Request, name: str, user_id: str):
     """Drop a membership. A workspace may not lose its last owner."""
     _require_multi()
     identity.require_role(_principal(request), workspace=name, role=WS_OWNER)
+    _refuse_personal(name)
     try:
         removed = identity.remove_member(name, user_id)
     except ValueError as exc:

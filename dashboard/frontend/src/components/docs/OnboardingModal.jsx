@@ -1,35 +1,42 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Rocket, X, BookOpen, Compass } from 'lucide-react';
-import OnboardingChecklist from './OnboardingChecklist';
+import { BookOpen, Compass, Keyboard, Mic, Rocket, X } from 'lucide-react';
 import { useWelcomeTour } from './WelcomeTour';
 import { useWorkspace } from '../workspace';
 import { getDemo } from '../../api/demo';
+import useSetupGuide from '../setup/useSetupGuide';
+import FirstModelForm from '../setup/FirstModelForm';
 import { useI18n } from '../../i18n';
 
 // ---------------------------------------------------------------------------
 // OnboardingModal — auto-opens on first launch (tracked in localStorage) and
 // is otherwise dismissed. It can always be re-opened from the Docs section.
 // Mounted once, near the app root (in Layout), so it overlays every page.
+//
+// What it shows depends on the guided setup (useSetupGuide, docs/assistant.md
+// "Guided setup"): no model connected yet, the one step the browser itself
+// can do (FirstModelForm); otherwise the hand over to the assistant, which
+// leads the rest of it by voice or by text.
 // ---------------------------------------------------------------------------
 
 // Versioned: bumping the suffix re-shows the welcome popup once after the
 // onboarding content changes, instead of hiding it forever from anyone who
 // dismissed an older version.
-export const ONBOARDING_SEEN_KEY = 'agents_hub_onboarding_seen_v2';
+export const ONBOARDING_SEEN_KEY = 'agents_hub_onboarding_seen_v3';
 
 export default function OnboardingModal() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const tour = useWelcomeTour();
   const workspace = useWorkspace();
-  // Open on first launch only — derived once from localStorage, so no effect
-  // (and therefore no synchronous setState on mount).
-  const [open, setOpen] = useState(() => {
+  const { guide, act, refresh } = useSetupGuide();
+  // Dismissed this launch or a past one — derived once from localStorage, so
+  // no effect (and therefore no synchronous setState on mount).
+  const [closed, setClosed] = useState(() => {
     try {
-      return localStorage.getItem(ONBOARDING_SEEN_KEY) !== '1';
+      return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1';
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -37,7 +44,7 @@ export default function OnboardingModal() {
     try {
       localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
     } catch { /* storage unavailable */ }
-    setOpen(false);
+    setClosed(true);
   };
 
   // The tour reads best over data. When the demo workspace is seeded, switch
@@ -53,7 +60,19 @@ export default function OnboardingModal() {
     tour.start();
   };
 
-  if (!open) return null;
+  // The hand over: start the guide in this mode, then let the Assistant page
+  // send the first turn (its own kickoff handling reads `state.setup`).
+  const startGuide = async (mode) => {
+    dismiss();
+    try { await act('start', { mode }); } catch { /* the hand over still works without it */ }
+    navigate('/assistant', { state: { setup: { mode, kickoff: true } } });
+  };
+
+  // Nothing decided yet (the guide is still loading), dismissed already, or
+  // a guide that is running or over: there is nothing left for this to open.
+  if (closed || !guide || guide.active || guide.finished_at) return null;
+
+  const needsModel = Boolean(guide.needs_model);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
@@ -67,7 +86,7 @@ export default function OnboardingModal() {
             <div>
               <h2 className="text-lg font-bold">{t('onboardingModal.welcomeToAgentsHub')}</h2>
               <p className="text-sm text-white/80">
-                {t('onboardingModal.subtitle')}
+                {t(needsModel ? 'onboardingModal.needsModelSubtitle' : 'onboardingModal.handoverSubtitle')}
               </p>
             </div>
           </div>
@@ -80,9 +99,31 @@ export default function OnboardingModal() {
           </button>
         </div>
 
-        {/* Body */}
+        {/* Body: the one step the browser does itself, or the hand over. */}
         <div className="px-6 py-5 overflow-y-auto">
-          <OnboardingChecklist onNavigate={dismiss} />
+          {needsModel ? (
+            <FirstModelForm admin={guide.admin} onDone={refresh} />
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">{t('onboardingModal.chooseWay')}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  onClick={() => startGuide('voice')}
+                  className="flex flex-col items-center gap-2 px-4 py-6 rounded-xl border-2 border-indigo-200 bg-white hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                >
+                  <Mic className="w-7 h-7 text-indigo-600" />
+                  <span className="text-sm font-semibold text-gray-800">{t('onboardingModal.talkToAssistant')}</span>
+                </button>
+                <button
+                  onClick={() => startGuide('text')}
+                  className="flex flex-col items-center gap-2 px-4 py-6 rounded-xl border-2 border-indigo-200 bg-white hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                >
+                  <Keyboard className="w-7 h-7 text-indigo-600" />
+                  <span className="text-sm font-semibold text-gray-800">{t('onboardingModal.typeToAssistant')}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer: the tour first as the primary action, then the guide, and

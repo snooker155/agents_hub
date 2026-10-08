@@ -49,6 +49,7 @@ const Services = lazy(() => import('./pages/Services'));
 const ServiceDetail = lazy(() => import('./pages/ServiceDetail'));
 const MessageDetails = lazy(() => import('./pages/MessageDetails'));
 const Chat = lazy(() => import('./pages/Chat'));
+const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
@@ -57,6 +58,7 @@ const Watchers = lazy(() => import('./pages/Watchers'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
 const Widgets = lazy(() => import('./pages/Widgets'));
+const Distribution = lazy(() => import('./pages/Distribution'));
 const AgentRegistry = lazy(() => import('./pages/AgentRegistry'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
@@ -154,6 +156,7 @@ function AppRoutes() {
         <Route path="/" element={guard(<Chat />)} />
         <Route path="/chat" element={guard(<Chat />)} />
         <Route path="/chat/:convId" element={guard(<Chat />)} />
+        <Route path="/assistant" element={guard(<Assistant />)} />
         <Route path="/dashboard" element={guard(<Dashboard />)} />
         <Route path="/orchestrator" element={guard(<Orchestrator />)} />
         <Route path="/tasks" element={guard(<TaskManager />)} />
@@ -163,6 +166,7 @@ function AppRoutes() {
         {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
         <Route path="/files" element={<ArtifactsRedirect />} />
         <Route path="/widgets" element={guard(<Widgets />)} />
+        <Route path="/distribution" element={guard(<Distribution />)} />
         <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
         <Route path="/agents/:id" element={guard(<AgentDetails />)} />

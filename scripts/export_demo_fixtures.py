@@ -178,6 +178,7 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     _record(client, responses, "GET", "/api/auth/mode")
     _record(client, responses, "GET", "/api/workspaces")
     _record(client, responses, "GET", f"/api/workspaces/{DEMO_WORKSPACE_NAME}")
+    _record(client, responses, "GET", f"/api/workspaces/{DEMO_WORKSPACE_NAME}/summary")
     _record(client, responses, "GET", "/api/settings")
 
     _record(client, responses, "GET", "/api/agents")

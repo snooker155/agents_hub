@@ -156,7 +156,7 @@ def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
     except Exception:
         result = None
     lines += _prose("Latest result", result)
-    return {"title": task.title or f"Task {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": task.title or f"Task {entity_id[:8]}", "body": "\n".join(lines), "workspace": getattr(task, "workspace", None)}
 
 
 # ── view ─────────────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ def _render_view(entity_id: str) -> Optional[Dict[str, str]]:
     lines += _json_block("Spec", env.get("spec"), limit=6000)
     lines += _json_block("Data", env.get("data"), limit=2000)
     lines += _json_block("Controls", env.get("controls"), limit=1500)
-    return {"title": (env.get("title") or "").strip() or f"View {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": (env.get("title") or "").strip() or f"View {entity_id[:8]}", "body": "\n".join(lines), "workspace": env.get("workspace")}
 
 
 # ── project ──────────────────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ def _render_project(entity_id: str) -> Optional[Dict[str, str]]:
             f"{(getattr(t, 'key', None) or '')} {t.title}".rstrip()
             for t in tasks[:40]
         ]
-    return {"title": project.name or f"Project {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": project.name or f"Project {entity_id[:8]}", "body": "\n".join(lines), "workspace": project.workspace}
 
 
 # ── playground scenario ──────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ def _render_scenario(entity_id: str) -> Optional[Dict[str, str]]:
             f"- {r.sim_run_id} status={r.status} ticks={getattr(r, 'ticks_done', '')}"
             for r in runs
         ]
-    return {"title": scenario.name or f"Scenario {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": scenario.name or f"Scenario {entity_id[:8]}", "body": "\n".join(lines), "workspace": scenario.workspace}
 
 
 # ── loop ─────────────────────────────────────────────────────────────────────
@@ -360,7 +360,7 @@ def _render_loop(entity_id: str) -> Optional[Dict[str, str]]:
             f"best_score={r.best_score} stop_reason={r.stop_reason or '-'}"
             for r in runs
         ]
-    return {"title": loop.name or f"Loop {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": loop.name or f"Loop {entity_id[:8]}", "body": "\n".join(lines), "workspace": loop.workspace}
 
 
 # ── flow ─────────────────────────────────────────────────────────────────────
@@ -423,7 +423,7 @@ def _render_flow(entity_id: str) -> Optional[Dict[str, str]]:
     if edges:
         lines += ["", "Edges:"]
         lines += [f"- {e.get('source')} → {e.get('target')}" for e in edges[:60]]
-    return {"title": (flow.get("name") or "").strip() or f"Flow {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": (flow.get("name") or "").strip() or f"Flow {entity_id[:8]}", "body": "\n".join(lines), "workspace": flow.get("workspace")}
 
 
 # ── team ─────────────────────────────────────────────────────────────────────
@@ -464,7 +464,7 @@ def _render_team(entity_id: str) -> Optional[Dict[str, str]]:
             f"- {m.display_name()} (agent={m.agent_id}) — {m.role or 'no role'}"
             for m in team.members
         ]
-    return {"title": team.name or f"Team {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": team.name or f"Team {entity_id[:8]}", "body": "\n".join(lines), "workspace": team.workspace}
 
 
 # ── agent ────────────────────────────────────────────────────────────────────
@@ -569,7 +569,7 @@ def _render_job(entity_id: str) -> Optional[Dict[str, str]]:
         "flow_id": getattr(job, "flow_id", None),
     })
     lines += _prose("Message", getattr(job, "message", ""))
-    return {"title": job.title or f"Job {entity_id[:8]}", "body": "\n".join(lines)}
+    return {"title": job.title or f"Job {entity_id[:8]}", "body": "\n".join(lines), "workspace": getattr(job, "workspace", None)}
 
 
 # ── the catalog ──────────────────────────────────────────────────────────────
@@ -657,7 +657,7 @@ def list_entities(
 
 
 def render_entity(kind: str, entity_id: str) -> Optional[Dict[str, str]]:
-    """``{title, body}`` for one entity, or None when the kind is unknown, the
+    """``{title, body, workspace}`` for one entity, or None when the kind is unknown, the
     entity is gone, or its store errored."""
     spec = KINDS.get(kind)
     if spec is None or not entity_id:
@@ -672,7 +672,11 @@ def render_entity(kind: str, entity_id: str) -> Optional[Dict[str, str]]:
     body = rendered.get("body") or ""
     if len(body) > MAX_REFERENCE_CHARS:
         body = body[:MAX_REFERENCE_CHARS] + "\n...[truncated — open the entity or use its tool for the rest]"
-    return {"title": rendered.get("title") or str(entity_id), "body": body}
+    # The record's workspace (None for one that has none, such as an agent or
+    # a global flow), so a caller that must not show another workspace's
+    # records can drop it (routes/assistant.py).
+    return {"title": rendered.get("title") or str(entity_id), "body": body,
+            "workspace": rendered.get("workspace")}
 
 
 def agent_can_load(agent_id: Optional[str], kind: str) -> bool:
@@ -698,8 +702,11 @@ def agent_can_load(agent_id: Optional[str], kind: str) -> bool:
 
 # ── request-side plumbing ────────────────────────────────────────────────────
 
-def resolve_references(request) -> None:
+def resolve_references(request, *, workspace: Optional[str] = None) -> None:
     """Render every reference on ``request`` in place, dropping the unresolvable.
+
+    With ``workspace`` set, a record filed under another workspace is dropped
+    too (one that names none, an agent or a global flow, is kept).
 
     Runs before the prompt is built (the way ``materialize_attachments`` does for
     files), so every chat pipeline gets the same resolved payloads no matter
@@ -716,6 +723,10 @@ def resolve_references(request) -> None:
         rendered = render_entity(ref.kind, ref.id)
         if rendered is None:
             continue
+        if workspace and rendered.get("workspace"):
+            from common.workspace_scope import same_workspace
+            if not same_workspace(rendered["workspace"], workspace):
+                continue
         body = rendered["body"]
         remaining = MAX_TOTAL_REFERENCE_CHARS - spent
         if len(body) > remaining:

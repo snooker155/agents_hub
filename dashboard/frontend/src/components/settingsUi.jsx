@@ -6,11 +6,11 @@
 // up importing from the other.
 
 export const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none';
 
-export function SectionCard({ title, actions, children }) {
+export function SectionCard({ title, actions, children, className = '' }) {
   return (
-    <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
+    <section className={`bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5 ${className}`}>
       {/* The title row carries the card's own controls (a provider's status
           badge and its Test button). They used to be the first child of the
           body, which put them on a line of their own under the heading. */}

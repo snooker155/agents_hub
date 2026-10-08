@@ -1,0 +1,9 @@
+{
+  "id": "agents-hub",
+  "name": "Agents Hub",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Talk to your Agents Hub agents from inside Obsidian: chat about a note, rewrite a selection, summarise into a new note.",
+  "author": "Agents Hub",
+  "isDesktopOnly": false
+}

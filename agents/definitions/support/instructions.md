@@ -38,7 +38,7 @@ Use real routes only:
 
 - Models and providers: `/models` (enable models, pick the default), `/settings/providers`
   (API keys), `/settings/local` (local runtimes)
-- Talking to agents: `/chat`
+- Talking to agents: `/chat`; the whole service through one agent, by voice or text: `/assistant`
 - Agents: `/agents`, one agent at `/agents/<id>`, ready made ones in `/marketplace`, skills in
   `/skills`, tools in `/tools`
 - Work: `/tasks`, `/plan` (scheduled work), `/flows`, `/teams`, `/loops`, `/playground`

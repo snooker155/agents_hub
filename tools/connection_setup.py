@@ -121,14 +121,15 @@ def _answer(row: Dict[str, Any], proposal: Dict[str, Any], timeout: float) -> st
 class OptionsInput(BaseModel):
     kind: Optional[str] = Field(
         default=None,
-        description="One of connector, channel, mcp_server, database, watcher, secret; empty for all")
+        description="One of connector, channel, mcp_server, database, watcher, secret, provider; empty for all")
 
 
 @tool("connection_options", args_schema=OptionsInput)
 def connection_options(kind: Optional[str] = None) -> str:
     """List what can be connected and what already is: connectors and chat channels with
-    their fields (which are secret, which required), and this workspace's MCP servers,
-    database connections, watchers and secret names. Never returns a value.
+    their fields (which are secret, which required), this workspace's MCP servers,
+    database connections, watchers and secret names, and which model and web search
+    providers have a key for the whole hub. Never returns a value.
 
     Call it before propose_connection to learn the exact field keys.
     """
@@ -147,10 +148,12 @@ def connection_options(kind: Optional[str] = None) -> str:
 class ProposeInput(BaseModel):
     kind: str = Field(..., description="connector (jira, linear, google, microsoft, notion, confluence), "
                                        "channel (slack, discord, teams, mail), mcp_server, database, "
-                                       "watcher or secret")
+                                       "watcher, secret, or provider (openai, anthropic, google: a model "
+                                       "key; brave, tavily, exa: a web search key, both for the whole hub)")
     target: str = Field(default="", description="The connector or channel name; for mcp_server the "
                                                 "server id; for database and watcher the name; for "
-                                                "secret the secret name (UPPER_SNAKE_CASE)")
+                                                "secret the secret name (UPPER_SNAKE_CASE); for "
+                                                "provider the provider")
     # Not "config": LangChain hands a parameter of that name its own run config.
     fields: Dict[str, Any] = Field(
         default_factory=dict,
@@ -166,7 +169,8 @@ class ProposeInput(BaseModel):
 def propose_connection(kind: str, target: str = "", fields: Optional[Dict[str, Any]] = None,
                        reason: str = "") -> str:
     """Prepare a connection for the person to finish: a connector, chat channel, MCP server,
-    read-only database connection, watcher or workspace secret.
+    read-only database connection, watcher, workspace secret, or a model or web search
+    provider's API key for the whole hub (an administrator's).
 
     You fill the non-secret fields; the person sees a card in the chat, can edit them, types
     the secrets (you never see them) and presses Connect or Deny. In the chat this call waits

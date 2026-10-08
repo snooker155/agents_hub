@@ -211,3 +211,219 @@ def test_no_config_means_no_dispatch(monkeypatch):
     rm.upsert_run({"run_id": "run-w", "agent_id": "swe_agent", "status": "running"})
     rm.update_run("run-w", {"status": "completed"})
     assert calls == []
+
+
+# ── child spans for model and tool calls ────────────────────────────────────
+
+def _run_with_calls(**over):
+    proc = {
+        "token_usage": {"inbound_tokens": 100, "outbound_tokens": 50, "total_tokens": 150, "cached_tokens": 10},
+        "duration_ms": 60000,
+        "llm_invocations": [
+            {"kind": "llm", "model": "gpt-4o", "duration_ms": 2000, "response": "SECRET ANSWER",
+             "token_usage": {"inbound_tokens": 60, "outbound_tokens": 20, "cached_tokens": 5}},
+            {"kind": "tool", "model": "gpt-4o", "token_usage": {"inbound_tokens": 40, "outbound_tokens": 30}},
+        ],
+        "tool_calls": [{"tool": "web_search", "step": 1, "status": "ok", "duration_ms": 3000,
+                        "input": "SECRET INPUT", "output": "SECRET OUTPUT"}],
+    }
+    return _run(process=proc, **over)
+
+
+def _spans(payload):
+    return payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
+
+
+def _attrs(span):
+    return {a["key"]: a["value"] for a in span["attributes"]}
+
+
+def test_child_spans_follow_the_genai_conventions():
+    spans = _spans(otel_export.build_span(_run_with_calls()))
+    parent, children = spans[0], spans[1:]
+    assert [c["name"] for c in children] == ["chat gpt-4o", "execute_tool web_search", "chat gpt-4o"]
+    assert all(c["parentSpanId"] == parent["spanId"] and c["traceId"] == parent["traceId"] for c in children)
+    chat, tool = _attrs(children[0]), _attrs(children[1])
+    assert chat["gen_ai.operation.name"]["stringValue"] == "chat"
+    assert chat["gen_ai.usage.input_tokens"]["intValue"] == "60"
+    assert chat["gen_ai.usage.output_tokens"]["intValue"] == "20"
+    assert tool["gen_ai.operation.name"]["stringValue"] == "execute_tool"
+    assert tool["gen_ai.tool.name"]["stringValue"] == "web_search"
+    assert _attrs(parent)["gen_ai.operation.name"]["stringValue"] == "invoke_agent"
+    # no prompt, answer or tool content leaves the hub
+    assert "SECRET" not in json.dumps(spans)
+
+
+def test_child_spans_sit_inside_the_run_window_in_order():
+    spans = _spans(otel_export.build_span(_run_with_calls()))
+    parent, children = spans[0], spans[1:]
+    start, end = int(parent["startTimeUnixNano"]), int(parent["endTimeUnixNano"])
+    cursor = start
+    for c in children:
+        assert int(c["startTimeUnixNano"]) == cursor
+        cursor = int(c["endTimeUnixNano"])
+    assert cursor <= end
+    assert int(children[0]["endTimeUnixNano"]) - int(children[0]["startTimeUnixNano"]) == 2_000_000_000
+    assert len({c["spanId"] for c in children}) == 3
+
+
+def test_a_failed_tool_call_marks_its_span_as_an_error():
+    run = _run_with_calls()
+    run["process"]["tool_calls"][0]["status"] = "error"
+    tool = _spans(otel_export.build_span(run))[2]
+    assert tool["status"]["code"] == 2
+
+
+def test_child_spans_are_bounded_and_the_parent_says_what_was_left_out(monkeypatch):
+    from common.config import settings
+    monkeypatch.setattr(settings, "otel_max_child_spans", 2, raising=False)
+    spans = _spans(otel_export.build_span(_run_with_calls()))
+    assert len(spans) == 3
+    assert _attrs(spans[0])["agents_hub.child_spans_dropped"]["intValue"] == "1"
+    monkeypatch.setattr(settings, "otel_max_child_spans", 0, raising=False)
+    assert len(_spans(otel_export.build_span(_run_with_calls()))) == 1
+
+
+def test_a_run_without_call_records_is_still_one_span():
+    assert len(_spans(otel_export.build_span(_run()))) == 1
+
+
+def test_the_hub_s_decoder_reads_the_children_too():
+    from connections import otlp
+    spans = otlp.decode(json.dumps(otel_export.build_span(_run_with_calls())).encode(), "application/json")
+    assert len(spans) == 4
+
+
+def test_dispatch_queues_the_run_and_the_worker_builds_the_payload(monkeypatch):
+    """Nothing is built or read on the caller's thread."""
+    monkeypatch.setattr(otel_export, "_ensure_worker", lambda: None)
+    while not otel_export._queue.empty():
+        otel_export._queue.get_nowait()
+        otel_export._queue.task_done()
+    built = []
+    monkeypatch.setattr(otel_export, "build_span", lambda run: built.append(run))
+    otel_export.dispatch(_run())
+    assert built == []
+    queued = otel_export._queue.get_nowait()
+    otel_export._queue.task_done()
+    assert queued["run_id"] == "run-1"
+
+
+def test_the_worker_reads_the_payload_for_the_child_spans(monkeypatch):
+    stored = {"tool_calls": [{"tool": "read_file", "status": "ok"}], "llm_invocations": []}
+    monkeypatch.setattr("managers.runs.store.get_run_process", lambda run_id: stored)
+    run = otel_export._with_process(_run(process={"duration_ms": 5}))
+    assert run["process"]["tool_calls"] == stored["tool_calls"]
+    assert [s["name"] for s in _spans(otel_export.build_span(run))][1] == "execute_tool read_file"
+
+
+# ── endpoints and headers: the standard variables as fallbacks ──────────────
+
+@pytest.fixture
+def clean_endpoints(monkeypatch):
+    from common.config import settings
+    for name in ("otel_export_url", "otel_export_headers", "otel_endpoint", "otel_headers", "otel_metrics_url"):
+        monkeypatch.setattr(settings, name, "", raising=False)
+    return settings
+
+
+def test_the_standard_endpoint_is_the_fallback(clean_endpoints, monkeypatch):
+    s = clean_endpoints
+    assert not otel_export.configured() and not otel_export.metrics_configured()
+    monkeypatch.setattr(s, "otel_endpoint", "http://collector:4318/", raising=False)
+    assert otel_export.traces_url() == "http://collector:4318/v1/traces"
+    assert otel_export.metrics_url() == "http://collector:4318/v1/metrics"
+    assert otel_export.configured()
+    monkeypatch.setattr(s, "otel_export_url", "http://other/v1/traces", raising=False)
+    assert otel_export.traces_url() == "http://other/v1/traces"
+
+
+def test_the_metrics_url_follows_the_traces_url_unless_set(clean_endpoints, monkeypatch):
+    s = clean_endpoints
+    monkeypatch.setattr(s, "otel_export_url", "http://collector/v1/traces", raising=False)
+    assert otel_export.metrics_url() == "http://collector/v1/metrics"
+    monkeypatch.setattr(s, "otel_export_url", "http://hub/api/ingest/v1/traces/x", raising=False)
+    assert otel_export.metrics_url() == ""
+    monkeypatch.setattr(s, "otel_metrics_url", "http://m/v1/metrics", raising=False)
+    assert otel_export.metrics_url() == "http://m/v1/metrics"
+
+
+def test_the_standard_headers_are_the_fallback_and_are_percent_decoded(clean_endpoints, monkeypatch):
+    s = clean_endpoints
+    monkeypatch.setattr(s, "otel_headers", "Authorization=Bearer%20abc,X-Team=core", raising=False)
+    assert otel_export._headers()["Authorization"] == "Bearer abc"
+    monkeypatch.setattr(s, "otel_export_headers", "Authorization=own", raising=False)
+    h = otel_export._headers()
+    assert h["Authorization"] == "own" and "X-Team" not in h
+
+
+# ── OTLP metrics ────────────────────────────────────────────────────────────
+
+def _fake_metrics():
+    return [
+        {"name": "agents_hub_runs_running", "help": "running", "type": "gauge", "samples": [({}, 3)]},
+        {"name": "agents_hub_cost_usd_total", "help": "cost", "type": "gauge",
+         "samples": [({"workspace": "default"}, 1.5)]},
+        {"name": "agents_hub_runs_finished_total", "help": "finished", "type": "counter",
+         "samples": [({"agent": "writer", "status": "completed"}, 7)]},
+        {"name": "agents_hub_run_duration_seconds", "help": "dur", "type": "histogram", "samples": [],
+         "histogram": {"bounds": [1.0, 5.0], "counts": [2, 1, 0], "sum": 4.5, "count": 3}},
+        {"name": "agents_hub_empty", "help": "nothing", "type": "gauge", "samples": []},
+    ]
+
+
+def test_build_metrics_maps_gauges_counters_and_histograms():
+    payload = otel_export.build_metrics(_fake_metrics(), now_ns=123)
+    rm_ = payload["resourceMetrics"][0]
+    res = {a["key"]: a["value"] for a in rm_["resource"]["attributes"]}
+    assert res["service.name"]["stringValue"] == "agents-hub"
+    by_name = {m["name"]: m for m in rm_["scopeMetrics"][0]["metrics"]}
+    assert "agents_hub_empty" not in by_name
+    assert by_name["agents_hub_runs_running"]["gauge"]["dataPoints"][0]["asInt"] == "3"
+    assert by_name["agents_hub_cost_usd_total"]["gauge"]["dataPoints"][0]["asDouble"] == 1.5
+    counter = by_name["agents_hub_runs_finished_total"]["sum"]
+    assert counter["isMonotonic"] is True and counter["aggregationTemporality"] == 2
+    point = counter["dataPoints"][0]
+    assert point["asInt"] == "7" and "startTimeUnixNano" in point
+    assert {a["key"] for a in point["attributes"]} == {"agent", "status"}
+    hist = by_name["agents_hub_run_duration_seconds"]["histogram"]["dataPoints"][0]
+    assert hist["bucketCounts"] == ["2", "1", "0"] and hist["explicitBounds"] == [1.0, 5.0]
+    assert hist["count"] == "3" and hist["sum"] == 4.5
+
+
+def test_build_metrics_from_the_live_collector_is_json():
+    json.dumps(otel_export.build_metrics())
+
+
+def test_push_metrics_posts_to_the_metrics_url_with_headers(clean_endpoints, monkeypatch):
+    s = clean_endpoints
+    monkeypatch.setattr(s, "otel_export_url", "http://collector/v1/traces", raising=False)
+    monkeypatch.setattr(s, "otel_export_headers", "X-Key=1", raising=False)
+    seen = []
+    monkeypatch.setattr(otel_export.requests, "post",
+                        lambda url, json=None, headers=None, timeout=None: seen.append((url, headers, json)) or _FakeResponse(200))
+    assert otel_export.push_metrics_once() is True
+    url, headers, body = seen[0]
+    assert url == "http://collector/v1/metrics" and headers["X-Key"] == "1"
+    assert "resourceMetrics" in body
+
+
+def test_push_metrics_never_raises_and_does_nothing_unconfigured(clean_endpoints, monkeypatch):
+    assert otel_export.push_metrics_once() is False
+    monkeypatch.setattr(clean_endpoints, "otel_endpoint", "http://collector", raising=False)
+
+    def boom(*a, **k):
+        raise otel_export.requests.exceptions.ConnectionError("down")
+    monkeypatch.setattr(otel_export.requests, "post", boom)
+    assert otel_export.push_metrics_once() is False
+
+
+def test_the_exporter_thread_starts_only_when_configured(clean_endpoints, monkeypatch):
+    assert otel_export.start_metrics_exporter() is False
+    monkeypatch.setattr(clean_endpoints, "otel_endpoint", "http://collector", raising=False)
+    monkeypatch.setattr(otel_export, "_metrics_loop", lambda: None)
+    try:
+        assert otel_export.start_metrics_exporter() is True
+    finally:
+        otel_export.stop_metrics_exporter()
+        otel_export._metrics_thread = None

@@ -215,13 +215,14 @@ PROJECT_GRAPH_PROMPT = (
 # Providers served locally, where smaller models tend to misfire on the episodic
 # write tool (record_episode). Episodic write defaults OFF for these unless the
 # agent explicitly opts in (episodic_write_enabled=True).
-LOCAL_PROVIDERS = {"ollama", "lmstudio"}
+LOCAL_PROVIDERS = {"ollama", "lmstudio", "hub-local"}
 
 
 def resolve_episodic_write(episodic_flag: Optional[bool], provider: Optional[str]) -> bool:
     """Effective episodic-write decision: explicit flag wins; None = auto.
 
-    Auto means on for cloud providers and off for local ones (LM Studio/Ollama).
+    Auto means on for cloud providers and off for local ones (LM Studio, Ollama,
+    the hub's own runtime).
     """
     if episodic_flag is not None:
         return bool(episodic_flag)
@@ -256,7 +257,9 @@ class AgentFactory:
     """Factory for creating agents from YAML definitions."""
     
     def __init__(self, definitions_dir: Optional[str] = None):
-        self.definitions_dir = Path(definitions_dir) if definitions_dir else Path(__file__).parent / "definitions"
+        # The shipped folder reads through the state layer (agents/prompt_assembly.py).
+        from agents.prompt_assembly import SYSTEM_DEFINITIONS_DIR
+        self.definitions_dir = Path(definitions_dir) if definitions_dir else SYSTEM_DEFINITIONS_DIR
         self._agent_cache: Dict[str, Any] = {}
     
     def load_definition(self, agent_id: str) -> Dict[str, Any]:
@@ -291,7 +294,9 @@ class AgentFactory:
             "provider": spec.provider,
             "model": spec.model,
             "base_url": spec.base_url,
-            "temperature": spec.temperature if spec.temperature is not None else 0.0,
+            # Unset stays unset: the model's own value on the Models page,
+            # then the global one from Settings, apply in that order.
+            "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
@@ -307,7 +312,9 @@ class AgentFactory:
         agent definition → workspace model_override → workspace settings → global .env.
 
         Returns (provider, model, base_url, api_key).
-        Mutates *config* in-place for temperature/max_tokens workspace overrides.
+        Mutates *config* in-place for the max_tokens workspace override. The
+        temperature has no workspace level: the agent's own, the model's on
+        the Models page, then the global one from Settings (build_chat_model).
         """
         resolved_provider = config.get("provider") or None
         resolved_model = config.get("model") or None
@@ -347,16 +354,15 @@ class AgentFactory:
         if ws_name:
             try:
                 from workspace import get_effective_settings as _get_eff, get_workspace_metadata as _get_meta
-                _ws_raw_overrides = (_get_meta(ws_name) or {}).get("settings") or {}
+                from common.personal_workspace import model_source
+                # A personal workspace with no settings of its own runs with
+                # default's keys and base URLs (common/personal_workspace.py).
+                settings_ws = model_source(ws_name) or ws_name
+                _ws_raw_overrides = (_get_meta(settings_ws) or {}).get("settings") or {}
                 if _ws_raw_overrides:
-                    _eff = _get_eff(ws_name)
+                    _eff = _get_eff(settings_ws)
                     if not resolved_provider and "default_provider" in _ws_raw_overrides:
                         resolved_provider = _eff.get("default_provider") or resolved_provider
-                    if "temperature" in _ws_raw_overrides and config.get("temperature") is None:
-                        try:
-                            config["temperature"] = float(_eff["temperature"])
-                        except (ValueError, TypeError):
-                            pass
                     if "max_tokens" in _ws_raw_overrides and config.get("max_tokens") is None:
                         try:
                             config["max_tokens"] = int(_eff["max_tokens"])
@@ -624,6 +630,21 @@ class AgentFactory:
         # like the web tools; each works only when its connector is set up.
         from tools.connector_tools import connector_tools
         available.extend(connector_tools())
+        # The assistant's view of the hub's records as the person sees them,
+        # the service-wide one, the one-step actions and the guided setup
+        # (tools/hub_lookup.py, tools/hub_action.py, tools/setup_guide.py):
+        # plain per-tool grants.
+        from tools.hub_action import HUB_ACTION_TOOLS
+        from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
+        from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+        from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
+        from tools.setup_guide import SETUP_GUIDE_TOOLS
+        available.extend(SETUP_GUIDE_TOOLS)
+        available.extend(PROACTIVE_SETUP_TOOLS)
+        available.extend(HUB_LOOKUP_TOOLS)
+        available.extend(ASSISTANT_CONVERSATION_TOOLS)
+        available.extend(SERVICE_LOOKUP_TOOLS)
+        available.extend(HUB_ACTION_TOOLS)
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -633,16 +654,40 @@ class AgentFactory:
 
         result: List[Any] = []
         seen: set[str] = set()
+        missing: List[str] = []
         for tool_name in selected_names:
             if tool_name in seen:
                 continue
             tool_obj = by_name.get(tool_name)
             if not tool_obj:
+                missing.append(tool_name)
                 continue
             seen.add(tool_name)
             result.append(tool_obj)
 
+        if missing:
+            self._report_missing_tools(agent_id, missing)
         return result
+
+    @staticmethod
+    def _report_missing_tools(agent_id: Optional[str], names: List[str]) -> None:
+        """Say which requested tools the build left out. One the catalog knows
+        is only not offered here (the generic memory tools in a workspace run,
+        say). One it does not know means this process runs other code than the
+        record was written for, like a replica started before the tool was
+        added: the prompt may still tell the model to use it. MCP and reasoning
+        tools are resolved later in the build and are not judged here."""
+        from tools.approval import REASONING_TOOL_NAMES
+        from tools.registry import get_tool_by_id
+        names = [n for n in dict.fromkeys(names)
+                 if n and not n.startswith("mcp") and n not in REASONING_TOOL_NAMES]
+        unknown = [n for n in names if get_tool_by_id(n) is None]
+        if unknown:
+            log.warning("agent %s asks for tools this process does not have: %s",
+                        agent_id or "?", ", ".join(unknown))
+        rest = [n for n in names if n not in unknown]
+        if rest:
+            log.debug("agent %s: tools not offered in this build: %s", agent_id or "?", ", ".join(rest))
     
     def create_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
         """Return a runnable agent, reusing a cached build when possible.
@@ -736,7 +781,9 @@ class AgentFactory:
             "provider": spec.provider,
             "model": spec.model,
             "base_url": spec.base_url,
-            "temperature": spec.temperature if spec.temperature is not None else 0.0,
+            # Unset stays unset: the model's own value on the Models page,
+            # then the global one from Settings, apply in that order.
+            "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
@@ -826,6 +873,10 @@ class AgentFactory:
         # memory tool has been added, so the run can recall but never change
         # the pool. Popped like memory_pool; it reached the cache key already.
         _memory_access = str(override_params.pop("memory_access", None) or "write").strip().lower()
+        # The assistant in an administrator's service thread (routes/assistant.py,
+        # common/workspace_scope.py ASSISTANT_SERVICE_TOOLS). Popped like
+        # memory_pool; it reached the cache key already.
+        _service_mode = bool(override_params.pop("service_mode", False))
 
         # Imported agents run outside this process: there is no prompt to
         # assemble, no tool set to grant and no model to build here, because all
@@ -1261,7 +1312,8 @@ class AgentFactory:
         from common import workspace_scope as _scope
         _run_ws = _ws_name_of(workspace) if workspace else None
         _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
-        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or ""))
+        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or "",
+                                             service_mode=_service_mode))
         if _out_of_scope:
             tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
             log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
@@ -1309,12 +1361,10 @@ class AgentFactory:
             # independent of the ``think`` scratchpad tool: when it is a positive
             # level, capable models reason natively in the API, and that
             # reasoning is shown in the chat bubble and stripped from the final
-            # answer text.
-            thinking_level=(
-                reasoning.get("thinking_level")
-                if reasoning.get("thinking_level") not in (None, "", "off")
-                else None
-            ),
+            # answer text. Off is passed on as off, not dropped: a model that
+            # reasons by default is held to its lowest effort then
+            # (providers/reasoning_profile.py).
+            thinking_level=reasoning.get("thinking_level") or "off",
             native_reasoning=reasoning.get("thinking_level") not in (None, "", "off"),
             # The record this build came from (a stored version when pinned),
             # for the loop extensions and guardrails (agents/agent_loop.py).

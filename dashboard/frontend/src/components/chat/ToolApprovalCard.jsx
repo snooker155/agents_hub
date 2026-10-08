@@ -119,7 +119,7 @@ function GenericToolApprovalCard({ approval, live = true }) {
             maxLength={2000}
             placeholder={t('toolApproval.notePlaceholder')}
             aria-label={t('toolApproval.noteLabel')}
-            className="mt-2 w-full resize-y rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:border-indigo-300 focus:outline-none"
+            className="mt-2 w-full resize-y rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 focus:outline-none"
           />
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button

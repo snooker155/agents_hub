@@ -224,6 +224,12 @@ class Settings(BaseSettings):
         default=0,
         validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
                                       "rate_limit_tokens_per_day"))
+    # Default monthly spend limit of every person in multi mode, in USD
+    # (common/user_budget.py, docs/costs.md "Limit per person"). 0 = none. A
+    # person's own limit, set on the Users page, wins over it.
+    user_spend_limit_usd: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("AGENTS_HUB_USER_SPEND_LIMIT_USD", "user_spend_limit_usd"))
     # Requests per minute per client address on the public instance routes
     # (/api/external/{token}/messages and /run),
     # known and unknown tokens alike, so token guessing is slow. 0 disables.
@@ -482,12 +488,22 @@ class Settings(BaseSettings):
         default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
 
     # ── Model runtime (providers/local_models.py, deploy/models/) ──────────────
-    # Base URL of the hub's own model runtime, e.g. http://models:8200 under
-    # the compose `models` profile or http://127.0.0.1:8200 in host mode.
-    # Empty (default) hides the runtime: the Local models card says it is not
-    # configured and the provider hub-local is never registered.
+    # Base URL of a model runtime run elsewhere, e.g. http://models:8200 for
+    # the compose service. Empty (default): the hub runs its own on this host
+    # (providers/model_runtime_host.py), unless models_managed is off.
     models_url: str = Field(
         default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_URL", "models_url"))
+    # Whether the hub starts and keeps its own runtime when models_url is
+    # empty: a process of its own on 127.0.0.1:models_port, with its own
+    # Python environment and token under AGENTS_HUB_ROOT/models-runtime.
+    models_managed: bool = Field(
+        default=True, validation_alias=AliasChoices("AGENTS_HUB_MODELS_MANAGED", "models_managed"))
+    models_port: int = Field(
+        default=8200, validation_alias=AliasChoices("AGENTS_HUB_MODELS_PORT", "models_port"))
+    # A file holding the token, for a runtime that wrote its own (compose
+    # shares it over the models volume). models_token wins when both are set.
+    models_token_file: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN_FILE", "models_token_file"))
     # Shared token the runtime requires on every call (its MODELS_TOKEN). It
     # is also the api_key of the hub-local backend. The _TOKEN suffix keeps it
     # out of run_shell's environment (scrubbed_env).
@@ -677,6 +693,23 @@ class Settings(BaseSettings):
     otel_export_headers: str = Field(
         default="",
         validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_HEADERS", "otel_export_headers"))
+    # The standard OpenTelemetry variables, used as fallbacks when the
+    # AGENTS_HUB_ ones above are empty: a base endpoint (the traces go to
+    # <endpoint>/v1/traces, the metrics to <endpoint>/v1/metrics) and headers.
+    otel_endpoint: str = Field(
+        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_ENDPOINT", "otel_endpoint"))
+    otel_headers: str = Field(
+        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS", "otel_headers"))
+    # Where OTLP metrics go, when not <traces url with /v1/metrics>. Empty
+    # with no endpoint anywhere: no metrics export.
+    otel_metrics_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_URL", "otel_metrics_url"))
+    otel_metrics_interval_seconds: int = Field(
+        default=60, validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_INTERVAL", "otel_metrics_interval_seconds"))
+    # Model-call and tool-call child spans under each run's span: at most this
+    # many per run (0 turns them off).
+    otel_max_child_spans: int = Field(
+        default=40, validation_alias=AliasChoices("AGENTS_HUB_OTEL_MAX_CHILD_SPANS", "otel_max_child_spans"))
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

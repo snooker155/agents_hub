@@ -119,7 +119,7 @@ function PendingQuestion({ run, onAnswer }) {
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && value.trim() && send(value.trim())}
             placeholder={t('connections.answerPlaceholder')}
-            className="flex-1 min-w-[200px] border border-amber-300 rounded-lg px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+            className="flex-1 min-w-[200px] border border-amber-300 rounded-lg px-3 py-2 text-sm"
           />
           <button
             type="button"
@@ -425,7 +425,7 @@ export default function ConnectionDetail() {
                 min="0"
                 value={keep}
                 onChange={(e) => setKeep(e.target.value)}
-                className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
               <button
                 onClick={saveRetention}

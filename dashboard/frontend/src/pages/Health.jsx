@@ -67,13 +67,22 @@ function ServiceDot({ state }) {
   );
 }
 
-function Card({ icon: Icon, title, children, tone = 'default' }) {
+// `badge` and `meta` sit right after the title, `actions` at the far end of
+// the same line, so a card's state and its button read with its heading.
+function Card({ icon: Icon, title, children, tone = 'default', badge, meta, actions }) {
   const ring = tone === 'bad' ? 'border-red-200' : 'border-gray-200';
   return (
     <div className={`bg-white rounded-xl border ${ring} p-4 shadow-sm`}>
-      <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
-        <Icon className="w-4 h-4 text-indigo-500" /> {title}
-      </h3>
+      <div className="flex items-center gap-2 mb-3 min-h-[1.75rem]">
+        <div className="flex flex-1 min-w-0 items-center gap-x-2 gap-y-1 flex-wrap">
+          <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+            <Icon className="w-4 h-4 text-indigo-500" /> {title}
+          </h3>
+          {badge}
+          {meta && <span className="text-xs text-gray-400">{meta}</span>}
+        </div>
+        {actions && <div className="shrink-0">{actions}</div>}
+      </div>
       {children}
     </div>
   );
@@ -125,15 +134,62 @@ function DoctorBadge({ status }) {
   );
 }
 
+// The doctor answers in English (common/doctor.py), which `ah doctor` and the
+// Service Agent read as is. Each summary also carries its message key and
+// values, so the page says it in the reader's language; a key this build's
+// locales do not have yet keeps the English sentence.
+function doctorParams(params) {
+  const out = {};
+  for (const [name, value] of Object.entries(params || {})) {
+    out[name] = Array.isArray(value) ? value.join(', ') : value;
+  }
+  return out;
+}
+
+function doctorMessage(t, msg) {
+  if (!msg?.key) return null;
+  const key = `health.doctor.summaries.${msg.key}`;
+  const text = t(key, doctorParams(msg.params));
+  return text === key ? null : text;
+}
+
+function checkSummary(t, check) {
+  const i18n = check.summary_i18n;
+  if (i18n?.parts?.length) {
+    // Several findings in one sentence: "a; b." with the first letter raised,
+    // the same shape the backend gives the English.
+    const parts = i18n.parts.map((part) => doctorMessage(t, part));
+    if (!parts.every(Boolean)) return check.summary;
+    const text = parts.join('; ');
+    return `${text[0].toUpperCase()}${text.slice(1)}.`;
+  }
+  return doctorMessage(t, i18n) || check.summary;
+}
+
+function detailValue(t, language, key, value) {
+  if (value === null || value === undefined || (Array.isArray(value) && value.length === 0)) return '—';
+  if (typeof value === 'boolean') return t(value ? 'health.doctor.yes' : 'health.doctor.no');
+  if (key.endsWith('_bytes') && typeof value === 'number') return bytes(value);
+  if (key.endsWith('_at') && typeof value === 'string') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toLocaleString(language);
+  }
+  if (Array.isArray(value) && value.every((v) => v === null || typeof v !== 'object')) {
+    return value.join(', ');
+  }
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 // One self check, expandable to its detail map. `doc`/`anchor` point at the
 // service-health doc's matching section rather than duplicating the
 // explanation here, so the two never drift apart.
 function CheckRow({ check }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const detailEntries = check.detail && typeof check.detail === 'object'
     ? Object.entries(check.detail) : [];
   const hasDetail = detailEntries.length > 0;
+  const summary = checkSummary(t, check);
 
   return (
     <div className="border-b border-gray-100 last:border-0 py-2">
@@ -149,10 +205,12 @@ function CheckRow({ check }) {
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-gray-800">{check.title}</span>
+              <span className="text-sm font-semibold text-gray-800">
+                {t(`health.doctor.titles.${check.id}`, { defaultValue: check.title })}
+              </span>
               <CheckDot status={check.status} />
             </span>
-            {check.summary && <span className="block text-xs text-gray-500 mt-0.5">{check.summary}</span>}
+            {summary && <span className="block text-xs text-gray-500 mt-0.5">{summary}</span>}
           </span>
         </button>
         {check.doc && (
@@ -168,11 +226,11 @@ function CheckRow({ check }) {
         <div className="mt-2 ml-6 space-y-0.5">
           {detailEntries.map(([key, value]) => (
             <div key={key} className="flex items-baseline justify-between gap-3 text-xs">
-              <span className="text-gray-400">{key}</span>
+              <span className="text-gray-400" title={key}>
+                {t(`health.doctor.detail.${key}`, { defaultValue: key })}
+              </span>
               <span className="text-gray-700 font-mono break-all text-right">
-                {value === null || value === undefined
-                  ? '—'
-                  : (typeof value === 'object' ? JSON.stringify(value) : String(value))}
+                {detailValue(t, language, key, value)}
               </span>
             </div>
           ))}
@@ -186,7 +244,7 @@ function CheckRow({ check }) {
 // snapshot above it since the two answer different questions (see the module
 // docblock).
 function DiagnosticsSection() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const toast = useToast();
   const [doctor, setDoctor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -210,32 +268,32 @@ function DiagnosticsSection() {
   const checks = doctor?.checks || [];
 
   return (
-    <Card icon={Stethoscope} title={t('health.diagnostics.title')}>
-      <div className="flex items-center justify-between mb-2">
-        {doctor ? <DoctorBadge status={doctor.status} /> : <span className="text-xs text-gray-400">—</span>}
+    <Card
+      icon={Stethoscope}
+      title={t('health.diagnostics.title')}
+      badge={doctor && <DoctorBadge status={doctor.status} />}
+      meta={doctor?.checked_at
+        && t('health.diagnostics.checkedAt', { time: new Date(doctor.checked_at).toLocaleString(language) })}
+      actions={(
         <button
           type="button"
           onClick={load}
           disabled={running}
-          className="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
           {running
             ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
             : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
           {t('health.diagnostics.run')}
         </button>
-      </div>
+      )}
+    >
       {loading ? (
         <PageLoader size="sm" label={t('health.diagnostics.running')} />
       ) : checks.length === 0 ? (
         <p className="text-sm text-gray-400 italic">{t('health.diagnostics.noChecks')}</p>
       ) : (
         <div>{checks.map((c) => <CheckRow key={c.id} check={c} />)}</div>
-      )}
-      {doctor?.checked_at && (
-        <p className="text-xs text-gray-400 mt-2">
-          {t('health.diagnostics.checkedAt', { time: new Date(doctor.checked_at).toLocaleString() })}
-        </p>
       )}
     </Card>
   );
@@ -303,9 +361,11 @@ function SloCard() {
   const objectives = slo?.objectives || {};
 
   return (
-    <Card icon={Gauge} title={t('health.slo.title')}>
-      <div className="flex items-center justify-between mb-1">
-        {slo ? <SloStatusDot status={slo.status} /> : <span className="text-xs text-gray-400">—</span>}
+    <Card
+      icon={Gauge}
+      title={t('health.slo.title')}
+      badge={slo && <SloStatusDot status={slo.status} />}
+      actions={(
         <button
           type="button"
           onClick={load}
@@ -315,7 +375,8 @@ function SloCard() {
           {loading ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
           {t('health.refresh')}
         </button>
-      </div>
+      )}
+    >
       <SloObjectiveRow
         label={t('health.slo.startP95')}
         objective={objectives.start_p95}
@@ -664,63 +725,72 @@ export default function Health() {
 
       <div className={chat.gridClass}>
         <div className={chat.mainClass}>
-      <div className={`grid grid-cols-1 gap-4 mb-4 ${chat.open ? '' : 'lg:grid-cols-2'}`}>
-        <DiagnosticsSection />
-        <SloCard />
-        <SystemWorkspaceCard />
-      </div>
-      {loading ? (
-        <PageLoader label={t('health.loading')} />
-      ) : (
-        <div className={`grid grid-cols-1 gap-4 ${chat.open ? 'xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
-          <Card icon={Database} title={t('health.database')} tone={db.reachable ? 'default' : 'bad'}>
-            {db.reachable ? (
-              <>
-                <Row label={t('health.runningRuns')} value={db.running_runs ?? '—'}
-                     hint={t('health.runningRunsHint')} />
-                {Object.entries(counts).map(([table, n]) => (
-                  <Row key={table} label={table} value={n ?? '—'} />
-                ))}
-              </>
-            ) : (
-              <p className="text-sm text-red-700">{db.error || t('health.dbUnreachable')}</p>
-            )}
-          </Card>
-
-          <Card icon={Server} title={t('health.backgroundServices')}>
-            {Object.entries(services).map(([name, state]) => (
-              <div key={name} className="flex items-center justify-between py-1">
-                <span className="text-sm text-gray-500">{name}</span>
-                <ServiceDot state={state} />
-              </div>
-            ))}
-            <p className="text-xs text-gray-400 mt-2">{t('health.unknownHint')}</p>
-          </Card>
-
-          <Card icon={HardDrive} title={t('health.storage')}>
-            <Row label={t('health.dbSize')} value={bytes(storage.db_bytes)} />
-            <Row label={t('health.walSize')} value={bytes(storage.db_wal_bytes)} />
-            <Row label={t('health.runLogs')}
-                 value={`${bytes(storage.run_logs_bytes)} · ${storage.run_logs_files ?? 0}`} />
-            <Row label={t('health.totalState')} value={bytes(storage.agents_hub_bytes)} />
-          </Card>
-
-          <Card icon={KeyRound} title={t('health.providers')}>
-            <Row label={t('health.defaultProvider')} value={providers.default_provider || '—'} />
-            {['openai_key_set', 'anthropic_key_set', 'google_key_set'].map((k) => (
-              <Row key={k} label={k.replace('_key_set', '')}
-                   value={providers[k] ? t('health.keySet') : t('health.keyMissing')} />
-            ))}
-            <Row label={t('health.apiAuth')}
-                 value={providers.api_auth_enabled ? t('health.on') : t('health.off')} />
-            <Row label={t('health.agentCache')}
-                 value={health?.agent_cache?.enabled === null
-                   ? '—'
-                   : (health?.agent_cache?.enabled ? t('health.on') : t('health.off'))} />
-          </Card>
+      {/* Two independent stacks rather than one grid: grid rows stretch each
+          card to its neighbour's height, and a card that grows (diagnostics
+          loading its checks) would drag the cards beside it along. The long
+          diagnostics list gets a column of its own; everything else stacks
+          beside it, so neither column leaves a hole under a short card. */}
+      <div className={`grid grid-cols-1 gap-4 items-start ${chat.open ? '2xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
+        <div className="space-y-4 min-w-0">
+          <DiagnosticsSection />
+          {!loading && (
+            <Card icon={Database} title={t('health.database')} tone={db.reachable ? 'default' : 'bad'}>
+              {db.reachable ? (
+                <>
+                  <Row label={t('health.runningRuns')} value={db.running_runs ?? '—'}
+                       hint={t('health.runningRunsHint')} />
+                  {Object.entries(counts).map(([table, n]) => (
+                    <Row key={table} label={table} value={n ?? '—'} />
+                  ))}
+                </>
+              ) : (
+                <p className="text-sm text-red-700">{db.error || t('health.dbUnreachable')}</p>
+              )}
+            </Card>
+          )}
         </div>
-      )}
+        <div className="space-y-4 min-w-0">
+          <SloCard />
+          <SystemWorkspaceCard />
+          {loading ? (
+            <PageLoader label={t('health.loading')} />
+          ) : (
+            <>
+              <Card icon={Server} title={t('health.backgroundServices')}>
+                {Object.entries(services).map(([name, state]) => (
+                  <div key={name} className="flex items-center justify-between py-1">
+                    <span className="text-sm text-gray-500">{name}</span>
+                    <ServiceDot state={state} />
+                  </div>
+                ))}
+                <p className="text-xs text-gray-400 mt-2">{t('health.unknownHint')}</p>
+              </Card>
 
+              <Card icon={HardDrive} title={t('health.storage')}>
+                <Row label={t('health.dbSize')} value={bytes(storage.db_bytes)} />
+                <Row label={t('health.walSize')} value={bytes(storage.db_wal_bytes)} />
+                <Row label={t('health.runLogs')}
+                     value={`${bytes(storage.run_logs_bytes)} · ${storage.run_logs_files ?? 0}`} />
+                <Row label={t('health.totalState')} value={bytes(storage.agents_hub_bytes)} />
+              </Card>
+
+              <Card icon={KeyRound} title={t('health.providers')}>
+                <Row label={t('health.defaultProvider')} value={providers.default_provider || '—'} />
+                {['openai_key_set', 'anthropic_key_set', 'google_key_set'].map((k) => (
+                  <Row key={k} label={k.replace('_key_set', '')}
+                       value={providers[k] ? t('health.keySet') : t('health.keyMissing')} />
+                ))}
+                <Row label={t('health.apiAuth')}
+                     value={providers.api_auth_enabled ? t('health.on') : t('health.off')} />
+                <Row label={t('health.agentCache')}
+                     value={health?.agent_cache?.enabled === null
+                       ? '—'
+                       : (health?.agent_cache?.enabled ? t('health.on') : t('health.off'))} />
+              </Card>
+            </>
+          )}
+        </div>
+      </div>
         </div>
 
         {chat.open && (

@@ -12,6 +12,7 @@ import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import ToolPolicySettings from './ToolPolicySettings';
 import LoopSettingsWorkspace from './LoopSettingsWorkspace';
+import DefaultModelNote from './DefaultModelNote';
 
 // Brand names stay as they are; only the descriptive rows carry a key.
 const VECTOR_DBS = [
@@ -148,6 +149,46 @@ function CurrentValue({ value }) {
   return <span className="text-gray-400 font-normal">({t('settings.current')}: {value})</span>;
 }
 
+/**
+ * The global temperature: what every model runs at unless the model has its
+ * own on the Models page or the agent sets one. A machine-wide .env value
+ * (LLM_TEMPERATURE), so only the Settings page shows it, never a workspace.
+ */
+export function GlobalTemperatureSection({ s }) {
+  const { t } = useI18n();
+  const stored = s.globalSettings.temperature ?? 0;
+  const [value, setValue] = useState(String(stored));
+  useEffect(() => { setValue(String(stored)); }, [stored]);
+  const parsed = parseFloat(value);
+  const valid = value.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0 && parsed <= 2;
+  const dirty = valid && parsed !== stored;
+  return (
+    <SectionCard title={t('settings.temperatureTitle')}>
+      <p className="text-xs text-gray-500">{t('settings.temperatureHint')}</p>
+      <div className="flex items-center gap-2">
+        <input
+          type="number" min="0" max="2" step="0.1" value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className={`${inputCls} w-24`}
+          aria-label={t('settings.temperatureTitle')}
+        />
+        <button
+          onClick={() => s.saveGlobalTemperature(parsed)}
+          disabled={!dirty || s.temperatureSaving}
+          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-100 disabled:text-gray-400"
+        >
+          {s.temperatureSaving ? t('common.saving') : t('common.save')}
+        </button>
+        {!valid && <span className="text-xs text-red-600">{t('settings.temperatureRange')}</span>}
+      </div>
+      <p className="text-xs text-gray-400">
+        {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
+        <code className="bg-gray-100 rounded px-1 ml-1">LLM_TEMPERATURE</code>.
+      </p>
+    </SectionCard>
+  );
+}
+
 export function ProvidersSection({ s }) {
   const { t } = useI18n();
   const header = (id) => (
@@ -155,6 +196,7 @@ export function ProvidersSection({ s }) {
   );
   return (
     <div className="space-y-5">
+      <DefaultModelNote models={s.defaultModels} />
       <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-500">
         {t('settings.providersIntroBefore')} <span className="font-medium text-gray-700">{t('settings.models')}</span> {t('settings.providersIntroAfter')}
       </div>

@@ -29,6 +29,8 @@ export function useWorkspaceSettings(workspace) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // What saving a first provider key switched on (the Models page changes it).
+  const [defaultModels, setDefaultModels] = useState([]);
   const [error, setError] = useState('');
 
   const [globalSettings, setGlobalSettings] = useState({});
@@ -105,7 +107,8 @@ export function useWorkspaceSettings(workspace) {
     try {
       const payload = {};
       OVERRIDE_FIELDS.forEach((k) => { if (wsOverrides[k]) payload[k] = wsOverrides[k]; });
-      await updateWorkspaceSettingsOverrides(workspace, payload);
+      const { data: savedData } = await updateWorkspaceSettingsOverrides(workspace, payload);
+      setDefaultModels(savedData?.default_models || []);
       await load();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -186,6 +189,25 @@ export function useWorkspaceSettings(workspace) {
       return false;
     } finally {
       setWebSearchSaving(false);
+    }
+  };
+
+  // The global temperature (LLM_TEMPERATURE): what a model without its own on
+  // the Models page runs at, unless the agent sets one. Machine-wide, written
+  // to .env and applied in the running backend at once.
+  const [temperatureSaving, setTemperatureSaving] = useState(false);
+  const saveGlobalTemperature = async (value) => {
+    setTemperatureSaving(true);
+    setError('');
+    try {
+      await updateSettings({ temperature: value });
+      setGlobalSettings(s => ({ ...s, temperature: value }));
+      return true;
+    } catch (e) {
+      setError(`${t('settings.errors.temperatureSave')}: ` + (e.response?.data?.detail || e.message));
+      return false;
+    } finally {
+      setTemperatureSaving(false);
     }
   };
 
@@ -316,13 +338,14 @@ export function useWorkspaceSettings(workspace) {
   };
 
   return {
-    workspace, loading, saving, saved, error, save,
+    workspace, loading, saving, saved, error, save, defaultModels,
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
     policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks, importHooksFile,
     savePolicy,
     streamingSaving, toggleStreaming,
+    temperatureSaving, saveGlobalTemperature,
     capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
     codeRunnerSaving, setCodeRunnerProvider, toggleCodeRunnerFallback,
     webSearchSaving, saveWebSearch,

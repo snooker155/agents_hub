@@ -94,7 +94,7 @@ export function serializeEdge(edge) {
 }
 
 export const INPUT_CLS =
-  'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white';
+  'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition';
 
 // Parse / format a comma-separated list of state keys.
 export const parseKeys = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);

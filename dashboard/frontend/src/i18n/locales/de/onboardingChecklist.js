@@ -12,7 +12,7 @@ export default {
     done: 'Mindestens ein Anbieter ist konfiguriert.',
     doneWithLabel: 'Mindestens ein Anbieter ist konfiguriert (Standard: {{provider}}).',
     warn: 'Ein Anbieter ist konfiguriert, aber der Verbindungstest ist fehlgeschlagen — prüfen Sie API-Schlüssel und Basis-URL in den Einstellungen.',
-    todo: 'Fügen Sie in den Einstellungen einen API-Schlüssel (OpenAI / Anthropic / Google) hinzu oder verweisen Sie auf ein lokales Modell (Ollama / LM Studio).',
+    todo: 'Fügen Sie in den Einstellungen einen API-Schlüssel hinzu (OpenAI / Anthropic / Google) oder laden Sie unter Modelle, Reiter Lokal, ein lokales Modell: der Hub betreibt es selbst.',
     openSettings: 'Einstellungen öffnen',
     testConnection: 'Verbindung testen',
   },

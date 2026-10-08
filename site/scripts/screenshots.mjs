@@ -55,6 +55,7 @@ const PAGE = 'main header';
  * today, the flag is left for a page whose recording lags its caption.
  */
 const LANDING = [
+  { id: 'assistant', path: '/assistant', waitFor: '[data-tour="assistant-talk"]' },
   { id: 'agents', path: '/agents', waitFor: 'main .grid' },
   // A recorded conversation of the demo workspace, not the empty composer.
   { id: 'chat', path: '/chat/demo_chat_2', waitFor: 'main textarea' },
@@ -212,7 +213,7 @@ async function main() {
     // A first visit would open the onboarding modal over every shot.
     await context.addInitScript(() => {
       try {
-        localStorage.setItem('agents_hub_onboarding_seen_v2', '1');
+        localStorage.setItem('agents_hub_onboarding_seen_v3', '1');
         localStorage.setItem('agents_hub_tour_done_v1', '1');
         localStorage.setItem('selectedWorkspace', 'demo');
         localStorage.setItem('agents_hub_language', 'en');

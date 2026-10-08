@@ -401,7 +401,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             >
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900 text-sm truncate flex items-center gap-1.5">
-                  <span className="truncate">{poolName(m, t)}</span>
+                  <span className="truncate">{poolName(m, t, !workspaceFilter)}</span>
                   {isPersonalPool(m) && (
                     <span className="shrink-0 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium" title={t('memoryManager.personalHint')}>
                       {t('memoryManager.personal')}
@@ -444,7 +444,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             {/* Pool header */}
             <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">{poolName(selected, t)}</h2>
+                <h2 className="text-lg font-bold text-gray-900">{poolName(selected, t, !workspaceFilter)}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.id}</p>
                 {poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
               </div>
@@ -520,18 +520,18 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                       <div className="sm:col-span-2">
                         <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.name')}</label>
                         <input required value={newBlockName} onChange={e => setNewBlockName(e.target.value)} placeholder={t('memoryManager.blocks.namePlaceholder')}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono" />
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none font-mono" />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.limit')}</label>
                         <input type="number" min="1" value={newBlockLimit} onChange={e => setNewBlockLimit(e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
                       </div>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.description')}</label>
                       <input value={newBlockDesc} onChange={e => setNewBlockDesc(e.target.value)} placeholder={t('memoryManager.blocks.descriptionPlaceholder')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
                     </div>
                     <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
                       <Plus className="w-3.5 h-3.5" /> {t('memoryManager.blocks.addBlock')}
@@ -589,8 +589,8 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                         onChange={(e) => setBlockDraft(block.name, e.target.value)}
                         rows={5}
                         placeholder={t('memoryManager.blocks.valuePlaceholder')}
-                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:outline-none disabled:bg-gray-50 disabled:text-gray-500 ${
-                          over ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-indigo-500'
+                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none disabled:bg-gray-50 disabled:text-gray-500 ${
+                          over ? 'border-red-400' : 'border-gray-300'
                         }`}
                       />
                       <div className="flex items-center justify-between gap-2">
@@ -651,17 +651,17 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                       <form onSubmit={editingNote ? handleSaveNote : handleAddNote} className="space-y-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.title')}</label>
-                          <input required value={noteTitle} onChange={e => setNoteTitle(e.target.value)} placeholder={t('memoryManager.noteTitle')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                          <input required value={noteTitle} onChange={e => setNoteTitle(e.target.value)} placeholder={t('memoryManager.noteTitle')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none" />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.content')}</label>
-                          <textarea required value={noteContent} onChange={e => setNoteContent(e.target.value)} rows={12} placeholder={t('memoryManager.writeYourNoteHere')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                          <textarea required value={noteContent} onChange={e => setNoteContent(e.target.value)} rows={12} placeholder={t('memoryManager.writeYourNoteHere')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none" />
                         </div>
                         <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> {editingNote ? t('memoryManager.saveChanges') : t('common.save')}</button>
                       </form>
                     </div>
                   ) : viewingNote && !isJournalNote(viewingNote) ? (
-                    <div className="p-5">
+                    <div className="p-5 bg-white min-h-full">
                       <div className="flex justify-between items-center mb-4">
                         <div>
                           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -671,7 +671,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                         </div>
                         <button onClick={() => startEditNote(viewingNote)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> {t('memoryManager.edit')}</button>
                       </div>
-                      <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm overflow-x-auto shadow-inner min-h-[300px]"><ChatMarkdown content={viewingNote.content} /></div>
+                      <div className="text-sm overflow-x-auto"><ChatMarkdown content={viewingNote.content} /></div>
                     </div>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">
@@ -741,7 +741,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.name')}</label>
                       <input required value={slotName} onChange={e => setSlotName(e.target.value)} disabled={!!editingSlot} placeholder={t('memoryManager.apiVersion')}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono disabled:bg-gray-100 disabled:text-gray-400" />
+                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none font-mono disabled:bg-gray-100 disabled:text-gray-400" />
                     </div>
 
                     {/* Mode selector */}
@@ -771,7 +771,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           value={slotSimpleValue}
                           onChange={e => setSlotSimpleValue(e.target.value)}
                           placeholder={t('memoryManager.aSingleValue')}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none font-mono"
                         />
                         <p className="text-[11px] text-gray-500 mt-1">{t('memoryManager.storedAs')} <code className="bg-white px-1 rounded">{`{ "value": ... }`}</code>.</p>
                       </div>
@@ -787,13 +787,13 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                                 value={f.key}
                                 onChange={e => updateSlotField(i, { key: e.target.value })}
                                 placeholder={t('memoryManager.key')}
-                                className="w-1/3 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                className="w-1/3 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
                               />
                               <input
                                 value={f.value}
                                 onChange={e => updateSlotField(i, { value: e.target.value })}
                                 placeholder={t('memoryManager.value2')}
-                                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
                               />
                               <button
                                 type="button"
@@ -825,7 +825,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           rows={6}
                           value={slotDataRaw}
                           onChange={e => { setSlotDataRaw(e.target.value); setSlotDataError(''); }}
-                          className={`w-full border rounded-lg px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none ${slotDataError ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
+                          className={`w-full border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none ${slotDataError ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
                         />
                       </div>
                     )}
@@ -923,12 +923,12 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.name')}</label>
                 <input required value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('memoryManager.eGProjectNotesApi')}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.description')}</label>
                 <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder={t('memoryManager.whatIsThisFor')} rows={3}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none" />
               </div>
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setShowCreate(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium">{t('memoryManager.cancel')}</button>

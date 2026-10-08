@@ -76,7 +76,7 @@ def auth_headers() -> Dict[str, str]:
 # every such service a key to the whole dashboard.
 #
 # ``/scim/v2`` is the provisioning API an identity provider drives with its
-# own bearer token (``AUTH_SCIM_TOKEN``, see dashboard/backend/routes/scim.py):
+# own bearer token (``AUTH_SCIM_TOKEN``, see ee/routes/scim.py):
 # it sits outside ``/api`` so the operator token never applies to it, and is
 # listed here so the intent is in one place.
 #
@@ -87,7 +87,11 @@ def auth_headers() -> Dict[str, str]:
 # Teams send, so without this they could not reach a token or multi mode hub.
 SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/scim/v2",
                                 "/api/channels/slack/events", "/api/channels/slack/interactions",
-                                "/api/channels/teams/messages")
+                                "/api/channels/teams/messages",
+                                # Slack's installer has no hub credential: the
+                                # public install link checks the app is public,
+                                # the OAuth return checks its signed state.
+                                "/api/channels/slack/install", "/api/channels/slack/oauth")
 
 
 def _is_self_authenticating(path: str) -> bool:
@@ -168,7 +172,7 @@ PUBLIC_AUTH_ROUTES = frozenset({
     ("GET", "/api/auth/mode"),
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/bootstrap"),
-    # Single sign-on (common/oidc.py): the redirect to the provider, and the
+    # Single sign-on (ee/oidc.py): the redirect to the provider, and the
     # redirect back from it, both happen before there is a session.
     ("GET", "/api/auth/oidc/start"),
     ("GET", "/api/auth/oidc/callback"),
@@ -279,7 +283,8 @@ def _has_prefix(path: str, prefixes) -> bool:
 #: OpenAI-compatible model server (docs/hub-as-provider.md): it spends the
 #: operator's provider credit on behalf of whoever calls it, so it takes the
 #: same credential as the rest of the API even though it lives outside
-#: ``/api``, where OpenAI clients expect to find it.
+#: ``/api``, where OpenAI clients expect to find it. The MCP server
+#: (docs/hub-as-mcp-server.md) sits under it at ``/v1/mcp`` for that reason.
 CLOSED_OUTSIDE_API_PREFIXES = ("/v1",)
 
 

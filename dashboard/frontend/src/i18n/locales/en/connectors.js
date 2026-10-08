@@ -131,6 +131,10 @@ export default {
       app_token: "App token (xapp)",
       signing_secret: "Signing secret",
       mode: "Transport",
+      client_id: "OAuth client ID",
+      client_secret: "OAuth client secret",
+      distribution: "Distribution",
+      app_name: "App name",
     },
     discord: {
       bot_token: "Bot token",
@@ -140,6 +144,13 @@ export default {
       app_id: "Microsoft App ID",
       app_password: "App password",
       tenant_id: "Tenant id",
+      distribution: "Distribution",
+      app_name: "App name",
+      developer_name: "Publisher",
+      website_url: "Website",
+      privacy_url: "Privacy policy URL",
+      terms_url: "Terms of use URL",
+      app_version: "App version",
     },
     mail: {
       auth_mode: "Sign in with",
@@ -190,16 +201,17 @@ export default {
   fieldHints: {
     slack: {
       mode: "socket keeps a websocket open (no public URL needed); events expects Slack to call the inbound URL.",
+      distribution: "Private keeps installs to the ones you start on the Distribution page; public lets anyone install, and you approve each one.",
+      client_id: "From Basic Information of the Slack app. Needed for Add to Slack.",
     },
     teams: {
       tenant_id: "Only for single tenant bots.",
+      distribution: "Private keeps installs to the ones you add; public lets any organisation install, and you approve each one.",
+      app_name: "Shown in the Teams app package.",
     },
     mail: {
       auth_mode: "password uses the fields below; google signs in with the account connected on the Google tab (Connect with Gmail), and empty hosts, user and from address mean Gmail's and that account's.",
       from_address: "The address replies are sent from; messages from it are ignored.",
-    },
-    jira: {
-      base_url: "For example https://acme.atlassian.net",
     },
     microsoft: {
       default_user: "The user whose calendar the tools read when a call names none, e.g. anna@contoso.com",
@@ -269,6 +281,12 @@ export default {
   },
   // Labels of select options, by channel and field (ChannelConnector.jsx).
   options: {
+    slack: {
+      distribution: { private: "Private: only installs you start", public: "Public: anyone can install, you approve" },
+    },
+    teams: {
+      distribution: { private: "Private: only installs you start", public: "Public: anyone can install, you approve" },
+    },
     mail: {
       auth_mode: { password: "Password", google: "Connected Google account" },
     },

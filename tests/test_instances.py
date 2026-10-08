@@ -415,3 +415,16 @@ def test_route_stop_stops_a_resident_process_and_ends_a_one_shot_copy(client, mo
     solo = registry.ensure_instance("swe_agent", kind="task", state="active")
     client.post(f"/api/instances/{solo['instance_id']}/stop")
     assert store.get(solo["instance_id"])["state"] == "stopped"
+
+
+def test_list_instances_sorts_by_a_named_column_instead_of_live_first():
+    store.create("a", workspace="ws-sort", state="finished", label="Zulu", runs_count=1)
+    store.create("a", workspace="ws-sort", state="active", label="alpha", runs_count=5)
+    store.create("a", workspace="ws-sort", state="finished", label="mike", runs_count=3)
+
+    by_label = store.list_instances(workspace="ws-sort", sort="label", order="asc")["items"]
+    assert [i["label"] for i in by_label] == ["alpha", "mike", "Zulu"]
+    by_runs = store.list_instances(workspace="ws-sort", sort="runs", order="desc")["items"]
+    assert [i["runs_count"] for i in by_runs] == [5, 3, 1]
+    with pytest.raises(ValueError):
+        store.list_instances(workspace="ws-sort", sort="nope")

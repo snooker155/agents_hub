@@ -50,10 +50,12 @@ class ChatSendError(Exception):
     route can re-raise it unchanged while other callers just read ``detail``.
     """
 
-    def __init__(self, detail: str, status: int = 500):
+    def __init__(self, detail: str, status: int = 500, refusal: Optional[Dict[str, Any]] = None):
         super().__init__(detail)
         self.detail = detail
         self.status = status
+        # The structured form of a refusal the person can act on (chat/refusals.py).
+        self.refusal = refusal
 
 
 async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
@@ -108,7 +110,8 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
         _write_log(log_file, log_lines + [f"(budget: {e})", "", f"Finished: {finished}"])
         update_run(run_id, {"status": "failed", "finished_at": finished,
                             "exit_code": 1, "error": str(e)})
-        raise ChatSendError(str(e), status=402)
+        from chat.refusals import refusal_of
+        raise ChatSendError(str(e), status=402, refusal=refusal_of(e, agent_id=request.agent_id))
 
     step_request, prompt, chain = request, full_prompt, [request.agent_id]
     received: Optional[handoff_mod.HandoffIntent] = None
@@ -144,7 +147,10 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
             _write_log(run[2], run[3] + [f"(budget: {e})", "", f"Finished: {finished}"])
             update_run(run[0], {"status": "failed", "finished_at": finished,
                                 "exit_code": 1, "error": str(e)})
+            from chat.refusals import refusal_of
+            refusal = refusal_of(e, agent_id=step_request.agent_id)
             return {"response": f"Error: {e}", "ok": False, "run_id": run[0],
+                    **({"refusal": refusal} if refusal else {}),
                     **_handoff_fields(step_request.agent_id, handoffs)}
 
 
@@ -281,7 +287,8 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         _write_log(log_file, log_lines + [f"(error: {e})", "", f"Finished: {finished}"])
         update_run(run_id, {"status": "failed", "finished_at": finished,
                             "exit_code": 1, "error": str(e)})
-        raise ChatSendError(str(e), status=500)
+        from chat.refusals import refusal_of
+        raise ChatSendError(str(e), status=500, refusal=refusal_of(e, agent_id=request.agent_id))
     finally:
         handoff_mod.reset_sink(_handoff_token)
 
@@ -300,9 +307,13 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         _write_log(log_file, log_lines + [f"(budget: {error_text})", "", f"Finished: {finished}", "Status  : failed"])
         update_run(run_id, {"status": "failed", "finished_at": finished,
                             "exit_code": 1, "error": error_text})
+        from chat.refusals import KIND_TURN, budget_refusal
         return {"response": f"Error: {error_text}", "ok": False, "run_id": run_id,
                 "error_code": "budget",
-                "budget": {"spent_usd": capped.get("spent_usd"), "limit_usd": capped.get("limit_usd")}}, None
+                "budget": {"spent_usd": capped.get("spent_usd"), "limit_usd": capped.get("limit_usd")},
+                "refusal": budget_refusal(KIND_TURN, spent_usd=capped.get("spent_usd"),
+                                          limit_usd=capped.get("limit_usd"), message=error_text,
+                                          agent_id=request.agent_id)}, None
 
     if result.ok:
         response_text = str(result.agent_output)
@@ -360,7 +371,7 @@ async def _send_routed(request: ChatRequest) -> Dict[str, Any]:
     }
     # Why a turn failed, when the reply alone does not say (a money cap, a
     # conversation that outgrew the model), the way the streaming done says it.
-    for key in ("error_code", "budget"):
+    for key in ("error_code", "budget", "refusal"):
         if done.get(key) is not None:
             result[key] = done[key]
     if done.get("handoffs"):

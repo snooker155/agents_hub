@@ -22,3 +22,15 @@ describe('MessageBubble: system notice', () => {
     expect(screen.getByText('Hello there')).toBeInTheDocument();
   });
 });
+
+describe('MessageBubble: a line said to the Assistant', () => {
+  it('is marked as spoken, and a typed one is not', () => {
+    show({ id: 'u1', role: 'user', content: 'what failed today', voice: true });
+    expect(screen.getByTestId('spoken-caption')).toHaveTextContent('spoken');
+  });
+
+  it('a typed line has no mark', () => {
+    show({ id: 'u2', role: 'user', content: 'and yesterday?' });
+    expect(screen.queryByTestId('spoken-caption')).toBeNull();
+  });
+});

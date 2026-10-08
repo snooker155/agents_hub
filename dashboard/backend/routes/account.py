@@ -112,6 +112,18 @@ def _verify_current_password(user_id: str, current_password: str) -> bool:
         password_iterations=row["password_iterations"])
 
 
+# ── spend ────────────────────────────────────────────────────────────────────
+
+@router.get("/api/auth/spend")
+async def get_own_spend(request: Request):
+    """The caller's monthly spend limit, where it comes from and what they
+    spent this month (common/user_budget.py)."""
+    _require_multi()
+    principal = _require_account(request)
+    from common import user_budget
+    return user_budget.user_budget_status(principal.id)
+
+
 # ── sessions ─────────────────────────────────────────────────────────────────
 
 @router.get("/api/auth/sessions")

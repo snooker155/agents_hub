@@ -56,6 +56,7 @@ import {
   KeyRound,
   MessageSquareCode,
   Share2,
+  AudioLines,
 } from 'lucide-react';
 import OnboardingChecklist from '../components/docs/OnboardingChecklist';
 import { useWelcomeTour } from '../components/docs/WelcomeTour';
@@ -430,6 +431,7 @@ function Features() {
           {t('docs.tokenAndUsdSpendBy')}
         </FeatureCard>
       </div>
+      <CorpusRefs ids={['overview']} />
     </div>
   );
 }
@@ -455,6 +457,7 @@ function TryIt() {
       <P>
         {t('docs.whenYoureReadyOpen')} <Link className="text-indigo-600 underline" to="/chat">{t('docs.chat')}</Link> {t('docs.pageToTalkToYourOwn')}
       </P>
+      <CorpusRefs ids={['chat']} />
     </div>
   );
 }
@@ -631,14 +634,16 @@ function ChangelogDoc() {
 
 // "Full reference": a corpus document under a guide section, fetched the first
 // time it is opened. The guide above it is translated; the reference is the
-// English text the agents answer from, so the two never disagree on facts.
+// text the agents answer from, in the interface language where docs/<lang>/
+// has the page (the first hour ones) and in English otherwise. Keyed by the
+// language where it is used, so a switch fetches the page again.
 function CorpusRef({ id }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
   const load = (e) => {
     if (!e.currentTarget.open || doc || error) return;
-    getDoc(id)
+    getDoc(id, String(language || 'en').slice(0, 2))
       .then(({ data }) => setDoc(data))
       .catch((err) => setError(err?.response?.data?.detail || err?.message || 'error'));
   };
@@ -656,6 +661,16 @@ function CorpusRef({ id }) {
         {doc && <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>}
       </div>
     </details>
+  );
+}
+
+// The full references under a section, refetched when the language changes.
+function CorpusRefs({ ids }) {
+  const { language } = useI18n();
+  return (
+    <div className="mt-6">
+      {ids.map((id) => <CorpusRef key={`${id}-${language}`} id={id} />)}
+    </div>
   );
 }
 
@@ -691,9 +706,7 @@ function GuideDoc({ k, refs = [] }) {
       ))}
       {callout && <Callout tone="warn"><Rich>{callout}</Rich></Callout>}
       {refs.length > 0 && (
-        <div className="mt-6">
-          {refs.map((id) => <CorpusRef key={id} id={id} />)}
-        </div>
+        <CorpusRefs ids={refs} />
       )}
     </div>
   );
@@ -1164,6 +1177,7 @@ function ModelsDoc() {
       <H3>{t('docs.usage2')}</H3>
       <P><Rich>{t('docs.modelsDoc.usage')}</Rich></P>
       <Callout tone="warn"><Rich>{t('docs.modelsDoc.callout')}</Rich></Callout>
+      <CorpusRefs ids={['models']} />
     </div>
   );
 }
@@ -1429,6 +1443,7 @@ git pull && ./install.sh                           # the installer`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.upgradeBody')}</Rich></P>
 
       <Callout tone="warn"><Rich>{t('docs.installDoc.troubleCallout')}</Rich></Callout>
+      <CorpusRefs ids={['installation']} />
     </div>
   );
 }
@@ -1521,6 +1536,7 @@ const GROUPS = [
     key: 'workspace',
     items: [
       { id: 'chat', key: 'chat', icon: MessageCircle, render: TryIt },
+      guide('assistant', 'assistant', AudioLines, ['assistant']),
       { id: 'workspaces', key: 'workspaces', icon: Folder, render: WorkspacesDoc },
       { id: 'projects', key: 'projects', icon: FolderGit2, render: ProjectsDoc },
       guide('project-deployments', 'projectDeployments', Rocket, ['project-deployments']),

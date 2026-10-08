@@ -1,0 +1,61 @@
+.agents-hub-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
+}
+.agents-hub-top { display: flex; gap: var(--size-4-2); align-items: center; }
+.agents-hub-agent { flex: 1; min-width: 0; }
+.agents-hub-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+.agents-hub-bubble {
+  padding: var(--size-4-2) var(--size-4-3);
+  border-radius: var(--radius-m);
+  max-width: 95%;
+  word-break: break-word;
+}
+.agents-hub-user-bubble {
+  align-self: flex-end;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  white-space: pre-wrap;
+}
+.agents-hub-agent-bubble {
+  align-self: flex-start;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+}
+.agents-hub-thinking { color: var(--text-muted); font-style: italic; }
+.agents-hub-muted { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.agents-hub-run { margin-top: var(--size-4-1); }
+.agents-hub-error { color: var(--text-error); }
+.agents-hub-actions { display: flex; gap: var(--size-4-1); margin-top: var(--size-4-2); }
+.agents-hub-action { font-size: var(--font-ui-smaller); }
+.agents-hub-attached { display: flex; gap: var(--size-4-2); align-items: center; }
+.agents-hub-link {
+  background: none;
+  box-shadow: none;
+  color: var(--text-accent);
+  padding: 0;
+  height: auto;
+  cursor: pointer;
+}
+.agents-hub-include { display: flex; gap: var(--size-4-2); align-items: center; font-size: var(--font-ui-small); }
+.agents-hub-form { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.agents-hub-input { width: 100%; resize: vertical; }
+.agents-hub-modal-input { width: 100%; }
+.agents-hub-modal-preview {
+  white-space: pre-wrap;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: var(--background-secondary);
+  padding: var(--size-4-2);
+  border-radius: var(--radius-m);
+}
+.agents-hub-modal-buttons { display: flex; justify-content: flex-end; gap: var(--size-4-2); margin-top: var(--size-4-3); }

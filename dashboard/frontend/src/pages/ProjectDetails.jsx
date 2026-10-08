@@ -1029,7 +1029,7 @@ export default function ProjectDetails() {
                   required
                   value={publishForm.title}
                   onChange={e => setPublishForm(f => ({ ...f, title: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 />
               </div>
               {isConnectedRepo && (
@@ -1040,7 +1040,7 @@ export default function ProjectDetails() {
                     value={publishForm.body}
                     onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
                     placeholder={t('projectDetails.publish.bodyPlaceholder')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   />
                 </div>
               )}
@@ -1051,7 +1051,7 @@ export default function ProjectDetails() {
                     value={publishForm.branch}
                     onChange={e => setPublishForm(f => ({ ...f, branch: e.target.value }))}
                     placeholder={t('projectDetails.publish.optional')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   />
                 </div>
                 {isConnectedRepo && (
@@ -1061,7 +1061,7 @@ export default function ProjectDetails() {
                       value={publishForm.base}
                       onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
                       placeholder={t('projectDetails.publish.optional')}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     />
                   </div>
                 )}

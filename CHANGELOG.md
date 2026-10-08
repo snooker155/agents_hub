@@ -15,6 +15,107 @@ turns that section into the next release.
 
 ### Added
 
+- The hub as an MCP server (docs/hub-as-mcp-server.md): `POST /v1/mcp`,
+  Streamable HTTP, the same for every MCP client. Tools for agents
+  (`list_workspaces`, `list_agents`, `ask_agent` with `file_ids`), files
+  (`list_files`, `read_file`, `upload_file`), knowledge (`list_knowledge`,
+  `search_knowledge`), workflows (`list_workflows`, `run_workflow` for teams,
+  flows and loops) and runs (`list_runs`, `get_run`, `stop_run`). Closed like
+  `/v1` (personal API keys, `X-Agents-Hub-Workspace`, editor role for
+  anything that writes or spends), conversations carried by a signed handle,
+  slow work picked up with `get_run`, tokens per day and key budget checked,
+  runs marked `message_origin="mcp"` and treated as untrusted input by the
+  capability guard; nothing over MCP changes agents, connectors or settings.
+  `ah mcp connect <client>` prints or writes the setup for Claude Code,
+  Cursor, VS Code, Windsurf, Claude Desktop, Codex CLI, Gemini CLI or any
+  other client.
+- Distribution (docs/distribution.md): a Distribution page with the MCP
+  address and a snippet for each MCP client, an Obsidian plugin
+  (`clients/obsidian-agents-hub`, downloadable as a zip), a Slack app that
+  other Slack workspaces install over OAuth with a manifest, a public Direct
+  install URL and per team tokens, and a Teams app
+  package for an organisation's catalog or the Teams store. Organisations
+  that install wait as pending until an owner approves them with a workspace
+  and an agent; the allowlist and operator bindings keep working as before.
+- Simple and full menu (docs/overview.md "The menu"): the sidebar is five
+  groups along the object tree (Conversation, Work, Agents and library,
+  Integrations, Records and admin). The simple menu keeps fifteen pages,
+  workspaces among them and the Dashboard not, and is the default of a single operator and of every
+  non-administrator; the full menu is the default of a multi-user
+  administrator. A toggle at the foot of the menu switches; the simple menu
+  never changes shape, a page outside it lights up the row it belongs to
+  (Deployments lights up Plan, the Dashboard lights up Settings), the agent
+  registry moved to the administration, and
+  Cluster appears only when the hub runs as separate api and worker processes
+  (`features.cluster` on `/api/health`).
+- The agent registry follows the selected workspace (docs/registry.md "The
+  page"): outside `default` it lists only that workspace's agents, flows,
+  skills and MCP servers, without the workspace filter or the hub toggles;
+  `default` keeps the hub-wide view, which in multi mode now answers only an
+  administrator or a member of `default` (any other account got every
+  workspace's items by leaving the workspace out).
+- A default model switches on with a provider key (docs/models.md): saving an
+  OpenAI, Anthropic or Google key when that provider has no enabled model
+  enables one (`gpt-5.4-mini`, `claude-sonnet-5-5`, `gemini-2.5-flash`) with
+  its catalog price, and makes the provider the global default when there is
+  none. Settings says what was switched on. Current Claude models (Opus 4.6
+  to 5.5, Sonnet 5 and 5.5, Haiku 4.5, Fable) have their own price rows, and
+  models that reject a temperature (Opus 4.7 and later, Sonnet 5 and later,
+  Fable) are called without one.
+- Refusals as a card (docs/tools-and-capabilities.md, docs/costs.md): a turn
+  stopped by the capability guard or a spending limit shows the reason in
+  plain words with the action in place: "Allow for this agent" for editors,
+  raising a workspace limit right on the card for administrators, a link to
+  the person's or the service's limit, and "Try again". The structured
+  `refusal` rides on the chat `done` event, the blocking send and the
+  assistant's 402. `POST /api/agents/{id}/capability-override` now needs an
+  editor of the agent's workspace.
+- Ready local set (docs/local-models.md "Ready local set"): one button on the
+  Local tab, and a guided setup step, starts the runtime, installs llama.cpp,
+  downloads one Qwen3 chat model sized to the machine's memory, installs
+  Whisper and Kokoro and assigns them as the workspace speech models. A
+  background job with progress per step, safe to press again, cancelable.
+- Telegram voice messages (docs/telegram.md "Voice messages"): voice notes,
+  audio files and round videos are transcribed with the workspace's
+  transcription model and answered; the prompt says the message was spoken.
+- A pulse from a phrase (docs/proactive.md "From a phrase"): the assistant's
+  `schedule_pulse` turns "every morning at 8 send me a summary" (English,
+  Russian, German phrases parsed by the hub, cron from the model otherwise)
+  into a proactive profile behind a card that states the schedule in plain
+  words, in the person's browser timezone.
+- Observability (docs/observability.md): child spans per model call and tool
+  call on the OTLP run export, OTLP metrics export, the standard
+  `OTEL_EXPORTER_OTLP_*` variables, new Prometheus metrics (runs finished by
+  agent and status, tokens and cost by model, run duration histogram, tool
+  calls), a Grafana dashboard in `deploy/grafana/` and six new alert rules.
+- First hour documentation in Russian and German: installation, overview,
+  models, chat and assistant in `docs/ru/` and `docs/de/`, served by
+  `read_doc` and `GET /api/docs/{id}?lang=` in the interface language, with
+  English as the fallback. The Docs page gained an Assistant section and full
+  references under Installation, Overview, Chat and Models.
+
+- `SECURITY.md`: how to report a vulnerability privately, response times,
+  supported versions, what counts and what is a documented choice, and a
+  hardening list. `docs/threat-model.md`: what the hub protects, from whom,
+  the boundaries and what holds each, threats with their answers and what is
+  left, and what it does not defend against.
+- `ah doctor` has a `security` check (docs/service-health.md "Check:
+  security"): a capability guard not on `block`, secrets stored without
+  `AGENTS_HUB_SECRET_KEY`, and `token` or `multi` mode with local runs.
+
+- Guided setup by the assistant (docs/assistant.md "Guided setup",
+  docs/installation.md "After the install"): after an account and one model,
+  the assistant leads the rest of the setup and the first steps of using the
+  hub, by voice or text, one step at a time: the default model, its voice,
+  web search, the demo, the team, the health check, a first chat, channel,
+  accounts, agent, task and automation. The welcome window asks for the first
+  model when there is none (`POST /api/setup-guide/model`, the key checked
+  with the provider first) and then hands over to the assistant; the
+  Assistant page has a Setup tab and the header a Setup pill. New assistant
+  tools: `setup_guide`, `setup_step` (behind a card on every call, audited as
+  `setup.<operation>`) and `show_on_screen`; `propose_connection` gained the
+  kind `provider` for a model or web search key. `GET/POST /api/setup-guide`.
+
 - Workspace roles (docs/workspace-roles.md): coder, reviewer, planner,
   visualizer, web search, verifier, researcher, analyst and writer. A
   workspace gives each role to one of its agents (workspace settings, Agent
@@ -259,6 +360,27 @@ turns that section into the next release.
 
 ### Changed
 
+- Agent prompts the hub writes leave the repository: a new agent's
+  `instructions.md`, `capabilities.md` and `usage.md`, and any edit to a
+  system agent's prompt, go to `.agents_hub/definitions/<id>/`, where a file
+  shadows the shipped one of the same name. `agents/definitions/` holds only
+  the system agents' text as git tracks it and is never written. The Config
+  tab marks a system agent's edited files and offers **Restore shipped text**
+  (`DELETE /api/agents/<id>/definition/edits`), which keeps the edited text in
+  Versions. The demo agents' copies under `agents/definitions/` are gone (the
+  seed writes them).
+- Single sign-on and SCIM live in `ee/oidc.py`, `ee/scim.py` and
+  `ee/routes/`; the signed round-trip cookie they share with the GitHub
+  connection is core (`common/signed_state.py`). Without `ee/` the backend
+  does not mount their routes and the login screen does not offer them
+  (`common/edition.py`).
+
+- `ah setup` QuickStart asks only for the install, the database, access and
+  a model; the assistant's voice, the demo and web search are left to the
+  assistant (an answers file that names them still applies them).
+- A model key or model saved on the Settings page applies without a restart:
+  the backend's environment is updated and runner replicas started with other
+  keys are replaced once idle (`common/provider_env.py`).
 - The shipped system agents delegate by role: main-agent, orchestrator,
   universal_agent and the creators name `@coder`, `@reviewer`, `@planner` and
   `@visualizer`; researcher, verifier and sourcer `@web_search`; analyst
@@ -324,11 +446,23 @@ turns that section into the next release.
 
 ### Fixed
 
+- The proactive routes (`/api/agents/{id}/proactive` and its pause, resume
+  and wake, `/api/proactive/summary`) and every eval route checked no role in
+  `multi` mode: any signed-in account could read, change and run them. Now a
+  viewer of the workspace reads and an editor changes; the summary and the
+  eval set list show only what the caller can see.
+- Three browser tests read the developer's own browser service state file;
+  the suite now gives every test its own.
 - An environment's sandbox `size` picked on the Environments page was
   dropped by the create and update routes and never saved.
 
 ### Upgrade notes
 
+- On the first start in a git checkout, prompt files under
+  `agents/definitions/` that git does not track and that belong to a custom
+  agent, or to a system agent edited in the hub, move to
+  `.agents_hub/definitions/`. Edits made in the hub to tracked system files
+  stay where they are; move them by hand if they should survive a checkout.
 - On the first start, a system agent you edited by hand (so no longer synced
   from the seed) has, once, each `delegates` or `handoffs` id that the seed
   now names by role rewritten to the role (`swe_agent` becomes `@coder`).

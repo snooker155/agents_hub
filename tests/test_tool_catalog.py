@@ -103,6 +103,11 @@ def _tool_objects_by_id() -> dict:
     from tools.workspace_files import WORKSPACE_FILE_TOOLS
     from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
     from tools.connector_tools import connector_tools
+    from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
+    from tools.hub_action import HUB_ACTION_TOOLS
+    from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
+    from tools.setup_guide import SETUP_GUIDE_TOOLS
+    from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
 
     tools = [
         calculator, run_shell, ask_user, think,
@@ -133,6 +138,10 @@ def _tool_objects_by_id() -> dict:
         *WORKSPACE_FILE_TOOLS,
         *SPECIAL_MODEL_TOOL_OBJECTS,
         *connector_tools(),
+        *HUB_LOOKUP_TOOLS,
+        *SERVICE_LOOKUP_TOOLS,
+        *HUB_ACTION_TOOLS, *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS,
+        *PROACTIVE_SETUP_TOOLS,
     ]
     return {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}
 

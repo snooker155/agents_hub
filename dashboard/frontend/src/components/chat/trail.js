@@ -88,7 +88,7 @@ function currentActivity(msg) {
   const list = foldDelegationTools(msg.timeline);
   const last = list[list.length - 1];
   if (!last) return null;
-  if (last.type === 'tool' && last.running) return { kind: 'tool', tool: last.tool };
+  if (last.type === 'tool' && last.running) return { kind: 'tool', tool: last.tool, input: last.input };
   if (last.type === 'reasoning') return { kind: 'thinking', text: last.content || '' };
   if (last.type === 'text') return { kind: 'text', text: last.text || '' };
   return null;

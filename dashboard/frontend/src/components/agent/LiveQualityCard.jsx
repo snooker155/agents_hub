@@ -12,7 +12,7 @@ const GRADER_KINDS = Object.keys(GRADER_FIELDS);
 const SEVERITIES = ['info', 'warning', 'error'];
 const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
 
-const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none';
 
 const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(Number(v) * 100)}%`);
 const score = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(2));

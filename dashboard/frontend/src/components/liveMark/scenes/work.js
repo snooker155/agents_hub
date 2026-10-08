@@ -5,14 +5,16 @@
  *
  * A scene's frame(st, t, w) draws the artifact's clip at time t (it unfolds
  * from 0.5 s, is folded again by 6.9 s; bell(t, a, b, c, d) rises over a..b
- * and falls over c..d), with w = { live, work, out }: a clock that never
- * stops, the seconds spent working, and the seconds since the step ended
- * (negative while it lasts). mountWork() plays the clip up to the scene's
- * hold point, keeps it there while the work goes on (what moves meanwhile
- * comes from `live` and `work`: bars that follow fresh data, code typed and
- * retyped, a flow run round after round), lets the scene settle what the
- * work left half done when the step ends, then plays the finale and the fold
- * from the scene's outFrom point.
+ * and falls over c..d), with w = { live, work, out, back }: a clock that
+ * never stops, the seconds spent working, the seconds since the step ended
+ * (negative while it lasts) and, while a scene folds straight back, how much
+ * of its unfolding is left (1 down to 0, null otherwise). mountWork() plays
+ * the clip up to the scene's hold point, keeps it there while the work goes
+ * on (what moves meanwhile comes from `live` and `work`: bars that follow
+ * fresh data, code typed and retyped, a flow run round after round), lets
+ * the scene settle what the work left half done when the step ends, then
+ * plays the finale and the fold from the scene's outFrom point. A step that
+ * ends while the scene is still unfolding plays the unfolding back instead.
  */
 /* eslint-disable no-unused-vars */
 
@@ -25,7 +27,18 @@ var SPOKE = [[24, 16.5, 24, 10.5], [29.6, 28.2, 35.6, 31.6], [18.4, 28.2, 12.4, 
 var RS = SAT.map(function (p) { return Math.hypot(p[0] - C, p[1] - C); });
 var DIR = SAT.map(function (p, i) { return [(p[0] - C) / RS[i], (p[1] - C) / RS[i]]; });
 var ANG = SAT.map(function (p) { return Math.atan2(p[1] - C, p[0] - C) * 180 / Math.PI; });
-function set(e, a) { for (var k in a) e.setAttribute(k, typeof a[k] === 'number' ? Math.round(a[k] * 1000) / 1000 : a[k]); return e; }
+// writes only what changed since the last frame: a scene sets every
+// attribute of every element on every frame, and most stay as they were
+var ATTRS = new WeakMap();
+function set(e, a) {
+  var was = ATTRS.get(e);
+  if (!was) { was = {}; ATTRS.set(e, was); }
+  for (var k in a) {
+    var v = typeof a[k] === 'number' ? String(Math.round(a[k] * 1000) / 1000) : a[k];
+    if (was[k] !== v) { was[k] = v; e.setAttribute(k, v); }
+  }
+  return e;
+}
 function mk(parent, tag, a) { var e = document.createElementNS(NS, tag); if (a) set(e, a); parent.appendChild(e); return e; }
 function clamp(u) { return u < 0 ? 0 : u > 1 ? 1 : u; }
 function ph(t, a, b) { return clamp((t - a) / (b - a)); }
@@ -59,6 +72,13 @@ function drawLogo(lg, c, cr, co, sats, so) {
   sats.forEach(function (q, i) { set(lg.sats[i], { cx: q.p[0], cy: q.p[1], r: Math.max(0, q.r), opacity: q.o }); });
   SPOKE.forEach(function (q, i) { set(lg.spokes[i], { x1: q[0], y1: q[1], x2: q[2], y2: q[3], opacity: 0.55 * so[i] }); });
 }
+// put a layer's children in the order given (back to front), touching the
+// DOM only when it is not in that order already
+function restack(layer, els) {
+  for (var i = 0; i < els.length; i++) {
+    if (layer.childNodes[i] !== els[i]) { els.forEach(function (e) { layer.appendChild(e); }); return; }
+  }
+}
 function fade(m) { return [1 - m, 1 - m, 1 - m]; }
 function mod(a, n) { return ((a % n) + n) % n; }
 // a rise and fall over 0..1
@@ -66,7 +86,14 @@ function bump(u) { return Math.sin(Math.PI * clamp(u)); }
 // how much of the working motion shows: none in the intro, eased in once
 // the work starts, eased out once the step ends
 function amp(w) { return smooth(w.work / 0.3) * (w.out < 0 ? 1 : 1 - smooth(w.out / 0.3)); }
-var EXIT_SPEED = 1.8;
+// Once the step ends the scene finishes faster than it played, so the mark
+// keeps up with the run: what the work left half done is settled on a clock
+// running at SETTLE_SPEED (w.out, and the waits settle() returns, are in its
+// seconds), and the finale and the fold play at EXIT_SPEED.
+var SETTLE_SPEED = 2;
+var EXIT_SPEED = 2.5;
+var START = 0.45;   // the clip's time where it is the mark, about to unfold
+var HURRY = 4;      // the unfolding, once the step has ended
 
 var W = {};
 
@@ -115,6 +142,11 @@ W.gen3d = {
   // whole turn by the time it has folded, starting at the speed it had
   turn: function (st, t, w) {
     var th = GEN_SPIN * w.live;
+    // folding straight back: on to the next whole turn as it flattens
+    if (w.back != null) {
+      if (st.thB == null) { st.thB = th; st.thR = 2 * Math.PI * Math.ceil(th / (2 * Math.PI)); }
+      return lerp(st.thR, st.thB, w.back);
+    }
     if (w.out < 0) return th;
     if (st.th0 == null) {
       st.thD = (6.4 - this.hold) / EXIT_SPEED; st.th0 = th;
@@ -134,11 +166,15 @@ W.gen3d = {
     for (i = 0; i < 12; i++) for (j = i + 1; j < 12; j++) for (k = j + 1; k < 12; k++) if (adj(i, j) && adj(j, k) && adj(i, k)) F.push([i, j, k]);
     var st = { V: V3, E: E, F: F, g: g, coreV: 1, satV: [0, 9, 10] };
     st.rest = []; for (i = 0; i < 12; i++) if (i !== st.coreV && st.satV.indexOf(i) < 0) st.rest.push(i);
-    st.faces = F.map(function () { return mk(g, 'path', { class: 'wk-face' }); });
+    // faces under the edges, spokes and core, the dots over them; only the
+    // faces and the dots change order as it turns, each in its own layer
+    st.faceG = mk(g, 'g');
+    st.faces = F.map(function () { return mk(st.faceG, 'path', { class: 'wk-face' }); });
     st.edges = E.map(function () { return mk(g, 'line', { class: 'wk-edge' }); });
     st.spokes = [0, 1, 2].map(function () { return mk(g, 'line', { class: 'srch-handle', 'stroke-width': 2.5 }); });
     st.core = mk(g, 'circle', { class: 'srch-core' });
-    st.dots = V3.map(function () { return mk(g, 'circle', { class: 'srch-sat' }); });
+    st.dotG = mk(g, 'g');
+    st.dots = V3.map(function () { return mk(st.dotG, 'circle', { class: 'srch-sat' }); });
     var ax = [0.35, 1, 0.25], al = Math.hypot(ax[0], ax[1], ax[2]);
     st.axis = ax.map(function (c) { return c / al; });
     st.light = (function () { var L = [-0.4, -0.6, 0.7], l = Math.hypot(L[0], L[1], L[2]); return L.map(function (c) { return c / l; }); })();
@@ -164,14 +200,15 @@ W.gen3d = {
       var cen = rot([(st.V[f[0]][0] + st.V[f[1]][0] + st.V[f[2]][0]) / 3, (st.V[f[0]][1] + st.V[f[1]][1] + st.V[f[2]][1]) / 3, (st.V[f[0]][2] + st.V[f[1]][2] + st.V[f[2]][2]) / 3]);
       var l = Math.hypot(cen[0], cen[1], cen[2]), nz = cen[2] / l;
       var shade = 0.2 + 0.55 * Math.max(0, (cen[0] * st.light[0] + cen[1] * st.light[1] + cen[2] * st.light[2]) / l);
-      set(st.faces[i], { d: 'M' + f.map(function (vi) { return fx(Q[vi].x) + ' ' + fx(Q[vi].y); }).join('L') + 'Z', 'fill-opacity': nz > 0 ? shade * fo : 0 });
+      // a face that cannot be seen keeps its old outline
+      var fop = nz > 0 ? shade * fo : 0;
+      set(st.faces[i], fop > 0 ? { d: 'M' + f.map(function (vi) { return fx(Q[vi].x) + ' ' + fx(Q[vi].y); }).join('L') + 'Z', 'fill-opacity': fop } : { 'fill-opacity': 0 });
       order.push({ el: st.faces[i], z: cen[2] });
     });
-    order.sort(function (x, y) { return x.z - y.z; }).forEach(function (o) { st.g.appendChild(o.el); });
+    restack(st.faceG, order.sort(function (x, y) { return x.z - y.z; }).map(function (o) { return o.el; }));
     st.E.forEach(function (e, i) {
       var p = bell(t, 2.5 + i * 0.035, 2.85 + i * 0.035, 4.6, 5.2), A = Q[e[0]], B = Q[e[1]];
-      set(st.edges[i], { x1: A.x, y1: A.y, x2: lerp(A.x, B.x, p), y2: lerp(A.y, B.y, p), opacity: p > 0.01 ? 0.35 + 0.65 * clamp((A.z + B.z) / 64 + 0.5) : 0 });
-      st.g.appendChild(st.edges[i]);
+      set(st.edges[i], p > 0.01 ? { x1: A.x, y1: A.y, x2: lerp(A.x, B.x, p), y2: lerp(A.y, B.y, p), opacity: 0.35 + 0.65 * clamp((A.z + B.z) / 64 + 0.5) } : { opacity: 0 });
     });
     var cp = proj(rot(coreP));
     SPOKE.forEach(function (q, i) {
@@ -179,15 +216,14 @@ W.gen3d = {
       var a3 = rot(mix([q[0] - C, q[1] - C, 0], mix(coreP, P[st.satV[i]], 7.5 / 18), m));
       var b3 = rot(mix([q[2] - C, q[3] - C, 0], mix(coreP, P[st.satV[i]], 13.5 / 18), m)), A = proj(a3), B = proj(b3);
       set(st.spokes[i], { x1: A.x, y1: A.y, x2: B.x, y2: B.y, opacity: 0.55 * (1 - m) });
-      st.g.appendChild(st.spokes[i]);
     });
     set(st.core, { cx: cp.x, cy: cp.y, r: lerp(7, 1.6, m) * cp.k, opacity: 1 - m });
-    st.g.appendChild(st.core);
-    Q.map(function (q, i) { return { q: q, i: i }; }).sort(function (x, y) { return x.q.z - y.q.z; }).forEach(function (o) {
+    var dots = Q.map(function (q, i) { return { q: q, i: i }; }).sort(function (x, y) { return x.q.z - y.q.z; }).map(function (o) {
       var i = o.i, isSat = st.satV.indexOf(i) >= 0, op = i === st.coreV ? m : isSat ? lerp(0.75, 1, m) : 1;
       set(st.dots[i], { cx: o.q.x, cy: o.q.y, r: R[i] * o.q.k, opacity: op * (0.7 + 0.3 * clamp(o.q.z / 16 + 0.5)) });
-      st.g.appendChild(st.dots[i]);
+      return st.dots[i];
     });
+    restack(st.dotG, dots);
   }
 };
 
@@ -714,8 +750,11 @@ export function mountWork(g, kind) {
   var sc = W[kind];
   if (!sc) return null;
   var st = sc.build(g);
-  var s = { phase: 'intro', t: 0.45, live: 0, work: 0, out: -1, wait: 0, from: sc.hold };
-  function w() { return { live: s.live, work: s.work, out: s.out }; }
+  var s = { phase: 'intro', t: START, live: 0, work: 0, out: -1, wait: 0, from: sc.hold };
+  function w() {
+    var back = s.phase !== 'rewind' ? null : s.rw > START ? (s.t - START) / (s.rw - START) : 0;
+    return { live: s.live, work: s.work, out: s.out, back: back };
+  }
   function leave() {
     var r = sc.settle ? sc.settle(st, w()) : null;
     s.out = 0;
@@ -726,18 +765,24 @@ export function mountWork(g, kind) {
   function update(dt, next) {
     var leaving = next !== kind;
     s.live += dt;
-    if (s.phase === 'intro') {
-      // a step that ends before the scene has formed hurries it along
-      s.t = Math.min(sc.hold, s.t + dt * (leaving ? 3 : 1));
+    // a step that ends in the first half of the unfolding folds straight
+    // back (and does so to the end: the same step again unfolds anew from
+    // the mark); later on it hurries the scene along
+    if (s.phase === 'intro' && leaving && s.t < (START + sc.hold) / 2) { s.phase = 'rewind'; s.rw = s.t; }
+    if (s.phase === 'rewind') {
+      s.t = Math.max(START, s.t - dt * HURRY);
+      if (s.t <= START) { sc.frame(st, START, w()); return 'done'; }
+    } else if (s.phase === 'intro') {
+      s.t = Math.min(sc.hold, s.t + dt * (leaving ? HURRY : 1));
       if (s.t >= sc.hold) { if (leaving) leave(); else s.phase = 'work'; }
     } else if (s.phase === 'work') {
       s.work += dt;
       if (leaving) leave();
     } else if (s.phase === 'settle') {
-      s.out += dt;
+      s.out += dt * SETTLE_SPEED;
       if (s.out >= s.wait) { s.phase = 'outro'; s.t = s.from; }
     } else {
-      s.out += dt;
+      s.out += dt * SETTLE_SPEED;
       s.t += dt * EXIT_SPEED;
       if (s.t >= 6.9) { sc.frame(st, 6.9, w()); return 'done'; }
     }

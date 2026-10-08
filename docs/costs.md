@@ -102,6 +102,39 @@ launched with that key at `agents.agent_launcher.prepare_run` /
 `runtime.entity_launch.dispatch` before it starts. The cap resets with the
 UTC month, not on a rolling 30 days.
 
+## Limit per person
+
+In `multi` mode each person has a monthly spend limit (`common/user_budget.py`):
+their own, set by an administrator on the Users page (`PATCH
+/api/auth/users/{id}` with `spend_limit_usd`; `null` clears it, `0` means no
+limit), or else the default for everyone, set on the same page (`PUT
+/api/auth/spend-limits/default`, stored as `AGENTS_HUB_USER_SPEND_LIMIT_USD`).
+The default starts at `0`, no limit.
+
+A person's spend is their row of the [report](#report) for the current UTC
+month: every run stamped `launched_by` them, evaluation channels excluded,
+plus their served `/v1` calls. It is checked before a run starts and before
+each chat turn, inside `common.budget.check_budget`, so every surface that
+honours a workspace's hard limit honours the person's too, and again when a
+flow, loop, team or scenario is launched (`runtime.entity_launch.dispatch`).
+Once spend reaches the limit the run or turn is refused with the same budget
+error a workspace cap gives (a chat turn answers 402). The check fails open on
+a lookup error.
+
+The person sees their limit and month spend on the Account page (`GET
+/api/auth/spend`); an administrator sees everyone's in the Limit column of the
+Users page (`GET /api/auth/spend-limits`).
+
+## When a limit stops a chat turn
+
+A chat turn refused by a budget shows a card with the reason and the place to
+raise the limit: the workspace limit opens Costs, a person's limit opens the
+Users page (administrators), a turn cap opens the service. **Try again** sends
+the same message after you raise it. The `done` event, and the 402 body of
+`POST /api/chat/message` and the assistant, carry `refusal` with `code`
+`budget`, `kind` (`workspace`, `person` or `turn`), `spent_usd`, `limit_usd`
+and the workspace, user or service it concerns, next to the text message.
+
 ## Report
 
 `GET /api/accounting/report?group_by=key|user|project|workspace|agent|model`
@@ -126,7 +159,8 @@ and CSV export.
 A budget belongs to a workspace: a **hard limit**, a **soft limit** and a
 **period** (`total`, `daily` or `monthly`, in UTC). A limit of `0` is off, which
 is the default, so the feature is opt-in and existing workspaces keep behaving
-as they did.
+as they did. In `multi` mode only an administrator changes a workspace's budget;
+an owner, a personal workspace's person included, cannot lift their own.
 
 The hard limit is enforced at run launch, not merely displayed: when the
 period's estimated spend already meets it, the run is refused rather than
@@ -196,6 +230,11 @@ In rough order of surprise:
 - **Teams** — members times rounds, plus everyone reading everyone.
 - **Flows** — one call per agent node, once.
 - **Chat** — one call per turn, plus any delegation.
+- **Voice** — the [assistant](assistant.md#voice) pays its workspace's
+  transcription price per recording and its speech price per 1000 characters
+  read aloud. A recording is a `voice` run in the person's home workspace
+  (Messages lists it as "Voice input"); speech is added to the turn's run.
+  Both count toward the person's limit.
 
 This is why the tools that start the first four refuse until you have approved
 them, and why the refusal carries the estimate: the number arrives before the

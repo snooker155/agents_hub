@@ -55,11 +55,11 @@ from routes import google as google_router
 from routes import databases as databases_router
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import help_chat as help_chat_router
+from routes import assistant as assistant_router
+from routes import setup_guide as setup_guide_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
-from routes import oidc as oidc_router
 from routes import groups as groups_router
-from routes import scim as scim_router
 from routes import audit as audit_router
 from routes import account as account_router
 from routes import secrets as secrets_router
@@ -169,6 +169,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
+    # Periodic OTLP metrics export (common/otel_export.py), only when an
+    # endpoint is configured; a daemon thread off every request path.
+    try:
+        from common import otel_export as _otel_export
+        _otel_export.start_metrics_exporter()
+    except (ImportError, RuntimeError, ValueError) as e:  # a bad setting, or no thread to start
+        log.warning(f"⚠ Could not start the OTLP metrics exporter: {e}")
+
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
         from plans.scheduler import scheduler as _plan_scheduler
@@ -233,6 +241,16 @@ async def lifespan(app: FastAPI):
             log.info("✓ Service supervisor started")
         except Exception as e:  # noqa: BLE001 - the hub starts without it; services stay down
             log.warning(f"⚠ Could not start the service supervisor: {e}")
+
+    # The hub's own model runtime (providers/model_runtime_host.py): started
+    # on this host unless AGENTS_HUB_MODELS_URL names one run elsewhere, and
+    # started again when it dies. A worker leaves it to the API replica.
+    if hub_role() != "worker":
+        try:
+            from providers import model_runtime_host as _model_runtime
+            _model_runtime.start_watchdog()
+        except Exception as e:  # noqa: BLE001 - startup goes on without the runtime; logged
+            log.warning(f"⚠ Could not start the model runtime: {e}")
 
     # The deployment supervisor (deployments/supervisor.py): keeps a project's
     # deployed services alive and pauses a crash loop. See
@@ -604,6 +622,11 @@ app.include_router(local_models_router.router)
 
 # The hub as a provider (feature 5C): OpenAI-compatible /v1 served by the hub
 # itself, authorised by personal API keys. See docs/hub-as-provider.md.
+# The hub as an MCP server for Claude Code, Cursor and other MCP clients
+# (docs/hub-as-mcp-server.md), at /v1/mcp: /mcp is the dashboard's own page. Before
+# /v1's catch-all, which answers every other /v1 path with a 404.
+from routes import mcp_server as mcp_server_router
+app.include_router(mcp_server_router.router)
 from routes import openai_compat as openai_compat_router
 app.include_router(openai_compat_router.router)
 app.include_router(openai_compat_router.serving_router)
@@ -695,6 +718,9 @@ app.include_router(page_chat.router)
 
 # The Help panel: the support agent, one thread per user, about the product itself
 app.include_router(help_chat_router.router)
+app.include_router(assistant_router.router)
+# The guided setup the assistant leads (common/setup_guide.py)
+app.include_router(setup_guide_router.router)
 
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)
@@ -786,6 +812,10 @@ app.include_router(channels_router.router)
 app.include_router(connectors_router.router)
 app.include_router(slack_router.router)
 app.include_router(teams_channel_router.router)
+# The MCP server's address, the Obsidian plugin, the Slack and Teams apps and
+# the organisations that installed them (docs/distribution.md).
+from routes import distribution as distribution_router
+app.include_router(distribution_router.router)
 app.include_router(trackers_router.router)
 app.include_router(google_router.router)
 # Consent portal: a widget or channel end user grants their own Google or
@@ -840,9 +870,14 @@ app.include_router(auth_router.router)
 # and their mappings, SCIM provisioning, the audit trail, the caller's own
 # account (sessions, API keys) and workspace secrets. Each router answers
 # 404 outside the mode it needs, the same way the accounts routes do.
-app.include_router(oidc_router.router)
+# Single sign-on and SCIM are the enterprise part (ee/, its own licence):
+# mounted when the directory is there, absent from a community tree.
+from common.edition import enterprise_available
+if enterprise_available():
+    from ee.routes import oidc as oidc_router, scim as scim_router
+    app.include_router(oidc_router.router)
+    app.include_router(scim_router.router)
 app.include_router(groups_router.router)
-app.include_router(scim_router.router)
 app.include_router(audit_router.router)
 app.include_router(account_router.router)
 app.include_router(secrets_router.router)
@@ -866,9 +901,18 @@ app.include_router(kits_router.router)
 # them, so watching only its own directory would miss most edits.
 RELOAD_DIRS = [
     str(_backend_dir),
+    # Every package the backend imports from that holds code only (no state
+    # files written at runtime, which would restart it in a loop). A package
+    # left out keeps running its old code after an edit.
     *(str(project_root / name) for name in
-      ("agents", "common", "tools", "tasks", "chat", "flow")),
+      ("agents", "common", "tools", "tasks", "chat", "flow", "providers", "services",
+       "instances", "managers", "workspace", "reasoning", "memory", "connectors",
+       "connections", "deployments", "environments", "evals", "guardrails", "loops",
+       "mcp_client", "notify", "plans", "proactive", "runtime", "sandbox", "teams",
+       "watchers", "widgets", "views", "a2a", "declarative", "files", "kits", "projects")),
 ]
+#: How long a reload waits for open connections before closing them.
+RELOAD_GRACE_SECONDS = 5
 
 
 def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -889,6 +933,10 @@ def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
     options: Dict[str, Any] = {"host": args.host, "port": args.port, "reload": args.reload}
     if args.reload:
         options["reload_dirs"] = RELOAD_DIRS
+        # An open stream (a chat, the live mark's events) would hold the old
+        # process forever: uvicorn waits for every connection to close before
+        # the new code starts. The browser reconnects to the new one.
+        options["timeout_graceful_shutdown"] = RELOAD_GRACE_SECONDS
     return options
 
 

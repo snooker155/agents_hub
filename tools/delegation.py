@@ -211,7 +211,8 @@ def list_models_tool() -> str:
     catalog, the workspace's default model and your own.
 
     Returns JSON with `models` (each `id` is `provider/model`, the value to pass
-    as `model` to delegate_task_tool, with its `context_window`), `workspace_default`
+    as `model` to run_agent_tool or delegate_task_tool, with its `context_window`),
+    `workspace_default`
     and `self` (the provider and model this agent is configured with, or empty when
     it follows the workspace default). Pick a cheaper model for mechanical parts
     and a stronger one for hard parts; leave `model` empty to let the delegate use

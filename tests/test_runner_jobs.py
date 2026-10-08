@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from agents.callbacks import guards
+from common import code_version
 from instances import inbox, registry, store as istore
 from managers import run_manager as rm
 from services import jobs, store
@@ -61,7 +62,8 @@ def _runner(workspace="ws"):
     svc = store.ensure_runner(workspace)
     inst = registry.ensure_instance("", kind="runner", workspace=workspace, state="standby",
                                     service_id=svc["service_id"])
-    return svc, istore.update(inst["instance_id"], carrier_status="running", carrier_mode="local", pid=1)
+    return svc, istore.update(inst["instance_id"], carrier_status="running", carrier_mode="local", pid=1,
+                              carrier_code=code_version.current())
 
 
 # ── The cap of one turn ──────────────────────────────────────────────────────
@@ -535,6 +537,9 @@ def test_an_openai_model_streams_its_usage_even_with_an_empty_base_url_in_the_en
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
     model = build_chat_model(provider="openai", model="gpt-4o-mini", api_key="sk-test", streaming=True)
     assert model.stream_usage is True
+    # And the SDK must not read the empty value as its address: URL('') made
+    # every call fail with "Connection error".
+    assert str(model.root_client.base_url).startswith("https://api.openai.com/v1")
     gateway = build_chat_model(provider="openai", model="gpt-4o-mini", api_key="sk-test",
                                base_url="http://gateway.local/v1", streaming=True)
     assert not gateway.stream_usage

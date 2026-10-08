@@ -632,6 +632,65 @@
         }
       }
     },
+    "GET /api/workspaces/demo/summary": {
+      "name": "demo",
+      "allowed_agents": [
+        "demo_writer",
+        "demo_analyst",
+        "demo_reviewer",
+        "demo_support",
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "modeler_3d",
+        "web_view_builder",
+        "swe_agent",
+        "code_reviewer",
+        "eval_agent",
+        "researcher",
+        "web_searcher",
+        "main-agent",
+        "universal_agent",
+        "service_agent",
+        "prompt-engineer",
+        "world_builder",
+        "scenario_creator",
+        "loop_creator",
+        "team_creator",
+        "project_manager",
+        "system_doctor",
+        "system_engineer",
+        "support",
+        "verifier",
+        "analyst",
+        "writer",
+        "sourcer",
+        "screener"
+      ],
+      "personal_memory_enabled": true,
+      "isolated": false,
+      "palette": null,
+      "model": {
+        "global_default": {
+          "provider": "openai",
+          "model": ""
+        },
+        "workspace_default": {
+          "provider": "",
+          "model": "",
+          "inherited_from": null
+        },
+        "override": {
+          "provider": "",
+          "model": ""
+        }
+      }
+    },
     "GET /api/settings": {
       "openai_api_key_masked": "sk-proj****",
       "anthropic_api_key_masked": "****",

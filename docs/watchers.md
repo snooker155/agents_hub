@@ -6,7 +6,7 @@ watcher polls its source on its own interval, remembers what it last saw,
 and only on a change hands an event to the agents listening. No model runs
 for a poll, so watching costs a network request every few minutes, not a run.
 
-**Connect → Watchers** in the sidebar. The header shows how many watchers
+**Integrations → Watchers** in the sidebar. The header shows how many watchers
 are active right now; clicking it lists each one with its last check, its
 last change and the agents it wakes.
 

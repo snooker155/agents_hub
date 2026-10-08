@@ -455,6 +455,9 @@ def _ensure_review_fields(flow: Dict[str, Any]) -> Dict[str, Any]:
     return flow
 
 
+_skip_logged: set = set()
+
+
 def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> List[Dict[str, Any]]:
     """Return every flow as a combined dict, ordered by id (deterministic,
     matching the old file-name ordering when ids were also the filenames).
@@ -475,7 +478,10 @@ def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> Lis
         try:
             _check_entities_exist(flow_id, flow)
         except FlowParseError as e:
-            print(f"[flow_store] skip {flow_id}: {e}")
+            # Every listing hits the same broken flow; say so once per process.
+            if (flow_id, str(e)) not in _skip_logged:
+                _skip_logged.add((flow_id, str(e)))
+                print(f"[flow_store] skip {flow_id}: {e}")
             continue
         out.append(_ensure_review_fields(flow))
     return out

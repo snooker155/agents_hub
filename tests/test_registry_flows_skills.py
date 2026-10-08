@@ -250,6 +250,18 @@ def test_get_registry_includes_flows_and_skills():
     assert "skills" in body
 
 
+def test_get_registry_of_a_workspace_lists_only_its_own_items():
+    from flow import store as flow_store
+    flow_store.save_flow(_new_flow("flow-acme", workspace="acme"))
+    flow_store.save_flow(_new_flow("flow-other", workspace="other"))
+    client = _client()
+    scoped = {f["id"] for f in client.get("/api/registry", params={"workspace": "acme"}).json()["flows"]}
+    assert "flow-acme" in scoped and "flow-other" not in scoped
+    for hub_wide in (client.get("/api/registry"), client.get("/api/registry", params={"workspace": "default"})):
+        ids = {f["id"] for f in hub_wide.json()["flows"]}
+        assert {"flow-acme", "flow-other"} <= ids
+
+
 def test_flow_submit_publishes_its_agents_too(monkeypatch):
     """The doc item's own rule: a flow's publish also publishes its agents."""
     from agents import registry as agent_registry

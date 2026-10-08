@@ -11,8 +11,8 @@ agents/agent_launcher.py:BLE001 6
 agents/agent_launcher.py:S110 6
 agents/agent_replay.py:BLE001 1
 agents/agent_response.py:BLE001 2
-agents/agent_utils.py:BLE001 3
-agents/agent_utils.py:S110 3
+agents/agent_utils.py:BLE001 1
+agents/agent_utils.py:S110 1
 agents/callbacks/chat_stream.py:BLE001 21
 agents/callbacks/chat_stream.py:S110 7
 agents/callbacks/control.py:BLE001 7
@@ -97,14 +97,10 @@ dashboard/backend/routes/agents.py:BLE001 4
 dashboard/backend/routes/agents.py:S110 2
 dashboard/backend/routes/browser.py:BLE001 1
 dashboard/backend/routes/browser.py:S110 3
-dashboard/backend/routes/chat.py:BLE001 1
-dashboard/backend/routes/chat.py:S110 1
 dashboard/backend/routes/chats.py:BLE001 1
 dashboard/backend/routes/chats.py:S110 1
 dashboard/backend/routes/containers.py:BLE001 9
 dashboard/backend/routes/containers.py:S110 1
-dashboard/backend/routes/costs.py:BLE001 2
-dashboard/backend/routes/costs.py:S110 2
 dashboard/backend/routes/deployment.py:BLE001 9
 dashboard/backend/routes/external.py:BLE001 1
 dashboard/backend/routes/flow_entities.py:BLE001 1
@@ -122,7 +118,6 @@ dashboard/backend/routes/messages.py:S110 1
 dashboard/backend/routes/model_structure.py:BLE001 1
 dashboard/backend/routes/models.py:BLE001 5
 dashboard/backend/routes/models.py:S110 1
-dashboard/backend/routes/oidc.py:BLE001 2
 dashboard/backend/routes/ops.py:BLE001 9
 dashboard/backend/routes/ops.py:S110 2
 dashboard/backend/routes/page_chat.py:BLE001 1

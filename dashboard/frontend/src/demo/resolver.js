@@ -39,6 +39,13 @@ const FALLBACKS = [
   [/^\/api\/auth\/preferences$/, () => ({})],
   [/^\/api\/health$/, () => ({ status: 'ok', demo: true, checks: {} })],
   [/^\/api\/demo$/, () => ({ enabled: true, present: true, workspace: 'demo', counts: {} })],
+  // The guided setup never runs in the demo: a model is already there, and
+  // nobody touring it should be offered a welcome window.
+  [/^\/api\/setup-guide$/, () => ({
+    active: false, started_at: null, finished_at: null, dismissed_at: null,
+    mode: '', admin: true, multi: false, needs_model: false,
+    steps: [], done: 0, total: 0, next: null, complete: false, work: null,
+  })],
   [/^\/api\/stats$/, () => ({
     active_runs: 0, available_slots: 0, total_capacity: 0, total_tasks: 0,
     completed_tasks: 0, completion_rate: 0, recent_runs: [],
@@ -193,17 +200,19 @@ export const sseFrame = (ev) => `data: ${JSON.stringify(ev)}\n\n`;
 export const frameDelay = () => 60 + Math.floor(Math.random() * 91);
 
 /**
- * A ReadableStream replaying `frames` as SSE, `delay()` ms apart. `wait` is
- * injectable so a test can run the replay without real timers.
+ * A ReadableStream replaying `frames` as SSE, `delay()` ms apart; a frame
+ * with `demo_pause` waits that long instead, so a scripted step can last as
+ * long as a real one would. `wait` is injectable so a test can run the
+ * replay without real timers.
  */
 export function replayStream(frames, { delay = frameDelay, wait = (ms) => new Promise((r) => setTimeout(r, ms)), keepOpen = false } = {}) {
   const encoder = new TextEncoder();
   let cancelled = false;
   return new ReadableStream({
     async start(controller) {
-      for (const ev of frames) {
+      for (const { demo_pause: pause, ...ev } of frames) {
         if (cancelled) return;
-        await wait(delay());
+        await wait(pause ?? delay());
         if (cancelled) return;
         controller.enqueue(encoder.encode(sseFrame(ev)));
       }

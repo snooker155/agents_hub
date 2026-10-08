@@ -13,6 +13,11 @@ tab shows: the profile, the job, today's usage and the newest ticks.
 the profile owns, so the tab never has to know the job id. ``wake`` fires a
 tick now (``trigger="manual"``), through the quiet hours but not past the
 budget, the tick limit or a tick still running.
+
+Roles (multi mode): reading a pulse needs viewer on the workspace it runs in,
+changing, pausing, resuming or waking it needs editor there, and a PUT that
+moves the pulse to another workspace needs editor on that one too. The
+Dashboard summary shows only the pulses of workspaces the caller can see.
 """
 from __future__ import annotations
 
@@ -21,7 +26,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-from common import audit, identity
+from common import access, audit, identity
+from common.auth import WS_EDITOR, WS_VIEWER
 from proactive import service as proactive
 
 log = logging.getLogger(__name__)
@@ -36,6 +42,30 @@ def _status_or_404(agent_id: str, limit: int = 50) -> Dict[str, Any]:
     return body
 
 
+def _require(request: Optional[Request], agent_id: str, role: str) -> None:
+    """404 for an unknown agent, else the caller's role on the pulse's workspace."""
+    workspace = proactive.workspace_of(agent_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    identity.require_role(identity.request_principal(request), workspace=workspace, role=role)
+
+
+def _visible_summary(body: Dict[str, Any], request: Optional[Request]) -> Dict[str, Any]:
+    """The summary cut down to the pulses this caller can see, totals redone."""
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return body
+    rows = access.filter_by_workspace(principal, body.get("agents") or [])
+    totals = {key: 0 for key in body.get("totals") or {}}
+    for row in rows:
+        totals["agents"] = totals.get("agents", 0) + 1
+        totals["paused"] = totals.get("paused", 0) + (1 if row.get("status") == "paused" else 0)
+        for key in totals:
+            if key not in ("agents", "paused"):
+                totals[key] += int(row.get(key) or 0)
+    return {**body, "agents": rows, "totals": totals}
+
+
 def _audit(action: str, request: Request, agent_id: str, details: Dict[str, Any]) -> None:
     try:
         profile = proactive.get_profile(agent_id) or {}
@@ -48,14 +78,18 @@ def _audit(action: str, request: Request, agent_id: str, details: Dict[str, Any]
 
 
 @router.get("/api/proactive/summary")
-async def proactive_summary(workspace: Optional[str] = None, hours: int = 24):
+async def proactive_summary(workspace: Optional[str] = None, hours: int = 24, request: Request = None):
     """The Dashboard widget: every pulse that is on, and what its ticks of
     the last ``hours`` came to (acted, quiet, blocked, error, skipped)."""
-    return proactive.summary(workspace or None, hours=max(1, min(int(hours), 24 * 30)))
+    if workspace:
+        identity.require_role(identity.request_principal(request), workspace=workspace, role=WS_VIEWER)
+    body = proactive.summary(workspace or None, hours=max(1, min(int(hours), 24 * 30)))
+    return _visible_summary(body, request)
 
 
 @router.get("/api/agents/{agent_id}/proactive")
-async def get_proactive(agent_id: str, limit: int = 50):
+async def get_proactive(agent_id: str, limit: int = 50, request: Request = None):
+    _require(request, agent_id, WS_VIEWER)
     return _status_or_404(agent_id, limit=limit)
 
 
@@ -63,9 +97,13 @@ async def get_proactive(agent_id: str, limit: int = 50):
 async def update_proactive(agent_id: str, patch: Dict[str, Any], request: Request):
     if not isinstance(patch, dict):
         raise HTTPException(status_code=400, detail="the profile must be a JSON object")
+    _require(request, agent_id, WS_EDITOR)
     before = proactive.get_profile(agent_id)
     if before is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    moved_to = patch.get("workspace")
+    if moved_to and moved_to != before.get("workspace"):
+        identity.require_role(identity.request_principal(request), workspace=str(moved_to), role=WS_EDITOR)
     try:
         principal = identity.request_principal(request)
         after = proactive.save_profile(
@@ -87,6 +125,7 @@ async def update_proactive(agent_id: str, patch: Dict[str, Any], request: Reques
 
 @router.post("/api/agents/{agent_id}/proactive/pause")
 async def pause_proactive(agent_id: str, request: Request):
+    _require(request, agent_id, WS_EDITOR)
     try:
         proactive.pause(agent_id)
     except LookupError as e:
@@ -99,6 +138,7 @@ async def pause_proactive(agent_id: str, request: Request):
 
 @router.post("/api/agents/{agent_id}/proactive/resume")
 async def resume_proactive(agent_id: str, request: Request):
+    _require(request, agent_id, WS_EDITOR)
     try:
         proactive.resume(agent_id)
     except LookupError as e:
@@ -111,6 +151,7 @@ async def resume_proactive(agent_id: str, request: Request):
 
 @router.post("/api/agents/{agent_id}/proactive/wake")
 async def wake_proactive(agent_id: str, request: Request):
+    _require(request, agent_id, WS_EDITOR)
     try:
         result = proactive.wake(agent_id)
     except LookupError as e:

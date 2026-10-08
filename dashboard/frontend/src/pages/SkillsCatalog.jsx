@@ -350,7 +350,7 @@ const SkillsCatalog = () => {
               placeholder={t('skillsCatalog.searchSkills')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-56"
+              className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
             />
           </div>
           <button
@@ -668,7 +668,7 @@ const SkillsCatalog = () => {
                   value={editor.draft.name}
                   onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, name: e.target.value } })}
                   placeholder={t('skillsCatalog.triageABugReport')}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
                 />
               </div>
               <div>
@@ -680,7 +680,7 @@ const SkillsCatalog = () => {
                   onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, description: e.target.value } })}
                   rows={2}
                   placeholder={t('skillsCatalog.matchedAgainstIncomingInstructionsWrite')}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
                 />
               </div>
               <div>
@@ -690,7 +690,7 @@ const SkillsCatalog = () => {
                   onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, steps: e.target.value } })}
                   rows={8}
                   placeholder={t('skillsCatalog.stepsPlaceholder')}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none"
                 />
               </div>
               <div>
@@ -700,7 +700,7 @@ const SkillsCatalog = () => {
                   onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, body: e.target.value } })}
                   rows={6}
                   placeholder={t('skillsCatalog.instructionsPlaceholder')}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none"
                 />
                 <p className="text-[11px] text-gray-400 mt-1">{t('skillsCatalog.stepsOrInstructions')}</p>
               </div>
@@ -711,7 +711,7 @@ const SkillsCatalog = () => {
                     value={editor.draft.tags}
                     onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, tags: e.target.value } })}
                     placeholder={t('skillsCatalog.debuggingPython')}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
                   />
                 </div>
                 {!editor.id && (
@@ -720,7 +720,7 @@ const SkillsCatalog = () => {
                     <select
                       value={editor.draft.agent_id}
                       onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, agent_id: e.target.value } })}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
                     >
                       <option value="">{t('skillsCatalog.catalogEntryNoAgent')}</option>
                       {targets.map((t) => (
@@ -775,7 +775,7 @@ const SkillsCatalog = () => {
                 <select
                   value={installAgent}
                   onChange={(e) => setInstallAgent(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
                 >
                   <option value="">{t('skillsCatalog.workspaceCatalogOnlyNoAgent')}</option>
                   {targets.map((t) => (

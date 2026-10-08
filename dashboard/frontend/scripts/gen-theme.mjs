@@ -488,6 +488,17 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
   --warn-surface:   #fef08a;
   --danger-surface: #fee2e2;
   --info-surface:   ${BRAND_LIGHT[100]};
+
+  /* Chart marks (validated with the dataviz palette checks for this surface):
+     the accent series, the de-emphasised rest, three categorical slots,
+     gridlines and the unfilled track of a meter. */
+  --chart-accent:   #2a4fbd;
+  --chart-muted:    #cbd5e1;
+  --chart-cat-1:    #2a4fbd;
+  --chart-cat-2:    #eb6834;
+  --chart-cat-3:    #1baf7a;
+  --chart-grid:     #e8edf4;
+  --chart-track:    #dbe6ff;
 }
 
 html.dark {
@@ -509,6 +520,14 @@ html.dark {
   --text-muted:      #9aa7bd;
   --text-faint:      #8b98ae;
   --text-inverse:    #0d1526;
+
+  --chart-accent:   #5b82e6;
+  --chart-muted:    #3a4a6b;
+  --chart-cat-1:    #5b82e6;
+  --chart-cat-2:    #d95926;
+  --chart-cat-3:    #199e70;
+  --chart-grid:     #1f2a44;
+  --chart-track:    #1a3068;
 
 ${Object.entries(BRAND_DARK_VARS).map(([s, v]) => `  --brand-${s}: ${v};`).join('\n')}
   --brand:           #3f66d8;

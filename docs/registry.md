@@ -72,9 +72,19 @@ answer to it. Anyone can request a catalog entry; an admin approves or blocks.
 
 ## The page
 
+The page follows the workspace picked in the top bar. In `default` it is the
+hub's view: every workspace's items, which workspaces each one is in, a filter
+by workspace and the two hub toggles. In any other workspace it shows only that
+workspace's own items (`GET /api/registry?workspace=<name>`: the agents and
+flows it owns or added, the skills it owns, the MCP servers attached to it) and
+nothing about the rest, so there is no workspace filter and no hub toggle.
+In multi mode the hub-wide view (no `workspace`, or `default`) answers only an
+administrator or a member of `default`; anybody else gets a 403 and asks for a
+workspace they belong to.
+
 Four tabs, the first three sharing one row component. **Agents**, **Flows**
-and **Skills**: every item of that kind across every workspace, filterable by
-status, owner and workspace, with Submit for its owner, Approve/Reject for an
+and **Skills**: every item of that kind in view, filterable by status and
+owner (and by workspace in `default`), with Submit for its owner, Approve/Reject for an
 admin. **MCP servers**: every server attached anywhere (with whether it
 matches an approved catalog entry) alongside the catalog itself, with a
 request form for anyone and Approve/Block for an admin. The two hub toggles

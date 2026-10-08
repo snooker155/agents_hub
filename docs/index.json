@@ -41,6 +41,32 @@
       ]
     },
     {
+      "id": "assistant",
+      "title": "Assistant",
+      "summary": "A person's own assistant, by voice or text: the Assistant page with the live mark and push to talk, the assistant system agent, which extends the Main Agent, one thread per person at /api/assistant, turns in any workspace the person belongs to, speech in and out with the workspace's speech models or the browser's own, a spoken yes for a waiting card, one read-only hub_lookup over runs, sessions, spend, budgets, models, agents, notifications and approvals, hub_lookup over every page's records, one-step changes with hub_action behind a card or a spoken yes, a service thread with health tools and service_lookup (users, audit, settings) for administrators, and turns refused with code budget once a limit is used up, and the guided setup it leads after the install (setup_guide, setup_step behind a card, show_on_screen, keys through a provider card).",
+      "surface": "Assistant",
+      "related": [
+        "system-agents",
+        "identity",
+        "costs",
+        "agent-inheritance",
+        "workspaces",
+        "help",
+        "pwa"
+      ],
+      "headings": [
+        "The page",
+        "One thread per person",
+        "Where a turn runs",
+        "The service thread",
+        "What it can look up",
+        "Guided setup",
+        "Answers",
+        "Voice",
+        "Limits"
+      ]
+    },
+    {
       "id": "agent-inheritance",
       "title": "Agent inheritance",
       "summary": "An agent can extend another: start from its prompt, tools, model and the rest, and declare only what is different. A system agent can be a parent, never a child.",
@@ -107,7 +133,8 @@
         "loops",
         "teams",
         "evals",
-        "mcp"
+        "mcp",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -160,7 +187,8 @@
         "connectors",
         "notifications",
         "proactive",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "distribution"
       ],
       "headings": [
         "What every channel has",
@@ -273,9 +301,11 @@
       "headings": [
         "Where the numbers come from",
         "Budgets",
+        "When a limit stops a chat turn",
         "Per-run limit",
         "What actually costs money",
-        "Reducing it"
+        "Reducing it",
+        "Limit per person"
       ]
     },
     {
@@ -449,7 +479,8 @@
         "backup",
         "demo",
         "changelog",
-        "scaling"
+        "scaling",
+        "pwa"
       ],
       "headings": [
         "Prerequisites",
@@ -457,6 +488,7 @@
         "Path B: Docker Compose from a checkout",
         "Path C: the installer",
         "Path D: by hand",
+        "After the install: the assistant takes over",
         "Configuration",
         "Checking it worked",
         "Where state lives",
@@ -614,7 +646,8 @@
         "hooks",
         "agents",
         "workspaces",
-        "registry"
+        "registry",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "In the dashboard",
@@ -624,6 +657,7 @@
         "Approval",
         "Security notes",
         "How it behaves at runtime",
+        "The hub-wide allowlist",
         "Gotchas"
       ]
     },
@@ -666,6 +700,7 @@
       "headings": [
         "Catalog vs. enabled",
         "Defaults and overrides",
+        "A first key switches on a model",
         "Pricing",
         "Context window",
         "Providers",
@@ -689,6 +724,7 @@
         "How the objects nest",
         "Two kinds of agent",
         "Where work actually happens",
+        "The menu",
         "Two things worth knowing early"
       ]
     },
@@ -842,6 +878,7 @@
         "What a tick is",
         "The profile",
         "Schedule and quiet hours",
+        "From a phrase",
         "Budgets and limits",
         "The tick's answer",
         "Triggers besides the clock",
@@ -879,6 +916,27 @@
       ]
     },
     {
+      "id": "observability",
+      "title": "Observability",
+      "summary": "Prometheus metrics at /metrics, OpenTelemetry export of runs (with model and tool call spans) and metrics, the Grafana dashboard and the alert rules.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "slo",
+        "runbook",
+        "costs",
+        "workers"
+      ],
+      "headings": [
+        "Prometheus: GET /metrics",
+        "OpenTelemetry export",
+        "Spans",
+        "Metrics",
+        "Grafana dashboard and alerts",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "service-health",
       "title": "Service health and diagnostics",
       "summary": "Whether the moving parts are alive, and what to do when they are not.",
@@ -895,7 +953,8 @@
         "workers",
         "system-workspace",
         "runbook",
-        "slo"
+        "slo",
+        "observability"
       ],
       "headings": [
         "The snapshot",
@@ -917,7 +976,8 @@
         "service-health",
         "slo",
         "deployment",
-        "backup"
+        "backup",
+        "observability"
       ],
       "headings": [
         "Provider key invalid or rate limited",
@@ -992,6 +1052,7 @@
       ],
       "headings": [
         "What is here",
+        "After saving a first key",
         "Per-workspace overrides",
         "Reading the health of this"
       ]
@@ -1031,7 +1092,8 @@
         "tools-and-capabilities",
         "workspaces",
         "agent-inheritance",
-        "workspace-roles"
+        "workspace-roles",
+        "assistant"
       ],
       "headings": [
         "What being a system agent means",
@@ -1108,7 +1170,7 @@
     {
       "id": "telegram",
       "title": "Telegram",
-      "summary": "A Telegram bot can be bound to this service, so a conversation continues from a phone and notifications arrive where you are.",
+      "summary": "A Telegram bot can be bound to this service, so a conversation continues from a phone, voice messages are transcribed, and notifications arrive where you are.",
       "surface": "Settings",
       "related": [
         "chat",
@@ -1119,6 +1181,7 @@
       ],
       "headings": [
         "What the binding does",
+        "Voice messages",
         "Notifications",
         "The security consequence"
       ]
@@ -1142,6 +1205,7 @@
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "When a chat turn is refused",
         "Delegation counts as holding the capability",
         "The browser tools",
         "run_code",
@@ -1262,7 +1326,7 @@
     {
       "id": "special-models",
       "title": "Special models",
-      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
+      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback except a personal workspace, which uses default's. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
       "surface": "Models, Special models tab; Workspace settings, Special models section",
       "related": [
         "workspace-roles",
@@ -1349,6 +1413,7 @@
         "The three modes",
         "First run in multi mode",
         "Roles and what each may do",
+        "Personal workspace",
         "What a record remembers",
         "The service credential",
         "How passwords and sessions are stored",
@@ -1453,7 +1518,8 @@
         "local-models",
         "browser",
         "project-deployments",
-        "changelog"
+        "changelog",
+        "pwa"
       ],
       "headings": [
         "The shapes",
@@ -1593,7 +1659,8 @@
         "cli",
         "a2a",
         "audit",
-        "settings"
+        "settings",
+        "hub-as-mcp-server"
       ],
       "headings": [
         "What a key is",
@@ -1692,6 +1759,7 @@
       "headings": [
         "Ollama from the UI",
         "The hub runtime",
+        "Ready local set",
         "Downloads from Hugging Face",
         "Load and unload and memory",
         "The provider hub-local",
@@ -1709,7 +1777,9 @@
         "models",
         "audit",
         "local-models",
-        "services"
+        "services",
+        "hub-as-mcp-server",
+        "distribution"
       ],
       "headings": [
         "What it serves",
@@ -2052,6 +2122,71 @@
       ]
     },
     {
+      "id": "pwa",
+      "title": "Phone and installed app",
+      "summary": "The dashboard installs as an app on a phone or a desktop (a progressive web app), opens on the Assistant, keeps its shell offline and fits phone screens. Needs HTTPS; the quickstart compose file has an https profile with Caddy.",
+      "surface": "Install app",
+      "related": [
+        "assistant",
+        "chat",
+        "installation",
+        "deployment",
+        "identity",
+        "demo"
+      ],
+      "headings": [
+        "Install it",
+        "On a phone",
+        "What works offline",
+        "HTTPS on a server",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "threat-model",
+      "title": "Threat model",
+      "summary": "What the hub protects (provider keys, secrets, the host, private work, connected accounts, money), who might attack (text an agent reads first, then members, widget visitors, the network, dependencies), the boundaries and what holds each, a table of threats with the answer and what is left, and what the hub does not defend against.",
+      "surface": "Security",
+      "related": [
+        "security",
+        "identity",
+        "isolation",
+        "secrets",
+        "tools-and-capabilities",
+        "environments",
+        "hooks",
+        "guardrails",
+        "widget",
+        "service-health"
+      ],
+      "headings": [
+        "What is worth protecting",
+        "Who might attack",
+        "Boundaries and what holds each",
+        "Threats and answers",
+        "What the hub does not defend against",
+        "Checking a deployment"
+      ]
+    },
+    {
+      "id": "security",
+      "path": "SECURITY.md",
+      "title": "Security policy: reporting a vulnerability",
+      "summary": "How to report a vulnerability privately (GitHub private reporting or email), how fast it is answered, which versions get fixes, what counts as a vulnerability and what is a documented choice, and the short hardening list for a hub beyond one laptop.",
+      "surface": "Product",
+      "related": [
+        "threat-model",
+        "identity",
+        "service-health"
+      ],
+      "headings": [
+        "Reporting a vulnerability",
+        "Supported versions",
+        "What counts",
+        "Hardening"
+      ]
+    },
+    {
       "id": "changelog",
       "path": "CHANGELOG.md",
       "title": "Changelog: what's new in each release",
@@ -2069,6 +2204,55 @@
         "Fixed",
         "Security",
         "Upgrade notes"
+      ]
+    },
+    {
+      "id": "hub-as-mcp-server",
+      "title": "The hub as an MCP server",
+      "surface": "Distribution",
+      "summary": "POST /v1/mcp serves the hub's agents to Claude Code, Cursor and other MCP clients as tools (list_workspaces, list_agents, ask_agent, get_run), authorised like /v1 by personal API keys, with signed conversation handles, wait_seconds and get_run for long turns, usage and audit rows, and runs treated as untrusted input.",
+      "related": [
+        "distribution",
+        "mcp",
+        "hub-as-provider",
+        "api-keys",
+        "tools-and-capabilities",
+        "cli"
+      ],
+      "headings": [
+        "Setup",
+        "The tools",
+        "Conversations",
+        "Long turns",
+        "Authentication",
+        "Untrusted input",
+        "Accounting",
+        "Protocol details",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "distribution",
+      "title": "Distribution",
+      "surface": "Distribution",
+      "summary": "The Distribution page: the MCP server address, the Obsidian plugin zip, a Slack app other Slack workspaces install over OAuth (manifest, private or public, Marketplace direct install URL) and a Teams app package, with pending installations an owner approves with a workspace and an agent.",
+      "related": [
+        "hub-as-mcp-server",
+        "channels",
+        "api-keys",
+        "hub-as-provider",
+        "identity"
+      ],
+      "headings": [
+        "Before you start: a public address",
+        "MCP",
+        "Obsidian plugin",
+        "Slack app",
+        "Teams app",
+        "Security model",
+        "Routes",
+        "Gotchas"
       ]
     }
   ]

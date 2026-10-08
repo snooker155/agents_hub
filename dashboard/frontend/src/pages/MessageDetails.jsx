@@ -526,7 +526,7 @@ export default function MessageDetails() {
               value={replayModel}
               onChange={(e) => setReplayModel(e.target.value)}
               placeholder={`Model override (default: ${message?.model || 'same'})`}
-              className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-72"
+              className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none w-72"
             />
             <button
               onClick={handleReplay}

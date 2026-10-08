@@ -4,8 +4,14 @@ Special models: the models a workspace uses for work a chat model does not do.
 A chat model answers in text. Pictures, video, speech and transcripts come
 from other models with other APIs, and a team may also run a model of its own
 for one narrow job. Each of those is a *purpose*; a workspace picks the model
-for each purpose it wants (``special_models`` in the workspace metadata). There
-is no fallback: a workspace uses only the models it added itself.
+for each purpose it wants (``special_models`` in the workspace metadata). A
+workspace uses only the models it added itself, with one exception: a
+personal workspace (common/personal_workspace.py) takes ``default``'s model
+for each purpose it left empty, so a person's assistant can listen and speak
+without anyone configuring their workspace. Such an entry carries
+``inherited_from: "default"`` and is called with default's connection
+settings (:func:`entry_endpoint`); its price is still charged to the run, so
+to the personal workspace. Custom models are never inherited.
 
 Agents never choose the model. They call the purpose's tool
 (tools/special_models.py: ``generate_image``, ``generate_video``,
@@ -49,6 +55,9 @@ META_KEY = "special_models"
 #: server, a custom backend with the openai adapter) or Google's Gemini API.
 OPENAI = "openai_compat"
 GOOGLE = "google"
+#: Anthropic's API, only for a custom chat model's connection check
+#: (:func:`check`): it has no model for any purpose.
+ANTHROPIC = "anthropic"
 
 
 @dataclass(frozen=True)
@@ -65,6 +74,9 @@ class Purpose:
     suggestions: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     #: Options the purpose accepts, with a short hint each.
     options: Dict[str, str] = field(default_factory=dict)
+    #: Known values of the ``voice`` option per API shape (the field stays free
+    #: text): the Models page and the assistant's voice picker offer them.
+    voices: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
 
 
 PURPOSES: Tuple[Purpose, ...] = (
@@ -94,6 +106,9 @@ PURPOSES: Tuple[Purpose, ...] = (
          GOOGLE: ("gemini-2.5-flash-preview-tts",)},
         {"voice": "for example alloy, nova (OpenAI) or Kore, Puck (Google)",
          "format": "mp3, wav, opus (OpenAI)"},
+        {OPENAI: ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage",
+                  "shimmer", "verse"),
+         GOOGLE: ("Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")},
     ),
     Purpose(
         "transcription", "transcribe_audio", "call",
@@ -163,9 +178,15 @@ def provider_choices() -> List[Dict[str, Any]]:
     ]
     try:
         from providers.registry import list_backends
+        from providers.local_models import HUB_LOCAL_ID
         for b in list_backends():
             if str(b.get("adapter") or "openai") == "openai":
-                out.append({"id": b["id"], "label": b.get("label") or b["id"], "kind": OPENAI})
+                choice = {"id": b["id"], "label": b.get("label") or b["id"], "kind": OPENAI}
+                if b["id"] == HUB_LOCAL_ID:
+                    # The hub's own runtime: its models are what was downloaded
+                    # there, each with its own voices (:func:`model_voices`).
+                    choice["local_runtime"] = True
+                out.append(choice)
     except Exception:  # noqa: BLE001 - custom backends are optional here
         log.debug("special models: could not list custom backends", exc_info=True)
     return out
@@ -226,8 +247,12 @@ def endpoint(provider: str, workspace: Optional[str]) -> Endpoint:
     if str(backend.get("adapter") or "openai") != "openai":
         raise SpecialModelError(f"Provider '{provider}' does not speak the OpenAI API.")
     headers = backend.get("headers") if isinstance(backend.get("headers"), dict) else {}
+    headers = {str(k): str(v) for k, v in headers.items()}
+    from providers.local_models import HUB_LOCAL_ID, source_headers
+    if pid == HUB_LOCAL_ID:
+        headers.update(source_headers())
     return Endpoint(OPENAI, str(backend.get("base_url") or "").rstrip("/"),
-                    str(backend.get("api_key") or ""), {str(k): str(v) for k, v in headers.items()})
+                    str(backend.get("api_key") or ""), headers)
 
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -424,12 +449,47 @@ def save(workspace: str, raw: Any) -> Dict[str, Any]:
     return config
 
 
+#: Key on an effective entry that a personal workspace took from another.
+INHERITED_KEY = "inherited_from"
+
+
 def effective(workspace: Optional[str]) -> Dict[str, Any]:
-    """What ``workspace`` uses: the models it added itself, nothing more. A
-    purpose it left empty has no model, whatever another workspace has."""
+    """What ``workspace`` uses: the models it added itself. A purpose it left
+    empty has no model, whatever another workspace has, except in a personal
+    workspace, where ``default``'s model for that purpose fills the gap (marked
+    with :data:`INHERITED_KEY`)."""
     from common.workspace_context import workspace_name_from_path
     ws = (workspace_name_from_path(workspace) or workspace) if workspace else None
-    return stored(ws)
+    own = stored(ws)
+    from common import personal_workspace
+    if not ws or not personal_workspace.is_personal(ws):
+        return own
+    fallback = personal_workspace.FALLBACK
+    out = dict(own)
+    for purpose_id, entry in stored(fallback).items():
+        if purpose_id == "custom" or purpose_id in out:
+            continue
+        out[purpose_id] = {**entry, INHERITED_KEY: fallback}
+    return out
+
+
+def voice_entry(purpose: str, workspace: Optional[str], home: Optional[str]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """The model the assistant's voice uses for ``purpose`` (transcription or
+    speech) and the workspace it is called from: the one of the workspace the
+    turn runs in, else the person's home (with the personal fallback to
+    ``default``), so a person's assistant keeps its voice in a workspace that
+    added none. ``(None, workspace)`` when neither has one."""
+    for where in dict.fromkeys(w for w in (workspace or home, home) if w):
+        entry = effective(where).get(purpose)
+        if entry:
+            return entry, where
+    return None, workspace or home or ""
+
+
+def entry_endpoint(entry: Dict[str, Any], workspace: Optional[str]) -> Endpoint:
+    """:func:`endpoint` for an :func:`effective` entry: an inherited one is
+    called with the connection settings of the workspace it came from."""
+    return endpoint(entry["provider"], entry.get(INHERITED_KEY) or workspace)
 
 
 def configured_tools(workspace: Optional[str]) -> List[str]:
@@ -447,12 +507,385 @@ def options_payload() -> Dict[str, Any]:
         "purposes": [
             {"id": p.id, "tool": p.tool, "unit": p.unit, "summary": p.summary,
              "kinds": list(p.kinds), "suggestions": {k: list(v) for k, v in p.suggestions.items()},
-             "options": dict(p.options)}
+             "options": dict(p.options), "voices": {k: list(v) for k, v in p.voices.items()}}
             for p in PURPOSES
         ],
         "custom": {"tool": CUSTOM_TOOL, "kinds": list(CUSTOM_KINDS)},
         "providers": provider_choices(),
     }
+
+
+# ── discovery ────────────────────────────────────────────────────────────────
+
+def _token_re(*words: str) -> "re.Pattern[str]":
+    """Any of ``words`` standing on its own inside a model id: ``tts`` finds
+    ``gpt-4o-mini-tts`` and ``tts-1`` but not ``shortstop``."""
+    return re.compile(r"(?<![a-z])(?:" + "|".join(words) + r")(?![a-z])")
+
+
+#: What a model id of the OpenAI shape looks like per purpose. These lists
+#: carry no capability flags, so the id is all there is to go on: a model the
+#: patterns miss can still be typed in by hand.
+_OPENAI_FITS: Dict[str, "re.Pattern[str]"] = {
+    "image": re.compile(
+        r"gpt-image|chatgpt-image|dall-e|stable-diffusion|sdxl|(?<![a-z])sd-?3|flux|imagen|kandinsky"
+        r"|playground-v|ideogram|recraft|hidream|qwen-image|seedream"),
+    "video": re.compile(
+        r"sora|(?<![a-z])veo|(?<![a-z])wan-?2|ltx-?video|hunyuan-?video|mochi|cogvideo|kling|seedance"
+        r"|text-to-video|(?<![a-z])[ti]2v(?![a-z])"),
+    "speech": re.compile(
+        _token_re("tts", "xtts", "kokoro", "piper", "kitten", "supertonic", "bark", "orpheus", "parler",
+                  "chatterbox", "speecht5").pattern
+        + r"|text-to-speech"),
+    "transcription": re.compile(
+        _token_re("whisper", "stt", "asr", "parakeet", "canary", "sensevoice", "voxtral").pattern
+        + r"|transcri|speech-to-text"),
+}
+
+#: Ids that look like a purpose's but are something else: embeddings, chat
+#: models that only read the medium, realtime and live (streaming) sessions.
+_NOT_A_FIT = re.compile(
+    r"embed|moderation|realtime|(?<![a-z])live(?![a-z])|audio-preview|llava|(?<![a-z])vl(?![a-z])|vision")
+
+#: Gemini model ids that do not take an audio file and answer in text.
+_GEMINI_NOT_TRANSCRIBING = _token_re("tts", "image", "embedding", "live", "native", "robotics", "computer")
+
+
+def model_fits(purpose_id: str, kind: str, model_id: str, methods: Optional[List[str]] = None) -> bool:
+    """Whether ``model_id`` (with Gemini's ``methods``) can serve the purpose."""
+    mid = str(model_id or "").strip().lower()
+    if not mid:
+        return False
+    if kind == GOOGLE:
+        methods = list(methods or [])
+        generates = "generateContent" in methods
+        if purpose_id == "image":
+            return mid.startswith("imagen") or (
+                mid.startswith("gemini") and generates and bool(_token_re("image").search(mid)))
+        if purpose_id == "video":
+            return mid.startswith("veo") or "predictLongRunning" in methods
+        if purpose_id == "speech":
+            return generates and bool(_token_re("tts").search(mid))
+        if purpose_id == "transcription":
+            return mid.startswith("gemini") and generates and not _GEMINI_NOT_TRANSCRIBING.search(mid)
+        return False
+    pattern = _OPENAI_FITS.get(purpose_id)
+    if pattern is None or _NOT_A_FIT.search(mid) or not pattern.search(mid):
+        return False
+    # A speech model reads text aloud; one that listens belongs to transcription.
+    if purpose_id == "speech" and _OPENAI_FITS["transcription"].search(mid):
+        return False
+    return True
+
+
+def _runtime_models() -> List[Dict[str, Any]]:
+    """The hub runtime's model list, or nothing when it is not reachable."""
+    from providers import local_models as lm
+    if not lm.runtime_configured():
+        return []
+    try:
+        return lm.RuntimeClient(timeout=5.0).models()
+    except lm.LocalModelError:
+        return []
+
+
+def model_voices(provider: str, model: str, viewer: Any = None) -> Optional[List[str]]:
+    """The voices one model has, when its server can say: the hub runtime
+    reads them from each speech model's files (a Piper voice with several
+    speakers, Kokoro's, Kitten's and Supertonic's voice sets; a
+    single-speaker voice has none), and a cloning model's are the voices
+    people recorded, of which ``viewer`` sees their own and the shared ones
+    (:func:`providers.local_models.voice_visible`). None for every other
+    provider, whose known voices per API shape (:attr:`Purpose.voices`)
+    apply."""
+    from providers import local_models as lm
+    if str(provider or "").strip().lower() != lm.HUB_LOCAL_ID:
+        return None
+    for m in _runtime_models():
+        if m.get("name") == model:
+            voices = [str(v) for v in m.get("voices") or []]
+            if m.get("engine") in lm.CLONING_ENGINES and viewer is not None:
+                try:
+                    records = lm.RuntimeClient(timeout=5.0).voices()
+                except lm.LocalModelError:
+                    records = []
+                hidden = {r.get("name") for r in records if not lm.voice_visible(r, viewer)}
+                voices = [v for v in voices if v not in hidden]
+            return voices
+    return []
+
+
+#: Kokoro's voice names start with their language: ``af_heart`` is American
+#: English, ``zf_xiaobei`` Mandarin.
+_KOKORO_VOICE_RE = re.compile(r"^([abefhijpz])[fm]_")
+_KOKORO_LANG = {"a": "en", "b": "en", "e": "es", "f": "fr", "h": "hi", "i": "it", "j": "ja", "p": "pt", "z": "zh"}
+#: A locale inside a model id, the way Piper names its voices (``ru_RU``).
+_LOCALE_IN_NAME_RE = re.compile(r"(?:^|[-_/.])([a-z]{2,3})_[A-Z]{2}(?=[-_.]|$)")
+
+
+def voice_language(model: str, voice: str = "") -> Optional[str]:
+    """The language a voice speaks, when its name or its model's says so:
+    Kokoro's voice prefix, Piper's locale in the model id, English for every
+    Kitten voice. None for a voice that speaks whatever it is given
+    (OpenAI's, Google's, Supertonic's)."""
+    m = _KOKORO_VOICE_RE.match(str(voice or ""))
+    if m and "kokoro" in str(model or "").lower():
+        return _KOKORO_LANG[m.group(1)]
+    if "kitten" in str(model or "").lower():
+        return "en"
+    m = _LOCALE_IN_NAME_RE.search(str(model or ""))
+    return m.group(1) if m else None
+
+
+def voices_for(purpose_id: str, provider: str, model: str, viewer: Any = None) -> Dict[str, Any]:
+    """The voices the form offers for one model: the model's own, when its
+    server can say (:func:`model_voices`), else the ones known for the
+    provider's API shape; with the language of each voice that has one, and
+    the model's, for a model whose voices all speak it."""
+    purpose = get_purpose(purpose_id)
+    if purpose is None:
+        raise SpecialModelError(f"unknown purpose '{purpose_id}'")
+    pid, model = str(provider or "").strip().lower(), str(model or "").strip()
+    kind = provider_kind(pid)
+    if kind is None or kind not in purpose.kinds:
+        raise SpecialModelError(f"provider '{provider}' cannot serve {purpose.id}")
+    own = model_voices(pid, model, viewer) if model else None
+    voices = own if own is not None else list(purpose.voices.get(kind, ()))
+    languages = {v: lang for v in voices if (lang := voice_language(model, v))}
+    return {"purpose": purpose.id, "provider": pid, "model": model, "voices": voices,
+            "own": own is not None, "language": voice_language(model), "languages": languages}
+
+
+#: What a voice sample reads, per language: one short line, so a cloud model
+#: charges a fraction of a cent for it.
+SAMPLE_TEXTS: Dict[str, str] = {
+    "en": "Hello! This is how this voice sounds. I can read your answers aloud.",
+    "ru": "Привет! Так звучит этот голос. Я могу читать ваши ответы вслух.",
+    "de": "Hallo! So klingt diese Stimme. Ich kann Ihre Antworten vorlesen.",
+    "uk": "Привіт! Так звучить цей голос. Я можу читати ваші відповіді вголос.",
+    "es": "¡Hola! Así suena esta voz. Puedo leer tus respuestas en voz alta.",
+    "fr": "Bonjour ! Voici comment sonne cette voix. Je peux lire vos réponses à voix haute.",
+    "it": "Ciao! Ecco come suona questa voce. Posso leggere ad alta voce le tue risposte.",
+    "pt": "Olá! É assim que esta voz soa. Posso ler as suas respostas em voz alta.",
+    "pl": "Cześć! Tak brzmi ten głos. Mogę czytać Twoje odpowiedzi na głos.",
+    "nl": "Hallo! Zo klinkt deze stem. Ik kan je antwoorden voorlezen.",
+    "ja": "こんにちは。これがこの声の響きです。回答を読み上げることができます。",
+    "zh": "你好！这就是这个声音的效果。我可以为你朗读回答。",
+    "hi": "नमस्ते! यह आवाज़ ऐसी सुनाई देती है। आपके जवाब ज़ोर से पढ़े जा सकते हैं।",
+}
+
+#: A voice name as a provider takes it.
+VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+
+
+def sample_text(model: str, voice: str, language: Optional[str]) -> Tuple[str, str]:
+    """``(language, text)`` of a voice sample: in the voice's own language
+    when it has one, else in ``language`` (the page's), else in English."""
+    lang = voice_language(model, voice) or str(language or "").strip().lower()[:2]
+    lang = lang if lang in SAMPLE_TEXTS else "en"
+    return lang, SAMPLE_TEXTS[lang]
+
+
+def voice_sample(raw: Any, workspace: Optional[str], language: Optional[str] = None) -> Tuple[Any, str, str]:
+    """Read :func:`sample_text` with a speech model the form holds (saved or
+    not): ``{"provider", "model", "voice", "options"}``; no provider reads it
+    with what the workspace uses (a personal workspace's inherited model too).
+    Returns ``(media.Media, language, text)``, or raises
+    :class:`SpecialModelError` with the provider's reason."""
+    purpose = get_purpose("speech")
+    raw = raw if isinstance(raw, dict) else {}
+    provider, model, ws = str(raw.get("provider") or "").strip().lower(), str(raw.get("model") or "").strip(), workspace
+    options = {k: str(v) for k, v in (raw.get("options") or {}).items()
+               if k in purpose.options and isinstance(v, (str, int, float)) and str(v).strip()}
+    if not provider:
+        entry = effective(workspace).get(purpose.id)
+        if not entry:
+            raise SpecialModelError("No speech model is chosen.")
+        provider, model, ws = entry["provider"], entry["model"], entry.get(INHERITED_KEY) or workspace
+        options = {**{k: str(v) for k, v in (entry.get("options") or {}).items()}, **options}
+    elif provider_kind(provider) not in purpose.kinds:
+        raise SpecialModelError(f"provider '{provider}' cannot serve {purpose.id}")
+    if not model:
+        raise SpecialModelError("No model is chosen.")
+    voice = str(raw.get("voice") or options.get("voice") or "").strip()
+    if voice and not VOICE_NAME_RE.match(voice):
+        raise SpecialModelError("The voice must be a voice name.")
+    lang, text = sample_text(model, voice, language)
+    import httpx
+    from providers import media
+    try:
+        audio = media.synthesize_speech(endpoint(provider, ws), model, text, voice=voice or None,
+                                        instructions=None, options=options)
+    except SpecialModelError:
+        raise
+    except httpx.ConnectError:
+        raise SpecialModelError(f"Could not reach {provider}: connection refused. Is it running?") from None
+    except httpx.TimeoutException:
+        raise SpecialModelError(f"{provider} did not answer in time.") from None
+    except Exception as exc:  # noqa: BLE001 - the form shows the provider's reason
+        raise SpecialModelError(f"Speech synthesis failed: {str(exc)[:300]}") from exc
+    return audio, lang, text
+
+
+def discover(purpose_id: str, provider: str, workspace: Optional[str]) -> Dict[str, Any]:
+    """Ask ``provider`` which models it has, with this workspace's connection
+    settings, and keep those that fit the purpose. Returns ``models`` (the
+    purpose's suggestions first, as listed) and ``total``, the count before
+    filtering, or raises :class:`SpecialModelError`."""
+    purpose = get_purpose(purpose_id)
+    if purpose is None:
+        raise SpecialModelError(f"unknown purpose '{purpose_id}'")
+    pid = str(provider or "").strip().lower()
+    kind = provider_kind(pid)
+    if kind is None or kind not in purpose.kinds:
+        raise SpecialModelError(f"provider '{provider}' cannot serve {purpose.id}")
+    listed = _list_models(pid, endpoint(pid, workspace))
+    fit = {m["id"] for m in listed if model_fits(purpose.id, kind, m["id"], m.get("methods"))}
+    known = [m for m in purpose.suggestions.get(kind, ()) if m in fit]
+    out: Dict[str, Any] = {
+        "purpose": purpose.id, "provider": pid,
+        "models": known + sorted(fit - set(known)),
+        "total": len({m["id"] for m in listed}),
+    }
+    from providers.local_models import HUB_LOCAL_ID
+    if pid == HUB_LOCAL_ID and purpose.id == "speech":
+        out["voices"] = {str(m.get("name")): [str(v) for v in m.get("voices") or []]
+                         for m in _runtime_models() if m.get("name") in fit}
+    return out
+
+
+def _list_models(provider: str, ep: Endpoint, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
+    """:func:`providers.media.list_models` with its failures put in words."""
+    if provider == "openai" and not ep.api_key:
+        raise SpecialModelError("No API key for OpenAI. Set it in Settings (or this workspace's key override).")
+    if ep.kind == OPENAI and not ep.base_url:
+        raise SpecialModelError(f"Provider '{provider}' has no base URL.")
+    import httpx
+    from providers import media
+    try:
+        return media.list_models(ep, timeout=timeout)
+    except httpx.ConnectError:
+        raise SpecialModelError(f"Could not reach {provider}: connection refused. Is it running?") from None
+    except httpx.TimeoutException:
+        raise SpecialModelError(f"{provider} did not answer in time.") from None
+    except httpx.HTTPError as exc:
+        raise SpecialModelError(f"Could not list the models of {provider}: {exc}") from None
+
+
+# ── connection check ─────────────────────────────────────────────────────────
+
+#: Seconds a check waits for an answer: it asks for a list, not for a picture.
+CHECK_TIMEOUT = 15.0
+
+
+def _chat_endpoint(provider: str, workspace: Optional[str]) -> Endpoint:
+    """:func:`endpoint`, plus Anthropic, which a custom chat model may use."""
+    if provider != "anthropic":
+        return endpoint(provider, workspace)
+    from common.config import settings as cfg
+    eff = _effective_settings(workspace)
+    key = eff.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY") or cfg.anthropic_api_key or ""
+    return Endpoint(ANTHROPIC, "https://api.anthropic.com/v1", str(key))
+
+
+def _check_listed(provider: str, model: str, workspace: Optional[str],
+                  purpose: Optional[Purpose]) -> Tuple[str, str]:
+    """Reach ``provider`` and look for ``model`` on its list."""
+    pid = str(provider or "").strip().lower()
+    model = str(model or "").strip()
+    if not pid:
+        raise SpecialModelError("No provider is chosen.")
+    if not model:
+        raise SpecialModelError("No model is typed in.")
+    ep = _chat_endpoint(pid, workspace)
+    listed = _list_models(pid, ep, CHECK_TIMEOUT)
+    by_id = {m["id"].lower(): m for m in listed}
+    found = by_id.get(model.lower().removeprefix("models/"))
+    if found is None:
+        return "warn", (f"{pid} answered with {len(by_id)} models, but '{model}' is not among them. "
+                        "Check the spelling, or pull the model on a local server.")
+    if purpose is not None and not model_fits(purpose.id, ep.kind, found["id"], found.get("methods")):
+        return "warn", (f"{pid} has '{model}', but it does not look like a {purpose.id} model. "
+                        "It may still work if the provider names it unusually.")
+    return "ok", f"{pid} answered and has '{model}'."
+
+
+def _check_http(item: Dict[str, Any], workspace: Optional[str]) -> Tuple[str, str]:
+    """Send a GET to an HTTP model: it proves the address and the token
+    without running the model (which takes a POST)."""
+    url = str(item.get("url") or "").strip()
+    if not re.match(r"^https?://", url, re.I):
+        raise SpecialModelError("The URL must start with http:// or https://.")
+    before = {c["id"]: c for c in stored(workspace).get("custom") or []} if workspace else {}
+    old = (before.get(str(item.get("id") or "").strip().lower()) or {}).get("headers") or {}
+    raw_headers = item.get("headers") if isinstance(item.get("headers"), dict) else {}
+    env_vars: Dict[str, str] = {}
+    if workspace:
+        try:
+            from workspace import get_workspace_metadata
+            raw = (get_workspace_metadata(workspace) or {}).get("env_vars") or {}
+            env_vars = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        except Exception:  # noqa: BLE001 - no workspace variables: the process environment decides
+            log.debug("special models: no env vars for %s", workspace, exc_info=True)
+    import httpx
+    from providers import media
+    headers = {str(k): media.resolve_header_vars(old.get(k, "") if v == MASK else str(v), env_vars)
+               for k, v in raw_headers.items()}
+    try:
+        with media._client() as client:
+            client.timeout = CHECK_TIMEOUT
+            code = client.get(url, headers=headers).status_code
+    except httpx.ConnectError:
+        raise SpecialModelError("Could not reach the URL: connection refused or the host is unknown.") from None
+    except httpx.TimeoutException:
+        raise SpecialModelError("The URL did not answer in time.") from None
+    except httpx.HTTPError as exc:
+        raise SpecialModelError(f"Could not reach the URL: {exc}") from None
+    if code in (401, 403):
+        return "error", f"The URL answered {code}: the token in the headers was not accepted."
+    if code == 404:
+        return "warn", "The URL answered 404: the server is up, check the path."
+    if code >= 500:
+        return "warn", f"The URL answered {code}: the server is up but failing."
+    return "ok", f"The URL answered {code}: reachable, and the headers were accepted."
+
+
+def check(raw: Any, workspace: Optional[str]) -> Dict[str, Any]:
+    """Whether a model the form holds can be reached, without running it (a
+    run costs money). A provider is asked for its model list with the
+    workspace's connection settings, and the model must be on it; an HTTP
+    model is sent a GET. Takes ``{"purpose", "provider", "model"}`` (no
+    provider checks what a personal workspace inherits) or ``{"custom":
+    {...}}``, unsaved values included. Returns ``status``: ``ok``, ``warn``
+    (reached, but something looks off) or ``error``, with ``message``."""
+    import time
+    started = time.monotonic()
+    status, message = "error", ""
+    try:
+        if not isinstance(raw, dict):
+            raise SpecialModelError("Nothing to check.")
+        if isinstance(raw.get("custom"), dict):
+            item = raw["custom"]
+            if item.get("kind") == "http":
+                status, message = _check_http(item, workspace)
+            else:
+                status, message = _check_listed(item.get("provider"), item.get("model"), workspace, None)
+        else:
+            purpose = get_purpose(raw.get("purpose"))
+            if purpose is None:
+                raise SpecialModelError(f"unknown purpose '{raw.get('purpose')}'")
+            provider, model, ws = raw.get("provider"), raw.get("model"), workspace
+            if not str(provider or "").strip():
+                entry = effective(workspace).get(purpose.id)
+                if not entry:
+                    raise SpecialModelError("No model is chosen for this purpose.")
+                provider, model, ws = entry["provider"], entry["model"], entry.get(INHERITED_KEY) or workspace
+            elif provider_kind(provider) not in purpose.kinds:
+                raise SpecialModelError(f"provider '{provider}' cannot serve {purpose.id}")
+            status, message = _check_listed(provider, model, ws, purpose)
+    except SpecialModelError as exc:
+        message = str(exc)
+    return {"status": status, "message": message, "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
 
 def prompt_section(tool_names: List[str], workspace: Optional[str]) -> str:
@@ -503,6 +936,6 @@ __all__ = [
     "PURPOSES", "Purpose", "META_KEY", "OPENAI", "GOOGLE",
     "CUSTOM_TOOL", "CUSTOM_KINDS", "SPECIAL_MODEL_TOOLS", "SpecialModelError", "Endpoint",
     "get_purpose", "purpose_of_tool", "provider_kind", "provider_choices", "endpoint",
-    "normalize", "stored", "save", "effective", "masked", "MASK", "configured_tools", "options_payload",
-    "prompt_section",
+    "normalize", "stored", "save", "effective", "entry_endpoint", "INHERITED_KEY", "masked", "MASK", "configured_tools", "options_payload",
+    "prompt_section", "model_fits", "discover", "check", "CHECK_TIMEOUT",
 ]

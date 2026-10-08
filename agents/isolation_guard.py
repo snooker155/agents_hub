@@ -73,16 +73,33 @@ class PinnedWorkspaceTool(BaseTool):
         return await self.inner.arun(tool_input)
 
 
+#: Tools that scope themselves: ``hub_lookup`` (chat/lookup.py) and
+#: ``hub_action`` (chat/actions.py) reach the workspaces the person can see
+#: for the assistant, whose reach is the person's, and the turn's own
+#: workspace for any other agent; ``service_lookup`` is service-wide and held
+#: only in an administrator's service thread.
+SELF_SCOPED_TOOLS = frozenset({"hub_lookup", "service_lookup", "hub_action",
+                               # Reads only the running turn's own thread; its
+                               # workspace argument is a filter.
+                               "assistant_conversations",
+                               # The install's setup, the person's own guide.
+                               "setup_guide", "setup_step", "show_on_screen",
+                               # A pulse in the turn's own workspace, as the person.
+                               "schedule_pulse"})
+
+
 def pin_workspace(tools: List[Any], workspace: str) -> List[Any]:
     """``tools`` with every one that takes a ``workspace`` argument pinned to
-    ``workspace``. Tools without that argument are returned as they are."""
+    ``workspace``. Tools without that argument, and the self-scoped readers,
+    are returned as they are."""
     out: List[Any] = []
     for tool in tools:
-        if isinstance(tool, BaseTool) and _takes_workspace(tool):
+        if (isinstance(tool, BaseTool) and _takes_workspace(tool)
+                and getattr(tool, "name", "") not in SELF_SCOPED_TOOLS):
             out.append(PinnedWorkspaceTool(tool, workspace))
         else:
             out.append(tool)
     return out
 
 
-__all__ = ["PinnedWorkspaceTool", "pin_workspace"]
+__all__ = ["PinnedWorkspaceTool", "SELF_SCOPED_TOOLS", "pin_workspace"]

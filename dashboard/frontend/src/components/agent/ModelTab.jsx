@@ -86,7 +86,7 @@ export default function ModelTab() {
                 <select
                   value={modelForm.model}
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 >
                   <option value="">{t('agentDetails.selectAModel')}</option>
                   {localModels.map(m => <option key={m} value={m}>{m}</option>)}
@@ -98,7 +98,7 @@ export default function ModelTab() {
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
                   placeholder={modelForm.provider === 'inherit' ? t('agentDetails.inheritingPlaceholder') : t('agentDetails.enterModelName')}
                   disabled={modelForm.provider === 'inherit'}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
                 />
               )}
               {localModelsError && (
@@ -125,7 +125,7 @@ export default function ModelTab() {
                       modelForm.provider === 'lmstudio' ? 'http://localhost:1234' :
                       'https://api.openai.com/v1'
                     }
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   />
                   {(modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && (
                     <button
@@ -153,7 +153,7 @@ export default function ModelTab() {
                   onChange={e => setModelForm(f => ({ ...f, temperature: e.target.value }))}
                   placeholder={t('agentDetails.inheritGlobal')}
                   min="0" max="2" step="0.05"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 />
                 <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
@@ -165,7 +165,7 @@ export default function ModelTab() {
                   onChange={e => setModelForm(f => ({ ...f, max_tokens: e.target.value }))}
                   placeholder={t('agentDetails.inheritGlobal')}
                   min="256" step="256"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 />
                 <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
@@ -186,7 +186,7 @@ export default function ModelTab() {
                   value={modelForm.api_key}
                   onChange={e => setModelForm(f => ({ ...f, api_key: e.target.value }))}
                   placeholder={modelHasApiKey ? t('agentDetails.keyStored') : t('agentDetails.enterApiKey')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none"
                 />
                 <button
                   type="button"

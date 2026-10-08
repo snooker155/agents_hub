@@ -8,6 +8,7 @@ import { ThemeProvider } from './components/ThemeContext';
 import { I18nProvider } from './i18n'
 import { StreamProvider } from './components/StreamContext';
 import ToastProvider from './components/ToastProvider'
+import { registerServiceWorker } from './lib/pwa'
 
 // The demo build (VITE_DEMO=1, `npm run build:demo`) answers every /api call
 // from recorded fixtures through a mock service worker. The condition is a
@@ -44,3 +45,5 @@ async function bootstrap() {
 }
 
 bootstrap()
+// The installable app (docs/pwa.md); a no-op in dev, the demo and on plain HTTP.
+registerServiceWorker()

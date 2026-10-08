@@ -16,7 +16,7 @@ where it is; they differ in who decides when a run happens.
 
 ## Where it lives
 
-**Connect → Connections** in the sidebar. The page lists what is attached, with
+**Integrations → Connections** in the sidebar. The page lists what is attached, with
 each connection's kind, when it last reported, and how many runs it has sent.
 Opening one shows three tabs: the graph it reported, the runs it produced with
 the path each took, and its setup, where the token is rotated and the snippet to

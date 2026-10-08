@@ -463,10 +463,26 @@ def _seed_runs(seed: Dict[str, Any], task_ids: Dict[str, str],
         close_run(run_id, status="completed", exit_code=0, output=str(r.get("output") or ""))
 
 
+def _restore_missing_prompts() -> None:
+    """Write back a seeded demo agent's instructions.md when it has none. The
+    prompts used to be written into agents/definitions/, which no longer
+    holds them (agents/prompt_assembly.py)."""
+    from agents.prompt_assembly import has_definition, write_instructions
+    from agents.registry import get_agent_raw
+
+    for agent_id in DEMO_AGENT_IDS:
+        source = _SEED_ROOT / "agents" / agent_id / "instructions.md"
+        if get_agent_raw(agent_id) is None or has_definition(agent_id) or not source.is_file():
+            continue
+        write_instructions(agent_id, source.read_text(encoding="utf-8"))
+
+
 def ensure_demo_workspace() -> bool:
     """Seed the demo workspace end to end if it is missing. Idempotent:
-    returns ``False`` without touching anything when it is already present."""
+    returns ``False`` when it is already present, touching nothing but a
+    demo agent's missing prompt."""
     if _workspace_present():
+        _restore_missing_prompts()
         return False
     if not _SEED_FILE.is_file():
         log.warning("demo workspace: seed file missing at %s", _SEED_FILE)

@@ -619,6 +619,31 @@ def list_groups(kind: Optional[str] = None, workspace: Optional[str] = None,
     return out
 
 
+# Named sort orders for the run groups list (:func:`sort_groups`).
+GROUP_SORTS: Dict[str, Callable[[RunGroup], Any]] = {
+    "started": lambda g: g.started_at or "",
+    "finished": lambda g: g.finished_at or "",
+    "status": lambda g: str(g.status or ""),
+    "kind": lambda g: g.kind,
+    "title": lambda g: str(g.title or "").lower(),
+    "cost": lambda g: float(g.total_cost or 0.0),
+    "children": lambda g: len(g.children or []),
+    "workspace": lambda g: str(g.workspace or ""),
+}
+
+
+def sort_groups(groups: List[RunGroup], sort: Optional[str] = None,
+                order: Optional[str] = None) -> List[RunGroup]:
+    """``groups`` ordered by a key of :data:`GROUP_SORTS` (default
+    ``started``), descending unless ``order`` is ``asc``. Ties keep the newest
+    first. Raises ``ValueError`` on an unknown key."""
+    key = sort or "started"
+    if key not in GROUP_SORTS:
+        raise ValueError(f"Unknown sort {key!r} (expected one of {', '.join(GROUP_SORTS)})")
+    newest_first = sorted(groups, key=lambda g: g.started_at or "", reverse=True)
+    return sorted(newest_first, key=GROUP_SORTS[key], reverse=str(order or "").lower() != "asc")
+
+
 def _stop_via_adapter(kind: str, group_id: str) -> bool:
     """Stop one group through its own store's stop path, with no recursion
     into anything nested under it. The building block :func:`stop_tree` composes

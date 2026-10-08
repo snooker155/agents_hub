@@ -234,7 +234,7 @@ const Orchestrator = () => {
             <select
               value={selectedProject}
               onChange={(e) => setSelectedProject(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none"
             >
               <option value="">{t('orchestrator.allProjects')}</option>
               {projects.map((p) => (
@@ -485,7 +485,7 @@ const Orchestrator = () => {
               value={settings.max_retries ?? 0}
               onChange={(e) => handleMaxRetriesChange(e.target.value)}
               disabled={saving}
-              className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-lg font-semibold text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-lg font-semibold text-center focus:outline-none"
             />
           </div>
 

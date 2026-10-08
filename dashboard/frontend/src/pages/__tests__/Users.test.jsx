@@ -40,13 +40,15 @@ const api = vi.hoisted(() => ({
   deleteGroup: vi.fn(),
   createGroupMapping: vi.fn(),
   deleteGroupMapping: vi.fn(),
+  getSpendLimits: vi.fn(),
+  setDefaultSpendLimit: vi.fn(),
+  updateUser: vi.fn(),
 }));
 
 vi.mock('../../api', () => ({
   ...Object.fromEntries(Object.keys(api).map((k) => [k, (...a) => api[k](...a)])),
   createUser: vi.fn(),
   deleteUser: vi.fn(),
-  updateUser: vi.fn(),
   resetUserPassword: vi.fn(),
 }));
 
@@ -70,6 +72,34 @@ describe('Users page', () => {
     api.setGroupMembers.mockImplementation(() => ok([]));
     api.createGroupMapping.mockImplementation(() => ok({}));
     api.createGroup.mockImplementation(() => ok({}));
+  });
+
+  it('shows each person\'s month spend against their limit and saves the default', async () => {
+    api.getUsers.mockImplementation(() => ok([
+      { ...USERS[0], spend_limit_usd: null },
+      { ...USERS[1], spend_limit_usd: 20 },
+      { ...USERS[2], spend_limit_usd: 0 },
+    ]));
+    api.getSpendLimits.mockImplementation(() => ok({
+      period: 'monthly',
+      default_limit_usd: 10,
+      users: {
+        u1: { limit_usd: 10, source: 'default', spend: 2, exceeded: false },
+        u2: { limit_usd: 20, source: 'user', spend: 25, exceeded: true },
+        u3: { limit_usd: 0, source: 'user', spend: 1.5, exceeded: false },
+      },
+    }));
+    api.setDefaultSpendLimit.mockImplementation(() => ok({ default_limit_usd: 12 }));
+    show();
+    await screen.findByTestId('limit-alice');
+    expect(screen.getByTestId('limit-root').textContent).toContain('$2.00 of $10.00');
+    expect(screen.getByTestId('limit-root').textContent).toContain('default');
+    expect(screen.getByTestId('limit-alice').textContent).toBe('$25.00 of $20.00');
+    expect(screen.getByTestId('limit-carl').textContent).toBe('$1.50, no limit');
+
+    fireEvent.change(screen.getByLabelText(/Default limit per person/), { target: { value: '12' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
+    await waitFor(() => expect(api.setDefaultSpendLimit).toHaveBeenCalledWith(12));
   });
 
   it('shows where each account came from and offers a password reset only where it helps', async () => {

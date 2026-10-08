@@ -31,6 +31,9 @@ class TestTheDirectRun:
         options = entrypoint.uvicorn_options(["--reload"])
         assert options["reload"] is True
         assert options["reload_dirs"] == entrypoint.RELOAD_DIRS
+        # An open stream must not hold the old process forever.
+        assert options["timeout_graceful_shutdown"] == entrypoint.RELOAD_GRACE_SECONDS
+        assert "timeout_graceful_shutdown" not in entrypoint.uvicorn_options([])
 
     def test_the_watched_trees_are_the_ones_it_imports_from(self, entrypoint):
         """Watching only dashboard/backend would miss most edits."""

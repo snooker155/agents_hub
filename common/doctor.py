@@ -47,6 +47,40 @@ MODELS_TIMEOUT_SECONDS = 3.0
 Result = Tuple[str, str, Dict[str, Any]]
 
 
+class Msg(str):
+    """A summary sentence that also carries a message key and the values in it,
+    so the dashboard can say it in the reader's language
+    (``health.doctor.summaries.<key>`` in the frontend locales). Every other
+    caller, ``ah doctor`` and the Service Agent among them, reads it as the
+    plain English string it is. ``parts`` holds the pieces of a sentence
+    joined from several findings; each piece is a Msg of its own."""
+
+    key: Optional[str]
+    params: Dict[str, Any]
+    parts: List["Msg"]
+
+    def __new__(cls, key: Optional[str], text: str, **params: Any) -> "Msg":
+        obj = super().__new__(cls, text)
+        obj.key = key
+        obj.params = params
+        obj.parts = []
+        return obj
+
+    @classmethod
+    def joined(cls, parts: List["Msg"]) -> "Msg":
+        """``a; b.`` with the first letter raised, the shape the warn sentences
+        built from several problems have always had."""
+        text = "; ".join(parts)
+        obj = cls(None, text[:1].upper() + text[1:] + ".")
+        obj.parts = list(parts)
+        return obj
+
+    def i18n(self) -> Dict[str, Any]:
+        if self.parts:
+            return {"parts": [p.i18n() for p in self.parts]}
+        return {"key": self.key, "params": self.params}
+
+
 def anchor_for(check_id: str) -> str:
     """The heading slug of a check's section: ``### Check: disk`` -> ``check-disk``."""
     return "check-" + check_id.replace("_", "-")
@@ -68,11 +102,14 @@ def check_migrations(snap: Dict[str, Any]) -> Result:
     detail = {"dialect": dialect, "applied": len(applied), "latest": max(available or [0]),
               "pending": pending, "unknown": unknown}
     if unknown:
-        return ("fail", f"The database has migration(s) {unknown} this build does not know; "
-                        "it was written by a newer version.", detail)
+        return ("fail", Msg("migrations.unknown",
+                            f"The database has migration(s) {unknown} this build does not know; "
+                            "it was written by a newer version.", versions=unknown), detail)
     if pending:
-        return ("fail", f"{len(pending)} migration(s) are pending: {pending}.", detail)
-    return ("ok", f"Schema is at version {top}, nothing pending.", detail)
+        return ("fail", Msg("migrations.pending", f"{len(pending)} migration(s) are pending: {pending}.",
+                            count=len(pending), versions=pending), detail)
+    return ("ok", Msg("migrations.ok", f"Schema is at version {top}, nothing pending.", version=top),
+            detail)
 
 
 # ── provider ─────────────────────────────────────────────────────────────────
@@ -139,14 +176,17 @@ def check_provider(snap: Dict[str, Any]) -> Result:
         from common.config import settings
         provider = str(settings.default_provider or "").strip()
     if not provider:
-        return ("skip", "No default provider is configured.", {})
+        return ("skip", Msg("provider.none", "No default provider is configured."), {})
     probe = probe_provider(provider)
     detail = {"provider": provider, **{k: v for k, v in probe.items() if k != "skip"}}
     if "skip" in probe:
-        return ("skip", f"Not probed: {probe['skip']}.", detail)
+        return ("skip", Msg("provider.notProbed", f"Not probed: {probe['skip']}.",
+                            reason=probe["skip"]), detail)
     if probe.get("ok"):
-        return ("ok", f"{provider} answered in {probe.get('latency_ms')} ms.", detail)
-    return ("fail", f"{provider} did not answer: {probe.get('error')}.", detail)
+        return ("ok", Msg("provider.ok", f"{provider} answered in {probe.get('latency_ms')} ms.",
+                          provider=provider, ms=probe.get("latency_ms")), detail)
+    return ("fail", Msg("provider.fail", f"{provider} did not answer: {probe.get('error')}.",
+                        provider=provider, error=probe.get("error")), detail)
 
 
 # ── cors ─────────────────────────────────────────────────────────────────────
@@ -162,13 +202,53 @@ def check_cors(snap: Dict[str, Any]) -> Result:
     mode = identity.current_mode()
     detail = {"allow_origins": value or "(local dev defaults)", "auth_mode": mode}
     if value != "*":
-        return ("ok", "CORS allows a list of origins." if value
-                else "CORS allows the local dev origins only.", detail)
+        return ("ok", Msg("cors.list", "CORS allows a list of origins.") if value
+                else Msg("cors.devOnly", "CORS allows the local dev origins only."), detail)
     if mode == "multi":
-        return ("warn", "ALLOW_ORIGINS is *: any site can call the API with a stolen "
-                        "token; list the dashboard origins instead.", detail)
-    return ("ok", f"ALLOW_ORIGINS is * without credentials, acceptable in {mode} mode.",
-            detail)
+        return ("warn", Msg("cors.anyMulti", "ALLOW_ORIGINS is *: any site can call the API with a "
+                                             "stolen token; list the dashboard origins instead."),
+                detail)
+    return ("ok", Msg("cors.anyOk", f"ALLOW_ORIGINS is * without credentials, acceptable in {mode} "
+                                    "mode.", mode=mode), detail)
+
+
+# ── security posture ─────────────────────────────────────────────────────────
+
+def check_security(snap: Dict[str, Any]) -> Result:
+    """The settings SECURITY.md's hardening list names, read together: the
+    capability guard, the secret key against the secrets already stored, and
+    whether people share a hub whose runs have the host's permissions.
+    ``single`` mode on a local subprocess is the laptop case and reads ok."""
+    from agents.capability_guard import guard_mode
+    from common import db, identity, secrets
+    from common.config import agent_execution_mode, settings
+    mode = identity.current_mode()
+    execution = agent_execution_mode()
+    guard = guard_mode()
+    backend = str(getattr(settings, "secret_backend", "local") or "local").strip().lower()
+    stored = 0
+    if backend != "vault":
+        stored = int(db.get_conn().execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
+    detail = {"auth_mode": mode, "execution_mode": execution, "capability_guard": guard,
+              "secret_backend": backend, "secret_key": secrets.key_configured(),
+              "secrets_stored": stored}
+    problems = []
+    if guard != "block":
+        problems.append(Msg("security.guard", f"CAPABILITY_GUARD is {guard}: an agent may hold "
+                                              "all three capabilities; set it back to block",
+                            guard=guard))
+    if backend != "vault" and stored and not secrets.key_configured():
+        problems.append(Msg("security.secretKey", f"{stored} secret(s) stored but "
+                                                  "AGENTS_HUB_SECRET_KEY is empty, so runs receive "
+                                                  "none of them", count=stored))
+    if mode != "single" and execution == "local":
+        problems.append(Msg("security.localRuns", f"{mode} mode with AGENT_EXECUTION_MODE=local: "
+                                                  "every run has this host's permissions; use docker",
+                            mode=mode))
+    if problems:
+        return ("warn", Msg.joined(problems), detail)
+    return ("ok", Msg("security.ok", f"{mode} mode, {execution} runs, capability guard on block.",
+                      mode=mode, execution=execution), detail)
 
 
 # ── stale runs and leases ────────────────────────────────────────────────────
@@ -213,16 +293,20 @@ def check_stale_runs(snap: Dict[str, Any]) -> Result:
     detail = {"threshold_seconds": threshold, "stale_runs": len(stale), "runs": stale[:10],
               "expired_leases": expired, "run_watchdog": watchdog_alive}
     if stale and watchdog_alive is False:
-        return ("fail", f"{len(stale)} run(s) stopped beating and the run watchdog is not "
-                        "running to fail them.", detail)
+        return ("fail", Msg("staleRuns.noWatchdog", f"{len(stale)} run(s) stopped beating and the "
+                                                    "run watchdog is not running to fail them.",
+                            count=len(stale)), detail)
     if stale or expired:
         parts = []
         if stale:
-            parts.append(f"{len(stale)} run(s) have not beaten for over {int(threshold)} s")
+            parts.append(Msg("staleRuns.stale", f"{len(stale)} run(s) have not beaten for over "
+                                                f"{int(threshold)} s",
+                             count=len(stale), seconds=int(threshold)))
         if expired:
-            parts.append(f"expired lease(s): {', '.join(str(r) for r in expired)}")
-        return ("warn", "; ".join(parts).capitalize() + ".", detail)
-    return ("ok", "No stale runs and no expired leases.", detail)
+            roles = ", ".join(str(r) for r in expired)
+            parts.append(Msg("staleRuns.leases", f"expired lease(s): {roles}", roles=roles))
+        return ("warn", Msg.joined(parts), detail)
+    return ("ok", Msg("staleRuns.ok", "No stale runs and no expired leases."), detail)
 
 
 # ── run queue ────────────────────────────────────────────────────────────────
@@ -241,7 +325,9 @@ def check_run_queue(snap: Dict[str, Any]) -> Result:
     cluster = snap.get("cluster") or {}
     queue = cluster.get("queue")
     if queue is None:
-        return ("fail", f"The launch queue could not be read: {cluster.get('queue_error')}.",
+        return ("fail", Msg("runQueue.unreadable", "The launch queue could not be read: "
+                                                   f"{cluster.get('queue_error')}.",
+                            error=cluster.get("queue_error")),
                 {"error": cluster.get("queue_error")})
     queued = int(queue.get("queued") or 0)
     oldest = float(queue.get("oldest_queued_seconds") or 0.0)
@@ -250,9 +336,10 @@ def check_run_queue(snap: Dict[str, Any]) -> Result:
               "failed": queue.get("failed"), "oldest_queued_seconds": round(oldest),
               "live_workers": workers, "role": cluster.get("role")}
     if not workers and (queued > QUEUE_WARN_DEPTH or (queued and oldest > QUEUE_WARN_AGE_SECONDS)):
-        return ("warn", f"{queued} launch(es) are waiting, the oldest for {int(oldest)} s, and no "
-                        "worker is alive to claim them.", detail)
-    return ("ok", f"{queued} launch(es) waiting.", detail)
+        return ("warn", Msg("runQueue.noWorker", f"{queued} launch(es) are waiting, the oldest for "
+                                                 f"{int(oldest)} s, and no worker is alive to claim "
+                                                 "them.", count=queued, seconds=int(oldest)), detail)
+    return ("ok", Msg("runQueue.ok", f"{queued} launch(es) waiting.", count=queued), detail)
 
 
 # ── outbox ───────────────────────────────────────────────────────────────────
@@ -261,15 +348,20 @@ def check_outbox(snap: Dict[str, Any]) -> Result:
     cluster = snap.get("cluster") or {}
     box = cluster.get("outbox")
     if box is None:
-        return ("fail", f"The outbox could not be read: {cluster.get('outbox_error')}.",
+        return ("fail", Msg("outbox.unreadable", "The outbox could not be read: "
+                                                 f"{cluster.get('outbox_error')}.",
+                            error=cluster.get("outbox_error")),
                 {"error": cluster.get("outbox_error")})
     pending, dead = int(box.get("pending") or 0), int(box.get("dead") or 0)
     detail = {"pending": pending, "dead": dead}
     if dead:
-        return ("warn", f"{dead} notification(s) were given up on after every retry.", detail)
+        return ("warn", Msg("outbox.dead", f"{dead} notification(s) were given up on after every "
+                                           "retry.", count=dead), detail)
     if pending > OUTBOX_WARN_PENDING:
-        return ("warn", f"{pending} notification(s) are waiting to be delivered.", detail)
-    return ("ok", f"{pending} notification(s) pending, none given up on.", detail)
+        return ("warn", Msg("outbox.pending", f"{pending} notification(s) are waiting to be "
+                                              "delivered.", count=pending), detail)
+    return ("ok", Msg("outbox.ok", f"{pending} notification(s) pending, none given up on.",
+                      count=pending), detail)
 
 
 # ── disk ─────────────────────────────────────────────────────────────────────
@@ -283,10 +375,13 @@ def check_disk(snap: Dict[str, Any]) -> Result:
               "state_bytes": (snap.get("storage") or {}).get("agents_hub_bytes")}
     gb = free / 1024 ** 3
     if free < DISK_FAIL_BYTES:
-        return ("fail", f"Only {gb:.2f} GB free under the state directory.", detail)
+        return ("fail", Msg("disk.fail", f"Only {gb:.2f} GB free under the state directory.",
+                            gb=f"{gb:.2f}"), detail)
     if free < DISK_WARN_BYTES:
-        return ("warn", f"{gb:.2f} GB free under the state directory.", detail)
-    return ("ok", f"{gb:.1f} GB free under the state directory.", detail)
+        return ("warn", Msg("disk.free", f"{gb:.2f} GB free under the state directory.",
+                            gb=f"{gb:.2f}"), detail)
+    return ("ok", Msg("disk.free", f"{gb:.1f} GB free under the state directory.", gb=f"{gb:.1f}"),
+            detail)
 
 
 # ── browser ──────────────────────────────────────────────────────────────────
@@ -295,38 +390,61 @@ def check_browser(snap: Dict[str, Any]) -> Result:
     from common.config import settings
     url = str(getattr(settings, "browser_url", "") or "").strip().rstrip("/")
     if not url:
-        return ("skip", "The browser service is not configured.", {})
+        return ("skip", Msg("browser.off", "The browser service is not configured."), {})
     import httpx
     try:
         resp = httpx.get(f"{url}/healthz", timeout=BROWSER_TIMEOUT_SECONDS)
     except Exception as exc:  # noqa: BLE001 - reported as the check's result
-        return ("fail", f"The browser service at {url} is unreachable: {type(exc).__name__}.",
+        return ("fail", Msg("browser.unreachable", f"The browser service at {url} is unreachable: "
+                                                   f"{type(exc).__name__}.",
+                            url=url, error=type(exc).__name__),
                 {"url": url, "error": str(exc)[:300]})
     detail = {"url": url, "status_code": resp.status_code}
     if resp.status_code >= 400:
-        return ("fail", f"The browser service answered HTTP {resp.status_code}.", detail)
+        return ("fail", Msg("browser.http", f"The browser service answered HTTP {resp.status_code}.",
+                            code=resp.status_code), detail)
     if not str(getattr(settings, "browser_token", "") or "").strip():
-        return ("warn", "The browser service answers but AGENTS_HUB_BROWSER_TOKEN is not set.",
-                detail)
-    return ("ok", "The browser service answers.", detail)
+        return ("warn", Msg("browser.noToken", "The browser service answers but "
+                                               "AGENTS_HUB_BROWSER_TOKEN is not set."), detail)
+    return ("ok", Msg("browser.ok", "The browser service answers."), detail)
 
 
 # ── model runtime ────────────────────────────────────────────────────────────
 
 def check_models_runtime(snap: Dict[str, Any]) -> Result:
-    from common.config import settings
-    url = str(getattr(settings, "models_url", "") or "").strip().rstrip("/")
+    """The runtime local models run on: the one AGENTS_HUB_MODELS_URL names,
+    or the one the hub runs itself on this host."""
+    from providers import local_models as lm
+    cfg = lm.runtime_settings()
+    url = cfg["url"]
     if not url:
-        return ("skip", "The model runtime is not configured.", {})
+        return ("skip", Msg("modelsRuntime.off", "The model runtime is turned off "
+                                                 "(AGENTS_HUB_MODELS_MANAGED=false and no "
+                                                 "AGENTS_HUB_MODELS_URL)."), {})
     import httpx
+    detail: Dict[str, Any] = {"url": url, "managed": cfg.get("managed", False)}
     try:
         resp = httpx.get(f"{url}/healthz", timeout=MODELS_TIMEOUT_SECONDS)
     except Exception as exc:  # noqa: BLE001 - reported as the check's result
-        return ("fail", f"The model runtime at {url} is unreachable: {type(exc).__name__}.",
-                {"url": url, "error": str(exc)[:300]})
-    detail: Dict[str, Any] = {"url": url, "status_code": resp.status_code}
+        detail["error"] = str(exc)[:300]
+        if cfg.get("managed"):
+            from providers import model_runtime_host as host
+            state = host.status()
+            detail["state"] = state.get("state")
+            if state.get("stopped_by_user"):
+                return ("warn", Msg("modelsRuntime.stopped", "The hub's model runtime was stopped "
+                                                             "from the Models page."), detail)
+            return ("fail", Msg("modelsRuntime.notRunning", "The hub's model runtime is not running; "
+                                                            "the Models page, Local tab, shows why "
+                                                            "and can start it."), detail)
+        return ("fail", Msg("modelsRuntime.unreachable", f"The model runtime at {url} is unreachable: "
+                                                         f"{type(exc).__name__}.",
+                            url=url, error=type(exc).__name__), detail)
+    detail["status_code"] = resp.status_code
     if resp.status_code >= 400:
-        return ("fail", f"The model runtime answered HTTP {resp.status_code}.", detail)
+        return ("fail", Msg("modelsRuntime.http", f"The model runtime answered HTTP "
+                                                  f"{resp.status_code}.", code=resp.status_code),
+                detail)
     try:
         body = resp.json()
     except ValueError:
@@ -334,9 +452,11 @@ def check_models_runtime(snap: Dict[str, Any]) -> Result:
     if isinstance(body, dict):
         detail["loaded"] = body.get("loaded")
         detail["mode"] = body.get("mode")
-    if not str(getattr(settings, "models_token", "") or "").strip():
-        return ("warn", "The model runtime answers but AGENTS_HUB_MODELS_TOKEN is not set.", detail)
-    return ("ok", "The model runtime answers.", detail)
+    if not cfg["token"]:
+        return ("warn", Msg("modelsRuntime.noToken", "The model runtime answers but no token is set "
+                                                     "(AGENTS_HUB_MODELS_TOKEN or "
+                                                     "AGENTS_HUB_MODELS_TOKEN_FILE)."), detail)
+    return ("ok", Msg("modelsRuntime.ok", "The model runtime answers."), detail)
 
 
 # ── docker ───────────────────────────────────────────────────────────────────
@@ -350,12 +470,15 @@ def check_docker(snap: Dict[str, Any]) -> Result:
     available = docker_available()
     detail["available"] = available
     if available:
-        return ("ok", "Docker is available.", detail)
+        return ("ok", Msg("docker.ok", "Docker is available."), detail)
     if mode == "docker":
-        return ("fail", "Agents are set to run in docker, but no docker daemon answers.", detail)
+        return ("fail", Msg("docker.required", "Agents are set to run in docker, but no docker daemon "
+                                               "answers."), detail)
     if fallback != "local":
-        return ("warn", "No docker daemon answers, so run_code cannot start its sandbox.", detail)
-    return ("skip", "Docker is not available, and nothing configured here requires it.", detail)
+        return ("warn", Msg("docker.noSandbox", "No docker daemon answers, so run_code cannot start "
+                                                "its sandbox."), detail)
+    return ("skip", Msg("docker.notNeeded", "Docker is not available, and nothing configured here "
+                                            "requires it."), detail)
 
 
 # ── sandbox providers ────────────────────────────────────────────────────────
@@ -374,7 +497,9 @@ def check_sandbox(snap: Dict[str, Any]) -> Result:
     try:
         default_name = registry.resolve(None)
     except Exception as exc:  # noqa: BLE001 - reported as the check's result
-        return ("fail", f"No default sandbox provider could be resolved: {exc}", {"providers": providers})
+        return ("fail", Msg("sandbox.unresolved", f"No default sandbox provider could be resolved: "
+                                                  f"{exc}", error=str(exc)),
+                {"providers": providers})
 
     from environments import egress
     proxy_on = egress.enabled()
@@ -383,14 +508,18 @@ def check_sandbox(snap: Dict[str, Any]) -> Result:
     default_ok = bool(providers.get(default_name, {}).get("available"))
     if not default_ok:
         reason = providers.get(default_name, {}).get("reason") or "unavailable"
-        return ("fail", f"The default sandbox provider ({default_name}) cannot run: {reason}", detail)
+        return ("fail", Msg("sandbox.cannotRun", f"The default sandbox provider ({default_name}) "
+                                                 f"cannot run: {reason}",
+                            provider=default_name, reason=reason), detail)
     if not proxy_on:
-        return ("warn", (
+        return ("warn", Msg("sandbox.noProxy", (
             f"The default sandbox provider ({default_name}) is available, but the egress proxy is "
             "off (AGENTS_HUB_EGRESS_PROXY=1), so a limited/none network policy is enforced only by "
-            "the hub's own tool checks, not by the container network itself."), detail)
-    return ("ok", f"The default sandbox provider ({default_name}) is available; the enforced docker "
-                  "network policy is active.", detail)
+            "the hub's own tool checks, not by the container network itself."),
+            provider=default_name), detail)
+    return ("ok", Msg("sandbox.ok", f"The default sandbox provider ({default_name}) is available; the "
+                                    "enforced docker network policy is active.",
+                      provider=default_name), detail)
 
 
 # ── frontend build ───────────────────────────────────────────────────────────
@@ -414,8 +543,8 @@ def check_frontend_build(snap: Dict[str, Any]) -> Result:
     frontend = Path(PROJECT_ROOT) / "dashboard" / "frontend"
     index = frontend / "dist" / "index.html"
     if not index.is_file():
-        return ("skip", "No production build (dashboard/frontend/dist); the dev server serves the "
-                        "frontend.", {})
+        return ("skip", Msg("frontendBuild.none", "No production build (dashboard/frontend/dist); "
+                                                  "the dev server serves the frontend."), {})
     built = index.stat().st_mtime
     newest, which = _newest_mtime(frontend / "src") if (frontend / "src").is_dir() else (0.0, None)
     detail = {"built_at": datetime.fromtimestamp(built, timezone.utc).isoformat(),
@@ -423,9 +552,11 @@ def check_frontend_build(snap: Dict[str, Any]) -> Result:
               "newest_source_at": (datetime.fromtimestamp(newest, timezone.utc).isoformat()
                                    if newest else None)}
     if newest > built:
-        return ("warn", f"The frontend build is older than its sources ({which} changed after "
-                        "it); rebuild it.", detail)
-    return ("ok", "The frontend build is newer than every source file.", detail)
+        return ("warn", Msg("frontendBuild.stale", f"The frontend build is older than its sources "
+                                                   f"({which} changed after it); rebuild it.",
+                            file=which), detail)
+    return ("ok", Msg("frontendBuild.ok", "The frontend build is newer than every source file."),
+            detail)
 
 
 # ── system workspace ─────────────────────────────────────────────────────────
@@ -433,7 +564,8 @@ def check_frontend_build(snap: Dict[str, Any]) -> Result:
 def check_system_workspace(snap: Dict[str, Any]) -> Result:
     from common import system_workspace as sw
     if not sw.enabled():
-        return ("skip", "The system workspace is turned off (SYSTEM_WORKSPACE=false).", {})
+        return ("skip", Msg("systemWorkspace.off", "The system workspace is turned off "
+                                                   "(SYSTEM_WORKSPACE=false)."), {})
     from workspace import get_workspace_folder, get_workspace_metadata
     exists = bool(get_workspace_folder(sw.WORKSPACE)) and bool(get_workspace_metadata(sw.WORKSPACE))
     clone = sw.probe_clone()
@@ -441,15 +573,19 @@ def check_system_workspace(snap: Dict[str, Any]) -> Result:
               "head": clone.get("head"), "branch": clone.get("branch"),
               "synced_at": clone.get("synced_at")}
     if not exists:
-        return ("warn", "The system workspace has not been created; it is seeded at startup.",
-                detail)
+        return ("warn", Msg("systemWorkspace.missing", "The system workspace has not been created; "
+                                                       "it is seeded at startup."), detail)
     if clone.get("error"):
-        return ("warn", f"The repository copy has a problem: {clone['error']}", detail)
+        return ("warn", Msg("systemWorkspace.cloneError", f"The repository copy has a problem: "
+                                                          f"{clone['error']}", error=clone["error"]),
+                detail)
     if not clone.get("exists"):
-        return ("warn", "The system workspace exists but its repository copy has not been made "
-                        "yet; sync it.", detail)
-    return ("ok", f"The repository copy is at {clone.get('head')} on {clone.get('branch')}.",
-            detail)
+        return ("warn", Msg("systemWorkspace.notCloned", "The system workspace exists but its "
+                                                         "repository copy has not been made yet; "
+                                                         "sync it."), detail)
+    return ("ok", Msg("systemWorkspace.ok", f"The repository copy is at {clone.get('head')} on "
+                                            f"{clone.get('branch')}.",
+                      head=clone.get("head"), branch=clone.get("branch")), detail)
 
 
 # ── skills ───────────────────────────────────────────────────────────────────
@@ -466,7 +602,7 @@ def check_skills(snap: Dict[str, Any]) -> Result:
 
     procedures = all_procedures()
     if not procedures:
-        return ("skip", "No skills in any workspace.", {})
+        return ("skip", Msg("skills.none", "No skills in any workspace."), {})
     attached_high: List[Dict[str, Any]] = []
     catalog_high: List[Dict[str, Any]] = []
     medium = 0
@@ -495,19 +631,29 @@ def check_skills(snap: Dict[str, Any]) -> Result:
     }
     if attached_high:
         names = ", ".join(r["name"] for r in attached_high[:3])
-        return ("warn", f"{len(attached_high)} skill(s) attached to agents carry a high safety "
-                        f"flag ({names}); review them on the Skills page.", detail)
+        return ("warn", Msg("skills.attachedHigh", f"{len(attached_high)} skill(s) attached to "
+                                                   "agents carry a high safety flag "
+                                                   f"({names}); review them on the Skills page.",
+                            count=len(attached_high), names=names), detail)
     if unpublishable_shared:
-        return ("warn", f"{unpublishable_shared} published skill(s) carry a license that is not "
-                        "open; withdraw them from the global catalog.", detail)
+        return ("warn", Msg("skills.unpublishable", f"{unpublishable_shared} published skill(s) carry "
+                                                    "a license that is not open; withdraw them from "
+                                                    "the global catalog.",
+                            count=unpublishable_shared), detail)
     if catalog_high:
-        return ("warn", f"{len(catalog_high)} catalog skill(s) carry a high safety flag; review "
-                        "them before attaching them to an agent.", detail)
+        return ("warn", Msg("skills.catalogHigh", f"{len(catalog_high)} catalog skill(s) carry a high "
+                                                  "safety flag; review them before attaching them "
+                                                  "to an agent.", count=len(catalog_high)), detail)
     if unreviewed_repo:
-        return ("warn", f"{unreviewed_repo} repository skill(s) have no review yet; run Sync "
-                        "from repositories on their Skills page.", detail)
-    return ("ok", f"{len(procedures)} skills, none with a high flag"
-                  + (f", {with_scripts} with scripts" if with_scripts else "") + ".", detail)
+        return ("warn", Msg("skills.unreviewed", f"{unreviewed_repo} repository skill(s) have no "
+                                                 "review yet; run Sync from repositories on their "
+                                                 "Skills page.", count=unreviewed_repo), detail)
+    if with_scripts:
+        return ("ok", Msg("skills.okScripts", f"{len(procedures)} skills, none with a high flag, "
+                                              f"{with_scripts} with scripts.",
+                          count=len(procedures), scripts=with_scripts), detail)
+    return ("ok", Msg("skills.ok", f"{len(procedures)} skills, none with a high flag.",
+                      count=len(procedures)), detail)
 
 
 # ── the list and the runner ──────────────────────────────────────────────────
@@ -516,6 +662,7 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("migrations", "Database migrations", check_migrations),
     ("provider", "Default model provider", check_provider),
     ("cors", "Cross-origin access", check_cors),
+    ("security", "Security settings", check_security),
     ("stale_runs", "Stale runs and leases", check_stale_runs),
     ("run_queue", "Launch queue", check_run_queue),
     ("outbox", "Outbound notifications", check_outbox),
@@ -536,11 +683,17 @@ def _run_one(check_id: str, title: str, fn: Callable[[Dict[str, Any]], Result],
         status, summary, detail = fn(snap)
     except Exception as exc:  # noqa: BLE001 - a check that errors is a failed check, never a crash
         log.debug("doctor check %s failed", check_id, exc_info=True)
-        status, summary, detail = "fail", f"The check itself failed: {type(exc).__name__}: {exc}", {}
+        error = f"{type(exc).__name__}: {exc}"
+        status, summary, detail = "fail", Msg("checkFailed", f"The check itself failed: {error}",
+                                              error=error), {}
     if status not in ("ok", "warn", "fail", "skip"):
         status = "fail"
-    return {"id": check_id, "title": title, "status": status, "summary": summary,
-            "detail": detail or {}, "doc": DOC, "anchor": anchor_for(check_id)}
+    out = {"id": check_id, "title": title, "status": status, "summary": str(summary),
+           "detail": detail or {}, "doc": DOC, "anchor": anchor_for(check_id)}
+    if isinstance(summary, Msg):
+        # The dashboard translates by this; the English summary stays the fallback.
+        out["summary_i18n"] = summary.i18n()
+    return out
 
 
 def overall_status(checks: List[Dict[str, Any]]) -> str:
@@ -567,5 +720,5 @@ def run_doctor(app_state: Any = None) -> Dict[str, Any]:
             "checks": checks}
 
 
-__all__ = ["run_doctor", "overall_status", "anchor_for", "CHECKS", "probe_provider",
+__all__ = ["Msg", "run_doctor", "overall_status", "anchor_for", "CHECKS", "probe_provider",
            "stale_leaf_runs"]

@@ -155,8 +155,11 @@ def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
         return []
     runs.sort(key=lambda r: str(r.get("started_at") or r.get("created_at") or ""))
 
+    from chat.context import window_start
     history: list[ChatHistoryMessage] = []
-    for r in runs[-max_turns:]:
+    # In steps, not one turn at a time, so the transcript's start (and a
+    # prompt cache's hold on it) stays put for several turns.
+    for r in runs[window_start(len(runs), max_turns, step=5):]:
         ctx = (get_run_process(r.get("run_id")) or {}).get("llm_input_context") or {}
         user_msg = str(ctx.get("user_message") or "").strip()
         response = str(ctx.get("response") or "").strip()

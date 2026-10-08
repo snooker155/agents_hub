@@ -14,7 +14,7 @@ import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
 import { applyApprovalEvent } from '../toolApprovals';
 import { applyDelegationEvent } from '../processLive';
-import { policyVerdict } from '../../policyVerdict';
+import { toolOutcome } from '../../toolStatus';
 
 // Which bubble a per-turn event belongs in: the single assistant bubble in
 // agent mode, or the bubble for the currently active node in flow mode.
@@ -82,7 +82,7 @@ function handleDelegationEvent(event, ctx) {
                 type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true,
               });
             } else if (event.type === 'tool_end') {
-              tl = resolveDelegationTool(tl, event.run_id, { output: event.output, ...policyVerdict(event) });
+              tl = resolveDelegationTool(tl, event.run_id, { output: event.output, ...toolOutcome(event) });
             } else if (event.type === 'tool_error') {
               tl = resolveDelegationTool(tl, event.run_id, { output: `ERROR: ${event.error}`, error: true });
             } else if (event.type === 'text' && (event.content || '').trim()) {
@@ -317,9 +317,13 @@ function handleAgentEvent(event, ctx) {
           : mr
       ),
     }));
-  } else if (event.type === 'tool_end') {
+  } else if (event.type === 'tool_end' || event.type === 'tool_error') {
     // Keep running_tool set so the name stays visible until the next token arrives.
-    // Resolve the last running tool entry in the Build-view timeline.
+    // Resolve the last running tool entry in the Build-view timeline; a call
+    // that raised ends on tool_error instead of tool_end.
+    const outcome = event.type === 'tool_error'
+      ? { output: `ERROR: ${event.error}`, error: true, running: false, ...toolOutcome(event) }
+      : { output: event.output, running: false, ...toolOutcome(event) };
     {
       const tgt = targetMsgId(event, ctx);
       setConversations((prev) =>
@@ -331,7 +335,7 @@ function handleAgentEvent(event, ctx) {
               const tl = [...m.timeline];
               for (let i = tl.length - 1; i >= 0; i -= 1) {
                 if (tl[i].type === 'tool' && tl[i].running) {
-                  tl[i] = { ...tl[i], output: event.output, running: false, ...policyVerdict(event) };
+                  tl[i] = { ...tl[i], ...outcome };
                   break;
                 }
               }
@@ -345,7 +349,7 @@ function handleAgentEvent(event, ctx) {
       const tools = [...(prev.tools || [])];
       for (let i = tools.length - 1; i >= 0; i -= 1) {
         if (tools[i].running) {
-          tools[i] = { ...tools[i], output: event.output, running: false, ...policyVerdict(event) };
+          tools[i] = { ...tools[i], ...outcome };
           break;
         }
       }
@@ -354,7 +358,7 @@ function handleAgentEvent(event, ctx) {
         const mrTools = [...(mr.tools || [])];
         for (let i = mrTools.length - 1; i >= 0; i -= 1) {
           if (mrTools[i].running) {
-            mrTools[i] = { ...mrTools[i], output: event.output, running: false, ...policyVerdict(event) };
+            mrTools[i] = { ...mrTools[i], ...outcome };
             break;
           }
         }
@@ -458,6 +462,8 @@ function handleAgentEvent(event, ctx) {
                     context_used: event.usage?.context_used ?? m.context_used ?? null,
                     context_window: event.usage?.context_window ?? m.context_window ?? null,
                     context_overflow: event.error_code === 'context_overflow',
+                    // Why the turn was refused, when the guard or a limit said (RefusalCard).
+                    refusal: event.refusal || null,
                   }
                 : m
             ),
