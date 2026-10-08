@@ -18,9 +18,11 @@ result is meant to seed an editable canvas, not replace one.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+log = logging.getLogger(__name__)
 
 # Horizontal/vertical spacing for the layered layout.
 _COL_W = 280
@@ -72,7 +74,7 @@ _DATASTORE_HINTS = {
 def _read_text(path: Path, limit: int = 200_000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")[:limit]
-    except Exception:
+    except OSError:
         return ""
 
 
@@ -89,7 +91,7 @@ def _detect_frontend_framework(root: Path) -> str:
         return ""
     try:
         data = json.loads(_read_text(pkg))
-    except Exception:
+    except ValueError:
         return ""
     deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
     for name, label in (("next", "Next.js"), ("react", "React"),
@@ -194,7 +196,7 @@ def _render_tree(root: Path, max_depth: int = 2, max_entries: int = 160) -> str:
             return
         try:
             entries = sorted(d.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-        except Exception:
+        except OSError:
             return
         for p in entries:
             if count[0] >= max_entries:
@@ -235,7 +237,7 @@ def _key_file_heads(root: Path, head_lines: int = 30, budget: int = 5000) -> str
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except OSError:
             continue
         head = "\n".join(text.splitlines()[:head_lines]).strip()
         if not head:
@@ -297,7 +299,7 @@ def _docs_context(root: Optional[Path], budget: int = 8000) -> str:
         seen.add(rp)
         try:
             text = p.read_text(encoding="utf-8", errors="replace").strip()
-        except Exception:
+        except OSError:
             continue
         if not text:
             continue
@@ -764,7 +766,8 @@ def _sibling_view_context(project, view: str) -> str:
     try:
         from projects.graph_store import ProjectGraphStore
         saved = ProjectGraphStore().get(getattr(project, "id", None), other)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing sibling view just means no cross-reference context
+        log.debug("reading sibling graph view failed", exc_info=True)
         return ""
     return render_graph_summary(saved, f"Existing {other.upper()} view")
 
@@ -951,7 +954,8 @@ def agent_workspace_path(project, root: Optional[Path]) -> Optional[str]:
         from workspace import get_workspace_folder
         wf = get_workspace_folder(getattr(project, "workspace", None))
         return str(wf) if wf else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - no workspace folder falls back to the global model selection
+        log.debug("resolving workspace folder failed", exc_info=True)
         return None
 
 
@@ -966,7 +970,7 @@ def _ensure_architect_agent() -> bool:
     """
     try:
         from agents.registry import get_agent, add_agent, AgentSpec
-    except Exception:
+    except ImportError:
         return False
     try:
         tools = ["list_files", "read_file", "search_text",
@@ -1005,7 +1009,8 @@ def _ensure_architect_agent() -> bool:
             reasoning={"thinking_level": "medium"},
         ))
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unavailable registry means generation reports the agent as missing
+        log.debug("registering architect agent failed", exc_info=True)
         return False
 
 
@@ -1094,7 +1099,8 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
             res = invoke_agent(agent, prompt, catch_exceptions=True).result
             if res.ok:
                 text = str(res.agent_output)
-        except Exception:
+        except Exception:  # noqa: BLE001 - any model or tool failure falls back to the heuristic graph
+            log.debug("architect agent run failed", exc_info=True)
             text = None
 
     return finalize_generated_output(text, project, view, root, tasks)

@@ -25,6 +25,7 @@ unchanged for that (still the common) case.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from common import blobs, db
 from common.paths import workspace_views_dir
 from views.models import ViewEnvelope, ViewOwner, ViewValidationError, normalize_envelope, base_spec_for
 from views import ops as vops
+
+log = logging.getLogger(__name__)
 
 
 def utc_iso() -> str:
@@ -57,7 +60,7 @@ def _view_dir(workspace: Optional[str], view_id: str) -> Path:
 def _json_bytes(value: Any) -> int:
     try:
         return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-    except Exception:
+    except (TypeError, ValueError):
         return 0
 
 
@@ -65,8 +68,8 @@ def _mirror_view_file(path: Path) -> None:
     """Mirror one view file to the blob store, best-effort (common/blobs.py)."""
     try:
         blobs.mirror(blobs.rel(path))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - mirroring is best-effort, the local file is the source of truth
+        log.debug("view file mirror failed", exc_info=True)
 
 
 def _mirror_view_dir(view_dir: Path) -> None:
@@ -228,14 +231,15 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
         # written it and mirrored it to the blob store (common/blobs.py).
         try:
             fetched = blobs.ensure_local(blobs.rel(view_file))
-        except Exception:
+        except Exception:  # noqa: BLE001 - blob store backends raise anything, a miss means not found
+            log.debug("blob fetch of view.json failed", exc_info=True)
             fetched = None
         if fetched is None:
             return None
         view_file = fetched
     try:
         env = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return None
     env["view_id"] = view_id
     env["state"] = db.loads(row.get("state"), {}) or {}
@@ -372,12 +376,13 @@ def delete_view(view_id: str) -> bool:
     try:  # a backend launched for this view (view_serve) dies with it
         from views.serve import stop_service
         stop_service(view_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a service that cannot be stopped must not block deleting the view
+        log.debug("stopping view service on delete failed", exc_info=True)
     view_dir = _view_dir(row.get("workspace"), view_id)
     try:
         mirrored_prefix = blobs.rel(view_dir) + "/"
-    except Exception:
+    except Exception:  # noqa: BLE001 - blob store backends raise anything, delete continues locally
+        log.debug("blob prefix lookup failed", exc_info=True)
         mirrored_prefix = None
     if view_dir.exists():
         shutil.rmtree(view_dir, ignore_errors=True)
@@ -385,8 +390,8 @@ def delete_view(view_id: str) -> bool:
         try:
             for key in blobs.list(mirrored_prefix):
                 blobs.delete(key)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - blob store backends raise anything, the view row is still removed
+            log.debug("blob cleanup on view delete failed", exc_info=True)
     with db.transaction() as conn:
         conn.execute("DELETE FROM views WHERE view_id = ?", (view_id,))
     return True
@@ -495,7 +500,7 @@ def get_clip(view_id: str, name: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         return json.loads(target.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -533,7 +538,8 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
         return target
     try:
         return blobs.ensure_local(blobs.rel(target))
-    except Exception:
+    except Exception:  # noqa: BLE001 - blob store backends raise anything, a miss means no such file
+        log.debug("blob fetch of view file failed", exc_info=True)
         return None
 
 
@@ -582,13 +588,13 @@ def _base_doc(view_id: str, workspace: Optional[str]) -> Optional[Dict[str, Any]
     if base_file.exists():
         try:
             return json.loads(base_file.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError):
             return None
     # Legacy views created before base.json existed: fall back to the current doc.
     cur = _view_dir(workspace, view_id) / "view.json"
     try:
         return json.loads(cur.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -641,7 +647,7 @@ def append_ops(
 
     try:
         doc = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         doc = _base_doc(view_id, workspace) or {}
 
     now = utc_iso()
@@ -700,7 +706,7 @@ def list_checkpoints(view_id: str) -> Dict[str, int]:
     try:
         data = json.loads(f.read_text(encoding="utf-8"))
         return {str(k): int(v) for k, v in data.items()}
-    except Exception:
+    except (OSError, ValueError, TypeError, AttributeError):
         return {}
 
 
@@ -736,7 +742,7 @@ def _prune_checkpoints_after(view_id: str, workspace: Optional[str], seq: int) -
         return
     try:
         cps = json.loads(f.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return
     kept = {k: v for k, v in cps.items() if int(v) <= int(seq)}
     if kept != cps:
@@ -779,16 +785,16 @@ def _broadcast(view_id: str, ops: List[Dict[str, Any]]) -> None:
         from common.session_broker import publish_event
         for op in ops:
             publish_event(f"view:{view_id}", {"type": "view_op", "view_id": view_id, "op": op})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - live relay is best-effort, the op is already stored
+        log.debug("view op relay failed", exc_info=True)
 
 
 def _broadcast_reset(view_id: str, doc: Dict[str, Any], seq: int) -> None:
     try:
         from common.session_broker import publish_event
         publish_event(f"view:{view_id}", {"type": "view_reset", "view_id": view_id, "doc": doc, "seq": seq})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - live relay is best-effort, the reset is already stored
+        log.debug("view reset relay failed", exc_info=True)
 
 
 # ── code views: versions, runs, saves ─────────────────────────────────────────
@@ -820,7 +826,7 @@ def _read_json_list(path: Path) -> List[Dict[str, Any]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
-    except Exception:
+    except (OSError, ValueError):
         return []
 
 

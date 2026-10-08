@@ -9,12 +9,15 @@ looks like and keeps the definitions and the iteration log itself.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from common import db
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from loops.models import Iteration, Loop, LoopRun, utc_iso
+
+log = logging.getLogger(__name__)
 
 _CONFIG_FIELDS = (
     "max_iterations", "min_iterations", "target_score", "patience",
@@ -127,16 +130,16 @@ def touch_heartbeat(loop_run_id: str) -> None:
     try:
         from common import entity_runs
         entity_runs.touch_heartbeat(loop_run_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a missed heartbeat is not worth failing a run over
+        log.debug("loop heartbeat failed", exc_info=True)
 
 
 def _notify(resource: str, **meta) -> None:
     try:
         from common.session_broker import notify_change
         notify_change(resource, **meta)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an invalidation ping is a convenience, the write already happened
+        log.debug("change notification failed", exc_info=True)
 
 
 # ── Loop definitions ─────────────────────────────────────────────────────────

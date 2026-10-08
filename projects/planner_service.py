@@ -8,7 +8,10 @@ itself.
 """
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
+
+log = logging.getLogger(__name__)
 
 #: The Planner system agent's id — also the store key for its run records.
 PLANNER_AGENT_ID = "planner"
@@ -24,7 +27,8 @@ def ensure_planner_agent() -> bool:
         from common.bootstrap import _ensure_system_agents
         _ensure_system_agents()
         return get_agent(PLANNER_AGENT_ID) is not None
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unavailable registry means the Planner is reported as missing
+        log.debug("ensuring planner agent failed", exc_info=True)
         return False
 
 

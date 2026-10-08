@@ -18,6 +18,7 @@ Usage:
 """
 import os
 import json
+import logging
 import subprocess
 import sys
 import uuid
@@ -43,6 +44,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cli.backend import get_backend, BackendError  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -95,7 +98,7 @@ def _state_file() -> Path:
 def _read_state() -> dict:
     try:
         return json.loads(_state_file().read_text())
-    except Exception:
+    except (OSError, ValueError):
         # No file yet, or someone hand-edited it into invalid JSON. Either way an
         # unusable selection must not stop the command that asked for it.
         return {}
@@ -179,7 +182,7 @@ def _detect_from_cwd() -> tuple[Optional[str], Optional[str]]:
                 if depth > best_depth:
                     best_depth = depth
                     _detected = (ws_link.name, folder)
-    except Exception:
+    except (OSError, ImportError, RuntimeError, ValueError):
         _detected = (None, None)
     return _detected
 
@@ -190,9 +193,8 @@ def _detected_project_id(workspace: str, folder: str) -> Optional[str]:
         for pr in hub().list_projects():
             if (pr.get("workspace") or "") == workspace and (pr.get("folder") or "") == folder:
                 return str(pr.get("id") or "") or None
-    except Exception:
-        # The directory is still a perfectly good workspace selection without it.
-        pass
+    except Exception:  # noqa: BLE001 - the directory is still a good workspace selection without a project id
+        log.debug("project lookup for detected folder failed", exc_info=True)
     return None
 
 
@@ -283,7 +285,7 @@ def hub():
         _apply_saved_remote()
         try:
             _backend = get_backend()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any start-up failure is printed with a hint, then the command exits
             console.print(
                 f"[red]Could not open the service:[/red] {e}\n"
                 "Direct mode needs this repository importable and its dependencies "

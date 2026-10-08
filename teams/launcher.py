@@ -19,10 +19,13 @@ on a resume, the checkpoint to pick up from.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from teams.models import TeamRun
+
+log = logging.getLogger(__name__)
 
 
 class TeamResumeError(Exception):
@@ -194,7 +197,7 @@ def stop_team_run(team_run_id: str) -> bool:
         _publish(team_run_id, {"type": "stopping", "team_run_id": team_run_id,
                                "status": "stopping"})
     except Exception:  # noqa: BLE001 - the publish is a live-page convenience, not the stop itself
-        pass
+        log.debug("stopping event publish failed", exc_info=True)
     return True
 
 

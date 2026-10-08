@@ -9,7 +9,10 @@ instant the agent acts — no waiting for the final reply.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+log = logging.getLogger(__name__)
 
 # Grid spacing for incrementally-placed nodes (the agent supplies no
 # coordinates; positions are assigned here as nodes arrive).
@@ -62,8 +65,8 @@ class GraphStreamSink:
     def _emit(self, payload: Dict[str, Any]) -> None:
         try:
             self.loop.call_soon_threadsafe(self.queue.put_nowait, payload)
-        except Exception:
-            pass
+        except RuntimeError:
+            log.debug("graph stream loop closed, event dropped", exc_info=True)
 
     def _persist(self) -> None:
         # source="generated" — an agent-built graph (distinct from hand "manual").
@@ -80,7 +83,8 @@ class GraphStreamSink:
         try:
             from projects.graph import kind_grouped_layout
             kind_grouped_layout(self.nodes, self.edges)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a failed re-layout leaves the previous positions, the build goes on
+            log.debug("graph re-layout failed", exc_info=True)
             return
         positions = {n["id"]: n.get("position") for n in self.nodes if n.get("position")}
         self._emit({"type": "graph_layout", "positions": positions})

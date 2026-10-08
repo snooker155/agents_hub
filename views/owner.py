@@ -90,7 +90,7 @@ def _entity_owner_of_leaf(leaf_run_id: str) -> Optional[ViewOwner]:
     try:
         from managers.run_manager import get_run_by_id
         from common import entity_runs
-    except Exception:
+    except ImportError:
         return None
     run = get_run_by_id(leaf_run_id) or {}
     parent_run_id = run.get("parent_run_id")

@@ -6,12 +6,15 @@ looks like and keeps the team definitions and the message bus itself.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from common import db
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from teams.models import BROADCAST, Team, TeamMessage, TeamRun, utc_iso
+
+log = logging.getLogger(__name__)
 
 # Run-level knobs share one JSON column, so tightening a ceiling never needs a
 # migration (same reasoning as playground.store).
@@ -26,8 +29,8 @@ def _notify(resource: str, **meta) -> None:
     try:
         from common.session_broker import notify_change
         notify_change(resource, **meta)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an invalidation ping is a convenience, the write already happened
+        log.debug("change notification failed", exc_info=True)
 
 
 # ── Teams ────────────────────────────────────────────────────────────────────

@@ -319,12 +319,12 @@ def parse_leader_plan(text: str, team: Team) -> LeaderPlan:
     parsed: Any = None
     try:
         parsed = json.loads(candidate)
-    except Exception:
+    except ValueError:
         start, end = candidate.find("{"), candidate.rfind("}")
         if start != -1 and end > start:
             try:
                 parsed = json.loads(candidate[start:end + 1])
-            except Exception:
+            except ValueError:
                 parsed = None
 
     if isinstance(parsed, dict):

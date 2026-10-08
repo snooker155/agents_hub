@@ -23,10 +23,13 @@ Two habits of self-reviewing models are corrected here rather than hoped away:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loops.models import Verdict
+
+log = logging.getLogger(__name__)
 
 #: Output contract. Kept small and demanded as bare JSON: every extra field is
 #: another thing a mid-sized model gets wrong under a long context.
@@ -108,7 +111,7 @@ def build_evaluation_prompt(
     if state:
         try:
             rendered = json.dumps(state, indent=2, ensure_ascii=False, default=str)
-        except Exception:
+        except (TypeError, ValueError):
             rendered = str(state)
         state_block = f"\n## Shared state after this attempt\n{_clip(rendered, 4000)}\n"
 
@@ -149,12 +152,12 @@ def parse_verdict(text: str) -> Verdict:
     parsed: Any = None
     try:
         parsed = json.loads(candidate)
-    except Exception:
+    except ValueError:
         start, end = candidate.find("{"), candidate.rfind("}")
         if start != -1 and end > start:
             try:
                 parsed = json.loads(candidate[start:end + 1])
-            except Exception:
+            except ValueError:
                 parsed = None
 
     if not isinstance(parsed, dict):
@@ -195,7 +198,7 @@ def resolve_final_agent(flow: Dict[str, Any]) -> Optional[str]:
 
     try:
         order = execution_order(flow)
-    except Exception:
+    except (KeyError, TypeError, AttributeError, ValueError):
         order = [n.get("id") for n in flow.get("nodes", []) if isinstance(n, dict)]
     by_id = {n.get("id"): n for n in flow.get("nodes", []) or [] if isinstance(n, dict)}
     for node_id in reversed(order):
@@ -235,7 +238,8 @@ def _model_cost(provider: str, model: str, inbound: int, outbound: int) -> float
                                          "outbound_tokens": outbound}}},
             load_price_map(),
         ), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unpriced attempt costs zero rather than failing the verdict
+        log.debug("pricing the evaluator call failed", exc_info=True)
         return 0.0
 
 

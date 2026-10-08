@@ -94,7 +94,7 @@ class DirectBackend:
             return _jsonable(send_chat_message_sync(ChatRequest(**body)))
         except ChatSendError as e:
             raise BackendError(e.detail)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
 
     # ---- tasks ----
@@ -130,7 +130,7 @@ class DirectBackend:
                 project_id=body.get("project_id"),
                 agent_version=body.get("agent_version"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
         return _jsonable(task_to_dict(t))
 
@@ -142,7 +142,7 @@ class DirectBackend:
             return _jsonable(assign_agent_to_task(UUID(task_id), agent_id, params, task_to_dict=task_to_dict))
         except AssignError as e:
             raise BackendError(e.detail)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
 
     def decompose_task(self, task_id: str) -> dict:
@@ -158,7 +158,7 @@ class DirectBackend:
         from tasks.models import TaskStatus
         try:
             tasks_service.update_task(UUID(task_id), status=TaskStatus.stopped)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
         return {"stopped": True}
 
@@ -202,7 +202,7 @@ class DirectBackend:
         from workspace import create_workspace_folder
         try:
             p = create_workspace_folder(name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
         _notify_workspaces()
         return {"name": p.name, "path": str(p)}
@@ -452,12 +452,12 @@ class DirectBackend:
         headers = {"Authorization": f"Bearer {identity.service_token()}"}
         try:
             r = client.request(method, path, params=params, json=json, headers=headers)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
         if r.status_code >= 400:
             try:
                 detail = r.json().get("detail", r.text)
-            except Exception:
+            except (ValueError, AttributeError):
                 detail = r.text
             raise BackendError(f"{r.status_code}: {detail}")
         return r.json() if r.content else None
@@ -494,7 +494,7 @@ def _run_coroutine(coro):
         return _jsonable(asyncio.run(coro))
     except HTTPException as e:
         raise BackendError(str(e.detail))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
         raise _fail(e)
 
 
@@ -543,7 +543,7 @@ class HttpBackend:
         except requests.HTTPError as e:
             try:
                 detail = e.response.json().get("detail", str(e))
-            except Exception:
+            except (ValueError, AttributeError):
                 detail = str(e)
             raise BackendError(str(detail))
 

@@ -85,12 +85,7 @@ ignore = [
 # unreviewed blind excepts, so both rules stay ignored there until someone
 # does the same narrowing pass for that package; remove a line here once its
 # package is clean, and the rules start applying to it too.
-"cli/**" = ["BLE001", "S110"]
 "dashboard/**" = ["BLE001", "S110"]
-"loops/**" = ["BLE001", "S110"]
-"projects/**" = ["BLE001", "S110"]
-"teams/**" = ["BLE001", "S110"]
-"views/**" = ["BLE001", "S110"]
 # Tests exercise failure paths deliberately (forcing an exception to confirm
 # a caller handles it), so a blind except or a swallowed one there is not the
 # same code smell it is in application code. Both rules stay ignored here.

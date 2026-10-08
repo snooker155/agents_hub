@@ -21,10 +21,13 @@ this module is what makes pressing the button feel like pressing the button.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Dict, Set
 
 from langchain_core.callbacks import BaseCallbackHandler
+
+log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 #: team_run_id → the event that is set when that run is asked to stop.
@@ -74,8 +77,8 @@ def request_stop(team_run_id: str) -> bool:
         try:
             from managers.run_manager import stop_run_by_id
             stop_run_by_id(run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one run that cannot be stopped must not stop the rest from being signalled
+            log.debug("stopping team member run failed", exc_info=True)
     return event is not None
 
 
