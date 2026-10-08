@@ -14,8 +14,11 @@ This module owns the replay mechanics; the HTTP surface is ``routes/replay.py``.
 """
 from __future__ import annotations
 
+import logging
 import difflib
 from typing import Any, Dict, Optional
+
+log = logging.getLogger(__name__)
 
 # Runs created by a replay carry this channel so cost/budget aggregation can
 # skip them (re-invocation has real token cost, but it is evaluation spend, not
@@ -35,7 +38,8 @@ def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
             "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound}},
         }
         return round(run_cost_usd(fake, load_price_map()), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cost estimate is optional, unknown pricing reads as zero
+        log.debug("_run_cost: ignored error", exc_info=True)
         return 0.0
 
 

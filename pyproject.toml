@@ -80,12 +80,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # BLE001 (blind except Exception) and S110 (try/except/pass with no logging):
-# common/, managers/, notify/, a2a/, mcp_client/ and workspace/ are clean of
-# both and enforce them as errors. Every other top-level package still has
+# common/, managers/, notify/, a2a/, mcp_client/, workspace/, agents/ and tools/
+# are clean of both and enforce them as errors. Every other top-level package still has
 # unreviewed blind excepts, so both rules stay ignored there until someone
 # does the same narrowing pass for that package; remove a line here once its
 # package is clean, and the rules start applying to it too.
-"agents/**" = ["BLE001", "S110"]
 "chat/**" = ["BLE001", "S110"]
 "cli/**" = ["BLE001", "S110"]
 "clients/**" = ["BLE001", "S110"]
@@ -107,7 +106,6 @@ ignore = [
 "runtime/**" = ["BLE001", "S110"]
 "tasks/**" = ["BLE001", "S110"]
 "teams/**" = ["BLE001", "S110"]
-"tools/**" = ["BLE001", "S110"]
 "views/**" = ["BLE001", "S110"]
 # Tests exercise failure paths deliberately (forcing an exception to confirm
 # a caller handles it), so a blind except or a swallowed one there is not the

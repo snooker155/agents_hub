@@ -45,6 +45,8 @@ from uuid import uuid4
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from managers.run_manager import preopen_run, _utc_now_iso, _update_run, finalize_task_from_run
 
+log = logging.getLogger(__name__)
+
 #: What a task launch is called on the queue.
 QUEUE_KIND = "task"
 
@@ -175,8 +177,8 @@ def prepare_run(
     )
     try:
         _ts.update_task(task_id, session_id=session_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
+        log.debug("prepare_run: ignored error", exc_info=True)
 
     run_id = run_id or str(uuid4())
 
@@ -298,8 +300,8 @@ def prepare_run(
         try:
             from workspace import get_workspace_metadata
             _ws_agent_mode = (get_workspace_metadata(ws_name).get("settings") or {}).get("agent_mode") or None
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
+            log.debug("prepare_run: ignored error", exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
     # Two optional contributions to the launch, each a module that may be
@@ -332,14 +334,14 @@ def prepare_run(
             details={"agent_id": agent_id, "task_id": str(task_id),
                      "execution_mode": execution_mode},
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
+        log.debug("prepare_run: ignored error", exc_info=True)
 
     if environment_id:
         try:
             _update_run(run_id, {"environment_id": environment_id})
         except Exception:  # noqa: BLE001 - the run still launches without the environment note on its record
-            pass
+            log.debug("prepare_run: ignored error", exc_info=True)
 
     # The sandbox size (environments/models.py SIZE_PRESETS) and effective
     # cpu limit of a docker-mode run's container, so common.pricing can price
@@ -406,7 +408,8 @@ def _child_env_extra() -> Dict[str, str]:
     try:
         from runtime.entity_launch import _CHILD_ENV
         extra = _CHILD_ENV.get() or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - no launch context means no extra child env
+        log.debug("_child_env_extra: ignored error", exc_info=True)
         return {}
     return {str(k): str(v) for k, v in extra.items()}
 
@@ -589,8 +592,8 @@ def _start_run_in_docker(
             instance_registry.mark_failed(instance_id, error)
         try:
             finalize_task_from_run(run_id, "failed", 1)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
+            log.debug("_start_run_in_docker: ignored error", exc_info=True)
         return
 
     container_name = result.get("container_name")
@@ -609,8 +612,8 @@ def _start_run_in_docker(
         from managers.container_manager import register_container
         register_container(str(container_name), kind="run", agent_id=agent_id, run_id=run_id,
                            image=result.get("image"))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
+        log.debug("_start_run_in_docker: ignored error", exc_info=True)
 
 
 def _launching_key() -> Optional[str]:

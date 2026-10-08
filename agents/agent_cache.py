@@ -40,6 +40,7 @@ client, tools and prompt are shared.
 """
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import threading
@@ -47,6 +48,8 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 # Bounded LRU so many workspaces/agents can't grow the cache without limit.
 _MAX_ENTRIES = 64
@@ -67,7 +70,8 @@ def _stat_sig(path: Path) -> str:
     try:
         st = path.stat()
         return f"{st.st_mtime_ns}:{st.st_size}"
-    except Exception:
+    except OSError:
+        log.debug("_stat_sig: ignored error", exc_info=True)
         return "-"
 
 
@@ -89,7 +93,8 @@ def _overrides_repr(override_params: Dict[str, Any]) -> str:
         return repr(v)
     try:
         return repr(sorted((str(k), _value(v)) for k, v in (override_params or {}).items()))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unprintable override still yields a usable cache key
+        log.debug("_overrides_repr: ignored error", exc_info=True)
         return repr(override_params)
 
 

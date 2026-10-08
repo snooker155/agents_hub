@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,8 @@ from common.config import get_swe_config
 
 
 from .filesystem import _resolve_within_workspace, _workspace_root
+
+log = logging.getLogger(__name__)
 
 
 def _atomic_write(target: Path, data: str) -> None:
@@ -378,10 +381,10 @@ def apply_unified_diff(diff_text: str, workspace: Optional[str] = None, config: 
                     if orig.exists():
                         try:
                             orig.unlink()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except OSError:
+                            log.debug("apply_unified_diff: best-effort step failed", exc_info=True)
+            except Exception:  # noqa: BLE001 - one file that cannot be restored must not stop the rest of the rollback
+                log.debug("apply_unified_diff: best-effort step failed", exc_info=True)
         # Keep backup dir for inspection if rollback partially failed
         raise
 

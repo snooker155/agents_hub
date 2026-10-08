@@ -109,11 +109,14 @@ Two limits remain, and they follow from the process boundary:
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 from agents.agent_base import AgentBase, AgentResult, ToolResult
 from common.agent_frames import FrameTranslator
+
+log = logging.getLogger(__name__)
 
 
 # Defaults for descriptor keys a manifest may omit.
@@ -394,8 +397,8 @@ class _StreamState:
             return
         try:
             self._emitter(payload)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - progress and usage reporting must not fail remote work
+            log.debug("emit: ignored error", exc_info=True)
 
     def handle(self, frame: Dict[str, Any]) -> None:
         """Translate one frame from the remote and forward what it produced."""
@@ -432,7 +435,8 @@ class _StreamState:
                 sink.completion_tokens += completion
                 sink.total_tokens += total
                 sink.cached_prompt_tokens = getattr(sink, "cached_prompt_tokens", 0) + cached
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress and usage reporting must not fail remote work
+                log.debug("_credit: ignored error", exc_info=True)
                 continue
         if cost_usd is not None:
             self.reported_cost_usd = (self.reported_cost_usd or 0.0) + cost_usd
@@ -440,12 +444,12 @@ class _StreamState:
                 try:
                     from managers.runs.store import update_run
                     update_run(self.run_id, {"reported_cost_usd": self.reported_cost_usd})
-                except Exception:
+                except Exception:  # noqa: BLE001 - progress and usage reporting must not fail remote work
                     # A run record that cannot be found or updated yet (the
                     # caller opened no run at all, or this is a test exercising
                     # RemoteAgent directly) must not fail a run that is
                     # otherwise working. The tokens are still credited above.
-                    pass
+                    log.debug("_credit: ignored error", exc_info=True)
 
 
 class RemoteAgent(AgentBase):
@@ -660,7 +664,8 @@ class RemoteAgent(AgentBase):
         try:
             from common import stream_sink
             return stream_sink.get_emitter()
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress and usage reporting must not fail remote work
+            log.debug("_resolve_emitter: ignored error", exc_info=True)
             return None
 
     @staticmethod
@@ -911,7 +916,8 @@ class RemoteAgent(AgentBase):
     def _payload_of(resp: Any) -> Any:
         try:
             return resp.json()
-        except Exception:
+        except ValueError:
+            log.debug("_payload_of: ignored error", exc_info=True)
             return resp.text
 
     def _should_stream(self, callbacks: Any) -> tuple[bool, Optional[Any], List[Any]]:

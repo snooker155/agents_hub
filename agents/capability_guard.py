@@ -102,7 +102,8 @@ def _resolve_agent_tools(agent_id: str) -> List[str]:
     try:
         from agents.registry import get_agent
         spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable setting falls back to the safe default
+        log.debug("_resolve_agent_tools: ignored error", exc_info=True)
         return []
     return list(spec.tools or []) if spec is not None else []
 
@@ -218,7 +219,8 @@ def guard_mode() -> str:
             getattr(settings, "capability_guard", "block") or "block"
         )
         mode = mode.strip().lower()
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable setting falls back to the safe default
+        log.debug("guard_mode: ignored error", exc_info=True)
         return "block"
     return mode if mode in GUARD_MODES else "block"
 
@@ -233,7 +235,8 @@ def override_requires_container() -> bool:
         if raw:
             return raw.strip().lower() in ("1", "true", "yes", "on")
         return bool(getattr(settings, "capability_override_requires_container", False))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable setting falls back to the safe default
+        log.debug("override_requires_container: ignored error", exc_info=True)
         return False
 
 
@@ -395,7 +398,8 @@ def _container_isolated(agent_id: str) -> bool:
             "AGENT_DOCKER_NETWORK", str(getattr(settings, "agent_docker_network", "") or ""),
         ).strip().lower()
         return network == "none"
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable setting falls back to the safe default
+        log.debug("_container_isolated: ignored error", exc_info=True)
         return False
 
 

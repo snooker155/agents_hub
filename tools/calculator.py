@@ -137,7 +137,7 @@ def calculator(expression: str) -> str:
             result = int(result)
         return json.dumps({"ok": True, "expression": expression, "result": result},
                           ensure_ascii=False)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return json.dumps({"ok": False, "expression": expression, "error": str(e)},
                           ensure_ascii=False)
 

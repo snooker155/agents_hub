@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 from pathlib import Path
 
@@ -281,8 +282,8 @@ def build_chat_model(
                     if _ln.startswith("DEFAULT_PROVIDER") and "=" in _ln:
                         _file_provider = _ln.partition("=")[2].strip().strip('"\'')
                         break
-            except Exception:
-                pass
+            except (OSError, ValueError):
+                log.debug("build_chat_model: ignored error", exc_info=True)
         provider = os.environ.get("DEFAULT_PROVIDER") or _file_provider or settings.default_provider
 
     def _temp(mdl: Optional[str]) -> float:
@@ -437,3 +438,5 @@ from agents.callbacks.guards import (  # noqa: E402,F401
     ToolRepetitionGuard,
     ToolRepetitionError,
 )
+
+log = logging.getLogger(__name__)

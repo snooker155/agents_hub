@@ -7,6 +7,7 @@ agent-factory-specific tools local.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 from typing import Any, Dict, List, Optional
@@ -59,6 +60,8 @@ from tools.task_management import (
     _task_out_of_scope,
 )
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+log = logging.getLogger(__name__)
 
 
 
@@ -201,7 +204,7 @@ def list_agents_tool() -> str:
                     entry["self_delegation"] = True
             agents.append(entry)
         return _json_ok({"agents": agents})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list agents: {e}")
 
 
@@ -292,7 +295,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                 if obj is not None and not isinstance(obj, dict):
                     return _json_err("params_json must be a JSON object", code="bad_params")
                 params = obj
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
                 return _json_err(f"Invalid params_json: {e}", code="bad_params")
         if reason:
             svc_update_task(task.id, routing_reason=reason.strip())
@@ -308,7 +311,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             from workspace import get_workspace_metadata
             orch_settings = get_workspace_metadata(ws_name).get("orchestrator", {})
             assignment_mode = orch_settings.get("assignment_mode", "manual")
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable workspace settings mean manual assignment
+            log.debug("assign_agent: workspace settings unreadable", exc_info=True)
             assignment_mode = "manual"
 
         session_id = getattr(task, "session_id", None)
@@ -320,7 +324,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                     task_id=str(task.id),
                 )
                 svc_update_task(task.id, session_id=session_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a task without a session still runs
+                log.debug("assign_agent: session could not be created", exc_info=True)
                 session_id = None
 
         # Live mode: pre-register with "pending" so the task shows as pending (not awaiting_approval).
@@ -334,8 +339,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             if session_id:
                 try:
                     add_run_to_session(session_id, run_id)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - the session link is cosmetic, the assignment goes on
+                    log.debug("assign_agent_tool: best-effort step failed", exc_info=True)
 
         svc_assign_agent(task.id, agent_id, params, run_id=run_id)
         try:
@@ -346,8 +351,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                 reason=reason.strip() if reason else None,
                 workspace=getattr(task, "workspace", None),
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the routing log is cosmetic, the assignment goes on
+            log.debug("assign_agent_tool: best-effort step failed", exc_info=True)
         if agent_id == "code_reviewer":
             svc_update_task(task.id, status=TaskStatus.reviewing)
         if assignment_mode != "live":
@@ -373,7 +378,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             "task": _task_to_dict(updated) if updated else None,
             "agent": spec.to_dict(),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to assign agent: {e}")
 
 
@@ -581,7 +586,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
         _scope.__enter__()
         try:
             worker = create_agent(agent_id, workspace=ws_path, **model_params)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             _scope.__exit__(None, None, None)
             # Close the record here, or a build failure leaves it "running" forever.
             close_run(run_id, status="failed", exit_code=1, error=f"create_agent failed: {e}")
@@ -592,8 +597,8 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
             )
         try:
             update_run(run_id, {"provider": worker.provider or "", "model": worker.model or ""})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - run metadata is cosmetic, the worker still runs
+            log.debug("run_agent_tool: best-effort step failed", exc_info=True)
         # Seed the input context so the worker's system prompt is visible in the
         # dashboard while it runs (replaced by the full context at close).
         from managers.run_manager import seed_run_input_context
@@ -740,7 +745,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
             code="worker_failed",
             extra={"run_id": run_id, "agent_id": agent_id, "succeeded": False},
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to invoke agent: {e}")
 
 
@@ -776,7 +781,7 @@ def list_flows_tool() -> str:
                 "running": bool(f.get("running")),
             })
         return _json_ok({"flows": flows, "workspace": ws})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list flows: {e}")
 
 
@@ -885,7 +890,7 @@ def run_flow_tool(
         if create_task:
             payload["task_id"] = str(task.id)
         return _json_ok(payload)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to run flow: {e}")
 
 
@@ -962,8 +967,8 @@ def start_agent_tool(task_id: str) -> str:
             _start_session_id = getattr(task, "session_id", None)
             if _start_session_id:
                 add_run_to_session(_start_session_id, run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the session link is cosmetic, the start goes on
+            log.debug("start_agent_tool: best-effort step failed", exc_info=True)
         wait_for_completion = _get_wait_for_completion(_task_ws or ws)
 
         # Register a session continuation only in fire-and-forget mode.
@@ -982,8 +987,8 @@ def start_agent_tool(task_id: str) -> str:
                         workspace=_task_ws or None,
                         run_id=run_id,
                     )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a missing continuation only loses the auto resume
+            log.debug("start_agent_tool: best-effort step failed", exc_info=True)
         if execution_mode == "node":
             message = (
                 "Task queued for node execution. NEXT: call wait_for_agent_tool with task id to monitor."
@@ -1003,7 +1008,7 @@ def start_agent_tool(task_id: str) -> str:
             "execution_mode": execution_mode,
             "wait_for_completion": wait_for_completion,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to start agent: {e}")
 
 
@@ -1043,7 +1048,7 @@ def reject_assignment_tool(task_id: str) -> str:
             "message": f"Assignment rejected. Task returned to '{restore_status.value}' — you can assign a different agent.",
             "task": _task_to_dict(updated) if updated else None,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to reject assignment: {e}")
 
 
@@ -1072,8 +1077,8 @@ def stop_agent_tool(task_id: str) -> str:
                     assigned_agent_params=None,
                     assigned_agent_run_id=None,
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the stop already happened, the task record update is cosmetic
+                log.debug("stop_agent_tool: best-effort step failed", exc_info=True)
         updated = svc_get_task(task.id)
         status = run_manager.get_run_by_id(current_run_id) if current_run_id else None
         record_entity("task", str(task.id), "stopped", (task.title or "").strip())
@@ -1082,7 +1087,7 @@ def stop_agent_tool(task_id: str) -> str:
             "status": status,
             "task": _task_to_dict(updated) if updated else None,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to stop agent: {e}")
 
 
@@ -1096,7 +1101,8 @@ def _get_followup_mode(workspace: Optional[str]) -> str:
         from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace settings mean the default mode
+        log.debug("followup mode lookup failed", exc_info=True)
         return "single"
 
 
@@ -1106,7 +1112,8 @@ def _get_wait_for_completion(workspace: Optional[str]) -> bool:
         from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("wait_for_completion", False)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace settings mean the default mode
+        log.debug("wait_for_completion lookup failed", exc_info=True)
         return False
 
 
@@ -1116,7 +1123,8 @@ def _get_execution_mode(workspace: Optional[str]) -> str:
         from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace settings mean the default mode
+        log.debug("execution mode lookup failed", exc_info=True)
         return "subprocess"
 
 
@@ -1275,7 +1283,7 @@ def get_agent_status_tool(task_id: str) -> str:
             "followup_mode": _get_followup_mode(_task_ws or ws),
             "wait_for_completion": _wait_mode,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to get agent status: {e}")
 
 
@@ -1366,7 +1374,8 @@ def create_agent_tool(
             ws = resolve_active_workspace()
             if ws and ws != "default" and get_workspace_folder(ws):
                 active_ws = ws
-        except Exception:
+        except Exception:  # noqa: BLE001 - no usable workspace means the agent is created without one
+            log.debug("create_agent: active workspace lookup failed", exc_info=True)
             active_ws = None
 
         if parent_eff is not None:
@@ -1418,9 +1427,9 @@ def create_agent_tool(
                     allowed.append(agent_id)
                     update_workspace_metadata(active_ws, {"allowed_agents": allowed})
                 added_to_workspace = active_ws
-        except Exception:
+        except Exception:  # noqa: BLE001 - workspace association is optional, the agent itself is created
             # Workspace association is best-effort; the agent itself is created.
-            pass
+            log.debug("create_agent_tool: best-effort step failed", exc_info=True)
 
         record_entity("agent", agent_id, "created", name)
         payload = {"agent": spec.to_dict(), "message": f"Agent '{name}' created successfully"}
@@ -1430,7 +1439,7 @@ def create_agent_tool(
                 f"Agent '{name}' created and added to workspace '{added_to_workspace}'"
             )
         return _json_ok(payload)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create agent: {e}")
 
 
@@ -1486,7 +1495,7 @@ def get_agent_tool(agent_id: str) -> str:
         }
         record_entity("agent", agent_id, "viewed", spec.name or "")
         return _json_ok({"agent": spec.to_dict(), "definition": definition})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to get agent: {e}")
 
 
@@ -1622,7 +1631,7 @@ def modify_agent_tool(
             "changed": sorted(set(changed)),
             "message": f"Agent '{agent_id}' modified successfully",
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to modify agent: {e}")
 
 
@@ -1651,7 +1660,7 @@ def delete_agent_tool(agent_id: str) -> str:
         from agents import prompt_assembly
         prompt_assembly.delete_definition(agent_id)
         return _json_ok({"message": f"Agent '{agent_id}' deleted successfully", "agent_id": agent_id})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to delete agent: {e}")
 
 

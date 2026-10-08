@@ -383,8 +383,8 @@ class AgentFactory:
                         resolved_model = _eff.get(_mf) or resolved_model
                     if not resolved_base_url and _uf and _uf in _ws_raw_overrides:
                         resolved_base_url = _eff.get(_uf) or resolved_base_url
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
+                log.debug("_resolve_model_config: ignored error", exc_info=True)
 
         # Final fallback: global settings / .env.
         # Read .env directly so node subprocesses pick up provider changes made via the UI
@@ -402,8 +402,8 @@ class AgentFactory:
                             continue
                         _ek, _, _ev = _ln.partition("=")
                         _file_env[_ek.strip()] = _ev.strip().strip('"\'')
-                except Exception:
-                    pass
+                except (OSError, ValueError):
+                    log.debug("_resolve_model_config: ignored error", exc_info=True)
             resolved_provider = (
                 _os.environ.get("DEFAULT_PROVIDER")
                 or _file_env.get("DEFAULT_PROVIDER")
@@ -803,7 +803,7 @@ class AgentFactory:
                 return None
             spec = _validate_agent_dict(entry["spec"])
             return spec, self._definition_from_snapshot(spec, entry.get("definition") or {})
-        except Exception:
+        except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
             log.warning("could not load version %s of agent '%s'; building the current definition",
                         version, agent_id, exc_info=True)
             return None
@@ -975,8 +975,8 @@ class AgentFactory:
                 else:
                     from memory.procedural import inject_skills_catalog as _inject_catalog
                     config["system_prompt"] = _inject_catalog(agent_id, ws_name, config.get("system_prompt", ""))
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
+                log.debug("_build_agent: ignored error", exc_info=True)
 
         # Prepend workspace-level instructions to the system prompt
         if ws_name:
@@ -990,8 +990,8 @@ class AgentFactory:
                         + "\n\n---\n\n"
                         + config.get("system_prompt", "")
                     )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
+                log.debug("_build_agent: ignored error", exc_info=True)
 
         # Create tools
         tool_list = config.get("tools", [])
@@ -1395,7 +1395,7 @@ def _experiment_pin(agent_id: str) -> Optional[Dict[str, Any]]:
     try:
         from evals.experiments import take_pin
         return take_pin(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
         log.debug("experiment pin lookup failed for '%s'", agent_id, exc_info=True)
         return None
 
@@ -1404,7 +1404,7 @@ def _record_experiment_assignment(pin: Dict[str, Any]) -> None:
     try:
         from evals.experiments import record_assignment
         record_assignment(pin)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
         log.debug("experiment assignment not recorded", exc_info=True)
 
 

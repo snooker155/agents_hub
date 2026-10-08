@@ -161,7 +161,7 @@ def list_evals_tool(workspace: Optional[str] = None) -> str:
         from evals import store
         ws = workspace or resolve_active_workspace()
         return _json_ok({"eval_sets": [_summary(e) for e in store.list_eval_sets(ws)]})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list eval sets: {e}", code="internal")
 
 
@@ -177,7 +177,7 @@ def get_eval_tool(eval_set_id: str) -> str:
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         return _json_ok({"eval_set": evalset.to_dict()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read the eval set: {e}", code="internal")
 
 
@@ -199,7 +199,7 @@ def list_graders_tool() -> str:
             ],
             "note": "Prefer a deterministic grader when the question allows one.",
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list graders: {e}", code="internal")
 
 
@@ -248,7 +248,7 @@ def create_eval_tool(name: str, description: str = "", agent_id: Optional[str] =
                          "next": "Add cases with add_eval_case_tool."})
     except ValueError as e:
         return _json_err(str(e), code="invalid")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create the eval set: {e}", code="internal")
 
 
@@ -298,7 +298,7 @@ def modify_eval_tool(eval_set_id: str, name: Optional[str] = None,
         return _json_ok({"eval_set": _summary(store.save_eval_set(evalset))})
     except ValueError as e:
         return _json_err(str(e), code="invalid")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to modify the eval set: {e}", code="internal")
 
 
@@ -355,7 +355,7 @@ def add_eval_case_tool(eval_set_id: str, input: str, expected: Optional[str] = N
         return _json_ok({"case_id": case.case_id, "eval_set": _summary(evalset)})
     except ValueError as e:
         return _json_err(str(e), code="invalid")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to add the case: {e}", code="internal")
 
 
@@ -375,7 +375,7 @@ def remove_eval_case_tool(eval_set_id: str, case_id: str) -> str:
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         return _json_ok({"eval_set": _summary(evalset)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to remove the case: {e}", code="internal")
 
 
@@ -425,7 +425,7 @@ def estimate_eval_tool(eval_set_id: str,
         if refused:
             return _json_err(refused, code="not_found")
         return _json_ok({"estimate": project_cost(evalset, resolved)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to estimate the sweep: {e}", code="internal")
 
 
@@ -519,7 +519,7 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
         return _json_ok(payload)
     except ValueError as e:
         return _json_err(str(e), code="invalid")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"The eval run failed: {e}", code="internal")
 
 
@@ -546,7 +546,7 @@ def list_eval_runs_tool(eval_set_id: Optional[str] = None, limit: int = 20) -> s
         runs = [r for r in store.list_eval_runs(eval_set_id, min(limit * 10, 1000))
                 if not _run_hidden(r)][:limit]
         return _json_ok({"eval_runs": [r.to_dict() for r in runs]})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list eval runs: {e}", code="internal")
 
 
@@ -574,7 +574,7 @@ def get_eval_run_tool(eval_run_id: str) -> str:
             "cases": [c.to_dict() for c in (evalset.cases if evalset else [])],
             "matrix": store.build_matrix(eval_run_id),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read the eval run: {e}", code="internal")
 
 

@@ -252,7 +252,7 @@ class WebCall:
     def scan(self, text: str, *, where: str = "response") -> "WebCall":
         try:
             self.data["flags"].extend(scan_content(text, where=where))
-        except Exception as e:  # a heuristic must never break a web call
+        except Exception as e:  # noqa: BLE001 - a heuristic must never break a web call
             log.debug("web_log scan failed: %s", e)
         return self
 
@@ -267,7 +267,7 @@ class WebCall:
             if not self.data["body"]:
                 self.data["body"] = returned or ""
             append(self.data)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - logging must never break a web call
             log.debug("web_log append failed: %s", e)
         return returned
 
@@ -280,15 +280,15 @@ def _caller_context() -> Dict[str, Any]:
     try:
         from common.workspace_context import resolve_active_workspace
         ctx["workspace"] = resolve_active_workspace()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a missing workspace only leaves the log entry untagged
+        log.debug("_caller_context: best-effort step failed", exc_info=True)
     try:
         from common.agent_context import current_agent_id, current_session_id, current_task_id
         ctx["agent_id"] = current_agent_id.get()
         ctx["session_id"] = current_session_id.get()
         ctx["task_id"] = current_task_id.get()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - missing agent context only leaves the log entry untagged
+        log.debug("_caller_context: best-effort step failed", exc_info=True)
     return ctx
 
 
@@ -302,7 +302,8 @@ def _config() -> tuple:
             int(settings.web_log_max_entries),
             int(settings.web_log_body_chars),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable settings fall back to the defaults
+        log.debug("web log settings unreadable", exc_info=True)
         return True, 2000, 20_000
 
 
@@ -330,7 +331,7 @@ def _ensure_legacy_imported() -> None:
         return
     try:
         text = WEB_LOG_FILE.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return
     docs: Dict[str, Any] = {}
     for line in text.splitlines():
@@ -339,7 +340,7 @@ def _ensure_legacy_imported() -> None:
             continue
         try:
             obj = json.loads(line)
-        except Exception:
+        except ValueError:
             continue
         if isinstance(obj, dict) and obj.get("id"):
             docs[str(obj["id"])] = obj
@@ -474,7 +475,7 @@ def clear() -> int:
     _ensure_legacy_imported()
     try:
         return _store.clear()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a failed clear reports zero removed instead of raising
         log.warning("web_log clear failed: %s", e)
         return 0
 

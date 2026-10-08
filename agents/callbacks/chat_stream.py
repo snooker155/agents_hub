@@ -79,8 +79,8 @@ def _now() -> str:
 def write_log(log_file: Path, lines: list[str]) -> None:
     try:
         log_file.write_text("\n".join(lines), encoding="utf-8")
-    except Exception:
-        pass
+    except (OSError, ValueError):
+        log.debug("write_log: ignored error", exc_info=True)
 
 
 def append_log(log_lines: list[str], line: str, log_file: Path) -> None:
@@ -106,7 +106,8 @@ def format_tool_payload(value) -> str:
     if isinstance(value, (dict, list, tuple)):
         try:
             return _compact(value)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a value that cannot be serialised falls back to str()
+            log.debug("_compact: ignored error", exc_info=True)
             return str(value)
     text = str(value)
     stripped = text.strip()
@@ -117,7 +118,8 @@ def format_tool_payload(value) -> str:
         for parser in (json.loads, ast.literal_eval):
             try:
                 return _compact(parser(stripped))
-            except Exception:
+            except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+                log.debug("_compact: ignored error", exc_info=True)
                 continue
     return text
 
@@ -141,7 +143,8 @@ def extract_reasoning_text(value) -> str:
                 try:
                     obj = parser(stripped)
                     break
-                except Exception:
+                except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+                    log.debug("extract_reasoning_text: ignored error", exc_info=True)
                     continue
     if isinstance(obj, dict):
         for key in ("thought", "plan", "content", "text", "input"):
@@ -372,8 +375,8 @@ class ChatStreamCallback(BaseCallbackHandler):
             try:
                 from common.session_broker import broker
                 broker.publish_threadsafe(self.session_id, payload)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a callback must never break the model run
+                log.debug("_emit: ignored error", exc_info=True)
 
     def emit_external(self, payload: dict) -> None:
         """Thread-safe entry point for forwarding an externally-produced event.
@@ -440,18 +443,21 @@ class ChatStreamCallback(BaseCallbackHandler):
         try:
             for batch in (messages or []):
                 flat.extend(batch or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             flat = []
         try:
             self._last_prompt_struct = build_prompt_struct(flat)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             self._last_prompt_struct = {}
         try:
             self._last_prompt_text = "\n".join(
                 f"{it['role']}: {it['content']}"
                 for it in (message_to_role_content(m) for m in flat)
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             self._last_prompt_text = ""
         self._llm_started(model_name)
 
@@ -464,7 +470,8 @@ class ChatStreamCallback(BaseCallbackHandler):
                 self._last_prompt_text = "\n".join(str(p) for p in prompts if p is not None)
             else:
                 self._last_prompt_text = str(prompts or "")
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_llm_start: ignored error", exc_info=True)
             self._last_prompt_text = ""
         self._last_prompt_struct = {
             "system_prompt": "",
@@ -568,7 +575,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         try:
             from providers.context_windows import get_model_context_window
             self.context_window = int(get_model_context_window(provider or "", model or ""))
-        except Exception:
+        except Exception:  # noqa: BLE001 - an unknown context window means no meter this run
+            log.debug("bind_model: ignored error", exc_info=True)
             self.context_window = 0
 
     def context_usage(self) -> dict:
@@ -593,14 +601,15 @@ class ChatStreamCallback(BaseCallbackHandler):
                 "generations": to_json_safe(getattr(response, "generations", None)),
             }
             self.llm_invoke_responses.append(raw_payload)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
         # Flush the think-tag stream filter: an unclosed <think> becomes
         # reasoning; a leftover partial tag that never completed is plain text.
         try:
             leftover_visible, leftover_reasoning = self._think_filter.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_llm_end: ignored error", exc_info=True)
             leftover_visible, leftover_reasoning = "", ""
         if leftover_visible and not self.cancelled:
             if not self._answer_started:
@@ -628,7 +637,8 @@ class ChatStreamCallback(BaseCallbackHandler):
             try:
                 from reasoning.native_reasoning import extract_reasoning_from_llm_result
                 native = extract_reasoning_from_llm_result(response)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a callback must never break the model run
+                log.debug("on_llm_end: ignored error", exc_info=True)
                 native = ""
             if native:
                 self._emit_native_reasoning(native)
@@ -636,7 +646,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         usage = {}
         try:
             usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {}) or {}
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_llm_end: ignored error", exc_info=True)
             usage = {}
 
         if not usage:
@@ -651,7 +662,8 @@ class ChatStreamCallback(BaseCallbackHandler):
                             break
                     if usage:
                         break
-            except Exception:
+            except Exception:  # noqa: BLE001 - a callback must never break the model run
+                log.debug("on_llm_end: ignored error", exc_info=True)
                 usage = {}
 
         if not usage:
@@ -672,7 +684,8 @@ class ChatStreamCallback(BaseCallbackHandler):
                             break
                     if usage:
                         break
-            except Exception:
+            except Exception:  # noqa: BLE001 - a callback must never break the model run
+                log.debug("on_llm_end: ignored error", exc_info=True)
                 usage = {}
 
         p = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
@@ -736,8 +749,8 @@ class ChatStreamCallback(BaseCallbackHandler):
                     "total_tokens": t,
                 },
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         self._abort_if_cancelled()
@@ -849,7 +862,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         """
         try:
             artifact = build_artifact(op, path, before, after)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
+            log.debug("record_artifact: ignored error", exc_info=True)
             return
         self.artifact_history.append(artifact)
         line = f"[artifact] op={op} path={path} +{artifact.get('additions', 0)} -{artifact.get('deletions', 0)}"
@@ -877,14 +891,14 @@ class FileStatsCallback(StatsCollectorCallback):
     def write(self, line: str) -> None:
         try:
             self._f.write(line + "\n")
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            log.debug("write: ignored error", exc_info=True)
 
     def close(self) -> None:
         try:
             self._f.close()
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            log.debug("close: ignored error", exc_info=True)
 
     # -- emit hooks: route the base class's markers into the file --
     def _emit_thinking(self, line: str) -> None:
@@ -955,9 +969,9 @@ class DelegationStreamCallback(BaseCallbackHandler):
         event.update(payload)
         try:
             self._emit(event)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model run
             # Best-effort: a broken stream must not break the delegated run.
-            pass
+            log.debug("_send: ignored error", exc_info=True)
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         self._step += 1

@@ -143,7 +143,8 @@ def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
         meta_hooks = get_workspace_metadata(ws).get("hooks")
         if isinstance(meta_hooks, dict):
             raw = meta_hooks
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing workspace lookup falls back to no hooks
+        logger.debug("load_hooks: ignored error", exc_info=True)
         raw = None
     if not isinstance(raw, dict):
         if ignored_hooks_file(ws) is not None:
@@ -249,7 +250,8 @@ def _hook_cwd(workspace: Any) -> Optional[str]:
         from workspace import get_workspace_folder
         folder = get_workspace_folder(name)
         return str(folder) if folder else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing workspace lookup falls back to no hooks
+        logger.debug("_hook_cwd: ignored error", exc_info=True)
         return None
 
 
@@ -444,7 +446,7 @@ def _current_task_id() -> str:
         if tid:
             return str(tid)
     except Exception:  # noqa: BLE001 - no agent context module: the env still names it
-        pass
+        logger.debug("_current_task_id: ignored error", exc_info=True)
     return str(os.environ.get("AGENT_TASK_ID") or "")
 
 

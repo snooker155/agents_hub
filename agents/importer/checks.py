@@ -12,6 +12,7 @@ correctly configured, merely idle.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agents.importer.manifest import AgentManifest, MANIFEST_FILENAMES, SUPPORTED_RUNTIME_KINDS
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,7 +101,8 @@ def _workspace_env(workspace: Optional[str]) -> Dict[str, str]:
     try:
         from workspace import get_workspace_metadata
         meta = get_workspace_metadata(name) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable workspace means no env vars
+        log.debug("_workspace_env: ignored error", exc_info=True)
         return {}
     env = meta.get("env_vars")
     return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}

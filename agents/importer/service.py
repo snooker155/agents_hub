@@ -22,6 +22,7 @@ through the unchanged ``create_agent`` path (see :mod:`agents.remote_agent`).
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,8 @@ from agents import prompt_assembly, registry
 from agents.importer import a2a_import, checks, clone
 from agents.importer.manifest import AgentManifest, parse_manifest
 from agents.remote_agent import DEFAULT_HEALTH_PATH, DEFAULT_RUN_PATH, RemoteAgent, normalize_base_url
+
+log = logging.getLogger(__name__)
 
 # ``entrypoint`` is required on every registry record and must be an importable
 # "module:attr". For remote agents it documents the adapter that will run them
@@ -677,9 +680,9 @@ def _add_to_workspace(workspace: str, agent_id: str) -> None:
         if agent_id not in allowed:
             allowed.append(agent_id)
             update_workspace_metadata(workspace, {"allowed_agents": allowed})
-    except Exception:
+    except Exception:  # noqa: BLE001 - granting workspace access is best effort, the agent is already registered
         # Best effort: the agent itself is registered and owner_workspace is set.
-        pass
+        log.debug("_add_to_workspace: ignored error", exc_info=True)
 
 
 def recheck(agent_id: str, *, url: Optional[str] = None, workspace: Optional[str] = None) -> Dict[str, Any]:

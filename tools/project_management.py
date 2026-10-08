@@ -14,6 +14,7 @@ finished the job.
 """
 from __future__ import annotations
 
+import logging
 import json
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,8 @@ from common.workspace_context import (
 )
 from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
 from tools._json import json_err as _json_err, json_ok as _json_ok
+
+log = logging.getLogger(__name__)
 
 
 def _coerce_json(v: Any) -> Any:
@@ -399,8 +402,8 @@ def _delete_project(project_id: str) -> str:
         from common.paths import PROJECT_GRAPHS_FILE
         from projects.graph_store import ProjectGraphStore
         ProjectGraphStore(path=PROJECT_GRAPHS_FILE).delete_project(project_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - orphaned graph data must not fail the project delete
+        log.debug("_delete_project: best-effort step failed", exc_info=True)
 
     return _json_ok({
         "message": f"Project '{project.name}' deleted successfully (its folder on disk was kept)",

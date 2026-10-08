@@ -113,7 +113,7 @@ def _loads(raw: Any, default: Any) -> Any:
     for parser in (json.loads, ast.literal_eval):
         try:
             return parser(text)
-        except Exception:
+        except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
             continue
     return default
 
@@ -228,7 +228,7 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
             )
         except ViewValidationError as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-        except Exception as exc:  # never crash the agent turn on a view failure
+        except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"could not create view: {exc}"}, ensure_ascii=False)
 
         record_entity("view", env.view_id, "created", env.title)
@@ -273,7 +273,7 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
             ref = _add_asset(vid, str(src), Path(rel).name)
         except KeyError:
             return json.dumps({"ok": False, "error": f"view not found: {vid}"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"could not add asset: {exc}"}, ensure_ascii=False)
         record_entity("view", vid, "updated")
         return json.dumps({"ok": True, "view_id": vid, "asset": ref}, ensure_ascii=False)
@@ -405,7 +405,7 @@ def _apply(view_id: str, ops: list) -> str:
         return json.dumps({"ok": False, "error": f"view not found: {view_id}"})
     except OpError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
         return json.dumps({"ok": False, "error": f"could not apply ops: {exc}"}, ensure_ascii=False)
     record_entity("view", view_id, "updated")
     return json.dumps({"ok": True, "view_id": view_id, "applied": len(stored),

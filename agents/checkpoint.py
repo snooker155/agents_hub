@@ -65,7 +65,8 @@ def _text(value: Any) -> str:
         return value
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
+    except (TypeError, ValueError):
+        log.debug("_text: ignored error", exc_info=True)
         return str(value)
 
 
@@ -87,8 +88,8 @@ def _tool_args(input_str: Any, inputs: Optional[Dict[str, Any]]) -> Dict[str, An
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
-    except Exception:
-        pass
+    except ValueError:
+        log.debug("_tool_args: ignored error", exc_info=True)
     return {"input": text}
 
 
@@ -144,8 +145,8 @@ class RunCheckpointCallback(BaseCallbackHandler):
             self.prompt_tokens += int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             self.completion_tokens += int(
                 usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - checkpointing must never break the run it protects
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
     # ── the checkpoint ───────────────────────────────────────────────────────
 
@@ -187,7 +188,7 @@ class RunCheckpointCallback(BaseCallbackHandler):
         try:
             self._save(self.run_id, self.snapshot())
             self.writes += 1
-        except Exception:
+        except Exception:  # noqa: BLE001 - checkpointing must never break the run it protects
             log.debug("checkpoint write failed for run %s", self.run_id, exc_info=True)
 
 
@@ -214,7 +215,8 @@ def clear_checkpoint(run_id: str) -> None:
 def is_idempotent(tool: str) -> bool:
     try:
         from tools.capabilities import NON_IDEMPOTENT_TOOLS
-    except Exception:
+    except Exception:  # noqa: BLE001 - checkpointing must never break the run it protects
+        log.debug("is_idempotent: ignored error", exc_info=True)
         return False
     return tool not in NON_IDEMPOTENT_TOOLS and not tool.startswith("mcp__")
 
@@ -269,7 +271,8 @@ def elapsed_since(checkpoint: Dict[str, Any]) -> Optional[float]:
         from datetime import datetime
         saved = datetime.fromisoformat(str(checkpoint.get("saved_at")))
         return time.time() - saved.timestamp()
-    except Exception:
+    except (ValueError, TypeError, OverflowError, OSError):
+        log.debug("elapsed_since: ignored error", exc_info=True)
         return None
 
 

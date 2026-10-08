@@ -13,6 +13,7 @@ only chooses which *view* to read.
 """
 from __future__ import annotations
 
+import logging
 import json
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,8 @@ from langchain_core.tools import tool
 
 from common.entity_sink import record_entity
 from common.workspace_context import resolve_active_project
+
+log = logging.getLogger(__name__)
 
 
 class GetProjectGraphInput(BaseModel):
@@ -41,7 +44,8 @@ def _resolve_root(project) -> Optional[Any]:
             return None
         cand = (ws / project_folder_name(project.name)).resolve()
         return cand if cand.exists() else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unresolvable project folder means no on-disk graph
+        log.debug("project root lookup failed", exc_info=True)
         return None
 
 
@@ -76,13 +80,15 @@ def _load_graph(project_id: str, view: str) -> Optional[Dict[str, Any]]:
         try:
             from tasks import service as tasks_service
             tasks = [t for t in tasks_service.list_tasks() if t.project_id == project_id]
-        except Exception:
+        except Exception:  # noqa: BLE001 - a graph without task links is still returned
+            log.debug("project tasks lookup failed", exc_info=True)
             tasks = None
     try:
         graph = build_project_graph(project, view, _resolve_root(project), tasks)
         graph["source"] = "auto"
         return graph
-    except Exception:
+    except Exception:  # noqa: BLE001 - a graph that cannot be built reads as absent
+        log.debug("project graph build failed", exc_info=True)
         return None
 
 

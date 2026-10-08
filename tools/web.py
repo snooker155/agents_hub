@@ -82,7 +82,8 @@ def _workspace_web_settings(workspace: Optional[str] = None) -> Dict[str, Any]:
             return {}
         from workspace import get_workspace_metadata
         return dict((get_workspace_metadata(ws).get("settings") or {}))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace settings mean no per-workspace web policy
+        log.debug("workspace web settings unreadable", exc_info=True)
         return {}
 
 
@@ -270,7 +271,7 @@ def validate_url(url: str) -> Tuple[bool, str]:
     inherited from the URL the agent typed."""
     try:
         parsed = urlparse(str(url).strip())
-    except Exception:
+    except ValueError:
         return False, "malformed URL"
     if parsed.scheme not in ("http", "https"):
         return False, _BLOCKED_SCHEMES_MSG
@@ -341,7 +342,8 @@ def html_to_text(
 
     try:
         soup = BeautifulSoup(html, "html.parser")
-    except Exception:
+    except Exception:  # noqa: BLE001 - any parser failure falls back to plain tag stripping
+        log.debug("html parse failed, stripping tags", exc_info=True)
         return _strip_tags_fallback(html)
 
     hidden_chunks: List[str] = []
@@ -352,7 +354,8 @@ def html_to_text(
             return
         try:
             text = _collapse(tag.get_text(" "))
-        except Exception:
+        except Exception:  # noqa: BLE001 - a node whose text cannot be read is skipped
+            log.debug("hidden node text unreadable", exc_info=True)
             return
         if text:
             hidden_chunks.append(text)
@@ -383,7 +386,8 @@ def html_to_text(
                 counts["hidden"] += 1
                 _capture(tag)
                 tag.decompose()
-        except Exception:
+        except Exception:  # noqa: BLE001 - one malformed node must not stop the scan of the rest
+            log.debug("hidden node scan failed", exc_info=True)
             continue
 
     if stats is not None:
@@ -428,8 +432,8 @@ def _annotate_links(soup, base_url: Optional[str]) -> int:
             if base_url:
                 try:
                     href = urljoin(base_url, href)
-                except Exception:
-                    pass
+                except ValueError:
+                    log.debug("_annotate_links: best-effort step failed", exc_info=True)
             if not href.lower().startswith(_LINK_SCHEMES):
                 continue
             text = _collapse(a.get_text(" "))
@@ -441,7 +445,8 @@ def _annotate_links(soup, base_url: Optional[str]) -> int:
             seen.add(href)
             a.append(f" <{href}>")
             annotated += 1
-        except Exception:
+        except Exception:  # noqa: BLE001 - one malformed link must not stop annotating the rest
+            log.debug("link annotation failed", exc_info=True)
             continue
     return annotated
 
@@ -715,7 +720,7 @@ def run_search(query: str, count: Optional[int], call: Any, *,
     else:
         try:
             results = _call_provider(provider, query, n, key, _fetch_limits()[1], include, exclude)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             log.warning("web_search failed (provider=%s): %s", provider, e)
             return call.set(status="error", error=f"{type(e).__name__}: {e}").finish(
                 f"web_search error: {type(e).__name__}: {e}")
@@ -846,7 +851,7 @@ def fetch_and_extract(url: str, max_chars: Optional[int], call: Any, *,
                 call.set(status="error", final_url=current, redirects=redirects,
                          error=f"too many redirects (limit {hops})")
                 return call.finish(f"fetch_url error: too many redirects (limit {hops})")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         log.warning("fetch_url failed for %s: %s", url, e)
         call.set(status="error", final_url=current, redirects=redirects,
                  error=f"{type(e).__name__}: {e}")
@@ -875,7 +880,7 @@ def fetch_and_extract(url: str, max_chars: Optional[int], call: Any, *,
     if content_type in ("application/json", "application/ld+json"):
         try:
             body = json.dumps(resp.json(), indent=2, ensure_ascii=False)
-        except Exception:
+        except ValueError:
             body = raw
     elif content_type.startswith("text/") and content_type != "text/html":
         body = _collapse(raw)

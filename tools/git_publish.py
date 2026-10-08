@@ -105,7 +105,7 @@ def _current_task_context() -> Optional[Dict[str, str]]:
     task_id = ""
     try:
         task_id = current_task_id.get() or ""
-    except Exception:
+    except LookupError:
         task_id = ""
     if not task_id:
         task_id = os.environ.get("AGENT_TASK_ID", "").strip()
