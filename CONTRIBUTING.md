@@ -67,21 +67,18 @@ cd dashboard/frontend
 npx eslint .                    # frontend code
 ```
 
-**Blind excepts (BLE001, S110):** `common/`, `managers/`, `notify/`, `a2a/`,
-`mcp_client/` and `workspace/` are clean of bare `except Exception` and
-`try/except/pass` and enforce both rules as errors (`pyproject.toml`'s
-`per-file-ignores`). Every other package still has unreviewed ones, so CI
-does not fail on those outright; instead `scripts/ci/ruff_baseline.py check`
-compares the current count per file and rule code against
-`scripts/ci/ruff_baseline.txt` and fails only when a file gets a *new* one.
-The rule: don't add a new blind except or a swallowed exception anywhere in
-the codebase. If you touch code that has one, narrow it (catch a specific
-exception, or add logging) rather than leave it or add another next to it.
-When you do narrow one, re-record the baseline so the count drops with it:
-
-```bash
-python scripts/ci/ruff_baseline.py record
-```
+**Blind excepts (BLE001, S110):** every package is clean of bare
+`except Exception` and `try/except/pass`, and ruff enforces both rules as
+errors everywhere. A broad except is allowed only when the block genuinely
+has to survive anything (a background loop, a best-effort step, a tool
+wrapper that hands the error back to the model); then it names the reason
+on the line (`except Exception:  # noqa: BLE001 - <what must keep working>`)
+and logs what it swallows, at least `log.debug(..., exc_info=True)`.
+Otherwise catch the exceptions the block can raise. CI also runs
+`scripts/ci/ruff_baseline.py check`, which compares the count per file
+against `scripts/ci/ruff_baseline.txt`; the baseline is empty and stays
+empty, so the step is a second guard against a `noqa`-less broad except
+slipping into a package ruff's config misses.
 
 **Types (pyright):** `pyrightconfig.json` lists the packages pyright checks in
 basic mode (`common/` today), and CI runs `pyright` on them. The same deal as

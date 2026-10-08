@@ -14,6 +14,9 @@ from models import AgentMemoryUpdate, AgentSkillsConfigUpdate, AgentEpisodicConf
 
 from ._common import (package, get_factory, _workspace_memory_overrides)
 from .listing import _workspace_capacity_overrides
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -229,7 +232,8 @@ async def get_agent_episodic_config(agent_id: str):
     from agents.agent_factory import resolve_episodic_write, _factory
     try:
         provider, _m, _u, _k = _factory._resolve_model_config(spec.to_dict(), None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("get_agent_episodic_config: falling back after a failure", exc_info=True)
         provider = spec.provider
     return {
         "episodic_write_enabled": spec.episodic_write_enabled,  # null = auto
@@ -249,7 +253,8 @@ async def update_agent_episodic_config(agent_id: str, data: AgentEpisodicConfigU
     from agents.agent_factory import resolve_episodic_write, _factory
     try:
         provider, _m, _u, _k = _factory._resolve_model_config(new_spec.to_dict(), None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("update_agent_episodic_config: falling back after a failure", exc_info=True)
         provider = new_spec.provider
     return {
         "episodic_write_enabled": new_spec.episodic_write_enabled,

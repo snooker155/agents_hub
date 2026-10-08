@@ -23,6 +23,9 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 # around one turn, shared in shape with the graph chat above.
 
 from chat import remote_agent as _remote_agent  # noqa: E402
+import logging
+
+log = logging.getLogger(__name__)
 
 _PLANNER_AGENT_ID = planner_service.PLANNER_AGENT_ID
 # Store key for the planner chat (its trace/messages/session live on the Tasks
@@ -109,7 +112,8 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
                 workspace=project.workspace,
                 agent_id=_PLANNER_AGENT_ID,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("emit: falling back after a failure", exc_info=True)
             session_id = None
         _open_run(run_id, _PLANNER_AGENT_ID, task_id=conv_id, session_id=session_id,
                   session_type="chat", message_origin="planner-chat", channel="chat",
@@ -138,7 +142,8 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
         # Snapshot the task count so we can report how many were created.
         try:
             before = len(_project_tasks_for(project_id) or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("emit: falling back after a failure", exc_info=True)
             before = 0
 
         # Recent conversation so multi-turn planning ("also split X", "reprioritise
@@ -228,7 +233,8 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
 
         try:
             after = len(_project_tasks_for(project_id) or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("emit: falling back after a failure", exc_info=True)
             after = before
         created = max(0, after - before)
 
@@ -302,8 +308,8 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
                 turn_items.append(item)
         try:
             _graph_store.append_trace(project_id, _TASKS_VIEW, turn_items)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("emit: best-effort step failed", exc_info=True)
 
     async def event_stream():
         queue = _RecordingQueue()

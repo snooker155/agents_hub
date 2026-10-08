@@ -23,6 +23,9 @@ from common import access, identity
 from common.paths import workspace_knowledge_dir
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/shared-memory", tags=["memory"])
@@ -78,8 +81,8 @@ def _unlink_graph_mirror(memory_id: UUID, node_type: str, name: str) -> None:
         node = gstore.get_node(node_type, name)
         if node is not None:
             gstore.delete_node(node.id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_unlink_graph_mirror: best-effort step failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +200,8 @@ def _bound_pools(workspace: Optional[str]) -> List[Dict[str, Any]]:
     try:
         spec = get_agent(MEMORY_AGENT_ID)
         pool_ids = effective_memory_pools(spec, workspace) if spec else []
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_bound_pools: falling back after a failure", exc_info=True)
         return []
     store = MemoryStore()
     out: List[Dict[str, Any]] = []
@@ -343,15 +347,15 @@ async def delete_shared_memory(memory_id: UUID, request: Request):
         lock_path = ep_path.with_suffix(ep_path.suffix + ".lock")
         if lock_path.exists():
             lock_path.unlink()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_shared_memory: best-effort step failed", exc_info=True)
 
     # And the pool's vectors: a deleted pool whose chunks stay in the store
     # keeps answering searches from a pool that no longer exists.
     try:
         delete_pool_vectors(str(memory_id))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_shared_memory: best-effort step failed", exc_info=True)
 
     # Same for the per-pool graph file.
     try:
@@ -362,8 +366,8 @@ async def delete_shared_memory(memory_id: UUID, request: Request):
         lock_path = g_path.with_suffix(g_path.suffix + ".lock")
         if lock_path.exists():
             lock_path.unlink()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_shared_memory: best-effort step failed", exc_info=True)
 
     return {"message": "Memory deleted"}
 

@@ -28,6 +28,9 @@ from workspace import (
     get_workspace_metadata,
     update_workspace_metadata,
 )
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/flows", tags=["flows"])
@@ -432,7 +435,7 @@ async def run_flow(flow_id: str, req: FlowRun):
             # front of whoever pressed Run, not only on the estimate endpoint.
             "estimated_cost": _safe_estimate(flow),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -440,7 +443,8 @@ def _safe_estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Price a flow, or return None. An estimate must never block a run."""
     try:
         return estimate_flow_cost(flow)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_safe_estimate: falling back after a failure", exc_info=True)
         return None
 
 
@@ -574,7 +578,7 @@ async def run_flow_node(flow_id: str, req: FlowRunNode):
             "session_id": session_id,
             "workspace": ws_name,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -620,8 +624,8 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
                 stopped = True
             except (ProcessLookupError, PermissionError, ValueError, TypeError):
                 pass
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("now: best-effort step failed", exc_info=True)
 
         # 3) Stop this instance's in-flight node runs (they carry flow_run_id).
         for r in all_runs:
@@ -644,8 +648,8 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
                 tasks_service.clear_agent(UUID(str(task_id)))
                 tasks_service.stop_task(UUID(str(task_id)))
                 stopped = True
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("now: best-effort step failed", exc_info=True)
 
         _append_flow_log({
             "timestamp": now(), "type": "flow_stopped",
@@ -846,7 +850,7 @@ async def generate_flow(data: FlowGenerateRequest):
             f"Requirement:\n{data.requirement}"
         )
         result = await asyncio.to_thread(agent.run, instruction)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=f"Flow generation failed: {e}")
 
     # The agent persists the flow itself; recover what it created from the

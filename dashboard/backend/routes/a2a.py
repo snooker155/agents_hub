@@ -36,6 +36,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from a2a import card as a2a_card
 from a2a import server as a2a
 from agents import registry
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["a2a"])
 
@@ -98,8 +101,8 @@ def _agent_version(agent_id: str) -> str:
         versions = list_versions(agent_id)
         if versions:
             return str(versions[-1].get("version") or "1")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_agent_version: best-effort step failed", exc_info=True)
     return "1"
 
 
@@ -107,7 +110,8 @@ def _token_required() -> bool:
     try:
         from common.config import settings
         return bool(settings.api_token)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_token_required: falling back after a failure", exc_info=True)
         return False
 
 
@@ -145,7 +149,8 @@ def _default_agent_id() -> Optional[str]:
     try:
         from workspace.storage import _default_chat_agent_id
         return _default_chat_agent_id()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_default_agent_id: falling back after a failure", exc_info=True)
         return None
 
 
@@ -209,7 +214,8 @@ def _latest_run(task_id: str) -> Dict[str, Any]:
 
     try:
         page = run_manager.query_runs(task_id=str(task_id), limit=1)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_latest_run: falling back after a failure", exc_info=True)
         return {}
     items = page.get("items") or []
     return items[0] if items else {}

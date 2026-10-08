@@ -13,6 +13,9 @@ from fastapi import APIRouter, HTTPException
 
 from tasks import service as tasks_service
 from workspace import project_folder_name
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -67,7 +70,7 @@ async def list_project_files(project_id: str):
                 files.append((Path(dirpath) / name).relative_to(root).as_posix())
             if truncated:
                 break
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
     from files import service as files_service
     prefix = project_folder_name(project.name) + "/"
@@ -142,7 +145,7 @@ async def get_project_file_content(project_id: str, path: Optional[str] = None, 
             f"Limit is {_MAX_PDF_PREVIEW_BYTES} bytes."))
     try:
         preview = await asyncio.to_thread(preview_path, target, max_chars=package()._PREVIEW_CHARS)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
     root = _project_root_path(store().get(project_id))
     return {"path": target.relative_to(root).as_posix(), "size": size, "content": preview["text"], "kind": preview["kind"],
@@ -227,7 +230,8 @@ def _detect_port_from_source(root: Path) -> Optional[int]:
     for py_file in list(root.rglob("*.py"))[:40]:
         try:
             text = py_file.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_detect_port_from_source: falling back after a failure", exc_info=True)
             continue
         for pat in patterns:
             m = pat.search(text)
@@ -258,8 +262,8 @@ async def get_spec_from_code(project_id: str):
                 spec = json.loads(candidate.read_text(encoding="utf-8"))
                 detected_port = _detect_port_from_source(root)
                 return {"spec": spec, "source": spec_file, "detected_port": detected_port}
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("get_spec_from_code: best-effort step failed", exc_info=True)
 
     # Strategy 2: dynamic import via subprocess
     python_exec = sys.executable
@@ -287,7 +291,7 @@ async def get_spec_from_code(project_id: str):
                 return {"spec": spec, "source": "dynamic_import", "detected_port": detected_port}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Timed out trying to import app")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
     stderr = result.stderr.strip() if result else ""

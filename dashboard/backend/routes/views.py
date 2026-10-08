@@ -75,6 +75,9 @@ from tools import run_code as run_code_tool
 
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/views", tags=["views"])
 
@@ -103,7 +106,8 @@ def _owner_entity_id(owner_kind: Optional[str], owner_id: Optional[str]) -> Opti
     try:
         from common import entity_runs
         rec = entity_runs.get(owner_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_owner_entity_id: falling back after a failure", exc_info=True)
         return None
     entity_id = (rec or {}).get("entity_id")
     return str(entity_id) if entity_id else None
@@ -453,7 +457,7 @@ async def save_snapshot(view_id: str, payload: SnapshotRequest):
         raw = raw.split(",", 1)[1]
     try:
         png = base64.b64decode(raw, validate=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=400, detail="Invalid image data")
     if not png:
         raise HTTPException(status_code=400, detail="Empty image")
@@ -519,7 +523,7 @@ async def view_proxy(view_id: str, path: str, request: Request):
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.request(request.method, target, params=dict(request.query_params),
                                         content=body, headers=fwd_headers)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=502, detail=f"Upstream error: {exc}")
     # strip hop-by-hop / framing headers that don't apply to the proxied response
     drop = {"content-encoding", "transfer-encoding", "connection", "content-length"}
@@ -770,7 +774,8 @@ def _workspace_path(workspace: Optional[str]) -> Optional[str]:
         from workspace import resolve_workspace_arg
         ws_path, _ = resolve_workspace_arg(workspace)
         return str(ws_path) if ws_path else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_workspace_path: falling back after a failure", exc_info=True)
         return None
 
 

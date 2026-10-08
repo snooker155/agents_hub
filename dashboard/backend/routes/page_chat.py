@@ -37,6 +37,9 @@ from pydantic import BaseModel
 
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+import logging
+
+log = logging.getLogger(__name__)
 
 # No prefix here: the one call site below (build_entity_chat_router's routes,
 # the whole of this module) supplies "/api/page-chat" itself, because its own
@@ -221,5 +224,6 @@ def _workspace_path(workspace: Optional[str]) -> Optional[str]:
         from workspace import resolve_workspace_arg
         ws_path, _ = resolve_workspace_arg(workspace)
         return str(ws_path) if ws_path else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_workspace_path: falling back after a failure", exc_info=True)
         return None

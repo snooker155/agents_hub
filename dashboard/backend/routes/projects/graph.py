@@ -10,6 +10,9 @@ from tasks import service as tasks_service
 from models import ProjectGraphSave, ProjectGraphChat
 from chat.errors import error_event as _error_event
 from chat.entity_chat import settle_tool_step
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -57,7 +60,7 @@ async def get_project_graph(project_id: str, view: str = Query("architecture")):
         graph = await asyncio.to_thread(build_project_graph, project, view, root, tasks)
         graph["source"] = "auto"
         return graph
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -112,7 +115,7 @@ async def generate_project_graph(project_id: str, view: str = Query("architectur
     tasks = _project_tasks_for(project_id) if view == "process" else None
     try:
         graph = await asyncio.to_thread(generate_graph_via_llm, project, view, root, tasks)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
     saved = _graph_store.save(project_id, view, graph["nodes"], graph["edges"],
@@ -207,8 +210,8 @@ class _RecordingQueue(asyncio.Queue):
         super()._put(item)
         try:
             self.recorded.append(item)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_put: best-effort step failed", exc_info=True)
 
 
 def _trace_item_for(ev: dict):
@@ -453,7 +456,8 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
                 workspace=project.workspace,
                 agent_id=_ARCHITECT_AGENT_ID,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("emit: falling back after a failure", exc_info=True)
             session_id = None
         _open_run(run_id, _ARCHITECT_AGENT_ID, task_id=conv_id, session_id=session_id,
                   session_type="chat", message_origin="architect-chat", channel="chat",
@@ -622,8 +626,8 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
                 turn_items.append(item)
         try:
             _graph_store.append_trace(project_id, view, turn_items)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("emit: best-effort step failed", exc_info=True)
 
     async def event_stream():
         queue = _RecordingQueue()
@@ -662,8 +666,8 @@ async def _run_turn_guarded(run_turn, queue: asyncio.Queue):
     except Exception as exc:  # noqa: BLE001 — last-resort so the stream still closes
         try:
             await queue.put({"type": "error", "source": "server", "error": str(exc)})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_run_turn_guarded: best-effort step failed", exc_info=True)
     finally:
         await queue.put(_STREAM_DONE)
 

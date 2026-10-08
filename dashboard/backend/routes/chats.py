@@ -230,8 +230,8 @@ async def _announce_save(chat_id: str, origin_client: Optional[str]) -> None:
         await broker.apublish(channel, {"type": "chat_saved", "chat_id": chat_id,
                                         "conversation_id": chat_id,
                                         "origin_client": origin_client})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_announce_save: best-effort step failed", exc_info=True)
 
 
 @router.delete("/{chat_id}")

@@ -41,6 +41,9 @@ from connectors.telegram.telegram_runner import TelegramAPI, service as tg_servi
 from connectors.telegram import bots as tg_bots
 from connectors.telegram import telegram_store
 from workspace import get_workspace_folder
+import logging
+
+log = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE = telegram_store.DEFAULT_WORKSPACE
 
@@ -131,7 +134,8 @@ def _flow_name(flow_id: str) -> Optional[str]:
         from flow import store as flow_store
         flow = flow_store.get_flow(flow_id)
         return flow.get("name") if flow else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_flow_name: falling back after a failure", exc_info=True)
         return None
 
 
@@ -181,7 +185,8 @@ def _enriched_binding(b: dict) -> dict:
     try:
         spec = registry.get_agent(b.get("agent_id") or "")
         out["agent_name"] = spec.name if spec else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_enriched_binding: falling back after a failure", exc_info=True)
         out["agent_name"] = None
     out["flow_name"] = _flow_name(b.get("flow_id") or "")
     return out
@@ -256,7 +261,7 @@ async def test_token(workspace: Optional[str] = None):
     try:
         me = await TelegramAPI(token).get_me()
         return {"ok": True, "bot": me}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         return {"ok": False, "error": str(exc)[:200]}
 
 
@@ -356,5 +361,5 @@ async def send_as_bot(data: SendRequest, workspace: Optional[str] = None):
     try:
         result = await TelegramAPI(token).send_message(int(data.chat_id), data.text)
         return {"ok": True, "result": result}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=502, detail=f"Telegram send failed: {exc}")

@@ -28,6 +28,9 @@ from loops.models import EVALUATOR_MODES, Loop
 from loops.runner import LoopResumeError, estimate_cost
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/loops", tags=["loops"])
 
@@ -253,8 +256,8 @@ async def delete_loop(loop_id: str):
     try:
         from common.entity_chat_store import entity_chat_store
         entity_chat_store().delete(LOOP_CHAT_KIND, loop_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_loop: best-effort step failed", exc_info=True)
     return {"ok": True}
 
 
@@ -319,7 +322,8 @@ def _flow_catalog(workspace: Optional[str]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     try:
         flows = flow_store.list_flows()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_flow_catalog: falling back after a failure", exc_info=True)
         return out
     for f in flows or []:
         if not isinstance(f, dict):

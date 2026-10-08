@@ -30,6 +30,9 @@ from workspace import (
 )
 from workspace import storage as _workspace_storage
 from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate, WorkspaceRoleUpdate
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -157,8 +160,8 @@ async def list_workspaces(request: Request):
         try:
             p = create_workspace_folder("default")
             roots = [p]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("list_workspaces: best-effort step failed", exc_info=True)
 
     # A person in multi mode gets their personal workspace the first time they
     # look (common/personal_workspace.py); listed first, as theirs.
@@ -226,7 +229,7 @@ async def create_workspace(payload: WorkspaceCreate):
         # Let live listeners (e.g. the header workspace picker) refresh their list.
         notify_change("workspaces")
         return {"name": p.name, "path": str(p)}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -333,13 +336,13 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
                     directories.append(rel)
                 elif p.is_file():
                     files.append(rel)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("list_workspace_files_by_name: best-effort step failed", exc_info=True)
         if pattern and pattern not in {"**/*", "*"}:
             import fnmatch
             files = [p for p in files if fnmatch.fnmatch(p, pattern)]
             directories = [p for p in directories if fnmatch.fnmatch(p, pattern)]
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
     from files import service as files_service
     known = files_service.folder_ids(name)
@@ -406,7 +409,7 @@ async def get_workspace_file_content(name: str, file_id: Optional[str] = None, p
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -414,14 +417,14 @@ def _extract_pdf_preview(candidate: Path) -> str:
     """Extract text from a PDF for dashboard preview."""
     try:
         from pypdf import PdfReader
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
         raise HTTPException(
             status_code=415,
             detail="PDF preview is unavailable (pypdf not installed on the server).",
         )
     try:
         reader = PdfReader(str(candidate))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {e}")
 
     pages = []
@@ -429,7 +432,8 @@ def _extract_pdf_preview(candidate: Path) -> str:
     for i, page in enumerate(reader.pages):
         try:
             text = (page.extract_text() or "").strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("_extract_pdf_preview: falling back after a failure", exc_info=True)
             text = ""
         if text:
             has_text = True
@@ -492,7 +496,7 @@ async def delete_workspace_file(name: str, file_id: Optional[str] = None, path: 
             raise HTTPException(status_code=400, detail="Path is neither a file nor a directory")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
     from files import service as files_service
@@ -535,7 +539,7 @@ async def upload_workspace_file(
         dest.parent.mkdir(parents=True, exist_ok=True)
         content = await file.read()
         dest.write_bytes(content)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
     rel = dest.relative_to(root).as_posix()
@@ -719,8 +723,8 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
     try:
         from common.logging_config import configure_logging_for_active_workspace
         configure_logging_for_active_workspace()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("update_workspace_settings_overrides: best-effort step failed", exc_info=True)
     out = {"overrides": cleaned}
     # A first key for a provider switches on one default model with its catalog
     # price (common/default_model.py); only the default workspace speaks for the hub's default.

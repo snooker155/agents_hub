@@ -8,6 +8,9 @@ from tasks import service as tasks_service
 from workspace import get_workspace_folder, resolve_project_root, project_folder_name
 from models import ProjectCreate, ProjectUpdate
 from projects.models import Project
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -59,8 +62,8 @@ async def create_project(payload: ProjectCreate):
     try:
         folder = project_folder_name(project.name)
         resolve_project_root(project.workspace, folder)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("create_project: best-effort step failed", exc_info=True)
 
     d = _project_to_dict(project)
     d["folder"] = project_folder_name(project.name)

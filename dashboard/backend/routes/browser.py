@@ -399,20 +399,20 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
                     await websocket.send_text(json.dumps({"type": "error", "detail": f"{type(exc).__name__}: {exc}"[:300]}))
                     await websocket.close(code=1011, reason="frame stream failed")
                 except Exception:  # noqa: BLE001 - the client may be gone already
-                    pass
+                    log.debug("_watch: best-effort step failed", exc_info=True)
         elif relay in done and not relay.cancelled():
             try:
                 await websocket.close(code=1000)
-            except Exception:  # noqa: BLE001 - same
-                pass
+            except Exception:  # noqa: BLE001 - the client may be gone already
+                log.debug("_watch: best-effort step failed", exc_info=True)
     finally:
         for task in (relay, watch):
             task.cancel()
         for task in (relay, watch):
             try:
                 await task
-            except BaseException:  # noqa: BLE001 - cancelled or already failed, both fine here
-                pass
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - a cancelled or already failed relay task is fine here
+                log.debug("_watch: best-effort step failed", exc_info=True)
 
 
 @router.post("/sessions/{session_id}/input")
@@ -490,7 +490,7 @@ async def handoff(session_id: str, body: HandoffBody, request: Request) -> Dict[
     try:
         from workspace import create_workspace_folder
         create_workspace_folder(workspace)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
         log.debug("could not ensure workspace folder %s", workspace, exc_info=True)
 
     first_line = (body.message.strip().splitlines() or [""])[0][:80]

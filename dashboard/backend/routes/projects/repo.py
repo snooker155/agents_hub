@@ -15,6 +15,9 @@ from projects.models import Project, RepoConfig
 from common.paths import PROJECT_ROOT, AGENTS_HUB_ROOT
 from projects import git_service, proxy_service
 from projects.errors import ServiceError
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -402,7 +405,8 @@ async def get_swagger_spec(project_id: str, base_url: Optional[str] = Query(None
                 resp = await client.get(f"{base}{spec_path}")
                 if resp.status_code == 200:
                     return resp.json()
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("get_swagger_spec: falling back after a failure", exc_info=True)
             continue
 
     raise HTTPException(status_code=502, detail="Could not fetch OpenAPI spec from backend")

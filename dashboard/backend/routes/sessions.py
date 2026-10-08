@@ -36,6 +36,9 @@ from common.session_service import (
     get_context_by_id as _get_context_by_id,
 )
 from models import SessionPage
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -53,7 +56,8 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
     try:
         return datetime.fromisoformat(ts)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_parse_iso: falling back after a failure", exc_info=True)
         return None
 
 
@@ -84,8 +88,8 @@ def _resolve_session_model(run: dict) -> str:
                     ymodel = data.get("model")
                     if isinstance(ymodel, str) and ymodel.strip():
                         return ymodel.strip()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("_resolve_session_model: best-effort step failed", exc_info=True)
 
     # Workspace default model
     workspace = run.get("workspace") or run.get("task_workspace")
@@ -105,8 +109,8 @@ def _resolve_session_model(run: dict) -> str:
                 ws_m = ws_dm.get("model", "")
                 if isinstance(ws_m, str) and ws_m.strip():
                     return ws_m.strip()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_resolve_session_model: best-effort step failed", exc_info=True)
 
     # Global settings fallback — use the actual configured model per provider
     provider = (run.get("provider") or "").lower().strip()
@@ -221,8 +225,8 @@ def _enrich_run(run: dict, tasks_by_id: dict) -> dict:
                 m = re.search(r"^Title\s*:\s*(?P<v>.+)$", txt, flags=re.MULTILINE)
                 if m:
                     run_title = (m.group("v") or "").strip()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("_enrich_run: best-effort step failed", exc_info=True)
         if not run_title:
             run_title = f"Chat {str(task_id)[:8]}"
     return {
@@ -443,8 +447,8 @@ async def delete_session(session_id: str, request: Request, delete_messages: boo
                     p = Path(log_file)
                     if p.exists():
                         p.unlink()
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                    log.debug("delete_session: best-effort step failed", exc_info=True)
             # delete_run also removes the structured payload row.
             if run_manager.delete_run(rid):
                 deleted_messages += 1
@@ -470,7 +474,7 @@ async def publish_session_event(session_id: str, request: Request):
     from common.session_broker import broker
     try:
         event = await request.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=400, detail="Invalid JSON body")
     if not isinstance(event, dict):
         raise HTTPException(status_code=400, detail="Event must be a JSON object")
@@ -502,7 +506,8 @@ def _parse_reasoning_line(line: str) -> Optional[dict]:
     raw = m.group("content")
     try:
         content = json.loads(raw)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_parse_reasoning_line: falling back after a failure", exc_info=True)
         content = raw
     return {"step": int(m.group("step")), "content": str(content), "native": True}
 
@@ -706,8 +711,8 @@ def _related_runs_for_session(run: dict) -> list:
                         cutoff = ts
             if cutoff:
                 rel = [r for r in rel if (r.get("started_at") or "") >= cutoff]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_related_runs_for_session: best-effort step failed", exc_info=True)
     if not rel:
         rel = [run]
     rel.sort(key=lambda r: r.get("started_at") or "")
@@ -778,7 +783,8 @@ def _extract_tools_from_progress(run: dict) -> list:
             return []
         payload = json.loads(progress_file.read_text(encoding="utf-8"))
         raw_steps = payload.get("steps", []) if isinstance(payload, dict) else []
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_extract_tools_from_progress: falling back after a failure", exc_info=True)
         return []
     started = _parse_iso(run.get("started_at"))
     finished = _parse_iso(run.get("finished_at")) or datetime.now(timezone.utc)

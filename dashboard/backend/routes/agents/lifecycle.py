@@ -16,6 +16,9 @@ from models import AgentCreateCustom, AgentCloneToWorkspace, AgentSharingUpdate
 
 from ._common import (package, get_factory)
 from .capabilities import _validated_handoff_history, _validated_handoffs
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -141,9 +144,9 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
             if data.id not in allowed:
                 allowed.append(data.id)
                 package().update_workspace_metadata(owner_workspace, {"allowed_agents": allowed})
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
             # Best-effort; the agent itself is created and owner_workspace is set.
-            pass
+            log.debug("create_custom_agent: best-effort step failed", exc_info=True)
 
     return spec.to_dict()
 
@@ -215,9 +218,9 @@ async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace):
             if new_id not in allowed:
                 allowed.append(new_id)
                 package().update_workspace_metadata(owner_workspace, {"allowed_agents": allowed})
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
             # Best-effort; the record itself is created and owner_workspace is set.
-            pass
+            log.debug("clone_agent_to_workspace: best-effort step failed", exc_info=True)
 
     return new_spec.to_dict()
 

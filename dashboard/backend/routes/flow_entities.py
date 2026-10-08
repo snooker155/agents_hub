@@ -13,6 +13,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from flow import registry as flow_registry
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/flow-entities", tags=["flow-entities"])
 
@@ -70,7 +73,7 @@ async def create_flow_entity(data: FlowEntityCreate):
             source="user",
         )
         flow_registry.add_user_entity(spec)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=400, detail=str(e))
     return spec.to_dict()
 

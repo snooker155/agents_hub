@@ -13,6 +13,9 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+import logging
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -261,7 +264,8 @@ class Embedder:
             return cached
         try:
             result = self.embed([text])
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("embed_one: falling back after a failure", exc_info=True)
             return None
         vector = result.vectors[0] if result.vectors else None
         if vector is not None:

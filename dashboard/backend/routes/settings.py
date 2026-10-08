@@ -25,6 +25,9 @@ from providers import (
     list_adapters,
     validate_backend_id,
 )
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -77,7 +80,8 @@ def _released_at(item: dict) -> int:
             from datetime import datetime
             text = str(value).replace("Z", "+00:00")
             return int(datetime.fromisoformat(text).timestamp())
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_released_at: falling back after a failure", exc_info=True)
             continue
     return 0
 
@@ -90,7 +94,8 @@ def _released_map(items: list, id_of) -> dict:
             continue
         try:
             mid = id_of(item)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_released_map: falling back after a failure", exc_info=True)
             continue
         ts = _released_at(item)
         if mid and ts:
@@ -498,8 +503,8 @@ async def update_settings(data: SettingsUpdate):
         try:
             from common.logging_config import configure_logging_for_active_workspace
             configure_logging_for_active_workspace()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("update_settings: best-effort step failed", exc_info=True)
     out = {"ok": True, "updated": list(updates.keys())}
     # A first key for a provider switches on one default model with its catalog
     # price, so the first run works without a trip to the Models page.
@@ -552,7 +557,7 @@ async def test_local_model(data: TestLocalModelRequest):
         return {"ok": False, "error": f"Could not connect to {base}. Is the server running?"}
     except httpx.TimeoutException:
         return {"ok": False, "error": "Connection timed out after 5 s."}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         return {"ok": False, "error": str(exc)}
 
 
@@ -690,8 +695,8 @@ async def test_provider(data: TestProviderRequest):
                             n = info.get(f"{arch}.context_length") if arch else None
                             if n:
                                 context_windows[name] = int(n)
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                            log.debug("_ollama_ctx: best-effort step failed", exc_info=True)
                     import asyncio as _asyncio
                     await _asyncio.gather(*(_ollama_ctx(n) for n in models[:20]))
                 else:
@@ -702,8 +707,8 @@ async def test_provider(data: TestProviderRequest):
                         for m in r.json().get("data", []):
                             if m.get("max_context_length"):
                                 context_windows[m["id"]] = int(m["max_context_length"])
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                        log.debug("_ollama_ctx: best-effort step failed", exc_info=True)
                 return {"ok": True, "models": models, "context_windows": context_windows,
                         # For a local server this is when the model was pulled,
                         # which is the closest thing it knows to a release date.
@@ -723,7 +728,7 @@ async def test_provider(data: TestProviderRequest):
         if exc.response.status_code == 403:
             return {"ok": False, "error": "Access denied (403 Forbidden)"}
         return {"ok": False, "error": f"HTTP {exc.response.status_code}"}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         return {"ok": False, "error": str(exc)[:200]}
 
 
@@ -828,6 +833,6 @@ async def set_active_workspace(data: WorkspaceContextUpdate):
     try:
         from common.logging_config import configure_logging_for_active_workspace
         configure_logging_for_active_workspace()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("set_active_workspace: best-effort step failed", exc_info=True)
     return {"workspace": ws}

@@ -24,6 +24,9 @@ from .vector_store import (
     upsert_pinecone,
     upsert_qdrant,
 )
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def get_rag_status() -> dict:
@@ -51,7 +54,8 @@ def _get_embeddings(chunks: List[str]) -> Tuple[EmbeddingResult | None, str]:
         if provider == "google":
             return embed_google(chunks, cfg.embedding_model, cfg.embedding_api_key), ""
         return None, f"Unknown embedding provider: {provider}"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
+        log.debug("_get_embeddings: falling back after a failure", exc_info=True)
         return None, f"Embedding error ({provider}): {exc}"
 
 
@@ -87,7 +91,8 @@ def _store_vectors(
         else:
             return {}, f"Unknown vector DB: {db}"
         return meta, ""
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
+        log.debug("_store_vectors: falling back after a failure", exc_info=True)
         return {}, f"Vector store error ({db}): {exc}"
 
 
@@ -140,7 +145,8 @@ def process_rag_with_progress(
             on_event({"type": "embedding_progress", "done": len(chunks), "total": len(chunks)})
         else:
             emb_err = f"Unknown embedding provider: {provider}"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
+        log.debug("process_rag_with_progress: falling back after a failure", exc_info=True)
         emb_err = f"Embedding error ({provider}): {exc}"
 
     if emb_err:
@@ -231,7 +237,8 @@ def _read_file_text(path: Path) -> Optional[str]:
     if suffix in _SUPPORTED_EXTENSIONS or suffix == "":
         try:
             return path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("_read_file_text: falling back after a failure", exc_info=True)
             return None
     return None
 
@@ -336,7 +343,8 @@ def delete_file_vectors(pool_id: str, filename: str) -> Tuple[bool, str, dict]:
             cfg.vector_db_api_key, file_id=file_id,
         )
         return True, "", meta
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
+        log.debug("delete_file_vectors: falling back after a failure", exc_info=True)
         return False, f"Vector delete error ({cfg.vector_db}): {exc}", {}
 
 
@@ -353,5 +361,6 @@ def delete_pool_vectors(pool_id: str) -> Tuple[bool, str, dict]:
             cfg.vector_db_api_key, pool_id=str(pool_id),
         )
         return True, "", meta
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
+        log.debug("delete_pool_vectors: falling back after a failure", exc_info=True)
         return False, f"Vector delete error ({cfg.vector_db}): {exc}", {}

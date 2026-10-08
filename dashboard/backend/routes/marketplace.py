@@ -20,6 +20,9 @@ from agents.agent_factory import get_factory
 from flow import store as flow_store
 from tools.registry import get_all_tools
 from workspace import is_system_agent, get_workspace_metadata
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
@@ -268,7 +271,8 @@ async def get_marketplace_agent(agent_id: str, workspace: Optional[str] = None):
             for p in store.load()
             if p.agent_id == agent_id
         ]
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("get_marketplace_agent: falling back after a failure", exc_info=True)
         skills = []
 
     return {
