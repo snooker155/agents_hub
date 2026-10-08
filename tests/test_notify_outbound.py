@@ -164,18 +164,26 @@ def test_worker_thread_delivers(monkeypatch):
 
 def test_dispatch_does_not_block_caller(monkeypatch):
     """A slow endpoint must not make dispatch() itself slow."""
-    import time as time_mod
+    import threading
+
+    # The post is held open until the test releases it, so "dispatch returned
+    # while the post was still in flight" is checked without a wall-clock
+    # bound (the first outbox write also builds the per-test schema, which
+    # under a loaded full run can take longer than any tight bound).
+    release = threading.Event()
+    finished = threading.Event()
 
     def _slow_post(url, data=None, headers=None, timeout=None):
-        time_mod.sleep(0.2)
+        release.wait(5)
+        finished.set()
         return _FakeResponse(200)
 
     monkeypatch.setattr(outbound.requests, "post", _slow_post)
 
     endpoint = {"id": "e4", "kind": "webhook", "url": "https://example.com/hook", "secret": "s"}
-    start = time_mod.monotonic()
-    outbound.dispatch(endpoint, _event())
-    elapsed = time_mod.monotonic() - start
-
-    assert elapsed < 0.1
-    outbound._queue.join()  # let the worker finish before the next test
+    try:
+        outbound.dispatch(endpoint, _event())
+        assert not finished.is_set()
+    finally:
+        release.set()
+        outbound._queue.join()  # let the worker finish before the next test
