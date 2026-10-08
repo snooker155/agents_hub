@@ -48,12 +48,15 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="LangGraph — Agents Hub adapter")
 
@@ -482,7 +485,8 @@ def _pending_interrupt(graph: Any, run_id: Optional[str]) -> Optional[Dict[str, 
         return None
     try:
         snapshot = graph.get_state({"configurable": {"thread_id": run_id}})
-    except Exception:
+    except Exception:  # noqa: BLE001 - checkpointer may raise anything, a missing question is acceptable
+        log.debug("pending question lookup failed", exc_info=True)
         return None
 
     interrupts = list(getattr(snapshot, "interrupts", None) or [])

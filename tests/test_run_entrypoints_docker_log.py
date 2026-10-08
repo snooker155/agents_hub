@@ -13,6 +13,7 @@ Run: ``python -m pytest tests/test_run_entrypoints_docker_log.py -q``
 """
 from __future__ import annotations
 
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -35,8 +36,8 @@ def _restore_std_streams(ar_module, orig_stdout, orig_stderr):
         if isinstance(current, ar_module._Tee):
             try:
                 current._log.close()
-            except Exception:
-                pass
+            except OSError:
+                logging.getLogger(__name__).debug("tee log close failed", exc_info=True)
         setattr(sys, name, orig)
 
 

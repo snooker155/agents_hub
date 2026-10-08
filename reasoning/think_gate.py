@@ -296,7 +296,7 @@ def make_reviewing_executor(executor, gate: ThinkGate):
         try:
             values = getattr(finish, "return_values", None) or {}
             return str(values.get("output", "") or "")
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return ""
 
     def _intercept(item):

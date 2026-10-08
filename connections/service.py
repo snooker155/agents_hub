@@ -41,6 +41,7 @@ different name.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -59,6 +60,8 @@ RATE_LIMIT_PER_MINUTE = 1200
 # How long an accumulator with no traffic is kept before it is dropped. A run
 # that goes quiet for this long has either finished elsewhere or died.
 IDLE_TTL_SECONDS = 3600
+
+log = logging.getLogger(__name__)
 
 
 class IngestError(Exception):
@@ -149,12 +152,12 @@ def _publish(session_id: str, event: Dict[str, Any]) -> None:
 
     try:
         live_runs.record_run_event(event, session_id=session_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - live tail is best effort, the run must go on
+        log.debug("live run event not recorded", exc_info=True)
     try:
         broker.publish_threadsafe(session_id, event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a broken subscriber channel must not fail ingest
+        log.debug("event not published", exc_info=True)
 
 
 def open_run(
@@ -253,7 +256,8 @@ def _conversation_of(run_id: str) -> Optional[str]:
         session_id = (previous or {}).get("session_id")
         context = get_context_by_id(str(session_id)) if session_id else None
         return str((context or {}).get("conversation_id") or "") or None
-    except Exception:
+    except Exception:  # noqa: BLE001 - lookup through other subsystems, absence is an acceptable answer
+        log.debug("conversation lookup failed for run %s", run_id, exc_info=True)
         return None
 
 
@@ -503,8 +507,8 @@ def _notify_question(connection: Dict[str, Any], run_id: str, pending: Dict[str,
             workspace=connection.get("workspace") or None,
             channels=["dashboard"],
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a missing notification must not fail ingest
+        log.warning("question notification not created", exc_info=True)
 
 
 def _utc_now_iso() -> str:

@@ -19,6 +19,7 @@ The suite runs against both database backends (docs/scaling.md):
 empty string, so a developer's ``.env`` can never route the suite at a real
 database.
 """
+import logging
 import os
 import tempfile
 import threading
@@ -271,7 +272,7 @@ def fresh_db(tmp_path, monkeypatch):
             if isinstance(thread, EntityHeartbeat):
                 thread.stop()
     except Exception:  # noqa: BLE001 - a teardown guard, never a failure of its own
-        pass
+        logging.getLogger(__name__).debug("heartbeat teardown failed", exc_info=True)
     # The same for the outbox drainer (notify/outbound.py): once a test starts
     # it, it polls the database for the rest of the session.
     # Only a live one: shutdown() joins the queue, which nothing would drain.

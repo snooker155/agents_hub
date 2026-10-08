@@ -24,6 +24,7 @@ an imported agent streams, so a pushed run and a pulled one render identically.
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import threading
 import time
@@ -38,6 +39,8 @@ except ImportError:  # pragma: no cover
 
 from agents_hub_langgraph.client import HubClient, Transport, warn_once
 from agents_hub_langgraph.topology import graph_topology
+
+logger = logging.getLogger("agents_hub_langgraph")
 
 MAX_FIELD = 4_000
 
@@ -63,8 +66,8 @@ def _flush_live_tracers() -> None:
     for tracer in list(_LIVE_TRACERS):
         try:
             tracer.flush(timeout=EXIT_FLUSH_TIMEOUT)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - exit hook must not raise, one tracer must not block the rest
+            logger.debug("flush at exit failed", exc_info=True)
 
 
 def _flush_at_exit(tracer: "HubTracer") -> None:
@@ -158,8 +161,8 @@ def _is_interrupt(error: Any) -> bool:
 
         if isinstance(error, GraphInterrupt):
             return True
-    except Exception:
-        pass
+    except ImportError:
+        logger.debug("langgraph.errors not importable, matching by name", exc_info=True)
     return type(error).__name__ in ("GraphInterrupt", "Interrupt", "NodeInterrupt")
 
 
@@ -176,7 +179,8 @@ def _pending_question(graph: Any, thread_id: Optional[str]) -> Optional[Dict[str
         return None
     try:
         snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
-    except Exception:
+    except Exception:  # noqa: BLE001 - checkpointer may raise anything, a missing question is acceptable
+        logger.debug("pending question lookup failed", exc_info=True)
         return None
 
     interrupts = list(getattr(snapshot, "interrupts", None) or [])
@@ -282,8 +286,8 @@ class HubTracer(BaseCallbackHandler):
             return
         try:
             self._on_error(exc)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - user error handler must never become a failure itself
+            logger.debug("on_error handler raised", exc_info=True)
 
     def flush(self, timeout: float = 5.0) -> bool:
         """Wait for everything queued to reach the hub."""

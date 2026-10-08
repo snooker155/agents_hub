@@ -10,7 +10,10 @@ the same whichever way it is attached.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+log = logging.getLogger(__name__)
 
 
 def graph_topology(graph: Any) -> Dict[str, Any]:
@@ -22,7 +25,8 @@ def graph_topology(graph: Any) -> Dict[str, Any]:
     """
     try:
         raw = graph.get_graph().to_json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - any object may be passed, absence of a shape is the answer
+        log.debug("graph topology unavailable", exc_info=True)
         return {"framework": "langgraph", "nodes": [], "edges": []}
 
     nodes = []

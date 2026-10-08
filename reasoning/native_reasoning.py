@@ -28,10 +28,13 @@ This module extracts that reasoning so the harness can:
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Callable, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
+
+log = logging.getLogger(__name__)
 
 
 # Inline reasoning markers used by LM Studio / open reasoning models.
@@ -138,7 +141,8 @@ def extract_reasoning_from_llm_result(response: Any) -> str:
                 text = extract_reasoning_from_message(getattr(g, "message", None))
                 if text:
                     parts.append(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 - duck-typed provider result of any shape; reasoning is optional
+        log.debug("reasoning extraction failed", exc_info=True)
         return ""
     return "\n\n".join(parts)
 
@@ -286,20 +290,21 @@ class NativeReasoningCallback(BaseCallbackHandler):
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         try:
             reasoning = extract_reasoning_from_llm_result(response)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a callback must never break the model call
+            log.debug("reasoning extraction failed", exc_info=True)
             return
         if not reasoning:
             return
         if self.gate is not None:
             try:
                 self.gate.note_think()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a callback must never break the model call
+                log.debug("gate.note_think failed", exc_info=True)
         if self.on_reasoning is not None:
             try:
                 self.on_reasoning(reasoning)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - user callback must never break the model call
+                log.debug("on_reasoning callback failed", exc_info=True)
 
 
 __all__ = [

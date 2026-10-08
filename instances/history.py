@@ -13,10 +13,13 @@ module turns that journal back into the alternating transcript that
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from common import db
 from managers.run_manager import get_run_process
+
+log = logging.getLogger(__name__)
 
 # Bounds mirror the chat prompt budget: the pipeline trims again, but there is
 # no reason to read a thousand payload rows to throw them away.
@@ -63,7 +66,8 @@ def _exchange(run: Dict[str, Any]) -> Tuple[str, str]:
     ctx: Dict[str, Any] = {}
     try:
         ctx = (get_run_process(run.get("run_id")) or {}).get("llm_input_context") or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - payload store may fail in any way, the run columns are the fallback
+        log.debug("no prompt context for run %s", run.get("run_id"), exc_info=True)
         ctx = {}
     user = str(ctx.get("user_message") or run.get("input") or "").strip()
     response = str(ctx.get("response") or run.get("output") or "").strip()
@@ -76,7 +80,8 @@ def _tool_summary(run_id: str) -> str:
     work, which is exactly the part the operator is asking about."""
     try:
         calls = (get_run_process(run_id) or {}).get("tool_calls") or []
-    except Exception:
+    except Exception:  # noqa: BLE001 - payload store may fail in any way, the summary is optional
+        log.debug("no tool calls for run %s", run_id, exc_info=True)
         return ""
     counts: Dict[str, int] = {}
     for call in calls:

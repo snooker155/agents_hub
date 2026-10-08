@@ -16,12 +16,15 @@ row back with its fields refreshed; nobody has to check first.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 from common import db
 from common.session_broker import notify_change, notify_delta
 from instances import store
+
+log = logging.getLogger(__name__)
 
 # Fields worth streaming on every change: enough for the list row to repaint
 # without refetching, small enough to send a thousand of them.
@@ -191,8 +194,8 @@ def mark_finished(instance_id: str, activity: Optional[str] = None
     if inst:
         try:
             store.enforce_retention(inst.get("workspace"))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - retention sweep is hygiene, finishing must not fail on it
+            log.debug("retention sweep failed", exc_info=True)
     return inst
 
 

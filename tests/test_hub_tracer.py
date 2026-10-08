@@ -14,6 +14,7 @@ inconvenient.
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -123,8 +124,8 @@ def close_tracers(monkeypatch):
     for tracer in created:
         try:
             tracer.close(timeout=2)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - fixture teardown must not fail a test
+            logging.getLogger(__name__).debug("tracer close failed", exc_info=True)
 
 
 @pytest.fixture

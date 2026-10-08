@@ -28,6 +28,7 @@ the hot path of every ingest call.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
+
+log = logging.getLogger(__name__)
 
 #: Legacy JSON file this collection was imported from (kept as a constant:
 #: other modules reference it, e.g. for display or cleanup).
@@ -266,8 +269,8 @@ def touch(connection_id: str) -> None:
     """
     try:
         _mutate(connection_id, {"last_seen": _utc_now_iso()})
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - heartbeat is best effort, never fails the ingest
+        log.debug("heartbeat for %s failed", connection_id, exc_info=True)
 
 
 def delete_connection(connection_id: str) -> bool:

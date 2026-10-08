@@ -49,7 +49,8 @@ def _ensure_legacy_imported() -> None:
     try:
         text = MODELS_FILE.read_text(encoding="utf-8")
         data = json.loads(text) if text.strip() else None
-    except Exception:
+    except (OSError, ValueError):
+        log.debug("legacy models file unreadable", exc_info=True)
         return
     if isinstance(data, dict):
         _store.import_legacy({_CATALOG_KEY: data}, MODELS_FILE)

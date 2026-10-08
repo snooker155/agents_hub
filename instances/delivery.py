@@ -19,11 +19,14 @@ instance page renders it live exactly like a chat.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict, Optional, Set
 
 from common.session_broker import broker
 from instances import inbox, store
 from instances.history import build_instance_history
+
+log = logging.getLogger(__name__)
 
 # Instances that run their own loop drain their own mailbox; delivering to them
 # from here would answer in the wrong process, with the wrong tools mounted.
@@ -221,6 +224,7 @@ async def drain_idle(limit: int = 50) -> int:
         try:
             await deliver(instance, str(message.get("body") or ""), msg_id=msg_id)
             delivered += 1
-        except Exception:
+        except Exception:  # noqa: BLE001 - one failed delivery is recorded on the message, the rest go on
+            log.warning("delivery of %s to %s failed", msg_id, instance.get("instance_id"), exc_info=True)
             await asyncio.to_thread(inbox.mark_error, msg_id, "delivery failed")
     return delivered

@@ -347,7 +347,7 @@ class JobRegistry:
             try:
                 self._docs().delete(job_id)
             except Exception:  # noqa: BLE001 - see _persist
-                pass
+                log.debug("could not delete job record %s", job_id, exc_info=True)
 
     # ── the list ─────────────────────────────────────────────────────────────
 
