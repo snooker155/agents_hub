@@ -64,7 +64,7 @@ def _read_memory_impl(
             "notes": [n["title"] for n in mem.notes],
             "kv_keys": [kv["key"] for kv in mem.kv_pairs],
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"read_memory failed: {e}"})
 
 
@@ -131,7 +131,7 @@ def _write_memory_impl(
             return json.dumps({"ok": True, "type": "kv", "key": kv_key})
 
         return json.dumps({"ok": False, "error": "Provide note_title or kv_key to write"})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"write_memory failed: {e}"})
 
 
@@ -217,7 +217,7 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
         if _cite_results(str(memory_id), mem, results):
             body["citations"] = CITE_INSTRUCTION
         return json.dumps(body, default=str)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"search_memory failed: {e}"})
 
 
@@ -266,7 +266,7 @@ def _read_structured_impl(memory_id: str, slot: Optional[str] = None) -> str:
         if data is None:
             return json.dumps({"ok": False, "error": f"Slot '{slot}' not found"})
         return json.dumps({"ok": True, "slot": slot, "data": data})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"read_structured_memory failed: {e}"})
 
 
@@ -323,7 +323,7 @@ def _write_structured_impl(memory_id: str, slot: str, data: dict, replace: bool 
             "added": [k for k in data.keys() if k not in existing_keys],
             "overwritten": [k for k in data.keys() if k in existing_keys],
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"write_structured_memory failed: {e}"})
 
 
@@ -394,7 +394,7 @@ def _append_journal_impl(
 
         _persist(store, mem)
         return json.dumps({"ok": True, "journal": title, "entries": existing["content"].count("\n\n---\n\n") + 1 if existing else 1})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
         return json.dumps({"ok": False, "error": f"append_journal failed: {e}"})
 
 
@@ -487,7 +487,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
             try:
                 m = MemoryStore().get(pid)
                 _pool_names[pid] = m.name if m else pid
-            except Exception:
+            except Exception:  # noqa: BLE001 - the pool name is cosmetic, fall back to the id
+                log.debug("pool name lookup failed", exc_info=True)
                 return pid
         return _pool_names[pid]
 

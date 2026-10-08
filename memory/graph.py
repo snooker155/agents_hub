@@ -103,7 +103,7 @@ class GraphStore:
         try:
             text = self.path.read_text(encoding="utf-8")
             data = json.loads(text) if text.strip() else {}
-        except Exception:
+        except (OSError, ValueError):
             return
         if not isinstance(data, dict):
             return
@@ -137,7 +137,7 @@ class GraphStore:
         for obj in raw:
             try:
                 out.append(Node(**obj))
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return out
 
@@ -147,7 +147,7 @@ class GraphStore:
         for obj in raw:
             try:
                 out.append(Edge(**obj))
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return out
 
@@ -464,9 +464,9 @@ def merge_slot_duplicates(pool_id: str) -> dict:
                 keep = twins[0]
                 if store.merge_nodes(keep.id, sn.id):
                     summary["merged"].append({"name": sn.name, "into_type": keep.type})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one failed merge is reported in the summary and the rest continue
                 summary["errors"].append(f"merge failed for slot '{sn.name}': {e}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a crash is reported in the summary instead of failing the maintenance run
         summary["errors"].append(f"merge_slot_duplicates crashed: {e}")
     return summary
 

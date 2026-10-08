@@ -19,12 +19,15 @@ process, the same way ``delete_rag_vectors`` always has.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import Optional
 
 from common.paths import PROJECT_ROOT
 from common.dotenv import read_env as _read_dot_env
+
+log = logging.getLogger(__name__)
 
 _PROJECT_ROOT = PROJECT_ROOT
 _CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
@@ -63,8 +66,8 @@ def _backend_module(name: str):
     """
     try:
         return __import__(f"rag.{name}", fromlist=["_"])
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a failed import of any kind falls through to the sys.path retry
+        log.debug("rag module import failed, retrying with backend path", exc_info=True)
     backend = _PROJECT_ROOT / "dashboard" / "backend"
     if backend.is_dir() and str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
@@ -98,7 +101,8 @@ def embed_query(text: str) -> Optional[list]:
         Embedder = _backend_module("embeddings").Embedder
         embedder = Embedder.for_config(provider, model, api_key=api_key, base_url=base_url)
         return embedder.embed_one(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 - retrieval is best effort: no embedding means keyword search only
+        log.debug("query embedding failed", exc_info=True)
         return None
 
 
@@ -110,7 +114,8 @@ def _search_bm25(query: str, memory_id: str, top_k: int) -> list[dict]:
     try:
         bm25 = _backend_module("bm25")
         hits = bm25.search_pool(str(memory_id), query, top_k=top_k)
-    except Exception:
+    except Exception:  # noqa: BLE001 - retrieval is best effort: a broken keyword index yields no hits
+        log.debug("bm25 search failed", exc_info=True)
         return []
     return [
         {
@@ -151,7 +156,8 @@ def _query_chroma(query_vector: list, memory_id: str, top_k: int) -> list[dict]:
 
     try:
         collection = client.get_collection(collection_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 - retrieval is best effort: a missing collection yields no hits
+        log.debug("chroma collection lookup failed", exc_info=True)
         return []
 
     # Fetch more than needed so we can filter by memory_id afterwards
@@ -189,7 +195,8 @@ def _query_qdrant(query_vector: list, memory_id: str, top_k: int) -> list[dict]:
             limit=fetch,
             with_payload=True,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - retrieval is best effort: a vector store outage yields no hits
+        log.debug("qdrant search failed", exc_info=True)
         return []
 
     rows = [
@@ -243,7 +250,8 @@ def _search_vector(query: str, memory_id: str, top_k: int) -> list[dict]:
             return _query_qdrant(vec, memory_id, top_k)
         if db == "pinecone":
             return _query_pinecone(vec, memory_id, top_k)
-    except Exception:
+    except Exception:  # noqa: BLE001 - retrieval is best effort: a vector store outage yields no hits
+        log.debug("vector query failed", exc_info=True)
         return []
     return []
 
@@ -302,8 +310,8 @@ def _fuse(bm25_hits: list[dict], vector_hits: list[dict], top_k: int) -> list[di
                     info[key]["filename"] = row["filename"]
                     if not info[key]["text"]:
                         info[key]["text"] = row["text"]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - chunk metadata enrichment is optional, hits are returned without it
+            log.debug("chunk metadata enrichment skipped", exc_info=True)
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     out: list[dict] = []
@@ -361,8 +369,8 @@ def delete_rag_vectors(memory_id: str, filename: Optional[str] = None) -> dict:
         else:
             chunk_store.delete_pool_chunks(str(memory_id))
         bm25.invalidate_pool(str(memory_id))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - index cleanup is best effort, stale chunks are overwritten on the next index
+        log.debug("chunk cleanup failed", exc_info=True)
 
     db = _read_env("RAG_VECTOR_DB", "none")
     if db in ("none", ""):
@@ -379,5 +387,5 @@ def delete_rag_vectors(memory_id: str, filename: Optional[str] = None) -> dict:
             _read_env("RAG_VECTOR_DB_API_KEY", ""),
             **kwargs,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the failure is reported in the returned result
         return {"deleted": 0, "skipped": f"vector delete failed: {exc}"}

@@ -72,8 +72,8 @@ def silent_journal_append(
             })
 
         _persist(store, mem)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - automatic capture after a turn is best effort and must not break the reply
+        log.debug("journal capture failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +142,8 @@ def silent_interaction_episode(
             outcome="n/a",
         )
         EpisodeStore(str(pool_id)).add(ep)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - automatic capture after a turn is best effort and must not break the reply
+        log.debug("interaction episode capture failed", exc_info=True)
 
 
 def silent_task_episode(
@@ -202,5 +202,5 @@ def silent_task_episode(
             details=details,
         )
         EpisodeStore(str(pool_id)).add(ep)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - automatic capture after a turn is best effort and must not break the reply
+        log.debug("task episode capture failed", exc_info=True)

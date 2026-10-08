@@ -1,6 +1,7 @@
 """Persistence for scenarios, simulation runs and the tick log."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from common import db
@@ -10,6 +11,8 @@ from playground.models import (
     Scenario, SimRun, TickRecord, utc_iso,
 )
 from playground.worlds import WorldSpec
+
+log = logging.getLogger(__name__)
 
 def _notify(resource: str, **meta) -> None:
     """Coarse ``<resource>.changed`` invalidation for the open tabs.
@@ -22,8 +25,8 @@ def _notify(resource: str, **meta) -> None:
     try:
         from common.session_broker import notify_change
         notify_change(resource, **meta)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - change notification is best effort and must not fail the write
+        log.debug("change notification failed", exc_info=True)
 
 
 # Run-level knobs stored together in the ``config`` JSON column rather than as

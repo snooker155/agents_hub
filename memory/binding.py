@@ -15,7 +15,10 @@ Resolution rule:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 
 def home_workspace(spec) -> str:
@@ -30,7 +33,8 @@ def workspace_memory_override(agent_id: str, workspace: str) -> Optional[dict]:
         overrides = get_workspace_metadata(workspace).get("agent_memory_overrides") or {}
         entry = overrides.get(agent_id)
         return dict(entry) if isinstance(entry, dict) else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable workspace record means no override
+        log.debug("workspace memory override unreadable", exc_info=True)
         return None
 
 

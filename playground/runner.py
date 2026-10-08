@@ -115,7 +115,8 @@ def _agent_model(agent_id: str) -> Tuple[str, str]:
     try:
         from agents.registry import get_agent
         spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unknown agent just has no model
+        log.debug("agent model lookup failed", exc_info=True)
         return "", ""
     if spec is None:
         return "", ""
@@ -145,7 +146,8 @@ def _workspace_model(workspace: Optional[str]) -> Tuple[str, str]:
             get_workspace_default_model_config(meta) or {}
         )
         return (eff.get("provider") or "").strip(), (eff.get("model") or "").strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 - no workspace default means no model name, the run proceeds
+        log.debug("workspace model lookup failed", exc_info=True)
         return "", ""
 
 
@@ -185,7 +187,8 @@ def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
              "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound}}},
             load_price_map(),
         ), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing price must not fail the run, cost shows as zero
+        log.debug("run cost lookup failed", exc_info=True)
         return 0.0
 
 
@@ -256,8 +259,8 @@ def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
             try:
                 from agents.callbacks import RunStopCallback
                 callbacks.append(RunStopCallback(run_id))
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the stop hook is optional, the turn still runs without it
+                log.debug("run stop callback unavailable", exc_info=True)
         text, usage, streamed = _call_model(llm, [
             ("system", system_prompt), ("human", tick_prompt),
         ], beat, callbacks, _progress_reporter(sim_run_id, tick, name))
@@ -350,8 +353,8 @@ def _decide_with_agent(*, role: Role, scenario: Scenario, env: Environment,
         try:
             from agents.callbacks import RunStopCallback
             callbacks.append(RunStopCallback(run_id))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the stop hook is optional, the turn still runs without it
+            log.debug("run stop callback unavailable", exc_info=True)
 
     from agents.agent_invoke import invoke_agent
     invocation = invoke_agent(agent, prompt, extra_callbacks=callbacks,
@@ -403,8 +406,8 @@ def _publish(sim_run_id: str, event: Dict[str, Any]) -> None:
     try:
         from common.session_broker import broker
         broker.publish_threadsafe(f"sim:{sim_run_id}", event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - streaming to the live view is best effort and never fatal
+        log.debug("sim event publish failed", exc_info=True)
 
 
 #: How often a decision in progress reports back. Every chunk would be a
@@ -601,8 +604,8 @@ def run_simulation(
     if on_start:
         try:
             on_start(run)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a failing start hook must not abort the simulation
+            log.debug("on_start hook failed", exc_info=True)
 
     max_ticks = max(1, min(int(scenario.max_ticks), MAX_TICKS))
     wall_cap = optional_seconds(scenario.max_wall_seconds)
@@ -696,8 +699,8 @@ def run_simulation(
             if on_tick:
                 try:
                     on_tick(record)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a failing tick hook must not abort the simulation
+                    log.debug("on_tick hook failed", exc_info=True)
 
             # A stop that landed mid-tick already cut the decisions short;
             # ending here keeps a half-finished tick from being run again.
@@ -770,7 +773,7 @@ def _finalize_task(run: SimRun) -> None:
         persist_task_result(run.task_id, run.sim_run_id, _task_result_text(run),
                             agent_id="scenario")
     except Exception:  # noqa: BLE001 - best effort, see docstring
-        pass
+        log.debug("task result persist failed", exc_info=True)
     try:
         from managers.runs.task_finalize import finalize_task
         from tasks.models import Executor
@@ -781,7 +784,7 @@ def _finalize_task(run: SimRun) -> None:
             executor=Executor(kind="scenario", id=run.scenario_id),
         )
     except Exception:  # noqa: BLE001 - best effort, see docstring
-        pass
+        log.debug("task finalize failed", exc_info=True)
 
 
 

@@ -97,7 +97,7 @@ def _read_workspace_document(path: str, workspace: Optional[str]) -> str:
         if base != target and base not in target.parents:
             return ""
         return target.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except (OSError, ValueError, ImportError):
         return ""
 
 
@@ -225,12 +225,12 @@ def parse_decision(text: str) -> Dict[str, Any]:
     parsed = None
     try:
         parsed = json.loads(candidate)
-    except Exception:
+    except ValueError:
         start, end = candidate.find("{"), candidate.rfind("}")
         if start != -1 and end > start:
             try:
                 parsed = json.loads(candidate[start:end + 1])
-            except Exception:
+            except ValueError:
                 parsed = None
 
     if not isinstance(parsed, dict):

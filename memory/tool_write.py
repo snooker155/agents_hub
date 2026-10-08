@@ -147,7 +147,7 @@ def build_write_tools(ctx):
                             note_name = entry["title"]
                             node, mode = gstore.upsert_node("note", note_name, {})
                             graph_links.append({"type": "note", "name": note_name, "node_id": str(node.id), "mode": mode})
-                except Exception as ge:
+                except Exception as ge:  # noqa: BLE001 - a failed graph bridge is reported in errors and the save stands
                     errors.append(f"graph bridge skipped: {ge}")
 
             out = {"ok": True, "saved": saved, "errors": errors, "graph_links": graph_links,
@@ -156,7 +156,7 @@ def build_write_tools(ctx):
                 out["pool"] = _pool_name(target)
             return json.dumps(out)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"remember failed: {e}"})
 
     class _RememberPersonalInput(_RememberInput):
@@ -297,7 +297,7 @@ def build_write_tools(ctx):
                             continue
                         if node is not None and gstore.delete_node(node.id):
                             graph_unlinked.append({"type": node.type, "name": node.name})
-                except Exception as ge:
+                except Exception as ge:  # noqa: BLE001 - a failed graph unlink is reported in errors and the delete stands
                     errors.append(f"graph unlink skipped: {ge}")
 
             return json.dumps({
@@ -307,7 +307,7 @@ def build_write_tools(ctx):
                 "graph_unlinked": graph_unlinked,
                 **({"memory": _where(mem)} if deleted else {}),
             })
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"forget failed: {e}"})
 
     class _ForgetPersonalInput(_ForgetInput):

@@ -80,7 +80,7 @@ def build_block_tools(ctx):
                     "available": _block_names(),
                 })
             return _block_result(pid, block)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"memory_block_read failed: {e}"})
 
     memory_block_read_tool = StructuredTool.from_function(
@@ -147,7 +147,7 @@ def build_block_tools(ctx):
             block.value = updated
             _persist(MemoryStore(), mem)
             return _block_result(pid, block, mode="replaced")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"memory_block_replace failed: {e}"})
 
     memory_block_replace_tool = StructuredTool.from_function(
@@ -202,7 +202,7 @@ def build_block_tools(ctx):
             block.value = updated
             _persist(MemoryStore(), mem)
             return _block_result(pid, block, mode="appended")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"memory_block_append failed: {e}"})
 
     memory_block_append_tool = StructuredTool.from_function(

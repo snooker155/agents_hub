@@ -202,7 +202,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                 from memory.store import MemoryStore
                 _pmem = MemoryStore().get(pid)
                 _pname = _pmem.name if _pmem else pid
-            except Exception:
+            except Exception:  # noqa: BLE001 - the pool name is cosmetic, fall back to the id
+                log.debug("pool name lookup failed", exc_info=True)
                 _pname = pid
             role = ("PRIMARY, attached read only: recall only, writes refuse" if is_primary and primary_read_only
                     else "PRIMARY — writes go here" if is_primary
@@ -244,8 +245,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                     for title in journal_titles[:7]:
                         marker = " ← today" if title == today else ""
                         lines.append(f"- `{title}`{marker}")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the prompt hint block is optional and must not break agent start
+            log.debug("journal hint skipped", exc_info=True)
 
         # Episodic memory — capability hint + lightweight stats so the agent knows
         # what's already been recorded and when to use record_episode/recall_episodes.
@@ -276,8 +277,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                 lines.append(f"**Episodes:** {total} total — kinds: {kind_str}; outcomes: {outcome_str}")
             else:
                 lines.append("**Episodes:** none yet.")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the prompt hint block is optional and must not break agent start
+            log.debug("episode stats hint skipped", exc_info=True)
 
         # Graph memory — capability hint + lightweight stats so the agent knows
         # which entity types and relations already exist (encourages consistent naming).
@@ -306,8 +307,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                 lines.append(f"**Graph:** {node_count} nodes, {edge_count} edges — top types: {type_str}; top relations: {rel_str}")
             else:
                 lines.append("**Graph:** empty.")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the prompt hint block is optional and must not break agent start
+            log.debug("graph stats hint skipped", exc_info=True)
 
     definition["system_prompt"] = (definition.get("system_prompt") or "") + "\n".join(lines)
     definition["tools"] = tool_list
@@ -361,8 +362,8 @@ def _inject_extraction_context(pool_id: str, definition: Dict[str, Any]) -> Dict
                 lines.append(f"**Existing notes:** {', '.join(f'`{t}`' for t in titles[:20])}")
             if not mem.structured_data and not titles:
                 lines.append("\n**The pool is currently empty.**")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the prompt hint block is optional and must not break agent start
+        log.debug("pool contents hint skipped", exc_info=True)
     try:
         from memory.episodic import EpisodeStore
         from memory.graph import GraphStore
@@ -373,8 +374,8 @@ def _inject_extraction_context(pool_id: str, definition: Dict[str, Any]) -> Dict
             f"**Episodes:** {estats.get('total', 0)} stored (cap {estats.get('cap')}). "
             f"**Graph:** {gstats.get('node_count', 0)} nodes, {gstats.get('edge_count', 0)} edges."
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the prompt hint block is optional and must not break agent start
+        log.debug("episode and graph totals hint skipped", exc_info=True)
 
     definition["system_prompt"] = (definition.get("system_prompt") or "") + "\n".join(lines)
     return definition

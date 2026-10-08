@@ -83,7 +83,7 @@ def build_graph_tools(ctx):
             })
         except KeyError as e:
             return json.dumps({"ok": False, "error": f"missing required field: {e}"})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"link failed: {e}"})
 
     link_tool = StructuredTool.from_function(
@@ -179,7 +179,7 @@ def build_graph_tools(ctx):
                 ],
                 "rendered": edge_lines,
             }, default=str)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"traverse failed: {e}"})
 
     traverse_tool = StructuredTool.from_function(

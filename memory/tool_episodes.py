@@ -89,7 +89,7 @@ def build_episode_tools(ctx):
             )
             EpisodeStore(pool_id).add(ep)
             return json.dumps({"ok": True, "id": str(ep.id), "kind": ep.kind, "explicit": True, "pinned": ep.pinned})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"record_episode failed: {e}"})
 
     record_episode_tool = StructuredTool.from_function(
@@ -132,7 +132,7 @@ def build_episode_tools(ctx):
             if since:
                 try:
                     since_dt = datetime.fromisoformat(since)
-                except Exception:
+                except (TypeError, ValueError):
                     return json.dumps({"ok": False, "error": f"could not parse `since` as ISO datetime: {since!r}"})
 
             capped = max(1, min(int(limit), 50))
@@ -168,7 +168,7 @@ def build_episode_tools(ctx):
                     for e, pid in hits
                 ],
             }, default=str)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"recall_episodes failed: {e}"})
 
     recall_episodes_tool = StructuredTool.from_function(

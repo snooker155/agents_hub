@@ -62,7 +62,8 @@ def build_recall_tool(ctx):
             try:
                 from memory.rag_query import is_rag_configured
                 rag_on = is_rag_configured()
-            except Exception:
+            except Exception:  # noqa: BLE001 - RAG is an optional layer, treat a failed probe as off
+                log.debug("rag configuration probe failed", exc_info=True)
                 rag_on = False
 
             for pid in pool_ids:
@@ -91,7 +92,7 @@ def build_recall_tool(ctx):
                         ))
                         vector_keys.append(key)
                 except Exception:  # noqa: BLE001 - the passage search is one layer; the others still answer
-                    pass
+                    log.debug("passage search failed", exc_info=True)
 
                 ranked = rank_candidates(query, candidates, vector_keys=vector_keys)
                 pool_results: list[dict] = []
@@ -167,8 +168,8 @@ def build_recall_tool(ctx):
                         available["notes"] = note_titles[:20]
                     if graph_types:
                         available["graph_types"] = sorted(graph_types)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - the available-items hint is optional
+                    log.debug("available-items hint skipped", exc_info=True)
                 return json.dumps({
                     **base,
                     "found": False,
@@ -184,7 +185,7 @@ def build_recall_tool(ctx):
                 base["citations"] = CITE_INSTRUCTION
             return json.dumps({**base, "found": True, "results": results}, default=str)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"recall failed: {e}"})
 
     recall_tool = StructuredTool.from_function(

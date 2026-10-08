@@ -119,7 +119,8 @@ def _search_graph(pool_id: str, query: str, *, exclude: set, limit: int = 8) -> 
                 ) if relations else None,
             })
         return out
-    except Exception:
+    except Exception:  # noqa: BLE001 - the graph layer is optional, the other layers still answer
+        log.debug("graph layer lookup failed", exc_info=True)
         return []
 
 
@@ -182,7 +183,8 @@ def _annotate_with_graph_hints(pool_id: str, results: list[dict]) -> None:
                 f"traverse(type='{node_type}', name={node_name!r}) — "
                 f"the relations above are only 1 hop."
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 - graph hints are optional, results are returned without them
+        log.debug("graph hint enrichment failed", exc_info=True)
         return
 
 

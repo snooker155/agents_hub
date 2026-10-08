@@ -169,7 +169,7 @@ async def load_model(file: str, context_length: int, gpu_layers: int,
         harmony = bool(mlx_cfg) and str(mlx_cfg.get("model_type")) == "gpt_oss"
         try:
             await wait_healthy(port, proc)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - any health-check failure is returned to the caller as an HTTP error
             await asyncio.to_thread(_stop, app_speech_models.Loaded(name, path.name, port, proc, ctx, engine, kind))
             raise HTTPException(status_code=502, detail=f"{exc}. Log tail: {app_speech_models._log_tail(name)}")
         m = app_speech_models.Loaded(name=name, file=path.name, port=port, proc=proc, context_length=ctx,

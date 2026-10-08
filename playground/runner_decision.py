@@ -161,7 +161,8 @@ def _call_model(llm: Any, messages: List[Any], beat: Beat,
                     on_delta("".join(parts))
                 try:
                     aggregate = chunk if aggregate is None else aggregate + chunk
-                except Exception:
+                except Exception:  # noqa: BLE001 - chunks of foreign client classes may not add, usage is then estimated
+                    log.debug("chunk aggregation failed, usage will be estimated", exc_info=True)
                     aggregate = None
             return "".join(parts), _usage_of(aggregate), True
         except (_Cancelled, control.SimRunStopped):
@@ -190,7 +191,8 @@ def _estimated(text: str) -> int:
     try:
         from agents.callbacks import estimate_tokens
         return estimate_tokens(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 - token estimation is a fallback, a rough length estimate replaces it
+        log.debug("token estimator unavailable", exc_info=True)
         return max(0, len(text or "") // 4)
 
 
@@ -269,8 +271,8 @@ def _enable_stream_usage(llm: Any) -> None:
         return
     try:
         llm.stream_usage = True
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - clients without the stream_usage knob are left as they were
+        log.debug("stream_usage not settable", exc_info=True)
 
 
 # ── Decisions as runs of record ──────────────────────────────────────────────
@@ -301,7 +303,8 @@ def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
     agent_id = role.agent_id or role.display_name()
     try:
         from managers.run_manager import open_run, run_log_path
-    except Exception:
+    except Exception:  # noqa: BLE001 - a simulation that cannot write a run record still runs
+        log.debug("run manager unavailable", exc_info=True)
         return ""
     run_id = decision_run_id(sim_run_id, tick, role.display_name())
     try:
@@ -320,8 +323,8 @@ def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
                 provider=provider or None,
                 model=model or None,
             )["instance_id"]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the instance record is cosmetic, the turn still runs
+            log.debug("sim role instance registration failed", exc_info=True)
 
         log_path = run_log_path(run_id)
         open_run(
@@ -352,7 +355,8 @@ def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
                     f"Agent   : {agent_id}\nTick    : {tick}\n\n"
                     f"=== PROMPT ===\n{prompt}\n\n=== EXECUTION ===\n")
         return run_id
-    except Exception:
+    except Exception:  # noqa: BLE001 - a simulation that cannot write a run record still runs
+        log.debug("sim role run record failed", exc_info=True)
         return ""
 
 
@@ -379,5 +383,5 @@ def _close_decision_run(run_id: str, sim_run_id: str, decision: AgentDecision,
                 "estimated": decision.tokens_estimated,
             }},
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - closing the run record is best effort, the decision is already made
+        log.debug("sim role run record close failed", exc_info=True)

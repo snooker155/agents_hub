@@ -202,7 +202,7 @@ def _make_route_handler(session: Session):
             return
         try:
             response = await route.fetch(max_redirects=0, timeout=NAV_TIMEOUT_MS)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a failed upstream fetch aborts just that request for the page
             log.debug("fetch failed for %s: %s", url, exc)
             await route.abort("failed")
             return
@@ -281,8 +281,8 @@ async def _close_session(session: Session) -> None:
     state.sessions.pop(session.id, None)
     try:
         await session.context.close()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the context may already be dead, the session is dropped either way
+        log.debug("session context close failed", exc_info=True)
 
 
 async def _reap_idle() -> int:
@@ -355,7 +355,8 @@ def _session(session_id: str) -> Session:
 async def _page_info(s: Session) -> Dict[str, Any]:
     try:
         title = await s.page.title()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the title is cosmetic, an empty one is shown
+        log.debug("page title unavailable", exc_info=True)
         title = ""
     return {"url": s.page.url, "title": title, "blocked": s.take_blocked()}
 
@@ -372,8 +373,8 @@ async def _enforce_current_url(s: Session) -> Optional[str]:
     s.note_blocked(url, reason)
     try:
         await s.page.goto("about:blank")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - blanking the page is best effort, the refusal is returned anyway
+        log.debug("blanking the page failed", exc_info=True)
     return reason
 
 
@@ -441,7 +442,8 @@ async def describe(s: Session) -> Dict[str, Any]:
     the lock: it is a snapshot, and a page mid-action just answers late."""
     try:
         title = await s.page.title()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the title is cosmetic, an empty one is shown
+        log.debug("page title unavailable", exc_info=True)
         title = ""
     return {
         "session_id": s.id, "run_id": s.run_id, "workspace": s.workspace,
@@ -535,7 +537,7 @@ async def _navigate(s: Session, url: str) -> Dict[str, Any]:
     try:
         resp = await s.page.goto(url, wait_until="domcontentloaded")
         status = resp.status if resp is not None else None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any navigation failure is returned to the caller as an HTTP error
         # A page script that navigates somewhere blocked interrupts goto;
         # the refusal is recorded by the route handler a moment later.
         await asyncio.sleep(0.3)
@@ -590,7 +592,8 @@ async def perform(page: Any, action: str, selector: str, text: str) -> None:
             raise ValueError("select needs a selector")
         try:
             await loc.select_option(label=text)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a label miss falls back to selecting by value
+            log.debug("select by label failed, trying value", exc_info=True)
             await loc.select_option(value=text)
     elif action == "scroll":
         if loc is not None:
@@ -621,12 +624,12 @@ async def act(session_id: str, body: Act) -> Dict[str, Any]:
             await perform(s.page, body.action, body.selector.strip(), body.text)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - any action failure is returned to the caller as an HTTP error
             raise HTTPException(status_code=422, detail=f"{body.action} failed: {type(exc).__name__}: {exc}")
         try:
             await s.page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a page that never settles is not an error, the frame shows the state
+            log.debug("wait for load state failed", exc_info=True)
         refused = await _enforce_current_url(s)
         if refused:
             raise HTTPException(status_code=403, detail=f"refused the page the action led to: {refused}")
@@ -657,7 +660,8 @@ async def _frame_message(s: Session, jpeg: bytes, *, seq: int = 0,
     base64 CDP already hands over."""
     try:
         title = await s.page.title()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the title is cosmetic, an empty one is shown
+        log.debug("page title unavailable", exc_info=True)
         title = ""
     size = getattr(s.page, "viewport_size", None) or VIEWPORT
     return {
@@ -714,12 +718,12 @@ async def _screencast(s: Session, ws: WebSocket, seq: int) -> int:
         for call in ({"method": "Page.stopScreencast"},):
             try:
                 await cdp.send(call["method"])
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - stopping a screencast on a closed page is expected
+                log.debug("stop screencast failed", exc_info=True)
         try:
             await cdp.detach()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - detaching from a closed page is expected
+            log.debug("cdp detach failed", exc_info=True)
 
 
 async def _screenshot_stream(s: Session, ws: WebSocket, seq: int) -> int:
@@ -798,8 +802,8 @@ async def stream(ws: WebSocket, session_id: str, token: str = "") -> None:
         for task in (sender, watcher):
             try:
                 await task
-            except BaseException:  # noqa: BLE001 - cancelled or already failed, both fine here
-                pass
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - the stream tasks were cancelled or already failed, both fine here
+                log.debug("stream task ended", exc_info=True)
 
 
 async def perform_input(page: Any, body: Input) -> None:
@@ -849,14 +853,14 @@ async def send_input(session_id: str, body: Input) -> Dict[str, Any]:
             await perform_input(s.page, body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - input that cannot apply is not worth failing the request, the frame shows the result
             # Back with no history, a reload interrupted by a blocked
             # redirect: not worth failing the request, the frame shows it.
             log.debug("input %s failed: %s", body.kind, exc)
         try:
             await s.page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a page that never settles is not an error, the frame shows the state
+            log.debug("wait for load state failed", exc_info=True)
         refused = await _enforce_current_url(s)
         if refused:
             raise HTTPException(status_code=403, detail=f"refused the page the input led to: {refused}")

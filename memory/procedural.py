@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 from datetime import datetime, timezone
 from typing import Any, List, Literal, Optional, Sequence
@@ -13,6 +14,8 @@ from common import review as review_mod
 from common.docstore import DocStore
 from common.paths import PROCEDURES_FILE as _PROCEDURES_FILE
 from common.paths import WORKSPACES_ROOT, ensure_agents_hub_root
+
+log = logging.getLogger(__name__)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -148,7 +151,7 @@ def _migrate_legacy_files() -> None:
             try:
                 text = legacy.read_text(encoding="utf-8")
                 records = json.loads(text) if text.strip() else []
-            except Exception:
+            except (OSError, ValueError):
                 records = []
             if not isinstance(records, list):
                 continue
@@ -167,8 +170,8 @@ def _migrate_legacy_files() -> None:
 
             try:
                 legacy.rename(legacy.with_suffix(legacy.suffix + ".migrated.bak"))
-            except Exception:
-                pass
+            except OSError:
+                log.debug("legacy skills file rename failed", exc_info=True)
 
 
 class ProcedureStore:
@@ -194,7 +197,7 @@ class ProcedureStore:
         for obj in self.docs.values():
             try:
                 out.append(Procedure(**_normalize_review(obj)))
-            except Exception:
+            except (TypeError, ValueError, AttributeError):
                 continue
         return out
 
@@ -224,7 +227,7 @@ class ProcedureStore:
             return None
         try:
             p = Procedure(**_normalize_review(doc))
-        except Exception:
+        except (TypeError, ValueError, AttributeError):
             return None
         return p if p.workspace == self.workspace else None
 
@@ -421,7 +424,8 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
             content = effective_content(p)
             lines.append(f"- **{p.name}**: {content['description']}")
         return system_prompt + "\n".join(lines) + "\n"
-    except Exception:
+    except Exception:  # noqa: BLE001 - the skills listing is optional and must not break the prompt
+        log.debug("skills prompt listing skipped", exc_info=True)
         return system_prompt
 
 
@@ -463,7 +467,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
                 for p in procedures
             ]
             return json.dumps({"ok": True, "skills": result, "count": len(result)})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"list_skills failed: {e}"})
 
     list_skills_tool = StructuredTool.from_function(
@@ -546,7 +550,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
             if content["pinned"]:
                 result["pinned"] = True
             return json.dumps(result)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"get_skill failed: {e}"})
 
     get_skill_tool = StructuredTool.from_function(
@@ -599,7 +603,7 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
             )
             store.add(procedure)
             return json.dumps({"ok": True, "name": name, "version": procedure.version})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"create_skill failed: {e}"})
 
     create_skill_tool = StructuredTool.from_function(

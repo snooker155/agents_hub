@@ -89,7 +89,7 @@ class SharedMemory(BaseModel):
         """Update the updated_at timestamp to now (UTC)."""
         try:
             object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
-        except Exception:
+        except (AttributeError, TypeError):
             setattr(self, "updated_at", datetime.now(timezone.utc))
 
     # ── Core memory blocks ───────────────────────────────────────────────────
