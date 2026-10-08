@@ -283,7 +283,7 @@ async def slack_oauth(request: Request, code: Optional[str] = None, state: Optio
         from common.session_broker import notify_change
         notify_change("channel_slack", workspace=svc.workspace)
     except Exception:  # noqa: BLE001 - the page refreshes on its own anyway
-        pass
+        log.debug("slack: change notification failed", exc_info=True)
     if approve:
         return RedirectResponse(f"/distribution?installed=slack&org={org_id}", status_code=302)
     if install.get("status") == "approved":

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,8 @@ from pydantic import BaseModel
 
 from common import identity
 from common.auth import WS_OWNER
+
+log = logging.getLogger("routes.distribution")
 
 router = APIRouter(prefix="/api/distribution", tags=["distribution"])
 
@@ -376,7 +379,7 @@ def _notify(svc: Any) -> None:
         from common.session_broker import notify_change
         notify_change(f"channel_{svc.name}", workspace=svc.workspace)
     except Exception:  # noqa: BLE001 - a missed refresh is not worth failing the write
-        pass
+        log.debug("distribution: change notification failed", exc_info=True)
 
 
 @router.get("/{channel}/installs")
