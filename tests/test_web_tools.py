@@ -178,8 +178,9 @@ def test_page_cannot_close_the_envelope_early():
 # -- Tool behaviour -----------------------------------------------------------
 
 def test_web_search_reports_missing_configuration_instead_of_failing(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "web_search_provider", "")
+    # No search provider and no model key (a model provider's key alone
+    # turns the tool on, see the model provider tests below).
+    _no_model_keys(monkeypatch)
     out = web.web_search.invoke({"query": "anything"})
     assert "not configured" in out
 
@@ -259,3 +260,195 @@ def test_web_tools_are_selectable_and_registered():
         spec = get_tool_by_id(tid)
         assert spec is not None and spec.category == "web"
         assert spec.ingests_untrusted
+
+
+# -- Model providers' own search -----------------------------------------------
+#
+# Anthropic and OpenAI search through their server-side tool on the model
+# key; with no search provider set the hub picks one of them by itself.
+
+def _no_model_keys(monkeypatch):
+    from common.config import settings
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "DEFAULT_PROVIDER"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(settings, "web_search_provider", "")
+    monkeypatch.setattr(settings, "web_search_api_key", "")
+    monkeypatch.setattr(settings, "default_provider", "lmstudio")
+    monkeypatch.setattr(web, "_SEARCH_CACHE", {})
+
+
+def test_no_search_provider_and_no_model_key_is_not_configured(monkeypatch):
+    _no_model_keys(monkeypatch)
+    eff = web.effective_search_provider()
+    assert eff == {"provider": "", "source": "none", "key_set": False, "key": ""}
+    out = web.web_search.invoke({"query": "anything"})
+    assert "not configured" in out and "Models page" in out
+
+
+def test_an_anthropic_key_alone_turns_search_on(monkeypatch):
+    _no_model_keys(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    eff = web.effective_search_provider()
+    assert (eff["provider"], eff["source"], eff["key"]) == ("anthropic", "model_key", "sk-ant")
+    seen = []
+    monkeypatch.setitem(web._PROVIDERS, "anthropic", lambda q, n, k, t: seen.append((q, k)) or [
+        {"title": "t", "url": "https://ok.test/", "snippet": "s"}])
+    out = web.web_search.invoke({"query": "q"})
+    assert seen == [("q", "sk-ant")] and "search:anthropic" in out
+
+
+def test_the_default_provider_wins_when_both_keys_are_set(monkeypatch):
+    _no_model_keys(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
+    monkeypatch.setenv("DEFAULT_PROVIDER", "openai")
+    assert web.effective_search_provider()["provider"] == "openai"
+    monkeypatch.setenv("DEFAULT_PROVIDER", "lmstudio")
+    assert web.effective_search_provider()["provider"] == "anthropic"
+
+
+def test_an_openai_key_behind_a_foreign_base_url_is_not_picked(monkeypatch):
+    _no_model_keys(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8090/v1")
+    assert web.effective_search_provider()["provider"] == ""
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    assert web.effective_search_provider()["provider"] == "openai"
+
+
+def test_a_model_provider_chosen_explicitly_needs_its_model_key(monkeypatch):
+    from common.config import settings
+    _no_model_keys(monkeypatch)
+    monkeypatch.setattr(settings, "web_search_provider", "openai")
+    monkeypatch.setattr(settings, "web_search_api_key", "unused-search-key")
+    out = web.web_search.invoke({"query": "q"})
+    assert "not configured" in out and "openai model key is missing" in out
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
+    eff = web.effective_search_provider()
+    assert (eff["provider"], eff["source"], eff["key"]) == ("openai", "setting", "sk-oai")
+
+
+def test_a_search_service_chosen_explicitly_ignores_model_keys(monkeypatch):
+    from common.config import settings
+    _no_model_keys(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    monkeypatch.setattr(settings, "web_search_provider", "brave")
+    monkeypatch.setattr(settings, "web_search_api_key", "brave-key")
+    eff = web.effective_search_provider()
+    assert (eff["provider"], eff["key"]) == ("brave", "brave-key")
+
+
+class _Obj:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_anthropic_results_come_from_the_tool_result_and_citations(monkeypatch):
+    import anthropic
+    sent = {}
+
+    class _Messages:
+        def create(self, **kw):
+            sent.update(kw)
+            return _Obj(content=[
+                _Obj(type="server_tool_use"),
+                _Obj(type="web_search_tool_result", content=[
+                    _Obj(type="web_search_result", title="One", url="https://a.test/1"),
+                    _Obj(type="web_search_result", title="Two", url="https://b.test/2"),
+                ]),
+                _Obj(type="text", text="x", citations=[
+                    _Obj(type="web_search_result_location", url="https://b.test/2", cited_text="passage two"),
+                ]),
+            ])
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: _Obj(messages=_Messages()))
+    results = web._search_anthropic("q", 5, "sk-ant", 20.0, include=["a.test"], exclude=["evil.test"])
+    assert results == [
+        {"title": "One", "url": "https://a.test/1", "snippet": ""},
+        {"title": "Two", "url": "https://b.test/2", "snippet": "passage two"},
+    ]
+    tool = sent["tools"][0]
+    assert tool["type"].startswith("web_search_") and tool["max_uses"] == 1
+    # One list or the other: the allow list wins and blocked hosts are
+    # filtered out of the results by web_search itself.
+    assert tool["allowed_domains"] == ["a.test"] and "blocked_domains" not in tool
+    assert "q" in sent["messages"][0]["content"]
+
+
+def test_anthropic_search_errors_are_raised_not_swallowed(monkeypatch):
+    import anthropic
+
+    class _Messages:
+        def create(self, **kw):
+            return _Obj(content=[_Obj(type="web_search_tool_result",
+                                      content=_Obj(type="web_search_tool_result_error",
+                                                   error_code="max_uses_exceeded"))])
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: _Obj(messages=_Messages()))
+    with pytest.raises(RuntimeError, match="max_uses_exceeded"):
+        web._search_anthropic("q", 5, "sk-ant", 20.0)
+
+
+def test_openai_results_come_from_sources_and_url_citations(monkeypatch):
+    import openai
+    sent = {}
+    # As the API answers: one paragraph per result, the citation written as a
+    # markdown link whose span the annotation covers, and ``utm_source=openai``
+    # on the cited URL but not on the search call's sources.
+    link = "([b.test](https://b.test/2?utm_source=openai))"
+    text = f"First says alpha.\n\nSecond says beta. {link}"
+
+    class _Responses:
+        def create(self, **kw):
+            sent.update(kw)
+            return _Obj(output=[
+                _Obj(type="web_search_call", status="completed", action=_Obj(
+                    type="search", query="q", sources=[_Obj(type="url", url="https://a.test/1"),
+                                                       _Obj(type="url", url="https://b.test/2")])),
+                _Obj(type="message", content=[_Obj(type="output_text", text=text, annotations=[
+                    _Obj(type="url_citation", url="https://b.test/2?utm_source=openai", title="Two",
+                         start_index=text.index(link), end_index=len(text)),
+                ])]),
+            ])
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _Obj(responses=_Responses()))
+    results = web._search_openai("q", 5, "sk-oai", 20.0, include=["a.test"])
+    assert results == [
+        {"title": "", "url": "https://a.test/1", "snippet": ""},
+        {"title": "Two", "url": "https://b.test/2", "snippet": "Second says beta."},
+    ]
+    tool = sent["tools"][0]
+    assert tool["type"] == "web_search" and tool["filters"] == {"allowed_domains": ["a.test"]}
+    assert "web_search_call.action.sources" in sent["include"]
+
+
+def test_openai_search_uses_the_configured_base_url(monkeypatch):
+    import openai
+    got = {}
+
+    def _client(**kw):
+        got.update(kw)
+        return _Obj(responses=_Obj(create=lambda **k: _Obj(output=[])))
+
+    monkeypatch.setattr(openai, "OpenAI", _client)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    assert web._search_openai("q", 3, "sk-oai", 20.0) == []
+    assert got["base_url"] == "https://api.openai.com/v1" and got["api_key"] == "sk-oai"
+
+
+def test_search_model_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_MODEL", "my-small-model")
+    assert web._search_model("anthropic") == "my-small-model"
+    monkeypatch.setenv("WEB_SEARCH_MODEL", "")
+    assert web._search_model("anthropic") == web._SEARCH_MODELS["anthropic"]
+    assert web._search_model("openai") == web._SEARCH_MODELS["openai"]
+
+
+def test_openai_tracking_parameter_is_stripped_only_when_present():
+    strip = web._strip_openai_tracking
+    assert strip("https://a.test/p?utm_source=openai") == "https://a.test/p"
+    assert strip("https://a.test/p?x=1&utm_source=openai") == "https://a.test/p?x=1"
+    assert strip("https://a.test/p?utm_source=other") == "https://a.test/p?utm_source=other"
+    assert strip("https://a.test/p") == "https://a.test/p"

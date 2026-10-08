@@ -423,13 +423,19 @@ class Settings(BaseSettings):
     )
 
     # ── Web access (tools/web.py) ─────────────────────────────────────────────
-    # Search provider for the ``web_search`` tool. Empty (default) leaves the
-    # tool inert — it reports that no provider is configured rather than
-    # failing mid-run. Supported: "brave", "tavily", "exa".
+    # Search provider for the ``web_search`` tool. "brave", "tavily" and "exa"
+    # take WEB_SEARCH_API_KEY; "anthropic" and "openai" search through that
+    # provider's own server-side search tool on the model key. Empty
+    # (default) picks a model provider whose key is set, and with none the
+    # tool reports that it is not configured rather than failing mid-run.
     web_search_provider: str = Field(
         default="", validation_alias=AliasChoices("WEB_SEARCH_PROVIDER", "web_search_provider"))
     web_search_api_key: str = Field(
         default="", validation_alias=AliasChoices("WEB_SEARCH_API_KEY", "web_search_api_key"))
+    # The model that drives a model provider's search tool; empty picks a
+    # small one per provider (tools/web.py).
+    web_search_model: str = Field(
+        default="", validation_alias=AliasChoices("WEB_SEARCH_MODEL", "web_search_model"))
     # Results per search. Kept small: every result is untrusted text entering
     # the context window, and injection surface scales with it.
     web_search_max_results: int = Field(

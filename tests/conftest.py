@@ -216,6 +216,14 @@ def provider_env_isolated(tmp_path, monkeypatch):
         if hasattr(settings, field):
             monkeypatch.setattr(settings, field, getattr(settings, field), raising=False)
     saved = {key: os.environ.get(key) for key in provider_env.PROVIDER_ENV_KEYS}
+    # The developer's own model keys reach nothing: a key alone now turns
+    # web_search on (tools/web.py effective_search_provider), and a test
+    # must never make a live call on it. A test that needs a key saves one.
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+        field = provider_env._SETTINGS_FIELD.get(key)
+        if field and hasattr(settings, field):
+            monkeypatch.setattr(settings, field, None)
     yield
     for key, value in saved.items():
         if value is None:

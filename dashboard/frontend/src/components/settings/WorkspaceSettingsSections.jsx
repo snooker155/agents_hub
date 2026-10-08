@@ -797,10 +797,16 @@ function WebSearchProviderCard({ s }) {
   const provider = providerEdit ?? savedProvider;
   const maxResults = maxResultsEdit ?? savedMax;
   const dirty = provider !== savedProvider || key !== '' || Number(maxResults) !== savedMax;
-  const configured = Boolean(g.web_search_provider) && Boolean(g.web_search_api_key_masked);
+  // Anthropic and OpenAI search on the key the Models page holds, so the
+  // key field is for the search services only. With no provider chosen the
+  // backend picks a model provider whose key is set; the badge says which.
+  const modelProvider = provider === 'anthropic' || provider === 'openai';
+  const effective = g.web_search_effective_provider || '';
+  const configured = Boolean(effective) && Boolean(g.web_search_effective_key_set);
+  const providerNames = { brave: 'Brave Search', tavily: 'Tavily', exa: 'Exa', anthropic: 'Anthropic', openai: 'OpenAI' };
   const save = async () => {
     const patch = { web_search_provider: provider, web_search_max_results: Number(maxResults) || 5 };
-    if (key) patch.web_search_api_key = key;
+    if (key && !modelProvider) patch.web_search_api_key = key;
     const ok = await s.saveWebSearch(patch);
     if (ok) { setKey(''); setProviderEdit(null); setMaxResultsEdit(null); flash(); }
   };
@@ -809,7 +815,11 @@ function WebSearchProviderCard({ s }) {
       title={t('settings.webSearch')}
       actions={(
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${configured ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
-          {configured ? t('settings.webSearchConfigured') : t('settings.webSearchNotConfigured')}
+          {configured
+            ? (g.web_search_effective_source === 'model_key'
+              ? t('settings.webSearchViaModelKey', { provider: providerNames[effective] || effective })
+              : t('settings.webSearchConfigured'))
+            : t('settings.webSearchNotConfigured')}
         </span>
       )}
     >
@@ -818,20 +828,33 @@ function WebSearchProviderCard({ s }) {
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchProvider')}</label>
           <select value={provider} onChange={e => setProviderEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchProvider')}>
-            <option value="">{t('settings.webSearchProviderNone')}</option>
+            <option value="">{t('settings.webSearchProviderAuto')}</option>
+            <option value="anthropic">{t('settings.webSearchProviderModelKey', { provider: 'Anthropic' })}</option>
+            <option value="openai">{t('settings.webSearchProviderModelKey', { provider: 'OpenAI' })}</option>
             <option value="brave">Brave Search</option>
             <option value="tavily">Tavily</option>
             <option value="exa">Exa</option>
           </select>
+          {!provider && (
+            <p className="text-xs text-gray-400 mt-1">
+              {effective
+                ? t('settings.webSearchAutoPicks', { provider: providerNames[effective] || effective })
+                : t('settings.webSearchAutoNone')}
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             {t('settings.webSearchApiKey')}
-            {g.web_search_api_key_masked && <span className="ml-2 font-mono text-xs text-gray-400">{g.web_search_api_key_masked}</span>}
+            {!modelProvider && g.web_search_api_key_masked && <span className="ml-2 font-mono text-xs text-gray-400">{g.web_search_api_key_masked}</span>}
           </label>
-          <input type="password" value={key} onChange={e => setKey(e.target.value)}
-            placeholder={g.web_search_api_key_masked ? t('settings.webSearchKeyKeep') : t('settings.webSearchKeyPlaceholder')}
-            autoComplete="off" className={inputCls} aria-label={t('settings.webSearchApiKey')} />
+          {modelProvider ? (
+            <p className="text-xs text-gray-500 py-2">{t('settings.webSearchModelKeyHint', { provider: providerNames[provider] })}</p>
+          ) : (
+            <input type="password" value={key} onChange={e => setKey(e.target.value)}
+              placeholder={g.web_search_api_key_masked ? t('settings.webSearchKeyKeep') : t('settings.webSearchKeyPlaceholder')}
+              autoComplete="off" className={inputCls} aria-label={t('settings.webSearchApiKey')} />
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchMaxResults')}</label>

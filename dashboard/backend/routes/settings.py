@@ -169,10 +169,16 @@ class SettingsResponse(BaseModel):
     # and whether a per-agent override needs a no-network container to count.
     capability_guard: str
     capability_override_requires_container: bool
-    # Web search (tools/web.py): the provider behind ``web_search`` and its key.
+    # Web search (tools/web.py): the provider behind ``web_search`` and its
+    # key, and the backend a search would actually use now: the setting, or
+    # with none set a model provider (Anthropic, OpenAI) searching on its own
+    # key ("model_key"), or nothing ("none").
     web_search_provider: str
     web_search_api_key_masked: str
     web_search_max_results: int
+    web_search_effective_provider: str
+    web_search_effective_source: str
+    web_search_effective_key_set: bool
     # fetch_url limits and the global domain policy (tools/web.py).
     web_fetch_max_chars: int
     web_fetch_timeout: float
@@ -243,7 +249,7 @@ _FIELD_TO_ENV = {
     "web_deny_domains": "WEB_DENY_DOMAINS",
 }
 
-WEB_SEARCH_PROVIDERS = ("", "brave", "tavily", "exa")
+WEB_SEARCH_PROVIDERS = ("", "brave", "tavily", "exa", "anthropic", "openai")
 
 
 def _web_limits():
@@ -297,6 +303,8 @@ async def get_settings():
     env = _read_env()
     env_defined_fields = [field for field, env_key in _FIELD_TO_ENV.items() if env.get(env_key)]
     docker_ok, docker_reason = _docker_status()
+    from tools.web import effective_search_provider
+    _effective_search = effective_search_provider()
     return SettingsResponse(
         openai_api_key_masked=_mask_key(env.get("OPENAI_API_KEY") or _cfg.openai_api_key),
         anthropic_api_key_masked=_mask_key(env.get("ANTHROPIC_API_KEY")),
@@ -348,6 +356,9 @@ async def get_settings():
             if (env.get("WEB_SEARCH_API_KEY") or _cfg.web_search_api_key) else ""
         ),
         web_search_max_results=int(env.get("WEB_SEARCH_MAX_RESULTS") or _cfg.web_search_max_results or 5),
+        web_search_effective_provider=str(_effective_search["provider"]),
+        web_search_effective_source=str(_effective_search["source"]),
+        web_search_effective_key_set=bool(_effective_search["key_set"]),
         web_fetch_max_chars=_web_limits()[0],
         web_fetch_timeout=_web_limits()[1],
         web_fetch_max_redirects=_web_limits()[2],
@@ -442,7 +453,7 @@ async def update_settings(data: SettingsUpdate):
     if "web_search_provider" in updates:
         provider = str(updates["web_search_provider"]).strip().lower()
         if provider not in WEB_SEARCH_PROVIDERS:
-            raise HTTPException(status_code=400, detail="web_search_provider must be brave, tavily, exa or empty")
+            raise HTTPException(status_code=400, detail="web_search_provider must be brave, tavily, exa, anthropic, openai or empty")
         updates["web_search_provider"] = provider
     if "web_search_max_results" in updates:
         n = int(updates["web_search_max_results"])
@@ -653,10 +664,10 @@ async def test_provider(data: TestProviderRequest):
                     headers["Authorization"] = f"Bearer {key}"
                 resp = await client.get(f"{base}/models", headers=headers)
                 resp.raise_for_status()
-                # The hub runtime lists its speech models here too, marked by
-                # kind; they are special models, not chat models.
+                # The hub runtime lists its speech and image models here too,
+                # marked by kind; they are special models, not chat models.
                 items = [m for m in resp.json().get("data", [])
-                         if m.get("kind") not in ("speech", "transcription")]
+                         if m.get("kind") not in ("speech", "transcription", "image")]
                 models = [m["id"] for m in items]
                 # OpenAI-compatible gateways report the usable window under
                 # different keys: context_length (OpenRouter), max_model_len

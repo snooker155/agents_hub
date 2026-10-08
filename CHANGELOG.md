@@ -13,6 +13,17 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- `web_search` can run through the model providers' own search: `anthropic`
+  and `openai` are search providers that use the Messages API and Responses
+  API server-side search tools on the key the Models page holds, so no
+  separate search service or key is needed. With no provider set the hub picks
+  a model provider whose key is configured (the default provider first); the
+  Settings card, `ah setup`, the setup guide and the assistant's settings
+  lookup say which one a search uses. `WEB_SEARCH_MODEL` names the small model
+  that drives such a search.
+
 ## [0.10.0] - 2026-10-08
 
 ### Added

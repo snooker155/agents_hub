@@ -876,12 +876,16 @@ def step_features(a: Asker, plan: Plan) -> None:
         ], default=plan.cur("AGENT_EXECUTION_MODE", "local"))
 
     search = a.choose("web_search", "Web search for the web_search tool", [
-        ("none", "None", "fetch_url still works"),
+        ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
+        ("anthropic", "Anthropic", "its own search tool, on the model key"),
+        ("openai", "OpenAI", "its own search tool, on the model key"),
         ("brave", "Brave Search", "API key"),
         ("tavily", "Tavily", "API key"),
         ("exa", "Exa", "API key"),
-    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "none")
-    if search != "none":
+    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "auto")
+    if search in ("anthropic", "openai"):
+        plan.env.update({"WEB_SEARCH_PROVIDER": search})
+    elif search != "auto":
         key = a.secret("web_search_key", "Its API key", current=plan.cur("WEB_SEARCH_API_KEY"))
         plan.env.update({"WEB_SEARCH_PROVIDER": search, "WEB_SEARCH_API_KEY": key})
     elif plan.cur("WEB_SEARCH_PROVIDER"):

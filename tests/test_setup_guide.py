@@ -141,7 +141,12 @@ def test_done_is_read_from_the_hub_and_skips_are_remembered(single, no_keys, ws)
     with pytest.raises(ValueError, match="cannot be skipped"):
         setup_guide.act(LOCAL_PRINCIPAL, "skip", "model")
     g = setup_guide.act(LOCAL_PRINCIPAL, "skip", "voice")
-    assert _status(g, "voice") == "skipped" and g["next"] == "web_search"
+    # The OpenAI key saved above is a web search too (tools/web.py
+    # effective_search_provider), so that step is done and the guide moves
+    # past it (which step comes next depends on whether the demo workspace
+    # exists on this hub).
+    assert _status(g, "voice") == "skipped" and _status(g, "web_search") == "done"
+    assert g["next"] not in ("voice", "web_search")
     g = setup_guide.act(LOCAL_PRINCIPAL, "unskip", "voice")
     assert _status(g, "voice") == "todo"
     # The health check is not visible to the hub: the assistant marks it.

@@ -10411,6 +10411,18 @@
             "title": "Web Search Api Key Masked",
             "type": "string"
           },
+          "web_search_effective_key_set": {
+            "title": "Web Search Effective Key Set",
+            "type": "boolean"
+          },
+          "web_search_effective_provider": {
+            "title": "Web Search Effective Provider",
+            "type": "string"
+          },
+          "web_search_effective_source": {
+            "title": "Web Search Effective Source",
+            "type": "string"
+          },
           "web_search_max_results": {
             "title": "Web Search Max Results",
             "type": "integer"
@@ -10459,6 +10471,9 @@
           "web_search_provider",
           "web_search_api_key_masked",
           "web_search_max_results",
+          "web_search_effective_provider",
+          "web_search_effective_source",
+          "web_search_effective_key_set",
           "web_fetch_max_chars",
           "web_fetch_timeout",
           "web_fetch_max_redirects",

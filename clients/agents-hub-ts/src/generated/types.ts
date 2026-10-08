@@ -1726,6 +1726,9 @@ export type SettingsResponse = {
   "web_search_provider": string;
   "web_search_api_key_masked": string;
   "web_search_max_results": number;
+  "web_search_effective_provider": string;
+  "web_search_effective_source": string;
+  "web_search_effective_key_set": boolean;
   "web_fetch_max_chars": number;
   "web_fetch_timeout": number;
   "web_fetch_max_redirects": number;
