@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-08
+
 ### Added
 
 - The hub as an MCP server (docs/hub-as-mcp-server.md): `POST /v1/mcp`,
