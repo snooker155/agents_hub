@@ -110,6 +110,16 @@ def _process_group(pid: int) -> List[int]:
     return pids or [pid]
 
 
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def listening_ports(pid: int) -> List[int]:
     """TCP ports the process group of ``pid`` listens on, for a local service
     whose command ignored ``$PORT`` (``lsof`` on macOS and Linux, ``ss`` as
@@ -487,16 +497,16 @@ class LocalRunner:
         except ProcessLookupError:
             _procs.pop(rt.pid, None)
             return
+        # Wait for the whole group, not just the shell leader: the server it
+        # started can outlive the shell by a moment and still hold the port.
         deadline = time.monotonic() + STOP_TIMEOUT
         while time.monotonic() < deadline:
-            try:
-                os.kill(rt.pid, 0)
-            except ProcessLookupError:
-                break
             proc = _procs.get(rt.pid)
-            if proc is not None and proc.poll() is not None:
+            if proc is not None:
+                proc.poll()  # reap the leader so its zombie does not keep the group alive
+            if not _group_alive(pgid):
                 break
-            time.sleep(0.2)
+            time.sleep(0.1)
         else:
             try:
                 os.killpg(pgid, signal.SIGKILL)
