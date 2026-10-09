@@ -77,6 +77,9 @@ describe('Settings global temperature', () => {
     expect(saveButton()).toBeDisabled();
 
     fireEvent.change(field(), { target: { value: '0.7' } });
+    // A typed value stays typed: nothing resets the draft after the change.
+    expect(field()).toHaveValue(0.7);
+    expect(saveButton()).toBeEnabled();
     fireEvent.click(saveButton());
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ temperature: 0.7 }));

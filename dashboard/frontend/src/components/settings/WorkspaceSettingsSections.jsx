@@ -158,7 +158,15 @@ export function GlobalTemperatureSection({ s }) {
   const { t } = useI18n();
   const stored = s.globalSettings.temperature ?? 0;
   const [value, setValue] = useState(String(stored));
-  useEffect(() => { setValue(String(stored)); }, [stored]);
+  // The draft follows a stored value that changes under it (another tab
+  // saved), adjusted during render rather than in an effect: a mount effect
+  // ran after the first keystroke when the section appeared from a load
+  // outside act and wiped what was typed (the CI flake of 2026-10-09).
+  const [seen, setSeen] = useState(stored);
+  if (seen !== stored) {
+    setSeen(stored);
+    setValue(String(stored));
+  }
   const parsed = parseFloat(value);
   const valid = value.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0 && parsed <= 2;
   const dirty = valid && parsed !== stored;
