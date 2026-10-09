@@ -196,9 +196,16 @@ Viele Stimmen sprechen nur eine Sprache: eine Piper-Stimme ist auf eine
 trainiert, die Stimmen von Kokoro sind englisch, japanisch oder chinesisch.
 Deshalb kann das Sprachmodell pro Sprachcode ein Modell und eine Stimme nennen
 (`languages` im Sprachmodell des Arbeitsbereichs, die Zeilen **Eine Stimme pro
-Sprache** auf der Seite Modelle, Reiter Spezial). Eine Cloud-Stimme spricht
-alle Sprachen, dort nennt eine Sprache nur eine andere Stimme
-(`{"ru": {"voice": "coral"}}`).
+Sprache** auf der Seite Modelle, Reiter Spezial):
+
+```json
+{"provider": "hub-local", "model": "kokoro-v1.0",
+ "languages": {"ru": {"model": "piper-ru_RU-irina-medium"},
+               "de": {"model": "piper-de_DE-thorsten-medium"}}}
+```
+
+Eine Cloud-Stimme spricht alle Sprachen, dort nennt eine Sprache nur eine
+andere Stimme (`{"ru": {"voice": "coral"}}`).
 
 Die Sprache einer Antwort wird aus dem Text selbst bestimmt (zuerst die
 Schrift, dann häufige Wörter, sonst die Sprache der Seite), und Modell und
