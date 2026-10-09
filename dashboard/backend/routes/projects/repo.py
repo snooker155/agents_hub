@@ -3,7 +3,7 @@ from ._common import (_project_to_dict, store)
 import asyncio
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from workspace import get_workspace_folder, resolve_project_root, project_folder_name
 from models import ProjectAttach, ProjectApiRequest, ProjectImportFromRepo, ProjectConnectRepo
-from projects.models import Project, RepoConfig
+from projects.models import Project, ProjectType, RepoConfig, RepoType
 from common.paths import PROJECT_ROOT, AGENTS_HUB_ROOT
 from projects import git_service, proxy_service
 from projects.errors import ServiceError
@@ -112,10 +112,10 @@ async def import_from_repo(payload: ProjectImportFromRepo):
     project = Project(
         name=name,
         description=repo_info.get("description"),
-        type="code",
+        type=ProjectType.code,
         workspace=payload.workspace,
         repo=RepoConfig(
-            type=payload.provider,
+            type=cast(RepoType, payload.provider),  # pydantic coerces the string
             url=repo_info["clone_url"],
             branch=branch,
             local_path=local_path,
@@ -301,10 +301,10 @@ async def attach_project(payload: ProjectAttach):
     project = Project(
         name=folder,
         description=payload.description,
-        type=payload.type or "code",
+        type=cast(ProjectType, payload.type or "code"),  # pydantic coerces the string
         workspace=payload.workspace,
         repo=RepoConfig(
-            type="local" if is_repo else "none",
+            type=RepoType.local if is_repo else RepoType.none,
             local_path=folder,
             branch=None,
         ),

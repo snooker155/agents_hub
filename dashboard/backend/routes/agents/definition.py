@@ -2,7 +2,7 @@
 import dataclasses
 
 from fastapi import APIRouter, HTTPException
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from pydantic import BaseModel, Field
 
 from agents import registry
@@ -232,7 +232,7 @@ async def diff_agent_version(agent_id: str, version: int, against: str = "curren
         "agent_id": agent_id,
         "from": version,
         "against": against,
-        "diff": agent_versions.diff_entries(from_entry, to_entry),
+        "diff": agent_versions.diff_entries(from_entry, cast(Dict[str, Any], to_entry)),
     }
 
 

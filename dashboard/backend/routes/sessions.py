@@ -12,7 +12,7 @@ agent behind them lives under /api/instances.
 Session contexts are stored in the ``sessions`` table (``common.db``).
 """
 from fastapi import APIRouter, HTTPException, Request
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -337,7 +337,7 @@ async def list_sessions(
         raise HTTPException(status_code=400, detail=str(exc))
     principal = identity.request_principal(request)
     items = access.filter_by_workspace(principal, page["items"])
-    stats = run_manager.session_run_stats([c.get("session_id") for c in items])
+    stats = run_manager.session_run_stats(cast(List[str], [c.get("session_id") for c in items]))
     return {**page, "items": [_enrich_context(c, stats) for c in items]}
 
 
@@ -612,7 +612,7 @@ def _extract_chat_message_runs(log_text: str) -> list:
             if (me or mx) and tools:
                 for j in range(len(tools) - 1, -1, -1):
                     if tools[j].get("output") is None:
-                        tools[j]["output"] = me.group("output") if me else f"ERROR: {mx.group('error')}"
+                        tools[j]["output"] = me.group("output") if me else f"ERROR: {mx.group('error') if mx else ''}"
                         tools[j]["running"] = False
                         if mx:
                             tools[j]["status"] = "error"

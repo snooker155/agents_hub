@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -58,7 +58,7 @@ def _service(workspace: Optional[str]):
 
 
 async def _handle_activity_safely(activity: dict, service=None) -> None:
-    svc = service or _spec().service
+    svc: Any = service or _spec().service
     try:
         with svc.scope():
             await svc.handle_activity(activity)

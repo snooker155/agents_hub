@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
@@ -125,7 +125,7 @@ class ScenarioIn(BaseModel):
 
 
 def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> Scenario:
-    kwargs = dict(
+    kwargs: Dict[str, Any] = dict(
         name=data.name.strip(),
         description=data.description,
         # Omitted means unchanged, not cleared: the setup form and the chat both
@@ -1647,8 +1647,10 @@ async def generate_scenario_stream(data: ScenarioGenerateIn):
                 if not result.ok and not result.steps and result.error:
                     raise RuntimeError(result.error)
             else:
-                agent = await asyncio.to_thread(
-                    _scenario_generate_agent, data, ws_path, streaming=True)
+                # create_agent is typed as AgentBase; the scenario creator is a
+                # StandardAgent, which has arun.
+                agent = cast(Any, await asyncio.to_thread(
+                    _scenario_generate_agent, data, ws_path, streaming=True))
                 callback.bind_model(agent.provider or "", agent.model or "")
                 await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
                                  "provider": agent.provider or "", "model": agent.model or ""})

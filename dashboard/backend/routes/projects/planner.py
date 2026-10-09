@@ -211,7 +211,7 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
                 await emit({"type": "agent", "agent_id": _PLANNER_AGENT_ID,
                             "provider": provider, "model": model})
 
-                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))  # pyright: ignore[reportAttributeAccessIssue]  # arun is on the concrete agents, not AgentBase
                 _register_run(project_id, "__plan__", task)
 
                 try:

@@ -29,7 +29,7 @@ images.
 from __future__ import annotations
 
 import mimetypes
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -416,7 +416,7 @@ async def export_view_pptx(view_id: str):
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={
             "Content-Disposition": f"attachment; filename=\"slides.pptx\"; filename*=UTF-8''{quote(name)}",
-            "X-Export-Warnings": str(len(warnings)),
+            "X-Export-Warnings": str(len(cast(List[str], warnings))),
         },
     )
 

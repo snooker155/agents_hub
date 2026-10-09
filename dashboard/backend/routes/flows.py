@@ -7,7 +7,7 @@ import asyncio
 import os
 import signal
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 import json
 
@@ -319,7 +319,7 @@ async def update_flow_sharing(flow_id: str, data: FlowSharingUpdate):
             )
         for agent_id in agent_ids:
             spec = registry.get_agent(agent_id)
-            if is_system_agent(agent_id) or spec.shared:
+            if spec is None or is_system_agent(agent_id) or spec.shared:
                 continue
             registry.add_agent(dataclasses.replace(spec, shared=True))
             published_agents.append(agent_id)
@@ -389,7 +389,7 @@ async def run_flow(flow_id: str, req: FlowRun):
         raise HTTPException(status_code=404, detail="Flow not found")
 
     if req.task_id:
-        t = tasks_service.get_task(req.task_id)
+        t = tasks_service.get_task(cast(Any, req.task_id))  # the store takes a str id as well
         if not t:
             raise HTTPException(status_code=404, detail=f"Task '{req.task_id}' not found")
         # An existing task runs the flow in its own workspace.
@@ -612,6 +612,8 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
 
     for fr in active:
         fr_id = fr.get("flow_run_id")
+        if not fr_id:
+            continue
 
         # 1) Mark the flow run stopped — the orchestrator polls this between nodes.
         run_store.close_flow_run(fr_id, status="stopped", exit_code=1, error="Stopped by user")
@@ -631,7 +633,7 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
         for r in all_runs:
             if r.get("flow_run_id") != fr_id or r.get("status") not in {"running", "pending"}:
                 continue
-            if run_manager.stop_run_by_id(r.get("run_id")):
+            if r.get("run_id") and run_manager.stop_run_by_id(r["run_id"]):
                 stopped = True
                 label = r.get("flow_node_label") or r.get("agent_id", "")
                 _append_flow_log({

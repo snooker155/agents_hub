@@ -26,7 +26,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -176,7 +176,7 @@ def _csv_stream(rows: Iterable[Dict[str, Any]]) -> Iterator[str]:
         buf.truncate(0)
         out = dict(row)
         out["details"] = json.dumps(out.get("details") or {}, ensure_ascii=False, default=str)
-        writer.writerow(out)
+        writer.writerow(cast(Dict[Any, Any], out))
         yield buf.getvalue()
 
 

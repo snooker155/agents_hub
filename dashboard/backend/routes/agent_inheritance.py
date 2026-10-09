@@ -93,6 +93,8 @@ async def set_agent_extends(agent_id: str, data: AgentExtendsUpdate):
             )
         else:
             effective = registry.get_agent(raw.id)
+            if effective is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
             registry.add_agent(
                 dataclasses.replace(effective, extends=extends, extends_version=data.extends_version),
                 actor="dashboard", note=f"now extends {extends}",

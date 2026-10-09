@@ -54,7 +54,7 @@ async def get_stats(workspace: Optional[str] = None):
     agent_map = {a.id: a for a in agents}
     for r in runs:
         aid = r.get("agent_id")
-        agent = agent_map.get(aid)
+        agent = agent_map.get(aid) if aid else None
         domain = agent.domain if agent else "unknown"
         domain_usage[domain] = domain_usage.get(domain, 0) + 1
 

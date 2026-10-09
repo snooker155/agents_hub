@@ -232,7 +232,7 @@ async def update_service(service_id: str, body: ServiceUpdate, request: Request)
         updates["environment_name"] = None
     if "name" in updates:
         updates["name"] = str(updates["name"]).strip()[:120] or service.get("name")
-    updated = store.update(service_id, **updates) if updates else service
+    updated = (store.update(service_id, **updates) if updates else service) or service
     if updates:
         store.add_event(service_id, "updated", ", ".join(f"{k}={v}" for k, v in updates.items()))
         # Running replicas read their inputs from their row: keep them in step.
@@ -240,7 +240,7 @@ async def update_service(service_id: str, body: ServiceUpdate, request: Request)
             for rep in replicas.live_replicas(updated):
                 carrier.set_inputs(rep["instance_id"], take_tasks=updates.get("take_tasks"),
                                    concurrency=updates.get("concurrency"))
-    return _enrich(updated or service, request)
+    return _enrich(updated, request)
 
 
 @router.post("/{service_id}/pause")
@@ -248,6 +248,8 @@ async def pause_service(service_id: str, request: Request):
     """Stop every replica and start none until resumed."""
     _get_or_404(service_id)
     service = store.pause(service_id, "paused by operator")
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
     for rep in replicas.live_replicas(service):
         await asyncio.to_thread(replicas.stop_replica, service, rep, reason="paused")
     return _enrich(store.get(service_id) or service, request)
@@ -257,6 +259,8 @@ async def pause_service(service_id: str, request: Request):
 async def resume_service(service_id: str, request: Request):
     _get_or_404(service_id)
     service = store.resume(service_id)
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
     if int(service.get("replicas_min") or 0) > 0:
         try:
             await asyncio.to_thread(replicas.start_replica, service, reason="resumed")
@@ -276,7 +280,7 @@ async def delete_service(service_id: str):
 
 
 @router.get("/{service_id}/replicas")
-async def list_replicas(service_id: str, live: Optional[bool] = None, request: Request = None):
+async def list_replicas(service_id: str, live: Optional[bool] = None):
     _get_or_404(service_id)
     items = replicas.list_replicas(service_id, live=live)
     return {"items": [{**carrier.public_view(i), "resident": True,

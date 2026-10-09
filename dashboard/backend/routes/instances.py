@@ -603,7 +603,10 @@ async def update_instance_inputs(instance_id: str, body: InstanceInputs, request
     _resident_or_400(instance_id)
     instance = carrier.set_inputs(instance_id, take_tasks=body.take_tasks,
                                   concurrency=body.concurrency)
-    return _enrich(instance or store.get(instance_id), request=request)
+    row = instance or store.get(instance_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return _enrich(row, request=request)
 
 
 @router.get("/{instance_id}/carriers")

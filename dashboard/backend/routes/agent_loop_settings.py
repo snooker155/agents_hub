@@ -99,6 +99,8 @@ def _validate_output_schema(schema: Optional[Dict[str, Any]]) -> Optional[Dict[s
     if not isinstance(schema, dict) or not schema:
         raise HTTPException(status_code=400, detail="output_schema must be a non-empty JSON object")
     import jsonschema
+    import jsonschema.exceptions
+    import jsonschema.validators
     try:
         validator_cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
         validator_cls.check_schema(schema)

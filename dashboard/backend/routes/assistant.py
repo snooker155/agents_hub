@@ -155,6 +155,7 @@ def resolve_thread(request: Request, mode: Optional[str] = None) -> SimpleNamesp
         # One operator: one thread, in default, with the service tools.
         return SimpleNamespace(entity_id=f"user-{_clean(identity.current_user_id()) or 'local'}",
                                home="default", service=True, principal=principal)
+    assert principal is not None  # _principal refuses a missing one in multi mode
     if mode == MODE_SERVICE:
         if not principal.is_admin:
             raise HTTPException(status_code=403,
@@ -570,6 +571,7 @@ def voice_status(workspace: str, home: Optional[str] = None, viewer: Any = None)
     speech = model("speech")
     if speech is not None:
         entry, _ = voice_entry("speech", workspace, home)
+        assert entry is not None  # model("speech") above found it
         kind = special.provider_kind(str(entry.get("provider") or ""))
         purpose = special.get_purpose("speech")
         speech["voice"] = (entry.get("options") or {}).get("voice") or ""

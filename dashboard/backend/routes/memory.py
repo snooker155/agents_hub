@@ -640,6 +640,8 @@ async def upload_knowledge_file(
     _require_pool_visible(request, mem)
 
     kdir = workspace_knowledge_dir(workspace)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="The upload has no file name")
     dest = kdir / file.filename
     content = await file.read()
     dest.write_bytes(content)

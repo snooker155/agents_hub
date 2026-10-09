@@ -88,7 +88,7 @@ async def mint_ticket(kind: str, target_id: str, request: Request,
         if session_id:
             _session_for(principal, session_id, kind, target_id)
         else:
-            term.manager().check_limit(principal.id)
+            term.manager().check_limit(principal.id if principal else "")
     except term.TerminalRefused as exc:
         raise _refusal(exc)
     ttl = preview_tickets.TERMINAL_TTL_SECONDS
@@ -135,7 +135,7 @@ async def terminal_socket(websocket: WebSocket, kind: str, target_id: str) -> No
     found = preview_tickets.verify_terminal(websocket.query_params.get("ticket") or "",
                                             target_kind=kind, target_id=target_id)
     principal = term.principal_from_ticket(found) if found else None
-    if principal is None:
+    if found is None or principal is None:
         await websocket.close(code=4401, reason="a valid terminal ticket is required")
         return
     await websocket.accept()

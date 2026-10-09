@@ -5,7 +5,7 @@ user notification inbox.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -81,7 +81,7 @@ class JobCreate(BaseModel):
     def resolved_run_at(self) -> datetime:
         if self.run_at is not None:
             return self.run_at
-        return datetime.now(timezone.utc) + timedelta(minutes=int(self.delay_minutes))
+        return datetime.now(timezone.utc) + timedelta(minutes=int(cast(int, self.delay_minutes)))
 
 
 class JobUpdate(BaseModel):
@@ -185,6 +185,8 @@ async def update_job(job_id: UUID, payload: JobUpdate):
         updated = plan_service.update_job(job_id, **fields)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Job not found")
     return job_to_dict(updated)
 
 
@@ -225,7 +227,10 @@ async def cancel_job(job_id: UUID):
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status not in (JobStatus.scheduled, JobStatus.paused):
         raise HTTPException(status_code=400, detail=f"Cannot cancel a job in status '{job.status.value}'")
-    return job_to_dict(plan_service.cancel_job(job_id))
+    cancelled = plan_service.cancel_job(job_id)
+    if cancelled is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job_to_dict(cancelled)
 
 
 @router.post("/jobs/{job_id}/run-now")

@@ -14,7 +14,7 @@ Two rules shape the answers:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/models/local", tags=["local-models"])
 
 
-def _raise(exc: lm.LocalModelError) -> None:
+def _raise(exc: lm.LocalModelError) -> NoReturn:
     code = exc.status_code
     status = code if code is not None and 400 <= code < 500 else 502
     raise HTTPException(status_code=status, detail=str(exc))

@@ -101,7 +101,7 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     # an O(agents * instances) liveness scan.
     _running_by_agent: Dict[str, List[Dict[str, Any]]] = {}
     for instance in list_resident(live=True):
-        _running_by_agent.setdefault(instance.get("agent_id"), []).append(instance)
+        _running_by_agent.setdefault(str(instance.get("agent_id")), []).append(instance)
     # Inheritance (agents/inheritance.py): how many agents extend each one.
     _children_count: Dict[str, int] = {}
     for _raw in registry.list_agents_raw():

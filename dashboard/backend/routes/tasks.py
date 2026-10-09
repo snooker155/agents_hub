@@ -820,7 +820,7 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
     # A run parked at its money cap: stopping it needs no agent, so this is
     # answered before the agent checks below (the approving branch makes them).
     if str(pending.get("kind") or "") == "budget":
-        return _answer_budget_pause(request, task_id, t, pending, agent_id, payload)
+        return _answer_budget_pause(request, task_id, t, pending, agent_id or "", payload)
     if not agent_id:
         raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
     if not registry.get_agent(agent_id):
@@ -1130,7 +1130,7 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                         verbose=(payload.verbose if payload and payload.verbose is not None else True)
                     )
 
-                    result = agent.run(prompt, run_id)
+                    result = agent.run(prompt, run_id=run_id)
                     if result.ok:
                         fh.write(str(result.agent_output) + "\n")
                     else:

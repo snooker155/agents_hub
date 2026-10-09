@@ -25,7 +25,7 @@ import json
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -373,7 +373,7 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
         return
     try:
         info = await asyncio.to_thread(_load, session_id)
-        _check(websocket, info.get("workspace"))
+        _check(cast(Request, websocket), info.get("workspace"))
     except HTTPException as exc:
         await websocket.close(code=1008, reason=str(exc.detail)[:120])
         return

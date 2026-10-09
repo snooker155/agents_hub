@@ -326,7 +326,7 @@ async def generate_project_graph_stream(project_id: str, view: str = Query("arch
                 yield _sse({"type": "agent", "agent_id": _ARCHITECT_AGENT_ID,
                             "provider": agent.provider or "", "model": agent.model or ""})
 
-                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))  # pyright: ignore[reportAttributeAccessIssue]  # arun is on the concrete agents, not AgentBase
 
                 # Forward callback events as they arrive; drain anything left
                 # once the run finishes.
@@ -527,7 +527,7 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
                 # propagates into the agent run (and the threads its sync tools use),
                 # mirroring the artifact_sink pattern in the chat pipeline.
                 token = graph_sink.set_handler(sink)
-                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))  # pyright: ignore[reportAttributeAccessIssue]  # arun is on the concrete agents, not AgentBase
                 graph_sink.reset_handler(token)
                 _register_run(project_id, view, task)
 

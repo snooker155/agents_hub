@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 
-def _agent_label(agent_id: str) -> Optional[Dict[str, str]]:
+def _agent_label(agent_id: str) -> Optional[Dict[str, Any]]:
     if not agent_id:
         return None
     spec = registry.get_agent(agent_id)
@@ -622,7 +622,7 @@ async def install_skill(skill_id: str, data: SkillInstall):
         origin_skill_id=source.origin_skill_id or str(source.id),
     )
     # The version of the original this copy holds, for "update available".
-    origin = find_procedure(copy.origin_skill_id) if source.origin_skill_id else source
+    origin = find_procedure(source.origin_skill_id) if source.origin_skill_id else source
     copy.origin_version = (origin.version or None) if origin else None
     store.add(copy, version_op=skill_versions.OP_INSTALL,
               version_note=f"installed from {source.name}")

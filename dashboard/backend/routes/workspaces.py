@@ -3,7 +3,7 @@ Workspace-related API routes.
 """
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 import mimetypes
 import os
@@ -137,7 +137,8 @@ def _calc_task_progress(task, all_tasks):
     # Only count direct subtasks of this task
     subs = [st for st in all_tasks if st.parent_id == task.id]
     if not subs:
-        return 100 if getattr(task, "status", None) == "done" or getattr(task, "status", None).value == "done" else 0
+        status = getattr(task, "status", None)
+        return 100 if status == "done" or getattr(status, "value", None) == "done" else 0
     done = 0
     for st in subs:
         st_status = st.status.value if hasattr(st.status, "value") else str(st.status)
@@ -725,7 +726,7 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
         configure_logging_for_active_workspace()
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("update_workspace_settings_overrides: best-effort step failed", exc_info=True)
-    out = {"overrides": cleaned}
+    out: Dict[str, Any] = {"overrides": cleaned}
     # A first key for a provider switches on one default model with its catalog
     # price (common/default_model.py); only the default workspace speaks for the hub's default.
     from common import default_model

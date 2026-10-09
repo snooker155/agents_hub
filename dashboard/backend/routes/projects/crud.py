@@ -1,13 +1,13 @@
 """Project registry CRUD: list, create, read, update and delete."""
 from ._common import (_graph_store, _project_to_dict, store)
-from typing import Optional
+from typing import Optional, cast
 
 from fastapi import APIRouter, HTTPException, Query
 
 from tasks import service as tasks_service
 from workspace import get_workspace_folder, resolve_project_root, project_folder_name
 from models import ProjectCreate, ProjectUpdate
-from projects.models import Project
+from projects.models import Project, ProjectType
 import logging
 
 log = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ async def create_project(payload: ProjectCreate):
     project = Project(
         name=payload.name,
         description=payload.description,
-        type=payload.type or "general",
+        type=cast(ProjectType, payload.type or "general"),  # pydantic coerces the string
         workspace=payload.workspace,
         tags=payload.tags or [],
     )

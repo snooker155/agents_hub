@@ -120,7 +120,10 @@ async def get_project_file_id(project_id: str, path: str):
 
     target = _project_file(project_id, path)
     project = store().get(project_id)
-    rel = target.relative_to(_project_root_path(project)).as_posix()
+    root = _project_root_path(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project folder not found")
+    rel = target.relative_to(root).as_posix()
     try:
         record = files_service.ensure_folder_record(
             project.workspace, f"{project_folder_name(project.name)}/{rel}")
@@ -148,6 +151,8 @@ async def get_project_file_content(project_id: str, path: Optional[str] = None, 
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
     root = _project_root_path(store().get(project_id))
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project folder not found")
     return {"path": target.relative_to(root).as_posix(), "size": size, "content": preview["text"], "kind": preview["kind"],
             "mime_type": preview["mime_type"], "truncated": preview["truncated"]}
 
