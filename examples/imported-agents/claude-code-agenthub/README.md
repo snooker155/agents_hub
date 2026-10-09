@@ -37,6 +37,18 @@ pointed at this directory (`../prepare_example_repo.sh claude-code-agenthub`,
 see below) or your own fork of it. Enter `http://localhost:8430` as the
 endpoint once the container is up.
 
+## Or let the hub run it
+
+Instead of the `docker run` above, open the imported agent's page and under
+**Where it runs** pick *Docker on this host, run by the hub*. The hub builds
+this image from its clone and starts one container per workspace, with that
+workspace's folder mounted at its own host path, so the `workspace` the hub
+sends with every run is a directory Claude Code can edit. `ANTHROPIC_API_KEY`
+and the other variables declared in `agent-hub.json` are taken from the
+workspace's variables or the hub's environment. `AGENTS_HUB_WORKSPACE`, set
+by the hub, becomes the default working directory when a run names none.
+See docs/imported-agents.md, "Docker mode".
+
 ## Trying it without a remote
 
 This example ships inside the Agents Hub repository, so it is not a git

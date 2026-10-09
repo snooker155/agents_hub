@@ -15,6 +15,32 @@ turns that section into the next release.
 
 ### Added
 
+- **`tests_pass` grader**: the first eval grader that reads the files a run
+  left behind rather than its text or its tool trail. It runs a test command
+  (`python -m pytest -q` by default; `command`, `timeout` and `image` are
+  its parameters) in a copy of the case's working directory through the
+  sandbox provider with no network, and scores the share of tests that
+  passed (pytest, jest and TAP summaries are read; otherwise the exit code
+  decides), keeping the output's tail on the result. It is what makes two
+  coding agents, an imported Claude Code and the hub's own, comparable on
+  one eval set. `grade`/`grade_all` take `work_dir`; a batch run finds the
+  folder again with `evals.snapshot.locate_isolation_dir`.
+- **Docker mode for imported agents.** An imported agent whose manifest ships
+  a Dockerfile (Claude Code, Codex, the bundled examples) can be run by the
+  hub itself instead of behind a URL you start by hand: the hub builds the
+  image from the clone and starts one container per workspace, mounting that
+  workspace's folder at its own host path (never the root of all workspaces),
+  plus the workspace's eval folder when `AGENTS_HUB_EVAL_ROOT` keeps those
+  elsewhere, so the path the hub sends with every run, chat or eval case
+  alike, is a directory the agent can edit. Only the manifest's declared
+  environment crosses into the container; the port is published on
+  `127.0.0.1` and read back from the daemon. The choice, the image and the
+  containers are on the agent's page under *Where it runs*; the readiness
+  report follows the mode. New: `agents/importer/docker_runtime.py`,
+  `GET|POST /api/agent-import/{id}/docker[/mode|/build|/start|/stop]`,
+  `AGENTS_HUB_EVAL_ROOT` (`evals.snapshot.eval_root`), and the Claude Code
+  and Codex adapters default their working directory to
+  `AGENTS_HUB_WORKSPACE` when the hub started them.
 - **First run in the browser** for a single operator: a new install opens on
   a setup screen of its own instead of the app, one decision per screen (the
   language, light or dark, a model, the default model, the assistant's

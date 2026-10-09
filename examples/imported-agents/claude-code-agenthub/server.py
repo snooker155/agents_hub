@@ -68,7 +68,9 @@ from pydantic import BaseModel
 app = FastAPI(title="Claude Code: Agents Hub adapter")
 
 # Repository Claude Code edits when a run does not name a workspace of its own.
-DEFAULT_WORKDIR = Path(os.environ.get("CLAUDE_WORKDIR", "/work"))
+# When the hub runs this container itself (Docker mode), AGENTS_HUB_WORKSPACE
+# is the workspace folder it mounted, at its own host path.
+DEFAULT_WORKDIR = Path(os.environ.get("CLAUDE_WORKDIR") or os.environ.get("AGENTS_HUB_WORKSPACE") or "/work")
 
 # Hard ceiling on a single run, independent of the hub's own timeout, so a
 # wedged claude process cannot hold a worker forever.

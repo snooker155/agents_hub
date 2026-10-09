@@ -886,6 +886,158 @@ def grade_rubric(output: str, case, params: Dict[str, Any],
     return rubric_result(_reply_text(reply), ref, state, inbound=inbound, outbound=outbound)
 
 
+# ── Code graders: what the case's working directory looks like afterwards ───
+#
+# An output grader reads what the agent said; a trajectory grader reads what
+# it did; these read what it *left behind*. A coding agent's result is the
+# tree it edited, and the only honest measure of that tree is whether its
+# tests pass. The case's working directory (``runner.prepare_work_dir``) is
+# handed to the grader as ``work_dir``; a case without files has none, and
+# the grader says so rather than passing by default.
+
+#: The test command when the eval set names none. pytest is what this
+#: repository's own cases use; a JavaScript case sets ``command``.
+DEFAULT_TEST_COMMAND = "python -m pytest -q"
+TESTS_TIMEOUT_DEFAULT = 300
+#: Exit codes the wrapper script reserves, so a missing mount or a failed
+#: copy is never mistaken for a test failure.
+_EXIT_NO_WORK_DIR = 97
+_EXIT_COPY_FAILED = 98
+_OUTPUT_TAIL_LINES = 20
+
+_COUNT_PATTERNS = (
+    # pytest ("3 passed, 1 failed, 2 errors"), jest/vitest ("Tests: 1 failed, 2 passed")
+    (re.compile(r"(\d+)\s+passed\b"), re.compile(r"(\d+)\s+failed\b"), re.compile(r"(\d+)\s+errors?\b")),
+    # TAP ("# pass 3", "# fail 1"), node:test and tape
+    (re.compile(r"^#\s*pass\s+(\d+)", re.M), re.compile(r"^#\s*fail\s+(\d+)", re.M), None),
+)
+
+
+def parse_test_counts(text: str) -> Optional[Dict[str, int]]:
+    """``{"passed", "failed"}`` read off a test runner's summary, or None when
+    the output names no counts (a runner this does not know, or a crash
+    before any test ran). Errors count as failures: a test that could not
+    run did not pass."""
+    text = text or ""
+    for passed_re, failed_re, error_re in _COUNT_PATTERNS:
+        passed = [int(m) for m in passed_re.findall(text)]
+        failed = [int(m) for m in failed_re.findall(text)]
+        errors = [int(m) for m in error_re.findall(text)] if error_re else []
+        if not passed and not failed and not errors:
+            continue
+        # The summary line is the last match: pytest repeats "N passed" per
+        # session only once, but a wrapper may echo a previous run's line.
+        return {"passed": passed[-1] if passed else 0,
+                "failed": (failed[-1] if failed else 0) + (errors[-1] if errors else 0)}
+    return None
+
+
+def _tests_script(command: str) -> str:
+    """The bash the sandbox runs: copy the mounted working directory (read
+    only under docker) to a scratch folder, then run the command there, so
+    a test run that writes caches or build output never touches the case's
+    own tree, which stays inspectable as the agent left it."""
+    return "\n".join([
+        "set -u",
+        'SRC="${WORK:-}"',
+        f'if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then echo "no working directory mounted" >&2; exit {_EXIT_NO_WORK_DIR}; fi',
+        'DST="$(mktemp -d)"',
+        f'cp -R "$SRC/." "$DST/" || exit {_EXIT_COPY_FAILED}',
+        'cd "$DST"',
+        command,
+    ]) + "\n"
+
+
+def _run_tests_in_sandbox(command: str, work_dir: str, timeout: int, image: Optional[str]):
+    """Run the test command through the sandbox provider the settings name
+    (``sandbox.registry.resolve``: docker by default, ``local`` when the
+    operator opted into the fallback), with the working directory mounted and
+    no network. Returns a ``SandboxResult``; never raises."""
+    from sandbox import registry
+    from sandbox.base import SandboxNetwork, SandboxRequest, SandboxResult
+
+    try:
+        from common.config import settings
+    except Exception:  # noqa: BLE001 - settings are optional for the request's limits
+        settings = None
+    limit = max(1, int(getattr(settings, "code_runner_max_timeout", 300) or 300))
+    timeout = max(1, min(int(timeout or TESTS_TIMEOUT_DEFAULT), limit))
+    try:
+        name = registry.resolve(None, settings)
+        provider = registry.get_provider(name)
+    except Exception as exc:  # noqa: BLE001 - a configuration error is the result's error
+        return SandboxResult(exit_code=-1, provider="none", error=f"cannot resolve a sandbox provider: {exc}")
+    ok, reason = provider.is_available()
+    if not ok:
+        return SandboxResult(exit_code=-1, provider="none", error=(
+            f"the {name} sandbox provider is not available ({reason}); tests_pass needs one "
+            f"(CODE_RUNNER_FALLBACK=local runs them as a plain subprocess, with no isolation)"))
+    request = SandboxRequest(
+        language="bash", code=_tests_script(command), timeout=timeout,
+        memory=getattr(settings, "code_runner_memory", None),
+        cpus=getattr(settings, "code_runner_cpus", None),
+        pids_limit=getattr(settings, "code_runner_pids_limit", None),
+        network=SandboxNetwork(type="none"), workspace=work_dir, image=image or None,
+    )
+    try:
+        return provider.run(request)
+    except Exception as exc:  # noqa: BLE001 - a provider must not raise, a bug in one must not crash grading
+        return SandboxResult(exit_code=-1, provider=name, error=str(exc))
+
+
+def _output_tail(*parts: str) -> str:
+    lines = [ln for part in parts for ln in (part or "").splitlines() if ln.strip()]
+    return "\n".join(lines[-_OUTPUT_TAIL_LINES:])
+
+
+def grade_tests_pass(output: str, case, params: Dict[str, Any], payload: Optional[Dict[str, Any]] = None,
+                     *, work_dir: Optional[str] = None) -> GradeResult:
+    """The case's working directory passes its tests: ``params['command']``
+    (default ``python -m pytest -q``) runs in a copy of the folder the agent
+    edited, in the sandbox with no network; the score is the share of tests
+    that passed when the runner prints counts, else 1 or 0 by exit code.
+
+    ``timeout`` (seconds, default 300, capped by the code runner's limit) and
+    ``image`` (a docker image with the project's dependencies; the default
+    sandbox image has none) are the other parameters. A case with no working
+    directory fails with that reason: there is nothing to test.
+    """
+    command = str(params.get("command") or DEFAULT_TEST_COMMAND).strip()
+    if not work_dir:
+        return GradeResult("tests_pass", 0.0, False,
+                           "no working directory: the case has no files or artifact, so there is nothing to test")
+    result = _run_tests_in_sandbox(command, work_dir, int(params.get("timeout") or TESTS_TIMEOUT_DEFAULT),
+                                   params.get("image"))
+    extra: Dict[str, Any] = {"command": command, "provider": result.provider,
+                             "exit_code": result.exit_code, "duration_ms": result.duration_ms}
+    if result.error:
+        return GradeResult("tests_pass", 0.0, False, f"tests could not run: {result.error}", extra)
+    if result.exit_code == _EXIT_NO_WORK_DIR:
+        return GradeResult("tests_pass", 0.0, False, "the sandbox had no working directory mounted", extra)
+    if result.exit_code == _EXIT_COPY_FAILED:
+        return GradeResult("tests_pass", 0.0, False, "could not copy the working directory into the sandbox", extra)
+    counts = parse_test_counts((result.stdout or "") + "\n" + (result.stderr or ""))
+    tail = _output_tail(result.stdout, result.stderr)
+    extra["output_tail"] = tail
+    if counts:
+        extra.update(counts)
+        total = counts["passed"] + counts["failed"]
+        score = counts["passed"] / total if total else (1.0 if result.exit_code == 0 else 0.0)
+        passed = result.exit_code == 0 and counts["failed"] == 0
+        summary = f"{counts['passed']} passed, {counts['failed']} failed"
+    else:
+        score = 1.0 if result.exit_code == 0 else 0.0
+        passed = result.exit_code == 0
+        summary = "no test counts in the output, scored by exit code"
+    if result.timed_out:
+        passed, score = False, min(score, 0.0)
+        summary = f"timed out; {summary}"
+    detail = f"{command!r} exited {result.exit_code} ({summary}, {result.duration_ms} ms, {result.provider})"
+    if tail:
+        detail += "\n" + tail
+    return GradeResult("tests_pass", round(score, 4), passed, detail, extra)
+
+
 GRADERS: Dict[str, Callable[..., GradeResult]] = {
     "exact": grade_exact,
     "substring": grade_substring,
@@ -901,6 +1053,7 @@ GRADERS: Dict[str, Callable[..., GradeResult]] = {
     "no_error_tool_results": grade_no_error_tool_results,
     "llm_judge": grade_llm_judge,
     "rubric": grade_rubric,
+    "tests_pass": grade_tests_pass,
 }
 
 # Which graders cost money — the runner uses this to project spend before a
@@ -919,6 +1072,10 @@ TRAJECTORY_GRADERS = frozenset({
 # need it; ``rubric`` only uses it when present, to summarise the tool trail
 # for its grader, so a case with no run is still graded on its output.
 PAYLOAD_GRADERS = TRAJECTORY_GRADERS | frozenset({"rubric"})
+
+# Graders that read the case's working directory after the run (the tree a
+# coding agent left behind), handed as ``work_dir=``. See ``grade``.
+WORK_DIR_GRADERS = frozenset({"tests_pass"})
 
 
 def _load_run_payload(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -962,16 +1119,21 @@ def _container_payload(run_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def grade(output: str, case, spec, *, run_id: Optional[str] = None) -> GradeResult:
+def grade(output: str, case, spec, *, run_id: Optional[str] = None,
+          work_dir: Optional[str] = None) -> GradeResult:
     """Run one grader spec against one output. Never raises.
 
     ``run_id`` is the real agent run the case was executed as — only read (and
-    only loaded once) when ``spec.kind`` is a trajectory grader.
+    only loaded once) when ``spec.kind`` is a trajectory grader. ``work_dir``
+    is the case's working directory after the run, read only by the graders
+    in ``WORK_DIR_GRADERS``.
     """
     fn = GRADERS.get(spec.kind)
     if fn is None:
         return GradeResult(spec.kind, 0.0, False, f"unknown grader {spec.kind!r}")
     try:
+        if spec.kind in WORK_DIR_GRADERS:
+            return fn(output, case, dict(spec.params or {}), None, work_dir=work_dir)
         if spec.kind in PAYLOAD_GRADERS:
             return fn(output, case, dict(spec.params or {}), _load_run_payload(run_id))
         return fn(output, case, dict(spec.params or {}))
@@ -981,7 +1143,8 @@ def grade(output: str, case, spec, *, run_id: Optional[str] = None) -> GradeResu
 
 
 def grade_all(output: str, case, specs, *, run_id: Optional[str] = None,
-              precomputed: Optional[Dict[str, GradeResult]] = None) -> tuple:
+              precomputed: Optional[Dict[str, GradeResult]] = None,
+              work_dir: Optional[str] = None) -> tuple:
     """Run every grader and combine into one weighted score.
 
     Returns ``(per_grader_dict, combined_score, passed)``. ``passed`` requires
@@ -1001,7 +1164,8 @@ def grade_all(output: str, case, specs, *, run_id: Optional[str] = None,
         return {}, 0.0, False
 
     precomputed = precomputed or {}
-    results = [precomputed[s.kind] if s.kind in precomputed else grade(output, case, s, run_id=run_id)
+    results = [precomputed[s.kind] if s.kind in precomputed
+               else grade(output, case, s, run_id=run_id, work_dir=work_dir)
                for s in specs]
     weights = [max(0.0, float(getattr(s, "weight", 1.0) or 0.0)) for s in specs]
     total_weight = sum(weights) or float(len(results))
@@ -1015,7 +1179,8 @@ def grade_all(output: str, case, specs, *, run_id: Optional[str] = None,
 
 __all__ = [
     "GradeResult", "GRADERS", "COSTED_GRADERS", "TRAJECTORY_GRADERS",
-    "PAYLOAD_GRADERS", "grade", "grade_all", "grade_rubric", "rubric_pass",
+    "PAYLOAD_GRADERS", "WORK_DIR_GRADERS", "grade", "grade_all", "grade_tests_pass",
+    "parse_test_counts", "DEFAULT_TEST_COMMAND", "grade_rubric", "rubric_pass",
     "split_model_ref", "tool_trail_summary", "model_call_cost", "judge_request",
     "judge_result", "rubric_request", "rubric_result", "rubric_failed",
 ]

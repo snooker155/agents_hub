@@ -402,7 +402,7 @@ def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
     # is a regression, and dropping the cell would quietly inflate the average.
     if result.ok:
         scores, combined, passed = grade_all(result.output, case, evalset.graders,
-                                             run_id=result.run_id)
+                                             run_id=result.run_id, work_dir=work_dir)
         result.scores, result.score, result.passed = scores, combined, passed
     else:
         result.scores, result.score, result.passed = {}, 0.0, False

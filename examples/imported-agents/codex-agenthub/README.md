@@ -50,6 +50,17 @@ copy of this directory:
 
 Enter `http://localhost:8440` as the endpoint once the container is up.
 
+## Or let the hub run it
+
+On the imported agent's page, under **Where it runs**, pick *Docker on this
+host, run by the hub*: the hub builds this image from its clone and starts one
+container per workspace, mounting that workspace's folder at its own host
+path, so the `workspace` sent with every run is a directory Codex can edit.
+`OPENAI_API_KEY` and the other declared variables come from the workspace's
+variables or the hub's environment; `AGENTS_HUB_WORKSPACE`, set by the hub,
+is the default working directory when a run names none. See
+docs/imported-agents.md, "Docker mode".
+
 ## Cost
 
 Codex is not known to report a dollar figure of its own the way Claude Code's

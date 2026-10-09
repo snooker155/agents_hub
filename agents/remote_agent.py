@@ -478,12 +478,46 @@ class RemoteAgent(AgentBase):
         self.remote = dict(remote or {})
         self.description = description
         self.workspace = workspace
+        # Docker mode resolves the endpoint once per agent instance: the
+        # container of the run's workspace, started on first use.
+        self._docker_url: Optional[str] = None
 
     # ── descriptor accessors ────────────────────────────────────────────────
 
     @property
+    def docker_mode(self) -> bool:
+        """Whether the hub runs this agent's container itself
+        (agents/importer/docker_runtime.py), one per workspace."""
+        from agents.importer.docker_runtime import is_docker_mode
+        return is_docker_mode(self.remote)
+
+    @property
+    def has_endpoint(self) -> bool:
+        """Whether a run has somewhere to go: a configured URL, or Docker mode,
+        where the URL exists once the workspace's container is up. Capability
+        questions (streaming, resume, topology) ask this, never
+        ``base_url_remote``, so answering one never starts a container."""
+        if self.docker_mode:
+            return True
+        return bool(normalize_base_url(self.remote.get("url") or ""))
+
+    @property
     def base_url_remote(self) -> str:
+        """The base URL this run talks to. In Docker mode this ensures the
+        container of the run's workspace and may raise
+        :class:`agents.importer.docker_runtime.DockerRuntimeError`."""
+        if self.docker_mode:
+            if self._docker_url is None:
+                from agents.importer.docker_runtime import url_for
+                self._docker_url = url_for(self.agent_id, self.remote, self.workspace)
+            return self._docker_url
         return normalize_base_url(self.remote.get("url") or "")
+
+    def _endpoint_failure(self, exc: Exception) -> AgentResult:
+        return AgentResult(
+            ok=False, status="error",
+            error=f"Remote agent '{self.agent_id}' could not be started in Docker mode: {exc}",
+        )
 
     @property
     def is_a2a(self) -> bool:
@@ -536,13 +570,13 @@ class RemoteAgent(AgentBase):
         that speaks the protocol can be answered.
         """
         if self.is_a2a:
-            return bool(self.base_url_remote)
-        return bool(self.base_url_remote and self.remote.get("resume_path"))
+            return self.has_endpoint
+        return bool(self.has_endpoint and self.remote.get("resume_path"))
 
     @property
     def supports_topology(self) -> bool:
         """Whether the remote can describe its own shape."""
-        return bool(self.base_url_remote and self.remote.get("graph_path"))
+        return bool(self.has_endpoint and self.remote.get("graph_path"))
 
     @property
     def supports_streaming(self) -> bool:
@@ -555,8 +589,8 @@ class RemoteAgent(AgentBase):
         on the descriptor at import time.
         """
         if self.is_a2a:
-            return bool(self.base_url_remote and self.remote.get("streaming"))
-        return bool(self.base_url_remote and self.remote.get("stream_path"))
+            return bool(self.has_endpoint and self.remote.get("streaming"))
+        return bool(self.has_endpoint and self.remote.get("stream_path"))
 
     @property
     def timeout(self) -> int:
@@ -588,8 +622,14 @@ class RemoteAgent(AgentBase):
         """
         import httpx
 
-        if not self.base_url_remote:
+        if not self.has_endpoint:
             return {"ok": False, "detail": "no url configured"}
+        if self.docker_mode:
+            from agents.importer.docker_runtime import DockerRuntimeError
+            try:
+                self.base_url_remote
+            except DockerRuntimeError as exc:
+                return {"ok": False, "detail": f"docker mode: {exc}"}
         if self.is_a2a:
             # A2A has no health method. The card is the equivalent: a service
             # that serves one is up, and it is the only URL the protocol
@@ -940,8 +980,14 @@ class RemoteAgent(AgentBase):
         """
         import httpx
 
-        if not self.base_url_remote:
+        if not self.has_endpoint:
             return self._no_endpoint()
+        if self.docker_mode:
+            from agents.importer.docker_runtime import DockerRuntimeError
+            try:
+                self.base_url_remote
+            except DockerRuntimeError as exc:
+                return self._endpoint_failure(exc)
 
         callbacks = kwargs.get("callbacks")
         streaming, emitter, sinks = self._should_stream(callbacks)
@@ -1036,8 +1082,14 @@ class RemoteAgent(AgentBase):
         """
         import httpx
 
-        if not self.base_url_remote:
+        if not self.has_endpoint:
             return self._no_endpoint()
+        if self.docker_mode:
+            from agents.importer.docker_runtime import DockerRuntimeError
+            try:
+                self.base_url_remote
+            except DockerRuntimeError as exc:
+                return self._endpoint_failure(exc)
         task_id = str(key or "").strip()
         if not task_id:
             return AgentResult(
@@ -1102,8 +1154,14 @@ class RemoteAgent(AgentBase):
         """
         import httpx
 
-        if not self.base_url_remote:
+        if not self.has_endpoint:
             return self._no_endpoint()
+        if self.docker_mode:
+            from agents.importer.docker_runtime import DockerRuntimeError
+            try:
+                self.base_url_remote
+            except DockerRuntimeError as exc:
+                return self._endpoint_failure(exc)
 
         callbacks = kwargs.get("callbacks")
         streaming, emitter, sinks = self._should_stream(callbacks)
