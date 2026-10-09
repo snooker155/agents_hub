@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { I18nProvider } from '../../i18n';
@@ -126,6 +126,10 @@ function installGet() {
         usage_outdated: runtimeUsage === 404,
       });
     }
+    if (url === '/models/local/runtime/cache') {
+      return ok({ ok: true, settings: { enabled: true }, defaults: {}, kv_types: [], limits: {}, models: [], stored: [],
+                  memory: {}, pending: [] });
+    }
     if (url === '/models/serving/info') return ok(SERVING_INFO);
     if (url === '/models/serving/usage') return ok(SERVING_USAGE);
     if (url === '/models/local/runtime/hf/files') return ok(HF_PIPER);
@@ -185,6 +189,21 @@ async function openLocalTab() {
   await screen.findByText('Hub model runtime');
   return view;
 }
+
+describe('Models, Prompt cache tab', () => {
+  it('shows the cache open on its own tab and not on the Local tab', async () => {
+    runtimeState = RUNTIME_OK;
+    runtimeUsage = { rows: [], series: [] };
+    await openLocalTab();
+    expect(screen.queryByTestId('runtime-cache')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Prompt cache/ }));
+    const card = await screen.findByTestId('runtime-cache');
+    expect(screen.getByTestId('runtime-cache-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/models/local/runtime/cache')).toBe(true));
+    expect(card).toHaveTextContent('Local models compute only the part of a prompt');
+    expect(screen.queryByText('Hub model runtime')).toBeNull();
+  });
+});
 
 describe('Models, Local tab', () => {
 
@@ -673,6 +692,18 @@ describe('Models, Local tab, recorded voices', () => {
     expect(await screen.findByTestId('speech-presets')).toHaveTextContent('Chatterbox MLX');
   });
 
+  it('offers the Qwen3-TTS presets where the runtime lists that engine', async () => {
+    runtimeState = RUNTIME_CLONING;
+    await openLocalTab();
+    expect(await screen.findByTestId('speech-presets')).not.toHaveTextContent('Qwen3-TTS');
+    cleanup();
+    runtimeState = { ...RUNTIME_CLONING, engines: { ...RUNTIME_CLONING.engines, qwen3_tts: false } };
+    await openLocalTab();
+    const presets = await screen.findByTestId('speech-presets');
+    expect(presets).toHaveTextContent('Qwen3-TTS 1.7B, your voice, 10 languages');
+    expect(presets).toHaveTextContent('Qwen3-TTS 0.6B');
+  });
+
   it('has no card while the runtime keeps no voices list', async () => {
     runtimeState = RUNTIME_CLONING;
     await openLocalTab();
@@ -704,6 +735,28 @@ describe('Models, Local tab, recorded voices', () => {
     ));
     // Only the owner's row can be changed.
     expect(screen.getAllByText('Reader for OpenVoice')).toHaveLength(1);
+  });
+
+  it('names the model on the try button when an engine has several', async () => {
+    runtimeState = {
+      ...RUNTIME_CLONING,
+      engines: { ...RUNTIME_CLONING.engines, chatterbox_mlx: true },
+      models: [
+        ...RUNTIME_CLONING.models,
+        ...['chatterbox-4bit-mlx', 'chatterbox-8bit-mlx'].map((name) => ({
+          name, file: name, format: 'mlx', engine: 'chatterbox_mlx', kind: 'speech', loadable: true,
+          size_bytes: 1_100_000_000, loaded: false, voices: ['default', 'anna'],
+        })),
+      ],
+    };
+    voicesState = [{ name: 'anna', language: 'ru', duration: 14.2, mine: true, editable: true, shared: false }];
+    await openLocalTab();
+    await screen.findByTestId('voices-list');
+    // One model of an engine: the engine's name; two: each model's own.
+    expect(screen.getByTestId('voice-try-chatterbox')).toHaveTextContent('Chatterbox');
+    expect(screen.getByTestId('voice-try-openvoice')).toHaveTextContent('OpenVoice');
+    const mlx = screen.getAllByTestId('voice-try-chatterbox_mlx').map((b) => b.textContent);
+    expect(mlx).toEqual(['chatterbox-4bit-mlx', 'chatterbox-8bit-mlx']);
   });
 
   it('saves a recording from a file only after the consent box', async () => {

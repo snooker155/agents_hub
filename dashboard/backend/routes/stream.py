@@ -35,7 +35,7 @@ to refetch rather than trust a stream that may have skipped a beat.
 """
 import json
 import re
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -153,7 +153,7 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
         yield f"data: {json.dumps({'channel': '_meta', 'type': 'ready', 'client_id': client_id, 'resumed': resumed, 'replayed': len(replayed), 'source': source})}\n\n"
         for event in replayed:
             yield f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
-        events = broker.client_events(client_id)
+        events = broker.client_events(cast(str, client_id))
         try:
             async for event in events:
                 if await request.is_disconnected():

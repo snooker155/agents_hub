@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { MULTI, TOKEN, useAuth } from '../components/auth';
@@ -19,6 +19,7 @@ import {
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
 import PageLoader from '../components/PageLoader';
+import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 
@@ -57,6 +58,8 @@ const GROUPS = [
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
+      // The first run is a single operator's (docs/installation.md, "The first run in the browser").
+      { id: 'firstRun',      key: 'firstRun',      icon: RotateCcw,  singleOnly: true },
     ],
   },
 ];
@@ -478,6 +481,8 @@ export default function Settings() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const activeWorkspace = selectedWorkspace || 'default';
+  const { mode } = useAuth();
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !(i.singleOnly && mode === MULTI)) }));
 
   // The open section lives in the URL (/settings/:section) so a section can be
   // linked to and survives a reload, the same contract the Docs page uses.
@@ -524,7 +529,7 @@ export default function Settings() {
         {/* In-page section nav — same shape as the Docs sidebar */}
         <nav className="hidden w-56 shrink-0 overflow-y-auto md:block">
           <div className="pb-8">
-            {GROUPS.map((group) => (
+            {groups.map((group) => (
               <div key={group.key} className="mb-2">
                 <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
                   {t(`settings.nav.groups.${group.key}`)}
@@ -572,7 +577,7 @@ export default function Settings() {
                 onChange={(e) => navigate(`/settings/${e.target.value}`)}
                 className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
               >
-                {GROUPS.map((group) => (
+                {groups.map((group) => (
                   <optgroup key={group.key} label={t(`settings.nav.groups.${group.key}`)}>
                     {group.items.map((item) => (
                       <option key={item.id} value={item.id}>{t(`settings.nav.${item.key}`)}</option>
@@ -591,6 +596,7 @@ export default function Settings() {
             {active.id === 'rag' && <RagSection s={ws} />}
             {active.id === 'custom' && <CustomBackendsTab />}
             {active.id === 'demo' && <DemoWorkspaceTab />}
+            {active.id === 'firstRun' && <FirstRunSettings />}
             {active.id === 'logging' && <LoggingSection s={ws} />}
             {active.id === 'apiAccess' && <ApiAccessTab />}
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}

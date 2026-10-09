@@ -56,6 +56,18 @@ Voices
     compute from a sample (Chatterbox's conditionals, OpenVoice's tone
     color) in its ``cache/``, so a voice is analysed once per model.
 
+mflux
+    Images with Qwen-Image on Apple's MLX through `mflux
+    <https://github.com/filipstrand/mflux>`_, over a model directory with
+    ``transformer/``, ``text_encoder/``, ``vae/`` and ``tokenizer/``: an
+    mflux-saved quantised model such as mlx-community/Qwen-Image-2512-8bit
+    (34 GB) or Qwen's own diffusers layout (Qwen/Qwen-Image-2512). A
+    directory whose name says ``edit`` is Qwen-Image-Edit, which rewrites
+    the pictures it is given; the plain model draws from text and, given
+    a picture, redraws it (image to image). Apple silicon only. The one
+    engine here that makes pictures, not sound, served on the OpenAI image
+    routes below.
+
 Routes
     GET  /health                    200 once the model is loaded
     GET  /voices                    the voices a speech model knows
@@ -64,6 +76,11 @@ Routes
                                     (Chatterbox also takes exaggeration and cfg_weight)
     POST /v1/audio/convert          multipart: file, voice, source, tau, response_format
                                     (OpenVoice: speech in, the same speech in ``voice`` out)
+    POST /v1/images/generations     JSON: prompt, size, quality, n, seed, steps, guidance,
+                                    negative_prompt (an image model); the answer is OpenAI's,
+                                    ``data[].b64_json`` PNG
+    POST /v1/images/edits           multipart: image, prompt and the same fields; ``strength``
+                                    says how far a plain Qwen-Image may leave the picture
 
 The model loads before the server starts listening, so a refused connection
 means "still loading" to the runtime's health wait. Engines are imported only
@@ -93,15 +110,20 @@ log = logging.getLogger("speech_worker")
 
 #: Engine -> what it does, the purpose name the hub uses for it.
 ENGINE_KIND = {"whisper": "transcription", "piper": "speech", "kokoro": "speech", "kitten": "speech",
-               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech"}
+               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "qwen3_tts": "speech",
+               "openvoice": "speech", "mflux": "image"}
 #: Engines whose voices are the samples people recorded.
-CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "openvoice")
+CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "qwen3_tts", "openvoice")
 
 #: Chatterbox Multilingual's weights; the first file is what tells it apart.
 CHATTERBOX_FILES = ("t3_mtl23ls_v2.safetensors", "s3gen.pt", "ve.pt", "grapheme_mtl_merged_expanded_v1.json")
 #: The languages Chatterbox Multilingual reads.
 CHATTERBOX_LANGS = ("ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms",
                     "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh")
+
+#: The languages Qwen3-TTS reads, by the name it is told them under.
+QWEN3_TTS_LANGS = {"zh": "chinese", "en": "english", "de": "german", "it": "italian", "pt": "portuguese",
+                   "es": "spanish", "ja": "japanese", "ko": "korean", "fr": "french", "ru": "russian"}
 
 #: The rate a recorded sample is kept at, and how long it may be: Chatterbox
 #: listens closely to 10 s of it (:func:`reference_start` picks which),
@@ -120,6 +142,14 @@ _ESPEAK_PATH_MAX = 100
 #: Kokoro voice name prefix -> the language its phonemizer needs.
 _KOKORO_LANG = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it",
                 "p": "pt-br", "j": "ja", "z": "cmn"}
+
+#: The folders of a Qwen-Image model directory (mflux's saved layout and
+#: Qwen's diffusers one alike); ``text_encoder_2`` would make it FLUX.
+QWEN_IMAGE_DIRS = ("transformer", "text_encoder", "vae", "tokenizer")
+#: Steps for OpenAI's ``quality`` words; Qwen-Image's own default is 20.
+IMAGE_STEPS = {"low": 8, "medium": 20, "high": 40, "auto": 20}
+IMAGE_MAX_SIDE = 2048
+IMAGE_MAX_N = 4
 
 #: Supertonic's model files, under ``onnx/`` beside ``voice_styles/``.
 SUPERTONIC_FILES = ("duration_predictor.onnx", "text_encoder.onnx", "vector_estimator.onnx",
@@ -171,9 +201,23 @@ def detect_engine(path: Path) -> Optional[str]:
         return "chatterbox"
     if {"model.safetensors", "config.json", "tokenizer.json"} <= names and _is_mlx_chatterbox(path / "config.json"):
         return "chatterbox_mlx"
+    if {"model.safetensors", "config.json"} <= names and _is_qwen3_tts(path / "config.json"):
+        return "qwen3_tts"
     if "checkpoint.pth" in names and "config.json" in names and _is_tone_converter(path / "config.json"):
         return "openvoice"
+    if is_qwen_image_dir(path):
+        return "mflux"
     return None
+
+
+def is_qwen_image_dir(path: Path) -> bool:
+    """Whether ``path`` holds a Qwen-Image model: the four folders, weights
+    in the transformer's, and no second text encoder (that is FLUX)."""
+    if not all((path / d).is_dir() and any((path / d).iterdir()) for d in QWEN_IMAGE_DIRS):
+        return False
+    if (path / "text_encoder_2").is_dir():
+        return False
+    return any(p.suffix == ".safetensors" for p in (path / "transformer").iterdir())
 
 
 def _is_mlx_chatterbox(config: Path) -> bool:
@@ -184,6 +228,31 @@ def _is_mlx_chatterbox(config: Path) -> bool:
         return json.loads(config.read_text(encoding="utf-8")).get("model_type") == "chatterbox"
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def _is_qwen3_tts(config: Path) -> bool:
+    """Whether ``config`` is a Qwen3-TTS checkpoint's (mlx-community's
+    conversions keep Qwen's ``model_type``)."""
+    import json
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and str(data.get("model_type") or "") == "qwen3_tts"
+
+
+def qwen3_tts_voices(config: Path) -> Tuple[str, List[str]]:
+    """``(model type, its own speakers)`` from a Qwen3-TTS checkpoint's
+    config: a ``base`` checkpoint clones recorded voices and has no speakers
+    of its own, a ``custom_voice`` one has speakers and clones nothing."""
+    import json
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "base", []
+    kind = str(data.get("tts_model_type") or "base")
+    speakers = ((data.get("talker_config") or {}).get("spk_id") or {}) if kind == "custom_voice" else {}
+    return kind, sorted(str(s) for s in speakers)
 
 
 def _is_tone_converter(config: Path) -> bool:
@@ -476,6 +545,10 @@ def torch_device() -> str:
 class Engine:
     kind = "speech"
     name = ""
+    #: The keys of a speech request (beyond voice and speed) the engine
+    #: reads, the hub's Models page offers them per model: sampling knobs
+    #: such as ``temperature``.
+    OPTIONS: Tuple[str, ...] = ()
 
     def voices(self) -> List[str]:
         return []
@@ -489,6 +562,9 @@ class Engine:
 
     def convert(self, audio: bytes, voice: Optional[str], source: str, tau: float) -> bytes:
         raise WorkerError(f"{self.name} models do not change the voice of speech", 400)
+
+    def generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes] = None) -> Tuple[bytes, Dict[str, Any]]:
+        raise WorkerError(f"{self.name} models make no pictures; use /v1/audio", 400)
 
 
 class Whisper(Engine):
@@ -835,7 +911,19 @@ def chatterbox_language(text: str, fallback: Optional[str] = None) -> str:
 def sentence_chunks(text: str, max_len: int) -> List[str]:
     """``text`` in pieces of whole sentences, each up to ``max_len``
     characters, with their own punctuation (a question stays a question);
-    a sentence longer than that is cut at a word."""
+    a sentence longer than that is cut at a word. A paragraph (a blank line)
+    always starts a new piece: what one piece holds is read in one go, with
+    one intonation, so a paragraph read whole sounds more even than its
+    sentences read one by one."""
+    import re
+    chunks: List[str] = []
+    for paragraph in re.split(r"\n[ \t]*\n", text):
+        if paragraph.strip():
+            chunks.extend(_sentence_chunks(paragraph, max_len))
+    return chunks
+
+
+def _sentence_chunks(text: str, max_len: int) -> List[str]:
     import re
     pieces: List[str] = []
     for sentence in re.split(r"(?<=[.!?…。！？])\s+", " ".join(text.split())):
@@ -870,13 +958,19 @@ class ChatterboxBase(Engine):
     reading in pieces. A subclass loads the model and says how to prepare,
     keep and read with them."""
 
-    #: Characters per generation: its 1000 speech tokens hold about 40 s,
-    #: and a shorter piece keeps it from losing its place.
-    CHUNK = 250
+    #: Characters per generation, a paragraph or so: its 1000 speech tokens
+    #: hold about 40 s, and a piece well inside that keeps it from losing
+    #: its place. The longer the piece, the fewer the seams where the voice
+    #: and the pace shift.
+    CHUNK = 400
     #: Output rate (S3Gen's).
     rate = 24000
     #: False for an English-only checkpoint, which takes no language.
     multilingual = True
+    #: Exaggeration and guidance (Resemble's knobs), and the sampling
+    #: temperature: lower reads steadier, with less variety between takes.
+    OPTIONS = ("exaggeration", "cfg_weight", "temperature")
+    TEMPERATURE = 0.8
 
     def __init__(self, path: Path) -> None:
         # "best10": made from the best 10 s; a cache made from the first 10 s
@@ -899,7 +993,8 @@ class ChatterboxBase(Engine):
     def _save_cached(self, conds: Any, cache: Path) -> None:
         raise NotImplementedError
 
-    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float) -> Any:
+    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float,
+                  temperature: float) -> Any:
         raise NotImplementedError
 
     def _prepare_from_best(self, sample: Path) -> Any:
@@ -964,11 +1059,12 @@ class ChatterboxBase(Engine):
         cfg_default = 0.0 if spoken and spoken[:2] != lang else 0.5
         exaggeration = _number(options.get("exaggeration"), 0.25, 2.0, 0.5)
         cfg_weight = _number(options.get("cfg_weight"), 0.0, 1.0, cfg_default)
+        temperature = _number(options.get("temperature"), 0.1, 1.5, self.TEMPERATURE)
         parts: List[Any] = []
         with self._lock:
             conds = self._conditionals(voice)
             for chunk in sentence_chunks(text, self.CHUNK):
-                parts.append(np.asarray(self._generate(chunk, conds, lang, exaggeration, cfg_weight),
+                parts.append(np.asarray(self._generate(chunk, conds, lang, exaggeration, cfg_weight, temperature),
                                         dtype=np.float32).reshape(-1))
         parts = [a for a in parts if a.size]
         if not parts:
@@ -1022,9 +1118,11 @@ class Chatterbox(ChatterboxBase):
     def _save_cached(self, conds: Any, cache: Path) -> None:
         conds.save(cache)
 
-    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float) -> Any:
+    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float,
+                  temperature: float) -> Any:
         self.tts.conds = conds
-        wav = self.tts.generate(text, language_id=lang, exaggeration=exaggeration, cfg_weight=cfg_weight)
+        wav = self.tts.generate(text, language_id=lang, exaggeration=exaggeration, cfg_weight=cfg_weight,
+                                temperature=temperature)
         return wav.squeeze(0).cpu().numpy()
 
 
@@ -1097,15 +1195,114 @@ class ChatterboxMLX(ChatterboxBase):
             mx.save_safetensors(str(cache), arrays)
         self._on_mlx(save)
 
-    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float) -> Any:
+    def _generate(self, text: str, conds: Any, lang: str, exaggeration: float, cfg_weight: float,
+                  temperature: float) -> Any:
         import numpy as np
 
         def run() -> Any:
             out = [np.array(r.audio) for r in self.model.generate(
                 text, conds=conds, lang_code=lang, exaggeration=exaggeration, cfg_weight=cfg_weight,
-                verbose=False)]
+                temperature=temperature, verbose=False)]
             return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
         return self._on_mlx(run)
+
+
+def qwen3_language(text: str, fallback: Optional[str] = None, known: Optional[List[str]] = None) -> str:
+    """The language Qwen3-TTS is told ``text`` is in, by its name
+    (:data:`QWEN3_TTS_LANGS`), from the text as :func:`chatterbox_language`
+    reads it; ``auto`` (the model decides) for one it does not read, or
+    one not among ``known``, the checkpoint's own list."""
+    name = QWEN3_TTS_LANGS.get(chatterbox_language(text, fallback), "auto")
+    if known and name not in known:
+        return "auto"
+    return name
+
+
+class Qwen3TTSMLX(Engine):
+    """Qwen3-TTS (Alibaba, Apache 2.0) on Apple's MLX through mlx-audio, a
+    mlx-community/Qwen3-TTS-* checkpoint. A ``Base`` checkpoint clones a
+    recorded voice from its sample alone (the speaker embedding its encoder
+    makes of it; no transcript is needed) and reads ten languages, Russian
+    among them; a ``CustomVoice`` checkpoint has speakers of its own and
+    clones nothing. MLX keeps a stream per thread, so loading and every
+    generation run on one thread of its own."""
+
+    name = "qwen3_tts"
+    #: Sampling temperature; the model's default of 0.9 reads lively, lower
+    #: reads steadier.
+    OPTIONS = ("temperature",)
+    TEMPERATURE = 0.9
+    #: Characters per generation, a paragraph or so (its 4096 tokens hold
+    #: minutes of speech; a piece this long reads evenly).
+    CHUNK = 600
+    rate = 24000
+
+    def __init__(self, path: Path, threads: int = 0) -> None:
+        os.environ.setdefault("TQDM_DISABLE", "1")
+        from concurrent.futures import ThreadPoolExecutor
+        self._mlx = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+        self.model = self._mlx.submit(self._load, path).result()
+        self.rate = int(getattr(self.model, "sample_rate", 24000))
+        self.model_type, self.speakers = qwen3_tts_voices(path / "config.json")
+        self.clones = self.model_type == "base" and getattr(self.model, "speaker_encoder", None) is not None
+        self.languages = [str(name) for name in (getattr(self.model, "supported_languages", None) or [])
+                          if str(name) != "auto"]
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _load(path: Path) -> Any:
+        from mlx_audio.tts.utils import load_model
+        return load_model(path)
+
+    def voices(self) -> List[str]:
+        return list(self.speakers) + (recorded_voices() if self.clones else [])
+
+    def _pick(self, voice: Optional[str]) -> Dict[str, Any]:
+        """What generate is told about the voice: a recorded one's sample
+        (``ref_audio``) or one of the checkpoint's speakers (``voice``). A
+        name it does not know (the hub's default "alloy") reads in the
+        first speaker, else in the first recorded voice."""
+        name = str(voice or "")
+        recorded = recorded_voices() if self.clones else []
+        speakers = {s.lower(): s for s in self.speakers}
+        if name in recorded:
+            return {"ref_audio": str(voice_files(name, "")[0]), "_language": voice_meta(name).get("language")}
+        if name.lower() in speakers:
+            return {"voice": speakers[name.lower()]}
+        if self.speakers:
+            return {"voice": self.speakers[0]}
+        if recorded:
+            return {"ref_audio": str(voice_files(recorded[0], "")[0]),
+                    "_language": voice_meta(recorded[0]).get("language")}
+        raise WorkerError("no voice yet: record one on the Models page")
+
+    def speak(self, text: str, voice: Optional[str], speed: float,
+              options: Optional[Dict[str, Any]] = None) -> bytes:
+        import numpy as np
+        options = options or {}
+        temperature = _number(options.get("temperature"), 0.1, 1.5, self.TEMPERATURE)
+        picked = self._pick(voice)
+        lang = qwen3_language(text, picked.pop("_language", None), self.languages)
+        parts: List[Any] = []
+        with self._lock:
+            for chunk in sentence_chunks(text, self.CHUNK):
+                parts.append(np.asarray(self._generate(chunk, lang, temperature, picked),
+                                        dtype=np.float32).reshape(-1))
+        parts = [a for a in parts if a.size]
+        if not parts:
+            raise WorkerError("nothing in the input can be read aloud")
+        pause = np.zeros(int(self.rate * 0.2), dtype=np.float32)
+        joined = [x for a in parts for x in (a, pause)][:-1]
+        return wav_bytes(np.concatenate(joined), self.rate)
+
+    def _generate(self, text: str, lang: str, temperature: float, picked: Dict[str, Any]) -> Any:
+        import numpy as np
+
+        def run() -> Any:
+            out = [np.array(r.audio) for r in self.model.generate(
+                text, lang_code=lang, temperature=temperature, verbose=False, **picked)]
+            return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+        return self._mlx.submit(run).result()
 
 
 class OpenVoice(Engine):
@@ -1207,8 +1404,123 @@ class OpenVoice(Engine):
         return wav_bytes(out, self.vc.rate)
 
 
+# ── Images ───────────────────────────────────────────────────────────────────
+
+def image_options(fields: Any) -> Dict[str, Any]:
+    """The generation settings of an OpenAI image request (a JSON body or a
+    form): ``size`` as WxH (``auto`` is 1024x1024, each side at most
+    :data:`IMAGE_MAX_SIDE`), ``quality`` or ``steps``, ``guidance``,
+    ``seed`` (random when absent), ``n``, ``negative_prompt`` and
+    ``strength`` for an edit by the plain model. A wrong value is a 400."""
+    def number(name: str, lo: float, hi: float, default: Optional[float], whole: bool = False) -> Any:
+        raw = fields.get(name)
+        if raw in (None, ""):
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise WorkerError(f"{name} is not a number", 400)
+        if not lo <= value <= hi:
+            raise WorkerError(f"{name} must be between {lo:g} and {hi:g}", 400)
+        return int(value) if whole else value
+
+    size = str(fields.get("size") or "auto").strip().lower()
+    if size in ("auto", ""):
+        width, height = 1024, 1024
+    else:
+        parts = size.replace("×", "x").split("x")
+        try:
+            width, height = (int(parts[0]), int(parts[1])) if len(parts) == 2 else (0, 0)
+        except ValueError:
+            width, height = 0, 0
+        if not (16 <= width <= IMAGE_MAX_SIDE and 16 <= height <= IMAGE_MAX_SIDE):
+            raise WorkerError(f"size must be WIDTHxHEIGHT, each from 16 to {IMAGE_MAX_SIDE}, or auto", 400)
+    quality = str(fields.get("quality") or "auto").strip().lower()
+    if quality not in IMAGE_STEPS:
+        raise WorkerError(f"quality must be one of {', '.join(IMAGE_STEPS)}", 400)
+    steps = number("steps", 1, 100, IMAGE_STEPS[quality], whole=True)
+    seed = number("seed", 0, 2**31 - 1, None, whole=True)
+    if seed is None:
+        import random
+        seed = random.randrange(2**31 - 1)
+    return {
+        "width": 16 * (width // 16), "height": 16 * (height // 16), "steps": steps, "seed": seed,
+        "guidance": number("guidance", 0, 30, 4.0),
+        "n": number("n", 1, IMAGE_MAX_N, 1, whole=True),
+        "negative_prompt": str(fields.get("negative_prompt") or "").strip() or None,
+        "strength": number("strength", 0.05, 1.0, 0.6),
+    }
+
+
+class QwenImageMflux(Engine):
+    """Qwen-Image through mflux on Apple's MLX. The plain model draws from
+    text and, given a picture, redraws it with ``strength`` saying how far
+    it may go; Qwen-Image-Edit (a directory named ``edit``) takes a picture
+    and an instruction. mflux loads the weights as they are saved, so an
+    8-bit directory runs in 8 bit. MLX keeps a stream per thread: loading
+    and every picture run on one thread of its own."""
+
+    kind = "image"
+    name = "mflux"
+
+    def __init__(self, path: Path, threads: int = 0) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        self.path = path
+        self.edit = "edit" in path.name.lower()
+        self._mlx = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+        self.model = self._mlx.submit(self._load).result()
+
+    def _load(self) -> Any:
+        if self.edit:
+            from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
+            return QwenImageEdit(model_path=str(self.path))
+        from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
+        return QwenImage(model_path=str(self.path))
+
+    def generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes] = None) -> Tuple[bytes, Dict[str, Any]]:
+        if self.edit and image is None:
+            raise WorkerError(f"{self.path.name} edits pictures; send one on /v1/images/edits", 400)
+        return self._mlx.submit(self._generate, prompt, options, image).result()
+
+    def _generate(self, prompt: str, options: Dict[str, Any], image: Optional[bytes]) -> Tuple[bytes, Dict[str, Any]]:
+        import time as _time
+        kwargs: Dict[str, Any] = {
+            "seed": int(options["seed"]), "prompt": prompt, "num_inference_steps": int(options["steps"]),
+            "width": int(options["width"]), "height": int(options["height"]),
+            "guidance": float(options["guidance"]), "negative_prompt": options.get("negative_prompt"),
+        }
+        started = _time.monotonic()
+        source: Optional[str] = None
+        try:
+            if image is not None:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as fh:
+                    fh.write(image)
+                    source = fh.name
+                if self.edit:
+                    kwargs["image_paths"] = [source]
+                else:
+                    kwargs["image_path"] = source
+                    kwargs["image_strength"] = float(options["strength"])
+            try:
+                made = self.model.generate_image(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - mflux's own message is the answer
+                raise WorkerError(f"mflux: {type(exc).__name__}: {exc}"[:500], 500)
+        finally:
+            if source:
+                try:
+                    os.unlink(source)
+                except OSError:
+                    pass
+        buf = io.BytesIO()
+        made.image.save(buf, format="PNG")
+        return buf.getvalue(), {"seed": kwargs["seed"], "steps": kwargs["num_inference_steps"],
+                                "width": made.width or kwargs["width"], "height": made.height or kwargs["height"],
+                                "seconds": round(_time.monotonic() - started, 1)}
+
+
 ENGINES = {"whisper": Whisper, "piper": Piper, "kokoro": Kokoro, "kitten": Kitten, "supertonic": Supertonic,
-           "chatterbox": Chatterbox, "chatterbox_mlx": ChatterboxMLX, "openvoice": OpenVoice}
+           "chatterbox": Chatterbox, "chatterbox_mlx": ChatterboxMLX, "qwen3_tts": Qwen3TTSMLX,
+           "openvoice": OpenVoice, "mflux": QwenImageMflux}
 
 
 def load_engine(engine: str, path: Path, threads: int = 0) -> Engine:
@@ -1248,7 +1560,7 @@ def build_app(engine: Engine, model_name: str) -> FastAPI:
             speed = float(body.get("speed") or 1.0)
         except (TypeError, ValueError):
             speed = 1.0
-        options = {k: body[k] for k in ("exaggeration", "cfg_weight") if k in body}
+        options = {k: body[k] for k in ("exaggeration", "cfg_weight", "temperature") if k in body}
         try:
             wav = await run_in_threadpool(engine.speak, text, body.get("voice"), speed, options)
             data, mime = encode(wav, str(body.get("response_format") or "mp3"))
@@ -1293,6 +1605,47 @@ def build_app(engine: Engine, model_name: str) -> FastAPI:
         if fmt == "verbose_json":
             return JSONResponse({"task": "transcribe", **result})
         return JSONResponse({"text": result["text"]})
+
+    async def pictures(prompt: str, fields: Any, image: Optional[bytes]) -> Response:
+        """OpenAI's image answer: one ``data`` item per picture, PNG in
+        ``b64_json``, and ``generation`` saying how each was made."""
+        import base64
+        import time as _time
+        if not prompt:
+            return error("prompt is empty")
+        try:
+            options = image_options(fields)
+            data, made = [], []
+            for i in range(int(options["n"])):
+                png, meta = await run_in_threadpool(engine.generate, prompt, {**options, "seed": options["seed"] + i},
+                                                    image)
+                data.append({"b64_json": base64.b64encode(png).decode("ascii")})
+                made.append(meta)
+        except WorkerError as exc:
+            return error(str(exc), exc.status)
+        return JSONResponse({"created": int(_time.time()), "data": data, "output_format": "png",
+                             "generation": made[0] if len(made) == 1 else made})
+
+    @app.post("/v1/images/generations")
+    async def image_generations(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            return error("body is not JSON")
+        if not isinstance(body, dict):
+            return error("body is not a JSON object")
+        return await pictures(str(body.get("prompt") or "").strip(), body, None)
+
+    @app.post("/v1/images/edits")
+    async def image_edits(request: Request) -> Response:
+        form = await request.form()
+        upload = form.get("image") or form.get("image[]")
+        if upload is None or not hasattr(upload, "read"):
+            return error("image is missing")
+        picture = await upload.read()
+        if not picture:
+            return error("image is empty")
+        return await pictures(str(form.get("prompt") or "").strip(), form, picture)
 
     return app
 

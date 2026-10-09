@@ -9,10 +9,13 @@ into its output key. See flow/entities/containers/_nested.py for the rest.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from flow.entities.containers import _nested
 from flow.registry import FlowEntitySpec
+
+log = logging.getLogger(__name__)
 
 SPEC = FlowEntitySpec(
     id="run_flow",
@@ -90,7 +93,7 @@ def run(state: Any, config: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
         try:
             _ts.assign_executor(task.id, {"kind": "flow", "id": flow_id}, params, run_id=run_id)
         except Exception:  # noqa: BLE001 - the run is already going; the task page just shows no executor
-            pass
+            log.debug("executor assignment failed", exc_info=True)
         return run_id
 
     def _resume(child_id: str) -> Any:

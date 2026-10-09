@@ -58,7 +58,7 @@ def _read_record(key: str) -> Optional[Dict[str, Any]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -67,7 +67,7 @@ def _all_records() -> List[Dict[str, Any]]:
     for path in store.daemons_dir().glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError):
             continue
         if isinstance(data, dict) and data.get("key"):
             out.append(data)

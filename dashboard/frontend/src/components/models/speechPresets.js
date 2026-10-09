@@ -1,9 +1,9 @@
 /**
  * Models the Local tab offers in one click: a Hugging Face repo and either
  * the GGUF `file` to fetch from it (a chat model) or the `package` GET
- * /hf/files names in it (a speech model, see speech_packages in
- * deploy/models/app.py). Any other repo of the same shapes works too; these
- * are the ones checked to exist and run.
+ * /hf/files names in it (a speech or image model, see speech_packages in
+ * deploy/models/app_speech_models.py). Any other repo of the same shapes
+ * works too; these are the ones checked to exist and run.
  */
 export const MODEL_PRESETS = [
   { id: 'qwen25-05b', kind: 'chat', repo: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', file: 'qwen2.5-0.5b-instruct-q4_k_m.gguf', label: 'Qwen2.5 0.5B (0.5 GB)' },
@@ -21,11 +21,17 @@ export const MODEL_PRESETS = [
   { id: 'chatterbox', kind: 'speech', repo: 'ResembleAI/chatterbox', package: 'chatterbox-multilingual', label: 'Chatterbox, your voice, 23 languages (3.2 GB)' },
   // `engine`: shown only where the runtime lists that engine (Apple silicon).
   { id: 'chatterbox-mlx', kind: 'speech', engine: 'chatterbox_mlx', repo: 'mlx-community/chatterbox-4bit', package: 'chatterbox-4bit-mlx', label: 'Chatterbox MLX, your voice fast on a Mac (1.1 GB)' },
+  // Qwen3-TTS Base clones a recorded voice from its sample alone; Apple silicon only.
+  { id: 'qwen3-tts-1.7b', kind: 'speech', engine: 'qwen3_tts', repo: 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit', package: 'Qwen3-TTS-12Hz-1.7B-Base-8bit', label: 'Qwen3-TTS 1.7B, your voice, 10 languages (3.1 GB)' },
+  { id: 'qwen3-tts-0.6b', kind: 'speech', engine: 'qwen3_tts', repo: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit', package: 'Qwen3-TTS-12Hz-0.6B-Base-8bit', label: 'Qwen3-TTS 0.6B, your voice, lighter (2 GB)' },
   { id: 'openvoice', kind: 'speech', repo: 'myshell-ai/OpenVoiceV2', package: 'OpenVoiceV2-converter', label: 'OpenVoice, your voice fast (130 MB)' },
+  // Pictures, on Apple silicon through mflux (the mflux engine).
+  { id: 'qwen-image-8bit', kind: 'image', engine: 'mflux', repo: 'mlx-community/Qwen-Image-2512-8bit', package: 'Qwen-Image-2512-8bit', label: 'Qwen-Image 2512, 8-bit (34 GB)' },
+  { id: 'qwen-image-4bit', kind: 'image', engine: 'mflux', repo: 'mlx-community/Qwen-Image-2512-4bit', package: 'Qwen-Image-2512-4bit', label: 'Qwen-Image 2512, 4-bit (18 GB)' },
 ];
 
 // The order presets are grouped in.
-export const PRESET_KINDS = ['chat', 'transcription', 'speech'];
+export const PRESET_KINDS = ['chat', 'transcription', 'speech', 'image'];
 
 // The engines the runtime knows, in the order the engines row shows them.
 export const ENGINES = [
@@ -41,7 +47,11 @@ export const ENGINES = [
   { id: 'chatterbox', kind: 'speech' },
   // Apple silicon only: the runtime lists it nowhere else.
   { id: 'chatterbox_mlx', kind: 'speech' },
+  // Qwen3-TTS through mlx-audio; Apple silicon only too.
+  { id: 'qwen3_tts', kind: 'speech' },
   { id: 'openvoice', kind: 'speech' },
+  // Pictures with Qwen-Image; Apple silicon only, an environment of its own.
+  { id: 'mflux', kind: 'image' },
   // Recorded voice cleanup; a cleanup installs its engine itself. DeepFilterNet
   // is Apple silicon only.
   { id: 'deepfilternet', kind: 'cleanup' },
@@ -49,6 +59,9 @@ export const ENGINES = [
 ];
 
 export const isSpeechKind = (kind) => kind === 'speech' || kind === 'transcription';
+// A model a worker serves (speech, transcription or an image model): no
+// context length, no GGUF structure, a kind badge in the list.
+export const isSpecialKind = (kind) => isSpeechKind(kind) || kind === 'image';
 
 // Engines whose voices are the recordings people made (the Recorded voices card).
-export const CLONING_ENGINES = ['chatterbox', 'chatterbox_mlx', 'openvoice'];
+export const CLONING_ENGINES = ['chatterbox', 'chatterbox_mlx', 'qwen3_tts', 'openvoice'];

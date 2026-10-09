@@ -8,6 +8,7 @@ only the runtime class, keeping the factory focused on assembly.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -25,6 +26,8 @@ from agents.callbacks.guards import (
     RunBudgetExceeded,
     RunBudgetGuard,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _awaiting_input_result(sig: AskUserSignal) -> AgentResult:
@@ -70,7 +73,8 @@ def _collect_steps(result: Any) -> List[ToolResult]:
                 args=args,
                 output=str(observation),
             ))
-        except Exception:
+        except Exception:  # noqa: BLE001 - a malformed step is skipped, the rest still count
+            log.debug("_collect_steps: ignored error", exc_info=True)
             continue
     return steps
 
@@ -170,7 +174,8 @@ class StandardAgent(AgentBase):
         try:
             from providers.context_windows import get_model_context_window
             window = get_model_context_window(self.provider or "", self.model or "")
-        except Exception:
+        except Exception:  # noqa: BLE001 - an unknown context window disables the guard
+            log.debug("_context_window_guard: ignored error", exc_info=True)
             window = 0
         if window > 0:
             return ContextWindowGuard(window, model_name=self.model or "")
@@ -396,7 +401,7 @@ class StandardAgent(AgentBase):
                 agent_output=output,
                 loop=state.summary(),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any failure is reported as an error result
             return AgentResult(
                 ok=False,
                 status="error",
@@ -469,7 +474,7 @@ class StandardAgent(AgentBase):
         except ToolRepetitionError as e:
             output = guard.last_llm_text or f"[Agent stopped: {e}]"
             return AgentResult(ok=True, status="stopped", agent_output=output, loop=state.summary())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any failure is reported as an error result
             return AgentResult(ok=False, status="error", error=str(e), loop=state.summary())
         finally:
             reset_state(token)

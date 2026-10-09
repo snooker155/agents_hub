@@ -24,7 +24,7 @@ same shape ``routes/replay.py`` uses.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -178,6 +178,11 @@ def _configs_from_in(items: List[ConfigIn]) -> List[RunConfig]:
 
 # ── Roles ─────────────────────────────────────────────────────────────────────
 
+# FastAPI injects the real request; the default only exists so the parameter is
+# optional when a route function is called directly.
+_NO_REQUEST = cast(Request, None)
+
+
 def _require(request: Optional[Request], workspace: Optional[str], role: str) -> None:
     identity.require_role(identity.request_principal(request), workspace=workspace or "default", role=role)
 
@@ -212,7 +217,7 @@ def _suggestion_or_404(suggestion_id: str, request: Optional[Request]) -> None:
 # ── Eval sets ─────────────────────────────────────────────────────────────────
 
 @router.get("/evals")
-async def list_evals(workspace: Optional[str] = None, request: Request = None):
+async def list_evals(workspace: Optional[str] = None, request: Request = _NO_REQUEST):
     if workspace:
         _require(request, workspace, WS_VIEWER)
     sets = [e.to_dict() for e in store.list_eval_sets(workspace)]
@@ -222,7 +227,7 @@ async def list_evals(workspace: Optional[str] = None, request: Request = None):
 
 
 @router.post("/evals")
-async def create_eval(data: EvalSetIn, request: Request = None):
+async def create_eval(data: EvalSetIn, request: Request = _NO_REQUEST):
     _require(request, data.workspace, WS_EDITOR)
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
@@ -393,12 +398,12 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
 
 
 @router.get("/evals/{eval_set_id}")
-async def get_eval(eval_set_id: str, request: Request = None):
+async def get_eval(eval_set_id: str, request: Request = _NO_REQUEST):
     return _set_or_404(eval_set_id, request, WS_VIEWER).to_dict()
 
 
 @router.put("/evals/{eval_set_id}")
-async def update_eval(eval_set_id: str, data: EvalSetIn, request: Request = None):
+async def update_eval(eval_set_id: str, data: EvalSetIn, request: Request = _NO_REQUEST):
     evalset = _set_or_404(eval_set_id, request, WS_EDITOR)
     if data.name.strip():
         evalset.name = data.name.strip()
@@ -426,7 +431,7 @@ async def update_eval(eval_set_id: str, data: EvalSetIn, request: Request = None
 
 
 @router.delete("/evals/{eval_set_id}")
-async def delete_eval(eval_set_id: str, request: Request = None):
+async def delete_eval(eval_set_id: str, request: Request = _NO_REQUEST):
     _set_or_404(eval_set_id, request, WS_EDITOR)
     if not store.delete_eval_set(eval_set_id):
         raise HTTPException(status_code=404, detail="Eval set not found")
@@ -436,7 +441,7 @@ async def delete_eval(eval_set_id: str, request: Request = None):
 # ── Cases ─────────────────────────────────────────────────────────────────────
 
 @router.post("/evals/{eval_set_id}/cases")
-async def add_eval_case(eval_set_id: str, data: CaseIn, request: Request = None):
+async def add_eval_case(eval_set_id: str, data: CaseIn, request: Request = _NO_REQUEST):
     """Add a case. With ``from_run_id`` this is the "save this run as an eval
     case" button, the cheapest way to seed a dataset from real traffic. With
     ``from_task_id`` the case carries a snapshot of that task (see
@@ -453,7 +458,7 @@ async def add_eval_case(eval_set_id: str, data: CaseIn, request: Request = None)
 
 
 @router.delete("/evals/{eval_set_id}/cases/{case_id}")
-async def delete_eval_case(eval_set_id: str, case_id: str, request: Request = None):
+async def delete_eval_case(eval_set_id: str, case_id: str, request: Request = _NO_REQUEST):
     _set_or_404(eval_set_id, request, WS_EDITOR)
     evalset = store.remove_case(eval_set_id, case_id)
     if not evalset:
@@ -462,7 +467,7 @@ async def delete_eval_case(eval_set_id: str, case_id: str, request: Request = No
 
 
 @router.get("/evals/for-run/{run_id}")
-async def eval_sets_for_run(run_id: str, request: Request = None):
+async def eval_sets_for_run(run_id: str, request: Request = _NO_REQUEST):
     """What the "To eval case" dialog needs for one run: what kind of run it
     is (agent, flow, team, loop or scenario — whichever store the id belongs
     to), every eval set whose target fits it (so the dialog can offer them
@@ -502,7 +507,7 @@ async def eval_sets_for_run(run_id: str, request: Request = None):
 # ── Running ───────────────────────────────────────────────────────────────────
 
 @router.post("/evals/{eval_set_id}/estimate")
-async def estimate_eval(eval_set_id: str, data: RunEvalIn, request: Request = None):
+async def estimate_eval(eval_set_id: str, data: RunEvalIn, request: Request = _NO_REQUEST):
     """Projected spend for a sweep — surfaced before it starts, not after."""
     evalset = _set_or_404(eval_set_id, request, WS_VIEWER)
     try:
@@ -518,7 +523,7 @@ async def estimate_eval(eval_set_id: str, data: RunEvalIn, request: Request = No
 
 
 @router.post("/evals/{eval_set_id}/run")
-def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None, request: Request = None):
+def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None, request: Request = _NO_REQUEST):
     data = data or RunEvalIn()
     evalset = _set_or_404(eval_set_id, request, WS_EDITOR)
     if data.workspace and data.workspace != (evalset.workspace or "default"):
@@ -543,13 +548,13 @@ def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None, request: 
 
 
 @router.get("/evals/{eval_set_id}/runs")
-async def list_eval_runs_for_set(eval_set_id: str, limit: int = 50, request: Request = None):
+async def list_eval_runs_for_set(eval_set_id: str, limit: int = 50, request: Request = _NO_REQUEST):
     _set_or_404(eval_set_id, request, WS_VIEWER)
     return {"eval_runs": [r.to_dict() for r in store.list_eval_runs(eval_set_id, limit)]}
 
 
 @router.get("/evals/runs/{run_a_id}/diff/{run_b_id}")
-async def diff_eval_runs(run_a_id: str, run_b_id: str, request: Request = None):
+async def diff_eval_runs(run_a_id: str, run_b_id: str, request: Request = _NO_REQUEST):
     """Compare two eval runs cell by cell: which cases got fixed, which regressed.
 
     Matches by (case id, config label) using each run's own recorded results,
@@ -565,7 +570,7 @@ async def diff_eval_runs(run_a_id: str, run_b_id: str, request: Request = None):
 
 
 @router.get("/eval-runs/{eval_run_id}")
-async def get_eval_run_details(eval_run_id: str, request: Request = None):
+async def get_eval_run_details(eval_run_id: str, request: Request = _NO_REQUEST):
     run = _run_or_404(eval_run_id, request, WS_VIEWER)
     evalset = store.get_eval_set(run.eval_set_id)
     return {
@@ -585,7 +590,7 @@ def _batch_progress(eval_run_id: str) -> Dict[str, Any]:
 
 
 @router.post("/eval-runs/{eval_run_id}/cancel")
-def cancel_eval_run(eval_run_id: str, request: Request = None):
+def cancel_eval_run(eval_run_id: str, request: Request = _NO_REQUEST):
     """Cancel a batch run's open provider batches. Answers the provider already
     produced are still collected; the rest of the cells are recorded as stopped."""
     _run_or_404(eval_run_id, request, WS_EDITOR)
@@ -598,13 +603,14 @@ def cancel_eval_run(eval_run_id: str, request: Request = None):
 
 
 @router.post("/eval-runs/{eval_run_id}/poll")
-def poll_eval_run(eval_run_id: str, request: Request = None):
+def poll_eval_run(eval_run_id: str, request: Request = _NO_REQUEST):
     """Check this run's provider batches now instead of at the next scheduler
     tick, and process any that ended."""
     from evals.batch import poll_pending
     _run_or_404(eval_run_id, request, WS_EDITOR)
     poll_pending(force=True, background=False)
     run = store.get_eval_run(eval_run_id)
+    assert run is not None
     return {**run.to_dict(), "batch": _batch_progress(eval_run_id),
             "matrix": store.build_matrix(eval_run_id)}
 
@@ -622,7 +628,7 @@ class ApplySuggestionIn(BaseModel):
 
 
 @router.post("/eval-runs/{eval_run_id}/suggest-prompt")
-def suggest_prompt(eval_run_id: str, request: Request = None):
+def suggest_prompt(eval_run_id: str, request: Request = _NO_REQUEST):
     """Build a prompt suggestion from this eval run's failed cases. A plain
     ``def`` like ``start_eval_run``: it is one real model call, not free."""
     _run_or_404(eval_run_id, request, WS_EDITOR)
@@ -635,14 +641,14 @@ def suggest_prompt(eval_run_id: str, request: Request = None):
 
 
 @router.get("/eval-runs/{eval_run_id}/suggestions")
-async def list_suggestions(eval_run_id: str, request: Request = None):
+async def list_suggestions(eval_run_id: str, request: Request = _NO_REQUEST):
     _run_or_404(eval_run_id, request, WS_VIEWER)
     return {"suggestions": [s.to_dict() for s in store.list_prompt_suggestions(eval_run_id)]}
 
 
 @router.post("/prompt-suggestions/{suggestion_id}/apply")
 def apply_suggestion_route(suggestion_id: str, data: Optional[ApplySuggestionIn] = None,
-                           request: Request = None):
+                           request: Request = _NO_REQUEST):
     """Write the suggestion's instructions.md (through the definition editor's
     own path, so it is snapshotted), and optionally re-run the eval set — a
     plain ``def`` since a rerun is a real sweep, not free."""
@@ -655,7 +661,7 @@ def apply_suggestion_route(suggestion_id: str, data: Optional[ApplySuggestionIn]
 
 
 @router.post("/prompt-suggestions/{suggestion_id}/dismiss")
-async def dismiss_suggestion_route(suggestion_id: str, request: Request = None):
+async def dismiss_suggestion_route(suggestion_id: str, request: Request = _NO_REQUEST):
     _suggestion_or_404(suggestion_id, request)
     from evals.prompt_suggest import SuggestionError, dismiss_suggestion
     try:

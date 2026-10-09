@@ -13,6 +13,7 @@ bookkeeping.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -20,6 +21,8 @@ import time
 from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.callbacks.run_statistics import token_text
+
+log = logging.getLogger(__name__)
 
 # Token batching. A streaming completion fires on_llm_new_token hundreds of times;
 # one HTTP POST per token would put a synchronous request between every token of
@@ -73,8 +76,8 @@ class SessionPublishCallback(BaseCallbackHandler):
             import requests as _req
             from common.auth import auth_headers
             _req.post(self._url, json=event, headers=auth_headers(), timeout=2)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - live streaming is best effort and must not fail the run
+            log.debug("_send: ignored error", exc_info=True)
 
     def _post(self, event: dict) -> None:
         """Publish one non-token event, after any buffered tokens.
@@ -127,7 +130,8 @@ class SessionPublishCallback(BaseCallbackHandler):
         try:
             from reasoning.native_reasoning import extract_reasoning_from_llm_result
             reasoning = extract_reasoning_from_llm_result(response)
-        except Exception:
+        except Exception:  # noqa: BLE001 - live streaming is best effort and must not fail the run
+            log.debug("on_llm_end: ignored error", exc_info=True)
             reasoning = ""
         if reasoning and reasoning != self._last_reasoning:
             self._last_reasoning = reasoning

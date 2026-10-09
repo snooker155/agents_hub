@@ -80,7 +80,7 @@ def _check_scope(agent_id: Optional[str], user_id: Optional[str]) -> None:
 def _scope_details(name: str, agent_id: Optional[str], user_id: Optional[str],
                    allowed_hosts: Optional[List[str]] = None) -> dict:
     # What the audit row carries: the name and the scope, never the value.
-    details = {"name": name, "agent_id": agent_id or "", "user_id": user_id or ""}
+    details: dict = {"name": name, "agent_id": agent_id or "", "user_id": user_id or ""}
     if allowed_hosts is not None:
         details["allowed_hosts"] = list(allowed_hosts)
     return details

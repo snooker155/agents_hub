@@ -10,11 +10,14 @@ calling `extract_and_persist` directly.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Optional
 
 from memory.graph import GraphStore
+
+log = logging.getLogger(__name__)
 
 
 _EXTRACT_PROMPT = """Extract entities and the relationships between them from the text below.
@@ -146,11 +149,12 @@ def _resolve_workspace_model(pool_id: str) -> dict:
                 }.get(resolved["provider"])
                 if base_url_field and eff.get(base_url_field):
                     resolved["base_url"] = eff[base_url_field]
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the base url override is optional, the resolved model still works
+                log.debug("workspace base url override skipped", exc_info=True)
             return resolved
         return {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unresolvable model means no override, extraction reports it
+        log.debug("extraction model override unresolved", exc_info=True)
         return {}
 
 
@@ -196,7 +200,7 @@ def extract_and_persist(
         }
         try:
             llm = build_chat_model(**overrides)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any provider failure is reported in the summary
             summary["ok"] = False
             summary["errors"].append(f"build_chat_model failed: {e}")
             return summary
@@ -204,7 +208,7 @@ def extract_and_persist(
         prompt = _EXTRACT_PROMPT.replace("{text}", snippet)
         try:
             resp = llm.invoke(prompt)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any provider failure is reported in the summary
             summary["ok"] = False
             summary["errors"].append(f"llm.invoke failed: {e}")
             return summary
@@ -229,11 +233,11 @@ def extract_and_persist(
                 tgt_node, _ = gstore.upsert_node(t["target"]["type"], t["target"]["name"])
                 gstore.add_edge(src_node.id, tgt_node.id, t["relation"], properties={"source": "auto_extract"})
                 persisted += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one bad triple is reported and the rest are still persisted
                 summary["errors"].append(f"persist failed for {t}: {e}")
         summary["triples_persisted"] = persisted
         return summary
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a crash is reported in the summary instead of failing the turn
         summary["ok"] = False
         summary["errors"].append(f"extract_and_persist crashed: {e}")
         return summary
@@ -259,5 +263,5 @@ def silent_graph_extract(
             return
         text = f"User said:\n{user_message.strip()}\n\nAgent replied:\n{response.strip()}"
         extract_and_persist(str(pool_id), text)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - auto extraction after a turn is best effort and must not break the reply
+        log.debug("graph auto extraction failed", exc_info=True)

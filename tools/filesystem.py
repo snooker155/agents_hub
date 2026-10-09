@@ -6,6 +6,7 @@ These tools are workspace-aware and respect configuration limits.
 """
 from __future__ import annotations
 
+import logging
 import fnmatch
 import io
 import re
@@ -14,6 +15,8 @@ from typing import Iterable, List, Dict, Any, Optional
 
 # Centralized settings for sandbox and limits
 from common.config import get_swe_config
+
+log = logging.getLogger(__name__)
 
 
 def _workspace_root(workspace: Optional[Path] = None) -> Path:
@@ -46,7 +49,7 @@ def _resolve_within_workspace(path: str, workspace: Optional[Path] = None) -> Pa
     abs_path = (root / p).resolve() if not p.is_absolute() else p.resolve()
     try:
         abs_path.relative_to(root)
-    except Exception:
+    except ValueError:
         raise ValueError(f"Path escapes workspace: {path}")
     return abs_path
 
@@ -59,7 +62,7 @@ def _rel(path: Path, workspace: Optional[Path] = None) -> str:
     root = _workspace_root(workspace)
     try:
         return str(path.relative_to(root).as_posix())
-    except Exception:
+    except ValueError:
         return path.as_posix()
 
 
@@ -70,7 +73,7 @@ def _is_binary(sample: bytes) -> bool:
     try:
         sample.decode("utf-8")
         return False
-    except Exception:
+    except UnicodeDecodeError:
         return True
 
 
@@ -105,7 +108,8 @@ def _extract_pdf_text(content_bytes: bytes, rel: str) -> str:
     for i, page in enumerate(reader.pages):
         try:
             text = (page.extract_text() or "").strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a page the PDF library cannot extract counts as empty
+            log.debug("pdf page text extraction failed", exc_info=True)
             text = ""
         if text:
             has_text = True
@@ -129,7 +133,7 @@ def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any]
 
     try:
         size = abs_path.stat().st_size
-    except Exception:
+    except OSError:
         size = None
     if size is not None and size > int(cfg.max_read_bytes):
         raise ValueError(f"File too large to read (>{cfg.max_read_bytes} bytes): {_rel(abs_path, workspace=workspace)}")
@@ -170,8 +174,8 @@ def write_file(path: str, content: str, create_dirs: bool = True, workspace: Opt
         if tmp_path is not None and tmp_path.exists():
             try:
                 tmp_path.unlink()
-            except Exception:
-                pass
+            except OSError:
+                log.debug("write_file: best-effort step failed", exc_info=True)
     return _rel(abs_path, workspace=workspace)
 
 
@@ -225,18 +229,18 @@ def list_files(glob: str = "**/*", ignore: Iterable[str] | None = None, workspac
         if gpath.is_absolute():
             try:
                 glob_rel = str(gpath.resolve().relative_to(root).as_posix())
-            except Exception:
+            except (ValueError, OSError):
                 return []
         else:
             glob_rel = glob
-    except Exception:
+    except (ValueError, OSError):
         glob_rel = glob
 
     results: List[str] = []
     for p in root.glob(glob_rel):
         try:
             rp = _rel(p.resolve(), workspace=workspace)
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             continue
         if _is_ignored(rp, ignore):
             continue
@@ -257,11 +261,11 @@ def search_text(pattern: str, file_glob: str, workspace: Optional[Path] = None, 
             st = abs_path.stat()
             if st.st_size > int(cfg.max_read_bytes):
                 continue
-        except Exception:
-            pass
+        except OSError:
+            log.debug("search_text: best-effort step failed", exc_info=True)
         try:
             sample = abs_path.read_bytes()[: int(cfg.binary_threshold)]
-        except Exception:
+        except OSError:
             continue
         if _is_binary(sample):
             continue

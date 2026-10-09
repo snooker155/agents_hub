@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -108,7 +109,7 @@ async def stream_message_sse(request: ChatRequest):
 
     conv = request.conversation_id or str(uuid.uuid4())
     request.conversation_id = conv
-    channel = channel_for(conv)
+    channel = cast(str, channel_for(conv))  # conv is never empty here
     # Subscribing here as well as in the browser covers the gap between the POST
     # and the client's own channel request. It is never unsubscribed from this
     # side: the browser holds the channel for as long as the conversation is

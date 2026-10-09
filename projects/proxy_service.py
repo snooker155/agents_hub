@@ -58,7 +58,7 @@ def _max_redirects() -> int:
     try:
         from common.config import settings
         return max(0, int(settings.web_fetch_max_redirects))
-    except Exception:
+    except (ImportError, AttributeError, TypeError, ValueError):
         return _DEFAULT_MAX_REDIRECTS
 
 
@@ -211,7 +211,7 @@ async def proxy_api_request(
 
         try:
             resp_body = response.json()
-        except Exception:
+        except ValueError:
             resp_body = response.text
         return {
             "status_code": response.status_code,

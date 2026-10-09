@@ -2,7 +2,7 @@ export default {
   models: 'Models',
   theCatalogOfProvidersAnd: 'The catalog of providers and models this hub can call, and what they have cost so far.',
   loadingCatalog: 'Loading catalog…',
-  tabs: { catalog: 'Catalog', usage: 'Usage', special: 'Special models', endpoint: 'Endpoint /v1' },
+  tabs: { catalog: 'Catalog', usage: 'Usage', special: 'Special models', cache: 'Prompt cache', endpoint: 'Endpoint /v1' },
   specialFor: 'Special models of the workspace',
   specialInWorkspaceSettings: 'Also in the workspace settings →',
   specialLocalHint: 'Local speech and transcription models (Whisper, Piper, Kokoro, Kitten, Supertonic) are downloaded and run by the hub runtime:',

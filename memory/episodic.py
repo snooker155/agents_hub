@@ -80,7 +80,7 @@ class EpisodeStore:
         for obj in raw:
             try:
                 out.append(Episode(**obj))
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return out
 
@@ -133,7 +133,7 @@ class EpisodeStore:
                 return False
             try:
                 episode = Episode(**doc)
-            except Exception:
+            except (TypeError, ValueError):
                 return False
             episode.pinned = bool(pinned)
             self.docs.put(eid, _model_to_dict(episode))

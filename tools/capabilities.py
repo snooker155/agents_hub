@@ -691,7 +691,7 @@ def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
         from common.workspace_context import resolve_active_workspace
         from mcp_client.store import server_capabilities
         return server_capabilities(resolve_active_workspace(), server)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable MCP config grants nothing, the run goes on
         log.warning(
             "capability model: could not read the configuration of MCP server %r "
             "— treating it as granting nothing.", server,
@@ -730,7 +730,8 @@ def run_code_grants() -> FrozenSet[str]:
     try:
         from common.config import settings
         fallback = str(getattr(settings, "code_runner_fallback", "") or "").strip().lower()
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable setting falls back to the default grant
+        log.debug("code runner fallback setting unreadable", exc_info=True)
         return CAPABILITY_GRANTS["run_code"]
     if fallback == "local":
         return CAPABILITY_GRANTS["run_code"]
@@ -797,7 +798,8 @@ def _secrets_of(agent_id: str) -> List[str]:
     try:
         from agents.registry import get_agent  # lazy: avoid an import cycle
         spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an agent lookup that fails grants no secrets
+        log.debug("agent secrets lookup failed for %s", agent_id, exc_info=True)
         return []
     return secret_grant_ids(getattr(spec, "secrets", None)) if spec is not None else []
 
@@ -815,7 +817,8 @@ def _delegates_of(agent_id: str) -> Optional[List[str]]:
     try:
         from agents.registry import get_agent  # lazy: avoid an import cycle
         spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an agent lookup that fails means no delegation allow-list
+        log.debug("agent delegation lookup failed for %s", agent_id, exc_info=True)
         return None
     if spec is None:
         return None
@@ -844,7 +847,8 @@ def _all_agent_ids() -> List[str]:
     try:
         from agents.registry import list_agents  # lazy: avoid an import cycle
         return [spec.id for spec in list_agents()]
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry lists no agents
+        log.debug("agent registry listing failed", exc_info=True)
         return []
 
 
@@ -1243,7 +1247,8 @@ def _is_known_tool(tool_id: str) -> bool:
     try:
         from tools.registry import get_tool_by_id
         return get_tool_by_id(tool_id) is not None
-    except Exception:
+    except Exception:  # noqa: BLE001 - a registry that cannot load makes the tool id unknown
+        log.debug("tool registry lookup failed for %s", tool_id, exc_info=True)
         return False
 
 

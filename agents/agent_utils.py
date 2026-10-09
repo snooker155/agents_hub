@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 from pathlib import Path
 
@@ -19,9 +20,18 @@ from common.hostnet import host_service_url
 _SUMMARY_REFUSED: set = set()
 
 
+_OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
+
+
 def _summary_key(api_key, base_url) -> str:
+    # The model is built with the base URL its caller passed, often none, while
+    # the refusal is recorded with the one ChatOpenAI settled on, which may come
+    # from the environment. Both sides resolve it the same way, or a refusal
+    # recorded under one spelling is never found under the other.
+    base = (base_url or os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL")
+            or _OPENAI_DEFAULT_BASE).rstrip("/")
     secret = api_key.get_secret_value() if hasattr(api_key, "get_secret_value") else (api_key or "")
-    return f"{base_url or ''}|{hashlib.sha256(str(secret).encode()).hexdigest()[:16]}"
+    return f"{base}|{hashlib.sha256(str(secret).encode()).hexdigest()[:16]}"
 
 
 def _is_summary_refusal(exc: BaseException) -> bool:
@@ -281,8 +291,8 @@ def build_chat_model(
                     if _ln.startswith("DEFAULT_PROVIDER") and "=" in _ln:
                         _file_provider = _ln.partition("=")[2].strip().strip('"\'')
                         break
-            except Exception:
-                pass
+            except (OSError, ValueError):
+                log.debug("build_chat_model: ignored error", exc_info=True)
         provider = os.environ.get("DEFAULT_PROVIDER") or _file_provider or settings.default_provider
 
     def _temp(mdl: Optional[str]) -> float:
@@ -437,3 +447,5 @@ from agents.callbacks.guards import (  # noqa: E402,F401
     ToolRepetitionGuard,
     ToolRepetitionError,
 )
+
+log = logging.getLogger(__name__)

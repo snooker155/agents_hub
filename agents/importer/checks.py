@@ -12,6 +12,7 @@ correctly configured, merely idle.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agents.importer.manifest import AgentManifest, MANIFEST_FILENAMES, SUPPORTED_RUNTIME_KINDS
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,7 +101,8 @@ def _workspace_env(workspace: Optional[str]) -> Dict[str, str]:
     try:
         from workspace import get_workspace_metadata
         meta = get_workspace_metadata(name) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable workspace means no env vars
+        log.debug("_workspace_env: ignored error", exc_info=True)
         return {}
     env = meta.get("env_vars")
     return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}
@@ -195,7 +199,13 @@ def check_runtime(manifest: AgentManifest) -> ReadinessCheck:
     )
 
 
-def check_endpoint(url: str) -> ReadinessCheck:
+def check_endpoint(url: str, remote: Optional[Dict[str, Any]] = None) -> ReadinessCheck:
+    from agents.importer.docker_runtime import is_docker_mode
+    if is_docker_mode(remote):
+        return ReadinessCheck(
+            id="endpoint", label="Endpoint URL", ok=True,
+            detail="Docker mode: the hub starts a container per workspace on this host and talks to it",
+        )
     if not (url or "").strip():
         return ReadinessCheck(
             id="endpoint", label="Endpoint URL", ok=False,
@@ -390,8 +400,17 @@ def check_env(manifest: AgentManifest, workspace: Optional[str] = None) -> Readi
     )
 
 
-def check_health(url: str, manifest: AgentManifest, remote: Optional[Dict[str, Any]] = None) -> ReadinessCheck:
-    """Probe the live service. Optional — an unstarted service is not an error."""
+def check_health(url: str, manifest: AgentManifest, remote: Optional[Dict[str, Any]] = None,
+                 agent_id: str = "") -> ReadinessCheck:
+    """Probe the live service. Optional — an unstarted service is not an error.
+
+    In Docker mode there is no URL to probe until a workspace's container is
+    up: the check reports the image instead, and probes a running container
+    when there is one.
+    """
+    from agents.importer import docker_runtime
+    if docker_runtime.is_docker_mode(remote):
+        return _check_docker_runtime(agent_id, remote or {}, manifest)
     if not (url or "").strip():
         return ReadinessCheck(
             id="health", label="Service reachable", ok=False, required=False,
@@ -416,6 +435,54 @@ def check_health(url: str, manifest: AgentManifest, remote: Optional[Dict[str, A
             "Start the agent's service. The agent is still imported; re-run the check "
             "from its page once it is up."
         ),
+    )
+
+
+def _check_docker_runtime(agent_id: str, remote: Dict[str, Any], manifest: AgentManifest) -> ReadinessCheck:
+    from agents.importer import docker_runtime
+    from agents.remote_agent import RemoteAgent
+
+    try:
+        state = docker_runtime.status(agent_id, remote)
+    except docker_runtime.DockerRuntimeError as exc:
+        return ReadinessCheck(
+            id="health", label="Service reachable", ok=False, required=False,
+            detail=f"Docker mode: {exc}", fix="Install Docker on this host, or switch the agent back to a URL.",
+        )
+    if not state.get("docker_available"):
+        return ReadinessCheck(
+            id="health", label="Service reachable", ok=False, required=False,
+            detail=f"Docker mode: {state.get('error') or 'docker unavailable'}",
+            fix="Install Docker on this host, or switch the agent back to a URL.",
+        )
+    if not (state.get("image") or {}).get("exists"):
+        return ReadinessCheck(
+            id="health", label="Service reachable", ok=False, required=False,
+            detail="Docker mode: the image is not built yet",
+            fix="Build the image from the agent's page; a run cannot start a container without it.",
+        )
+    running = [c for c in state.get("containers") or [] if c.get("state") == "running" and c.get("url")]
+    if not running:
+        return ReadinessCheck(
+            id="health", label="Service reachable", ok=True, required=False,
+            detail="Docker mode: image built, no container running yet; one starts on the first run of each workspace",
+        )
+    first = running[0]
+    descriptor = dict(remote)
+    descriptor[docker_runtime.MODE_KEY] = docker_runtime.MODE_URL
+    descriptor["url"] = first["url"]
+    descriptor.setdefault("health_path", manifest.health_path)
+    probe = RemoteAgent(agent_id="__probe__", name="probe", remote=descriptor).check_health()
+    names = ", ".join(c.get("workspace") or c.get("name") for c in running)
+    if probe["ok"]:
+        return ReadinessCheck(
+            id="health", label="Service reachable", ok=True, required=False,
+            detail=f"Docker mode: containers running for {names}; {first['url']} answered {probe['detail']}",
+        )
+    return ReadinessCheck(
+        id="health", label="Service reachable", ok=False, required=False,
+        detail=f"Docker mode: {first['name']} at {first['url']} — {probe['detail']}",
+        fix="Stop the container from the agent's page; the next run starts a fresh one.",
     )
 
 
@@ -448,7 +515,7 @@ def evaluate(
         check_manifest(manifest),
         check_agent_id(agent_id, conflict=id_conflict),
         check_runtime(manifest),
-        check_endpoint(url),
+        check_endpoint(url, remote),
         check_env(manifest, workspace),
     ]
     checks.append(check_card(manifest, url) if a2a_runtime
@@ -461,7 +528,7 @@ def evaluate(
     if resume is not None:
         checks.append(resume)
     if probe_health and not a2a_runtime:
-        checks.append(check_health(url, manifest, remote))
+        checks.append(check_health(url, manifest, remote, agent_id=agent_id))
     return ReadinessReport(checks=checks, checked_at=_now())
 
 

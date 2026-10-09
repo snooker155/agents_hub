@@ -437,7 +437,7 @@ async def proxy_to(raw_base: str, path: str, request: Request, *, prefix: str,
                              media_type=content_type or None)
 
 
-@public_router.api_route("/{ticket}", methods=["GET", "HEAD"])
+@public_router.api_route("/{ticket}", methods=["GET", "HEAD"], include_in_schema=False)
 async def preview_root_redirect(ticket: str):
     """``/preview/<ticket>`` (no trailing slash) redirects to the form every
     relative URL on the proxied page is written against."""
@@ -447,6 +447,7 @@ async def preview_root_redirect(ticket: str):
 @public_router.api_route(
     "/{ticket}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
 )
 async def preview_proxy(ticket: str, path: str, request: Request):
     target = preview_tickets.verify(ticket)

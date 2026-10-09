@@ -141,7 +141,7 @@ def test_two_threads_checkpointing_different_fields_keep_both():
             start.wait(timeout=5)
             for _ in range(20):
                 run_store.update_flow_run("fr-10", {key: value})
-        except Exception as exc:  # pragma: no cover - only on a real failure
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - collected and asserted on after the join
             errors.append(exc)
 
     threads = [threading.Thread(target=write, args=("from_a", 1)),

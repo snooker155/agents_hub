@@ -4,6 +4,7 @@ see stdout/stderr/exit-code so they can verify their own output and iterate.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -11,6 +12,8 @@ from typing import Mapping, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+log = logging.getLogger(__name__)
 
 
 _MAX_OUTPUT = 20_000  # chars — keeps context window manageable
@@ -78,12 +81,13 @@ def _shell_allowlist() -> Optional[tuple]:
                 try:
                     from workspace import get_workspace_metadata
                     enabled = bool((get_workspace_metadata(ws).get("settings") or {}).get("shell_allowlist_enabled"))
-                except Exception:
+                except Exception:  # noqa: BLE001 - unreadable workspace settings leave the allow-list off
+                    log.debug("shell allow-list setting unreadable", exc_info=True)
                     enabled = False
         if enabled:
             return tuple(settings.allow_shell)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - unreadable settings leave the allow-list off
+        log.debug("_shell_allowlist: best-effort step failed", exc_info=True)
     return None
 
 
@@ -92,7 +96,7 @@ def _command_allowed(command: str, allowlist: tuple) -> bool:
     import shlex
     try:
         first = (shlex.split(command)[0] if command.strip() else "")
-    except Exception:
+    except ValueError:
         first = command.strip().split()[0] if command.strip() else ""
     # Compare on the executable's basename so '/usr/bin/python' matches 'python'.
     import os
@@ -122,8 +126,8 @@ def _resolve_shell_cwd() -> str:
         cwd = Path.cwd().resolve()
         if cwd == root or root in cwd.parents:
             return str(cwd)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an unusable cwd falls through to the next candidate
+        log.debug("_resolve_shell_cwd: best-effort step failed", exc_info=True)
 
     try:
         from common.workspace_context import resolve_active_workspace, resolve_active_project
@@ -139,17 +143,18 @@ def _resolve_shell_cwd() -> str:
                     obj = ProjectStore(PROJECTS_FILE).get(str(proj_id))
                     if obj and getattr(obj, "name", None):
                         proj_folder = project_folder_name(obj.name)
-                except Exception:
+                except Exception:  # noqa: BLE001 - an unreadable project record falls back to the workspace root
+                    log.debug("project folder lookup failed", exc_info=True)
                     proj_folder = None
             return str(resolve_project_root(ws_name, proj_folder))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an unresolvable project root falls through to the workspaces root
+        log.debug("_resolve_shell_cwd: best-effort step failed", exc_info=True)
 
     try:
         from workspace import WORKSPACES_ROOT
         Path(WORKSPACES_ROOT).mkdir(parents=True, exist_ok=True)
         return str(WORKSPACES_ROOT)
-    except Exception:
+    except (ImportError, OSError):
         import os
         return os.getcwd()
 
@@ -236,5 +241,5 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
 
     except subprocess.TimeoutExpired:
         return f"exit_code: -1\nerror: command timed out after {timeout}s"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
         return f"exit_code: -1\nerror: {exc}"

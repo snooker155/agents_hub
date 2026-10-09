@@ -280,7 +280,8 @@ def _load_run(run_id: str) -> Dict[str, Any]:
                 "output": loaded["output"], "input": loaded["input"]}
     try:
         proc = rm.get_run_process(run_id) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable process record grades with what the run row has
+        log.debug("run process unavailable for online eval", exc_info=True)
         proc = {}
     input_ctx = proc.get("input_context") or {}
     output = str((proc.get("response") or {}).get("text") or run.get("output") or "")
@@ -411,7 +412,7 @@ def process_job(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         record = _write_result(job, rule, loaded["run"], graded)
         try:
             _maybe_fire(job, rule, record)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a failed alert must not fail the grade
             log.warning("online eval: could not raise the alert for run %s",
                         job.get("run_id"), exc_info=True)
         _finish(int(job["id"]), "done")
@@ -420,7 +421,7 @@ def process_job(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         log.warning("online eval: grading run %s failed: %s", job.get("run_id"), exc)
         try:
             _finish(int(job["id"]), "failed", f"{type(exc).__name__}: {exc}")
-        except Exception:
+        except Exception:  # noqa: BLE001 - recording the failure is best effort
             log.debug("online eval: could not record the failure", exc_info=True)
         return None
 
@@ -538,7 +539,7 @@ class _Service:
         while not self._stop.is_set():
             try:
                 process_pending()
-            except Exception:
+            except Exception:  # noqa: BLE001 - the loop must keep ticking
                 log.warning("online eval loop tick failed", exc_info=True)
             self._stop.wait(POLL_SECONDS)
 

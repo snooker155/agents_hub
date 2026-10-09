@@ -486,7 +486,7 @@ def _self_intersections(bm, fl):
     bm.faces.ensure_lookup_table()
     try:
         tree = BVHTree.FromBMesh(bm, epsilon=1e-6)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - BVH tree construction inside Blender can raise anything and is reported as an error field
         return {"count": None, "error": str(exc)}
     hits = []
     for i, j in tree.overlap(tree):
@@ -1051,7 +1051,7 @@ def handle(frame):
         result = HANDLERS[cmd](args)
     except EngineError as exc:
         return {"id": req_id, "ok": False, "error": str(exc), "error_kind": "engine"}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - an operator failing inside Blender is reported to the agent as a one-line error
         # An operator that blew up inside Blender: the message alone rarely says
         # which call it was, so the traceback goes to stderr (the daemon's log)
         # while the agent gets a clean one-liner.
@@ -1124,7 +1124,7 @@ def serve(sock_path, idle_timeout):
                     continue
                 try:
                     frame = protocol.decode(line)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - a malformed frame is answered with a protocol error and the connection keeps serving
                     _send(conn, {"ok": False, "error": "bad frame: %s" % exc,
                                  "error_kind": "protocol"})
                     continue

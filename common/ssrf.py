@@ -52,7 +52,7 @@ def resolved_addresses(host: str) -> List[str]:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return []
-    return sorted({info[4][0] for info in infos})
+    return sorted({str(info[4][0]) for info in infos})
 
 
 def resolve_and_check(host: str) -> Tuple[bool, str]:
@@ -67,7 +67,7 @@ def resolve_and_check(host: str) -> Tuple[bool, str]:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as e:
         return False, f"could not resolve host {host!r}: {e}"
-    addrs = {info[4][0] for info in infos}
+    addrs = {str(info[4][0]) for info in infos}
     if not addrs:
         return False, f"could not resolve host {host!r}"
     for addr in addrs:

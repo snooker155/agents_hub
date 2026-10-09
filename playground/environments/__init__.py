@@ -6,10 +6,13 @@ returns state. Adding a third environment must touch **zero frontend code**: an
 environment declares its own parameter schema (mirroring ``ToolSpec.parameters``)
 and names the renderer it wants, and the UI renders both generically.
 """
+import logging
 from typing import Any, Dict, List, Optional, Type
 
 from playground.environments.base import Environment
 from playground.worlds import is_custom_env, world_id_of
+
+log = logging.getLogger(__name__)
 
 _REGISTRY: Dict[str, Type[Environment]] = {}
 
@@ -60,8 +63,8 @@ def list_environments(workspace: Optional[str] = None,
             from playground import store
             from playground.environments.custom import describe_world
             envs += [describe_world(spec) for spec in store.list_worlds(workspace)]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - custom worlds are optional in the catalogue, the built-in environments still list
+            log.debug("custom world listing skipped", exc_info=True)
     return envs
 
 

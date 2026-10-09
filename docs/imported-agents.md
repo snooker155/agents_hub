@@ -175,6 +175,65 @@ from documentation rather than a captured transcript, since the CLI was not
 installed while writing it; its README says so and names what to verify
 against a real install.
 
+## Docker mode: the hub runs the container
+
+An agent whose manifest names a Dockerfile can run in one of two ways. The
+choice is on the agent's page, under **Where it runs**:
+
+- **A service you run** (the default): you start the container or process
+  yourself and paste its URL. The hub never touches Docker.
+- **Docker on this host, run by the hub**: the hub builds the image from the
+  agent's clone (`docker build -f <Dockerfile> <context>`, tagged
+  `agents-hub-import/<agent>:latest`) and starts **one container per
+  workspace**, the first time a run from that workspace needs the agent, or
+  from the page's *Start for this workspace* button. Switching to this mode
+  builds the image at once; *Rebuild* builds again after a re-import.
+
+What each container gets:
+
+- **The workspace folder, at its own path.** Every run the hub sends carries
+  `workspace`, an absolute host path (the workspace, a project under it, or
+  an eval case folder). The container mounts
+  `<AGENTS_HUB_ROOT>/workspaces/<name>` at that same path, so the path the
+  adapter receives is a directory it can open. Never the root of all
+  workspaces: a container sees the one workspace it was started for.
+- **The workspace's eval folder, when it lives elsewhere.** Eval cases run in
+  `<workspace>/.eval/<run>/<case>` by default, which the first mount already
+  covers. With `AGENTS_HUB_EVAL_ROOT` set (see [evals](evals.md)), they run
+  under `<AGENTS_HUB_EVAL_ROOT>/<workspace>/...`, and that workspace's folder
+  there is mounted as a second volume, again at its host path.
+- **The declared environment.** Only the names the manifest lists under
+  `runtime.env`, valued from the workspace's variables first and the hub's
+  environment second. An undeclared variable never crosses. The hub adds
+  `AGENTS_HUB_WORKSPACE`, the mounted workspace path, which the Claude Code
+  and Codex adapters use as their default working directory.
+- **A port on `127.0.0.1`** only, picked free at start. The URL is read back
+  from the daemon each time rather than stored, so a record can never point
+  at a port the daemon reassigned.
+
+Both mounts are read-write: a coding agent's whole point is to edit the files.
+A container on an image older than the one last built is replaced on the next
+run. Containers are labelled `agents-hub.managed=true`,
+`agents-hub.import=<agent>` and `agents-hub.workspace=<name>`, and appear on
+the Containers page like any other the hub starts. *Stop* removes one
+workspace's container; *Stop all* removes every container of the agent, as
+does switching back to a URL.
+
+The readiness report reads differently in this mode: the endpoint check
+passes without a URL, and the reachability check reports the image (not
+built yet, or built with no container running, which is fine: one starts on
+the first run) and probes a running container when there is one.
+
+When the hub itself runs in Docker (`docker compose`), bind mounts are
+resolved by the daemon on the host, so `HOST_PROJECT_ROOT` has to be set as
+for every other container the hub starts (docs/containers.md).
+
+The API behind the page: `GET /api/agent-import/{id}/docker` (mode, image,
+containers), `POST .../docker/mode` with `{"mode": "url"|"docker"}`,
+`POST .../docker/build` (`{"no_cache": true}` to build from scratch),
+`POST .../docker/start` and `POST .../docker/stop` with `{"workspace": ...}`
+(stop with no workspace stops them all).
+
 ## Importing an A2A agent
 
 An agent that speaks [A2A](a2a.md), the Agent2Agent protocol, needs no manifest

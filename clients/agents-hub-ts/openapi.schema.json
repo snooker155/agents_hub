@@ -3799,6 +3799,34 @@
         "title": "DiscardRequest",
         "type": "object"
       },
+      "DockerBuildRequest": {
+        "properties": {
+          "no_cache": {
+            "default": false,
+            "title": "No Cache",
+            "type": "boolean"
+          }
+        },
+        "title": "DockerBuildRequest",
+        "type": "object"
+      },
+      "DockerContainerRequest": {
+        "properties": {
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "DockerContainerRequest",
+        "type": "object"
+      },
       "DownloadBody": {
         "properties": {
           "file": {
@@ -4344,6 +4372,70 @@
           "provider"
         ],
         "title": "FirstModel",
+        "type": "object"
+      },
+      "FirstRunAction": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "FirstRunAction",
+        "type": "object"
+      },
+      "FirstRunOp": {
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "title": "FirstRunOp",
         "type": "object"
       },
       "FlowCreate": {
@@ -9123,6 +9215,19 @@
         "title": "RunEvalIn",
         "type": "object"
       },
+      "RuntimeModeRequest": {
+        "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "RuntimeModeRequest",
+        "type": "object"
+      },
       "SampleIn": {
         "properties": {
           "language": {
@@ -10411,6 +10516,18 @@
             "title": "Web Search Api Key Masked",
             "type": "string"
           },
+          "web_search_effective_key_set": {
+            "title": "Web Search Effective Key Set",
+            "type": "boolean"
+          },
+          "web_search_effective_provider": {
+            "title": "Web Search Effective Provider",
+            "type": "string"
+          },
+          "web_search_effective_source": {
+            "title": "Web Search Effective Source",
+            "type": "string"
+          },
           "web_search_max_results": {
             "title": "Web Search Max Results",
             "type": "integer"
@@ -10459,6 +10576,9 @@
           "web_search_provider",
           "web_search_api_key_masked",
           "web_search_max_results",
+          "web_search_effective_provider",
+          "web_search_effective_source",
+          "web_search_effective_key_set",
           "web_fetch_max_chars",
           "web_fetch_timeout",
           "web_fetch_max_redirects",
@@ -15016,6 +15136,243 @@
           }
         },
         "summary": "Get Import Details",
+        "tags": [
+          "agent-import"
+        ]
+      }
+    },
+    "/api/agent-import/{agent_id}/docker": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Docker Status",
+        "tags": [
+          "agent-import"
+        ]
+      }
+    },
+    "/api/agent-import/{agent_id}/docker/build": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DockerBuildRequest",
+                "default": {
+                  "no_cache": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Docker Image",
+        "tags": [
+          "agent-import"
+        ]
+      }
+    },
+    "/api/agent-import/{agent_id}/docker/mode": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeModeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Docker Mode",
+        "tags": [
+          "agent-import"
+        ]
+      }
+    },
+    "/api/agent-import/{agent_id}/docker/start": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DockerContainerRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Docker Container",
+        "tags": [
+          "agent-import"
+        ]
+      }
+    },
+    "/api/agent-import/{agent_id}/docker/stop": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DockerContainerRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Docker Container",
         "tags": [
           "agent-import"
         ]
@@ -27724,6 +28081,134 @@
         "summary": "File Usage",
         "tags": [
           "files"
+        ]
+      }
+    },
+    "/api/first-run": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Status",
+        "tags": [
+          "first-run"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstRunAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Act",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/context": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Context",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/op": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstRunOp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Op",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/options": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Options",
+        "tags": [
+          "first-run"
         ]
       }
     },
@@ -53143,238 +53628,6 @@
         ]
       }
     },
-    "/api/views/{view_id}/proxy/{path}": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "view_id",
-            "required": true,
-            "schema": {
-              "title": "View Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "View Proxy",
-        "tags": [
-          "views"
-        ]
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "view_id",
-            "required": true,
-            "schema": {
-              "title": "View Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "View Proxy",
-        "tags": [
-          "views"
-        ]
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "view_id",
-            "required": true,
-            "schema": {
-              "title": "View Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "View Proxy",
-        "tags": [
-          "views"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "view_id",
-            "required": true,
-            "schema": {
-              "title": "View Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "View Proxy",
-        "tags": [
-          "views"
-        ]
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "view_id",
-            "required": true,
-            "schema": {
-              "title": "View Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "View Proxy",
-        "tags": [
-          "views"
-        ]
-      }
-    },
     "/api/views/{view_id}/revert": {
       "post": {
         "description": "Undo a live view back to an op seq (0 = empty) or a named checkpoint.",
@@ -57821,406 +58074,6 @@
         ]
       }
     },
-    "/apps/{slug}": {
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Root Redirect",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "head": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Root Redirect",
-        "tags": [
-          "project-deployments"
-        ]
-      }
-    },
-    "/apps/{slug}/{path}": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "head": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "options": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "slug",
-            "required": true,
-            "schema": {
-              "title": "Slug",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "App Proxy",
-        "tags": [
-          "project-deployments"
-        ]
-      }
-    },
     "/consent/callback": {
       "get": {
         "parameters": [
@@ -58445,408 +58298,6 @@
         "summary": "Metrics",
         "tags": [
           "ops"
-        ]
-      }
-    },
-    "/preview/{ticket}": {
-      "get": {
-        "description": "``/preview/<ticket>`` (no trailing slash) redirects to the form every\nrelative URL on the proxied page is written against.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Root Redirect",
-        "tags": [
-          "preview"
-        ]
-      },
-      "head": {
-        "description": "``/preview/<ticket>`` (no trailing slash) redirects to the form every\nrelative URL on the proxied page is written against.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Root Redirect",
-        "tags": [
-          "preview"
-        ]
-      }
-    },
-    "/preview/{ticket}/{path}": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "head": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "options": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
-        ]
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket",
-            "required": true,
-            "schema": {
-              "title": "Ticket",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview Proxy",
-        "tags": [
-          "preview"
         ]
       }
     },

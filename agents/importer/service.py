@@ -22,6 +22,7 @@ through the unchanged ``create_agent`` path (see :mod:`agents.remote_agent`).
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,8 @@ from agents import prompt_assembly, registry
 from agents.importer import a2a_import, checks, clone
 from agents.importer.manifest import AgentManifest, parse_manifest
 from agents.remote_agent import DEFAULT_HEALTH_PATH, DEFAULT_RUN_PATH, RemoteAgent, normalize_base_url
+
+log = logging.getLogger(__name__)
 
 # ``entrypoint`` is required on every registry record and must be an importable
 # "module:attr". For remote agents it documents the adapter that will run them
@@ -667,6 +670,103 @@ def _register_card(
     )
 
 
+# ── Docker mode ─────────────────────────────────────────────────────────────
+
+def _remote_spec(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if spec is None:
+        raise ImportError_(f"Agent '{agent_id}' not found")
+    if not spec.is_remote():
+        raise ImportError_(f"Agent '{agent_id}' is not an imported agent")
+    return spec
+
+
+def _save_descriptor(spec: Any, descriptor: Dict[str, Any]) -> None:
+    import dataclasses
+    registry.add_agent(dataclasses.replace(spec, remote=descriptor))
+
+
+def docker_status(agent_id: str) -> Dict[str, Any]:
+    """The Docker-mode state of an imported agent, for its page."""
+    from agents.importer import docker_runtime
+    spec = _remote_spec(agent_id)
+    descriptor = dict(spec.remote or {})
+    out = docker_runtime.status(agent_id, descriptor)
+    out["dockerfile"] = descriptor.get("dockerfile") or ""
+    out["supported"] = bool(descriptor.get("dockerfile")) and descriptor.get("kind") != "a2a"
+    return out
+
+
+def set_runtime_mode(agent_id: str, mode: str) -> Dict[str, Any]:
+    """Switch an imported agent between ``url`` and ``docker``. Leaving Docker
+    mode stops its containers; entering it changes nothing until the image
+    is built (:func:`docker_build`). The readiness report is refreshed."""
+    from agents.importer import docker_runtime
+    mode = (mode or "").strip().lower()
+    if mode not in docker_runtime.MODES:
+        raise ImportError_(f"Unknown runtime mode '{mode}'. Known modes: {', '.join(docker_runtime.MODES)}.")
+    spec = _remote_spec(agent_id)
+    descriptor = dict(spec.remote or {})
+    if mode == docker_runtime.MODE_DOCKER:
+        if descriptor.get("kind") == "a2a":
+            raise ImportError_("An A2A agent is already running somewhere: there is no container to run.")
+        if not descriptor.get("dockerfile"):
+            raise ImportError_("This agent's manifest names no Dockerfile, so the hub cannot build it.")
+    previous = docker_runtime.is_docker_mode(descriptor)
+    descriptor[docker_runtime.MODE_KEY] = mode
+    if previous and mode == docker_runtime.MODE_URL:
+        try:
+            docker_runtime.stop_containers(agent_id, descriptor)
+        except docker_runtime.DockerRuntimeError:
+            log.debug("set_runtime_mode: stop on leaving docker mode failed", exc_info=True)
+    _save_descriptor(spec, descriptor)
+    result = recheck(agent_id)
+    result["mode"] = mode
+    return result
+
+
+def docker_build(agent_id: str, *, no_cache: bool = False) -> Dict[str, Any]:
+    """Build the agent's image from its clone and record it on the descriptor."""
+    from agents.importer import docker_runtime
+    spec = _remote_spec(agent_id)
+    descriptor = dict(spec.remote or {})
+    try:
+        built = docker_runtime.build_image(agent_id, descriptor, no_cache=no_cache)
+    except docker_runtime.DockerRuntimeError as exc:
+        raise ImportError_(str(exc))
+    descriptor["docker"] = built
+    _save_descriptor(spec, descriptor)
+    out = recheck(agent_id)
+    out["docker"] = built
+    return out
+
+
+def docker_start(agent_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+    """Start (or confirm) the container for one workspace."""
+    from agents.importer import docker_runtime
+    spec = _remote_spec(agent_id)
+    descriptor = dict(spec.remote or {})
+    if not docker_runtime.is_docker_mode(descriptor):
+        raise ImportError_("This agent is not in Docker mode.")
+    name = (workspace or "").strip() or "default"
+    try:
+        return docker_runtime.ensure_container(agent_id, descriptor, name)
+    except docker_runtime.DockerRuntimeError as exc:
+        raise ImportError_(str(exc))
+
+
+def docker_stop(agent_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+    """Stop and remove the container for one workspace, or every container."""
+    from agents.importer import docker_runtime
+    spec = _remote_spec(agent_id)
+    descriptor = dict(spec.remote or {})
+    try:
+        removed = docker_runtime.stop_containers(agent_id, descriptor, (workspace or "").strip() or None)
+    except docker_runtime.DockerRuntimeError as exc:
+        raise ImportError_(str(exc))
+    return {"removed": removed}
+
+
 def _add_to_workspace(workspace: str, agent_id: str) -> None:
     """Make a workspace-owned import visible in that workspace immediately."""
     try:
@@ -677,9 +777,9 @@ def _add_to_workspace(workspace: str, agent_id: str) -> None:
         if agent_id not in allowed:
             allowed.append(agent_id)
             update_workspace_metadata(workspace, {"allowed_agents": allowed})
-    except Exception:
+    except Exception:  # noqa: BLE001 - granting workspace access is best effort, the agent is already registered
         # Best effort: the agent itself is registered and owner_workspace is set.
-        pass
+        log.debug("_add_to_workspace: ignored error", exc_info=True)
 
 
 def recheck(agent_id: str, *, url: Optional[str] = None, workspace: Optional[str] = None) -> Dict[str, Any]:

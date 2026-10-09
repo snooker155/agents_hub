@@ -290,7 +290,7 @@ def main() -> None:
                 seed_state = parsed
             else:
                 log.info(f"[flow_seed] ignoring non-object seed: {type(parsed).__name__}")
-        except Exception as e:
+        except ValueError as e:
             log.info(f"[flow_seed] failed to parse --seed JSON: {e}")
 
     async def _drive() -> dict:

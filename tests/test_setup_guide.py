@@ -141,7 +141,12 @@ def test_done_is_read_from_the_hub_and_skips_are_remembered(single, no_keys, ws)
     with pytest.raises(ValueError, match="cannot be skipped"):
         setup_guide.act(LOCAL_PRINCIPAL, "skip", "model")
     g = setup_guide.act(LOCAL_PRINCIPAL, "skip", "voice")
-    assert _status(g, "voice") == "skipped" and g["next"] == "web_search"
+    # The OpenAI key saved above is a web search too (tools/web.py
+    # effective_search_provider), so that step is done and the guide moves
+    # past it (which step comes next depends on whether the demo workspace
+    # exists on this hub).
+    assert _status(g, "voice") == "skipped" and _status(g, "web_search") == "done"
+    assert g["next"] not in ("voice", "web_search")
     g = setup_guide.act(LOCAL_PRINCIPAL, "unskip", "voice")
     assert _status(g, "voice") == "todo"
     # The health check is not visible to the hub: the assistant marks it.
@@ -282,14 +287,19 @@ def test_a_local_voice_downloads_in_the_background(single, no_keys, ws, monkeypa
         {"id": "hub-local", "label": "This hub", "adapter": "openai", "base_url": "http://runtime/v1"}))
     monkeypatch.setattr(setup_ops, "_in_backend", lambda: False)
     setup_ops.perform("voice_local", {"speech": "piper-ru"})
-    assert special.stored("default")["speech"]["model"] == "piper-ru_RU-irina-medium"
+    speech = special.stored("default")["speech"]
+    assert speech["model"] == "piper-ru_RU-irina-medium"
+    # A Piper voice speaks one language: English and German get their own.
+    assert speech["languages"] == {"en": {"model": "piper-en_US-lessac-medium"},
+                                   "de": {"model": "piper-de_DE-thorsten-medium"}}
     g = setup_guide.guide(LOCAL_PRINCIPAL)
     assert _status(g, "voice") == "working" and "runtime" in g["steps"][2]["detail"]
     runtime.up = True
     setup_ops.advance_work(LOCAL_PRINCIPAL)
     work = setup_guide.load_state(LOCAL_PRINCIPAL)["work"]
-    # whisper is installed already: one engine to install, two models to download.
-    assert [j["id"] for j in work["jobs"]] == ["e-piper", "d-faster-whisper-small", "d-piper-ru_RU-irina-medium"]
+    # whisper is installed already: one engine to install, four models to download.
+    assert [j["id"] for j in work["jobs"]] == ["e-piper", "d-faster-whisper-small", "d-piper-ru_RU-irina-medium",
+                                               "d-piper-en_US-lessac-medium", "d-piper-de_DE-thorsten-medium"]
     for job in runtime.jobs.values():
         job.update(status="done", percent=100)
     setup_ops.advance_work(LOCAL_PRINCIPAL)

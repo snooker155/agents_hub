@@ -69,7 +69,7 @@ def first_balanced_object(text: str) -> Optional[dict]:
                 if depth == 0:
                     try:
                         obj = json.loads(text[i : j + 1])
-                    except Exception:
+                    except (ValueError, RecursionError):
                         break  # this candidate didn't parse; try the next "{"
                     if isinstance(obj, dict):
                         return obj
@@ -97,6 +97,6 @@ def extract_json_object(raw: str) -> Optional[dict]:
         return None
     try:
         obj = json.loads(cleaned[start : end + 1])
-    except Exception:
+    except (ValueError, RecursionError):
         return None
     return obj if isinstance(obj, dict) else None

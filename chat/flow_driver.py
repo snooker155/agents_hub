@@ -41,6 +41,8 @@ from chat.streaming import StreamDriveResult, drive_streaming_run
 from flow.engine import FlowEngineDriver, build_agent_input
 from flow.state import RunContext
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class ChatFlowState:
@@ -152,8 +154,8 @@ def build_chat_driver(
         )
         try:
             _update_run(run_id, {"input": prompt})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - recording the input is best effort
+            log.debug("run input update failed", exc_info=True)
         log_flow({
             "timestamp": utc_iso(), "type": "agent_start", "node_id": node_id,
             "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
@@ -244,8 +246,8 @@ def build_chat_driver(
             callback.cancelled = True
             try:
                 task.cancel()
-            except Exception:
-                pass
+            except RuntimeError:
+                log.debug("task cancel failed", exc_info=True)
             finished = utc_iso()
             _write_log(log_file, log_lines + ["(cancelled)", "", f"Finished: {finished}", "Status  : stopped"])
             _update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "cancelled"})

@@ -64,8 +64,12 @@ export default defineConfig({
     restoreMocks: true,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
-      include: ['src/lib/**', 'src/components/*.js', 'src/i18n/core.js', 'src/views/*.js'],
+      reporter: ['text-summary', 'html', 'json-summary'],
+      include: ['src/**/*.{js,jsx}'],
+      exclude: ['src/**/__tests__/**', 'src/test/**', 'src/demo/fixtures/**', 'src/main.jsx'],
+      // A floor, not a goal: CI fails when coverage drops below what the suite
+      // reached when the gate was added (2026-10-09). Raise it as tests grow.
+      thresholds: { lines: 66, statements: 66, functions: 54, branches: 73 },
     },
   },
 })

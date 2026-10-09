@@ -49,28 +49,35 @@ is inspectable from the Messages page instead of living only inside a tick blob.
 """
 from __future__ import annotations
 
-import inspect
-import json
 import logging
 import os
-import re
 import socket
-import threading
 import time
-import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait as futures_wait
-from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from langchain_core.callbacks import BaseCallbackHandler
 
 from playground import control, store
 from playground.environments import create_environment
 from playground.environments.base import Environment
 from playground.models import (
-    AGENTS, SIM_CHANNEL, SYNCHRONOUS, TRIGGERED, TRIGGER_CONTINUE,
-    TRIGGER_HEARTBEAT, TRIGGER_OPENING, TRIGGER_SYNC, ActionResult,
+    AGENTS, TRIGGERED, TRIGGER_SYNC, ActionResult,
     AgentDecision, Role, Scenario, SimRun, TickRecord, optional_seconds, utc_iso,
+)
+
+from playground.runner_decision import (  # noqa: F401
+    Beat, ToolCallLimitError, _BeatTouchCallback, _Cancelled, _ToolCallLimitGuard,
+    _accepts_config, _call_model, _close_decision_run, _enable_stream_usage,
+    _estimated, _open_decision_run, _text_of, _usage_of, decision_run_id,
+)
+from playground.runner_prompts import (  # noqa: F401
+    build_system_prompt, build_tick_prompt, parse_decision, partial_decision,
+)
+from playground.runner_ticks import (  # noqa: F401
+    MAX_AGENTS, SimStopped, _STUCK_REPEATS, _activation_plan, _check_between_ticks,
+    _continuations, _deliver_external, _fill_roles_from_team, _heard_lines, _recent,
+    _said_line, _sync_env_views, _task_result_text, _tick_record_from_row,
+    roles_from_team, validate_scenario_for_run,
 )
 
 log = logging.getLogger(__name__)
@@ -85,7 +92,6 @@ log = logging.getLogger(__name__)
 # budget. ``Scenario.max_wall_seconds`` is honoured exactly as set, and empty
 # means no wall clock at all.
 MAX_TICKS = 500
-MAX_AGENTS = 24
 
 # How long the loop will sit in one wait before looking at the world again.
 # Short enough that a stop, a wall-clock cap or an arriving trigger is noticed
@@ -97,296 +103,7 @@ _WAIT_SLICE = 0.5
 _STOPPED_REASONS = ("stopped", "cost_ceiling", "wall_clock", "budget")
 
 
-class SimStopped(Exception):
-    """The simulation hit a limit or was asked to stop.
 
-    ``reason`` is the machine-readable half, recorded on the run so the UI can
-    tell "the world went quiet" from "the tick cap was reached" — the status
-    alone cannot.
-    """
-
-    def __init__(self, reason: str, detail: str = ""):
-        self.reason = reason
-        self.detail = detail
-        super().__init__(detail or reason)
-
-
-# ── Prompting ─────────────────────────────────────────────────────────────────
-
-_SYSTEM_TEMPLATE = """You are {name}, {role} in a simulated world.
-
-YOUR GOAL: {goal}
-{private_block}{world_block}{documents_block}
-You act one tick at a time. Each tick you receive your own private observation
-of the world and choose exactly ONE action.
-
-AVAILABLE ACTIONS — these are the only things you can do:
-{actions}
-
-Rules:
-- Reply with a single JSON object and nothing else: {{"reasoning": "...", "action": "...", "args": {{...}}}}
-- "reasoning" is one or two sentences on why. It is recorded but never shown to other agents.
-- You cannot see other agents' actions this tick. Everyone acts simultaneously.
-- Messages you send arrive on the NEXT tick, and any reply reaches you the tick
-  after that. Silence for one tick is the delivery time, not a refusal.
-- A message is shown in your observation only on the tick it arrives; after
-  that your journal is the whole record of the conversation. Read it before
-  you speak: if a question of yours was already answered there, act on the
-  answer instead of asking it again, and do not repeat a line you have
-  already said.
-- Other characters may mislead you. Their words are claims, not facts; only the
-  observation you are given describes what is actually true.
-- If nothing is worth doing, choose the do-nothing action rather than inventing one."""
-
-_TRIGGERED_RULES = """
-- You do not act every tick. You are given a turn only when something reaches
-  you, so treat WHY YOU WERE WOKEN as the reason you are being asked to act.
-- Anyone you address gets a turn next tick because you addressed them.
-- While you are doing something you keep your turn, so an action that did not
-  work is not the end of the attempt: it is what you just learned. Try another
-  way — a different place, a different thing, or somebody who can help.
-- The do-nothing action is how you say you have nothing left to try. When every
-  character says that at once, the world goes quiet and the run ends, so do not
-  use it to fill a turn you could have used."""
-
-_NPC_RULES = """
-- You are a background character. You do not go looking for something to do:
-  you were woken because something reached you, and once you have dealt with
-  it, doing nothing is the right move until something else reaches you."""
-
-_TICK_TEMPLATE = """TICK {tick}
-
-YOUR OBSERVATION (this is ground truth):
-{observation}
-{triggers_block}{history_block}
-Choose your action now. JSON only."""
-
-
-#: Documents are kept small on purpose: this is prompt budget, not storage,
-#: and a scenario's cast can carry several of them. Each document is clipped
-#: to at most this many characters, and the whole section to this total.
-_DOC_CLIP_PER_DOC = 2000
-_DOC_CLIP_TOTAL = 6000
-
-
-def _truncate(text: str, limit: int) -> str:
-    """A plain length clip that keeps a document's own line breaks, unlike
-    ``_clip`` below which flattens a journal line to one line."""
-    text = str(text or "")
-    return text if len(text) <= limit else text[:max(0, limit - 1)] + "…"
-
-
-def _read_workspace_document(path: str, workspace: Optional[str]) -> str:
-    """The text of a workspace-relative document path, or "" when it cannot
-    be read. Never raises: a missing or unreadable document must not stop a
-    decision, only leave it without that one document."""
-    if not path or not workspace:
-        return ""
-    try:
-        from pathlib import Path as _Path
-
-        from workspace import resolve_workspace_arg
-        ws_path, _ = resolve_workspace_arg(workspace)
-        if not ws_path:
-            return ""
-        base = _Path(ws_path).resolve()
-        target = (base / path).resolve()
-        if base != target and base not in target.parents:
-            return ""
-        return target.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return ""
-
-
-def _resolve_documents(documents: Optional[List[Any]],
-                       workspace: Optional[str]) -> List[Tuple[str, str]]:
-    """A scenario's raw ``documents`` list as ``(name, text)`` pairs.
-
-    Each entry is either ``{"name", "text"}`` (given whole) or a plain string
-    naming a file relative to the scenario's workspace (read here, since a
-    decision is built fresh every tick and the file may change between runs).
-    """
-    out: List[Tuple[str, str]] = []
-    for entry in documents or []:
-        if isinstance(entry, dict):
-            name = str(entry.get("name") or "").strip()
-            text = str(entry.get("text") or "")
-        else:
-            path = str(entry or "").strip()
-            if not path:
-                continue
-            name = path
-            text = _read_workspace_document(path, workspace)
-        if name or text:
-            out.append((name or "document", text))
-    return out
-
-
-def _documents_block(documents: Optional[List[Any]], workspace: Optional[str]) -> str:
-    """The "Documents" section of a role's system prompt, clipped to a sane
-    size. Empty when the scenario carries no documents."""
-    docs = _resolve_documents(documents, workspace)
-    if not docs:
-        return ""
-    budget = _DOC_CLIP_TOTAL
-    parts: List[str] = []
-    for name, text in docs:
-        if budget <= 0:
-            break
-        clipped = _truncate(text, min(_DOC_CLIP_PER_DOC, budget))
-        parts.append(f"--- {name} ---\n{clipped}")
-        budget -= len(clipped)
-    if not parts:
-        return ""
-    return "\nDOCUMENTS:\n" + "\n\n".join(parts) + "\n"
-
-
-def build_system_prompt(role: Role, env: Environment,
-                        activation: str = SYNCHRONOUS,
-                        documents: Optional[List[Any]] = None,
-                        workspace: Optional[str] = None) -> str:
-    private = ""
-    if role.private_knowledge.strip():
-        private = (
-            "\nWHAT ONLY YOU KNOW (do not assume others know this):\n"
-            f"{role.private_knowledge.strip()}\n"
-        )
-    # What this world is and how things are done in it. Shipped environments
-    # say nothing here — their rules are their actions — and an authored world
-    # says the part its author could not express as a requirement.
-    brief = env.world_brief(role.display_name()).strip()
-    world_block = f"\nTHIS WORLD:\n{brief}\n" if brief else ""
-    documents_block = _documents_block(documents, workspace)
-    prompt = _SYSTEM_TEMPLATE.format(
-        name=role.display_name(),
-        role=role.role or "a participant",
-        goal=role.goal or "act in your own interest",
-        private_block=private,
-        world_block=world_block,
-        documents_block=documents_block,
-        # Per character: a world may let one role take an action and not
-        # another, and an agent should not read about moves it cannot make.
-        actions=env.action_help(role.display_name()),
-    )
-    if activation == TRIGGERED:
-        # In a triggered world "everyone acts simultaneously" is false and the
-        # agent needs to know why it, specifically, was handed this turn.
-        prompt = prompt.replace(
-            "- You cannot see other agents' actions this tick. Everyone acts simultaneously.\n",
-            "- You cannot see other agents' actions this tick.\n",
-        ) + _TRIGGERED_RULES
-        # A background character is told it is one. Otherwise the rule above —
-        # keep your turn while you are doing something — reads as an
-        # instruction to find something to do, which is the opposite of what
-        # the villain waiting in the temple is for.
-        if role.npc:
-            prompt += _NPC_RULES
-    return prompt
-
-
-def build_tick_prompt(observation: Dict[str, Any], tick: int,
-                      history: List[str],
-                      triggers: Optional[List[str]] = None) -> str:
-    history_block = ""
-    if history:
-        history_block = ("\nYOUR JOURNAL — what you did and what was said to you:\n"
-                         + "\n".join(history) + "\n")
-    triggers_block = ""
-    reasons = [r for r in (triggers or []) if r and r != TRIGGER_SYNC]
-    if reasons:
-        triggers_block = ("\nWHY YOU WERE WOKEN:\n"
-                          + "\n".join(f"- {r}" for r in reasons) + "\n")
-    return _TICK_TEMPLATE.format(
-        tick=tick,
-        observation=json.dumps(observation, indent=2, ensure_ascii=False, default=str),
-        triggers_block=triggers_block,
-        history_block=history_block,
-    )
-
-
-def parse_decision(text: str) -> Dict[str, Any]:
-    """Pull ``{reasoning, action, args}`` out of a model reply.
-
-    Models wrap JSON in prose and code fences no matter how firmly you ask them
-    not to, so this is forgiving about the wrapper and strict about the content.
-    """
-    raw = (text or "").strip()
-    if not raw:
-        return {"error": "empty response"}
-
-    candidate = raw
-    fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
-    if fence:
-        candidate = fence.group(1).strip()
-
-    parsed = None
-    try:
-        parsed = json.loads(candidate)
-    except Exception:
-        start, end = candidate.find("{"), candidate.rfind("}")
-        if start != -1 and end > start:
-            try:
-                parsed = json.loads(candidate[start:end + 1])
-            except Exception:
-                parsed = None
-
-    if not isinstance(parsed, dict):
-        return {"error": "no JSON object in response"}
-    action = str(parsed.get("action") or "").strip()
-    if not action:
-        return {"error": "response has no 'action'"}
-    args = parsed.get("args")
-    return {
-        "reasoning": str(parsed.get("reasoning") or ""),
-        "action": action,
-        "args": args if isinstance(args, dict) else {},
-    }
-
-
-_PARTIAL_REASONING = re.compile(r'"reasoning"\s*:\s*"')
-_PARTIAL_ACTION = re.compile(r'"action"\s*:\s*"([^"]*)"')
-_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "", "f": ""}
-
-
-def partial_decision(text: str) -> Dict[str, str]:
-    """What can be read out of a *half-written* reply.
-
-    The finished answer is JSON, and JSON cannot be parsed until its last
-    brace arrives — which is exactly the moment the watching is over. So the
-    reasoning string is read out by hand, character by character, and whatever
-    has been written of it so far is what the page shows. Nothing here is used
-    to decide anything: it is display only, which is why it is forgiving where
-    ``parse_decision`` is strict.
-    """
-    raw = text or ""
-    out = {"reasoning": "", "action": ""}
-    m = _PARTIAL_REASONING.search(raw)
-    if m:
-        buf: List[str] = []
-        i, n = m.end(), len(raw)
-        while i < n:
-            c = raw[i]
-            if c == "\\":
-                nxt = raw[i + 1] if i + 1 < n else ""
-                if nxt == "u" and i + 6 <= n - 1 + 1:
-                    try:
-                        buf.append(chr(int(raw[i + 2:i + 6], 16)))
-                    except ValueError:
-                        pass
-                    i += 6
-                    continue
-                buf.append(_ESCAPES.get(nxt, nxt))
-                i += 2
-                continue
-            if c == '"':
-                break
-            buf.append(c)
-            i += 1
-        out["reasoning"] = "".join(buf)
-    a = _PARTIAL_ACTION.search(raw)
-    if a:
-        out["action"] = a.group(1)
-    return out
 
 
 # ── Model resolution ──────────────────────────────────────────────────────────
@@ -398,7 +115,8 @@ def _agent_model(agent_id: str) -> Tuple[str, str]:
     try:
         from agents.registry import get_agent
         spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unknown agent just has no model
+        log.debug("agent model lookup failed", exc_info=True)
         return "", ""
     if spec is None:
         return "", ""
@@ -428,7 +146,8 @@ def _workspace_model(workspace: Optional[str]) -> Tuple[str, str]:
             get_workspace_default_model_config(meta) or {}
         )
         return (eff.get("provider") or "").strip(), (eff.get("model") or "").strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 - no workspace default means no model name, the run proceeds
+        log.debug("workspace model lookup failed", exc_info=True)
         return "", ""
 
 
@@ -468,183 +187,10 @@ def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
              "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound}}},
             load_price_map(),
         ), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a missing price must not fail the run, cost shows as zero
+        log.debug("run cost lookup failed", exc_info=True)
         return 0.0
 
-
-# ── One agent's turn ──────────────────────────────────────────────────────────
-
-@dataclass
-class Beat:
-    """The liveness record of one decision, shared with the waiting loop.
-
-    A timeout on a model call has to mean "it has gone silent", not "it is
-    taking a while": a model that is still streaming tokens is still working,
-    and cutting it off at sixty seconds throws away an answer that was on its
-    way. So the decision thread stamps ``last`` on every sign of life and the
-    loop in :func:`_run_tick` watches that stamp instead of the total elapsed
-    time. ``cancel`` is how the loop tells an abandoned decision to stop
-    calling the model — the thread cannot be killed, but it can be told.
-
-    Waiting is not the same as working, and that distinction is the whole
-    reason for ``begin``. A decision sits in two queues before it costs
-    anything: the thread pool's, when the tick has more agents than
-    ``max_concurrent``, and the provider's, when a single-threaded model server
-    serves one request at a time. A clock started at submit time runs through
-    both, so the agents behind the first one used to forfeit turns they had not
-    yet been given. ``submitted`` is only for the record; the
-    clocks that matter start at ``work_started``, stamped by the worker thread
-    itself, and at ``first_token``, stamped when the provider stops queueing
-    the request and starts answering it.
-    """
-    submitted: float = field(default_factory=time.monotonic)
-    last: float = field(default_factory=time.monotonic)
-    #: When the worker thread actually picked this decision up. ``None`` while
-    #: it is still queued in the pool — and a queued decision never times out.
-    work_started: Optional[float] = None
-    #: True once the provider has actually sent something. Until then only the
-    #: silence timeout applies; a provider that cannot stream at all never sets
-    #: it and is bounded by the hard cap instead.
-    streaming: bool = False
-    #: When the first token arrived — the moment the provider stopped queueing
-    #: this request and started answering it. The hard cap is measured from
-    #: here so that time spent in a busy server's queue is not charged to the
-    #: agent as slowness.
-    first_token: Optional[float] = None
-    cancel: threading.Event = field(default_factory=threading.Event)
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def begin(self) -> None:
-        """Called on the worker thread: the waiting is over, the work starts."""
-        with self.lock:
-            now = time.monotonic()
-            self.work_started = now
-            self.last = now
-
-    def touch(self, streaming: bool = False) -> None:
-        with self.lock:
-            self.last = time.monotonic()
-            if streaming:
-                if not self.streaming:
-                    self.first_token = self.last
-                self.streaming = True
-
-    def started_work(self) -> bool:
-        with self.lock:
-            return self.work_started is not None
-
-    def last_sign_of_life(self) -> float:
-        with self.lock:
-            return self.last
-
-    def silent_for(self) -> float:
-        with self.lock:
-            return time.monotonic() - self.last
-
-    def streamed_for(self) -> float:
-        """Seconds since the first token — how long the model has actually been
-        answering, which is what the hard cap is about."""
-        with self.lock:
-            if self.first_token is None:
-                return 0.0
-            return time.monotonic() - self.first_token
-
-    def has_streamed(self) -> bool:
-        with self.lock:
-            return self.streaming
-
-
-class _Cancelled(Exception):
-    """The waiting loop gave up on this decision (stall or stop)."""
-
-
-def _text_of(message: Any) -> str:
-    """Flatten a message's content, which may be a string or content blocks."""
-    content = getattr(message, "content", message)
-    if isinstance(content, list):
-        return "".join(
-            str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in content
-        )
-    return str(content or "")
-
-
-def _accepts_config(fn: Any) -> bool:
-    """Whether a model's ``invoke``/``stream`` takes a LangChain ``config``.
-
-    Test doubles and hand-rolled clients implement ``invoke(messages)`` and
-    nothing else; probing the signature beats calling twice and catching the
-    TypeError, which on a real client would mean paying for the call twice.
-    """
-    try:
-        params = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return False
-    return "config" in params or any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
-
-
-def _call_model(llm: Any, messages: List[Any], beat: Beat,
-                callbacks: List[Any],
-                on_delta: Optional[Callable[[str], None]] = None,
-                ) -> Tuple[str, Dict[str, int], bool]:
-    """Run one model call, streaming when the client can.
-
-    Returns ``(text, usage, streamed)``. Streaming earns its keep twice: it is
-    what makes "the model went silent" observable at all — without it a
-    decision is one opaque blocking call whose only timeout is a deadline on
-    the finished answer — and, through ``on_delta``, it is what lets the page
-    watch an agent think instead of waiting out the whole tick in silence.
-    ``on_delta`` is handed the text accumulated so far and must never raise.
-    """
-    stream = getattr(llm, "stream", None)
-    config = {"callbacks": callbacks} if callbacks else None
-
-    if callable(stream):
-        parts: List[str] = []
-        aggregate = None
-        try:
-            kwargs = {"config": config} if (config and _accepts_config(stream)) else {}
-            for chunk in stream(messages, **kwargs):
-                if beat.cancel.is_set():
-                    raise _Cancelled()
-                beat.touch(streaming=True)
-                parts.append(_text_of(chunk))
-                if on_delta is not None:
-                    on_delta("".join(parts))
-                try:
-                    aggregate = chunk if aggregate is None else aggregate + chunk
-                except Exception:
-                    aggregate = None
-            return "".join(parts), _usage_of(aggregate), True
-        except (_Cancelled, control.SimRunStopped):
-            raise
-        except NotImplementedError:
-            # A client that advertises stream() but cannot do it. Nothing was
-            # spent, so falling through to invoke() does not double-charge.
-            pass
-
-    beat.touch()
-    kwargs = {"config": config} if (config and _accepts_config(llm.invoke)) else {}
-    reply = llm.invoke(messages, **kwargs)
-    beat.touch()
-    return _text_of(reply), _usage_of(reply), False
-
-
-def _usage_of(reply: Any) -> Dict[str, int]:
-    usage = getattr(reply, "usage_metadata", None) or {}
-    return {
-        "inbound": int(usage.get("input_tokens") or 0),
-        "outbound": int(usage.get("output_tokens") or 0),
-    }
-
-
-def _estimated(text: str) -> int:
-    try:
-        from agents.callbacks import estimate_tokens
-        return estimate_tokens(text)
-    except Exception:
-        return max(0, len(text or "") // 4)
 
 
 def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
@@ -713,8 +259,8 @@ def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
             try:
                 from agents.callbacks import RunStopCallback
                 callbacks.append(RunStopCallback(run_id))
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the stop hook is optional, the turn still runs without it
+                log.debug("run stop callback unavailable", exc_info=True)
         text, usage, streamed = _call_model(llm, [
             ("system", system_prompt), ("human", tick_prompt),
         ], beat, callbacks, _progress_reporter(sim_run_id, tick, name))
@@ -756,67 +302,6 @@ def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
                         status="failed" if decision.error else "completed")
     return decision
 
-
-class ToolCallLimitError(RuntimeError):
-    """Raised when an agents-mode decision calls more tools in one tick than
-    its scenario's ``max_tool_calls_per_tick`` allows."""
-
-
-class _ToolCallLimitGuard(BaseCallbackHandler):
-    """Cuts an agents-mode decision off once it has made too many tool calls
-    in one tick.
-
-    Mirrors ``agents.callbacks.guards.ToolRepetitionGuard``: count on
-    ``on_tool_start``, raise on ``on_tool_end`` so the call that crossed the
-    limit is still recorded before the run stops, instead of being cut off
-    mid call.
-    """
-
-    def __init__(self, limit: int) -> None:
-        super().__init__()
-        self.raise_error = True  # tell LangChain to propagate our exception
-        self.limit = max(1, int(limit))
-        self.calls = 0
-        self.tripped = False
-
-    def on_tool_start(self, serialized: Any, input_str: Any, **kwargs: Any) -> None:
-        self.calls += 1
-
-    def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-        if self.calls > self.limit:
-            self.tripped = True
-            raise ToolCallLimitError(
-                f"made {self.calls} tool call(s) this tick, over the "
-                f"scenario's limit of {self.limit}"
-            )
-
-
-class _BeatTouchCallback(BaseCallbackHandler):
-    """Keeps an agents-mode decision's :class:`Beat` alive across the agent's
-    own model and tool calls.
-
-    A bare model's call streams tokens, and every one of them touches the
-    beat (see ``_call_model``). An agent invocation is one blocking call with
-    no streaming visible here, so without this a working agent that is simply
-    busy calling tools would look silent to the stall detection in
-    ``_run_decisions`` and be cut off mid turn.
-    """
-
-    def __init__(self, beat: Beat) -> None:
-        super().__init__()
-        self.beat = beat
-
-    def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
-        self.beat.touch(streaming=True)
-
-    def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
-        self.beat.touch(streaming=True)
-
-    def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
-        self.beat.touch(streaming=True)
-
-    def on_tool_end(self, *args: Any, **kwargs: Any) -> None:
-        self.beat.touch(streaming=True)
 
 
 def _decide_with_agent(*, role: Role, scenario: Scenario, env: Environment,
@@ -868,8 +353,8 @@ def _decide_with_agent(*, role: Role, scenario: Scenario, env: Environment,
         try:
             from agents.callbacks import RunStopCallback
             callbacks.append(RunStopCallback(run_id))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the stop hook is optional, the turn still runs without it
+            log.debug("run stop callback unavailable", exc_info=True)
 
     from agents.agent_invoke import invoke_agent
     invocation = invoke_agent(agent, prompt, extra_callbacks=callbacks,
@@ -913,130 +398,6 @@ def _decide_with_agent(*, role: Role, scenario: Scenario, env: Environment,
                         status="failed" if decision.error else "completed")
 
 
-def _enable_stream_usage(llm: Any) -> None:
-    """Ask for token usage on streamed completions where the client offers it.
-
-    ``build_chat_model`` deliberately leaves ``stream_usage`` alone for the
-    agent path; here the alternative is an estimate, so it is worth asking.
-    Any client that does not have the knob is left exactly as it was.
-    """
-    if not hasattr(llm, "stream_usage"):
-        return
-    try:
-        llm.stream_usage = True
-    except Exception:
-        pass
-
-
-# ── Decisions as runs of record ──────────────────────────────────────────────
-
-def decision_run_id(sim_run_id: str, tick: int, agent: str) -> str:
-    """The run id one agent's turn at one tick always gets.
-
-    Deterministic (``uuid5`` over the sim, the tick and the agent's own
-    in-world name) rather than random, so a tick that is ever attempted twice
-    — the narrow crash window between :func:`playground.store.save_tick` and
-    its checkpoint, see ``run_simulation`` — opens the *same* run record
-    instead of leaving an orphaned one behind from the attempt that did not
-    finish. ``open_run`` upserts by id, so reopening it is exactly resuming it.
-    """
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"scenario:{sim_run_id}:{tick}:{agent}"))
-
-
-def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
-                       tick: int, workspace: Optional[str], provider: str,
-                       model: str, prompt: str) -> str:
-    """Open a run for one agent's turn and write its prompt to the log.
-
-    Best-effort: a simulation that cannot write a run record still runs. It
-    returns "" in that case, and the decision simply has no log to link to.
-    """
-    if not sim_run_id:
-        return ""
-    agent_id = role.agent_id or role.display_name()
-    try:
-        from managers.run_manager import open_run, run_log_path
-    except Exception:
-        return ""
-    run_id = decision_run_id(sim_run_id, tick, role.display_name())
-    try:
-        instance_id = None
-        try:
-            from instances import registry as instance_registry
-            instance_id = instance_registry.ensure_instance(
-                agent_id,
-                instance_id=instance_registry.deterministic_id(
-                    sim_run_id, role.display_name()),
-                kind="sim_role",
-                workspace=workspace,
-                label=f"{scenario.name or 'sim'} · {role.display_name()}",
-                state="active",
-                pid=os.getpid(),
-                provider=provider or None,
-                model=model or None,
-            )["instance_id"]
-        except Exception:
-            pass
-
-        log_path = run_log_path(run_id)
-        open_run(
-            run_id, agent_id, pid=os.getpid(), channel=SIM_CHANNEL,
-            log_file=str(log_path), workspace=workspace,
-            title=f"{scenario.name or 'sim'}: {role.display_name()} · tick {tick}",
-            scenario_id=scenario.scenario_id, sim_run_id=sim_run_id,
-            sim_role=role.display_name(), tick=tick,
-            provider=provider or "", model=model or "", input=prompt,
-            instance_id=instance_id, link_to_session=False,
-            # A decision always runs on a thread of *whichever* process is
-            # executing this simulation, so its pid is that process's own —
-            # the API server for the old thread-based path (tools, tests), or
-            # the scenario's own subprocess (runtime/scenario_run.py) for a
-            # launched run. Either way, signalling that pid to stop one turn
-            # would take the whole process down with it, so this flag keeps
-            # managers.runs.lifecycle._stop_run_record from doing that: it
-            # marks the run record stopped and lets ``SimStopCallback`` (which
-            # reads ``playground.control``, not this run's own pid) abort the
-            # model call at its next callback instead. A scenario-wide stop is
-            # a different, durable path — entity_runs status plus
-            # ``control.request_stop`` — and does not go through here at all.
-            in_process=True,
-        )
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write(f"--- Simulation turn started at {utc_iso()} ---\n"
-                    f"Scenario: {scenario.name}\nRole    : {role.display_name()}\n"
-                    f"Agent   : {agent_id}\nTick    : {tick}\n\n"
-                    f"=== PROMPT ===\n{prompt}\n\n=== EXECUTION ===\n")
-        return run_id
-    except Exception:
-        return ""
-
-
-def _close_decision_run(run_id: str, sim_run_id: str, decision: AgentDecision,
-                        *, status: str) -> None:
-    """Close the run for one decision and append its outcome to the log."""
-    if not run_id:
-        return
-    control.untrack(sim_run_id, run_id)
-    try:
-        from managers.run_manager import close_run, run_log_path
-        with open(run_log_path(run_id), "a", encoding="utf-8") as f:
-            f.write(f"\n=== OUTPUT ===\n{decision.raw_output or decision.error or ''}\n"
-                    f"--- duration_ms={decision.duration_ms} ---\n")
-        close_run(
-            run_id,
-            status=status,
-            exit_code=0 if status == "completed" else 1,
-            error=decision.error,
-            output=decision.raw_output,
-            process={"token_usage": {
-                "inbound_tokens": decision.inbound_tokens,
-                "outbound_tokens": decision.outbound_tokens,
-                "estimated": decision.tokens_estimated,
-            }},
-        )
-    except Exception:
-        pass
-
 
 # ── The loop ──────────────────────────────────────────────────────────────────
 
@@ -1045,8 +406,8 @@ def _publish(sim_run_id: str, event: Dict[str, Any]) -> None:
     try:
         from common.session_broker import broker
         broker.publish_threadsafe(f"sim:{sim_run_id}", event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - streaming to the live view is best effort and never fatal
+        log.debug("sim event publish failed", exc_info=True)
 
 
 #: How often a decision in progress reports back. Every chunk would be a
@@ -1140,111 +501,10 @@ def trigger_agent(sim_run_id: str, agent: str, text: str,
     return delivered
 
 
-def roles_from_team(scenario: Scenario) -> List[Role]:
-    """The cast a scenario gets from its team, when it names one.
-
-    ``Scenario.team_id`` lets an existing team play a world without anybody
-    retyping its roster: each member becomes a role with the member's agent,
-    name, role and goal (the member's own goal, else its manifest, which is
-    what it committed to doing for that team). The team's leader opens the
-    scene in triggered mode. Display names are made unique with a suffix,
-    because names address agents in world and two members may share an
-    agent. An unknown team, or a scenario with no team, gives ``[]``.
-    """
-    if not getattr(scenario, "team_id", None):
-        return []
-    try:
-        from teams.store import get_team
-        team = get_team(scenario.team_id)
-    except Exception:  # noqa: BLE001 - a missing teams table reads as no team
-        log.exception("could not load team %s", scenario.team_id)
-        return []
-    if team is None:
-        return []
-    roles: List[Role] = []
-    seen: Dict[str, int] = {}
-    for member in team.members:
-        base = member.display_name() or member.agent_id or "member"
-        seen[base] = seen.get(base, 0) + 1
-        name = base if seen[base] == 1 else f"{base} {seen[base]}"
-        roles.append(Role(
-            agent_id=member.agent_id, name=name, role=member.role,
-            goal=member.goal or member.manifest,
-            provider=member.provider, model=member.model,
-            starts=bool(team.leader_agent_id and member.agent_id == team.leader_agent_id),
-        ))
-    return roles
 
 
-def _fill_roles_from_team(scenario: Scenario) -> None:
-    """Give a team backed scenario its cast, in place, when it has none."""
-    if not scenario.roles and getattr(scenario, "team_id", None):
-        scenario.roles = roles_from_team(scenario)
 
 
-def validate_scenario_for_run(scenario: Scenario) -> None:
-    """Every check a scenario must pass before a run exists for it.
-
-    A scenario with a ``team_id`` and no roles of its own gets its cast from
-    the team here (see :func:`roles_from_team`), in place: the launcher
-    freezes the scenario into the run's config right after this call, so the
-    run carries the roster it started with even if the team changes later.
-
-    Shared by ``playground.launcher.start_scenario_run``, which checks before
-    it ever writes a run record, and this module's own head below — the tools'
-    direct call (``tools/entity_runs.py``, not this run's launcher) and the
-    test suite still go straight through ``run_simulation`` with no launcher
-    in front of it. Both fail the same way for the same scenario.
-    """
-    _fill_roles_from_team(scenario)
-    if not scenario.roles:
-        raise ValueError("Scenario has no roles — a society needs participants")
-    if len(scenario.roles) > MAX_AGENTS:
-        raise ValueError(f"Scenario has {len(scenario.roles)} roles; the cap is {MAX_AGENTS}")
-    names = [r.display_name() for r in scenario.roles]
-    if len(set(names)) != len(names):
-        raise ValueError("Two roles share a display name — names address agents in-world")
-    if create_environment(scenario.environment, scenario.env_params, seed=scenario.seed) is None:
-        raise ValueError(f"Unknown environment: {scenario.environment}")
-    if scenario.mode == AGENTS:
-        # Agents mode gives a role real tools, however small the allowlist.
-        # That is only safe in a container: local execution runs those tools
-        # against the host with no isolation at all, so it is refused here,
-        # before a run record even exists, not discovered mid tick.
-        from runtime.entity_launch import execution_mode_for
-        if execution_mode_for(scenario.workspace) != "docker":
-            raise ValueError(
-                "Agents mode scenarios must run in docker. Set this "
-                "workspace's execution mode to docker before running this "
-                "scenario, or switch it back to personas mode."
-            )
-
-
-_DECISION_FIELDS = {f.name for f in dataclass_fields(AgentDecision)}
-_RESULT_FIELDS = {f.name for f in dataclass_fields(ActionResult)}
-
-
-def _tick_record_from_row(row: Dict[str, Any]) -> TickRecord:
-    """Rebuild a :class:`TickRecord` from ``store.get_tick``'s stored shape.
-
-    Used only when a resumed run finds a tick it already wrote to
-    ``sim_ticks`` (see ``run_simulation``): the stored outcome is replayed
-    into history and ``carry`` without asking the model again for a turn that
-    already happened.
-    """
-    return TickRecord(
-        sim_run_id=str(row.get("sim_run_id") or ""),
-        tick=int(row.get("tick") or 0),
-        decisions=[AgentDecision(**{k: v for k, v in d.items() if k in _DECISION_FIELDS})
-                   for d in (row.get("decisions") or []) if isinstance(d, dict)],
-        resolutions=[ActionResult(**{k: v for k, v in r.items() if k in _RESULT_FIELDS})
-                     for r in (row.get("resolutions") or []) if isinstance(r, dict)],
-        frame=dict(row.get("frame") or {}),
-        events=list(row.get("events") or []),
-        idle=list(row.get("idle") or []),
-        cost=float(row.get("cost") or 0.0),
-        ts=str(row.get("ts") or utc_iso()),
-    )
 
 
 def run_simulation(
@@ -1344,8 +604,8 @@ def run_simulation(
     if on_start:
         try:
             on_start(run)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a failing start hook must not abort the simulation
+            log.debug("on_start hook failed", exc_info=True)
 
     max_ticks = max(1, min(int(scenario.max_ticks), MAX_TICKS))
     wall_cap = optional_seconds(scenario.max_wall_seconds)
@@ -1439,8 +699,8 @@ def run_simulation(
             if on_tick:
                 try:
                     on_tick(record)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a failing tick hook must not abort the simulation
+                    log.debug("on_tick hook failed", exc_info=True)
 
             # A stop that landed mid-tick already cut the decisions short;
             # ending here keeps a half-finished tick from being run again.
@@ -1494,35 +754,6 @@ def run_simulation(
     return run
 
 
-def _sync_env_views(env: Environment, run: SimRun,
-                    view_ids: Optional[Dict[str, str]] = None,
-                    last_specs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    """Publish the environment's views for this run (never raises).
-
-    See ``playground.lab_views.sync_env_views``: a key seen for the first
-    time creates a view owned by this scenario run, a key seen again updates
-    it in place. Most environments declare no views and this costs one call.
-    """
-    try:
-        from playground.lab_views import sync_env_views
-        return sync_env_views(env, run, view_ids, last_specs)
-    except Exception:  # noqa: BLE001 - views are a by-product, never a reason to fail a run
-        log.exception("sim %s: publishing environment views failed", run.sim_run_id)
-        return view_ids if view_ids is not None else {}
-
-
-def _task_result_text(run: SimRun) -> str:
-    """A short, human-readable summary of a finished run, for the task's own
-    result text. Never the whole tick log: the tick log is already the
-    artifact of record, reachable from the run itself."""
-    bits = [f"Scenario run finished: {run.stop_reason or run.status}."]
-    if run.ticks_done:
-        bits.append(f"{run.ticks_done} tick(s) completed.")
-    if run.total_cost:
-        bits.append(f"Total cost: ${run.total_cost:.4f}.")
-    if run.scores:
-        bits.append("Scores: " + json.dumps(run.scores, ensure_ascii=False, default=str))
-    return " ".join(bits)
 
 
 def _finalize_task(run: SimRun) -> None:
@@ -1542,7 +773,7 @@ def _finalize_task(run: SimRun) -> None:
         persist_task_result(run.task_id, run.sim_run_id, _task_result_text(run),
                             agent_id="scenario")
     except Exception:  # noqa: BLE001 - best effort, see docstring
-        pass
+        log.debug("task result persist failed", exc_info=True)
     try:
         from managers.runs.task_finalize import finalize_task
         from tasks.models import Executor
@@ -1553,196 +784,11 @@ def _finalize_task(run: SimRun) -> None:
             executor=Executor(kind="scenario", id=run.scenario_id),
         )
     except Exception:  # noqa: BLE001 - best effort, see docstring
-        pass
+        log.debug("task finalize failed", exc_info=True)
 
 
-def _check_between_ticks(sim_run_id: str, started: float,
-                         wall_cap: Optional[float],
-                         spend: float, scenario: Scenario,
-                         workspace: Optional[str]) -> None:
-    """Every ceiling that ends the simulation rather than one agent's turn.
-
-    ``wall_cap`` of ``None`` is a scenario with no wall clock: the run then
-    ends on ticks, cost, the budget or the button, and not because the models
-    were having a slow afternoon.
-    """
-    if control.is_stopped(sim_run_id) or store.stop_requested(sim_run_id):
-        raise SimStopped("stopped", "stopped by request")
-    elapsed = time.monotonic() - started
-    if wall_cap is not None and elapsed > wall_cap:
-        raise SimStopped("wall_clock",
-                         f"wall-clock cap reached ({elapsed:.0f}s of {wall_cap:.0f}s)")
-    if scenario.cost_ceiling and spend >= scenario.cost_ceiling:
-        raise SimStopped(
-            "cost_ceiling",
-            f"cost ceiling reached (${spend:.4f} of ${scenario.cost_ceiling:.2f})",
-        )
-    try:
-        from common.budget import check_budget
-        check_budget(workspace)
-    except SimStopped:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise SimStopped("budget", f"budget: {e}")
 
 
-def _deliver_external(env: Environment, sim_run_id: str, names: List[str]) -> None:
-    """Hand any externally injected triggers to the world.
-
-    They go in through ``queue_message`` rather than a side channel: the point
-    of an external trigger is that the agent cannot tell it apart from a
-    colleague's message, and the environment already knows how to deliver one.
-
-    Drained from both queues, every tick: ``control``'s in-memory one (a poke
-    that arrived while this process itself was running the sim) and
-    ``store``'s durable one (a poke that arrived through the database — the
-    only door open to a scenario running in another process). A run started
-    before either queue existed for it reads back an empty list from each, so
-    this is always safe to call.
-    """
-    for item in control.drain_triggers(sim_run_id) + store.drain_triggers(sim_run_id):
-        agent = str(item.get("agent") or "")
-        text = str(item.get("text") or "")
-        if agent not in names:
-            env.log_event(f"external trigger for unknown agent {agent!r} dropped")
-            continue
-        # No line of our own: queue_message logs the delivery, and what was
-        # said is worth more in the log than the fact that something was.
-        env.queue_message(str(item.get("sender") or "(external)"), agent, text)
-
-
-#: How many ticks running an agent may repeat the same move, to the same
-#: effect, before the loop stops handing it turns on its own account. Three is
-#: "it tried, it tried again, it tried once more": enough to get past a lock
-#: that needs a key fetched in between, short of a character that will hammer
-#: the same door until the tick cap.
-_STUCK_REPEATS = 3
-
-
-def _activation_plan(env: Environment, scenario: Scenario, tick: int,
-                     carry: Optional[Dict[str, List[str]]] = None,
-                     ) -> Dict[str, List[str]]:
-    """Who acts this tick, and why.
-
-    Synchronous scenarios wake everyone, which is the whole point of them. A
-    triggered scenario wakes an agent for five reasons: something is in its
-    inbox, the world did something to it, its own heartbeat came round, it is
-    the opening tick and somebody has to start — or ``carry``, the agents that
-    were in the middle of something when the last tick resolved (see
-    :func:`_continuations`).
-
-    ``npc`` roles are left out of the opening: the point of a background
-    character is that it waits to be reached. An explicit ``wake_every`` is
-    still honoured for one, because an author who typed a heartbeat onto a
-    patrolling guard meant it.
-    """
-    if scenario.activation != TRIGGERED:
-        return {r.display_name(): [TRIGGER_SYNC] for r in scenario.roles}
-
-    openers = {r.display_name() for r in scenario.roles if r.starts}
-    if not openers:
-        # Nobody claimed the first move; the active cast opens the scene rather
-        # than a world that starts asleep and never wakes. A cast of nothing
-        # but NPCs opens nothing — such a world is waiting for an external
-        # poke, and the idle grace is what keeps it up for one.
-        openers = {r.display_name() for r in scenario.roles if not r.npc}
-
-    plan: Dict[str, List[str]] = {}
-    for role in scenario.roles:
-        name = role.display_name()
-        reasons = list(env.pending_triggers(name))
-        if tick == 1 and name in openers:
-            reasons.append(TRIGGER_OPENING)
-        if role.wake_every > 0 and tick % role.wake_every == 0:
-            reasons.append(TRIGGER_HEARTBEAT)
-        reasons.extend((carry or {}).get(name) or ())
-        if reasons:
-            plan[name] = reasons
-    return plan
-
-
-def _continuations(env: Environment, scenario: Scenario, record: TickRecord,
-                   streaks: Dict[str, List[Any]]) -> Dict[str, List[str]]:
-    """Who is still in the middle of something, after the tick just resolved.
-
-    A triggered world used to end the moment its opening move touched nobody:
-    the hero searched the tavern, found nothing, nothing was addressed to
-    anyone, and the run was over on tick one with "no agent has anything to
-    react to". But a search that found nothing is not an ending — it is the
-    reason to look somewhere else. So an agent that *did* something keeps the
-    next turn, whether or not it worked, and the world only goes quiet when
-    every agent that had a turn chose to do nothing with it.
-
-    Four things are deliberately not a continuation:
-
-    * **The do-nothing action** (``Environment.IDLE_ACTIONS``). It is the one
-      way a character says the scene is over as far as it is concerned, and a
-      loop that woke it again anyway would take that answer away.
-    * **A move that landed on somebody else.** Speaking to a character, handing
-      it something, doing something to it — that *is* the handover, and the
-      recipient is woken by it. Keeping the turn as well would have both ends
-      of every conversation talking at once.
-    * **An NPC.** It gets turns from the world, never from itself.
-    * **The same move, three ticks running, to the same effect.** A character
-      that cannot open the door is out of ideas, not mid-action; it goes quiet
-      and waits for the world — or another character — to change something.
-      Without this the anti-idle rule is just a budget leak with a plot.
-    """
-    if scenario.activation != TRIGGERED:
-        return {}
-    idle_actions = set(getattr(env, "IDLE_ACTIONS", ()) or ())
-    active = {r.display_name() for r in scenario.roles if not r.npc}
-    cast = {r.display_name() for r in scenario.roles}
-    carry: Dict[str, List[str]] = {}
-    for res in record.resolutions:
-        name = res.agent
-        if name not in active:
-            continue
-        if res.ok and (res.action in idle_actions or _handed_over(res, cast)):
-            streaks.pop(name, None)      # it held, or the turn is somebody else's
-            continue
-        signature = json.dumps([res.action, res.args, res.ok],
-                               sort_keys=True, default=str)
-        last, count = streaks.get(name) or ["", 0]
-        count = count + 1 if signature == last else 1
-        streaks[name] = [signature, count]
-        if count >= _STUCK_REPEATS:
-            continue
-        carry[name] = [_continue_reason(res)]
-    return carry
-
-
-def _handed_over(res: ActionResult, cast: set) -> bool:
-    """Did this move pass the turn to another character?
-
-    Read off the arguments rather than from a flag the environment sets,
-    because "who did you do it to" is already written there — ``speak_to``'s
-    ``agent``, ``give_item``'s ``agent``, an authored attack's ``target`` — and
-    every one of those wakes the character it names. A world could instead
-    report causality from ``poke``, which would also catch "you walked into the
-    room I was standing in"; that is a bigger change than the question needs,
-    and being woken alongside somebody you interrupted is not a bug.
-    """
-    return any(str(value) in cast and str(value) != res.agent
-               for value in (res.args or {}).values())
-
-
-def _continue_reason(res: ActionResult) -> str:
-    """Why an agent is being handed another turn, in the words it will read.
-
-    The wake reasons land in the agent's prompt under "WHY YOU WERE WOKEN", so
-    this is not a log line: "your last action failed, try something else" is a
-    turn an agent can use, and ``continuing`` on its own is a turn it has to
-    guess the point of.
-    """
-    if res.action == "(none)":
-        return (f"{TRIGGER_CONTINUE}: your last turn produced no action "
-                f"({res.message}) — take one now")
-    if res.ok:
-        return (f"{TRIGGER_CONTINUE}: nothing interrupted you after "
-                f"{res.action} — the next move is still yours")
-    return (f"{TRIGGER_CONTINUE}: {res.action} did not work ({res.message}) "
-            "— you still have the turn, so try another way")
 
 
 #: How often an idle wait polls the durable trigger queue. Coarser than
@@ -1788,58 +834,6 @@ def _wait_out_idle(env: Environment, sim_run_id: str, scenario: Scenario,
     return False
 
 
-def _recent(history: Dict[str, List[str]], name: str, horizon: int) -> List[str]:
-    """The last *horizon* journal lines for one agent — and none at all for 0.
-
-    Written out rather than sliced inline because ``lines[-0:]`` is the whole
-    list: a horizon of 0 would hand an agent its entire history, the most
-    expensive prompt there is, from the knob that reads like "no memory".
-    """
-    if horizon <= 0:
-        return []
-    return history.get(name, [])[-horizon:]
-
-
-def _clip(text: str, limit: int = 400) -> str:
-    """One journal line is one line: long speeches are quoted, not replayed."""
-    flat = " ".join(str(text or "").split())
-    return flat if len(flat) <= limit else flat[:limit - 1] + "…"
-
-
-def _heard_lines(tick: int, observation: Dict[str, Any]) -> List[str]:
-    """What an agent was told this tick, as journal lines.
-
-    Messages are delivered once, inside the observation of the tick they
-    arrive. Without a record of them the agent's own past is a list of things
-    it did with nothing anyone said back, which reads exactly like nobody ever
-    answered — so it asks again, and again.
-    """
-    lines: List[str] = []
-    for msg in (observation.get("messages") or []):
-        if not isinstance(msg, dict):
-            continue
-        sender = str(msg.get("from") or "someone")
-        lines.append(f'tick {tick}: {sender} said to you: "{_clip(msg.get("text"))}"')
-    return lines
-
-
-def _said_line(tick: int, res: ActionResult) -> str:
-    """One resolution as a journal line — quoting the agent's own words.
-
-    ``speak_to -> message queued for Bob`` records that a message left, not
-    what it said. An agent that cannot see what it asked cannot tell a reply
-    from a non-reply, and has no way to know it is repeating itself.
-    """
-    args = res.args or {}
-    text = str(args.get("text") or "").strip()
-    if not text:
-        return f"tick {tick}: {res.action} -> {res.message}"
-    target = str(args.get("agent") or "").strip()
-    who = f"to {target}" if target else "to everyone present"
-    quote = _clip(text)
-    if res.ok:
-        return f'tick {tick}: you said {who}: "{quote}"'
-    return f'tick {tick}: you tried to say {who}: "{quote}" -> {res.message}'
 
 
 def _run_tick(env: Environment, scenario: Scenario, sim_run_id: str,

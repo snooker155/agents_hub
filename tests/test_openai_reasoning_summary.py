@@ -218,3 +218,17 @@ def test_the_stream_still_reaches_the_callbacks(monkeypatch, no_refusals):
                            thinking_level="low", streaming=True)
     assert llm.invoke("17*23?").content == "391"
     assert seen and seen[0] is not None
+
+
+@pytest.mark.parametrize("env_base", [None, "https://api.openai.com/v1", "https://proxy.example/v1/"])
+def test_a_refusal_is_found_whatever_spelling_the_base_url_had(monkeypatch, no_refusals, env_base):
+    # The model is built with no base URL while ChatOpenAI records the refusal
+    # under the one it resolved, from the environment or its own default.
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    if env_base is None:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("OPENAI_BASE_URL", env_base)
+    resolved = (env_base or "https://api.openai.com/v1").rstrip("/")
+    agent_utils._SUMMARY_REFUSED.add(agent_utils._summary_key("sk-a", resolved))
+    assert agent_utils.openai_reasoning_param("low", "sk-a", None) == {"effort": "low"}

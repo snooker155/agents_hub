@@ -66,7 +66,8 @@ def _loads_lenient(raw: str):
     for parser in (json.loads, ast.literal_eval):
         try:
             return parser(raw)
-        except Exception:
+        except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+            log.debug("_loads_lenient: ignored error", exc_info=True)
             continue
     return None
 
@@ -320,7 +321,7 @@ def parse_agent_response(text: str) -> tuple[str, Optional[AgentResponse]]:
     fields.setdefault("fallback_text", clean)
     try:
         resp = cls.model_validate(fields)
-    except Exception as exc:
+    except ValueError as exc:
         log.warning("UI block kind=%s failed validation: %s", data.get("kind"), exc)
         return clean, None
     log.debug("parsed UI response kind=%s", data.get("kind"))

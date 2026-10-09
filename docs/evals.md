@@ -71,7 +71,11 @@ A case can carry a task snapshot, `artifact`:
 `add_eval_case_tool` takes the same `from_task_id`. At run time the files are
 written to an isolated folder, `<workspace>/.eval/<eval_run_id>/<case_id>` (a
 temporary folder when the set has no workspace folder), which is the agent's
-or the flow's working directory. The title, description, context and
+or the flow's working directory. `AGENTS_HUB_EVAL_ROOT` moves those folders
+out of the workspace tree, to `<AGENTS_HUB_EVAL_ROOT>/<workspace>/<eval_run_id>/<case_id>`,
+always created; an imported agent in Docker mode mounts that workspace's
+folder there next to the workspace itself
+([imported agents](imported-agents.md), "Docker mode"). The title, description, context and
 documents are prepended to the case input as a "Task" block that also names
 the folder.
 
@@ -130,6 +134,9 @@ input, expected and rubric be edited before saving. `ah eval add-case <set>
   / **tool_input_matches** / **no_error_tool_results**: trajectory graders,
   described below. Free and deterministic, like the output-based ones, but
   they read what the agent *did* rather than what it said.
+- **tests_pass**: the case's working directory, as the agent left it, passes
+  its tests. The one grader that reads the files rather than the text or the
+  trail; described under [code graders](#code-graders).
 - **rubric**: grades the result against a markdown rubric, criterion by
   criterion, with an independent model. Costs tokens. The same grader as
   [task outcomes](outcomes.md).
@@ -201,6 +208,54 @@ params:
 
 Each reports a reason naming what it actually saw (which tool, how many times,
 what order), never just pass or fail.
+
+## Code graders
+
+A coding agent's result is the tree it edited, not the sentence it ended
+with. **tests_pass** reads that tree: it takes the case's working directory
+after the run (the isolated folder a case with an artifact or files runs in,
+see [cases from tasks](#cases-from-tasks)) and runs the test command in it.
+
+```yaml
+kind: tests_pass
+params:
+  command: python -m pytest -q     # default; a JavaScript case says "npm test"
+  timeout: 300                      # seconds, capped by the code runner's limit
+  image: my-project-ci:latest       # docker only: an image with the project's dependencies
+```
+
+How it runs:
+
+- Through the sandbox provider the settings name (`CODE_RUNNER_PROVIDER`,
+  docker by default; `CODE_RUNNER_FALLBACK=local` runs the command as a
+  plain subprocess, with no isolation), with no network, the working
+  directory mounted, and the same memory, CPU and process limits as
+  `run_code` ([sandboxes](sandboxes.md)).
+- In a **copy** of the folder: the command runs in a scratch directory the
+  tree was copied to, so caches and build output never land in the case's
+  folder, which stays inspectable as the agent left it. Under docker the
+  mount is read-only anyway.
+- The default sandbox image carries no project dependencies and no pytest,
+  so under docker set `image` to one that does, or use the local fallback
+  on a host that has them.
+
+How it scores: when the runner prints counts (pytest's `3 passed, 1 failed`,
+jest's `Tests: 1 failed, 4 passed`, TAP's `# pass` / `# fail`; errors count
+as failures) the score is the share that passed and the case passes only at
+zero failures and exit 0. Without counts the exit code decides: 1 or 0. The
+detail keeps the tail of the output, the command, the provider and the exit
+code, so a failing cell says which test broke, not just that one did. A case
+with no working directory (no artifact, no files) fails with that reason:
+there is nothing to test.
+
+This is the grader that makes two coding agents comparable on one set: the
+same cases, one column per agent (an [imported](imported-agents.md) Claude
+Code, this hub's own coding agent, the system engineer), the same test
+command, and the share of tests each left passing next to its cost and
+duration. A batch run grades a cell in a later process; the folder is found
+again by its workspace, eval run and case (`evals.snapshot.locate_isolation_dir`),
+so a set with no workspace folder (the temporary fallback) cannot use this
+grader in batch mode.
 
 ## Cost
 

@@ -2,7 +2,7 @@ export default {
   models: 'Modelle',
   theCatalogOfProvidersAnd: 'Der Katalog der Anbieter und Modelle, die dieser Hub aufrufen kann, und was sie bisher gekostet haben.',
   loadingCatalog: 'Katalog wird geladen…',
-  tabs: { catalog: 'Katalog', usage: 'Verbrauch', special: 'Spezialmodelle', endpoint: 'Endpunkt /v1' },
+  tabs: { catalog: 'Katalog', usage: 'Verbrauch', special: 'Spezialmodelle', cache: 'Prompt-Cache', endpoint: 'Endpunkt /v1' },
   specialFor: 'Spezialmodelle des Arbeitsbereichs',
   specialInWorkspaceSettings: 'Auch in den Einstellungen des Arbeitsbereichs →',
   specialLocalHint: 'Lokale Modelle für Transkription und Sprachausgabe (Whisper, Piper, Kokoro, Kitten, Supertonic) lädt und betreibt die Modellumgebung des Hubs:',

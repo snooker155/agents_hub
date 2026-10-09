@@ -163,12 +163,12 @@ def docker_status() -> Dict[str, Any]:
 def playwright_status() -> Dict[str, Any]:
     """Whether the hub's Python has Playwright, and Chromium for its version."""
     try:
-        import playwright  # noqa: F401
+        import playwright  # noqa: F401  # pyright: ignore[reportMissingImports] - optional
     except ImportError:
         return {"installed": False, "chromium": False, "reason": "the playwright package is not installed"}
     try:
-        import playwright as pw
-        browsers = json.loads((Path(pw.__file__).parent / "driver" / "package" / "browsers.json").read_text())
+        import playwright as pw  # pyright: ignore[reportMissingImports] - optional
+        browsers = json.loads((Path(pw.__file__ or "").parent / "driver" / "package" / "browsers.json").read_text())
         revision = next(b["revision"] for b in browsers["browsers"] if b["name"] == "chromium")
     except Exception:  # noqa: BLE001 - an odd install: report as unknown rather than failing the page
         return {"installed": True, "chromium": None, "reason": "could not read the expected Chromium revision"}
@@ -349,12 +349,12 @@ def start_local(token: str, port: int) -> Dict[str, Any]:
 
 def stop_local() -> bool:
     state = _read_state()
-    pid = state.get("pid")
+    pid = int(state.get("pid") or 0)
     if not _pid_alive(pid):
         _write_state({})
         return False
     try:
-        os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
     deadline = time.monotonic() + 10
@@ -362,7 +362,7 @@ def stop_local() -> bool:
         time.sleep(0.2)
     if _pid_alive(pid):
         try:
-            os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
     _write_state({})

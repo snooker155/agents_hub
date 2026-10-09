@@ -12,6 +12,9 @@ from models import OrchestratorSettings
 from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
 from common.workspace_context import normalize_workspace_name
 from common.paths import AGENTS_HUB_ROOT
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["stats"])
@@ -51,7 +54,7 @@ async def get_stats(workspace: Optional[str] = None):
     agent_map = {a.id: a for a in agents}
     for r in runs:
         aid = r.get("agent_id")
-        agent = agent_map.get(aid)
+        agent = agent_map.get(aid) if aid else None
         domain = agent.domain if agent else "unknown"
         domain_usage[domain] = domain_usage.get(domain, 0) + 1
 
@@ -120,7 +123,8 @@ def _read_run_log_text(run_id: str) -> Optional[str]:
     try:
         run = getattr(run_manager, "get_run_by_id", None)
         run_rec = run(run_id) if callable(run) else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_read_run_log_text: falling back after a failure", exc_info=True)
         run_rec = None
 
     if isinstance(run_rec, dict):
@@ -131,7 +135,8 @@ def _read_run_log_text(run_id: str) -> Optional[str]:
                 return p.read_text(encoding="utf-8")
             try:
                 text = blobs.read_text(blobs.rel(p))
-            except Exception:
+            except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+                log.debug("_read_run_log_text: falling back after a failure", exc_info=True)
                 text = None
             if text is not None:
                 return text
@@ -160,7 +165,8 @@ def _read_run_log_text(run_id: str) -> Optional[str]:
                 ws_logs = root / ".logs" / log_name
                 if ws_logs.exists():
                     return ws_logs.read_text(encoding="utf-8")
-            except Exception:
+            except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+                log.debug("_read_run_log_text: falling back after a failure", exc_info=True)
                 continue
 
     return None

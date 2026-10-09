@@ -19,6 +19,7 @@ The suite runs against both database backends (docs/scaling.md):
 empty string, so a developer's ``.env`` can never route the suite at a real
 database.
 """
+import logging
 import os
 import tempfile
 import threading
@@ -215,6 +216,14 @@ def provider_env_isolated(tmp_path, monkeypatch):
         if hasattr(settings, field):
             monkeypatch.setattr(settings, field, getattr(settings, field), raising=False)
     saved = {key: os.environ.get(key) for key in provider_env.PROVIDER_ENV_KEYS}
+    # The developer's own model keys reach nothing: a key alone now turns
+    # web_search on (tools/web.py effective_search_provider), and a test
+    # must never make a live call on it. A test that needs a key saves one.
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+        field = provider_env._SETTINGS_FIELD.get(key)
+        if field and hasattr(settings, field):
+            monkeypatch.setattr(settings, field, None)
     yield
     for key, value in saved.items():
         if value is None:
@@ -271,7 +280,7 @@ def fresh_db(tmp_path, monkeypatch):
             if isinstance(thread, EntityHeartbeat):
                 thread.stop()
     except Exception:  # noqa: BLE001 - a teardown guard, never a failure of its own
-        pass
+        logging.getLogger(__name__).debug("heartbeat teardown failed", exc_info=True)
     # The same for the outbox drainer (notify/outbound.py): once a test starts
     # it, it polls the database for the rest of the session.
     # Only a live one: shutdown() joins the queue, which nothing would drain.

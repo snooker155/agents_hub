@@ -244,13 +244,13 @@ def record_conversation_event(conversation_id: str, event: Dict[str, Any]) -> Op
         turn_id = _by_conversation.get(str(conversation_id))
         turn = _turns.get(turn_id) if turn_id else None
     if kind == "chat_stream_end":
-        if turn is None:
+        if turn is None or turn_id is None:
             return None
         if turn["status"] == "running":
             finish(turn_id)
         return "ended"
     started = None
-    if turn is None:
+    if turn is None or turn_id is None:
         # Joined halfway (this backend restarted mid-turn): the first event
         # is as good a beginning as exists, as for record_run_event.
         turn_id = start_turn(conversation_id=conversation_id)
@@ -444,6 +444,10 @@ def _mirror_write(turn: Optional[Dict[str, Any]], *, force: bool = False) -> Non
 def _public(turn: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if turn is None:
         return None
+    return _snapshot(turn)
+
+
+def _snapshot(turn: Dict[str, Any]) -> Dict[str, Any]:
     return {**turn, "thinking": list(turn["thinking"]), "tools": [dict(s) for s in turn["tools"]]}
 
 
@@ -496,7 +500,7 @@ def by_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
 def active() -> List[Dict[str, Any]]:
     """Every turn still running, newest first. Used by tests and diagnostics."""
     with _lock:
-        return sorted((_public(t) for t in _turns.values() if t["status"] == "running"),
+        return sorted((_snapshot(t) for t in _turns.values() if t["status"] == "running"),
                       key=lambda t: t["started_at"], reverse=True)
 
 

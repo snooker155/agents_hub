@@ -6,7 +6,8 @@ No process is started and nothing is downloaded: the probe, the venv step
 and the spawn are replaced, and GitHub answers through a MockTransport."""
 from __future__ import annotations
 
-import importlib.util
+import shutil
+import subprocess
 import io
 import json
 import os
@@ -21,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from _models_runtime import load_runtime
 from common.config import settings
 from providers import local_models as lm
 from providers import model_runtime_host as host
@@ -187,24 +189,21 @@ MODELS_SVC_DIR = Path(__file__).resolve().parents[1] / "deploy" / "models"
 
 @pytest.fixture
 def svc(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("models_host_app", MODELS_SVC_DIR / "app.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["models_host_app"] = mod
-    spec.loader.exec_module(mod)
-    monkeypatch.setattr(mod, "MODELS_DIR", tmp_path / "models")
+    mod = load_runtime("models_host_app")
+    monkeypatch.setattr(mod.app_settings, "MODELS_DIR", tmp_path / "models")
     yield mod
     sys.modules.pop("models_host_app", None)
 
 
 def test_the_runtime_writes_a_token_file_once_and_starts_with_it(svc, tmp_path, monkeypatch):
     f = tmp_path / "models" / ".token"
-    monkeypatch.setattr(svc, "TOKEN", "")
-    monkeypatch.setattr(svc, "TOKEN_FILE", str(f))
+    monkeypatch.setattr(svc.app_settings, "TOKEN", "")
+    monkeypatch.setattr(svc.app_settings, "TOKEN_FILE", str(f))
     with TestClient(svc.app) as c:
         token = f.read_text()
         assert c.get("/jobs", headers={"Authorization": f"Bearer {token}"}).status_code == 200
-        assert c.get("/healthz").json()["version"] == svc.code_version()
-    assert svc.token_from_file(str(f)) == token
+        assert c.get("/healthz").json()["version"] == svc.app_routes_models.code_version()
+    assert svc.app_core.token_from_file(str(f)) == token
 
 
 def _llama_archive(tag: str) -> bytes:
@@ -218,8 +217,8 @@ def _llama_archive(tag: str) -> bytes:
 
 
 def test_llama_installs_from_the_newest_release_for_this_platform(svc, monkeypatch):
-    monkeypatch.setattr(svc, "llama_asset_suffix", lambda: "macos-arm64")
-    monkeypatch.setattr(svc, "_LLAMA_BIN_PINNED", False)
+    monkeypatch.setattr(svc.app_engines, "llama_asset_suffix", lambda: "macos-arm64")
+    monkeypatch.setattr(svc.app_settings, "_LLAMA_BIN_PINNED", False)
     archive = _llama_archive("b200")
 
     def handler(request):
@@ -233,33 +232,33 @@ def test_llama_installs_from_the_newest_release_for_this_platform(svc, monkeypat
         assert str(request.url) == "https://dl/mac"
         return httpx.Response(200, content=archive)
 
-    monkeypatch.setattr(svc, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
-    assert svc.llama_installed() is (svc.shutil.which("llama-server") is not None)
-    job = svc.jobs.create("engine_install", "llama engine", meta={"engine": "llama"})
-    svc.run_llama_install(job["id"])
-    done = svc.jobs.get(job["id"])
+    monkeypatch.setattr(svc.app_core, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    assert svc.app_engines.llama_installed() is (shutil.which("llama-server") is not None)
+    job = svc.app_core.jobs.create("engine_install", "llama engine", meta={"engine": "llama"})
+    svc.app_engines.run_llama_install(job["id"])
+    done = svc.app_core.jobs.get(job["id"])
     assert done["status"] == "done", done["error"]
     assert "b200" in done["message"]
-    assert svc.llama_bin().endswith("llama.cpp/b200/llama-b200/llama-server")
-    assert svc.llama_installed() is True
-    assert json.loads((svc.MODELS_DIR / ".engines" / "llama.json").read_text())["tag"] == "b200"
-    assert not list((svc.MODELS_DIR / ".engines").glob("*.tar.gz"))
+    assert svc.app_engines.llama_bin().endswith("llama.cpp/b200/llama-b200/llama-server")
+    assert svc.app_engines.llama_installed() is True
+    assert json.loads((svc.app_settings.MODELS_DIR / ".engines" / "llama.json").read_text())["tag"] == "b200"
+    assert not list((svc.app_settings.MODELS_DIR / ".engines").glob("*.tar.gz"))
 
 
 def test_llama_install_says_when_no_build_fits(svc, monkeypatch):
-    monkeypatch.setattr(svc, "llama_asset_suffix", lambda: None)
-    job = svc.jobs.create("engine_install", "llama engine", meta={"engine": "llama"})
-    svc.run_llama_install(job["id"])
-    assert "LLAMA_SERVER_BIN" in svc.jobs.get(job["id"])["error"]
+    monkeypatch.setattr(svc.app_engines, "llama_asset_suffix", lambda: None)
+    job = svc.app_core.jobs.create("engine_install", "llama engine", meta={"engine": "llama"})
+    svc.app_engines.run_llama_install(job["id"])
+    assert "LLAMA_SERVER_BIN" in svc.app_core.jobs.get(job["id"])["error"]
 
 
 def test_loading_without_llama_says_to_install_it(svc, tmp_path, monkeypatch):
-    monkeypatch.setattr(svc, "TOKEN", "t")
-    monkeypatch.setattr(svc, "LLAMA_SERVER_BIN", str(tmp_path / "missing-llama-server"))
-    monkeypatch.setattr(svc, "_port_free", lambda port: True)
-    svc.state.loaded, svc.state.lock = {}, None
+    monkeypatch.setattr(svc.app_settings, "TOKEN", "t")
+    monkeypatch.setattr(svc.app_settings, "LLAMA_SERVER_BIN", str(tmp_path / "missing-llama-server"))
+    monkeypatch.setattr(svc.app_speech_models, "_port_free", lambda port: True)
+    svc.app_speech_models.state.loaded, svc.app_speech_models.state.lock = {}, None
     with TestClient(svc.app) as c:
-        (svc.MODELS_DIR / "a.gguf").write_bytes(b"GGUF")
+        (svc.app_settings.MODELS_DIR / "a.gguf").write_bytes(b"GGUF")
         r = c.post("/load", headers={"Authorization": "Bearer t"}, json={"file": "a.gguf"})
     assert r.status_code == 409 and "install it on the Models page" in r.json()["detail"]
 
@@ -297,9 +296,9 @@ def _ollama(root: Path) -> Path:
 
 @pytest.fixture
 def ollama_svc(svc, tmp_path, monkeypatch):
-    monkeypatch.setattr(svc, "OLLAMA_DIR", _ollama(tmp_path / "ollama"))
-    monkeypatch.setattr(svc, "TOKEN", "t")
-    svc.MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(svc.app_engines, "OLLAMA_DIR", _ollama(tmp_path / "ollama"))
+    monkeypatch.setattr(svc.app_settings, "TOKEN", "t")
+    svc.app_settings.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     with TestClient(svc.app) as c:
         yield svc, c
 
@@ -317,15 +316,15 @@ def test_ollama_models_are_listed_by_their_ollama_names(ollama_svc):
     assert by_name["nomic-embed-text:latest"]["file"] == "nomic-embed-text.gguf"
     assert "embedding" in by_name["nomic-embed-text:latest"]["note"]
     assert "vision part" in by_name["llava:7b"]["note"]
-    assert svc.ollama_dest_name("hf.co/someone/odd:Q4_K_M") == "odd-Q4_K_M.gguf"
+    assert svc.app_engines.ollama_dest_name("hf.co/someone/odd:Q4_K_M") == "odd-Q4_K_M.gguf"
 
 
 def test_an_import_is_a_hard_link_and_shows_up_as_a_model(ollama_svc):
     svc, c = ollama_svc
     r = c.post("/ollama/import", headers=AUTH_T, json={"name": "gpt-oss:20b"})
     assert r.status_code == 200 and r.json()["linked"] is True and r.json()["job_id"] is None
-    dest = svc.MODELS_DIR / "gpt-oss-20b.gguf"
-    blobs = list((svc.OLLAMA_DIR / "blobs").iterdir())
+    dest = svc.app_settings.MODELS_DIR / "gpt-oss-20b.gguf"
+    blobs = list((svc.app_engines.OLLAMA_DIR / "blobs").iterdir())
     assert any(os.path.samefile(dest, b) for b in blobs)
     names = [m["name"] for m in c.get("/models", headers=AUTH_T).json()["models"]]
     assert "gpt-oss-20b" in names
@@ -341,21 +340,21 @@ def test_an_import_across_disks_copies_as_a_job(ollama_svc, monkeypatch):
     def no_link(src, dst):
         raise OSError(18, "Invalid cross-device link")
 
-    monkeypatch.setattr(svc.os, "link", no_link)
+    monkeypatch.setattr(os, "link", no_link)
     r = c.post("/ollama/import", headers=AUTH_T, json={"name": "nomic-embed-text:latest"}).json()
     assert r["linked"] is False and r["job_id"]
     for _ in range(100):
-        job = svc.jobs.get(r["job_id"])
+        job = svc.app_core.jobs.get(r["job_id"])
         if job["status"] in ("done", "error"):
             break
         time.sleep(0.02)
     assert job["status"] == "done" and job["kind"] == "ollama_import"
-    assert (svc.MODELS_DIR / "nomic-embed-text.gguf").read_bytes().startswith(b"GGUF")
+    assert (svc.app_settings.MODELS_DIR / "nomic-embed-text.gguf").read_bytes().startswith(b"GGUF")
 
 
 def test_no_ollama_folder_means_nothing_to_import(svc, tmp_path, monkeypatch):
-    monkeypatch.setattr(svc, "OLLAMA_DIR", tmp_path / "none")
-    monkeypatch.setattr(svc, "TOKEN", "t")
+    monkeypatch.setattr(svc.app_engines, "OLLAMA_DIR", tmp_path / "none")
+    monkeypatch.setattr(svc.app_settings, "TOKEN", "t")
     with TestClient(svc.app) as c:
         assert c.get("/ollama/models", headers=AUTH_T).json() == {
             "dir": str(tmp_path / "none"), "found": False, "models": []}
@@ -375,15 +374,15 @@ def test_models_only_ollama_can_run_are_flagged_and_not_imported(ollama_svc, mon
                         "tensors": [{"name": "blk.0.attn_q.weight"}, {"name": "v.blk.0.attn_q.weight"}]}
             return {"metadata": {"general.architecture": "nomic-bert"}, "tensors": [{"name": "token_embd.weight"}]}
 
-    monkeypatch.setattr(svc, "_structure_module", lambda: Reader)
-    svc._compat_cache.clear()
+    monkeypatch.setattr(svc.app_routes_models, "_structure_module", lambda: Reader)
+    svc.app_engines._compat_cache.clear()
     by_name = {m["name"]: m for m in c.get("/ollama/models", headers=AUTH_T).json()["models"]}
     assert by_name["gpt-oss:20b"]["compatible"] is False and "gptoss" in by_name["gpt-oss:20b"]["note"]
     assert by_name["llava:7b"]["compatible"] is False and "vision part is inside" in by_name["llava:7b"]["note"]
     assert by_name["nomic-embed-text:latest"]["compatible"] is True
     r = c.post("/ollama/import", headers=AUTH_T, json={"name": "gpt-oss:20b"})
     assert r.status_code == 422 and "Hugging Face" in r.json()["detail"]
-    assert not (svc.MODELS_DIR / "gpt-oss-20b.gguf").exists()
+    assert not (svc.app_settings.MODELS_DIR / "gpt-oss-20b.gguf").exists()
 
 
 # ── the runtime: LM Studio and MLX ───────────────────────────────────────────
@@ -410,10 +409,10 @@ def _lmstudio(root: Path) -> Path:
 @pytest.fixture
 def lms_svc(svc, tmp_path, monkeypatch):
     monkeypatch.setenv("MODELS_LMSTUDIO_DIR", str(_lmstudio(tmp_path / "lmstudio")))
-    monkeypatch.setattr(svc, "TOKEN", "t")
-    monkeypatch.setattr(svc, "mlx_platform", lambda: True)
-    monkeypatch.setattr(svc, "engines", lambda: {"llama": True, "mlx": True})
-    svc.MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(svc.app_settings, "TOKEN", "t")
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: True)
+    monkeypatch.setattr(svc.app_speech_models, "engines", lambda: {"llama": True, "mlx": True})
+    svc.app_settings.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     with TestClient(svc.app) as c:
         yield svc, c
 
@@ -432,7 +431,7 @@ def test_an_mlx_folder_is_linked_in_whole_and_runs_on_mlx(lms_svc, monkeypatch):
     svc, c = lms_svc
     r = c.post("/lmstudio/import", headers=AUTH_T, json={"name": "mlx-community/gpt-oss-20b-MXFP4-Q8"}).json()
     assert r["linked"] is True and r["file"] == "gpt-oss-20b-MXFP4-Q8"
-    dest = svc.MODELS_DIR / "gpt-oss-20b-MXFP4-Q8"
+    dest = svc.app_settings.MODELS_DIR / "gpt-oss-20b-MXFP4-Q8"
     src = Path(os.environ["MODELS_LMSTUDIO_DIR"]) / "mlx-community" / "gpt-oss-20b-MXFP4-Q8"
     assert os.path.samefile(dest / "model-00001-of-00001.safetensors", src / "model-00001-of-00001.safetensors")
     assert (dest / "tokenizer" / "vocab.json").is_file()
@@ -455,22 +454,22 @@ def test_an_mlx_folder_is_linked_in_whole_and_runs_on_mlx(lms_svc, monkeypatch):
     async def healthy(port, proc, timeout=0):
         return None
 
-    monkeypatch.setattr(svc.subprocess, "Popen", Proc)
-    monkeypatch.setattr(svc, "wait_healthy", healthy)
-    monkeypatch.setattr(svc, "_port_free", lambda port: True)
-    svc.state.loaded, svc.state.lock = {}, None
+    monkeypatch.setattr(subprocess, "Popen", Proc)
+    monkeypatch.setattr(svc.app_serving, "wait_healthy", healthy)
+    monkeypatch.setattr(svc.app_speech_models, "_port_free", lambda port: True)
+    svc.app_speech_models.state.loaded, svc.app_speech_models.state.lock = {}, None
     out = c.post("/load", headers=AUTH_T, json={"file": "gpt-oss-20b-MXFP4-Q8"}).json()
     assert (out["engine"], out["kind"], out["context_length"]) == ("mlx", "chat", 131072)
     assert started[0][1:3] == ["-m", "mlx_lm.server"] and str(dest) in started[0]
-    assert svc.state.loaded["gpt-oss-20b-MXFP4-Q8"].harmony is True
+    assert svc.app_speech_models.state.loaded["gpt-oss-20b-MXFP4-Q8"].harmony is True
 
 
 def test_gguf_from_lmstudio_is_a_linked_file_and_mlx_is_refused_off_apple_silicon(lms_svc, monkeypatch):
     svc, c = lms_svc
     r = c.post("/lmstudio/import", headers=AUTH_T,
                json={"name": "lmstudio-community/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf"}).json()
-    assert r["file"] == "Qwen3-4B-Q4_K_M.gguf" and (svc.MODELS_DIR / "Qwen3-4B-Q4_K_M.gguf").is_file()
-    monkeypatch.setattr(svc, "mlx_platform", lambda: False)
+    assert r["file"] == "Qwen3-4B-Q4_K_M.gguf" and (svc.app_settings.MODELS_DIR / "Qwen3-4B-Q4_K_M.gguf").is_file()
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: False)
     m = c.get("/lmstudio/models", headers=AUTH_T).json()["models"]
     mlx = next(x for x in m if x["format"] == "mlx")
     assert mlx["compatible"] is False and "Apple silicon" in mlx["note"]
@@ -481,16 +480,16 @@ def test_gguf_from_lmstudio_is_a_linked_file_and_mlx_is_refused_off_apple_silico
 def test_harmony_is_split_into_reasoning_and_answer(svc):
     text = ("<|channel|>analysis<|message|>Think first.<|end|>"
             "<|start|>assistant<|channel|>final<|message|>Paris")
-    assert svc.split_harmony(text) == ("Think first.", "Paris")
-    assert svc.split_harmony("plain answer") == ("", "plain answer")
-    stream = svc.HarmonyStream()
+    assert svc.app_engines.split_harmony(text) == ("Think first.", "Paris")
+    assert svc.app_engines.split_harmony("plain answer") == ("", "plain answer")
+    stream = svc.app_engines.HarmonyStream()
     pieces = ["<|chan", "nel|>analysis<|mes", "sage|>Think", " first.<|end|><|start|>assistant",
               "<|channel|>final<|message|>Pa", "ris"]
     got = [stream.feed(p) for p in pieces]
     assert "".join(r for r, _ in got) == "Think first." and "".join(a for _, a in got) == "Paris"
     msg = {"content": text, "reasoning": None}
-    svc.mlx_message(msg, svc.HarmonyStream(), whole=True)
+    svc.app_engines.mlx_message(msg, svc.app_engines.HarmonyStream(), whole=True)
     assert msg["content"] == "Paris" and msg["reasoning_content"] == "Think first."
     qwen = {"content": "42", "reasoning": "I think"}
-    svc.mlx_message(qwen, None, whole=True)
+    svc.app_engines.mlx_message(qwen, None, whole=True)
     assert qwen == {"content": "42", "reasoning_content": "I think"}

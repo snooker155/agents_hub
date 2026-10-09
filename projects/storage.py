@@ -92,5 +92,5 @@ class ProjectStore:
     def _parse_or_none(self, data: Any) -> Optional[Project]:
         try:
             return _parse_project(dict(data))
-        except Exception:
+        except (TypeError, ValueError):
             return None

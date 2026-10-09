@@ -35,9 +35,12 @@ Where a call is *held* depends on the surface, and that split is the whole point
 """
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 from typing import Any, Dict, Optional
+
+log = logging.getLogger(__name__)
 
 # Tool ids that always need a human yes. Every one of them ends something, drops
 # something, or writes over something a person may not get back: the cost of a
@@ -198,7 +201,8 @@ def _mcp_needs_approval(tool_id: str) -> bool:
         if isinstance(approval, (list, tuple, set)):
             return tool_id in approval or remote_name in approval
         return str(approval or "none").strip().lower() == "all"
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable config must not make every call look gated
+        log.debug("tool_needs_approval: server config unreadable", exc_info=True)
         # Same failure posture as ``approval_gate_enabled``: an unreadable
         # config must not make every tool call look gated, which would stop the
         # run outright.
@@ -237,7 +241,8 @@ def approval_gate_enabled(workspace: Optional[str] = None) -> bool:
         from workspace import get_workspace_metadata
         settings = get_workspace_metadata(ws).get("settings") or {}
         return bool(settings.get("require_tool_approval"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable workspace config means the gate is off
+        log.debug("approval_gate_enabled: workspace config unreadable", exc_info=True)
         return False
 
 
@@ -252,7 +257,7 @@ def call_fingerprint(tool_id: str, tool_input: Any) -> str:
     """
     try:
         payload = json.dumps(tool_input, sort_keys=True, ensure_ascii=False, default=str)
-    except Exception:
+    except (TypeError, ValueError, RecursionError):
         payload = str(tool_input)
     raw = f"{str(tool_id or '').strip()}\x00{payload}"
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
@@ -298,7 +303,7 @@ def gate_refusal_text(tool_id: str, tool_input: Any, reason: str = "") -> str:
     """
     try:
         pretty = json.dumps(tool_input, ensure_ascii=False, sort_keys=True, default=str)
-    except Exception:
+    except (TypeError, ValueError, RecursionError):
         pretty = str(tool_input)
     effect = f"run `{tool_id}` with {pretty}"
     if reason:

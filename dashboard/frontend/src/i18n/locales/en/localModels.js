@@ -72,6 +72,11 @@ export default {
     cancelFailed: 'Could not cancel.',
     planModel: 'Chat model for this machine: {{label}}, about {{size}}',
     ready: 'Everything is already in place.',
+    allThere: 'All in place',
+    allThereUnloaded: 'All in place, model not loaded',
+    unloadedNote: 'Everything is downloaded and installed; only loading the chat model into memory remains, which the button on the right does.',
+    inProgress: 'In progress',
+    partly: '{{present}} of {{total}} already there',
     stepStatus: { todo: 'To do', running: 'Running', done: 'Done', skipped: 'Already there', error: 'Failed' },
     steps: {
       runtime: 'Start the model runtime',
@@ -90,6 +95,7 @@ export default {
     chat: 'Chat:',
     transcription: 'Transcription:',
     speech: 'Speech:',
+    image: 'Images:',
   },
 
 
@@ -121,8 +127,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
-    kinds: { speech: 'Speech', transcription: 'Transcription', chat: 'Chat', cleanup: 'Voice cleanup' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', qwen3_tts: 'Qwen3-TTS', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Speech', transcription: 'Transcription', image: 'Images', chat: 'Chat', cleanup: 'Voice cleanup' },
     installed: 'Installed',
     install: 'Install',
     installStarted: 'Installing {{engine}}…',
@@ -137,8 +143,8 @@ export default {
   voices: {
     title: 'Recorded voices',
     count: '{{count}} recorded',
-    hint: 'Record 20 to 30 seconds of your speech, and the voice shows up for the Chatterbox and OpenVoice models, in the same voice lists as every other model. Chatterbox reads text in this voice and comes closest; on a Mac take Chatterbox MLX, twice as fast as the speech itself, while plain Chatterbox is fast only on an NVIDIA GPU. OpenVoice quickly gives speech another model read this timbre, keeping that model\'s intonation.',
-    noModels: 'To speak in these voices, download Chatterbox (on a Mac, Chatterbox MLX) or OpenVoice among the speech presets above and install their engine.',
+    hint: 'Record 20 to 30 seconds of your speech, and the voice shows up for the Chatterbox, Qwen3-TTS and OpenVoice models, in the same voice lists as every other model. Chatterbox reads text in this voice and comes closest; on a Mac take Chatterbox MLX, twice as fast as the speech itself, while plain Chatterbox is fast only on an NVIDIA GPU. Qwen3-TTS (a Mac too) reads evenly in ten languages, Russian among them, from the sample alone. OpenVoice quickly gives speech another model read this timbre, keeping that model\'s intonation. A steadier reading: set a lower temperature on the speech model in the workspace.',
+    noModels: 'To speak in these voices, download Chatterbox (on a Mac, Chatterbox MLX or Qwen3-TTS) or OpenVoice among the speech presets above and install their engine.',
     empty: 'No voices yet.',
     add: 'Record a voice',
     name: 'Voice name',
@@ -198,7 +204,7 @@ export default {
     purpose: 'Purpose',
     license: 'License',
     sort: 'Order',
-    purposes: { any: 'Any', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription' },
+    purposes: { any: 'Any', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription', image: 'Images' },
     licenses: { any: 'Any', permissive: 'Permissive (Apache, MIT)', 'apache-2.0': 'Apache 2.0', mit: 'MIT', llama: 'Llama', gemma: 'Gemma' },
     sorts: { downloads: 'Downloads', likes: 'Likes', trending: 'Trending', updated: 'Recently updated' },
     noResults: 'Nothing found. Try another word or clear the filters.',
@@ -248,7 +254,7 @@ export default {
     noCalls: 'No calls yet.',
     recent: 'Recent calls',
     sources: { hub: 'Hub agents', endpoint: 'Endpoint /v1', voice: 'Assistant voice', direct: 'Direct' },
-    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription' },
+    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Speech', transcription: 'Transcription', image: 'Images' },
     tokensUnknown: 'The model did not report token counts',
   },
 

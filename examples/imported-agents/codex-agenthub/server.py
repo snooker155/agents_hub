@@ -54,7 +54,9 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Codex: Agents Hub adapter")
 
-DEFAULT_WORKDIR = Path(os.environ.get("CODEX_WORKDIR", "/work"))
+# When the hub runs this container itself (Docker mode), AGENTS_HUB_WORKSPACE
+# is the workspace folder it mounted, at its own host path.
+DEFAULT_WORKDIR = Path(os.environ.get("CODEX_WORKDIR") or os.environ.get("AGENTS_HUB_WORKSPACE") or "/work")
 RUN_TIMEOUT = int(os.environ.get("CODEX_RUN_TIMEOUT", "1800"))
 
 

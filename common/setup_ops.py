@@ -151,6 +151,9 @@ def options() -> Dict[str, Any]:
                 "tiers": {t: {"model": m, "verified": ok, "label": P.TIER_LABELS.get(t, t)}
                           for t, (m, ok) in tiers.items()},
             }
+            if provider in P.LOCAL:
+                # A local server has no tiers: whatever it serves is the choice.
+                models[provider]["served"] = sorted(found.models)[:50]
         else:
             backend = _custom_backend(provider) or {}
             models[provider] = {"listed": False, "custom": True,
@@ -171,7 +174,9 @@ def options() -> Dict[str, Any]:
                       "speech": [{"id": i, "label": label, "size": size} for i, label, size, *_ in VOICE_LOCAL_SPEECH],
                       "transcription": [{"id": i, "label": label, "size": size}
                                         for i, label, size, *_ in VOICE_LOCAL_TRANSCRIPTION],
-                      "default_speech": _local_speech_default(), "default_transcription": "whisper-small"},
+                      "default_speech": _local_speech_default(), "default_transcription": "whisper-small",
+                      # The voice each page language gets with the default.
+                      "languages": _local_language_labels(_local_speech_default())},
             "browser": "without models the page uses the browser's own voice (Chrome, Edge, Safari; not Firefox)",
         },
         "web_search": ["brave", "tavily", "exa"],
@@ -179,15 +184,33 @@ def options() -> Dict[str, Any]:
     }
 
 
+def _local_language_labels(speech: str) -> Dict[str, str]:
+    """``{language: voice label}`` the local voice ``speech`` reads each page language with."""
+    row = _preset(VOICE_LOCAL_SPEECH, speech)
+    if row is None:
+        return {}
+    own = _preset_language(row)
+    out = {lang: row[1] for lang in VOICE_LANGUAGES if own in (None, lang)}
+    for lang, pid in _language_voices(row).items():
+        other = _preset(VOICE_LOCAL_SPEECH, pid)
+        if other:
+            out[lang] = other[1]
+    return out
+
+
 def _local_speech_default() -> str:
-    lang = (os.environ.get("AGENTS_HUB_LANGUAGE") or os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
+    from common import first_run
+    lang = (first_run.language() or os.environ.get("AGENTS_HUB_LANGUAGE") or os.environ.get("LC_ALL")
+            or os.environ.get("LANG") or "").lower()
     return "piper-ru" if lang.startswith("ru") else "piper-de" if lang.startswith("de") else "piper-en"
 
 
 # ── describing a call (the card's sentence) ───────────────────────────────────
 
-def _args(raw: Optional[Dict[str, Any]]) -> Dict[str, str]:
-    return {str(k): str(v).strip() for k, v in (raw or {}).items() if v not in (None, "")}
+def _args(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Strings, but an object (a voice per language) is kept as it is."""
+    return {str(k): (v if isinstance(v, dict) else str(v).strip())
+            for k, v in (raw or {}).items() if v not in (None, "", {})}
 
 
 def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
@@ -204,8 +227,11 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
     if operation == "voice_local":
         speech = _preset(VOICE_LOCAL_SPEECH, a.get("speech") or _local_speech_default())
         hear = _preset(VOICE_LOCAL_TRANSCRIPTION, a.get("transcription") or "whisper-small")
+        extra = [_preset(VOICE_LOCAL_SPEECH, pid) for pid in _language_voices(speech).values()]
+        others = ", ".join(row[1] for row in extra if row)
         return (f"Give the assistant a voice from the hub's own runtime: {speech[1] if speech else '?'} "
-                f"({speech[2] if speech else '?'}) and {hear[1] if hear else '?'} ({hear[2] if hear else '?'}), "
+                f"({speech[2] if speech else '?'})" + (f", with {others} for the other languages" if others else "")
+                + f" and {hear[1] if hear else '?'} ({hear[2] if hear else '?'}), "
                 f"downloaded in the background, free to use.")
     if operation == "local_set":
         return ("Set the hub up to run locally: install the llama.cpp engine, download one chat model sized "
@@ -278,7 +304,33 @@ def choose_model(provider: str, model: str, *, principal: Any = None, check: boo
             "summary": f"The default model is now {provider}/{model}."}
 
 
-def voice_cloud(provider: str, voice: str = "", *, principal: Any = None) -> Dict[str, Any]:
+#: The languages the hub's pages speak; each gets a voice of its own.
+VOICE_LANGUAGES = ("en", "ru", "de")
+#: The Piper voice of each language, for a speech model that speaks another.
+_PIPER_FOR = {"en": "piper-en", "ru": "piper-ru", "de": "piper-de"}
+
+
+def _preset_language(row: Optional[tuple]) -> Optional[str]:
+    """The one language a local speech preset speaks; None for one that speaks many."""
+    if row is None:
+        return None
+    from providers import special
+    return special.voice_language(row[4]) or ("en" if row[5] in ("kokoro", "kitten") else None)
+
+
+def _language_voices(row: Optional[tuple]) -> Dict[str, str]:
+    """``{language: preset id}``: a Piper voice for each page language that the
+    chosen preset does not speak (none for a preset that speaks them all)."""
+    own = _preset_language(row)
+    if own is None:
+        return {}
+    return {lang: _PIPER_FOR[lang] for lang in VOICE_LANGUAGES if lang != own}
+
+
+def voice_cloud(provider: str, voice: str = "", *, principal: Any = None,
+                voices: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """A cloud voice; ``voices`` names another voice of the same model for a
+    language (``{"ru": "alloy"}``), read when a line is in that language."""
     provider = (provider or "").strip().lower()
     spec = VOICE_CLOUD.get(provider)
     if spec is None:
@@ -291,8 +343,18 @@ def voice_cloud(provider: str, voice: str = "", *, principal: Any = None) -> Dic
     if voice.lower() not in known:
         raise SetupOpError(f"'{voice}' is not one of {provider}'s voices: {', '.join(spec['voices'])}.",
                            code="unknown_voice")
+    by_language: Dict[str, Dict[str, str]] = {}
+    for lang, name in (voices or {}).items():
+        lang, name = str(lang or "").strip().lower(), str(name or "").strip()
+        if not name:
+            continue
+        if name.lower() not in known:
+            raise SetupOpError(f"'{name}' is not one of {provider}'s voices: {', '.join(spec['voices'])}.",
+                               code="unknown_voice")
+        by_language[lang] = {"voice": known[name.lower()]}
     entries = {
         "speech": {"provider": provider, "model": spec["speech"], "options": {"voice": known[voice.lower()]},
+                   **({"languages": by_language} if by_language else {}),
                    **({"price_usd": spec["speech_price"]} if spec.get("speech_price") is not None else {})},
         "transcription": {"provider": provider, "model": spec["transcription"], "options": {},
                           **({"price_usd": spec["transcription_price"]}
@@ -329,14 +391,20 @@ def voice_local(speech: str = "", transcription: str = "", *, principal: Any = N
                            code="unknown_voice")
     _, s_label, _, s_repo, s_package, s_engine = s
     _, h_label, _, h_repo, h_package = h
+    # A voice of its own for each page language the chosen one does not speak.
+    rows = {lang: _preset(VOICE_LOCAL_SPEECH, pid) for lang, pid in _language_voices(s).items()}
+    extra = [row for row in rows.values() if row]
+    languages = {lang: {"model": row[4]} for lang, row in rows.items() if row}
     # The runtime's backend first: a special model names it as its provider.
     lm.ensure_hub_local_backend()
-    _save_voice({"speech": {"provider": HUB_LOCAL, "model": s_package, "options": {}},
+    _save_voice({"speech": {"provider": HUB_LOCAL, "model": s_package, "options": {},
+                            **({"languages": languages} if languages else {})},
                  "transcription": {"provider": HUB_LOCAL, "model": h_package, "options": {}}})
     setup_guide.set_work(principal, {
         "step": "voice", "kind": "voice_local", "phase": "starting", "started_at": _now(),
-        "engines": ["whisper", s_engine],
-        "packages": [[h_repo, h_package, h_label], [s_repo, s_package, s_label]],
+        "engines": list(dict.fromkeys(["whisper", s_engine, *(row[5] for row in extra)])),
+        "packages": [[h_repo, h_package, h_label], [s_repo, s_package, s_label],
+                     *([row[3], row[4], row[1]] for row in extra)],
         "jobs": [], "message": "",
     })
     advance_work(principal)
@@ -372,7 +440,8 @@ def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
 
 _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "choose_model": lambda a, p: choose_model(a.get("provider", ""), a.get("model", ""), principal=p),
-    "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), principal=p),
+    "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), principal=p,
+                                            voices=a.get("voices") if isinstance(a.get("voices"), dict) else None),
     "voice_local": lambda a, p: voice_local(a.get("speech", ""), a.get("transcription", ""), principal=p),
     "local_set": lambda a, p: local_set(a.get("workspace", ""), principal=p),
     "seed_demo": lambda a, p: seed_demo(principal=p),

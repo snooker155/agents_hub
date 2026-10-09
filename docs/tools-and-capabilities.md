@@ -131,14 +131,32 @@ reports zero unclassified tools alongside the current roster's violations.
 ## Web search provider
 
 `web_search` calls an external search API; the hub ships no search engine of
-its own. Settings, "Web search" picks the provider (Brave
-Search, Tavily or Exa), takes its API key and the number of results a call
-returns, and writes them to `.env` as `WEB_SEARCH_PROVIDER`,
-`WEB_SEARCH_API_KEY` and `WEB_SEARCH_MAX_RESULTS`. They are read live, so a
-change applies to the next call in the backend and in every runner without a
-restart. With no provider or no key the tool performs no search and answers
-that it is not configured, an ordinary tool answer the agent relays to the
-user. `fetch_url` and the browser tools need none of this.
+its own. Settings, "Web search" picks the provider, the number of results a
+call returns and, for a search service, its API key, and writes them to
+`.env` as `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_API_KEY` and
+`WEB_SEARCH_MAX_RESULTS`. They are read live, so a change applies to the next
+call in the backend and in every runner without a restart.
+
+Two kinds of provider. **Anthropic** and **OpenAI** search through their own
+server-side search tool (the Messages API `web_search` tool, the Responses
+API `web_search` tool) on the key the Models page already holds, so no
+separate service or key is needed: the hub sends one request with a small
+model (`WEB_SEARCH_MODEL` overrides it), keeps the result list and the cited
+passages as snippets, and discards the prose. The provider bills each search
+on the same account as the model. **Brave Search**, **Tavily** and **Exa**
+are search services with a key of their own. Either way the agent gets the
+same tool: titles, URLs and snippets through the same untrusted-content
+envelope, domain policy, cache and web log, whatever model the agent itself
+runs on, including a local one.
+
+With no provider set the hub picks a model provider whose key is configured:
+the default provider from the Models page when it is Anthropic or OpenAI,
+else Anthropic, else OpenAI (skipped when `OPENAI_BASE_URL` points away from
+OpenAI, since a proxy or a local runtime rarely implements the search tool).
+The Settings card says which one a search would use. With nothing to search
+with, the tool performs no search and answers that it is not configured, an
+ordinary tool answer the agent relays to the user. `fetch_url` and the
+browser tools need none of this.
 
 The same page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
 `WEB_FETCH_TIMEOUT`, `WEB_FETCH_MAX_REDIRECTS`) and the global domain policy:

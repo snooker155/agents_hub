@@ -73,7 +73,8 @@ async def apply_proposal(approval_id: str, body: ApplyBody, request: Request):
         raise HTTPException(status_code=409, detail={
             "message": "This proposal is no longer waiting for an answer.",
             "status": approval.get("status")})
-    proposal = approval.get("input") if isinstance(approval.get("input"), dict) else {}
+    raw_input = approval.get("input")
+    proposal: Dict[str, Any] = raw_input if isinstance(raw_input, dict) else {}
     if proposal.get("kind") not in proposals.KINDS:
         raise HTTPException(status_code=400, detail="this proposal is unreadable")
     details = {"approval_id": approval_id, "run_id": approval.get("run_id"),

@@ -12,6 +12,7 @@ call this, so an assignment means the same thing whichever one made it.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
@@ -23,6 +24,8 @@ from agents import agent_launcher
 from managers import run_manager
 from workspace import get_workspace_metadata
 from common.session_service import add_event_to_session
+
+log = logging.getLogger(__name__)
 
 
 class AssignError(Exception):
@@ -151,7 +154,8 @@ def assign_agent_to_task(
                 from common.session_service import get_or_create_task_session
                 session_id = get_or_create_task_session(title=t.title, workspace=t.workspace, task_id=str(task_id))
                 tasks_service.update_task(task_id, session_id=session_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a task without a session record still gets its run
+                log.debug("task session create failed", exc_info=True)
                 session_id = None
         run_id = str(uuid4())
         run_manager.upsert_run({
@@ -186,8 +190,8 @@ def assign_agent_to_task(
                 "timestamp": run_manager.utc_now_iso(),
                 "description": f"Assignment of {agent_id} is done by user",
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the session event is a courtesy, assignment already succeeded
+            log.debug("assignment event append failed", exc_info=True)
 
     updated = tasks_service.get_task(task_id)
     return {

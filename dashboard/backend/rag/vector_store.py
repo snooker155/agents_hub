@@ -16,6 +16,9 @@ from uuid import NAMESPACE_URL, uuid5
 from .embeddings import EmbeddingResult
 
 from common.paths import PROJECT_ROOT
+import logging
+
+log = logging.getLogger(__name__)
 
 # Use a fixed absolute path so the backend and agent subprocesses share the same DB.
 _PROJECT_ROOT = PROJECT_ROOT
@@ -100,7 +103,8 @@ def upsert_chroma(
 def _chroma_drop_tail(collection, file_id: str, keep: int) -> int:
     try:
         existing = collection.get(where={"file_id": file_id}, include=["metadatas"])
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_chroma_drop_tail: falling back after a failure", exc_info=True)
         return 0
     ids = existing.get("ids") or []
     metas = existing.get("metadatas") or []
@@ -111,7 +115,8 @@ def _chroma_drop_tail(collection, file_id: str, keep: int) -> int:
     if stale:
         try:
             collection.delete(ids=stale)
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("_chroma_drop_tail: falling back after a failure", exc_info=True)
             return 0
     return len(stale)
 
@@ -127,7 +132,8 @@ def delete_chroma(
     client = _chroma_client(url)
     try:
         collection = client.get_collection(collection_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("delete_chroma: falling back after a failure", exc_info=True)
         return {"deleted": 0, "collection": collection_name}
 
     ids = _chroma_matching_ids(collection, file_id=file_id, pool_id=pool_id)
@@ -143,18 +149,21 @@ def _chroma_matching_ids(collection, *, file_id: Optional[str], pool_id: Optiona
         try:
             got = collection.get(where={"file_id": file_id})
             return list(got.get("ids") or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("_chroma_matching_ids: falling back after a failure", exc_info=True)
             return []
     if not pool_id:
         return []
     try:
         got = collection.get(where={"pool_id": pool_id})
         ids = list(got.get("ids") or [])
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_chroma_matching_ids: falling back after a failure", exc_info=True)
         ids = []
     try:
         everything = collection.get(include=["metadatas"])
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_chroma_matching_ids: falling back after a failure", exc_info=True)
         return ids
     prefix = f"{pool_id}::"
     legacy = [
@@ -240,7 +249,8 @@ def upsert_qdrant(
     # Create collection if it doesn't exist yet
     try:
         client.get_collection(collection_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("upsert_qdrant: falling back after a failure", exc_info=True)
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=dims, distance=Distance.COSINE),
@@ -279,7 +289,7 @@ def delete_qdrant(
     )
     try:
         client.delete(collection_name=collection_name, points_selector=selector)
-    except Exception as exc:  # collection may not exist yet
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         return {"deleted": 0, "collection": collection_name, "error": str(exc)}
     return {"deleted": "all matching", "collection": collection_name}
 

@@ -129,7 +129,8 @@ def usable_providers() -> List[str]:
         catalog = load_catalog_raw() or {}
         for b in list_backends():
             bid = str(b.get("id") or "")
-            entry = catalog.get(bid) if isinstance(catalog.get(bid), dict) else {}
+            found = catalog.get(bid)
+            entry: Dict[str, Any] = found if isinstance(found, dict) else {}
             enabled = any(isinstance(m, dict) and m.get("enabled") for m in entry.get("models") or [])
             if bid and (b.get("default_model") or enabled):
                 out.append(bid)
@@ -176,10 +177,12 @@ def _voice(ctx: _Ctx):
 
 
 def _web_search(ctx: _Ctx):
-    from common import provider_env
-    env = provider_env.live()
-    provider = env.get("WEB_SEARCH_PROVIDER", "")
-    return bool(provider and env.get("WEB_SEARCH_API_KEY")), provider
+    from tools.web import effective_search_provider
+    eff = effective_search_provider()
+    provider = str(eff["provider"])
+    if provider and eff["source"] == "model_key":
+        provider = f"{provider} (model key)"
+    return bool(eff["key_set"]), provider
 
 
 def _demo(ctx: _Ctx):
@@ -292,9 +295,10 @@ STEPS: tuple[Step, ...] = (
          "hub's own runtime, free, downloads 0.5 to 2 GB); skipping keeps the browser's voice.",
          "/models?tab=special", _voice),
     Step("web_search", GROUP_SETUP, "Turn on web search",
-         "Agents can then search the web, not only open pages they are given.",
-         "propose_connection with kind provider and target brave, tavily or exa: the person types the "
-         "key into the card.",
+         "Agents can then search the web, not only open pages they are given. An Anthropic or "
+         "OpenAI key already does this through that provider's own search.",
+         "propose_connection with kind provider and target anthropic or openai (a model key searches "
+         "too), or brave, tavily or exa: the person types the key into the card.",
          "/settings/webSearch", _web_search),
     Step("demo", GROUP_SETUP, "Look around the demo workspace",
          "Four agents with chats, views and a pulse show what the hub does before anything is built.",

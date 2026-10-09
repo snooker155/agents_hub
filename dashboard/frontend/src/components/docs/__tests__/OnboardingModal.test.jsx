@@ -21,7 +21,7 @@ vi.mock('../../../api/setupGuide', () => setupGuideApi);
 
 const INACTIVE = {
   active: false, started_at: null, finished_at: null, dismissed_at: null,
-  mode: '', admin: true, multi: false, needs_model: false,
+  mode: '', admin: true, multi: true, needs_model: false,
   steps: [], done: 0, total: 0, next: null, complete: false, work: null,
 };
 
@@ -46,6 +46,13 @@ describe('OnboardingModal', () => {
   it('stays closed once dismissed before, whatever the guide says', async () => {
     localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
     setupGuideApi.getSetupGuide.mockResolvedValue({ data: INACTIVE });
+    const { container } = renderModal();
+    await waitFor(() => expect(setupGuideApi.getSetupGuide).toHaveBeenCalled());
+    expect(container.textContent).toBe('');
+  });
+
+  it('leaves a single operator to the first run', async () => {
+    setupGuideApi.getSetupGuide.mockResolvedValue({ data: { ...INACTIVE, multi: false } });
     const { container } = renderModal();
     await waitFor(() => expect(setupGuideApi.getSetupGuide).toHaveBeenCalled());
     expect(container.textContent).toBe('');

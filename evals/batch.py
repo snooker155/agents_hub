@@ -462,8 +462,16 @@ def _judge_requests(result: EvalResult, case: Case, evalset: EvalSet
 def _finish_cell(result: EvalResult, case: Case, evalset: EvalSet,
                  judged: Optional[Dict[str, Any]] = None) -> EvalResult:
     from evals import graders
+    from evals.snapshot import locate_isolation_dir
+    # A cell may be graded in a later process than the one that ran it, so
+    # its working directory is found again rather than carried: the eval
+    # run's workspace is the set's (start_batch_run runs under it).
+    run = store.get_eval_run(result.eval_run_id)
+    workspace = (run.workspace if run else None) or evalset.workspace
+    work_dir = locate_isolation_dir(workspace, result.eval_run_id, case.case_id, result.attempt)
     scores, combined, passed = graders.grade_all(result.output, case, evalset.graders,
-                                                 run_id=result.run_id, precomputed=judged or {})
+                                                 run_id=result.run_id, precomputed=judged or {},
+                                                 work_dir=work_dir)
     result.scores, result.score, result.passed = scores, combined, passed
     return store.save_result(result)
 

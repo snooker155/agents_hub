@@ -12,6 +12,7 @@ signals) live in ``agents.callbacks.guards``.
 """
 from __future__ import annotations
 
+import logging
 import json
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from typing import Optional
 from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.callbacks.run_statistics import extract_token_usage, normalize_usage
+
+log = logging.getLogger(__name__)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -105,8 +108,8 @@ class SharedProgressCallback(BaseCallbackHandler):
                     "cap (LLM_MAX_TOKENS); the response was cut off mid-reasoning/answer.",
                     flush=True,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - console/log hooks must never break the run
+            log.debug("_log_model_output: ignored error", exc_info=True)
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         try:
@@ -121,14 +124,14 @@ class SharedProgressCallback(BaseCallbackHandler):
                         data = json.loads(preview.replace("'", "\""))
                         if "path" in data:
                             preview = data["path"]
-                except Exception:
-                    pass
+                except (ValueError, TypeError):
+                    log.debug("on_tool_start: ignored error", exc_info=True)
 
             if len(preview) > 200:
                 preview = preview[:200] + "..."
             print(f"[{self.model_name}] Step {self._step}: {name} ← {preview}")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - console/log hooks must never break the run
+            log.debug("on_tool_start: ignored error", exc_info=True)
 
     def on_tool_end(self, output, **kwargs):
         try:
@@ -136,8 +139,8 @@ class SharedProgressCallback(BaseCallbackHandler):
             if len(text) > 300:
                 text = text[:300] + "..."
             print(f"[{self.model_name}] Result: {text}")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - console/log hooks must never break the run
+            log.debug("on_tool_end: ignored error", exc_info=True)
 
 
 # How often the stop status may be re-read from the run store. Under streaming,
@@ -183,8 +186,8 @@ class RunStopCallback(BaseCallbackHandler):
                 raise InterruptedError(f"Run {self.run_id} was stopped by user")
         except InterruptedError:
             raise
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - console/log hooks must never break the run
+            log.debug("_check_stop: ignored error", exc_info=True)
 
     # Start hooks abort *before* the next model/tool execution begins; the
     # token/end hooks catch a stop that arrived mid-step.
@@ -219,8 +222,8 @@ class NodeFileCallback(BaseCallbackHandler):
     def _w(self, line: str) -> None:
         try:
             self._f.write(line + "\n")
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            log.debug("_w: ignored error", exc_info=True)
 
     def on_llm_start(self, serialized, prompts, **_):
         model = (serialized or {}).get("name", "unknown") if isinstance(serialized, dict) else "unknown"
@@ -249,5 +252,5 @@ class NodeFileCallback(BaseCallbackHandler):
     def close(self) -> None:
         try:
             self._f.close()
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            log.debug("close: ignored error", exc_info=True)

@@ -41,18 +41,20 @@ function Section({ title, children, action }) {
 }
 
 /**
- * The runtime's prompt cache (deploy/models/app.py, "Prompt cache") on the
- * Local tab: how well it works, what it holds, what it takes, and its
- * settings.
+ * The runtime's prompt cache (deploy/models/app.py, "Prompt cache"): how
+ * well it works, what it holds, what it takes, and its settings. The Models
+ * page's Prompt cache tab shows it `standalone`: open from the start, with
+ * no fold, and shown even before the first figures (`ready` says the
+ * status came); elsewhere it is a card folded by default, whose header
+ * still shows the share of prompt tokens served from the cache and the
+ * time it saved.
  *
  * How it works comes from the runtime's call counts, which arrive with the
- * runtime status that RuntimeSection polls (`usage`: per model rows and a day
- * of 5 minute buckets); what it holds and takes, and the settings, from
+ * runtime status (`usage`: per model rows and a day of 5 minute buckets);
+ * what it holds and takes, and the settings, from
  * GET /models/local/runtime/cache, read here while the card is open.
- * Folded by default like the cards around it; the folded header still shows
- * the share of prompt tokens served from the cache and the time it saved.
  */
-export default function RuntimeCache({ usage }) {
+export default function RuntimeCache({ usage, standalone = false, ready = false }) {
   const { t, language } = useI18n();
   const toast = useToast();
   const auth = useAuth();
@@ -62,7 +64,7 @@ export default function RuntimeCache({ usage }) {
   };
   const dur = (ms) => fmtDuration(ms, units);
   const canEdit = !isMultiUser(auth) || isAdmin(auth);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(standalone);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,7 +146,7 @@ export default function RuntimeCache({ usage }) {
     }
   };
 
-  if (!usage && !data) return null;
+  if (!usage && !data && !(standalone && ready)) return null;
 
   const settings = data?.settings;
   const mem = data?.memory || {};
@@ -180,12 +182,12 @@ export default function RuntimeCache({ usage }) {
       <div className={`flex items-center gap-2 bg-gray-50 border-gray-100 ${open ? 'border-b' : ''}`}>
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex-1 min-w-0 flex items-center gap-2 px-4 py-3 text-left hover:bg-gray-100 transition-colors focus:outline-none flex-wrap"
+          onClick={() => { if (!standalone) setOpen((v) => !v); }}
+          className={`flex-1 min-w-0 flex items-center gap-2 px-4 py-3 text-left transition-colors focus:outline-none flex-wrap ${standalone ? 'cursor-default' : 'hover:bg-gray-100'}`}
           aria-expanded={open}
           data-testid="runtime-cache-toggle"
         >
-          {open ? <ChevronDown className="w-4 h-4 text-gray-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-500 shrink-0" />}
+          {standalone ? null : open ? <ChevronDown className="w-4 h-4 text-gray-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-500 shrink-0" />}
           <span className="text-sm font-semibold text-gray-800 shrink-0">{t('localModels.runtimeCache.title')}</span>
           <span className="text-xs text-gray-400" data-testid="runtime-cache-summary">
             {disabled ? t('localModels.runtimeCache.off') : anyCalls ? (

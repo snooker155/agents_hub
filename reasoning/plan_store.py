@@ -16,6 +16,7 @@ dict, so the on-disk format is transparent to callers.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -30,6 +31,8 @@ from workspace import (
     update_plan_step as ws_update_plan_step,
     delete_plan as ws_delete_plan,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _json_ok(payload: Dict[str, Any]) -> str:
@@ -91,7 +94,8 @@ def save_plan(
         return _json_ok({"plan": record})
     except ValueError as e:
         return _json_err(str(e), code="conflict")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool wrapper returns the error to the model
+        log.warning("create_plan failed", exc_info=True)
         return _json_err(f"Failed to save plan: {e}")
 
 
@@ -186,7 +190,8 @@ def update_plan_status(
         return _json_ok({"plan": record})
     except ValueError as e:
         return _json_err(str(e))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool wrapper returns the error to the model
+        log.warning("update_plan failed", exc_info=True)
         return _json_err(f"Failed to update plan: {e}")
 
 

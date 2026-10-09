@@ -66,7 +66,7 @@ def _uuid_from_str(value: str) -> UUID:
     s = str(value).strip()
     try:
         return UUID(s)
-    except Exception:
+    except ValueError:
         hex_only = s.replace("-", "").replace(" ", "")
         if len(hex_only) == 32 and all(c in "0123456789abcdefABCDEF" for c in hex_only):
             return UUID(f"{hex_only[:8]}-{hex_only[8:12]}-{hex_only[12:16]}-{hex_only[16:20]}-{hex_only[20:]}")
@@ -229,7 +229,7 @@ def schedule_notification(
             "current_time": _now().isoformat(),
             "job": job_to_dict(job),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to schedule notification: {e}")
 
 
@@ -282,7 +282,7 @@ def schedule_task(
             "current_time": _now().isoformat(),
             "job": job_to_dict(job),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to schedule task: {e}")
 
 
@@ -322,7 +322,7 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
             "notification_id": str(n.id),
             "channels": channels,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to send notification: {e}")
 
 
@@ -400,7 +400,7 @@ def list_scheduled(include_finished: bool = False) -> str:
             "count": len(jobs),
             "jobs": [job_to_dict(j) for j in jobs],
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list scheduled jobs: {e}")
 
 
@@ -419,7 +419,7 @@ def cancel_scheduled(id: str) -> str:
         updated = plan_service.cancel_job(jid)
         _record_job(updated, "cancelled")
         return _json_ok({"job": job_to_dict(updated)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to cancel job: {e}")
 
 
@@ -479,7 +479,7 @@ def update_scheduled(
             "current_time": _now().isoformat(),
             "job": job_to_dict(updated),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to update job: {e}")
 
 

@@ -116,7 +116,7 @@ def service_health() -> str:
     try:
         from common.health import snapshot
         return _json_ok({"health": snapshot()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read health: {e}", code="internal")
 
 
@@ -135,7 +135,7 @@ def run_diagnostics() -> str:
     try:
         from common.doctor import run_doctor
         return _json_ok({"doctor": run_doctor()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to run the doctor: {e}", code="internal")
 
 
@@ -151,7 +151,7 @@ def list_containers() -> str:
     try:
         import managers.container_manager as cm
         return _json_ok({"containers": cm.list_containers()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_ok({"containers": [], "docker_available": False, "reason": str(e)})
 
 
@@ -167,7 +167,7 @@ def container_logs(name: str, tail: int = 200) -> str:
     try:
         import managers.container_manager as cm
         return _json_ok({"container": name, "log": _tail(cm.get_logs(name, tail=tail), tail)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read container logs: {e}", code="internal")
 
 
@@ -216,7 +216,7 @@ def list_instances(state: Optional[str] = None, agent_id: Optional[str] = None,
             "total": page.get("total"),
             "by_state": store.counts_by_state(workspace=workspace, agent_id=agent_id),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list instances: {e}", code="internal")
 
 
@@ -241,7 +241,7 @@ def instance_logs(instance_id: str, tail: int = 200) -> str:
         text = Path(log_file).read_text(encoding="utf-8", errors="replace")
         return _json_ok({"instance_id": instance_id, "state": instance.get("state"),
                          "log": _tail(text, tail)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read instance logs: {e}", code="internal")
 
 
@@ -264,7 +264,7 @@ def instance_timeline(instance_id: str, max_turns: int = 10) -> str:
             "instance": inst,
             "timeline": history.describe_context(instance_id, max_turns=max_turns),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read instance timeline: {e}", code="internal")
 
 
@@ -283,7 +283,7 @@ def list_sessions(workspace: Optional[str] = None, limit: int = 30) -> str:
         from common import session_service
         page = session_service.query_contexts(workspace=workspace, limit=limit)
         return _json_ok({"sessions": page.get("items", []), "total": page.get("total")})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list sessions: {e}", code="internal")
 
 
@@ -313,7 +313,7 @@ def list_runs(status: Optional[str] = None, agent_id: Optional[str] = None,
             limit=limit,
         )
         return _json_ok({"runs": page.get("items", []), "total": page.get("total")})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list runs: {e}", code="internal")
 
 
@@ -352,7 +352,7 @@ def run_log(run_id: str, tail: int = 200) -> str:
             )
         text = path.read_text(encoding="utf-8", errors="replace")
         return _json_ok({"run_id": run_id, "run": record, "log": _tail(text, tail)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read run log: {e}", code="internal")
 
 
@@ -410,7 +410,7 @@ def search_errors(since_hours: float = 24, agent_id: Optional[str] = None,
             "stale_running_count": stale.get("total"),
             "stale_running": stale.get("items", []),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to search errors: {e}", code="internal")
 
 
@@ -429,7 +429,7 @@ def routing_log(workspace: Optional[str] = None, limit: int = 30) -> str:
         from tasks import service as tasks_service
         entries = tasks_service.get_routing_log(workspace=workspace) or []
         return _json_ok({"entries": entries[:limit], "total": len(entries)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read the routing log: {e}", code="internal")
 
 
@@ -456,7 +456,7 @@ def web_log_recent(limit: int = 20, min_severity: Optional[str] = None,
         page = web_log.query(limit=limit, min_severity=min_severity, agent_id=agent_id)
         return _json_ok({"entries": page.get("items", page.get("entries", [])),
                          "total": page.get("total")})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to read the web log: {e}", code="internal")
 
 
@@ -506,7 +506,7 @@ def costs_summary(since_hours: float = 24, workspace: Optional[str] = None) -> s
             "note": "Costs are estimates from the Models page price map; a model with no "
                     "price set contributes tokens but no cost.",
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to summarise costs: {e}", code="internal")
 
 
@@ -538,7 +538,7 @@ def stop_run(run_id: str, user_approved: bool = False) -> str:
                 code="not_running", extra={"run": record},
             )
         return _json_ok({"run_id": run_id, "stopped": run_manager.stop_run_by_id(run_id)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to stop the run: {e}", code="internal")
 
 
@@ -564,7 +564,7 @@ def stop_instance(instance_id: str, user_approved: bool = False) -> str:
         if not store.get(instance_id):
             return _json_err(f"Instance '{instance_id}' not found", code="not_found")
         return _json_ok({"instance_id": instance_id, "stopped": carrier.stop(instance_id)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to stop the instance: {e}", code="internal")
 
 
@@ -587,7 +587,7 @@ def restart_instance(instance_id: str, user_approved: bool = False) -> str:
             return _json_err(f"Instance '{instance_id}' not found", code="not_found")
         restarted = carrier.restart(instance_id)
         return _json_ok({"instance_id": instance_id, "restarted": restarted is not None})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to restart the instance: {e}", code="internal")
 
 
@@ -610,7 +610,7 @@ def stop_container(name: str, user_approved: bool = False) -> str:
     try:
         import managers.container_manager as cm
         return _json_ok({"container": name, "stopped": cm.stop_container(name)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to stop the container: {e}", code="internal")
 
 
@@ -649,11 +649,11 @@ def prune_run_logs(older_than_days: int = 30, user_approved: bool = False) -> st
                     freed += st.st_size
                     f.unlink()
                     deleted += 1
-            except Exception:
+            except OSError:
                 continue
         return _json_ok({"deleted": deleted, "freed_bytes": freed,
                          "older_than_days": older_than_days})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to prune run logs: {e}", code="internal")
 
 

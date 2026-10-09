@@ -273,8 +273,9 @@ JSON stores are migrated in automatically on first start and renamed to
 | `SHELL_ALLOWLIST_ENABLED` | Global `.env` or `settings.shell_allowlist_enabled` per workspace | `false` (default), `true` | When on, `run_shell` only permits commands whose first word is in `ALLOW_SHELL` | Enable in conservative/shared environments |
 | `CAPABILITY_GUARD` | Global `.env` | `block` (default), `warn`, `off` | Refuses agent tool sets that form the "lethal trifecta" — ingests untrusted content + reads private data + can send data outside. See `tools/capabilities.py` | Leave on `block`; `warn` while auditing an existing roster |
 | `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER` | Global `.env` | `false` (default), `true` | When on, a per-agent `capability_override` is only honoured for agents running container-isolated on a `none` network | Turn on for the hardened posture |
-| `WEB_SEARCH_PROVIDER` | Global `.env` | `""` (default, tool inert), `brave`, `tavily`, `exa` | Search backend for the `web_search` tool | Set with `WEB_SEARCH_API_KEY` to enable web search |
-| `WEB_SEARCH_API_KEY` | Global `.env` | API key string | Credential for the chosen search provider | Required whenever `WEB_SEARCH_PROVIDER` is set |
+| `WEB_SEARCH_PROVIDER` | Global `.env` | `""` (default: a model provider with a key, else inert), `anthropic`, `openai`, `brave`, `tavily`, `exa` | Search backend for the `web_search` tool; `anthropic` and `openai` use that provider's own search tool on its model key | Set a search service with `WEB_SEARCH_API_KEY`; a model provider needs only its model key |
+| `WEB_SEARCH_API_KEY` | Global `.env` | API key string | Credential for Brave, Tavily or Exa | Required for those three; unused by `anthropic` and `openai` |
+| `WEB_SEARCH_MODEL` | Global `.env` | model id | The small model that drives an `anthropic` or `openai` search | Empty picks one per provider |
 | `WEB_SEARCH_MAX_RESULTS` | Global `.env` | `5` (default) | Results per search — every result is untrusted text entering the context window | Keep small; injection surface scales with it |
 | `WEB_FETCH_MAX_CHARS` | Global `.env` | `20000` (default) | Hard cap on the text `fetch_url` returns after HTML is stripped | Lower for small-context models |
 | `WEB_FETCH_TIMEOUT` | Global `.env` | `20.0` (default, seconds) | Per-request timeout for search and fetch | — |

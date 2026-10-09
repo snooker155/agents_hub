@@ -10,6 +10,11 @@ The flow the dashboard drives:
     POST /api/agent-import/register       promote the inspected clone, register
     POST /api/agent-import/discard        throw away an inspected clone
     POST /api/agent-import/{id}/recheck   re-run checks on an imported agent
+    GET  /api/agent-import/{id}/docker    Docker mode: image and containers
+    POST /api/agent-import/{id}/docker/mode   switch between url and docker
+    POST /api/agent-import/{id}/docker/build  build the image from the clone
+    POST /api/agent-import/{id}/docker/start  start a workspace's container
+    POST /api/agent-import/{id}/docker/stop   stop one or every container
 
 ``register`` succeeds even when the readiness report says the agent cannot run
 yet: the record lands in the agent list with the report attached, so the missing
@@ -20,6 +25,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from agents import registry
@@ -62,6 +68,22 @@ class DiscardRequest(BaseModel):
 
 class RecheckRequest(BaseModel):
     url: Optional[str] = None
+    workspace: Optional[str] = None
+
+
+class RuntimeModeRequest(BaseModel):
+    # "url": the operator runs the service and gives its address.
+    # "docker": the hub builds the image and runs a container per workspace.
+    mode: str
+
+
+class DockerBuildRequest(BaseModel):
+    no_cache: bool = False
+
+
+class DockerContainerRequest(BaseModel):
+    # The workspace whose container to start or stop; stop with none stops
+    # every container of the agent.
     workspace: Optional[str] = None
 
 
@@ -289,3 +311,53 @@ async def get_import_details(agent_id: str):
         "topology": remote.get("topology") or {},
         "readiness": remote.get("readiness") or {},
     }
+
+
+# ── Docker mode ─────────────────────────────────────────────────────────────
+#
+# The hub runs the imported agent's container itself, one per workspace, with
+# that workspace's folder mounted at its own host path (and its eval folder
+# when that lives elsewhere). See agents/importer/docker_runtime.py.
+
+def _import_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{agent_id}/docker")
+async def get_docker_status(agent_id: str):
+    try:
+        return await run_in_threadpool(import_service.docker_status, agent_id)
+    except import_service.ImportError_ as exc:
+        raise _import_error(exc)
+
+
+@router.post("/{agent_id}/docker/mode")
+async def set_docker_mode(agent_id: str, req: RuntimeModeRequest):
+    try:
+        return await run_in_threadpool(import_service.set_runtime_mode, agent_id, req.mode)
+    except import_service.ImportError_ as exc:
+        raise _import_error(exc)
+
+
+@router.post("/{agent_id}/docker/build")
+async def build_docker_image(agent_id: str, req: DockerBuildRequest = DockerBuildRequest()):
+    try:
+        return await run_in_threadpool(import_service.docker_build, agent_id, no_cache=req.no_cache)
+    except import_service.ImportError_ as exc:
+        raise _import_error(exc)
+
+
+@router.post("/{agent_id}/docker/start")
+async def start_docker_container(agent_id: str, req: DockerContainerRequest = DockerContainerRequest()):
+    try:
+        return await run_in_threadpool(import_service.docker_start, agent_id, req.workspace)
+    except import_service.ImportError_ as exc:
+        raise _import_error(exc)
+
+
+@router.post("/{agent_id}/docker/stop")
+async def stop_docker_container(agent_id: str, req: DockerContainerRequest = DockerContainerRequest()):
+    try:
+        return await run_in_threadpool(import_service.docker_stop, agent_id, req.workspace)
+    except import_service.ImportError_ as exc:
+        raise _import_error(exc)

@@ -32,6 +32,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from mcp_client import store as mcp_store
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
@@ -215,7 +218,7 @@ async def test_server(server_id: str, workspace: Optional[str] = None):
     record = _found_or_404(ws, server_id)
     try:
         tools = await asyncio.to_thread(discover, record)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         message = str(exc) or exc.__class__.__name__
         mcp_store.record_status(ws, server_id, error=message)
         return {"ok": False, "error": message, "tools": []}

@@ -261,7 +261,7 @@ def snapshot_if_changed(
                  spec_json, definition_json, note),
             )
         return version
-    except Exception:
+    except Exception:  # noqa: BLE001 - a failed version snapshot must not block the registry write
         log.warning("agent_versions: snapshot of '%s' failed, continuing without it",
                     agent_id, exc_info=True)
         return None

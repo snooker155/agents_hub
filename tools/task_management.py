@@ -5,6 +5,7 @@ Provides tools for creating, updating, and managing tasks in the system.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -42,6 +43,8 @@ from tasks.keys import looks_like_key
 from tools._json import json_err, json_ok
 from workspace import create_workspace_folder as ws_create_workspace_folder
 
+log = logging.getLogger(__name__)
+
 # -------------------- helpers --------------------
 
 def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
@@ -57,7 +60,7 @@ def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
     s = str(value).strip()
     try:
         return UUID(s)
-    except Exception:
+    except ValueError:
         if looks_like_key(s):
             t = svc_find_task_by_key(s)
             if t is not None:
@@ -99,8 +102,8 @@ def _task_to_dict(t: Task) -> Dict[str, Any]:
         if data.get(ts) is not None:
             try:
                 data[ts] = data[ts].isoformat()
-            except Exception:
-                pass
+            except AttributeError:
+                log.debug("_task_to_dict: best-effort step failed", exc_info=True)
 
     return data
 
@@ -181,7 +184,8 @@ def _inherit_project(parent_id: Optional[UUID]) -> tuple[Optional[str], Optional
     if active_tid:
         try:
             current = svc_get_task(_uuid_from_str(active_tid))
-        except Exception:
+        except Exception:  # noqa: BLE001 - an unreadable controlling task means no inherited project
+            log.debug("controlling task lookup failed", exc_info=True)
             current = None
         if current is not None:
             return getattr(current, "project", None), getattr(current, "project_id", None)
@@ -272,7 +276,7 @@ def create_task(
         )
         _record_task(task, "created")
         return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create task: {e}")
 
 
@@ -319,7 +323,7 @@ def add_subtask(parent_id: str, title: str, description: str = "", depends: Opti
         )
         _record_task(task, "created")
         return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to add subtask: {e}")
 
 
@@ -344,7 +348,7 @@ def get_task(id: str) -> str:
             return _task_not_found(id)
         _record_task(task, "viewed")
         return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to get task: {e}")
 
 
@@ -403,7 +407,7 @@ def list_tasks() -> str:
             "by_status": by_status,
             "tasks": compact,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list tasks: {e}")
 
 class UpdateTaskInput(BaseModel):
@@ -528,7 +532,7 @@ def update_task(
                 name = _Path(workspace).name
                 p = ws_create_workspace_folder(name)
                 fields["workspace"] = p.name
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
                 return _json_err(f"Failed to set workspace '{workspace}': {e}")
         if depends is not None:
             fields["depends"] = [_uuid_from_str(d) for d in depends]
@@ -542,7 +546,7 @@ def update_task(
         return _json_ok({"task": _task_to_dict(updated)})
     except IllegalTransition as e:
         return _json_err(str(e), code="illegal_transition")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to update task: {e}")
 
 
@@ -570,7 +574,7 @@ def stop_task(id: str) -> str:
             return _json_err("Task not found", code="not_found", extra={"id": id})
         _record_task(updated, "stopped")
         return _json_ok({"task": _task_to_dict(updated)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to stop task: {e}")
 
 
@@ -599,7 +603,7 @@ def block_task(id: str, reason: str) -> str:
             return _json_err("Task not found", code="not_found", extra={"id": id})
         _record_task(updated, "blocked")
         return _json_ok({"task": _task_to_dict(updated)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to block task: {e}")
 
 
@@ -645,7 +649,7 @@ def set_task_dependencies(id: str, depends: List[str]) -> str:
         fresh = svc_get_task(tid) or updated
         _record_task(fresh, "updated")
         return _json_ok({"task": _task_to_dict(fresh)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to set dependencies: {e}")
 
 
@@ -685,7 +689,7 @@ def create_sequence(task_ids: List[str], sequence_id: Optional[str] = None, star
         return _json_ok({"sequence_id": seq_id, "tasks": tasks})
     except ValueError as e:
         return _json_err(str(e), code="not_found")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create sequence: {e}")
 
 
@@ -714,7 +718,7 @@ def get_task_result(task_id: str) -> str:
             return _json_err("No result found for this task", code="not_found")
         _record_task(svc_get_task(tid), "viewed")
         return _json_ok({"task_id": task_id, "result": result})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to get task result: {e}")
 
 

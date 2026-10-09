@@ -46,6 +46,9 @@ from pydantic import BaseModel, Field
 from common import identity, rate_limit
 from instances import carrier
 from notify.inbound import seen_delivery, verify_signature
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/external", tags=["external"])
 
@@ -376,6 +379,6 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
             "instance_id": instance_id,
             "agent_id": agent_id,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         call.log(500, f"error:{str(e)[:120]}")
         raise HTTPException(status_code=500, detail=str(e))

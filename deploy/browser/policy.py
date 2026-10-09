@@ -176,7 +176,7 @@ def check_url(url: str, policy: Policy, *, resolve: bool = True) -> Tuple[bool, 
     """
     try:
         parsed = urlparse(str(url).strip())
-    except Exception:
+    except ValueError:
         return False, "malformed URL"
     if parsed.scheme not in NETWORK_SCHEMES:
         return False, f"scheme {parsed.scheme!r} is not allowed"

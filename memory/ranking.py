@@ -23,11 +23,14 @@ memory pool reaches, so nothing here depends on the dependency being present.
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
+
+log = logging.getLogger(__name__)
 
 # Reciprocal rank fusion constant. 60 is the value the original RRF paper used
 # and the one every implementation since has kept: large enough that the top of
@@ -128,7 +131,8 @@ def bm25_scores(query: str, documents: Sequence[str]) -> List[float]:
         from rank_bm25 import BM25Okapi  # type: ignore
 
         return [float(s) for s in BM25Okapi(tokenised).get_scores(q)]
-    except Exception:
+    except Exception:  # noqa: BLE001 - rank_bm25 is optional, any failure falls back to the built-in scorer
+        log.debug("rank_bm25 failed, using built-in scorer", exc_info=True)
         return _BM25(tokenised).scores(q)
 
 
@@ -154,7 +158,7 @@ def _recency_boost(occurred_at: Optional[datetime]) -> float:
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=timezone.utc)
         age_days = max(0.0, (datetime.now(timezone.utc) - moment).total_seconds() / 86400.0)
-    except Exception:
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return 0.0
     return RECENCY_WEIGHT * (0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS))
 
@@ -250,7 +254,7 @@ def pool_candidates(
     for slot, data in (getattr(mem, "structured_data", {}) or {}).items():
         try:
             data_str = _json.dumps(data, ensure_ascii=False, default=str)
-        except Exception:
+        except (TypeError, ValueError, RecursionError):
             data_str = str(data)
         out.append(Candidate(
             key=f"{pid}:slot:{slot}",
@@ -282,7 +286,7 @@ def pool_candidates(
             for ep in episodes[:episode_limit]:
                 try:
                     details = _json.dumps(ep.details, ensure_ascii=False, default=str) if ep.details else ""
-                except Exception:
+                except (TypeError, ValueError, RecursionError):
                     details = ""
                 out.append(Candidate(
                     key=f"{pid}:episode:{ep.id}",
@@ -299,7 +303,7 @@ def pool_candidates(
                         "occurred_at": ep.occurred_at.isoformat(),
                     },
                 ))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - episodes are an optional ranking source, the rest still ranks
+            log.debug("episode candidates skipped", exc_info=True)
 
     return out

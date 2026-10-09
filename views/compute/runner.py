@@ -34,8 +34,8 @@ def _publish(view_id: str, event: Dict[str, Any]) -> None:
     try:
         from common.session_broker import publish_event
         publish_event(f"view:{view_id}", event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a live-frame relay failure must never stop the compute
+        log.debug("relay of view event failed", exc_info=True)
 
 
 def run_compute(
@@ -68,7 +68,7 @@ def run_compute(
     for i in range(steps):
         try:
             rt.step(dt)
-        except Exception as exc:               # numerical blowup → stop cleanly
+        except Exception as exc:  # noqa: BLE001 - any runtime failure (numerical blowup) stops the run cleanly and is reported
             stopped = f"runtime error: {exc}"
             break
         if i % stream_every == 0:

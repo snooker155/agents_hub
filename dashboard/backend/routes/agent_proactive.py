@@ -22,7 +22,7 @@ Dashboard summary shows only the pulses of workspaces the caller can see.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -78,7 +78,7 @@ def _audit(action: str, request: Request, agent_id: str, details: Dict[str, Any]
 
 
 @router.get("/api/proactive/summary")
-async def proactive_summary(workspace: Optional[str] = None, hours: int = 24, request: Request = None):
+async def proactive_summary(workspace: Optional[str] = None, hours: int = 24, request: Request = cast(Request, None)):
     """The Dashboard widget: every pulse that is on, and what its ticks of
     the last ``hours`` came to (acted, quiet, blocked, error, skipped)."""
     if workspace:
@@ -88,7 +88,7 @@ async def proactive_summary(workspace: Optional[str] = None, hours: int = 24, re
 
 
 @router.get("/api/agents/{agent_id}/proactive")
-async def get_proactive(agent_id: str, limit: int = 50, request: Request = None):
+async def get_proactive(agent_id: str, limit: int = 50, request: Request = cast(Request, None)):
     _require(request, agent_id, WS_VIEWER)
     return _status_or_404(agent_id, limit=limit)
 

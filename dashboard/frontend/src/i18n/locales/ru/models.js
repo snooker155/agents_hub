@@ -2,7 +2,7 @@ export default {
   models: 'Модели',
   theCatalogOfProvidersAnd: 'Каталог провайдеров и моделей, которые может вызывать этот хаб, и во что они обошлись.',
   loadingCatalog: 'Загрузка каталога…',
-  tabs: { catalog: 'Каталог', usage: 'Расход', special: 'Специальные модели', endpoint: 'Endpoint /v1' },
+  tabs: { catalog: 'Каталог', usage: 'Расход', special: 'Специальные модели', cache: 'Кэш промптов', endpoint: 'Endpoint /v1' },
   specialFor: 'Специальные модели пространства',
   specialInWorkspaceSettings: 'Также в настройках пространства →',
   specialLocalHint: 'Локальные модели распознавания и синтеза речи (Whisper, Piper, Kokoro, Kitten, Supertonic) скачивает и запускает среда моделей хаба:',

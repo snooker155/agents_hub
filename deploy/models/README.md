@@ -1,11 +1,12 @@
 # Model runtime
 
 The hub's own local model server: GGUF files served by llama.cpp's
-`llama-server`, and speech models (Whisper, Piper, Kokoro, Kitten, Supertonic) served by
+`llama-server`, speech models (Whisper, Piper, Kokoro, Kitten, Supertonic) and
+image models (Qwen-Image through mflux, Apple silicon) served by
 `speech_worker.py`, one subprocess per loaded model, behind a token-protected
-API and one OpenAI-compatible gateway (`/v1`, including `/v1/audio/speech` and
-`/v1/audio/transcriptions`) that the hub registers as the provider
-`hub-local`. Full guide: [docs/local-models.md](../../docs/local-models.md).
+API and one OpenAI-compatible gateway (`/v1`, including `/v1/audio/speech`,
+`/v1/audio/transcriptions` and `/v1/images/generations`) that the hub
+registers as the provider `hub-local`. Full guide: [docs/local-models.md](../../docs/local-models.md).
 
 ## How it runs
 
@@ -26,7 +27,7 @@ the release build for the platform (POST /engines/llama/install), or set
 ```sh
 pip install -r deploy/models/requirements.txt
 pip install -r deploy/models/requirements-speech.txt   # optional: speech models
-# Voice cloning (Chatterbox, Chatterbox MLX, OpenVoice) installs from the Local tab into environments of its own.
+# Voice cloning (Chatterbox, Chatterbox MLX, Qwen3-TTS, OpenVoice) installs from the Local tab into environments of its own.
 MODELS_TOKEN=<token> MODELS_DIR=$HOME/.agents_hub/models python deploy/models/app.py
 ```
 
@@ -52,6 +53,9 @@ Then set `AGENTS_HUB_MODELS_URL=http://127.0.0.1:8200` and
 | `MODELS_SPEECH_PYTHON` | this interpreter | the Python the speech workers run under |
 | `MODELS_TORCH_PYTHON` | `MODELS_DIR/.engines/torch/bin/python` | the Python the voice cloning engines (Chatterbox, OpenVoice) run under; the Local tab's Install makes that environment |
 | `MODELS_MLX_AUDIO_PYTHON` | `MODELS_DIR/.engines/mlx-audio/bin/python` | the Python Chatterbox MLX runs under (Apple silicon only) |
+| `MODELS_MFLUX_PYTHON` | an interpreter on this machine that already has mflux (the one `mflux-generate` runs under, a uv tool, pipx, a conda env), else `MODELS_DIR/.engines/mflux/bin/python` | the Python the image engine (mflux, Apple silicon only) runs under; set it to skip the search |
+| `MODELS_MAX_IMAGE_LOADED` | 1 | image models loaded at once, a pool of their own |
+| `MODELS_IMAGE_LOAD_TIMEOUT` | 900 | seconds an image model may take to load |
 | `MODELS_TORCH_INDEX` | CPU-only wheels on Linux without `nvidia-smi`, else PyPI | where their torch comes from; empty for PyPI |
 | `MODELS_TTS_DEVICE` | auto: CUDA, else Apple's MPS, else CPU | where Chatterbox runs (`cuda`, `mps`, `cpu`); OpenVoice's converter stays on the CPU unless CUDA |
 | `MODELS_WHISPER_DEVICE` | `auto` | `cpu` or `cuda` for faster-whisper |

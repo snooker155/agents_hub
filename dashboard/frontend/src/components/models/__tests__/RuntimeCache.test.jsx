@@ -107,6 +107,17 @@ describe('RuntimeCache', () => {
     expect(screen.getByTestId('cache-models')).toHaveTextContent('old-model');
   });
 
+  it('stands open on its own tab, even before any call was counted', async () => {
+    getRuntimeCache.mockResolvedValue({ data: CACHE });
+    render(<I18nProvider><RuntimeCache usage={null} standalone ready /></I18nProvider>);
+    expect(screen.getByTestId('runtime-cache-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await waitFor(() => expect(getRuntimeCache).toHaveBeenCalled());
+    expect(await screen.findByText('What the cache holds')).toBeInTheDocument();
+    // Nothing to fold: the header is not a toggle.
+    fireEvent.click(screen.getByTestId('runtime-cache-toggle'));
+    expect(screen.getByTestId('runtime-cache-toggle')).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('shows the columns as a table on demand', async () => {
     renderCard();
     fireEvent.click(screen.getByTestId('runtime-cache-toggle'));

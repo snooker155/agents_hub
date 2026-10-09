@@ -244,6 +244,7 @@ async def me(request: Request):
     if principal is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     payload = identity.principal_dict(principal)
+    assert payload is not None  # principal is not None just above
     if identity.current_mode() == MULTI and principal.kind == "user":
         from common import personal_workspace
         payload["personal_workspace"] = personal_workspace.ensure_for_principal(principal)

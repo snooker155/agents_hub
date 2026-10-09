@@ -14,7 +14,7 @@ Two rules shape the answers:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/models/local", tags=["local-models"])
 
 
-def _raise(exc: lm.LocalModelError) -> None:
+def _raise(exc: lm.LocalModelError) -> NoReturn:
     code = exc.status_code
     status = code if code is not None and 400 <= code < 500 else 502
     raise HTTPException(status_code=status, detail=str(exc))
@@ -321,9 +321,9 @@ def runtime_load(body: LoadBody) -> Dict[str, Any]:
     except lm.LocalModelError as exc:
         _raise(exc)
     name = str(result.get("name") or lm.model_name(body.file))
-    if result.get("kind") in lm.SPEECH_KINDS:
-        # A speech model is not a chat model: it is picked per workspace as a
-        # special model, so the chat catalog stays as it was.
+    if result.get("kind") in lm.SPECIAL_KINDS:
+        # A speech or image model is not a chat model: it is picked per
+        # workspace as a special model, so the chat catalog stays as it was.
         try:
             lm.ensure_hub_local_backend()
         except Exception as exc:  # noqa: BLE001 - the model is loaded; say what failed around it
@@ -349,7 +349,7 @@ def runtime_unload(body: UnloadBody) -> Dict[str, Any]:
         result = lm.RuntimeClient().unload(body.file)
     except lm.LocalModelError as exc:
         _raise(exc)
-    if result.get("kind") in lm.SPEECH_KINDS:
+    if result.get("kind") in lm.SPECIAL_KINDS:
         return result
     try:
         lm.catalog_set_enabled(lm.model_name(body.file), False, seed=_catalog_seed)

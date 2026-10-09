@@ -20,6 +20,7 @@ runner catches the exception and turns it into the appropriate AgentResult.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 import threading
@@ -34,6 +35,8 @@ from agents.callbacks.run_statistics import (
     extract_token_usage,
     normalize_usage,
 )
+
+log = logging.getLogger(__name__)
 
 # Reasoning scratchpad tools are exempt from the tool-repetition guard: calling
 # them repeatedly is the agent reasoning more, not looping. Kept in sync with
@@ -126,7 +129,8 @@ class AskUserGuard(BaseCallbackHandler):
             return content
         try:
             return str(output)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a guard probing odd provider payloads must not break the run
+            log.debug("_output_text: ignored error", exc_info=True)
             return ""
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
@@ -135,7 +139,8 @@ class AskUserGuard(BaseCallbackHandler):
             return
         try:
             data = json.loads(text)
-        except Exception:
+        except ValueError:
+            log.debug("on_tool_end: ignored error", exc_info=True)
             return
         if isinstance(data, dict) and data.get(ASK_USER_SENTINEL):
             raise AskUserSignal(
@@ -300,8 +305,8 @@ class ToolRepetitionGuard(BaseCallbackHandler):
                         text = " ".join(t for t in texts if t).strip()
                         if text:
                             self.last_llm_text = text
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a guard probing odd provider payloads must not break the run
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
     def on_tool_start(self, serialized: Any, input_str: Any, **kwargs: Any) -> None:
         name: str = (serialized.get("name", "") if isinstance(serialized, dict) else "") or ""
@@ -518,8 +523,8 @@ def _response_model(response: Any) -> str:
         name = out.get("model_name") or out.get("model")
         if name:
             return str(name)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a guard probing odd provider payloads must not break the run
+        log.debug("_response_model: ignored error", exc_info=True)
     try:
         for grp in (getattr(response, "generations", []) or []):
             for g in grp:
@@ -527,8 +532,8 @@ def _response_model(response: Any) -> str:
                 name = md.get("model_name") or md.get("model")
                 if name:
                     return str(name)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a guard probing odd provider payloads must not break the run
+        log.debug("_response_model: ignored error", exc_info=True)
     return ""
 
 

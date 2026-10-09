@@ -584,7 +584,7 @@ def _ensure_legacy_imported() -> None:
         return
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - change notification is best effort and must not fail the registry write
         log.warning("agents.json is unreadable and was left in place: %s", exc)
         return
     items = raw.get("agents") if isinstance(raw, dict) else raw
@@ -757,7 +757,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     if not isinstance(capacity, int):
         try:
             capacity = int(capacity)
-        except Exception:
+        except (TypeError, ValueError):
+            log.debug("_validate_agent_dict: ignored error", exc_info=True)
             capacity = 1
 
     memory_type = ad.get("memory_type", "none")
@@ -1147,7 +1148,8 @@ def system_agent_ids() -> List[str]:
     """
     try:
         specs = _maybe_reload()
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry yields no system agents, callers use constants
+        log.debug("system_agent_ids: ignored error", exc_info=True)
         return []
     return [spec.id for spec in specs if spec.system]
 
@@ -1366,7 +1368,7 @@ def _save_record(
             snapshot_if_changed(stored.id, next_spec=effective, actor=actor, note=note)
             for child_id in descendants:
                 snapshot_if_changed(child_id, actor=actor, note=f"before '{stored.id}' changed")
-        except Exception:
+        except Exception:  # noqa: BLE001 - change notification is best effort and must not fail the registry write
             log.warning("could not snapshot version history for '%s'", stored.id, exc_info=True)
 
     if snapshot.in_snapshot_mode():
@@ -1410,13 +1412,13 @@ def _notify_agents_changed(agent_id: str | None = None) -> None:
     try:
         from agents.agent_cache import invalidate
         invalidate(agent_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - change notification is best effort and must not fail the registry write
+        log.debug("_notify_agents_changed: ignored error", exc_info=True)
     try:
         from common.session_broker import notify_change
         notify_change("agents", agent_id=agent_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - change notification is best effort and must not fail the registry write
+        log.debug("_notify_agents_changed: ignored error", exc_info=True)
 
 
 def set_default_chat_agent(agent_id: str) -> None:

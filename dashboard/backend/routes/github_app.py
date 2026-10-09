@@ -269,6 +269,7 @@ async def github_callback(request: Request):
             return response
         return _back_to_account(request, "error", "bad_state")
 
+    assert saved is not None  # state_ok above implies a decoded state
     user_id = str(saved.get("uid") or "")
     actor = {"actor_id": user_id, "actor_kind": "user", "actor_name": None}
     if params.get("error"):

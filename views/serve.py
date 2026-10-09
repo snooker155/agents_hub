@@ -38,7 +38,7 @@ def is_allowed_upstream(url: str) -> bool:
     """True when ``url`` is an ``http(s)://<loopback>[:port]`` upstream."""
     try:
         p = urlparse(str(url))
-    except Exception:
+    except ValueError:
         return False
     if p.scheme not in ("http", "https"):
         return False
@@ -58,7 +58,8 @@ def launch_enabled() -> bool:
     try:
         from common.config import settings
         return bool(getattr(settings, "views_serve_launch_enabled", False))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable settings object means launching stays off
+        log.debug("launch setting unreadable", exc_info=True)
         return False
 
 
@@ -108,8 +109,8 @@ def start_service(view_id: str, command: str, cwd: str, port: int,
         # Popen dup'ed the fd (or failed); the parent's handle is done either way.
         try:
             out.close()
-        except Exception:
-            pass
+        except OSError:
+            log.debug("closing view_serve log handle failed", exc_info=True)
 
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
@@ -136,8 +137,8 @@ def stop_service(view_id: str) -> bool:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - stopping a service is best-effort, the entry is already dropped
+        log.debug("stopping view_serve process failed", exc_info=True)
     log.info("view_serve stopped view=%s pid=%s", view_id, proc.pid)
     return True
 

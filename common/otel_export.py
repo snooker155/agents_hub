@@ -212,12 +212,13 @@ def _with_process(run: Dict[str, Any]) -> Dict[str, Any]:
     """*run* with its structured payload (model and tool calls) when the record
     does not carry it. Called on the export thread only; any failure leaves the
     run as it was, and the run then exports as its one span."""
-    proc = run.get("process") if isinstance(run.get("process"), dict) else {}
+    process = run.get("process")
+    proc: Dict[str, Any] = process if isinstance(process, dict) else {}
     if "tool_calls" in proc or "llm_invocations" in proc:
         return run
     try:
         from managers.runs.store import get_run_process
-        full = get_run_process(str(run.get("run_id") or ""))
+        full = get_run_process(str(run.get("run_id") or "")) or {}
     except Exception:  # noqa: BLE001 - child spans are a bonus, the run's own span still goes
         log.debug("otel_export: could not read the run payload", exc_info=True)
         return run
@@ -245,7 +246,8 @@ def _child_spans(run: Dict[str, Any], trace_id: str, parent_id: str, start_ns: i
     they are scaled down to fit. Prompts, tool inputs and outputs are never
     exported.
     """
-    proc = run.get("process") if isinstance(run.get("process"), dict) else {}
+    process = run.get("process")
+    proc: Dict[str, Any] = process if isinstance(process, dict) else {}
     llms = [c for c in (proc.get("llm_invocations") or []) if isinstance(c, dict)]
     tools = [c for c in (proc.get("tool_calls") or []) if isinstance(c, dict)]
     steps: List[tuple[str, Dict[str, Any]]] = []
@@ -309,7 +311,8 @@ def build_span(run: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(run.get("run_id") or "")
     agent_id = str(run.get("agent_id") or "")
     status = str(run.get("status") or "")
-    proc = run.get("process") if isinstance(run.get("process"), dict) else {}
+    process = run.get("process")
+    proc: Dict[str, Any] = process if isinstance(process, dict) else {}
     usage = proc.get("token_usage") or {}
     duration_ms = proc.get("duration_ms", run.get("duration_ms"))
     started = run.get("started_at") or run.get("created_at")

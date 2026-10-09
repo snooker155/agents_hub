@@ -450,7 +450,8 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
         _write_log(log_file, log_lines + ["(cancelled)", "", f"Finished: {finished}", "Status  : stopped"])
         update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "cancelled"})
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any stream failure is stored on the run and reported to the client
+        log.debug("flow stream failed", exc_info=True)
         finished = utc_iso()
         _write_log(log_file, log_lines + [f"(stream error: {e})", "", f"Finished: {finished}", "Status  : failed"])
         update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": str(e)})
@@ -690,7 +691,8 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
             workspace=request.workspace,
             agent_id=f"flow:{request.flow_id}",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a flow chat without a session still runs
+        log.debug("flow chat session create failed", exc_info=True)
         session_id = None
 
     # Shared history / attached-context blocks — same builders as
@@ -884,7 +886,8 @@ async def _run_chat_team_pipeline(request: ChatRequest):
             workspace=request.workspace,
             agent_id=f"team:{request.team_id}",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a team chat without a session still runs
+        log.debug("team chat session create failed", exc_info=True)
         session_id = None
 
     # The goal carries the conversation, not just the last line: a team asked to

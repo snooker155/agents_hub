@@ -22,7 +22,11 @@ reads the catalog first and falls back to (3). Returns 0 when unknown.
 """
 from __future__ import annotations
 
+import logging
+
 from providers.catalog import load_catalog_raw
+
+log = logging.getLogger(__name__)
 
 # Built-in fallback (max input tokens), matched by substring against the model
 # id, most-specific first — same convention as the pricing defaults. Indicative
@@ -69,7 +73,8 @@ def _litellm_context_window(model: str) -> int:
         litellm.suppress_debug_info = True  # no console banner on unknown models
         info = litellm.get_model_info(model)
         return int(info.get("max_input_tokens") or info.get("max_tokens") or 0)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional third-party library, any failure means unknown
+        log.debug("litellm has no window for %s", model, exc_info=True)
         return 0
 
 
@@ -102,8 +107,8 @@ def get_model_context_window(provider: str, model: str) -> int:
                     if n:
                         return n
                     break
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - documented to never raise, falls back to the static map
+        log.debug("catalog context window lookup failed", exc_info=True)
     return fallback_context_window(provider, model)
 
 

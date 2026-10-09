@@ -35,10 +35,13 @@ by hand, and nothing that grants access to anything:
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 #: Folders never walked into.
 SKIP_DIRS = frozenset({
@@ -237,23 +240,79 @@ def _safe_relpath(path: str) -> Optional[PurePosixPath]:
     return rel
 
 
+#: Moves every workspace's eval folders out of the workspace tree:
+#: ``<AGENTS_HUB_EVAL_ROOT>/<workspace>/<run>/<case>`` instead of
+#: ``<workspace>/.eval/<run>/<case>``. An imported agent in Docker mode
+#: mounts that folder next to the workspace (agents/importer/docker_runtime.py).
+EVAL_ROOT_ENV = "AGENTS_HUB_EVAL_ROOT"
+
+
+def _custom_eval_root() -> Optional[Path]:
+    raw = (os.environ.get(EVAL_ROOT_ENV) or "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def eval_root(workspace: Optional[str]) -> Optional[Path]:
+    """The folder a workspace's eval cases run under, or None without a
+    workspace: ``<workspace>/.eval`` by default, ``<AGENTS_HUB_EVAL_ROOT>/<ws>``
+    when that variable is set. The folder is not created here."""
+    name = (workspace or "").strip()
+    if not name:
+        return None
+    custom = _custom_eval_root()
+    if custom is not None:
+        return custom / name
+    from workspace import WORKSPACES_ROOT
+    return (Path(WORKSPACES_ROOT) / name).resolve() / ".eval"
+
+
+def workspace_of_eval_dir(path: Optional[str]) -> Optional[str]:
+    """The workspace an eval case folder under a custom ``AGENTS_HUB_EVAL_ROOT``
+    belongs to (its first path component under that root), or None when the
+    folder is not under a custom root. The default location is under the
+    workspace itself, which ``workspace_name_from_path`` already reads."""
+    custom = _custom_eval_root()
+    if custom is None or not path:
+        return None
+    try:
+        rel = Path(str(path)).resolve().relative_to(custom)
+    except (ValueError, OSError):
+        return None
+    return rel.parts[0] if rel.parts else None
+
+
 def isolation_dir(workspace: Optional[str], eval_run_id: str, case_id: str,
                   attempt: int = 1) -> Path:
-    """Where a case with an artifact runs: ``<workspace>/.eval/<run>/<case>``
+    """Where a case with an artifact runs: ``<eval_root(workspace)>/<run>/<case>``
     (with ``-<attempt>`` past the first attempt, so repeats never share a
-    tree), or a fresh temporary directory when there is no workspace folder."""
+    tree), or a fresh temporary directory when there is no workspace folder.
+    Under a custom ``AGENTS_HUB_EVAL_ROOT`` the folder is always made, since
+    its whole point is a place that can be mounted ahead of the run."""
     leaf = case_id if attempt <= 1 else f"{case_id}-{attempt}"
     if workspace:
         try:
-            from workspace import WORKSPACES_ROOT
-            ws_root = (Path(WORKSPACES_ROOT) / workspace).resolve()
-            if ws_root.is_dir():
-                target = ws_root / ".eval" / eval_run_id / leaf
+            root = eval_root(workspace)
+            if root is not None and (_custom_eval_root() is not None or root.parent.is_dir()):
+                target = root / eval_run_id / leaf
                 target.mkdir(parents=True, exist_ok=True)
                 return target
         except Exception:  # noqa: BLE001 - fall back to a temporary directory
-            pass
+            log.debug("eval snapshot directory unavailable", exc_info=True)
     return Path(tempfile.mkdtemp(prefix=f"eval-{eval_run_id}-{leaf}-"))
+
+
+def locate_isolation_dir(workspace: Optional[str], eval_run_id: str, case_id: str,
+                         attempt: int = 1) -> Optional[str]:
+    """The folder :func:`isolation_dir` made for this cell, if it still
+    exists; None otherwise (no workspace, or the temporary fallback, which
+    cannot be found again). Used where grading happens after the fact, in a
+    batch run's later process, with no ``work_dir`` in hand."""
+    root = eval_root(workspace)
+    if root is None:
+        return None
+    leaf = case_id if attempt <= 1 else f"{case_id}-{attempt}"
+    target = root / eval_run_id / leaf
+    return str(target) if target.is_dir() else None
 
 
 def materialize_artifact(artifact: Dict[str, Any], directory: Path) -> Path:
@@ -284,5 +343,6 @@ def materialize_artifact(artifact: Dict[str, Any], directory: Path) -> Path:
 
 __all__ = [
     "snapshot_task", "collect_files", "materialize_artifact", "isolation_dir",
+    "eval_root", "workspace_of_eval_dir", "locate_isolation_dir", "EVAL_ROOT_ENV",
     "is_secret_name", "SECRET_PATTERNS", "SKIP_DIRS",
 ]

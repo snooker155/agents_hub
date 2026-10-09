@@ -12,7 +12,7 @@ and `tools/special_models.py` (the tools).
 
 | Purpose | Tool | Providers | Price unit |
 |---------|------|-----------|------------|
-| Images | `generate_image` | OpenAI (gpt-image-1, dall-e-3), Google (Gemini image, Imagen), any OpenAI compatible server | per image |
+| Images | `generate_image` | OpenAI (gpt-image-1, dall-e-3), Google (Gemini image, Imagen), the hub runtime (Qwen-Image on a Mac), any OpenAI compatible server | per image |
 | Video | `generate_video` | OpenAI (Sora), Google (Veo) | per second |
 | Speech | `synthesize_speech` | OpenAI (gpt-4o-mini-tts, tts-1), Google (Gemini TTS) | per 1000 characters |
 | Transcription | `transcribe_audio` | OpenAI (gpt-4o-transcribe, whisper-1), Google (Gemini), any OpenAI compatible server | per call |
@@ -23,7 +23,10 @@ openai adapter (Settings, custom providers): a local Stable Diffusion behind
 LocalAI or a whisper server answers the same calls. The hub's own runtime
 (provider "Hub runtime", `hub-local`) runs open speech and transcription
 models downloaded from Hugging Face: Whisper, Piper, Kokoro, Kitten and Supertonic; see
-[local models](local-models.md#speech-models). For it the form suggests no
+[local models](local-models.md#speech-models). On Apple silicon it draws
+too: Qwen-Image through mflux ([image models](local-models.md#image-models)),
+picked here for the Images purpose like any other model; `size` and
+`quality` reach it, a picture takes minutes. For it the form suggests no
 cloud model names, and the voice field offers the chosen model's own voices. Anthropic has no image,
 video or audio models, so it is not offered for these purposes.
 

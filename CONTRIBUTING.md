@@ -67,21 +67,43 @@ cd dashboard/frontend
 npx eslint .                    # frontend code
 ```
 
-**Blind excepts (BLE001, S110):** `common/`, `managers/`, `notify/`, `a2a/`,
-`mcp_client/` and `workspace/` are clean of bare `except Exception` and
-`try/except/pass` and enforce both rules as errors (`pyproject.toml`'s
-`per-file-ignores`). Every other package still has unreviewed ones, so CI
-does not fail on those outright; instead `scripts/ci/ruff_baseline.py check`
-compares the current count per file and rule code against
-`scripts/ci/ruff_baseline.txt` and fails only when a file gets a *new* one.
-The rule: don't add a new blind except or a swallowed exception anywhere in
-the codebase. If you touch code that has one, narrow it (catch a specific
-exception, or add logging) rather than leave it or add another next to it.
-When you do narrow one, re-record the baseline so the count drops with it:
+**Blind excepts (BLE001, S110):** every package is clean of bare
+`except Exception` and `try/except/pass`, and ruff enforces both rules as
+errors everywhere. A broad except is allowed only when the block genuinely
+has to survive anything (a background loop, a best-effort step, a tool
+wrapper that hands the error back to the model); then it names the reason
+on the line (`except Exception:  # noqa: BLE001 - <what must keep working>`)
+and logs what it swallows, at least `log.debug(..., exc_info=True)`.
+Otherwise catch the exceptions the block can raise. CI also runs
+`scripts/ci/ruff_baseline.py check`, which compares the count per file
+against `scripts/ci/ruff_baseline.txt`; the baseline is empty and stays
+empty, so the step is a second guard against a `noqa`-less broad except
+slipping into a package ruff's config misses.
 
-```bash
-python scripts/ci/ruff_baseline.py record
-```
+**Types (pyright):** `pyrightconfig.json` lists the packages pyright checks in
+basic mode (`common/` and `dashboard/backend/routes/` today), and CI runs
+`pyright` on them. The same deal as
+the blind excepts: a package joins the list once it is clean, and stays clean.
+Run `pip install pyright && pyright` before pushing a change under one of the
+listed packages; to add a package, append it to `include` and fix what pyright
+reports there first.
+
+**Coverage:** CI measures how much of the code the tests run and fails when
+it drops below a floor: `fail_under` under `[tool.coverage.report]` in
+`pyproject.toml` for the backend, `coverage.thresholds` in
+`dashboard/frontend/vite.config.js` for the frontend. The floors are what the
+suites reached when the gate was added, not a goal. Raise them when you add
+tests; never lower them to get a change through.
+
+**Dependencies:** `requirements.lock` is the pinned resolution CI and the
+backend image install. Refresh it with `scripts/refresh_lock.sh` (pins that
+still fit stay), `scripts/refresh_lock.sh --upgrade-package <name>` for one
+package, or `--upgrade` for everything; a weekly workflow
+(`.github/workflows/lock-refresh.yml`) does the last and opens a PR to `dev`.
+Dependabot covers npm, GitHub Actions and Docker base images. CI runs
+`scripts/ci/audit_lock.py`, which fails on a known vulnerability in the lock
+unless `scripts/ci/audit_ignore.txt` accepts it with a reason, and on an
+accepted one that has gone away.
 
 ## Adding an agent tool
 
@@ -289,7 +311,9 @@ The `t()` function walks the dot path through the namespace object. If a key is 
 
 ## Git conventions
 
-Branch `dev` for work. The main branch is `main`, used for releases. Small focused commits with imperative subject lines:
+Branch `dev` for work, and the target of every pull request, Dependabot's
+included. The main branch is `main`, used for releases: after a release is
+cut and tagged on `dev`, a pull request from `dev` brings `main` up to it. Small focused commits with imperative subject lines:
 
 ```bash
 git log --oneline -15   # see the house style
@@ -309,7 +333,7 @@ Rules:
 - Subject line: imperative mood, capitalised first word, no period, under 70 characters
 - Body: explain why, not what. What is in the diff
 - One focused change per commit. Split large work across multiple commits
-- Test your changes: `pytest tests/ -q -n auto` and `cd dashboard/frontend && npx vitest run` both pass
+- Test your changes: `python -m pytest tests/ -q -n auto` and `cd dashboard/frontend && npx vitest run` both pass
 - No force push to main. If a PR needs a rebase, the author does it on their branch
 
 Run `git gc` occasionally because the repository is large (currently `.git` is about 40MB).

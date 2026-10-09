@@ -27,6 +27,9 @@ from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeReques
 from common.session_service import add_event_to_session
 from common.paths import PROJECTS_FILE
 from common import access, audit, identity
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -97,13 +100,13 @@ async def create_task(task: TaskCreate):
     if requested_ws:
         try:
             ws_path = str(create_workspace_folder(Path(requested_ws).name))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=400, detail=f"Failed to resolve workspace '{requested_ws}': {e}")
     else:
         # Auto-create if none provided
         try:
             ws_path = str(create_workspace_folder())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=500, detail=f"Failed to auto-create workspace: {e}")
 
     # Store only the workspace folder name
@@ -129,15 +132,15 @@ async def create_task(task: TaskCreate):
             _proj = _pstore.get(task.project_id)
             if _proj:
                 project_name = project_folder_name(_proj.name)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("create_task: best-effort step failed", exc_info=True)
 
     # Ensure the project subfolder exists inside the workspace
     if project_name and ws_name:
         try:
             resolve_project_root(ws_name, project_name)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("create_task: best-effort step failed", exc_info=True)
 
     # Resolve dependency references (UUIDs or task keys like "DEMO-12")
     depends_uuids = None
@@ -337,21 +340,21 @@ async def set_task_workspace(task_id: UUID, payload: TaskWorkspaceUpdate):
         try:
             p = create_workspace_folder(payload.workspace_name)
             name = p.name
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=400, detail=f"Failed to create workspace '{payload.workspace_name}': {e}")
     elif payload.workspace:
         try:
             name = Path(payload.workspace).name
             # create if missing
             _ = create_workspace_folder(name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=400, detail=f"Invalid workspace '{payload.workspace}': {e}")
     else:
         # auto
         try:
             p = create_workspace_folder()
             name = p.name
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=500, detail=f"Failed to auto-create workspace: {e}")
 
     updated = tasks_service.update_task(task_id, workspace=name)
@@ -393,7 +396,8 @@ async def list_workspace_files(task_id: UUID):
         run_started_at = datetime.fromisoformat(raw_start)
         if run_started_at.tzinfo is None:
             run_started_at = run_started_at.replace(tzinfo=timezone.utc)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("list_workspace_files: falling back after a failure", exc_info=True)
         return {"files": []}
 
     project_name = (getattr(t, "project", None) or "").strip() or None
@@ -405,7 +409,8 @@ async def list_workspace_files(task_id: UUID):
                 continue
             try:
                 rel = p.relative_to(root).as_posix()
-            except Exception:
+            except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+                log.debug("list_workspace_files: falling back after a failure", exc_info=True)
                 continue
             if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _INTERNAL_PREFIXES):
                 continue
@@ -413,11 +418,11 @@ async def list_workspace_files(task_id: UUID):
                 mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
                 if mtime >= run_started_at:
                     files.append(rel)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("list_workspace_files: best-effort step failed", exc_info=True)
         files.sort()
         return {"files": files}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -479,7 +484,7 @@ async def get_task_file_content(task_id: UUID, path: str):
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -528,7 +533,7 @@ async def assign_agent(task_id: UUID, assign: AgentAssign):
         raise HTTPException(status_code=e.status, detail=e.detail)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -556,7 +561,8 @@ async def approve_assignment(task_id: UUID):
                     from common.session_service import get_or_create_task_session
                     session_id = get_or_create_task_session(title=t.title, workspace=t.workspace, task_id=str(task_id))
                     tasks_service.update_task(task_id, session_id=session_id)
-                except Exception:
+                except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+                    log.debug("approve_assignment: falling back after a failure", exc_info=True)
                     session_id = None
             run_id = str(uuid4())
             run_manager.upsert_run({
@@ -588,8 +594,8 @@ async def approve_assignment(task_id: UUID):
                     "timestamp": run_manager.utc_now_iso(),
                     "description": f"Assignment of {t.assigned_agent_type} approved by user",
                 })
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("approve_assignment: best-effort step failed", exc_info=True)
 
         # Post-approval orchestrator hooks based on workspace settings.
         try:
@@ -622,12 +628,12 @@ async def approve_assignment(task_id: UUID):
                     workspace=ws_name,
                     run_id=run_id,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("approve_assignment: best-effort step failed", exc_info=True)
 
         updated = tasks_service.get_task(task_id)
         return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False,}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -650,8 +656,8 @@ async def reject_assignment(task_id: UUID):
                 "timestamp": run_manager.utc_now_iso(),
                 "description": f"Assignment of {t.assigned_agent_type} rejected by user",
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("reject_assignment: best-effort step failed", exc_info=True)
 
     # Determine the status to restore: go back to the pre-assignment status if
     # it was a finished state, otherwise fall back to todo.
@@ -708,7 +714,7 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
         flow_run_id = str(node_run.get("flow_run_id") or "")
         try:
             resumed = flow_launcher.resume_flow_run(flow_run_id, answer)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
             raise HTTPException(status_code=400, detail=str(e))
         return {"task": task_to_dict(tasks_service.get_task(task_id)), **resumed}
 
@@ -758,8 +764,8 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
         try:
             from common.session_service import rebind_continuations_to_run
             rebind_continuations_to_run(str(task_id), run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("answer_task: best-effort step failed", exc_info=True)
         if session_id:
             try:
                 add_event_to_session(session_id, {
@@ -768,11 +774,11 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
                     "timestamp": run_manager.utc_now_iso(),
                     "description": f"User answered: {answer}",
                 })
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("answer_task: best-effort step failed", exc_info=True)
         updated = tasks_service.get_task(task_id)
         return {"task": task_to_dict(updated), "run_id": run_id}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -814,7 +820,7 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
     # A run parked at its money cap: stopping it needs no agent, so this is
     # answered before the agent checks below (the approving branch makes them).
     if str(pending.get("kind") or "") == "budget":
-        return _answer_budget_pause(request, task_id, t, pending, agent_id, payload)
+        return _answer_budget_pause(request, task_id, t, pending, agent_id or "", payload)
     if not agent_id:
         raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
     if not registry.get_agent(agent_id):
@@ -866,8 +872,8 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
         try:
             from common.session_service import rebind_continuations_to_run
             rebind_continuations_to_run(str(task_id), run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("approve_task_call: best-effort step failed", exc_info=True)
         if session_id:
             try:
                 add_event_to_session(session_id, {
@@ -879,11 +885,11 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
                         + (f": {note}" if note else "")
                     ),
                 })
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("approve_task_call: best-effort step failed", exc_info=True)
         updated = tasks_service.get_task(task_id)
         return {"task": task_to_dict(updated), "run_id": run_id, "approved": payload.approved}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -929,7 +935,7 @@ def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[
     params = {"description": resume_desc}
     try:
         run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
     tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
     tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
@@ -940,8 +946,8 @@ def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[
     try:
         from common.session_service import rebind_continuations_to_run
         rebind_continuations_to_run(str(task_id), run_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_answer_budget_pause: best-effort step failed", exc_info=True)
     if session_id:
         try:
             add_event_to_session(session_id, {
@@ -950,8 +956,8 @@ def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[
                 "timestamp": run_manager.utc_now_iso(),
                 "description": f"Money cap raised to ${new_cap:.2f}" + (f": {note}" if note else ""),
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_answer_budget_pause: best-effort step failed", exc_info=True)
     return {"task": task_to_dict(tasks_service.get_task(task_id)), "run_id": run_id, "approved": True}
 
 
@@ -1052,7 +1058,8 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     run_id = str(uuid4())
     try:
         root = create_workspace_folder(t.workspace or None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("decompose_task: falling back after a failure", exc_info=True)
         root = create_workspace_folder()
     log_dir = root / ".logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1061,8 +1068,8 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     # Mark assignment/state for visibility in UI
     try:
         tasks_service.assign_agent(task_id, "decomposer", None, run_id=run_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("decompose_task: best-effort step failed", exc_info=True)
 
     prompt = (
         "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
@@ -1123,20 +1130,16 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                         verbose=(payload.verbose if payload and payload.verbose is not None else True)
                     )
 
-                    result = agent.run(prompt, run_id)
+                    result = agent.run(prompt, run_id=run_id)
                     if result.ok:
                         fh.write(str(result.agent_output) + "\n")
                     else:
                         fh.write(f"error: {result.error}\n")
-                except Exception as e:  # capture errors
+                except Exception as e:  # noqa: BLE001 - a failed decomposition is written to the run log
                     fh.write(f"error: {e}\n")
                 fh.flush()
         finally:
-            try:
-                # Decomposition does not complete the parent task
-                pass
-            except Exception:
-                pass
+            pass  # Decomposition does not complete the parent task
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"run_id": run_id}

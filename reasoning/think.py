@@ -9,8 +9,12 @@ observation the model can read on the next turn.
 Based on the technique described in:
   "Thinking Clearly: Improving Reasoning with a Think Tool" (Anthropic, 2025)
 """
+import logging
+
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+log = logging.getLogger(__name__)
 
 
 class ThinkInput(BaseModel):
@@ -113,8 +117,8 @@ def make_think(mode: str = "standard", on_think=None):
         if on_think is not None:
             try:
                 on_think()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - gate hook must never break the think tool
+                log.debug("on_think hook failed", exc_info=True)
         return thought
 
     return _think

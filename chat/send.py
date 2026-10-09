@@ -282,7 +282,7 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
             f"Agent '{request.agent_id}' has no YAML definition and cannot run in chat mode",
             status=400,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any agent failure is stored on the run and returned as a send error
         finished = utc_iso()
         _write_log(log_file, log_lines + [f"(error: {e})", "", f"Finished: {finished}"])
         update_run(run_id, {"status": "failed", "finished_at": finished,

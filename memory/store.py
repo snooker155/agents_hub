@@ -62,7 +62,7 @@ class MemoryStore:
         for obj in raw:
             try:
                 out.append(SharedMemory(**obj))
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return out
 
@@ -86,7 +86,7 @@ class MemoryStore:
             return None
         try:
             return SharedMemory(**doc)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     def add(self, memory: SharedMemory, timeout: float = 10.0, *,

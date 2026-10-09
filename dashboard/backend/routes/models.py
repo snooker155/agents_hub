@@ -38,6 +38,9 @@ from providers import all_provider_ids as _all_provider_ids, list_backends as _l
 from providers.catalog import load_catalog_raw as _load_catalog_raw, save_catalog_raw as _save_catalog_raw
 from providers.context_windows import fallback_context_window as _fallback_ctx
 from providers.reasoning_profile import reasoning_profile
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -253,7 +256,8 @@ def _seed_custom_defaults(catalog: dict) -> None:
 def _load_catalog() -> dict:
     try:
         data = _load_catalog_raw()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_load_catalog: falling back after a failure", exc_info=True)
         data = None
     if isinstance(data, dict):
         # Ensure every known provider key exists (built-ins + custom backends)
@@ -383,7 +387,8 @@ async def get_catalog():
     """
     try:
         stored = _load_catalog_raw()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("get_catalog: falling back after a failure", exc_info=True)
         stored = None
     catalog = _load_catalog()
     if stored is None:
@@ -432,13 +437,15 @@ def _prune_workspace_models(catalog: dict) -> None:
     enabled = {(p, m["id"]) for p, e in catalog.items() for m in e.get("models", []) if m.get("enabled")}
     try:
         from workspace import list_workspace_folders, get_workspace_metadata, update_workspace_metadata
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_prune_workspace_models: falling back after a failure", exc_info=True)
         return
     for folder in list_workspace_folders():
         name = folder.name
         try:
             meta = get_workspace_metadata(name)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_prune_workspace_models: falling back after a failure", exc_info=True)
             continue
         updates: dict = {}
         md = meta.get("model_default") or {}
@@ -452,8 +459,8 @@ def _prune_workspace_models(catalog: dict) -> None:
         if updates:
             try:
                 update_workspace_metadata(name, updates)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("_prune_workspace_models: best-effort step failed", exc_info=True)
 
 
 @router.put("")

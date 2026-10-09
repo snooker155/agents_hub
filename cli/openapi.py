@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json as json_mod
+import logging
 import os
 import re
 import time
@@ -34,6 +35,8 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.table import Table
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schema: fetch, cache
@@ -67,8 +70,8 @@ def fetch_schema(hub, *, refresh: bool = False) -> dict:
             payload = json_mod.loads(cache_file.read_text())
             if time.time() - payload.get("fetched_at", 0) < CACHE_TTL_SECONDS:
                 return payload["schema"]
-        except Exception:
-            pass  # A corrupt or unreadable cache is refetched, not fatal.
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            log.debug("corrupt or unreadable schema cache, refetching", exc_info=True)
 
     if getattr(hub, "kind", "") == "http":
         schema = hub.request("GET", "/openapi.json")

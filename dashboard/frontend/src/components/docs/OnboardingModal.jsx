@@ -9,8 +9,9 @@ import FirstModelForm from '../setup/FirstModelForm';
 import { useI18n } from '../../i18n';
 
 // ---------------------------------------------------------------------------
-// OnboardingModal — auto-opens on first launch (tracked in localStorage) and
-// is otherwise dismissed. It can always be re-opened from the Docs section.
+// OnboardingModal: auto-opens on first launch (tracked in localStorage) and
+// is otherwise dismissed. Multi mode only; a single operator gets the first
+// run instead (docs/installation.md, "The first run in the browser"). It can always be re-opened from the Docs section.
 // Mounted once, near the app root (in Layout), so it overlays every page.
 //
 // What it shows depends on the guided setup (useSetupGuide, docs/assistant.md
@@ -70,7 +71,9 @@ export default function OnboardingModal() {
 
   // Nothing decided yet (the guide is still loading), dismissed already, or
   // a guide that is running or over: there is nothing left for this to open.
-  if (closed || !guide || guide.active || guide.finished_at) return null;
+  // Outside multi mode the first run (components/firstRun) took its place:
+  // its last screen offers the same ways on, once, for the whole install.
+  if (closed || !guide || !guide.multi || guide.active || guide.finished_at) return null;
 
   const needsModel = Boolean(guide.needs_model);
 

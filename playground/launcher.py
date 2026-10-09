@@ -23,12 +23,15 @@ other caller that wants a real process now goes through.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from playground import runner, store
 from playground.models import SimRun, utc_iso
+
+log = logging.getLogger(__name__)
 
 
 def _log_dir() -> Path:
@@ -88,8 +91,8 @@ def start_scenario_run(
                 {"scenario_id": scenario_id, "workspace": ws},
                 run_id=run.sim_run_id,
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - the task link is best effort, the scenario run still starts
+            log.debug("task executor assignment failed", exc_info=True)
 
     from runtime.entity_launch import dispatch, execution_mode_for
 

@@ -14,8 +14,11 @@ exists).
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable, Optional
+
+log = logging.getLogger(__name__)
 
 DEFAULT_PREFIX = "TASK"
 
@@ -57,8 +60,8 @@ def prefix_for_task(project_id: Optional[str], workspace: Optional[str]) -> str:
             proj = ProjectStore(PROJECTS_FILE).get(str(project_id))
             if proj and proj.name:
                 return derive_prefix(proj.name)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - an unreadable project falls back to the workspace prefix
+            log.debug("project prefix lookup failed", exc_info=True)
     ws = (workspace or "").strip()
     if ws and ws != "default":
         return derive_prefix(ws)

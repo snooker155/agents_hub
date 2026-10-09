@@ -9,6 +9,7 @@ import {
   sampleWorkspaceSpecialModel, updateWorkspaceSpecialModels,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
+import SpeechLanguagesField from './SpeechLanguagesField';
 import { useToast, errorDetail } from '../toast';
 import { useI18n } from '../../i18n';
 import useVoiceSample from '../useVoiceSample';
@@ -71,6 +72,11 @@ function ConnectionCheck({ id, sig, state, onCheck }) {
  * voice's own language, else in the page's; ``sample`` is what the backend
  * reads it with, null while there is no model to read it.
  */
+// Options only some models take: shown when the model's own answer
+// (voices_for, `options`) lists them, the hub runtime's cloning models for
+// temperature; a cloud API would refuse the field.
+const GATED_OPTIONS = ['temperature'];
+
 function VoicePicker({ id, workspace, value, onChange, hint, info, fallbackNames, sample }) {
   const { t, language } = useI18n();
   const names = info?.voices || fallbackNames;
@@ -198,6 +204,8 @@ export default function WorkspaceSpecialModels({ workspace }) {
       next[p.id] = {
         provider: entry.provider || '', model: entry.model || '',
         price_usd: entry.price_usd ?? '', options: { ...(entry.options || {}) },
+        // A voice per language (speech only, providers/speech_languages.py).
+        languages: { ...(entry.languages || {}) },
       };
     }
     setDraft(next);
@@ -303,6 +311,9 @@ export default function WorkspaceSpecialModels({ workspace }) {
         provider: entry.provider, model: entry.model.trim(),
         price_usd: priceOrNull(entry.price_usd),
         options: Object.fromEntries(Object.entries(entry.options || {}).filter(([, v]) => String(v).trim())),
+        // Kept only with the provider they were set for: another provider's models are not these.
+        ...(p.id === 'speech' && entry.provider === (payload.own?.speech?.provider || entry.provider)
+          && Object.keys(entry.languages || {}).length ? { languages: entry.languages } : {}),
       };
     }
     body.custom = draft.custom.map((c) => ({
@@ -492,7 +503,9 @@ export default function WorkspaceSpecialModels({ workspace }) {
             )}
             {entry.provider && Object.keys(p.options).length > 0 && (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                {Object.entries(p.options).map(([key, hint]) => (key === 'voice' ? (
+                {Object.entries(p.options)
+                  .filter(([key]) => !GATED_OPTIONS.includes(key) || (voiceInfo?.options || []).includes(key))
+                  .map(([key, hint]) => (key === 'voice' ? (
                   <VoicePicker
                     key={key}
                     id={p.id}
@@ -514,12 +527,22 @@ export default function WorkspaceSpecialModels({ workspace }) {
                     <input
                       value={entry.options[key] || ''}
                       placeholder={hint}
+                      inputMode={key === 'temperature' ? 'decimal' : undefined}
+                      data-testid={`special-${p.id}-${key}`}
                       onChange={(e) => setPurpose(p.id, { options: { ...entry.options, [key]: e.target.value } })}
                       className={`${inputCls} mt-1`}
                     />
                   </label>
                 )))}
               </div>
+            )}
+            {p.id === 'speech' && entry.provider && (
+              <SpeechLanguagesField
+                value={entry.languages}
+                onChange={(languages) => setPurpose(p.id, { languages })}
+                model={entry.model.trim()}
+                voice={entry.options.voice || ''}
+              />
             )}
           </SectionCard>
         );

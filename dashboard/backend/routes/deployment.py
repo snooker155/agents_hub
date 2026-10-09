@@ -64,7 +64,8 @@ def _active_runs() -> List[Dict[str, Any]]:
     for status in ACTIVE_RUN_STATUSES:
         try:
             page = query_runs(status=status, limit=500)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_active_runs: falling back after a failure", exc_info=True)
             continue
         items = page.get("items") if isinstance(page, dict) else page
         for rec in items or []:
@@ -93,7 +94,8 @@ def _active_entity_runs() -> List[Dict[str, Any]]:
     try:
         from common import entity_runs
         recs = entity_runs.list_runs(active=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_active_entity_runs: falling back after a failure", exc_info=True)
         return []
     out = []
     for rec in recs:
@@ -116,7 +118,8 @@ def _entity_runs_section(entity_active: List[Dict[str, Any]]) -> Dict[str, Any]:
     try:
         from common import entity_runs
         counts = entity_runs.counts_by_kind()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_entity_runs_section: falling back after a failure", exc_info=True)
         counts = {}
     active = [{k: v for k, v in rec.items() if k != "checkpoint"} for rec in entity_active]
     return {"counts_by_kind": counts, "active": active}
@@ -160,7 +163,8 @@ def _instances() -> List[Dict[str, Any]]:
     try:
         from instances import carrier
         items = carrier.list_resident(live=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_instances: falling back after a failure", exc_info=True)
         return []
     return [{
         "instance_id": i.get("instance_id"), "agent_id": i.get("agent_id"), "label": i.get("label"),
@@ -188,7 +192,8 @@ def _containers() -> List[Dict[str, Any]]:
     try:
         from managers import container_manager
         return container_manager.list_containers()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_containers: falling back after a failure", exc_info=True)
         return []
 
 
@@ -208,11 +213,13 @@ def build_map() -> Dict[str, Any]:
 
     try:
         member_rows = members.list_members()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("build_map: falling back after a failure", exc_info=True)
         member_rows = []
     try:
         lease_rows = leases.all_leases()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("build_map: falling back after a failure", exc_info=True)
         lease_rows = []
     by_owner: Dict[str, List[str]] = defaultdict(list)
     for lease in lease_rows:
@@ -234,12 +241,14 @@ def build_map() -> Dict[str, Any]:
         queue = run_queue.stats()
         queued = run_queue.list_queue(statuses=[run_queue.STATUS_QUEUED, run_queue.STATUS_LEASED,
                                                 run_queue.STATUS_RUNNING], limit=100)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("build_map: falling back after a failure", exc_info=True)
         queue, queued = {}, []
     try:
         from notify import outbound
         outbox = outbound.stats()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("build_map: falling back after a failure", exc_info=True)
         outbox = {}
 
     hosts = sorted({str(m.get("host") or "") for m in member_rows}

@@ -23,6 +23,7 @@ duplicates. All writes carry `source: knowledge_extract` provenance.
 """
 from __future__ import annotations
 
+import logging
 import json
 import re
 from datetime import datetime, timezone
@@ -33,6 +34,8 @@ from uuid import uuid4
 from common.docstore import DocStore
 from common.paths import pool_extractions_file
 from memory.graph_extract import _normalize_token, _resolve_workspace_model
+
+log = logging.getLogger(__name__)
 
 # Per-call caps — extraction should distill, not transcribe.
 MAX_SLOTS_PER_CALL = 8
@@ -117,8 +120,8 @@ def _build_pool_context(pool_id: str) -> str:
             titles = [n.get("title", "") for n in mem.notes if not n.get("title", "").startswith(JOURNAL_PREFIX)]
             if titles:
                 lines.append("Notes: " + ", ".join(titles[:20]))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - pool context is optional for extraction, an unreadable pool is left out
+        log.debug("pool slots and notes context skipped", exc_info=True)
     try:
         from memory.graph import GraphStore
 
@@ -129,8 +132,8 @@ def _build_pool_context(pool_id: str) -> str:
             lines.append("Graph entity types: " + ", ".join(k for k, _ in types))
         if rels:
             lines.append("Graph relations: " + ", ".join(k for k, _ in rels))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - pool context is optional for extraction, an unreadable graph is left out
+        log.debug("graph context skipped", exc_info=True)
     return "\n".join(lines) if lines else "(memory pool is empty)"
 
 
@@ -450,7 +453,7 @@ def _persist_proposal(pool_id: str, proposal: dict) -> dict:
             from memory.tool import _persist
 
             _persist(store, mem)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed persist is reported in the result and the rest continue
             result["errors"].append(f"slot/note persist failed: {e}")
 
     if proposal["episodes"]:
@@ -470,7 +473,7 @@ def _persist_proposal(pool_id: str, proposal: dict) -> dict:
                     details={"source": PROVENANCE},
                 ))
                 result["episodes_recorded"] += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed persist is reported in the result and the rest continue
             result["errors"].append(f"episode persist failed: {e}")
 
     if proposal["triples"] or proposal["slots"]:
@@ -486,7 +489,7 @@ def _persist_proposal(pool_id: str, proposal: dict) -> dict:
                     tgt_node, _ = gstore.upsert_node(t["target"]["type"], t["target"]["name"])
                     gstore.add_edge(src_node.id, tgt_node.id, t["relation"], properties={"source": PROVENANCE})
                     result["edges_added"] += 1
-                except Exception as ge:
+                except Exception as ge:  # noqa: BLE001 - one bad triple is reported and the rest are still added
                     result["errors"].append(f"edge persist failed for {t}: {ge}")
             # Mirror written slots into the graph so `traverse` can reach them.
             # When a typed entity node with the same name already exists (e.g.
@@ -502,9 +505,9 @@ def _persist_proposal(pool_id: str, proposal: dict) -> dict:
                         gstore.upsert_node(twin.type, twin.name, props)
                     else:
                         gstore.upsert_node("slot", slot, props)
-                except Exception as ge:
+                except Exception as ge:  # noqa: BLE001 - one failed slot bridge is reported and the rest continue
                     result["errors"].append(f"slot graph bridge failed for {slot}: {ge}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed graph persist is reported in the result
             result["errors"].append(f"graph persist failed: {e}")
 
     return result
@@ -546,7 +549,7 @@ def _run_extraction(
 
     try:
         llm = build_chat_model(**overrides)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any provider failure is reported in the summary
         summary["ok"] = False
         summary["errors"].append(f"build_chat_model failed: {e}")
         return None
@@ -561,7 +564,7 @@ def _run_extraction(
 
     try:
         resp = llm.invoke(prompt)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any provider failure is reported in the summary
         summary["ok"] = False
         summary["errors"].append(f"llm.invoke failed: {e}")
         return None
@@ -618,8 +621,8 @@ def propose_extraction(
                 s["mode"] = "merge" if s["slot"] in existing_slots else "create"
             for n in proposal["notes"]:
                 n["mode"] = "extend" if n["title"] in existing_notes else "create"
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the create/merge mode hint is optional, proposals stay valid without it
+            log.debug("proposal mode hints skipped", exc_info=True)
 
         summary["proposal"] = proposal
         summary["counts"] = _proposal_counts(proposal)
@@ -633,7 +636,7 @@ def propose_extraction(
         )
         summary["extraction_id"] = entry["id"]
         return summary
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a crash is reported in the summary instead of failing the caller
         summary["ok"] = False
         summary["errors"].append(f"propose_extraction crashed: {e}")
         return summary
@@ -684,7 +687,7 @@ def commit_extraction(
         summary["errors"].extend(persisted.pop("errors", []))
         store.mark_saved(extraction_id)
         return summary
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a crash is reported in the summary instead of failing the caller
         summary["ok"] = False
         summary["errors"].append(f"commit_extraction crashed: {e}")
         return summary
@@ -728,7 +731,7 @@ def extract_knowledge(
         summary["persisted"] = persisted
         summary["errors"].extend(persisted.pop("errors", []))
         return summary
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a crash is reported in the summary instead of failing the caller
         summary["ok"] = False
         summary["errors"].append(f"extract_knowledge crashed: {e}")
         return summary

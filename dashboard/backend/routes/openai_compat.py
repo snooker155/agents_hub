@@ -845,6 +845,7 @@ async def _agent_stream(relay: Any, first: Dict[str, Any], *, completion_id: str
         yield chunk({}, "error", error={"message": error, "type": "api_error"})
         yield "data: [DONE]\n\n"
         return
+    assert done is not None  # a truthy "ok" above came from a done event
     if not streamed_since_boundary and done.get("response"):
         yield chunk({"content": str(done["response"])})
     more: Dict[str, Any] = {"usage": usage} if include_usage else {}

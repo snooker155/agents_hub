@@ -72,6 +72,11 @@ export default {
     cancelFailed: 'Abbrechen nicht möglich.',
     planModel: 'Chatmodell für diesen Rechner: {{label}}, etwa {{size}}',
     ready: 'Alles ist schon vorhanden.',
+    allThere: 'Alles vorhanden',
+    allThereUnloaded: 'Alles vorhanden, Modell nicht geladen',
+    unloadedNote: 'Alles ist heruntergeladen und installiert; nur das Laden des Chatmodells in den Speicher fehlt noch, das erledigt der Knopf rechts.',
+    inProgress: 'Wird vorbereitet',
+    partly: '{{present}} von {{total}} schon vorhanden',
     stepStatus: { todo: 'Offen', running: 'Läuft', done: 'Fertig', skipped: 'Schon vorhanden', error: 'Fehlgeschlagen' },
     steps: {
       runtime: 'Modell-Runtime starten',
@@ -90,6 +95,7 @@ export default {
     chat: 'Chat:',
     transcription: 'Transkription:',
     speech: 'Sprachausgabe:',
+    image: 'Bilder:',
   },
 
 
@@ -121,8 +127,8 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
-    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', chat: 'Chat', cleanup: 'Stimmbereinigung' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', qwen3_tts: 'Qwen3-TTS', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder', chat: 'Chat', cleanup: 'Stimmbereinigung' },
     installed: 'Installiert',
     install: 'Installieren',
     installStarted: '{{engine}} wird installiert…',
@@ -137,8 +143,8 @@ export default {
   voices: {
     title: 'Eigene Stimmen',
     count: '{{count}} aufgenommen',
-    hint: 'Nehmen Sie 20 bis 30 Sekunden Ihrer Sprache auf, und die Stimme erscheint bei den Modellen Chatterbox und OpenVoice, in denselben Stimmlisten wie bei allen anderen Modellen. Chatterbox liest Text in dieser Stimme und kommt ihr am nächsten; auf einem Mac nehmen Sie Chatterbox MLX, doppelt so schnell wie die Sprache selbst, das normale Chatterbox ist nur mit einer NVIDIA-Grafikkarte schnell. OpenVoice überträgt die Klangfarbe schnell auf die Sprache eines anderen Modells, dessen Betonung bleibt.',
-    noModels: 'Um mit diesen Stimmen zu sprechen, laden Sie Chatterbox (auf einem Mac Chatterbox MLX) oder OpenVoice unter den Sprachvorlagen oben und installieren Sie ihre Engine.',
+    hint: 'Nehmen Sie 20 bis 30 Sekunden Ihrer Sprache auf, und die Stimme erscheint bei den Modellen Chatterbox, Qwen3-TTS und OpenVoice, in denselben Stimmlisten wie bei allen anderen Modellen. Chatterbox liest Text in dieser Stimme und kommt ihr am nächsten; auf einem Mac nehmen Sie Chatterbox MLX, doppelt so schnell wie die Sprache selbst, das normale Chatterbox ist nur mit einer NVIDIA-Grafikkarte schnell. Qwen3-TTS (ebenfalls Mac) liest gleichmäßig in zehn Sprachen, Russisch darunter, allein aus der Aufnahme. OpenVoice überträgt die Klangfarbe schnell auf die Sprache eines anderen Modells, dessen Betonung bleibt. Für ein ruhigeres Vorlesen stellen Sie beim Sprachmodell des Arbeitsbereichs eine niedrigere Temperatur ein.',
+    noModels: 'Um mit diesen Stimmen zu sprechen, laden Sie Chatterbox (auf einem Mac Chatterbox MLX oder Qwen3-TTS) oder OpenVoice unter den Sprachvorlagen oben und installieren Sie ihre Engine.',
     empty: 'Noch keine Stimmen.',
     add: 'Stimme aufnehmen',
     name: 'Name der Stimme',
@@ -198,7 +204,7 @@ export default {
     purpose: 'Zweck',
     license: 'Lizenz',
     sort: 'Reihenfolge',
-    purposes: { any: 'Beliebig', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription' },
+    purposes: { any: 'Beliebig', chat: 'Chat', code: 'Code', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder' },
     licenses: { any: 'Beliebig', permissive: 'Frei (Apache, MIT)', 'apache-2.0': 'Apache 2.0', mit: 'MIT', llama: 'Llama', gemma: 'Gemma' },
     sorts: { downloads: 'Downloads', likes: 'Likes', trending: 'Im Trend', updated: 'Zuletzt aktualisiert' },
     noResults: 'Nichts gefunden. Versuchen Sie ein anderes Wort oder entfernen Sie Filter.',
@@ -248,7 +254,7 @@ export default {
     noCalls: 'Noch keine Aufrufe.',
     recent: 'Letzte Aufrufe',
     sources: { hub: 'Agenten des Hubs', endpoint: 'Endpunkt /v1', voice: 'Stimme des Assistenten', direct: 'Direkt' },
-    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription' },
+    kinds: { chat: 'Chat', embeddings: 'Embeddings', speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder' },
     tokensUnknown: 'Das Modell hat keine Tokenzahlen gemeldet',
   },
 

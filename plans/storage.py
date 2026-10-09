@@ -100,7 +100,7 @@ class _ModelStore:
     def _parse_or_none(self, data: Any) -> Optional[M]:
         try:
             return self._parse(data)
-        except Exception:
+        except (ValueError, TypeError):
             return None
 
     def _items(self, docs: Dict[str, Any]) -> List[M]:

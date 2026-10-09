@@ -393,9 +393,15 @@ def _settings_categories() -> Dict[str, Dict[str, Any]]:
     for field, env_key in _RAG_ENV_SECRETS.items():
         rag[field] = bool(os.environ.get(env_key))
 
+    from tools.web import effective_search_provider
+    eff = effective_search_provider()
     web: Dict[str, Any] = {
         "web_search_provider": (cfg.web_search_provider or "").strip().lower(),
         "web_search_api_key_set": bool(cfg.web_search_api_key),
+        # The backend a search uses now: the setting, or a model provider
+        # (Anthropic, OpenAI) on its own key when no search provider is set.
+        "web_search_effective_provider": eff["provider"],
+        "web_search_effective_source": eff["source"],
         "web_search_max_results": cfg.web_search_max_results,
         "web_fetch_max_chars": cfg.web_fetch_max_chars, "web_fetch_timeout": cfg.web_fetch_timeout,
         "web_fetch_max_redirects": cfg.web_fetch_max_redirects,
@@ -421,7 +427,8 @@ def _settings_categories() -> Dict[str, Dict[str, Any]]:
 _SETTING_SUMMARY = {
     "providers": lambda f: f"default: {f.get('default_provider')} / {f.get('model')}",
     "rag": lambda f: f.get("rag_vector_db") or "none",
-    "web": lambda f: f.get("web_search_provider") or "no search provider",
+    "web": lambda f: (f.get("web_search_effective_provider") or f.get("web_search_provider")
+                      or "no search provider"),
     "execution": lambda f: f.get("agent_execution_mode") or "local",
 }
 

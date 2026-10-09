@@ -242,8 +242,9 @@ class BrokerBridge:
                 return False
 
         try:
-            self._redis = redis_module.from_url(self.url)
-            await self._redis.ping()
+            client = redis_module.from_url(self.url)
+            await client.ping()
+            self._redis = client
         except Exception as e:  # noqa: BLE001 - the caller must keep running either way (see docstring)
             log.error(
                 "AGENTS_HUB_BROKER_URL=%s is set but the initial Redis connection failed (%s); "
@@ -324,6 +325,8 @@ class BrokerBridge:
         backoff = _INITIAL_BACKOFF
         while not self._stopping:
             try:
+                if self._redis is None:
+                    raise RuntimeError("broker bridge has no Redis connection")
                 resp = await self._redis.xread({STREAM_KEY: cursor}, block=_XREAD_BLOCK_MS)
                 backoff = _INITIAL_BACKOFF  # a clean read earns a fresh budget
                 if not resp:
@@ -346,7 +349,8 @@ class BrokerBridge:
                 backoff = min(backoff * 2, _MAX_BACKOFF)
                 # The old connection may be wedged; a fresh one is cheap.
                 try:
-                    self._redis = self._redis_module.from_url(self.url)
+                    if self._redis_module is not None:
+                        self._redis = self._redis_module.from_url(self.url)
                 except Exception:  # noqa: BLE001 - reconnect attempt, next loop iteration retries anyway
                     log.debug("broker_bridge: reconnect attempt failed", exc_info=True)
 

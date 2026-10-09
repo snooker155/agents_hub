@@ -496,7 +496,8 @@ class Task(BaseModel):
         """Update the updated_at timestamp to now (UTC)."""
         try:
             object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
-        except Exception:
+        except Exception:  # noqa: BLE001 - frozen or validated models fall back to plain setattr
+            logger.debug("touch via object setattr failed", exc_info=True)
             setattr(self, "updated_at", datetime.now(timezone.utc))
 
     @property
@@ -538,8 +539,8 @@ class Task(BaseModel):
                         return AgentState.stopped
                     if st == "failed":
                         return AgentState.failed
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - an unreadable run record reads as no agent state
+                logger.debug("entity run state read failed", exc_info=True)
             return AgentState.none
         if self.assigned_agent_type and not self.assigned_agent_run_id:
             return AgentState.pending_approval
@@ -563,8 +564,8 @@ class Task(BaseModel):
                         return AgentState.stopped
                     if st in ("failed", "error"):
                         return AgentState.failed
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - an unreadable run record reads as no agent state
+                logger.debug("run state read failed", exc_info=True)
         return AgentState.none
 
 from memory.models import SharedMemory  # noqa: F401 — re-exported for backward compatibility

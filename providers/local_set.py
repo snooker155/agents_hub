@@ -48,6 +48,9 @@ CHAT_LADDER = [
 #: The speech engines and models of the set, taken from the setup presets.
 SPEECH_ID = "kokoro"
 TRANSCRIPTION_ID = "whisper-small"
+#: Kokoro speaks no Russian or German: a Piper voice reads each of those
+#: (providers/speech_languages.py), downloaded in the voice step.
+LANGUAGE_VOICE_IDS = {"ru": "piper-ru", "de": "piper-de"}
 
 #: Seconds between looks at a runtime job, and the longest a step may wait.
 POLL_SECONDS = 2.0
@@ -105,7 +108,8 @@ def _preset(table: List[tuple], wanted: str) -> tuple:
 def presets() -> Dict[str, tuple]:
     from cli.onboard.presets import VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION
     return {"speech": _preset(VOICE_LOCAL_SPEECH, SPEECH_ID),
-            "transcription": _preset(VOICE_LOCAL_TRANSCRIPTION, TRANSCRIPTION_ID)}
+            "transcription": _preset(VOICE_LOCAL_TRANSCRIPTION, TRANSCRIPTION_ID),
+            "languages": {lang: _preset(VOICE_LOCAL_SPEECH, pid) for lang, pid in LANGUAGE_VOICE_IDS.items()}}
 
 
 def _have(client: "lm.RuntimeClient") -> Dict[str, Any]:
@@ -129,6 +133,7 @@ def _hardware(client: "lm.RuntimeClient") -> Dict[str, Any]:
 def plan(workspace: str = "default") -> Dict[str, Any]:
     """What pressing the button would do, with nothing changed: the chosen
     chat model, and each step as ``todo`` or ``skipped`` (already there).
+    ``ready`` is every step present, ``installed`` every step but ``load``.
     Works with the runtime down (everything is ``todo``)."""
     out: Dict[str, Any] = {"available": lm.runtime_configured(), "steps": [], "chat": None}
     if not out["available"]:
@@ -150,12 +155,16 @@ def plan(workspace: str = "default") -> Dict[str, Any]:
         "chat": row[3] in files,
         "load": _chat_loaded(client, row[3]),
         "hearing": bool(engines.get("whisper")) and pre["transcription"][4] in names,
-        "voice": bool(engines.get(pre["speech"][5])) and pre["speech"][4] in names,
+        "voice": bool(engines.get(pre["speech"][5])) and pre["speech"][4] in names
+        and all(bool(engines.get(row[5])) and row[4] in names for row in pre["languages"].values()),
         "assign": _assigned(workspace, pre),
     }
     out["steps"] = [{"id": sid, "label": label, "status": "skipped" if done[sid] else "todo"}
                     for sid, label in STEPS]
     out["ready"] = all(done.values())
+    # Everything is on disk; only loading the chat model (lost on a runtime
+    # restart) may remain. The card folds on this, not on ``ready``.
+    out["installed"] = all(v for k, v in done.items() if k != "load")
     return out
 
 
@@ -352,8 +361,15 @@ def _assign(workspace: str, pre: Dict[str, tuple]) -> List[str]:
     stored = special.stored(workspace)
     entries = dict(stored)
     set_now: List[str] = []
-    if not (stored.get("speech") or {}).get("model"):
-        entries["speech"] = {"provider": lm.HUB_LOCAL_ID, "model": pre["speech"][4], "options": {}}
+    languages = {lang: {"model": row[4]} for lang, row in pre["languages"].items()}
+    speech = stored.get("speech") or {}
+    if not speech.get("model"):
+        entries["speech"] = {"provider": lm.HUB_LOCAL_ID, "model": pre["speech"][4], "options": {},
+                             "languages": languages}
+        set_now.append("speech")
+    elif speech.get("model") == pre["speech"][4] and not speech.get("languages"):
+        # The set's own Kokoro, given before it had a voice per language.
+        entries["speech"] = {**speech, "languages": languages}
         set_now.append("speech")
     if not (stored.get("transcription") or {}).get("model"):
         entries["transcription"] = {"provider": lm.HUB_LOCAL_ID, "model": pre["transcription"][4],
@@ -462,6 +478,19 @@ def _steps(job_id: str, workspace: str, progress: _Progress) -> None:
             progress.set(cur, "running", detail=f"downloading {label}")
             _download(client, repo, progress, cur, f"Downloading {label}", package=package)
             progress.set(cur, "done", detail=label)
+
+        # 6b. a voice for each language Kokoro does not speak, in the same step
+        cur = "voice"
+        for row in pre["languages"].values():
+            have = _have(client)
+            if (have.get("engines") or {}).get(row[5]) and row[4] in (have.get("names") or set()):
+                continue
+            if not (have.get("engines") or {}).get(row[5]):
+                progress.set(cur, "running", detail=f"installing the {row[5]} engine")
+                _install_engine(client, row[5], progress, cur)
+            progress.set(cur, "running", detail=f"downloading {row[1]}")
+            _download(client, row[3], progress, cur, f"Downloading {row[1]}", package=row[4])
+            progress.set(cur, "done", detail=row[1])
 
         # 7. the workspace's speech models
         cur = "assign"

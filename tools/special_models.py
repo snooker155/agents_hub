@@ -283,7 +283,9 @@ def synthesize_speech(text: str, voice: Optional[str] = None, instructions: Opti
     if refused:
         return refused
     try:
-        from providers import media, special
+        from providers import media, special, speech_languages
+        # The text's own language picks its voice, when the workspace set one for it.
+        entry, voice = speech_languages.pick(entry, speech_languages.text_language(text), voice or "")
         ep = special.entry_endpoint(entry, workspace)
         result = media.synthesize_speech(ep, entry["model"], text, voice=voice, instructions=instructions,
                                          options=dict(entry.get("options") or {}))

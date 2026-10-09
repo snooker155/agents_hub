@@ -120,7 +120,13 @@ describe('Health — Diagnostics', () => {
     await waitFor(() => expect(getDoctor).toHaveBeenCalledTimes(1));
     // Exact name: "Prune" also contains the substring "run", so a /run/i
     // regex over-matches it.
-    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    const run = screen.getByRole('button', { name: 'Run' });
+    // The button stays disabled while the mount load is in flight; the first
+    // call above is made synchronously on mount, so on a slow runner the
+    // mocked promise may not have settled yet and a click now would be
+    // dropped. Wait for the load to finish before pressing it.
+    await waitFor(() => expect(run).not.toBeDisabled());
+    fireEvent.click(run);
     await waitFor(() => expect(getDoctor).toHaveBeenCalledTimes(2));
   });
 });

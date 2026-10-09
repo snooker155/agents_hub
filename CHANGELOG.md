@@ -15,6 +15,107 @@ turns that section into the next release.
 
 ### Added
 
+- **`tests_pass` grader**: the first eval grader that reads the files a run
+  left behind rather than its text or its tool trail. It runs a test command
+  (`python -m pytest -q` by default; `command`, `timeout` and `image` are
+  its parameters) in a copy of the case's working directory through the
+  sandbox provider with no network, and scores the share of tests that
+  passed (pytest, jest and TAP summaries are read; otherwise the exit code
+  decides), keeping the output's tail on the result. It is what makes two
+  coding agents, an imported Claude Code and the hub's own, comparable on
+  one eval set. `grade`/`grade_all` take `work_dir`; a batch run finds the
+  folder again with `evals.snapshot.locate_isolation_dir`.
+- **Docker mode for imported agents.** An imported agent whose manifest ships
+  a Dockerfile (Claude Code, Codex, the bundled examples) can be run by the
+  hub itself instead of behind a URL you start by hand: the hub builds the
+  image from the clone and starts one container per workspace, mounting that
+  workspace's folder at its own host path (never the root of all workspaces),
+  plus the workspace's eval folder when `AGENTS_HUB_EVAL_ROOT` keeps those
+  elsewhere, so the path the hub sends with every run, chat or eval case
+  alike, is a directory the agent can edit. Only the manifest's declared
+  environment crosses into the container; the port is published on
+  `127.0.0.1` and read back from the daemon. The choice, the image and the
+  containers are on the agent's page under *Where it runs*; the readiness
+  report follows the mode. New: `agents/importer/docker_runtime.py`,
+  `GET|POST /api/agent-import/{id}/docker[/mode|/build|/start|/stop]`,
+  `AGENTS_HUB_EVAL_ROOT` (`evals.snapshot.eval_root`), and the Claude Code
+  and Codex adapters default their working directory to
+  `AGENTS_HUB_WORKSPACE` when the hub started them.
+- **First run in the browser** for a single operator: a new install opens on
+  a setup screen of its own instead of the app, one decision per screen (the
+  language, light or dark, a model, the default model, the assistant's
+  voice, web search, personal memory, the demo), then a summary with the way
+  in. Only the model is required and the whole of it cannot be skipped; the
+  step is kept on the hub, so a reload goes on where it stopped, and once
+  finished it does not come back (Settings, First setup, runs it again). An
+  install already in use is never stopped by it; `multi` mode keeps the
+  login screen and the welcome window. `GET/POST /api/first-run`,
+  `/api/first-run/context`, `/options`, `/op` (docs/installation.md, "The
+  first run in the browser").
+- The first run's voice screen sets up the voice and **meets the assistant**:
+  it says hello out loud (a real turn, so the model, the speech model and
+  the transcription model are checked together), the person answers by
+  voice and hears the reply. From there every screen carries the assistant
+  (`first_run_screen` on the turn puts the screen in its prompt), and the
+  last screen hands over to it, by voice when it was heard.
+- **A voice per language**: the speech model takes `languages`, a model and
+  voice per language code; an answer is read with the voice of the language
+  it is in, told from its text, and keeps that one voice to its end, a quote
+  in another language included (`/speak`, voice samples,
+  `synthesize_speech`, the browser's own voice). A cloud voice gets a voice
+  per page language in the first run; the local voice and the ready local set
+  add a Piper voice for each language their voice does not speak. The Models
+  page, Special tab, edits the rows and keeps them on save; a change of
+  provider drops them (docs/assistant.md, "A voice per language").
+- Qwen3-TTS as a voice cloning engine of the model runtime (Apple silicon,
+  through mlx-audio): a `mlx-community/Qwen3-TTS-*-Base` checkpoint reads
+  text in a recorded voice from the sample alone, ten languages, Russian
+  among them; two presets on the Local tab, the search finds the rest.
+- The workspace's speech model takes a **temperature** for the runtime's
+  cloning models (Chatterbox, Chatterbox MLX, Qwen3-TTS): lower reads
+  steadier. The field shows only for a model that takes it; the runtime's
+  `/models` lists each model's `options`, and `/v1/audio/speech` passes
+  `temperature` through to the engine.
+
+### Changed
+
+- Chatterbox and Qwen3-TTS read a paragraph in one go (up to 400 and 600
+  characters) instead of a few sentences at a time, so the pace and the
+  intonation hold through it; a blank line still starts a new piece.
+- The Recorded voices card names the model on a Try button when an engine
+  has several models (chatterbox-4bit-mlx and chatterbox-8bit-mlx).
+- The prompt cache moved from a card on the Local tab to a tab of its own
+  on the Models page (`/models?tab=cache`).
+
+- `web_search` can run through the model providers' own search: `anthropic`
+  and `openai` are search providers that use the Messages API and Responses
+  API server-side search tools on the key the Models page holds, so no
+  separate search service or key is needed. With no provider set the hub picks
+  a model provider whose key is configured (the default provider first); the
+  Settings card, `ah setup`, the setup guide and the assistant's settings
+  lookup say which one a search uses. `WEB_SEARCH_MODEL` names the small model
+  that drives such a search.
+- Image models in the hub runtime, on Apple silicon: Qwen-Image through
+  mflux (engine `mflux`, kind `image`), served on `POST /v1/images/generations`
+  and `/v1/images/edits` in OpenAI's shape and picked for a workspace's
+  Images purpose as provider "Hub runtime", so `generate_image` draws
+  locally. A Qwen-Image folder is detected from its four folders, downloaded
+  as a package from the Images preset (`mlx-community/Qwen-Image-2512-8bit`,
+  34 GB, or the 4-bit one) or hard-linked in from LM Studio, loaded in a pool
+  of its own (`MODELS_MAX_IMAGE_LOADED`, `MODELS_IMAGE_LOAD_TIMEOUT`) and
+  counted under kind `image` on the Runtime load card. The engine runs
+  under an interpreter that already has mflux when the machine has one (the
+  one `mflux-generate` runs under, a uv tool, pipx or a conda environment;
+  Install then only adds the worker's web packages there), else installs
+  from the engines row into an environment of its own
+  (`MODELS_MFLUX_PYTHON` pins one). `AGENTS_HUB_IMAGE_TIMEOUT` (default
+  1800 s) is how long the hub's image tool waits for a picture
+  (docs/local-models.md, "Image models").
+
+## [0.10.0] - 2026-10-08
+
+### Added
+
 - The hub as an MCP server (docs/hub-as-mcp-server.md): `POST /v1/mcp`,
   Streamable HTTP, the same for every MCP client. Tools for agents
   (`list_workspaces`, `list_agents`, `ask_agent` with `file_ids`), files
@@ -444,6 +545,28 @@ turns that section into the next release.
   `/api/agents/researcher_agent/...`). The `ah apply` example's agents are
   now `team_researcher` and `team_writer`.
 
+- The frontend's vega, vega-lite and vega-embed moved a major each (6, 6, 7)
+  and katex to 0.19, with the audit fixes for axios, react-router, mermaid
+  and dompurify: `npm audit --omit=dev` reports nothing. Chart views render
+  the same specs as before.
+- The five largest backend modules are packages or module sets now:
+  `routes/projects/`, `routes/agents/`, `deploy/models/app_*.py`,
+  `playground/runner_*.py`, `memory/tool_*.py`. Import paths, route paths
+  and behaviour are unchanged; a contributor opens a 300 to 700 line file
+  instead of a 2000 to 4600 line one. The frontend's `src/api/index.js`,
+  `TaskDetails` and `Docs` pages are split the same way.
+- Every Python package enforces ruff's blind-except rules (BLE001, S110)
+  now, not only `common/` and five others: 1251 broad `except Exception`
+  blocks were reviewed, about 200 narrowed to the exceptions the block can
+  raise, the rest carry a reason and log what they swallow instead of a
+  silent `pass`. `scripts/ci/ruff_baseline.txt` is empty and the
+  per-file-ignores list is gone (CONTRIBUTING.md "Blind excepts").
+- CI type-checks `common/` with pyright in basic mode (`pyrightconfig.json`,
+  CONTRIBUTING.md "Types"); its 44 findings were fixed, among them a
+  four-tuple stored in a ContextVar typed for three, Optional turn ids
+  handed to functions that need a str, and two dead helpers in
+  `common/utils.py`.
+
 ### Fixed
 
 - The proactive routes (`/api/agents/{id}/proactive` and its pause, resume
@@ -455,6 +578,10 @@ turns that section into the next release.
   the suite now gives every test its own.
 - An environment's sandbox `size` picked on the Environments page was
   dropped by the create and update routes and never saved.
+
+- The preview, app and view proxies no longer register duplicate OpenAPI
+  operation ids (one handler serves several methods; they are hidden from
+  the schema now, so the app starts without the FastAPI warnings).
 
 ### Upgrade notes
 

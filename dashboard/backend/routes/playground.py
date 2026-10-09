@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
@@ -42,6 +42,9 @@ from pydantic import BaseModel
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 from common.config import playground_enabled
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/playground", tags=["playground"])
 
@@ -122,7 +125,7 @@ class ScenarioIn(BaseModel):
 
 
 def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> Scenario:
-    kwargs = dict(
+    kwargs: Dict[str, Any] = dict(
         name=data.name.strip(),
         description=data.description,
         # Omitted means unchanged, not cleared: the setup form and the chat both
@@ -462,8 +465,8 @@ async def delete_world(world_id: str, force: bool = False):
     try:
         from common.entity_chat_store import entity_chat_store
         entity_chat_store().delete(WORLD_CHAT_KIND, world_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_world: best-effort step failed", exc_info=True)
     return {"ok": True, "orphaned": users}
 
 
@@ -571,7 +574,8 @@ def _world_workspace_path(spec: WorldSpec) -> Optional[str]:
         ws_path, _ = (resolve_workspace_arg(spec.workspace) if spec.workspace
                       else (None, None))
         return str(ws_path) if ws_path else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_world_workspace_path: falling back after a failure", exc_info=True)
         return None
 
 
@@ -868,8 +872,8 @@ async def delete_scenario(scenario_id: str):
     try:
         from common.entity_chat_store import entity_chat_store
         entity_chat_store().delete(SCENARIO_CHAT_KIND, scenario_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("delete_scenario: best-effort step failed", exc_info=True)
     return {"ok": True}
 
 
@@ -1322,7 +1326,8 @@ def _scenario_workspace_path(scenario) -> Optional[str]:
         from workspace import resolve_workspace_arg
         ws_path, _ = resolve_workspace_arg(scenario.workspace) if scenario.workspace else (None, None)
         return str(ws_path) if ws_path else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_scenario_workspace_path: falling back after a failure", exc_info=True)
         return None
 
 
@@ -1642,8 +1647,10 @@ async def generate_scenario_stream(data: ScenarioGenerateIn):
                 if not result.ok and not result.steps and result.error:
                     raise RuntimeError(result.error)
             else:
-                agent = await asyncio.to_thread(
-                    _scenario_generate_agent, data, ws_path, streaming=True)
+                # create_agent is typed as AgentBase; the scenario creator is a
+                # StandardAgent, which has arun.
+                agent = cast(Any, await asyncio.to_thread(
+                    _scenario_generate_agent, data, ws_path, streaming=True))
                 callback.bind_model(agent.provider or "", agent.model or "")
                 await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
                                  "provider": agent.provider or "", "model": agent.model or ""})

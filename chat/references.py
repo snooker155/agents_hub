@@ -74,7 +74,7 @@ def _json_block(title: str, value: Any, limit: int = 4000) -> List[str]:
         return []
     try:
         text = json.dumps(value, indent=2, ensure_ascii=False, default=str)
-    except Exception:
+    except (TypeError, ValueError):
         text = str(value)
     if len(text) > limit:
         text = text[:limit] + "\n...[truncated]"
@@ -123,7 +123,8 @@ def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
 
     try:
         task = get_task(UUID(entity_id))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable task is simply not attachable
+        log.debug("task read failed", exc_info=True)
         return None
     if task is None:
         return None
@@ -143,7 +144,8 @@ def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
     lines += _prose("Description", getattr(task, "description", ""))
     try:
         subtasks = get_subtasks(task.id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the task is rendered without subtasks
+        log.debug("subtask read failed", exc_info=True)
         subtasks = []
     if subtasks:
         lines += ["", "Subtasks:"]
@@ -153,7 +155,8 @@ def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
         ]
     try:
         result = get_task_result(task.id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the task is rendered without its result
+        log.debug("task result read failed", exc_info=True)
         result = None
     lines += _prose("Latest result", result)
     return {"title": task.title or f"Task {entity_id[:8]}", "body": "\n".join(lines), "workspace": getattr(task, "workspace", None)}
@@ -243,7 +246,8 @@ def _render_project(entity_id: str) -> Optional[Dict[str, str]]:
         from tasks.service import list_tasks
         from common.workspace_context import filter_tasks_for_project
         tasks = filter_tasks_for_project(list_tasks(), entity_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the project is rendered without its tasks
+        log.debug("project tasks read failed", exc_info=True)
         tasks = []
     if tasks:
         lines += ["", f"Tasks ({len(tasks)}):"]
@@ -300,7 +304,8 @@ def _render_scenario(entity_id: str) -> Optional[Dict[str, str]]:
     lines += _json_block("Environment params", scenario.env_params, limit=2000)
     try:
         runs = list_sim_runs(scenario_id=entity_id, limit=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the scenario is rendered without recent runs
+        log.debug("scenario runs read failed", exc_info=True)
         runs = []
     if runs:
         lines += ["", "Recent runs:"]
@@ -351,7 +356,8 @@ def _render_loop(entity_id: str) -> Optional[Dict[str, str]]:
     lines += _prose("Exit criterion", loop.exit_criterion)
     try:
         runs = list_runs(loop_id=entity_id, limit=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - the loop is rendered without recent runs
+        log.debug("loop runs read failed", exc_info=True)
         runs = []
     if runs:
         lines += ["", "Recent runs:"]
@@ -375,7 +381,8 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
         try:
             from workspace.storage import get_workspace_metadata
             allowed = get_workspace_metadata(workspace).get("allowed_flows")
-        except Exception:
+        except Exception:  # noqa: BLE001 - no allowlist means global and own flows
+            log.debug("workspace metadata read failed", exc_info=True)
             allowed = None
 
     out = []
@@ -646,7 +653,7 @@ def list_entities(
     spec = KINDS[kind]
     try:
         items = spec.list_fn(workspace or None, project_id or None, query or "")
-    except Exception:
+    except Exception:  # noqa: BLE001 - a failing store yields an empty picker
         log.warning("context reference listing failed for kind=%s", kind, exc_info=True)
         return []
     for item in items:
@@ -664,7 +671,7 @@ def render_entity(kind: str, entity_id: str) -> Optional[Dict[str, str]]:
         return None
     try:
         rendered = spec.render_fn(str(entity_id))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a failing store yields no reference
         log.warning("context reference render failed for %s:%s", kind, entity_id, exc_info=True)
         return None
     if not rendered:
@@ -692,7 +699,8 @@ def agent_can_load(agent_id: Optional[str], kind: str) -> bool:
     try:
         from agents.registry import get_agent
         agent_spec = get_agent(agent_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable agent has no reference tools
+        log.debug("agent lookup failed", exc_info=True)
         return False
     if agent_spec is None:
         return False

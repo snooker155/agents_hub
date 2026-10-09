@@ -190,6 +190,36 @@ Der Hub spricht auch von sich aus, in der Sprache der Seite:
 
 Fehler, die die Seite behandelt: 409 `model_not_added` (kein Transkriptions- oder Sprachmodell; die Seite bietet stattdessen die Erkennung oder Stimme des Browsers an, mit dem Hinweis, dass das Audio dann an den Hersteller des Browsers geht), 402 `budget`, 413 `too_long`, 415 `unsupported_audio`, 502 `provider_error`.
 
+### Eine Stimme pro Sprache
+
+Viele Stimmen sprechen nur eine Sprache: eine Piper-Stimme ist auf eine
+trainiert, die Stimmen von Kokoro sind englisch, japanisch oder chinesisch.
+Deshalb kann das Sprachmodell pro Sprachcode ein Modell und eine Stimme nennen
+(`languages` im Sprachmodell des Arbeitsbereichs, die Zeilen **Eine Stimme pro
+Sprache** auf der Seite Modelle, Reiter Spezial):
+
+```json
+{"provider": "hub-local", "model": "kokoro-v1.0",
+ "languages": {"ru": {"model": "piper-ru_RU-irina-medium"},
+               "de": {"model": "piper-de_DE-thorsten-medium"}}}
+```
+
+Eine Cloud-Stimme spricht alle Sprachen, dort nennt eine Sprache nur eine
+andere Stimme (`{"ru": {"voice": "coral"}}`).
+
+Die Sprache einer Antwort wird aus dem Text selbst bestimmt (zuerst die
+Schrift, dann häufige Wörter, sonst die Sprache der Seite), und Modell und
+Stimme dieser Sprache lesen sie; eine Sprache ohne eigene Zeile liest das
+Modell des Eintrags. Eine Antwort behält eine Stimme: die Sprache wird einmal
+bestimmt, aus dem, was der Zug bis zum ersten gesprochenen Satz gesagt hat,
+also liest eine russische Antwort mit englischem Zitat durchgehend die
+russische Stimme. Das gilt für `/speak`, für eine Stimmprobe in
+einer Sprache und für das Werkzeug `synthesize_speech`; die Stimme des
+Browsers wählt ihr Gebietsschema genauso. Der erste Start und
+`setup_step voice_local` geben jeder Sprache der Oberfläche eine Stimme, und
+das fertige lokale Paket ergänzt Kokoro um Piper-Stimmen für Russisch und
+Deutsch.
+
 ## Limits
 
 In einem Thread läuft jeweils ein Turn: Ein Senden, während einer läuft, ergibt 409 `busy` (außer einem gesprochenen Ja oder Nein für eine wartende Karte, siehe oben). Ein Turn wird vor dem Start mit 402 und `{"detail": {"code": "budget", "message": ...}}` abgelehnt, wenn das Monatslimit der Person ([costs](costs.md#limit-per-person)) oder das harte Budget des Workspace aufgebraucht ist. Jeder Turn ist ein Run, der mit der Person gekennzeichnet ist, er erscheint also in Läufe und zählt auf ihr Limit.

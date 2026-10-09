@@ -27,6 +27,9 @@ projects.json
 */execution_logs/
 */results/
 coverage/
+.coverage
+.coverage.*
+htmlcov/
 
 # Public site (site/). The guide is copied out of docs/ at build time by
 # site/scripts/sync-docs.mjs, so it is generated, not source. node_modules/ and

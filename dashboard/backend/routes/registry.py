@@ -14,7 +14,7 @@ or an admin can make from it.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -101,7 +101,7 @@ def _flow_workspaces(flow_id: str, flow: Dict[str, Any], names: List[str]) -> Li
 
 
 def _flow_row(flow: Dict[str, Any], names: List[str]) -> Dict[str, Any]:
-    flow_id = flow.get("id")
+    flow_id = cast(str, flow.get("id"))
     return {
         "id": flow_id,
         "name": flow.get("name") or flow_id,
@@ -327,6 +327,8 @@ async def submit_flow(flow_id: str, data: ReviewDecision, request: Request):
     # be on — the toggle only gates the *automatic* gate a plain share/edit
     # goes through, not a request the owner made on purpose.
     flow = flow_store.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
     flow["review_status"] = "in_review"
     flow["reviewed_by"] = None
     flow["reviewed_at"] = None
@@ -334,6 +336,8 @@ async def submit_flow(flow_id: str, data: ReviewDecision, request: Request):
         flow["review_note"] = data.note
     flow_store.save_flow(flow)
     flow = flow_store.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
 
     audit.record("registry.flow.submit", principal=_principal(request),
                  object_type="flow", object_id=flow_id,
@@ -355,6 +359,8 @@ async def approve_flow(flow_id: str, data: ReviewDecision, request: Request):
         flow["review_note"] = data.note
     flow_store.save_flow(flow)
     flow = flow_store.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
     audit.record("registry.flow.approve", principal=_principal(request),
                  object_type="flow", object_id=flow_id,
                  workspace=flow.get("workspace"), ip=identity.client_ip(request),
@@ -376,6 +382,8 @@ async def reject_flow(flow_id: str, data: ReviewDecision, request: Request):
         flow["review_note"] = data.note
     flow_store.save_flow(flow)
     flow = flow_store.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
     audit.record("registry.flow.reject", principal=_principal(request),
                  object_type="flow", object_id=flow_id,
                  workspace=flow.get("workspace"), ip=identity.client_ip(request),
@@ -419,6 +427,8 @@ async def submit_skill(skill_id: str, data: ReviewDecision, request: Request):
     procedure.touch()
     store.update(procedure)
     procedure = find_procedure(skill_id)
+    if procedure is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
 
     audit.record("registry.skill.submit", principal=_principal(request),
                  object_type="skill", object_id=skill_id,
@@ -441,6 +451,8 @@ async def approve_skill(skill_id: str, data: ReviewDecision, request: Request):
     procedure.touch()
     ProcedureStore(procedure.workspace).update(procedure)
     procedure = find_procedure(skill_id)
+    if procedure is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
     audit.record("registry.skill.approve", principal=_principal(request),
                  object_type="skill", object_id=skill_id,
                  workspace=procedure.workspace, ip=identity.client_ip(request),
@@ -463,6 +475,8 @@ async def reject_skill(skill_id: str, data: ReviewDecision, request: Request):
     procedure.touch()
     ProcedureStore(procedure.workspace).update(procedure)
     procedure = find_procedure(skill_id)
+    if procedure is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
     audit.record("registry.skill.reject", principal=_principal(request),
                  object_type="skill", object_id=skill_id,
                  workspace=procedure.workspace, ip=identity.client_ip(request),

@@ -30,7 +30,7 @@ VOICES = [
 
 RUNTIME_MODELS = [
     {"name": "chatterbox-multilingual", "kind": "speech", "engine": "chatterbox", "loadable": True,
-     "voices": ["default", "anna", "boris", "legacy", "team"]},
+     "voices": ["default", "anna", "boris", "legacy", "team"], "options": ["exaggeration", "cfg_weight", "temperature"]},
     {"name": "kokoro-v1.0", "kind": "speech", "engine": "kokoro", "loadable": True, "voices": ["af_heart"]},
 ]
 
@@ -172,6 +172,16 @@ def test_the_pickers_offer_a_cloning_models_voices_per_person(runtime, monkeypat
     # engines' voices are never filtered.
     assert special.model_voices("hub-local", "chatterbox-multilingual") == RUNTIME_MODELS[0]["voices"]
     assert special.model_voices("hub-local", "kokoro-v1.0", U1) == ["af_heart"]
+
+
+def test_the_form_is_told_which_options_a_runtime_model_takes(runtime, monkeypatch):
+    from providers import special
+    monkeypatch.setattr(lm, "runtime_configured", lambda: True)
+    lm.ensure_hub_local_backend()
+    # Of the engine's knobs, the ones the speech purpose has a field for.
+    assert special.voices_for("speech", "hub-local", "chatterbox-multilingual", U1)["options"] == ["temperature"]
+    assert special.voices_for("speech", "hub-local", "kokoro-v1.0", U1)["options"] == []
+    assert special.voices_for("speech", "openai", "gpt-4o-mini-tts")["options"] == []
 
 
 def test_cleaning_a_recording_is_for_its_owner(api, runtime, who):

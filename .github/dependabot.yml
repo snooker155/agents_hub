@@ -1,0 +1,38 @@
+# Dependency updates. Every PR targets dev, where work happens; main only
+# receives releases (CONTRIBUTING.md, "Branches").
+#
+# Python is not here: requirements.lock is a uv resolution of ranged
+# requirement files, which Dependabot does not read. The weekly
+# lock-refresh workflow re-resolves it instead, and CI audits it on every push.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /dashboard/frontend
+    target-branch: dev
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories: [/clients/agents-hub-ts, /clients/agents-hub-langgraph-js, /site]
+    target-branch: dev
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule: { interval: monthly }
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories: [/, /dashboard/frontend, /deploy/models, /deploy/browser]
+    target-branch: dev
+    schedule: { interval: monthly }

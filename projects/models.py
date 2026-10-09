@@ -88,5 +88,5 @@ class Project(BaseModel):
     def touch(self) -> None:
         try:
             object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             setattr(self, "updated_at", datetime.now(timezone.utc))

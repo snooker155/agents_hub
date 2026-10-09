@@ -652,6 +652,14 @@ export type DiscardRequest = {
   "token": string;
 };
 
+export type DockerBuildRequest = {
+  "no_cache"?: boolean;
+};
+
+export type DockerContainerRequest = {
+  "workspace"?: string | null;
+};
+
 export type DownloadBody = {
   "repo": string;
   "file"?: string;
@@ -742,6 +750,18 @@ export type FirstModel = {
   "provider": string;
   "api_key"?: string;
   "base_url"?: string;
+};
+
+export type FirstRunAction = {
+  "action": string;
+  "step"?: string | null;
+  "language"?: string | null;
+  "theme"?: string | null;
+};
+
+export type FirstRunOp = {
+  "operation": string;
+  "args"?: Record<string, unknown>;
 };
 
 export type FlowCreate = {
@@ -1524,6 +1544,10 @@ export type RunEvalIn = {
   "mode"?: string;
 };
 
+export type RuntimeModeRequest = {
+  "mode": string;
+};
+
 export type SampleIn = {
   "voice"?: string;
   "language"?: string;
@@ -1726,6 +1750,9 @@ export type SettingsResponse = {
   "web_search_provider": string;
   "web_search_api_key_masked": string;
   "web_search_max_results": number;
+  "web_search_effective_provider": string;
+  "web_search_effective_source": string;
+  "web_search_effective_key_set": boolean;
   "web_fetch_max_chars": number;
   "web_fetch_timeout": number;
   "web_fetch_max_redirects": number;
@@ -2404,6 +2431,21 @@ export interface ApiPaths {
   };
   "/api/agent-import/{agent_id}": {
     get: { response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker": {
+    get: { response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/build": {
+    post: { body: DockerBuildRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/mode": {
+    post: { body: RuntimeModeRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/start": {
+    post: { body: DockerContainerRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/stop": {
+    post: { body: DockerContainerRequest; response: unknown };
   };
   "/api/agent-import/{agent_id}/recheck": {
     post: { body: RecheckRequest; response: unknown };
@@ -3149,6 +3191,19 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/files/{file_id}/usage": {
+    get: { response: unknown };
+  };
+  "/api/first-run": {
+    get: { response: unknown };
+    post: { body: FirstRunAction; response: unknown };
+  };
+  "/api/first-run/context": {
+    get: { response: unknown };
+  };
+  "/api/first-run/op": {
+    post: { body: FirstRunOp; response: unknown };
+  };
+  "/api/first-run/options": {
     get: { response: unknown };
   };
   "/api/flow-entities": {
@@ -4608,13 +4663,6 @@ export interface ApiPaths {
     get: { response: unknown };
     post: { body: ApplyOpsRequest; response: unknown };
   };
-  "/api/views/{view_id}/proxy/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-  };
   "/api/views/{view_id}/revert": {
     post: { body: RevertRequest; response: unknown };
   };
@@ -4844,19 +4892,6 @@ export interface ApiPaths {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
   };
-  "/apps/{slug}": {
-    get: { response: unknown };
-    head: { response: unknown };
-  };
-  "/apps/{slug}/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-    options: { response: unknown };
-    head: { response: unknown };
-  };
   "/consent/callback": {
     get: { response: unknown };
   };
@@ -4874,19 +4909,6 @@ export interface ApiPaths {
   };
   "/metrics": {
     get: { response: unknown };
-  };
-  "/preview/{ticket}": {
-    get: { response: unknown };
-    head: { response: unknown };
-  };
-  "/preview/{ticket}/{path}": {
-    get: { response: unknown };
-    post: { response: unknown };
-    put: { response: unknown };
-    patch: { response: unknown };
-    delete: { response: unknown };
-    options: { response: unknown };
-    head: { response: unknown };
   };
   "/readyz": {
     get: { response: unknown };

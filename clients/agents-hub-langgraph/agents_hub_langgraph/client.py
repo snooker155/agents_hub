@@ -296,10 +296,8 @@ class HubClient:
             return
         try:
             self._on_error(exc)
-        except Exception:
-            # An error handler that itself fails must not become the failure
-            # this whole class exists to avoid.
-            pass
+        except Exception:  # noqa: BLE001 - user error handler must never become a failure itself
+            logger.debug("on_error handler raised", exc_info=True)
 
     def _should_exit(self, pending: List[Dict[str, Any]], idle_since: float) -> bool:
         """Whether this worker may end. Decided under the start/stop lock.

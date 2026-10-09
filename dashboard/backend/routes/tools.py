@@ -8,6 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from tools.registry import get_all_tools, get_tool_by_id, list_mcp_tool_specs
 from models import ToolSourceUpdate
+import logging
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
@@ -52,7 +55,8 @@ def _find_tool_source(tool_id: str) -> dict:
     for py_file in sorted(TOOLS_ROOT.glob("*.py")):
         try:
             text = py_file.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable entry must not stop the rest of the listing
+            log.debug("_find_tool_source: falling back after a failure", exc_info=True)
             continue
         lines = text.splitlines()
         for i, line in enumerate(lines, start=1):
@@ -144,7 +148,7 @@ async def get_tool_source(tool_id: str):
     p = Path(abs_path)
     try:
         content = p.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=f"Failed to read source: {e}")
 
     return {
@@ -176,11 +180,12 @@ async def update_tool_source(tool_id: str, data: ToolSourceUpdate):
         old_content = p.read_text(encoding="utf-8", errors="replace")
         p.write_text(data.source_code, encoding="utf-8")
         py_compile.compile(str(p), doraise=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("update_tool_source: falling back after a failure", exc_info=True)
         try:
             p.write_text(old_content, encoding="utf-8")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("update_tool_source: best-effort step failed", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Failed to save source: {e}")
 
     return {

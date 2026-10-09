@@ -133,7 +133,7 @@ def _call(cmd: str, args: Dict[str, Any], view_id: str = "", *,
         return None, _err(str(exc), exc.kind)
     except DaemonError as exc:
         return None, _err(str(exc), "engine")
-    except Exception as exc:                       # never take the agent turn down
+    except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
         return None, _err(f"{type(exc).__name__}: {exc}", "engine")
 
 
@@ -163,7 +163,7 @@ def _mutated(vid: str, object_id: str, cmd: str, args: Dict[str, Any],
     if ops:
         try:
             _append_ops(vid, ops, run_id=_run_id() or None, source="agent")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
             export_error = export_error or f"could not update the view: {exc}"
     record_entity("view", vid, "updated")
     return _reply(vid, object_id, result, export=ref, warning=export_error, revision=revision)

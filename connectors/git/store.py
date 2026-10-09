@@ -42,12 +42,15 @@ acting for a workspace names it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from typing import Any, Optional
 
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
+
+log = logging.getLogger(__name__)
 
 
 PROVIDERS = ("github", "gitlab", "bitbucket", "gitea")
@@ -161,7 +164,7 @@ def _ensure_legacy_imported() -> None:
     try:
         text = _GIT_FILE.read_text(encoding="utf-8")
         data = json.loads(text) if text.strip() else None
-    except Exception:
+    except (OSError, ValueError):
         return
     if isinstance(data, dict):
         _store.import_legacy({_STATE_KEY: data}, _GIT_FILE)
@@ -233,8 +236,8 @@ def _run_token(provider: str, workspace: Optional[str] = None) -> str:
             value = _secrets.get(name, host=_api_host(provider, workspace))
             if value:
                 return value.strip()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a secret scope failure falls back to the environment
+        log.debug("git token lookup through secrets failed", exc_info=True)
     if os.environ.get("AGENT_WORKSPACE"):
         return (os.environ.get(name) or "").strip()
     return ""

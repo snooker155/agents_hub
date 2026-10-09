@@ -42,8 +42,8 @@ def _setup_cli_log(run_id: str, workspace: str) -> str:
     lf = open(log_path, "w", encoding="utf-8", buffering=1)  # noqa: SIM115
     try:
         lf.write(f"--- Run started at {_utc_now_iso()} ---\n\n")
-    except Exception:
-        pass
+    except (OSError, ValueError):
+        log.debug("run log header not written", exc_info=True)
     sys.stdout = _Tee(sys.__stdout__, lf)
     sys.stderr = _Tee(sys.__stderr__, lf)
     return str(log_path)
@@ -66,8 +66,8 @@ def _setup_docker_log_tee(log_path: str) -> None:
         lf = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         sys.stdout = _Tee(sys.__stdout__, lf)
         sys.stderr = _Tee(sys.__stderr__, lf)
-    except Exception:
-        pass
+    except OSError:
+        log.debug("run log tee not set up", exc_info=True)
 
 
 # -------------------- Heartbeat --------------------
@@ -102,14 +102,15 @@ class _Heartbeat(threading.Thread):
         while not self._halt.wait(HEARTBEAT_SECONDS):
             try:
                 status = self._state.heartbeat(self.run_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a failed heartbeat is retried on the next beat
+                log.debug("heartbeat failed", exc_info=True)
                 continue
             self.beats += 1
             if status == "stop":
                 log.info(f"[heartbeat] stop requested for run {self.run_id}; terminating")
                 try:
                     os.kill(os.getpid(), signal.SIGTERM)
-                except Exception:
+                except OSError:
                     os._exit(143)
                 return
 
@@ -180,8 +181,8 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
             **_overrides_field(overrides),
         )
         return run_id
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a run record that cannot be opened must not stop the run
+        log.debug("run record could not be opened", exc_info=True)
 
 
 def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", process: Optional[dict] = None) -> None:
@@ -226,10 +227,10 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
 
         try:
             state.finalize_task_from_run(run_id, "completed" if result.ok else "failed", 0 if result.ok else 1)
-        except Exception:
-            pass
-    except Exception:
-        pass
+        except Exception:  # noqa: BLE001 - task finalize is best effort after the run closed
+            log.debug("task finalize failed", exc_info=True)
+    except Exception:  # noqa: BLE001 - persisting the result must never turn a finished run into a failure
+        log.debug("run result not persisted", exc_info=True)
 
 
 def model_overrides(provider: Optional[str], model: Optional[str]) -> dict:
@@ -401,7 +402,8 @@ def main():
         _cp = None
         try:
             _cp = _state.load_checkpoint(args.resume_checkpoint)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a missing or unreadable checkpoint means a fresh start
+            log.debug("checkpoint could not be loaded", exc_info=True)
             _cp = None
         if _cp and _cp.get("steps"):
             _history = _ckpt.history_messages(_cp)
@@ -475,8 +477,8 @@ def main():
         # the source of truth — no need for agent_launcher to pre-resolve into env).
         try:
             _state.update_run(run_id, {"provider": agent.provider or "", "model": agent.model or "", "input": instruction})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the run record update is cosmetic for the live view
+            log.debug("run record update failed", exc_info=True)
         # Seed the input context now so the dashboard shows this worker's system
         # prompt while the run is still executing (the full context replaces it
         # at close).
@@ -594,8 +596,8 @@ def main():
             _log_file = os.environ.get("AGENT_LOG_FILE")
             if _log_file:
                 blobs.mirror(blobs.rel(_log_file))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - mirroring the log must not turn a finished run into a failure
+            log.debug("run log mirror failed", exc_info=True)
 
 
 if __name__ == "__main__":

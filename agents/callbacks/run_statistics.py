@@ -16,12 +16,15 @@ holds the common pieces once:
 """
 from __future__ import annotations
 
+import logging
 import json
 import math
 import time
 from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
+
+log = logging.getLogger(__name__)
 
 
 def content_text(content: Any) -> str:
@@ -103,13 +106,13 @@ def to_json_safe(value: Any, *, _depth: int = 0, _max_depth: int = 5) -> Any:
         if callable(fn):
             try:
                 return to_json_safe(fn(), _depth=_depth + 1, _max_depth=_max_depth)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+                log.debug("to_json_safe: ignored error", exc_info=True)
     if hasattr(value, "__dict__"):
         try:
             return to_json_safe(vars(value), _depth=_depth + 1, _max_depth=_max_depth)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("to_json_safe: ignored error", exc_info=True)
     return str(value)
 
 
@@ -124,8 +127,8 @@ def extract_token_usage(response: Any) -> Dict[str, Any]:
         usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {}) or {}
         if usage:
             return usage
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+        log.debug("extract_token_usage: ignored error", exc_info=True)
     # 2) generations[*].message.response_metadata.token_usage|usage
     try:
         for grp in (getattr(response, "generations", []) or []):
@@ -134,8 +137,8 @@ def extract_token_usage(response: Any) -> Dict[str, Any]:
                 tu = md.get("token_usage") or md.get("usage") or {}
                 if tu:
                     return tu
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+        log.debug("extract_token_usage: ignored error", exc_info=True)
     # 3) generations[*].message.usage_metadata (input/output/total_tokens)
     try:
         for grp in (getattr(response, "generations", []) or []):
@@ -150,8 +153,8 @@ def extract_token_usage(response: Any) -> Dict[str, Any]:
                         # still find the cache-read count after normalisation.
                         "input_token_details": um.get("input_token_details") or {},
                     }
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+        log.debug("extract_token_usage: ignored error", exc_info=True)
     return {}
 
 
@@ -175,8 +178,8 @@ def _as_mapping(value: Any) -> Dict[str, Any]:
                 out = fn()
                 if isinstance(out, dict):
                     return out
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+                log.debug("_as_mapping: ignored error", exc_info=True)
     return {}
 
 
@@ -250,7 +253,8 @@ def message_to_role_content(msg: Any) -> Dict[str, str]:
             try:
                 import json
                 content = json.dumps(content, ensure_ascii=False)
-            except Exception:
+            except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+                log.debug("message_to_role_content: ignored error", exc_info=True)
                 content = str(content)
     return {"role": role, "content": content}
 
@@ -361,18 +365,21 @@ class StatsCollectorCallback(BaseCallbackHandler):
         try:
             for batch in (messages or []):
                 flat.extend(batch or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             flat = []
         try:
             self._last_prompt_struct = build_prompt_struct(flat)
-        except Exception:
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             self._last_prompt_struct = {}
         try:
             self._last_prompt_text = "\n".join(
                 f"{it['role']}: {it['content']}" for it in
                 (message_to_role_content(m) for m in flat)
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_chat_model_start: ignored error", exc_info=True)
             self._last_prompt_text = ""
         self._start(self._model_name(serialized))
 
@@ -384,7 +391,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                 "\n".join(str(p) for p in prompts if p is not None)
                 if isinstance(prompts, list) else str(prompts or "")
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_llm_start: ignored error", exc_info=True)
             self._last_prompt_text = ""
         self._last_prompt_struct = {
             "system_prompt": "",
@@ -413,7 +421,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                     if txt:
                         parts.append(txt)
             return "\n".join(parts)
-        except Exception:
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("_response_text: ignored error", exc_info=True)
             return ""
 
     def on_llm_end(self, response, **_):
@@ -423,8 +432,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                 "llm_output": to_json_safe(getattr(response, "llm_output", None)),
                 "generations": to_json_safe(getattr(response, "generations", None)),
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
         usage = extract_token_usage(response)
         p, c, t = normalize_usage(usage)
@@ -456,8 +465,8 @@ class StatsCollectorCallback(BaseCallbackHandler):
                     "cached_tokens": min(cached, p),
                 },
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - statistics capture must never break the run it measures
+            log.debug("on_llm_end: ignored error", exc_info=True)
 
     # -- tool lifecycle --
     def _mark(self, line: str) -> None:

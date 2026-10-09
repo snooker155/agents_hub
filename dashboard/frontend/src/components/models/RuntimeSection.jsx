@@ -11,7 +11,7 @@ import SpeechPackages from './SpeechPackages';
 import ModelSearch from './ModelSearch';
 import { FitBadge, HardwareLine } from './FitBadge';
 import { useFitText, fmtParams, fmtContext } from './fit';
-import { MODEL_PRESETS, PRESET_KINDS, isSpeechKind } from './speechPresets';
+import { MODEL_PRESETS, PRESET_KINDS, isSpecialKind } from './speechPresets';
 import { RuntimeButtons, RuntimeState } from './RuntimeControl';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
@@ -350,8 +350,8 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
                     {models.map((m) => {
                       const f = loadForm[m.file] || { context_length: 4096, gpu_layers: -1 };
                       const busy = busyFile === m.file;
-                      const speech = isSpeechKind(m.kind);
-                      // Speech and MLX models take no context length: they load at once.
+                      const speech = isSpecialKind(m.kind);
+                      // Speech, image and MLX models take no context length: they load at once.
                       const quickLoad = speech || m.engine === 'mlx';
                       return (
                         <tr key={m.file} className="border-t border-gray-50 hover:bg-gray-50 align-top" data-testid={`runtime-model-${m.file}`}>

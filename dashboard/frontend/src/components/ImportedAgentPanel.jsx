@@ -1,17 +1,27 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Box,
   Check,
   CheckCircle2,
   GitBranch,
   Info,
   Loader,
+  Play,
   RefreshCw,
   Server,
+  Square,
   Workflow,
   X,
 } from 'lucide-react';
 import { recheckImportedAgent, refreshAgentTopology } from '../api';
+import {
+  buildImportedAgentImage,
+  getImportedAgentDocker,
+  setImportedAgentRuntimeMode,
+  startImportedAgentContainer,
+  stopImportedAgentContainer,
+} from '../api/agentImport';
 import { useI18n } from '../i18n';
 import GraphMirror from './GraphMirror';
 
@@ -33,16 +43,77 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
   const [topology, setTopology] = useState(remote?.topology || null);
   const [fetchingGraph, setFetchingGraph] = useState(false);
 
+  // Docker mode: the hub builds the image and runs a container per workspace.
+  // Only an agent whose manifest ships a Dockerfile can be switched to it.
+  const dockerCapable = !!remote?.dockerfile && remote?.kind !== 'a2a';
+  const [mode, setMode] = useState(remote?.runtime_mode === 'docker' ? 'docker' : 'url');
+  const [docker, setDocker] = useState(null);
+  const [dockerBusy, setDockerBusy] = useState('');
+
+  const loadDocker = useCallback(async () => {
+    if (!dockerCapable || !agent?.id) return;
+    try {
+      const { data } = await getImportedAgentDocker(agent.id);
+      setDocker(data);
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    }
+  }, [dockerCapable, agent?.id]);
+
+  useEffect(() => {
+    if (mode === 'docker') loadDocker();
+  }, [mode, loadDocker]);
+
   if (!remote) return null;
 
   const ready = !!readiness?.runnable;
+
+  const dockerAction = async (label, call) => {
+    setDockerBusy(label);
+    setError('');
+    try {
+      const { data } = await call();
+      if (data?.report) setReadiness(data.report);
+      await loadDocker();
+      onUpdated?.();
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setDockerBusy('');
+    }
+  };
+
+  const switchMode = async (next) => {
+    if (next === mode) return;
+    setDockerBusy('mode');
+    setError('');
+    try {
+      const { data } = await setImportedAgentRuntimeMode(agent.id, next);
+      setMode(next);
+      if (data?.report) setReadiness(data.report);
+      onUpdated?.();
+      // Entering Docker mode is only useful with an image: build it right away,
+      // so the first run does not stall on a build nobody started.
+      if (next === 'docker') {
+        const { data: built } = await buildImportedAgentImage(agent.id);
+        if (built?.report) setReadiness(built.report);
+        await loadDocker();
+      }
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setDockerBusy('');
+    }
+  };
 
   const recheck = async () => {
     setChecking(true);
     setError('');
     try {
       const { data } = await recheckImportedAgent(agent.id, {
-        url: url.trim(),
+        // In Docker mode the address belongs to the workspace's container,
+        // not to the record: sending an empty URL would erase a saved one.
+        url: mode === 'docker' ? undefined : url.trim(),
         workspace: workspace || undefined,
       });
       setReadiness(data.report);
@@ -139,6 +210,118 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
         </div>
       </dl>
 
+      {/* Where it runs: a service the operator runs, or a container the hub runs */}
+      {dockerCapable && (
+        <div className="mb-5 border border-gray-100 rounded-lg p-4" data-testid="imported-runtime">
+          <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+            <Box className="w-4 h-4 text-indigo-500" /> {t('importedAgentPanel.runtime')}
+          </h4>
+          <div className="space-y-2">
+            {[
+              ['url', t('importedAgentPanel.modeUrl'), t('importedAgentPanel.modeUrlHint')],
+              ['docker', t('importedAgentPanel.modeDocker'), t('importedAgentPanel.modeDockerHint')],
+            ].map(([value, label, hint]) => (
+              <label key={value} className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="imported-runtime-mode"
+                  value={value}
+                  checked={mode === value}
+                  disabled={dockerBusy === 'mode'}
+                  onChange={() => switchMode(value)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium text-gray-800">{label}</span>
+                  <span className="block text-gray-500 text-[13px]">{hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {mode === 'docker' && (
+            <div className="mt-4 space-y-3">
+              {docker && docker.docker_available === false && (
+                <p className="text-sm text-amber-700">{t('importedAgentPanel.dockerUnavailable')} {docker.error}</p>
+              )}
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mr-2">{t('importedAgentPanel.image')}</span>
+                  <code>{docker?.image?.tag || '…'}</code>{' '}
+                  <span className="text-gray-500">
+                    {docker?.image?.exists
+                      ? `${t('importedAgentPanel.imageBuilt')}${docker.image.built_at ? ` · ${new Date(docker.image.built_at).toLocaleString()}` : ''}`
+                      : t('importedAgentPanel.imageNotBuilt')}
+                  </span>
+                </span>
+                <button
+                  onClick={() => dockerAction('build', () => buildImportedAgentImage(agent.id, !!docker?.image?.exists))}
+                  disabled={!!dockerBusy}
+                  className="text-xs text-indigo-600 font-semibold flex items-center gap-1.5 hover:text-indigo-700 disabled:opacity-50"
+                >
+                  {dockerBusy === 'build' || dockerBusy === 'mode'
+                    ? <Loader className="w-3.5 h-3.5 animate-spin" />
+                    : <RefreshCw className="w-3.5 h-3.5" />}
+                  {dockerBusy === 'build' || dockerBusy === 'mode'
+                    ? t('importedAgentPanel.building')
+                    : docker?.image?.exists ? t('importedAgentPanel.rebuild') : t('importedAgentPanel.build')}
+                </button>
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('importedAgentPanel.containers')}</span>
+                  <span className="flex items-center gap-3">
+                    <button
+                      onClick={() => dockerAction('start', () => startImportedAgentContainer(agent.id, workspace || 'default'))}
+                      disabled={!!dockerBusy || !docker?.image?.exists}
+                      className="text-xs text-indigo-600 font-semibold flex items-center gap-1.5 hover:text-indigo-700 disabled:opacity-50"
+                    >
+                      {dockerBusy === 'start' ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      {t('importedAgentPanel.startForWorkspace')} ({workspace || 'default'})
+                    </button>
+                    {(docker?.containers || []).length > 0 && (
+                      <button
+                        onClick={() => dockerAction('stop', () => stopImportedAgentContainer(agent.id, null))}
+                        disabled={!!dockerBusy}
+                        className="text-xs text-gray-600 font-semibold flex items-center gap-1.5 hover:text-gray-800 disabled:opacity-50"
+                      >
+                        <Square className="w-3.5 h-3.5" /> {t('importedAgentPanel.stopAll')}
+                      </button>
+                    )}
+                  </span>
+                </div>
+                {(docker?.containers || []).length === 0 ? (
+                  <p className="text-[13px] text-gray-500">{t('importedAgentPanel.noContainers')}</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {docker.containers.map((c) => (
+                      <li key={c.name} className="text-sm flex items-start justify-between gap-3">
+                        <span className="min-w-0">
+                          <span className="font-medium text-gray-800">{c.workspace || c.name}</span>
+                          <span className={`ml-2 text-[11px] uppercase tracking-wider font-bold ${c.state === 'running' ? 'text-emerald-600' : 'text-amber-600'}`}>{c.state}</span>
+                          {c.url && <span className="text-gray-500 break-all"> · {c.url}</span>}
+                          {c.mounts?.length > 0 && (
+                            <span className="block text-[12px] text-gray-400 break-all">
+                              {t('importedAgentPanel.mounts')}: {c.mounts.join(', ')}
+                            </span>
+                          )}
+                        </span>
+                        <button
+                          onClick={() => dockerAction(`stop:${c.name}`, () => stopImportedAgentContainer(agent.id, c.workspace))}
+                          disabled={!!dockerBusy}
+                          className="text-xs text-gray-600 font-semibold flex items-center gap-1 hover:text-gray-800 disabled:opacity-50 shrink-0"
+                        >
+                          <Square className="w-3 h-3" /> {t('importedAgentPanel.stop')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Endpoint + re-check */}
       <div className="mb-5">
         <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">
@@ -146,11 +329,12 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
         </label>
         <div className="flex gap-2">
           <input
-            value={url}
+            value={mode === 'docker' ? '' : url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && recheck()}
-            placeholder="http://localhost:8410"
-            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm"
+            placeholder={mode === 'docker' ? t('importedAgentPanel.modeDocker') : 'http://localhost:8410'}
+            disabled={mode === 'docker'}
+            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
           />
           <button
             onClick={recheck}

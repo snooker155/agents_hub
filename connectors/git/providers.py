@@ -22,12 +22,15 @@ Normalized shapes:
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
 
 import httpx
 
 from . import store
+
+log = logging.getLogger(__name__)
 
 _API_TIMEOUT = 30.0
 _PER_PAGE = 100
@@ -104,8 +107,8 @@ class GitProvider:
             try:
                 data = resp.json()
                 detail = str(data.get("message") or data.get("error") or "").strip()
-            except Exception:
-                pass
+            except (ValueError, AttributeError):
+                log.debug("git provider error body unreadable", exc_info=True)
             suffix = f": {detail}" if detail else ""
             raise GitProviderError(f"{self.name} API error {resp.status_code}{suffix}")
         return resp

@@ -303,6 +303,10 @@ export default function VoicesCard({ models }) {
                   {cloning.map((m) => {
                     const key = `try:${v.name}:${m.name}`;
                     const busy = player.playing === key;
+                    // The engine's name, or the model's when the engine has
+                    // several (chatterbox-4bit-mlx and chatterbox-8bit-mlx).
+                    const label = cloning.filter((o) => o.engine === m.engine).length > 1
+                      ? m.name : t(`localModels.speech.engines.${m.engine}`);
                     return (
                       <button
                         key={m.name}
@@ -314,7 +318,7 @@ export default function VoicesCard({ models }) {
                       >
                         {busy && player.loading ? <Loader className="w-3 h-3 animate-spin" />
                           : busy ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                        {t(`localModels.speech.engines.${m.engine}`)}
+                        {label}
                       </button>
                     );
                   })}

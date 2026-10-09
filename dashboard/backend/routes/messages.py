@@ -31,6 +31,9 @@ from routes.sessions import (
     _build_thinking_trace,
     _parse_reasoning_line,
 )
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
@@ -161,7 +164,7 @@ async def get_message_logs(run_id: str, request: Request):
     try:
         content = Path(log_file).read_text(encoding="utf-8", errors="replace")
         return {"logs": content}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -246,7 +249,8 @@ async def get_message_insights(run_id: str, request: Request):
         if p.exists():
             try:
                 log_text = p.read_text(encoding="utf-8", errors="replace")[-120_000:]
-            except Exception:
+            except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+                log.debug("get_message_insights: falling back after a failure", exc_info=True)
                 log_text = ""
 
     if run.get("session_type") == "chat":
@@ -475,8 +479,8 @@ async def delete_message(run_id: str, request: Request, delete_log: bool = True)
                     assigned_agent_run_id=None,
                     assigned_agent_type=None,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("delete_message: best-effort step failed", exc_info=True)
 
     log_deleted = False
     if delete_log and log_file:
@@ -485,7 +489,8 @@ async def delete_message(run_id: str, request: Request, delete_log: bool = True)
             if p.exists():
                 p.unlink()
                 log_deleted = True
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("delete_message: falling back after a failure", exc_info=True)
             log_deleted = False
 
     return {"deleted": True, "run_id": run_id, "log_deleted": log_deleted}

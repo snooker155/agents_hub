@@ -16,9 +16,12 @@ pressing Run, which is the point — the alternative is finding out afterwards.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from flow.dispatch import node_field
+
+log = logging.getLogger(__name__)
 
 #: Tokens one agent node is assumed to spend. An agent loop re-sends its
 #: context on every step, so the inbound figure is deliberately several times a
@@ -43,8 +46,8 @@ def _resolve_model(agent_id: str) -> Tuple[str, str]:
         if spec:
             provider = (spec.provider or "") if spec.provider != "inherit" else ""
             model = spec.model or ""
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an unknown agent falls back to the settings model
+        log.debug("agent model lookup failed", exc_info=True)
     if provider and model:
         return provider, model
     try:
@@ -60,8 +63,8 @@ def _resolve_model(agent_id: str) -> Tuple[str, str]:
             "ollama": getattr(settings, "ollama_model", ""),
             "lmstudio": getattr(settings, "lmstudio_model", ""),
         }.get(provider, settings.model)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - unreadable settings leave the estimate with no model
+        log.debug("settings model lookup failed", exc_info=True)
     return provider or "", model or ""
 
 

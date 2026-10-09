@@ -152,10 +152,7 @@ class RecordingQueue(asyncio.Queue):
         self._in_tap = False
 
     def _record(self, item) -> None:
-        try:
-            self.recorded.append(item)
-        except Exception:
-            pass
+        self.recorded.append(item)
 
     def _put(self, item):
         super()._put(item)
@@ -201,13 +198,13 @@ async def guarded(run_turn, queue: asyncio.Queue):
     except Exception as exc:  # noqa: BLE001 — last resort so the stream closes
         try:
             await queue.put({"type": "error", "source": "server", "error": str(exc)})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the stream closes even if the error event cannot be queued
+            log.debug("error event could not be queued", exc_info=True)
     finally:
         try:
             queue.put_nowait(_STREAM_DONE)
-        except Exception:
-            pass
+        except asyncio.QueueFull:
+            log.debug("stream sentinel dropped, queue full", exc_info=True)
 
 
 def settle_tool_step(items: List[Dict[str, Any]], ev: dict) -> bool:
@@ -367,7 +364,8 @@ async def run_entity_chat_turn(
             workspace=spec.session_workspace or spec.workspace,
             agent_id=spec.agent_id,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a chat without a stored session still answers
+        log.debug("chat session create failed", exc_info=True)
         session_id = None
     prompt = build_prompt(folded_history(history, session_id) if spec.fold_history else history)
     _open_run(run_id, spec.agent_id, task_id=conv_id, session_id=session_id,
@@ -612,8 +610,8 @@ async def run_entity_chat_turn(
             turn_items.append(item)
     try:
         store.append_trace(spec.kind, entity_id, turn_items)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a trace that cannot be saved must not fail the answered turn
+        log.debug("trace append failed", exc_info=True)
 
 
 def transcript_block(history: List[dict], limit: Optional[int] = 12) -> str:

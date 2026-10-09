@@ -65,10 +65,10 @@ def _delete_runs(conn, run_ids: List[str]) -> None:
         if log_file:
             try:
                 Path(log_file).unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 # A log that cannot be removed is a stray file, not a reason to
                 # leave the database row behind.
-                pass
+                log.debug("could not remove run log %s", log_file, exc_info=True)
 
 
 def _drop_empty_ingest_sessions(conn, connection_id: str) -> int:

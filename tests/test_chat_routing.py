@@ -386,7 +386,7 @@ def test_execute_turn_reports_a_pipeline_failure_and_marks_the_message(monkeypat
 
     async def _boom(request, kind=None):
         raise HTTPException(status_code=402, detail="budget")
-        yield  # noqa: unreachable, makes this an async generator
+        yield  # unreachable, makes this an async generator
 
     monkeypatch.setattr(pipelines, "execute_locally", _boom)
     posted = []

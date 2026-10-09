@@ -29,7 +29,7 @@ import WorkspaceSpecialModels from '../workspace/WorkspaceSpecialModels';
 const options = {
   purposes: [
     { id: 'speech', tool: 'synthesize_speech', unit: '1k_chars', summary: '', kinds: ['openai_compat'],
-      suggestions: { openai_compat: ['gpt-4o-mini-tts'] }, options: { voice: 'a voice' },
+      suggestions: { openai_compat: ['gpt-4o-mini-tts'] }, options: { voice: 'a voice', temperature: '0.1 to 1.5' },
       voices: { openai_compat: ['alloy', 'nova'] } },
   ],
   custom: { tool: 'ask_special_model', kinds: ['chat', 'http'] },
@@ -94,6 +94,25 @@ describe('WorkspaceSpecialModels with the hub runtime', () => {
 
     fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'piper-ru_RU-irina-medium' } });
     await waitFor(() => expect(screen.getByTestId('special-speech-voice').placeholder).toBe('This model has one voice'));
+  });
+
+  it('offers the temperature only for a model that takes it', async () => {
+    getWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'alpha', own: {}, effective: {}, options }));
+    getWorkspaceSpecialModelVoices.mockImplementation((ws, provider, model) => ok(model === 'chatterbox-4bit-mlx'
+      ? { voices: ['default', 'anna'], own: true, language: null, languages: {}, options: ['temperature'] }
+      : { voices: ['af_heart'], own: true, language: null, languages: {}, options: [] }));
+    renderForm();
+    await screen.findByTestId('special-speech-missing');
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'hub-local' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'chatterbox-4bit-mlx' } });
+    const field = await screen.findByTestId('special-speech-temperature');
+    expect(field.placeholder).toBe('0.1 to 1.5');
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'kokoro-v1.0' } });
+    await waitFor(() => expect(screen.queryByTestId('special-speech-temperature')).toBeNull());
+    // A cloud model never takes it.
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'gpt-4o-mini-tts' } });
+    await waitFor(() => expect(screen.queryByTestId('special-speech-temperature')).toBeNull());
   });
 
   it('drops the voice picked for one model when another model is picked', async () => {

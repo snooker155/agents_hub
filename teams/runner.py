@@ -83,8 +83,8 @@ def _publish(team_run_id: str, event: Dict[str, Any]) -> None:
     try:
         from common.session_broker import broker
         broker.publish_threadsafe(f"team:{team_run_id}", event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - live publish is never fatal to the run
+        log.debug("team event publish failed", exc_info=True)
 
 
 def _turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
@@ -127,8 +127,8 @@ def _run_member(
     try:
         from common.workspace_context import _workspace_ctx, workspace_name_from_path
         _workspace_ctx.set(workspace_name_from_path(workspace))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - without the workspace scope the turn still runs on the default
+        log.debug("setting turn workspace context failed", exc_info=True)
     try:
         # The team block is *appended* to the agent's own assembled prompt, not
         # substituted for it: the member keeps its expertise and gains a roster.
@@ -166,8 +166,8 @@ def _run_member(
                 provider=agent.provider or None,
                 model=agent.model or None,
             )["instance_id"]
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the instance row is bookkeeping, the turn runs without it
+            log.debug("opening instance for team turn failed", exc_info=True)
 
         open_run(
             run_id, agent_id, pid=os.getpid(), task_id=task_id,
@@ -195,8 +195,8 @@ def _run_member(
             f.write(f"--- Team turn started at {utc_iso()} ---\n"
                     f"Team : {team.name}\nSeat : {speaker}\nAgent: {agent_id}\n\n"
                     f"=== PROMPT ===\n{prompt}\n\n=== EXECUTION ===\n")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - run bookkeeping must never fail the turn
+        log.debug("opening run record for team turn failed", exc_info=True)
 
     # Two guards, because a turn can be stopped from either side: the team page
     # (the event) or this member's own run record (the runs page, the API).
@@ -233,8 +233,8 @@ def _run_member(
                       error="stopped by user", process=inv.process)
         else:
             close_run_from_result(run_id, result, process=inv.process)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - run bookkeeping must never fail the turn
+        log.debug("closing run record for team turn failed", exc_info=True)
     return turn
 
 
@@ -418,8 +418,8 @@ class _Board:
         if self.on_message:
             try:
                 self.on_message(msg)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a subscriber callback must not break the conversation
+                log.debug("on_message callback failed", exc_info=True)
         return msg
 
     def view(self, viewer: str, *, see_all: bool = False) -> str:
@@ -1004,8 +1004,8 @@ def _prepare_context(
             )
             try:
                 _ts.update_task(task_id, session_id=session_id)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - linking the session is cosmetic, the run goes on
+                log.debug("linking task to team session failed", exc_info=True)
         else:
             try:
                 session_id = get_or_create_chat_session(
@@ -1013,7 +1013,8 @@ def _prepare_context(
                     title=f"Team: {team.name}", workspace=ws_name,
                     agent_id=f"team:{team.team_id}",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - no chat session just means the run is not shown in a chat
+                log.debug("creating chat session for team run failed", exc_info=True)
                 session_id = None
     return ws_name, str(ws_path), task_id, session_id
 
@@ -1065,8 +1066,8 @@ def _claim_task(team: Team, run: TeamRun) -> None:
             team_id=team.team_id, is_team=True, link_to_session=True,
             input=run.goal,
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - run bookkeeping must never fail the team run
+        log.debug("opening team run record failed", exc_info=True)
     try:
         _ts.assign_executor(
             run.task_id, {"kind": "team", "id": team.team_id},
@@ -1092,16 +1093,16 @@ def _finalize_task(run: TeamRun) -> None:
             error=run.error,
             output=run.result or "",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - closing the record must not stop the task update below
+        log.debug("closing team run record failed", exc_info=True)
     if not run.task_id:
         return
     try:
         from tasks.context import persist_task_result
         if run.result:
             persist_task_result(run.task_id, run.team_run_id, run.result, agent_id="team")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - persisting the result is best-effort, the run is already finished
+        log.debug("persisting team result to task failed", exc_info=True)
     if run.status == "stopped":
         # Stopped is a decision, not a failure: the task keeps its history and
         # is left free to be picked up again rather than blocked with a reason.
@@ -1109,14 +1110,14 @@ def _finalize_task(run: TeamRun) -> None:
             from tasks import service as _ts
             _ts.clear_agent(run.task_id)
             _ts.stop_task(run.task_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a stopped task that cannot be released must not raise out of finalize
+            log.debug("releasing stopped team task failed", exc_info=True)
         return
     try:
         run_manager.finalize_flow_task(run.task_id, "completed" if ok else "failed",
                                        0 if ok else 1, error=run.error)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - finalizing the task is best-effort, the run is already finished
+        log.debug("finalizing team task failed", exc_info=True)
 
 
 def stop_run(team_run_id: str) -> bool:

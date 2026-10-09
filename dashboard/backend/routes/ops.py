@@ -24,6 +24,9 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ops"])
 
@@ -41,7 +44,8 @@ def _database_ok() -> bool:
         from common import db
         db.get_conn().execute("SELECT 1").fetchone()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_database_ok: falling back after a failure", exc_info=True)
         return False
 
 
@@ -54,12 +58,14 @@ def _broker_status() -> Any:
         from common.config import settings
         if not (settings.broker_url or "").strip():
             return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_broker_status: falling back after a failure", exc_info=True)
         return None
     try:
         from common import broker_bridge
         return broker_bridge.get_redis() is not None
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_broker_status: falling back after a failure", exc_info=True)
         return False
 
 
@@ -72,17 +78,20 @@ def _blob_status() -> Any:
         import os
         from common.config import settings
         url = (getattr(settings, "blob_url", "") or os.environ.get("AGENTS_HUB_BLOB_URL", "")).strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_blob_status: falling back after a failure", exc_info=True)
         url = ""
     if not url:
         return None
     try:
         from common import blobs
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_blob_status: falling back after a failure", exc_info=True)
         return "unknown"
     try:
         return bool(blobs.configured())
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_blob_status: falling back after a failure", exc_info=True)
         return "unknown"
 
 
@@ -96,14 +105,14 @@ def _singleton_info() -> Dict[str, bool]:
         from connectors.telegram import telegram_store
         if telegram_store.is_enabled() and telegram_store.has_token():
             roles.append("telegram")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_singleton_info: best-effort step failed", exc_info=True)
     current: Dict[str, bool] = {}
     try:
         from common import leases
         current = {str(rec["role"]): not rec.get("expired") for rec in leases.all_leases()}
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_singleton_info: best-effort step failed", exc_info=True)
     # A workspace's own chat bots hold roles of their own
     # (``channel_slack@team-a``, ``telegram@team-a``): listed when held.
     roles += sorted(r for r in current if "@" in r and r.split("@", 1)[0].startswith(("channel_", "telegram"))
@@ -135,7 +144,8 @@ async def readyz() -> Response:
     try:
         from common.config import hub_role
         role = hub_role()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("readyz: falling back after a failure", exc_info=True)
         role = "all"
     if role in ("all", "api"):
         # Informational, not part of `ready`: see _singleton_info.

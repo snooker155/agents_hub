@@ -41,6 +41,7 @@ phase, but the resolution machinery is already provided here.
 """
 from __future__ import annotations
 
+import logging
 import json
 import pkgutil
 from dataclasses import dataclass, field, replace
@@ -51,6 +52,8 @@ from typing import Any, Callable, Dict, List, Optional
 from common import db
 from common.docstore import DocStore
 from common.paths import FLOW_ENTITIES_FILE
+
+log = logging.getLogger(__name__)
 
 # Folder holding code-defined entities, scanned for subfolders (categories).
 ENTITIES_DIR = Path(__file__).resolve().parent / "entities"
@@ -251,7 +254,8 @@ def _agents_signature() -> tuple:
     try:
         from agents import registry as agent_registry
         return tuple(sorted(a.id for a in agent_registry.list_agents()))
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry gives an empty signature
+        log.debug("agents signature failed", exc_info=True)
         return ()
 
 
@@ -374,7 +378,8 @@ def _agent_visible_in_workspace(agent_id: str, workspace: Optional[str]) -> bool
     try:
         from agents.registry import get_agent as _get_agent
         from workspace import system_agent_ids as _system_ids
-    except Exception:
+    except Exception:  # noqa: BLE001 - without the registry every agent stays visible
+        log.debug("visibility helpers unavailable", exc_info=True)
         return True
     spec = _get_agent(agent_id)
     if spec is None:
@@ -396,7 +401,8 @@ def _agent_visible_in_workspace(agent_id: str, workspace: Optional[str]) -> bool
     try:
         from workspace import get_workspace_metadata
         allowed = (get_workspace_metadata(ws) or {}).get("allowed_agents")
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable workspace metadata means no allowlist
+        log.debug("workspace metadata read failed", exc_info=True)
         allowed = None
     if allowed is not None:
         if not (agent_id in allowed or is_system or owner == ws):

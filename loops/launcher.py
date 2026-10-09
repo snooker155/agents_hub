@@ -22,11 +22,14 @@ orchestrator of the agent runs, not their sandbox, the same as a flow.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from loops.models import LoopRun
 from loops.runner import LoopResumeError
+
+log = logging.getLogger(__name__)
 
 #: What a loop launch is called on the queue and in runtime.entity_launch's
 #: ENTRYPOINTS / LAUNCHERS tables.
@@ -98,7 +101,7 @@ def start_loop_run(
             run_id=run.loop_run_id,
         )
     except Exception:  # noqa: BLE001 - the run still launches; the task page just shows no run id yet
-        pass
+        log.debug("assigning loop run to task failed", exc_info=True)
 
     spec = {
         "kind": QUEUE_KIND, "run_id": run.loop_run_id, "entity_id": loop_id,
@@ -161,7 +164,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
         if task is not None:
             _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
     except Exception:  # noqa: BLE001 - the workspace root is a fine fallback for the cwd
-        pass
+        log.debug("resolving task workspace failed", exc_info=True)
 
     spec = {
         "kind": QUEUE_KIND, "run_id": loop_run_id, "entity_id": run.loop_id,

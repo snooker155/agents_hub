@@ -7,7 +7,10 @@ stack behind it, seconds of import time for one serializer.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+log = logging.getLogger(__name__)
 
 
 def task_to_dict(task: Any) -> Dict[str, Any]:
@@ -22,10 +25,12 @@ def task_to_dict(task: Any) -> Dict[str, Any]:
     # them — add explicitly.
     try:
         data["agent_state"] = task.agent_state.value
-    except Exception:
+    except Exception:  # noqa: BLE001 - a property that raises must not break serialization
+        log.debug("agent_state read failed", exc_info=True)
         data.setdefault("agent_state", "none")
     try:
         data["overdue"] = task.overdue
-    except Exception:
+    except Exception:  # noqa: BLE001 - a property that raises must not break serialization
+        log.debug("overdue read failed", exc_info=True)
         data.setdefault("overdue", False)
     return data

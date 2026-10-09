@@ -69,7 +69,7 @@ def _mtime(path: Any) -> float:
 def _index_at(mtime: float) -> List[Dict[str, Any]]:
     try:
         return list(json.loads(INDEX_FILE.read_text(encoding="utf-8")).get("docs") or [])
-    except Exception:
+    except (OSError, ValueError, AttributeError, TypeError):
         return []
 
 
@@ -109,7 +109,7 @@ def _doc_path(doc_id: str, lang: str = "en") -> Any:
 def _read_at(path: Any, mtime: float) -> str:
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, ValueError):
         return ""
 
 

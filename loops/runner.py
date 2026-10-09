@@ -57,7 +57,8 @@ def _owner_id() -> str:
     try:
         from common.leases import owner_id
         return owner_id()
-    except Exception:
+    except Exception:  # noqa: BLE001 - no lease owner id just means an unowned run record
+        log.debug("reading lease owner id failed", exc_info=True)
         return ""
 
 
@@ -65,7 +66,7 @@ def _hostname() -> str:
     import socket
     try:
         return socket.gethostname()
-    except Exception:
+    except OSError:
         return ""
 
 
@@ -74,8 +75,8 @@ def _publish(loop_run_id: str, event: Dict[str, Any]) -> None:
     try:
         from common.session_broker import broker
         broker.publish_threadsafe(f"loop:{loop_run_id}", event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - live publish is never fatal to the run
+        log.debug("loop event publish failed", exc_info=True)
 
 
 # ── Per-iteration context ────────────────────────────────────────────────────
@@ -372,8 +373,8 @@ def run_loop(
                 {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
                 run_id=run.loop_run_id,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the task page just shows no run id yet
+            log.debug("linking loop run to task failed", exc_info=True)
     if resume_run:
         # Distinct from a plain resume (e.g. the watchdog picking a crashed run
         # back up): a person's explicit stop is what "resumed from a stop"
@@ -407,8 +408,8 @@ def run_loop(
     try:
         from flow.launcher import _set_flow_running
         _set_flow_running(loop.flow_id, True)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the running flag is a display hint, the loop runs without it
+        log.debug("marking flow running failed", exc_info=True)
 
     try:
         try:
@@ -469,8 +470,8 @@ def run_loop(
                 if on_iteration:
                     try:
                         on_iteration(it)
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001 - a subscriber callback must not break the loop
+                        log.debug("on_iteration callback failed", exc_info=True)
 
                 if it.status == "stopped":
                     raise LoopStopped("stopped", "stop requested during the flow run")
@@ -510,8 +511,8 @@ def run_loop(
     try:
         from flow.launcher import _set_flow_running
         _set_flow_running(loop.flow_id, False)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - clearing the display flag must not lose the finished run
+        log.debug("clearing flow running flag failed", exc_info=True)
     _finalize_task(run)
     _publish(run.loop_run_id, {"type": "loop_done", **run.to_dict()})
     return run
@@ -680,8 +681,8 @@ def _prepare_context(
     )
     try:
         _ts.update_task(task_id, session_id=session_id)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - linking the session is cosmetic, the run goes on
+        log.debug("linking task to loop session failed", exc_info=True)
     # Record the loop as the task's executor (kind loop), the same way a flow
     # run does, so a task attached to a loop shows what is working on it
     # instead of appearing unassigned for the whole run. The run id is added
@@ -691,8 +692,8 @@ def _prepare_context(
             task.id, {"kind": "loop", "id": loop.loop_id},
             {"loop_id": loop.loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - an unassigned task is cosmetic, the run goes on
+        log.debug("assigning loop as task executor failed", exc_info=True)
     return ws_name, str(ws_path), str(task_id), session_id
 
 
@@ -706,15 +707,15 @@ def _finalize_task(run: LoopRun) -> None:
             persist_task_result(
                 run.task_id, run.loop_run_id, run.result, agent_id="loop",
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - persisting the result is best-effort, the run is already finished
+        log.debug("persisting loop result to task failed", exc_info=True)
     try:
         from managers.run_manager import finalize_flow_task
         ok = run.status == "completed"
         finalize_flow_task(run.task_id, "completed" if ok else "failed",
                            0 if ok else 1, error=run.error)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - finalizing the task is best-effort, the run is already finished
+        log.debug("finalizing loop task failed", exc_info=True)
 
 
 class LoopResumeError(Exception):
@@ -777,7 +778,8 @@ def estimate_cost(loop: Loop) -> Dict[str, Any]:
 
     try:
         flow = flow_store.get_flow(loop.flow_id) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable flow just means an estimate without nodes
+        log.debug("reading flow for cost estimate failed", exc_info=True)
         flow = {}
     agent_nodes = [
         n for n in flow.get("nodes", []) or []

@@ -16,6 +16,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from providers.model_structure import ModelStructureError, structure_for, structure_from_file
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/models/structure", tags=["model-structure"])
 
@@ -26,7 +29,8 @@ def _catalog() -> Optional[dict]:
     try:
         from routes.models import _load_catalog
         return _load_catalog()
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+        log.debug("_catalog: falling back after a failure", exc_info=True)
         return None
 
 

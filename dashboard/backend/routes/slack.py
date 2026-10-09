@@ -99,7 +99,7 @@ def _verify(raw: bytes, headers: Any, service: Any = None) -> None:
 
 async def _handle_event_safely(event: dict[str, Any], event_id: str | None, service: Any = None,
                                team_id: str | None = None) -> None:
-    svc = service or _spec().service
+    svc: Any = service or _spec().service
     try:
         with svc.scope():
             await svc.handle_event(event, event_id=event_id, team_id=team_id)
@@ -108,7 +108,7 @@ async def _handle_event_safely(event: dict[str, Any], event_id: str | None, serv
 
 
 async def _handle_block_action_safely(payload: dict[str, Any], service: Any = None) -> None:
-    svc = service or _spec().service
+    svc: Any = service or _spec().service
     try:
         with svc.scope():
             await svc.handle_block_action(payload)

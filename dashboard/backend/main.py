@@ -57,6 +57,7 @@ from routes import agent_import, agents, chats, connections as connections_route
 from routes import help_chat as help_chat_router
 from routes import assistant as assistant_router
 from routes import setup_guide as setup_guide_router
+from routes import first_run as first_run_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
 from routes import groups as groups_router
@@ -133,7 +134,7 @@ async def lifespan(app: FastAPI):
             log.warning(f"⚠ Chat channels not registered: {e}")
         await _supervisor.start()
         log.info("✓ Singleton supervisor started (telegram, channels, online_evals)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the singleton supervisor: {e}")
 
     # This replica's row on the deployment map (common/members.py): registered
@@ -148,7 +149,8 @@ async def lifespan(app: FastAPI):
                 running = _dbm.get_conn().execute(
                     "SELECT COUNT(*) FROM runs WHERE status = 'running' AND host = ?",
                     (__import__("socket").gethostname(),)).fetchone()[0]
-            except Exception:
+            except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+                log.debug("_load: falling back after a failure", exc_info=True)
                 running = None
             return {"sse_clients": len(getattr(_broker, "_clients", {}) or {}),
                     "running_runs_on_host": running}
@@ -158,7 +160,7 @@ async def lifespan(app: FastAPI):
         }, load_fn=_load)
         app.state.member_beat.start()
         log.info("✓ Registered on the deployment map")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not register this replica: {e}")
 
     # Outbound webhook deliveries left in the outbox by an earlier process go
@@ -166,7 +168,7 @@ async def lifespan(app: FastAPI):
     try:
         from notify import outbound as _notify_outbound
         _notify_outbound.start()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
     # Periodic OTLP metrics export (common/otel_export.py), only when an
@@ -182,7 +184,7 @@ async def lifespan(app: FastAPI):
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.start()
         log.info("✓ Plan scheduler started")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start plan scheduler: {e}")
 
     # Start the watcher runner (polls mailboxes and HTTP resources, wakes the
@@ -200,7 +202,7 @@ async def lifespan(app: FastAPI):
         from common.live_state import run_external_publisher
         app.state.external_publisher = asyncio.create_task(run_external_publisher())
         log.info("✓ External-state publisher started")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start external-state publisher: {e}")
 
     # Start the cross-replica broker bridge (common/broker_bridge.py). A no-op
@@ -209,7 +211,7 @@ async def lifespan(app: FastAPI):
     try:
         from common.broker_bridge import start_bridge
         await start_bridge()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start broker bridge: {e}")
 
     # Start the run watchdog (fails runs stuck in 'pending' and runs whose
@@ -218,7 +220,7 @@ async def lifespan(app: FastAPI):
         from managers.run_watchdog import watchdog as _run_watchdog
         await _run_watchdog.start()
         log.info("✓ Run watchdog started")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start run watchdog: {e}")
 
     # The egress proxy for environments with a limited network
@@ -227,7 +229,7 @@ async def lifespan(app: FastAPI):
         from environments import egress as _egress
         if _egress.start_background() is not None:
             log.info("✓ Egress proxy started")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the egress proxy: {e}")
 
     # The service supervisor (services/supervisor.py): keeps every service's
@@ -280,16 +282,16 @@ async def lifespan(app: FastAPI):
     try:
         from environments import egress as _egress
         _egress.stop_background()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     task = getattr(app.state, "external_publisher", None)
     if task:
         task.cancel()
     try:
         from common.broker_bridge import stop_bridge
         await stop_bridge()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     try:
         from watchers.runner import runner as _watcher_runner
         await _watcher_runner.stop()
@@ -298,41 +300,41 @@ async def lifespan(app: FastAPI):
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     try:
         from managers.run_watchdog import watchdog as _run_watchdog
         await _run_watchdog.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     try:
         from common.singletons import supervisor as _supervisor
         await _supervisor.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     try:
         from notify import outbound as _notify_outbound
         _notify_outbound.shutdown()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     beat = getattr(app.state, "member_beat", None)
     if beat is not None:
         try:
             beat.stop()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("_load: best-effort step failed", exc_info=True)
     # Every role this replica held goes back to the pool at once, so a
     # restart is taken over by a sibling immediately, not after the TTL.
     try:
         from common import leases as _leases
         _leases.release_all()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
     try:
         from common import db as _db
         _db.close_pool()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_load: best-effort step failed", exc_info=True)
 
 
 # Initialize FastAPI app
@@ -440,8 +442,8 @@ async def _api_token_guard(request, call_next):
                 method=request.method, path=request.url.path,
                 result=str(response.status_code),
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+        log.debug("_api_token_guard: best-effort step failed", exc_info=True)
     return response
 
 
@@ -721,6 +723,8 @@ app.include_router(help_chat_router.router)
 app.include_router(assistant_router.router)
 # The guided setup the assistant leads (common/setup_guide.py)
 app.include_router(setup_guide_router.router)
+# The first run: the install's own setup in the browser, once (common/first_run.py)
+app.include_router(first_run_router.router)
 
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)

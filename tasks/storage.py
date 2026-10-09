@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 from datetime import datetime, timezone
 from enum import Enum
@@ -14,6 +15,8 @@ from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 from common import db
 
 from pydantic_core import to_jsonable_python as _pydantic_encoder
+
+log = logging.getLogger(__name__)
 
 def _model_to_dict(obj: BaseModel) -> dict:
     return obj.model_dump()
@@ -84,7 +87,7 @@ def _parse_task(data: dict) -> Task:
 def _json_default(o):
     try:
         return _pydantic_encoder(o)
-    except Exception:
+    except (TypeError, ValueError):
         pass
     # Fallbacks
     if isinstance(o, Enum):
@@ -105,8 +108,8 @@ def _doc_to_task(doc: str) -> Optional[Task]:
         data = json.loads(doc)
         if isinstance(data, dict):
             return _parse_task(data)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - a corrupt task document reads as no task
+        log.debug("task document parse failed", exc_info=True)
     return None
 
 
@@ -177,9 +180,9 @@ class TaskStore:
                         workspace=t.workspace,
                     )
                     _write_task_row(conn, t)
-        except Exception:
+        except Exception:  # noqa: BLE001 - store initialization must never break over key backfill
             # Never break store initialization over key backfill
-            pass
+            log.debug("task key backfill failed", exc_info=True)
 
     # ------------- internals -------------
     @staticmethod
@@ -299,7 +302,8 @@ class TaskStore:
             try:
                 from tasks.keys import next_key
                 key = next_key(tasks, project_id=project_id, workspace=workspace)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a task is created without a key rather than not at all
+                log.debug("task key allocation failed", exc_info=True)
                 key = None
             task = Task(
                 key=key,
@@ -341,7 +345,7 @@ class TaskStore:
                 return None
             try:
                 data = json.loads(row["doc"])
-            except Exception:
+            except (ValueError, TypeError):
                 return None
             # Merge with JSON-safe values so the stored doc stays serializable.
             safe_fields = json.loads(json.dumps(fields, ensure_ascii=False, default=_json_default))
@@ -371,7 +375,7 @@ class TaskStore:
                 return None
             try:
                 data = json.loads(row["doc"])
-            except Exception:
+            except (ValueError, TypeError):
                 return None
             if data.get("executor") or data.get("assigned_agent_type"):
                 return None
@@ -443,8 +447,8 @@ def delete_activity_log(tasks_path: Path, task_id: str) -> None:
     try:
         with db.transaction() as conn:
             conn.execute("DELETE FROM task_activity WHERE task_id = ?", (str(task_id),))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - deleting an activity log is best effort cleanup
+        log.debug("activity log delete failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -526,5 +530,5 @@ def delete_task_result(tasks_path: Path, task_id: str) -> None:
     try:
         with db.transaction() as conn:
             conn.execute("DELETE FROM task_results WHERE task_id = ?", (str(task_id),))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - deleting task results is best effort cleanup
+        log.debug("task results delete failed", exc_info=True)

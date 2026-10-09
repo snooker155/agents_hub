@@ -215,7 +215,7 @@ def _request(method: str, path: str, **kwargs: Any):
             headers={"Authorization": f"Bearer {token}"},
             timeout=timeout, **kwargs,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any transport failure becomes a BrowserError for the tool
         raise BrowserError(f"browser service unreachable: {type(exc).__name__}: {exc}")
     return resp
 
@@ -223,7 +223,7 @@ def _request(method: str, path: str, **kwargs: Any):
 def _detail(resp) -> str:
     try:
         return str(resp.json().get("detail") or resp.text)
-    except Exception:
+    except (ValueError, AttributeError):
         return resp.text or f"HTTP {resp.status_code}"
 
 
@@ -235,7 +235,7 @@ def _agent_label() -> str:
     try:
         from common.agent_context import current_agent_id
         return str(current_agent_id.get() or "")
-    except Exception:
+    except (ImportError, LookupError):
         return ""
 
 
@@ -247,8 +247,8 @@ def _session_tags(key: str) -> Dict[str, Any]:
     try:
         from common.workspace_context import resolve_active_workspace
         workspace = resolve_active_workspace() or ""
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the workspace tag is optional, the session still opens
+        log.debug("_session_tags: best-effort step failed", exc_info=True)
     return {"run_id": _run_id_of(key), "workspace": workspace,
             "owner": "agent", "label": _agent_label()}
 
@@ -414,8 +414,8 @@ def _check_landing(url: str) -> Optional[str]:
     if sid:
         try:
             _request("DELETE", f"/sessions/{sid}")
-        except Exception:
-            pass
+        except BrowserError:
+            log.debug("_check_landing: best-effort step failed", exc_info=True)
     return reason
 
 
@@ -667,7 +667,7 @@ def browser_screenshot(full_page: bool = False) -> str:
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"browser-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.png"
         path.write_bytes(resp.content)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the error goes back to the caller as a message
         return json.dumps({"ok": False, "error": f"could not save the screenshot: {exc}"})
     return json.dumps({"ok": True, "path": f"screenshots/{path.name}", "bytes": len(resp.content)})
 

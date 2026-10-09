@@ -79,10 +79,10 @@ async def _publish(channel: Optional[str], event: Dict[str, Any]) -> None:
         return
     try:
         await broker.apublish(channel, event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a live view is an extra, a broken publish must not take the turn down
         # A live view is an extra, never the run. A broken publish must not take
         # the turn down with it.
-        pass
+        log.debug("live publish failed", exc_info=True)
 
 
 def _publish_now(channel: Optional[str], event: Dict[str, Any]) -> None:
@@ -100,8 +100,8 @@ def _publish_now(channel: Optional[str], event: Dict[str, Any]) -> None:
 
     try:
         broker.publish_threadsafe(channel, event)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the closing event is best effort and must not mask the turn's own end
+        log.debug("closing publish failed", exc_info=True)
 
 
 def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
@@ -160,7 +160,7 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
         if handoffs and event.get("agent_id"):
             chat_store.set_agent(conversation_id, str(event["agent_id"]))
     except Exception:  # noqa: BLE001 - the safety net must never fail the turn it records
-        pass
+        log.debug("turn safety-net record failed", exc_info=True)
     return written
 
 

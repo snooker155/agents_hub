@@ -419,7 +419,8 @@ async def get_instance_logs(instance_id: str):
         try:
             from common import blobs
             text = blobs.read_text(blobs.rel(log_file))
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("get_instance_logs: falling back after a failure", exc_info=True)
             text = None
         if text is not None:
             return {"logs": text[-LOG_TAIL_BYTES:], "log_file": log_file,
@@ -439,7 +440,7 @@ async def get_instance_logs(instance_id: str):
                 fh.seek(size - LOG_TAIL_BYTES)
             content = fh.read()
         return {"logs": content, "log_file": log_file, "truncated": size > LOG_TAIL_BYTES}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -554,7 +555,8 @@ async def stop_instance(instance_id: str):
     if run_id:
         try:
             stopped_run = run_manager.stop_run_by_id(str(run_id))
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
+            log.debug("stop_instance: falling back after a failure", exc_info=True)
             stopped_run = False
     instance_registry.mark_stopped(instance_id, "stopped by operator")
     return {"ok": True, "stopped_run": stopped_run, "instance": store.get(instance_id)}
@@ -601,7 +603,10 @@ async def update_instance_inputs(instance_id: str, body: InstanceInputs, request
     _resident_or_400(instance_id)
     instance = carrier.set_inputs(instance_id, take_tasks=body.take_tasks,
                                   concurrency=body.concurrency)
-    return _enrich(instance or store.get(instance_id), request=request)
+    row = instance or store.get(instance_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return _enrich(row, request=request)
 
 
 @router.get("/{instance_id}/carriers")

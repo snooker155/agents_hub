@@ -39,13 +39,13 @@ def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
     """
     try:
         abs_path = _resolve_within_workspace(path, workspace=ws_path)
-    except Exception:
+    except (ValueError, OSError):
         return None
     if not abs_path.is_file():
         return None
     try:
         return abs_path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -90,7 +90,7 @@ def _workspace_rel_prefix(ws_path: Optional[Path]) -> str:
     try:
         from workspace import WORKSPACES_ROOT
         rel = ws_path.relative_to(Path(WORKSPACES_ROOT).resolve())
-    except Exception:
+    except (ImportError, ValueError, OSError):
         return ""
     parts = rel.parts[1:]  # drop the workspace name itself
     return "/".join(parts) + "/" if parts else ""
@@ -257,7 +257,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             return json.dumps({"path": path, "content": part, "offset": start,
                                "returned_chars": len(part), "total_chars": len(content)},
                               ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"read_file failed: {e}", "path": path}, ensure_ascii=False)
 
     read_tool = StructuredTool.from_function(
@@ -275,7 +275,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             after = _snapshot_text(rel, ws_path)
             _record("add" if before is None else "modify", rel, before, after)
             return json.dumps(WriteFileOutput(path=rel).model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"write_file failed: {e}", "path": path}, ensure_ascii=False)
 
     write_tool = StructuredTool.from_function(
@@ -291,7 +291,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             rel = _delete_file(path, workspace=ws_path, config=cfg)
             _record("delete", rel, before, None)
             return json.dumps(DeleteFileOutput(path=rel).model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"delete_file failed: {e}", "path": path}, ensure_ascii=False)
 
     delete_tool = StructuredTool.from_function(
@@ -305,7 +305,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         try:
             files = _list_files(glob, ignore=ignore, workspace=ws_path, config=cfg)
             return json.dumps(ListFilesOutput(files=files).model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"list_files failed: {e}"}, ensure_ascii=False)
 
     list_tool = StructuredTool.from_function(
@@ -320,7 +320,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             raw = _search_text(pattern, file_glob, workspace=ws_path, config=cfg)
             results = [SearchMatch(**hit) for hit in raw]
             return json.dumps(SearchTextOutput(results=results).model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"search_text failed: {e}"}, ensure_ascii=False)
 
     search_tool = StructuredTool.from_function(
@@ -342,7 +342,8 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
                     rel = fp.new_path if (fp.new_path and fp.new_path != "/dev/null") else fp.old_path
                     if rel and rel not in before_by_path:
                         before_by_path[rel] = _snapshot_text(rel, ws_path)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a diff the snapshot step cannot parse only loses the before-text, the apply step reports the real error
+                log.debug("patch snapshot failed", exc_info=True)
                 before_by_path = {}
             result = _apply_unified_diff(diff_text, workspace=str(ws_path) if ws_path else None, config=cfg)
             for fo in (result.get("files") or []):
@@ -355,7 +356,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             files = [FileOp(**fo) for fo in (result.get("files") or [])]
             out = ApplyUnifiedDiffOutput(applied=bool(result.get("applied")), files=files)
             return json.dumps(out.model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"apply_unified_diff failed: {e}"}, ensure_ascii=False)
 
     apply_tool = StructuredTool.from_function(
@@ -373,7 +374,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             after = _snapshot_text(rel, ws_path)
             _record("add" if before is None else "modify", rel, before, after)
             return json.dumps(CreateFileOutput(path=rel).model_dump(), ensure_ascii=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             return json.dumps({"ok": False, "error": f"create_file failed: {e}", "path": path}, ensure_ascii=False)
 
     create_tool = StructuredTool.from_function(

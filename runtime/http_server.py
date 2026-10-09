@@ -62,12 +62,12 @@ class _TeeStream(io.TextIOBase):
         n = self._primary.write(s)
         try:
             self._primary.flush()
-        except Exception:
+        except (OSError, ValueError):
             pass
         try:
             self._secondary.write(s)
             self._secondary.flush()
-        except Exception:
+        except (OSError, ValueError):
             pass
         return n
 
@@ -75,7 +75,7 @@ class _TeeStream(io.TextIOBase):
         for stream in (self._primary, self._secondary):
             try:
                 stream.flush()
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
     def fileno(self) -> int:
@@ -100,7 +100,7 @@ def _make_logger(log_file: Optional[str]) -> Callable[[str], None]:
             p = Path(log_file)
             p.parent.mkdir(parents=True, exist_ok=True)
             _fh = open(p, "a", encoding="utf-8", buffering=1)
-        except Exception:
+        except OSError:
             pass
 
     def _log(msg: str) -> None:
@@ -111,7 +111,7 @@ def _make_logger(log_file: Optional[str]) -> Callable[[str], None]:
             try:
                 _fh.write(line + "\n")
                 _fh.flush()
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
     return _log
@@ -160,7 +160,7 @@ def create_app(instance_id: str, agent_id: str, workspace: Optional[str] = None,
             if not inst:
                 return {"instance_id": instance_id, "agent_id": agent_id, "state": "unknown"}
             return {k: v for k, v in carrier.public_view(inst).items() if k != "expose_token"}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported to the caller as a 500 with the message
             raise HTTPException(status_code=500, detail=str(exc))
 
     # ── Run ───────────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ def create_app(instance_id: str, agent_id: str, workspace: Optional[str] = None,
                 return {"instance_id": instance_id, "lines": []}
             all_lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
             return {"instance_id": instance_id, "lines": all_lines[-tail:]}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - reported to the caller as a 500 with the message
             raise HTTPException(status_code=500, detail=str(exc))
 
     return app
@@ -222,7 +222,7 @@ def start_http_server(
             _fh = open(p, "a", encoding="utf-8", buffering=1)
             sys.stdout = _TeeStream(sys.stdout, _fh)  # type: ignore[assignment]
             sys.stderr = _TeeStream(sys.stderr, _fh)  # type: ignore[assignment]
-        except Exception:
+        except OSError:
             pass
 
     app = create_app(instance_id, agent_id, workspace=workspace, log_file=log_file)

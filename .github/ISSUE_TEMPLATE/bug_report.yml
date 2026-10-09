@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work the way the docs say it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Agents, pick main-agent
+        2. Ask it to ...
+        3. The chat shows ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in Settings, or `ah --version`, or the image tag.
+      placeholder: 0.10.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it runs
+      options:
+        - Docker quickstart (GHCR images)
+        - From source
+        - Helm chart
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Auth mode
+      options: [single, token, multi, not sure]
+  - type: input
+    id: model
+    attributes:
+      label: Model and provider
+      description: If the problem is in a run or a chat.
+      placeholder: claude-sonnet-5-5 on Anthropic, a local Qwen3 on the hub runtime
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or support bundle
+      description: Backend log lines, the browser console, or a support bundle from Settings. Remove keys and personal data first.
+      render: text

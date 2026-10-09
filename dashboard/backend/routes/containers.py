@@ -20,6 +20,9 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from agents.registry import get_agent, list_agents
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/containers", tags=["containers"])
 
@@ -58,7 +61,7 @@ def list_images():
     try:
         images = _mgr().list_images()
         return {"images": images}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         raise _docker_error(exc)
 
 
@@ -90,7 +93,7 @@ async def build_base_image(body: BuildRequest, background_tasks: BackgroundTasks
         return result
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -121,7 +124,7 @@ async def build_agent_image(agent_id: str, body: BuildRequest):
         return result
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -150,10 +153,10 @@ def list_containers():
                     c["http_expose"] = bool(instance.get("http_port"))
                     c["http_url"] = instance.get("http_url")
                     c["http_host_port"] = instance.get("http_host_port")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("list_containers: best-effort step failed", exc_info=True)
         return {"containers": containers}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         raise _docker_error(exc)
 
 
@@ -163,7 +166,7 @@ def get_container_logs(name: str, tail: int = 200):
     try:
         logs = _mgr().get_logs(name, tail=tail)
         return logs
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -177,7 +180,7 @@ def stop_container(name: str):
         return {"stopped": name}
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -191,7 +194,7 @@ def remove_container(name: str):
         return {"removed": name}
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -203,7 +206,7 @@ def ensure_network():
     try:
         network = _mgr().get_or_create_network()
         return {"network": network}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(exc))
 
 

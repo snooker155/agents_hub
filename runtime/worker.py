@@ -98,7 +98,8 @@ def _child_alive(spec: Dict[str, Any]) -> Optional[bool]:
         try:
             from managers.run_manager import get_run_by_id
             rec = get_run_by_id(run_id) or {}
-        except Exception:
+        except Exception:  # noqa: BLE001 - an unreadable run record means the run is skipped
+            log.debug("run record lookup failed", exc_info=True)
             return None
         status = str(rec.get("status") or "")
         if status not in ("running", "stop", "pending", "queued"):
@@ -116,7 +117,8 @@ def _child_alive(spec: Dict[str, Any]) -> Optional[bool]:
     try:
         from common import entity_runs
         rec = entity_runs.get(run_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable run record means the run is skipped
+        log.debug("entity run lookup failed", exc_info=True)
         return None
     if rec is None:
         return None
@@ -194,8 +196,8 @@ class Worker:
                     try:
                         from common import blobs
                         blobs.mirror(blobs.rel(log_file))
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001 - mirroring the log is best effort
+                        log.debug("run log mirror failed", exc_info=True)
 
     # ── the loop ─────────────────────────────────────────────────────────────
 
@@ -214,15 +216,15 @@ class Worker:
         try:
             from environments import egress
             egress.start_background()
-        except Exception:
+        except Exception:  # noqa: BLE001 - the proxy is optional and the failure is logged
             log.warning("could not start the egress proxy", exc_info=True)
 
         if install_signals:
             for sig in (signal.SIGTERM, signal.SIGINT):
                 try:
                     signal.signal(sig, lambda *_: self.request_stop())
-                except Exception:
-                    pass
+                except (ValueError, OSError):
+                    log.debug("signal handler not installed", exc_info=True)
         log.info("worker %s ready: modes=%s concurrency=%d host=%s",
                  self.owner, ",".join(self.modes), self.concurrency, socket.gethostname())
         while not self.stopping.is_set():
@@ -243,14 +245,14 @@ class Worker:
             time.sleep(min(TICK_SECONDS, 5.0))
         try:
             leases.release_all(self.owner)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - shutdown must go on to stop the beat and the proxy
+            log.debug("releasing leases failed", exc_info=True)
         beat.stop()
         try:
             from environments import egress
             egress.stop_background()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - shutdown must finish even if the proxy stop fails
+            log.debug("egress proxy stop failed", exc_info=True)
         log.info("worker %s stopped (%d launched, %d failed)", self.owner, self.launched, self.failed)
 
     def request_stop(self) -> None:
@@ -283,7 +285,8 @@ def main(argv: Optional[List[str]] = None, *, run: Callable[[Worker], None] = No
     from common.logging_config import configure_logging
     try:
         configure_logging(None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - logging setup falls back to the basic config
+        log.debug("logging setup failed", exc_info=True)
         logging.basicConfig(level=logging.INFO)
     from common.bootstrap import ensure_initial_state
     ensure_initial_state()
