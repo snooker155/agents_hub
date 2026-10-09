@@ -1,0 +1,21 @@
+name: Feature request
+description: Something Agents Hub should do and does not.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to get done, and where Agents Hub gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working. Rough is fine.
+  - type: textarea
+    id: around
+    attributes:
+      label: What you do instead now
+      description: A workaround, another tool, or nothing.

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/snooker155/agents_hub/security/advisories/new
+    about: Please report privately, never in a public issue (SECURITY.md).

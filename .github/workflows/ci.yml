@@ -30,7 +30,7 @@ jobs:
           # and go through cli.main, which reaches for rich and requests too).
           # It is universal, so it installs the same on any supported version.
           pip install -r requirements.lock
-          pip install pytest pytest-xdist ruff pyright
+          pip install pytest pytest-xdist pytest-cov ruff pyright pip-audit
 
       - name: Blind excepts (no new ones beyond the baseline)
         # --isolated so the per-file-ignores in pyproject.toml do not hide the
@@ -50,6 +50,11 @@ jobs:
         # the same release (scripts/release.py, docs/deployment.md "Releases").
         run: python scripts/release.py check
 
+      - name: Known vulnerabilities (requirements.lock)
+        # Fails on any advisory not accepted in scripts/ci/audit_ignore.txt, and
+        # on an accepted one that has gone away, so the list stays current.
+        run: python scripts/ci/audit_lock.py
+
       - name: Run tests
         # AGENTS_HUB_ROOT is also set to a throwaway dir by tests/conftest.py; this
         # is belt-and-braces so nothing can touch a real state directory on CI.
@@ -57,7 +62,9 @@ jobs:
           AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_ci
         # One worker per core: every test gets its own SQLite file and
         # tmp_path (tests/conftest.py), so the workers never share state.
-        run: python -m pytest tests/ -q -n auto
+        # --cov fails the step when coverage falls below fail_under in
+        # pyproject.toml ([tool.coverage.report]).
+        run: python -m pytest tests/ -q -n auto --cov --cov-report=term:skip-covered
 
   # The same suite against Postgres (common/db.py's second backend). Tests
   # marked sqlite_only are skipped (tests/conftest.py).
@@ -255,7 +262,9 @@ jobs:
       - name: Test
         # Workers hung intermittently when files ran in parallel on the CI
         # runner; one worker at a time is slower but finishes every time.
-        run: npx vitest run --fileParallelism=false
+        # --coverage fails the step below the floor in vite.config.js
+        # (coverage.thresholds).
+        run: npx vitest run --coverage --fileParallelism=false
 
       - name: Build
         run: npx vite build

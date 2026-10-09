@@ -84,3 +84,28 @@ ignore = [
 # names the exceptions the block can raise or carries a `noqa: BLE001` with
 # the reason it must catch everything, and logs what it swallows. Nothing is
 # ignored here any more; keep it that way (CONTRIBUTING.md "Blind excepts").
+
+# Coverage of the backend by the test suite (CI "Run tests" step). fail_under
+# is a floor, not a goal: the suite reached it when the gate was added
+# (2026-10-09), and a change that lowers it fails CI. Raise it as tests grow.
+[tool.coverage.run]
+source = ["."]
+branch = false
+parallel = true
+omit = [
+    "tests/*",
+    "examples/*",
+    "clients/*",
+    "site/*",
+    "scripts/*",
+    "deploy/*",
+    ".agents_hub/*",
+    "**/node_modules/*",
+    "dashboard/frontend/*",
+    "ee/*/tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 76
+skip_empty = true
+precision = 1
