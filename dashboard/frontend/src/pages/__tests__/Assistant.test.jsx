@@ -102,6 +102,26 @@ describe('the Assistant page', () => {
     await waitFor(() => expect(assistantApi.getAssistant).toHaveBeenLastCalledWith('service', 'team'));
   });
 
+  it('Space never scrolls the page or presses the menu link that kept focus', async () => {
+    assistantApi.getAssistant.mockReturnValue(new Promise(() => {}));
+    show();
+    const link = document.createElement('a');
+    link.href = '/assistant';
+    document.body.appendChild(link);
+    link.focus();
+    for (const repeat of [false, true]) {
+      const down = new KeyboardEvent('keydown', { code: 'Space', key: ' ', repeat, bubbles: true, cancelable: true });
+      link.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+    }
+    const up = new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
+    link.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(link);
+    expect(recorder.start).not.toHaveBeenCalled();
+    link.remove();
+  });
+
   it('names no workspace and asks for the voice models of the header one', async () => {
     show();
     await screen.findByTestId('assistant-answer');

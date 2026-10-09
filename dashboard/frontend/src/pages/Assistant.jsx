@@ -472,24 +472,30 @@ export default function Assistant() {
 
   // Space is the talk button while nothing else wants the key; hands-free
   // it is a tap on the button (start or end the conversation, call it now).
+  // Outside text fields the page owns the key outright: no scroll (also while
+  // the page is still loading or the key is held), and the menu link that
+  // kept focus after navigation is let go instead of lighting up or firing.
   const tapRef = useRef(null);
   useEffect(() => {
     const down = (e) => {
-      if (e.code !== 'Space' || e.repeat || isTyping(e.target) || !canListen) return;
+      if (e.code !== 'Space' || isTyping(e.target)) return;
       e.preventDefault();
+      const focused = document.activeElement;
+      if (focused && focused !== document.body) focused.blur?.();
+      if (e.repeat || !canListen) return;
       if (tapRef.current) { tapRef.current(); return; }
       startTalk();
     };
     const up = (e) => {
-      if (e.code !== 'Space' || !talkRef.current) return;
+      if (e.code !== 'Space' || (isTyping(e.target) && !talkRef.current)) return;
       e.preventDefault();
-      endTalk();
+      if (talkRef.current) endTalk();
     };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup', up, true);
     return () => {
-      window.removeEventListener('keydown', down);
-      window.removeEventListener('keyup', up);
+      window.removeEventListener('keydown', down, true);
+      window.removeEventListener('keyup', up, true);
     };
   }, [canListen, endTalk, startTalk]);
 
