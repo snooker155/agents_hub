@@ -229,11 +229,47 @@ run does, and writes nothing until you confirm a review of every value:
 An answers file that names `voice.mode` or `demo` still applies them in
 QuickStart.
 
+### The first run in the browser
+
+With one operator (`AUTH_MODE=single` or `token`), a new install opens on a
+setup screen of its own instead of the app: no sidebar, no header, one
+decision per screen, the way a new phone sets itself up. In order: hello,
+the language, light or dark, a model, the default model, the assistant's
+voice, web search, personal memory and the demo workspace, then a summary
+with the way in (**Start using Agents Hub**, **Continue with the
+assistant** or **Take the tour**).
+
+On the voice screen you meet the assistant: it says hello out loud, each
+language in a voice of its own ([a voice per language](assistant.md#a-voice-per-language)),
+you say whether you heard it, answer by voice and hear the reply, which checks
+the model, the speech model and the transcription model in one go. From then
+on every screen has the assistant at its foot, asked by voice or by typing
+about that screen, and the last screen hands over to it, by voice when it was
+heard.
+
+Only the model is required: a key of OpenAI, Anthropic or Google (checked
+with the provider before it is saved), a model server already running on
+this machine (Ollama, LM Studio; their models are listed to pick from), or,
+when the hub runs its own model runtime, the ready local set downloaded in
+the background. Every later screen has **Not now**, and a screen whose
+answer is already in place (a key set by `ah setup`, web search through the
+model's own key) only says so. There is no way past the whole of it.
+
+The step is saved on the hub, so a reload or another browser goes on where
+it stopped; the language and look chosen there are what a new browser starts
+with. Once finished it does not come back; **Settings, First setup** runs
+it again on purpose. An install that was already in use when it was
+upgraded (a chat, or a guided setup started) is never stopped by it. In
+`multi` mode the first administrator is made on the login screen and each
+person gets the welcome window below instead.
+
 ### After the install: the assistant takes over
 
 The console (or the browser) does only what the assistant cannot do for
-itself: an account and one model to think with. When the dashboard opens for
-the first time, the welcome window either asks for that model (a key of
+itself: an account and one model to think with. With one operator the first
+run above does both and its **Continue with the assistant** leads here. In
+`multi` mode, when a person opens the dashboard for the first time, the
+welcome window either asks for that model (a key of
 OpenAI, Anthropic or Google, or a model server already running on this
 machine, checked with the provider before it is saved) or, once there is one,
 offers **Talk to the assistant** or **Type to the assistant**. From there the

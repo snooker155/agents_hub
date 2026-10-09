@@ -308,6 +308,15 @@ def _normalize_purpose(purpose: Purpose, raw: Any) -> Optional[Dict[str, Any]]:
     options = _options(raw.get("options"), purpose.options)
     if options:
         out["options"] = options
+    if purpose.id == "speech" and raw.get("languages"):
+        # A voice per language (providers/speech_languages.py).
+        from providers import speech_languages
+        try:
+            languages = speech_languages.normalize(raw.get("languages"))
+        except speech_languages.SpeechLanguageError as exc:
+            raise SpecialModelError(str(exc)) from None
+        if languages:
+            out["languages"] = languages
     return out
 
 

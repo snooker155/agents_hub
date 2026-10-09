@@ -115,14 +115,17 @@ def test_the_whole_set_runs_in_order_and_is_registered(env):
     job = local_set.start(background=False)
     assert job["status"] == "done", job
     assert [c for c in runtime.calls if c[0] == "engine"] == [("engine", "llama"), ("engine", "whisper"),
-                                                              ("engine", "kokoro")]
+                                                              ("engine", "kokoro"), ("engine", "piper")]
     order = [c[1] for c in runtime.calls]
     assert order.index("llama") < order.index("Qwen3-8B-Q4_K_M.gguf") < order.index("faster-whisper-small") \
-        < order.index("kokoro-v1.0")
+        < order.index("kokoro-v1.0") < order.index("piper-ru_RU-irina-medium") < order.index("piper-de_DE-thorsten-medium")
     assert ("load", "Qwen3-8B-Q4_K_M.gguf") in runtime.calls
     assert [s["status"] for s in job["meta"]["steps"]] == ["skipped"] + ["done"] * 6
     stored = special.stored("default")
     assert stored["speech"]["model"] == "kokoro-v1.0" and stored["transcription"]["model"] == "faster-whisper-small"
+    # Kokoro speaks English only: Russian and German get a Piper voice each.
+    assert stored["speech"]["languages"] == {"ru": {"model": "piper-ru_RU-irina-medium"},
+                                             "de": {"model": "piper-de_DE-thorsten-medium"}}
     assert job["meta"]["chat"]["id"] == "qwen3-8b" and job["percent"] == 100
 
 
@@ -217,9 +220,10 @@ def test_the_dry_run_describes_without_changing(env):
 def test_installed_ignores_only_the_load_step(env, monkeypatch):
     _use(env, Runtime(ram_gb=8, engines={"llama": True}))
     monkeypatch.setattr(local_set, "_have", lambda client: {
-        "engines": {"llama": True, "whisper": True, "kokoro": True},
+        "engines": {"llama": True, "whisper": True, "kokoro": True, "piper": True},
         "files": {"Qwen3-4B-Q4_K_M.gguf"},
-        "names": {local_set.presets()["transcription"][4], local_set.presets()["speech"][4]},
+        "names": {local_set.presets()["transcription"][4], local_set.presets()["speech"][4],
+                  *(row[4] for row in local_set.presets()["languages"].values())},
     })
     monkeypatch.setattr(local_set, "_assigned", lambda workspace, pre: True)
     monkeypatch.setattr(local_set, "_chat_loaded", lambda client, file: False)

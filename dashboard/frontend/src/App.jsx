@@ -7,6 +7,7 @@ import { PageChatProvider } from './components/pageChat/PageChatContext';
 import { FeaturesProvider } from './components/FeaturesContext';
 import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
+import FirstRunGate from './components/firstRun/FirstRunGate';
 import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
 import { getInstances } from './api';
 
@@ -305,9 +306,13 @@ function App() {
         <FeaturesProvider>
           <PageChatProvider>
             <AuthGate>
-              <Layout>
-                <AppRoutes />
-              </Layout>
+              {/* Outside multi mode, a new install sets itself up first
+                  (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
+              <FirstRunGate>
+                <Layout>
+                  <AppRoutes />
+                </Layout>
+              </FirstRunGate>
             </AuthGate>
           </PageChatProvider>
         </FeaturesProvider>

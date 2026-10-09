@@ -4346,6 +4346,70 @@
         "title": "FirstModel",
         "type": "object"
       },
+      "FirstRunAction": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "FirstRunAction",
+        "type": "object"
+      },
+      "FirstRunOp": {
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "title": "FirstRunOp",
+        "type": "object"
+      },
       "FlowCreate": {
         "properties": {
           "description": {
@@ -27739,6 +27803,134 @@
         "summary": "File Usage",
         "tags": [
           "files"
+        ]
+      }
+    },
+    "/api/first-run": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Status",
+        "tags": [
+          "first-run"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstRunAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Act",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/context": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Context",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/op": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstRunOp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Op",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/options": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Options",
+        "tags": [
+          "first-run"
         ]
       }
     },

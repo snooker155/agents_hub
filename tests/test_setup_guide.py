@@ -287,14 +287,19 @@ def test_a_local_voice_downloads_in_the_background(single, no_keys, ws, monkeypa
         {"id": "hub-local", "label": "This hub", "adapter": "openai", "base_url": "http://runtime/v1"}))
     monkeypatch.setattr(setup_ops, "_in_backend", lambda: False)
     setup_ops.perform("voice_local", {"speech": "piper-ru"})
-    assert special.stored("default")["speech"]["model"] == "piper-ru_RU-irina-medium"
+    speech = special.stored("default")["speech"]
+    assert speech["model"] == "piper-ru_RU-irina-medium"
+    # A Piper voice speaks one language: English and German get their own.
+    assert speech["languages"] == {"en": {"model": "piper-en_US-lessac-medium"},
+                                   "de": {"model": "piper-de_DE-thorsten-medium"}}
     g = setup_guide.guide(LOCAL_PRINCIPAL)
     assert _status(g, "voice") == "working" and "runtime" in g["steps"][2]["detail"]
     runtime.up = True
     setup_ops.advance_work(LOCAL_PRINCIPAL)
     work = setup_guide.load_state(LOCAL_PRINCIPAL)["work"]
-    # whisper is installed already: one engine to install, two models to download.
-    assert [j["id"] for j in work["jobs"]] == ["e-piper", "d-faster-whisper-small", "d-piper-ru_RU-irina-medium"]
+    # whisper is installed already: one engine to install, four models to download.
+    assert [j["id"] for j in work["jobs"]] == ["e-piper", "d-faster-whisper-small", "d-piper-ru_RU-irina-medium",
+                                               "d-piper-en_US-lessac-medium", "d-piper-de_DE-thorsten-medium"]
     for job in runtime.jobs.values():
         job.update(status="done", percent=100)
     setup_ops.advance_work(LOCAL_PRINCIPAL)

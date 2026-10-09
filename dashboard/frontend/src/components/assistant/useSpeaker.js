@@ -18,9 +18,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AssistantError, speakAssistant } from '../../api/assistant';
 import { SpeechQueue } from './speechQueue';
 import { plainSpeech } from './sentences';
+import textLanguage from './textLanguage';
 
 const SILENCE = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
-const LOCALES = { en: 'en-US', ru: 'ru-RU', de: 'de-DE' };
+const LOCALES = { en: 'en-US', ru: 'ru-RU', de: 'de-DE', uk: 'uk-UA' };
 //: How often a sentence the server does not know yet (the turn runs on
 //: another replica) is asked for again, and how far apart.
 const NOT_READY_TRIES = 4;
@@ -41,6 +42,9 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
   const [useBrowser, setUseBrowser] = useState(!serverSpeech);
   const audioRef = useRef(null);
   const settings = useRef({ language, voice, useBrowser, onFallback });
+  // One answer, one voice: the language a turn is read in, told from its
+  // first sentence and kept for the rest of it (as the hub does).
+  const turnLanguages = useRef(new Map());
   useEffect(() => {
     settings.current = { language, voice, useBrowser, onFallback };
   }, [language, voice, useBrowser, onFallback]);
@@ -56,7 +60,18 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
     synthesize: async (item, signal) => {
       const browserClip = () => {
         const text = item.text ? plainSpeech(item.text) : item.fallback;
-        return text ? { kind: 'browser', text } : null;
+        if (!text) return null;
+        const page = settings.current.language;
+        let lang = textLanguage(text, page) || page;
+        if (item.run_id && item.text) {
+          const turns = turnLanguages.current;
+          if (!turns.has(item.run_id)) {
+            turns.set(item.run_id, lang);
+            if (turns.size > 64) turns.delete(turns.keys().next().value);
+          }
+          lang = turns.get(item.run_id);
+        }
+        return { kind: 'browser', text, lang };
       };
       // A phrase of the page's own (a refusal said aloud) has no turn to
       // read it from: always the browser's voice.
@@ -88,7 +103,9 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
     play: (clip, signal) => new Promise((resolve, reject) => {
       if (clip.kind === 'browser') {
         const utterance = new window.SpeechSynthesisUtterance(clip.text);
-        utterance.lang = LOCALES[settings.current.language] || settings.current.language;
+        // The answer's language picks the browser's voice, as the hub's does.
+        const lang = clip.lang || settings.current.language;
+        utterance.lang = LOCALES[lang] || lang;
         utterance.onend = () => resolve();
         utterance.onerror = (e) => (e.error === 'interrupted' || e.error === 'canceled' ? resolve() : reject(e));
         signal.addEventListener('abort', () => { window.speechSynthesis.cancel(); resolve(); });

@@ -21,6 +21,7 @@ export default {
     apiAccess: 'API access',
     browser: 'Browser',
     demo: 'Demo workspace',
+    firstRun: 'First setup',
   },
   blender: {
     title: 'Blender geometry engine',

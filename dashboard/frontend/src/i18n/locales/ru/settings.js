@@ -21,6 +21,7 @@ export default {
     apiAccess: 'Доступ к API',
     browser: 'Браузер',
     demo: 'Демо-пространство',
+    firstRun: 'Первая настройка',
   },
   blender: {
     title: 'Геометрический движок Blender',

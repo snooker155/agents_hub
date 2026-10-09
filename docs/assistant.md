@@ -457,6 +457,33 @@ model; the page offers the browser's own recognition or voice instead, with a
 note that the audio then goes to the browser's vendor), 402 `budget`, 413
 `too_long`, 415 `unsupported_audio`, 502 `provider_error`.
 
+### A voice per language
+
+Many voices speak one language only: a Piper voice is trained on one, Kokoro's
+voices are English, Japanese or Chinese. So the speech model may name a model
+and a voice per language code (`languages` on the workspace's speech entry,
+the **A voice per language** rows on the Models page, Special tab):
+
+```json
+{"provider": "hub-local", "model": "kokoro-v1.0",
+ "languages": {"ru": {"model": "piper-ru_RU-irina-medium"},
+               "de": {"model": "piper-de_DE-thorsten-medium"}}}
+```
+
+A cloud voice speaks every language, so there a language names only another
+voice (`{"ru": {"voice": "coral"}}`). An answer's language is told from its
+own text (the script first, then common words, else the page's language) and
+that language's model and voice read it; a language with no row keeps the
+model and voice of the entry. One answer keeps one voice: the language is
+told once, from what the turn has said by its first spoken sentence, so a
+Russian answer that quotes an English sentence is read by the Russian voice
+throughout. This holds for `/speak`, for a voice sample in a language and for
+the `synthesize_speech` tool (the whole text decides), and the browser's own
+voice takes its locale the same way. The first run
+and `setup_step voice_local` give each page language a voice: the chosen
+Piper voice, and a Piper voice for each language it does not speak; the ready
+local set adds Russian and German Piper voices to Kokoro.
+
 ## Limits
 
 One turn runs at a time in a thread: a send while one runs is 409 `busy`

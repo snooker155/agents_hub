@@ -9,6 +9,7 @@ import {
   sampleWorkspaceSpecialModel, updateWorkspaceSpecialModels,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
+import SpeechLanguagesField from './SpeechLanguagesField';
 import { useToast, errorDetail } from '../toast';
 import { useI18n } from '../../i18n';
 import useVoiceSample from '../useVoiceSample';
@@ -198,6 +199,8 @@ export default function WorkspaceSpecialModels({ workspace }) {
       next[p.id] = {
         provider: entry.provider || '', model: entry.model || '',
         price_usd: entry.price_usd ?? '', options: { ...(entry.options || {}) },
+        // A voice per language (speech only, providers/speech_languages.py).
+        languages: { ...(entry.languages || {}) },
       };
     }
     setDraft(next);
@@ -303,6 +306,9 @@ export default function WorkspaceSpecialModels({ workspace }) {
         provider: entry.provider, model: entry.model.trim(),
         price_usd: priceOrNull(entry.price_usd),
         options: Object.fromEntries(Object.entries(entry.options || {}).filter(([, v]) => String(v).trim())),
+        // Kept only with the provider they were set for: another provider's models are not these.
+        ...(p.id === 'speech' && entry.provider === (payload.own?.speech?.provider || entry.provider)
+          && Object.keys(entry.languages || {}).length ? { languages: entry.languages } : {}),
       };
     }
     body.custom = draft.custom.map((c) => ({
@@ -520,6 +526,14 @@ export default function WorkspaceSpecialModels({ workspace }) {
                   </label>
                 )))}
               </div>
+            )}
+            {p.id === 'speech' && entry.provider && (
+              <SpeechLanguagesField
+                value={entry.languages}
+                onChange={(languages) => setPurpose(p.id, { languages })}
+                model={entry.model.trim()}
+                voice={entry.options.voice || ''}
+              />
             )}
           </SectionCard>
         );

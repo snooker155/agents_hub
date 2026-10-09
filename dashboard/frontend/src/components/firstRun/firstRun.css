@@ -1,0 +1,16 @@
+/* The first run's motion: each screen slides in a little, hello fades between languages. */
+@keyframes first-run-enter {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes first-run-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.first-run-enter { animation: first-run-enter 320ms ease-out both; }
+.first-run-fade { animation: first-run-fade 600ms ease-out both; }
+.first-run { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+
+@media (prefers-reduced-motion: reduce) {
+  .first-run-enter, .first-run-fade { animation: none; }
+}

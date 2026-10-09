@@ -63,6 +63,7 @@
         "Guided setup",
         "Answers",
         "Voice",
+        "A voice per language",
         "Limits"
       ]
     },
@@ -488,6 +489,7 @@
         "Path B: Docker Compose from a checkout",
         "Path C: the installer",
         "Path D: by hand",
+        "The first run in the browser",
         "After the install: the assistant takes over",
         "Configuration",
         "Checking it worked",

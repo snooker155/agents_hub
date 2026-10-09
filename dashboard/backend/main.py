@@ -57,6 +57,7 @@ from routes import agent_import, agents, chats, connections as connections_route
 from routes import help_chat as help_chat_router
 from routes import assistant as assistant_router
 from routes import setup_guide as setup_guide_router
+from routes import first_run as first_run_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
 from routes import groups as groups_router
@@ -722,6 +723,8 @@ app.include_router(help_chat_router.router)
 app.include_router(assistant_router.router)
 # The guided setup the assistant leads (common/setup_guide.py)
 app.include_router(setup_guide_router.router)
+# The first run: the install's own setup in the browser, once (common/first_run.py)
+app.include_router(first_run_router.router)
 
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)

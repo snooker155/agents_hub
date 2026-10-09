@@ -15,6 +15,32 @@ turns that section into the next release.
 
 ### Added
 
+- **First run in the browser** for a single operator: a new install opens on
+  a setup screen of its own instead of the app, one decision per screen (the
+  language, light or dark, a model, the default model, the assistant's
+  voice, web search, personal memory, the demo), then a summary with the way
+  in. Only the model is required and the whole of it cannot be skipped; the
+  step is kept on the hub, so a reload goes on where it stopped, and once
+  finished it does not come back (Settings, First setup, runs it again). An
+  install already in use is never stopped by it; `multi` mode keeps the
+  login screen and the welcome window. `GET/POST /api/first-run`,
+  `/api/first-run/context`, `/options`, `/op` (docs/installation.md, "The
+  first run in the browser").
+- The first run's voice screen sets up the voice and **meets the assistant**:
+  it says hello out loud (a real turn, so the model, the speech model and
+  the transcription model are checked together), the person answers by
+  voice and hears the reply. From there every screen carries the assistant
+  (`first_run_screen` on the turn puts the screen in its prompt), and the
+  last screen hands over to it, by voice when it was heard.
+- **A voice per language**: the speech model takes `languages`, a model and
+  voice per language code; an answer is read with the voice of the language
+  it is in, told from its text, and keeps that one voice to its end, a quote
+  in another language included (`/speak`, voice samples,
+  `synthesize_speech`, the browser's own voice). A cloud voice gets a voice
+  per page language in the first run; the local voice and the ready local set
+  add a Piper voice for each language their voice does not speak. The Models
+  page, Special tab, edits the rows and keeps them on save; a change of
+  provider drops them (docs/assistant.md, "A voice per language").
 - `web_search` can run through the model providers' own search: `anthropic`
   and `openai` are search providers that use the Messages API and Responses
   API server-side search tools on the key the Models page holds, so no

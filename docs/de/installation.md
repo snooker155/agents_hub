@@ -124,9 +124,46 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 
 Eine Antwortdatei, die `voice.mode` oder `demo` nennt, wendet beides auch in QuickStart an.
 
+### Der erste Start im Browser
+
+Mit einer Person am Hub (`AUTH_MODE=single` oder `token`) öffnet eine neue
+Installation statt der App einen eigenen Einrichtungsbildschirm: ohne
+Seitenleiste und Kopfleiste, eine Entscheidung pro Bildschirm, wie bei einem
+neuen Telefon. Der Reihe nach: Begrüßung, Sprache, hell oder dunkel, ein
+Modell, das Standardmodell, die Stimme des Assistenten, Websuche,
+persönlicher Speicher und der Demo-Arbeitsbereich, dann eine Übersicht mit
+dem Weg hinein (**Agents Hub verwenden**, **Mit dem Assistenten
+weitermachen** oder **Rundgang starten**).
+
+Auf dem Bildschirm der Stimme lernen Sie den Assistenten kennen: er sagt laut
+Hallo, jede Sprache mit eigener Stimme ([eine Stimme pro Sprache](assistant.md)),
+Sie sagen, ob Sie ihn gehört haben, antworten per Stimme und hören die Antwort;
+so werden Modell, Sprachausgabe und Spracherkennung in einem Zug geprüft.
+Danach hat jeder Bildschirm den Assistenten unten, per Stimme oder Text zu
+diesem Bildschirm zu fragen, und der letzte Bildschirm übergibt an ihn, per
+Stimme, wenn er zu hören war.
+
+Nur das Modell ist Pflicht: ein Schlüssel von OpenAI, Anthropic oder Google
+(vor dem Speichern beim Anbieter geprüft), ein Modellserver, der auf diesem
+Rechner schon läuft (Ollama, LM Studio; seine Modelle stehen zur Wahl), oder,
+wenn der Hub eine eigene Modellumgebung hat, das fertige lokale Paket, das im
+Hintergrund lädt. Jeder spätere Bildschirm hat **Nicht jetzt**, und ein
+Bildschirm, dessen Antwort schon feststeht (ein Schlüssel aus `ah setup`,
+Websuche über den Schlüssel des Modells), sagt das nur. Als Ganzes
+überspringen lässt sich die Einrichtung nicht.
+
+Der Schritt wird im Hub gespeichert: nach einem Neuladen oder in einem
+anderen Browser geht es an derselben Stelle weiter, und ein neuer Browser
+übernimmt Sprache und Darstellung. Abgeschlossen erscheint sie nicht wieder;
+**Einstellungen, Ersteinrichtung** startet sie bewusst erneut. Eine
+Installation, die vor dem Update schon genutzt wurde (ein Chat oder eine
+begonnene Einrichtung mit dem Assistenten), hält sie nicht an. Im Modus
+`multi` wird der erste Administrator auf dem Anmeldebildschirm angelegt, und
+jede Person bekommt das unten beschriebene Willkommensfenster.
+
 ### Nach der Installation: Der Assistent übernimmt
 
-Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Konto und ein Modell, mit dem er denken kann. Wenn sich das Dashboard zum ersten Mal öffnet, fragt das Willkommensfenster entweder nach diesem Modell (ein Schlüssel von OpenAI, Anthropic oder Google, oder ein Modellserver, der schon auf diesem Rechner läuft, vor dem Speichern beim Anbieter geprüft) oder bietet, sobald eines vorhanden ist, **Mit dem Assistenten sprechen** oder **Dem Assistenten schreiben** an. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, die Websuche, den Demo-Workspace, das Team, den Zustand des Hubs, dann einen ersten Chat, einen Kanal, Konten, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
+Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Konto und ein Modell, mit dem er denken kann. Mit einer Person am Hub erledigt das der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Im Modus `multi` fragt, wenn eine Person das Dashboard zum ersten Mal öffnet, das Willkommensfenster entweder nach diesem Modell (ein Schlüssel von OpenAI, Anthropic oder Google, oder ein Modellserver, der schon auf diesem Rechner läuft, vor dem Speichern beim Anbieter geprüft) oder bietet, sobald eines vorhanden ist, **Mit dem Assistenten sprechen** oder **Dem Assistenten schreiben** an. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, die Websuche, den Demo-Workspace, das Team, den Zustand des Hubs, dann einen ersten Chat, einen Kanal, Konten, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
 
 `./install.sh` startet sie bei einer Erstinstallation aus einem Terminal von selbst (`--no-setup` überspringt sie, `--setup` führt sie bei einer Neuinstallation aus). Führen Sie sie erneut aus, wann immer sich eine Einstellung ändern soll: Jede Frage hat dann den geltenden Wert als Vorgabe, und eine leere Antwort bei einem Schlüssel behält den aktuellen Schlüssel.
 

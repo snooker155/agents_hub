@@ -744,6 +744,18 @@ export type FirstModel = {
   "base_url"?: string;
 };
 
+export type FirstRunAction = {
+  "action": string;
+  "step"?: string | null;
+  "language"?: string | null;
+  "theme"?: string | null;
+};
+
+export type FirstRunOp = {
+  "operation": string;
+  "args"?: Record<string, unknown>;
+};
+
 export type FlowCreate = {
   "name": string;
   "description"?: string;
@@ -3152,6 +3164,19 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/files/{file_id}/usage": {
+    get: { response: unknown };
+  };
+  "/api/first-run": {
+    get: { response: unknown };
+    post: { body: FirstRunAction; response: unknown };
+  };
+  "/api/first-run/context": {
+    get: { response: unknown };
+  };
+  "/api/first-run/op": {
+    post: { body: FirstRunOp; response: unknown };
+  };
+  "/api/first-run/options": {
     get: { response: unknown };
   };
   "/api/flow-entities": {

@@ -181,6 +181,14 @@ export default {
     },
   },
   specialModels: {
+    languages: {
+      title: 'A voice per language',
+      hint: 'A line is read with the voice of its own language. A voice that speaks one language only (Piper) needs another model for each; a cloud voice speaks all, so there another voice is enough. Empty rows keep the model and voice above.',
+      model: 'model',
+      voice: 'voice',
+      modelFor: 'Model for {{language}}',
+      voiceFor: 'Voice for {{language}}',
+    },
     intro: 'Models for work a chat model does not do. Agents call a tool for each purpose and this workspace decides which model answers it. Only the models added here are used: a purpose left empty has no model, and its tool tells the agent the model is not added.',
     save: 'Save models',
     saved: 'Special models saved',
