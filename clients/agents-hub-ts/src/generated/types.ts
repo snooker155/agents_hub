@@ -652,6 +652,14 @@ export type DiscardRequest = {
   "token": string;
 };
 
+export type DockerBuildRequest = {
+  "no_cache"?: boolean;
+};
+
+export type DockerContainerRequest = {
+  "workspace"?: string | null;
+};
+
 export type DownloadBody = {
   "repo": string;
   "file"?: string;
@@ -1534,6 +1542,10 @@ export type RunEvalIn = {
   "workspace"?: string | null;
   "cost_ceiling"?: number | null;
   "mode"?: string;
+};
+
+export type RuntimeModeRequest = {
+  "mode": string;
 };
 
 export type SampleIn = {
@@ -2419,6 +2431,21 @@ export interface ApiPaths {
   };
   "/api/agent-import/{agent_id}": {
     get: { response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker": {
+    get: { response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/build": {
+    post: { body: DockerBuildRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/mode": {
+    post: { body: RuntimeModeRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/start": {
+    post: { body: DockerContainerRequest; response: unknown };
+  };
+  "/api/agent-import/{agent_id}/docker/stop": {
+    post: { body: DockerContainerRequest; response: unknown };
   };
   "/api/agent-import/{agent_id}/recheck": {
     post: { body: RecheckRequest; response: unknown };
