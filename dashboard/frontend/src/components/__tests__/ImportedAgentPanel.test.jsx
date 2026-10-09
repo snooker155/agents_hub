@@ -68,7 +68,10 @@ describe('ImportedAgentPanel: where it runs', () => {
     expect(await screen.findByText('w1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /importedAgentPanel.stop$/ }));
     await waitFor(() => expect(dockerApi.stopImportedAgentContainer).toHaveBeenCalledWith('claude-code', 'w1'));
-    fireEvent.click(screen.getByRole('button', { name: /importedAgentPanel.startForWorkspace/ }));
+    // every Docker button stays disabled until the stop has settled and the list reloaded
+    const start = screen.getByRole('button', { name: /importedAgentPanel.startForWorkspace/ });
+    await waitFor(() => expect(start).not.toBeDisabled());
+    fireEvent.click(start);
     await waitFor(() => expect(dockerApi.startImportedAgentContainer).toHaveBeenCalledWith('claude-code', 'w2'));
   });
 
