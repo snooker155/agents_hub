@@ -41,6 +41,26 @@ turns that section into the next release.
   add a Piper voice for each language their voice does not speak. The Models
   page, Special tab, edits the rows and keeps them on save; a change of
   provider drops them (docs/assistant.md, "A voice per language").
+- Qwen3-TTS as a voice cloning engine of the model runtime (Apple silicon,
+  through mlx-audio): a `mlx-community/Qwen3-TTS-*-Base` checkpoint reads
+  text in a recorded voice from the sample alone, ten languages, Russian
+  among them; two presets on the Local tab, the search finds the rest.
+- The workspace's speech model takes a **temperature** for the runtime's
+  cloning models (Chatterbox, Chatterbox MLX, Qwen3-TTS): lower reads
+  steadier. The field shows only for a model that takes it; the runtime's
+  `/models` lists each model's `options`, and `/v1/audio/speech` passes
+  `temperature` through to the engine.
+
+### Changed
+
+- Chatterbox and Qwen3-TTS read a paragraph in one go (up to 400 and 600
+  characters) instead of a few sentences at a time, so the pace and the
+  intonation hold through it; a blank line still starts a new piece.
+- The Recorded voices card names the model on a Try button when an engine
+  has several models (chatterbox-4bit-mlx and chatterbox-8bit-mlx).
+- The prompt cache moved from a card on the Local tab to a tab of its own
+  on the Models page (`/models?tab=cache`).
+
 - `web_search` can run through the model providers' own search: `anthropic`
   and `openai` are search providers that use the Messages API and Responses
   API server-side search tools on the key the Models page holds, so no

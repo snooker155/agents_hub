@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain, HardDrive, Waypoints, Sparkles, Plug,
+  Brain, HardDrive, Waypoints, Sparkles, Plug, Database,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -15,6 +15,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
+import CacheTab from '../components/models/CacheTab';
 import ServingSection from '../components/models/ServingSection';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import PageLoader from '../components/PageLoader';
@@ -769,6 +770,7 @@ export default function Models() {
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
     { id: 'local', label: t('localModels.tab'), icon: HardDrive },
+    { id: 'cache', label: t('models.tabs.cache'), icon: Database },
     { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
     { id: 'endpoint', label: t('models.tabs.endpoint'), icon: Plug },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
@@ -801,6 +803,7 @@ export default function Models() {
       </div>
       {tab === 'catalog' && <CatalogTab />}
       {tab === 'local' && <LocalTab />}
+      {tab === 'cache' && <CacheTab />}
       {tab === 'special' && <SpecialModelsTab />}
       {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}

@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import RuntimeSection from './RuntimeSection';
 import RuntimeUsage from './RuntimeUsage';
-import RuntimeCache from './RuntimeCache';
 import ImportModels from './ImportModels';
 import VoicesCard from './VoicesCard';
 import JobProgress from './JobProgress';
@@ -98,7 +97,6 @@ export default function LocalTab() {
         onRefresh={reloadUsage}
         onChange={setUsage}
       />
-      <RuntimeCache usage={usage} />
       <ImportModels
         refreshKey={runtimeRefreshKey}
         onImported={() => setRuntimeRefreshKey((k) => k + 1)}

@@ -435,7 +435,19 @@ of your own instead), `MODELS_DIR/.engines/mlx-audio` for Chatterbox MLX
 |---|---|---|---|
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) (MIT) | `ResembleAI/chatterbox`, package `chatterbox-multilingual`: `t3_mtl23ls_v2.safetensors`, `s3gen.pt`, `ve.pt`, the grapheme table, `conds.pt` (3.2 GB) | reads the text itself in the recorded voice, 23 languages, Russian among them | about 4 times slower than the speech lasts on Apple's GPU (MPS), slower on the CPU; much faster on CUDA |
 | Chatterbox MLX ([mlx-audio](https://github.com/Blaizzy/mlx-audio)'s port, MIT; Apple silicon only) | `mlx-community/chatterbox-4bit` (or `-8bit`, `-fp16`, `chatterbox-multilingual-v3`), package `<repo>-mlx`: `model.safetensors`, `tokenizer.json`, `config.json`, `conds.safetensors`, plus `mlx-community/S3TokenizerV2` in `s3tokenizer/` (1.1 GB for 4 bit) | the same model on Apple's GPU through MLX, no watermark | about 2.3 s for 5 s of speech, ten times the torch engine; 4 and 8 bit as close to the recording as the original |
+| [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) Base (Apache 2.0; through mlx-audio, Apple silicon only) | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit` (or `0.6B`, `-bf16`, `-4bit`), package named as the repo: the checkpoint whole with its `speech_tokenizer/` folder (3.1 GB for 1.7B in 8 bit) | reads the text itself in the recorded voice from the sample alone (its speaker encoder, no transcript), 10 languages, Russian among them; reads a paragraph in one go, so the pace stays even; a `CustomVoice` checkpoint has speakers of its own instead | about as fast as the speech lasts for 1.7B |
 | [OpenVoice](https://github.com/myshell-ai/OpenVoice) tone color converter (MIT) | `myshell-ai/OpenVoiceV2`, package `OpenVoiceV2-converter`: `converter/config.json` and `checkpoint.pth` (130 MB) | another downloaded speech model reads the text, the converter gives that speech the recorded timbre; the intonation is the reading model's | about 1 s for 6 s of speech, with Piper reading |
+
+**Steadier reading.** Chatterbox and Qwen3-TTS sample their speech, so two
+readings of one line differ in pace and intonation. Each reads a paragraph
+(up to 400 or 600 characters) in one go rather than sentence by sentence,
+which keeps one intonation through it. The workspace's speech model
+(Workspace, Special models) takes a **temperature** for these models (0.1 to
+1.5; the model's own, 0.8 or 0.9, when empty): 0.4 to 0.5 reads markedly
+steadier at the price of some liveliness. The field appears only for a model
+that takes it; the runtime's `/models` lists each model's `options`, and a
+`temperature` in a `/v1/audio/speech` request reaches the engine (with
+Chatterbox's `exaggeration` and `cfg_weight`).
 
 **Recording.** The **Recorded voices** card on the Local tab records from the
 microphone (with a passage to read in the voice's language) or takes a file;
@@ -619,7 +631,7 @@ oldest one moves forward ten at a time, not one turn at a time
 turn changed the start of the conversation every turn, and the model then
 computed the whole history again for each reply.
 
-The Local tab's **Prompt cache** card shows the share of prompt tokens served
+The Models page's **Prompt cache** tab (`/models?tab=cache`) shows the share of prompt tokens served
 from the cache, the calls with a hit, the time saved (cached tokens at each
 model's measured prefill speed, llama.cpp only) and the time to the first
 token, as columns over the last hour, 6 or 24 hours and per model; then what
