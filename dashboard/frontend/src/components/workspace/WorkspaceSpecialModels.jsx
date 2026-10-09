@@ -72,6 +72,11 @@ function ConnectionCheck({ id, sig, state, onCheck }) {
  * voice's own language, else in the page's; ``sample`` is what the backend
  * reads it with, null while there is no model to read it.
  */
+// Options only some models take: shown when the model's own answer
+// (voices_for, `options`) lists them, the hub runtime's cloning models for
+// temperature; a cloud API would refuse the field.
+const GATED_OPTIONS = ['temperature'];
+
 function VoicePicker({ id, workspace, value, onChange, hint, info, fallbackNames, sample }) {
   const { t, language } = useI18n();
   const names = info?.voices || fallbackNames;
@@ -498,7 +503,9 @@ export default function WorkspaceSpecialModels({ workspace }) {
             )}
             {entry.provider && Object.keys(p.options).length > 0 && (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                {Object.entries(p.options).map(([key, hint]) => (key === 'voice' ? (
+                {Object.entries(p.options)
+                  .filter(([key]) => !GATED_OPTIONS.includes(key) || (voiceInfo?.options || []).includes(key))
+                  .map(([key, hint]) => (key === 'voice' ? (
                   <VoicePicker
                     key={key}
                     id={p.id}
@@ -520,6 +527,8 @@ export default function WorkspaceSpecialModels({ workspace }) {
                     <input
                       value={entry.options[key] || ''}
                       placeholder={hint}
+                      inputMode={key === 'temperature' ? 'decimal' : undefined}
+                      data-testid={`special-${p.id}-${key}`}
                       onChange={(e) => setPurpose(p.id, { options: { ...entry.options, [key]: e.target.value } })}
                       className={`${inputCls} mt-1`}
                     />

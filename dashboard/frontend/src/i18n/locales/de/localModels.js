@@ -127,7 +127,7 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', qwen3_tts: 'Qwen3-TTS', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
     kinds: { speech: 'Sprachausgabe', transcription: 'Transkription', image: 'Bilder', chat: 'Chat', cleanup: 'Stimmbereinigung' },
     installed: 'Installiert',
     install: 'Installieren',
@@ -143,8 +143,8 @@ export default {
   voices: {
     title: 'Eigene Stimmen',
     count: '{{count}} aufgenommen',
-    hint: 'Nehmen Sie 20 bis 30 Sekunden Ihrer Sprache auf, und die Stimme erscheint bei den Modellen Chatterbox und OpenVoice, in denselben Stimmlisten wie bei allen anderen Modellen. Chatterbox liest Text in dieser Stimme und kommt ihr am nächsten; auf einem Mac nehmen Sie Chatterbox MLX, doppelt so schnell wie die Sprache selbst, das normale Chatterbox ist nur mit einer NVIDIA-Grafikkarte schnell. OpenVoice überträgt die Klangfarbe schnell auf die Sprache eines anderen Modells, dessen Betonung bleibt.',
-    noModels: 'Um mit diesen Stimmen zu sprechen, laden Sie Chatterbox (auf einem Mac Chatterbox MLX) oder OpenVoice unter den Sprachvorlagen oben und installieren Sie ihre Engine.',
+    hint: 'Nehmen Sie 20 bis 30 Sekunden Ihrer Sprache auf, und die Stimme erscheint bei den Modellen Chatterbox, Qwen3-TTS und OpenVoice, in denselben Stimmlisten wie bei allen anderen Modellen. Chatterbox liest Text in dieser Stimme und kommt ihr am nächsten; auf einem Mac nehmen Sie Chatterbox MLX, doppelt so schnell wie die Sprache selbst, das normale Chatterbox ist nur mit einer NVIDIA-Grafikkarte schnell. Qwen3-TTS (ebenfalls Mac) liest gleichmäßig in zehn Sprachen, Russisch darunter, allein aus der Aufnahme. OpenVoice überträgt die Klangfarbe schnell auf die Sprache eines anderen Modells, dessen Betonung bleibt. Für ein ruhigeres Vorlesen stellen Sie beim Sprachmodell des Arbeitsbereichs eine niedrigere Temperatur ein.',
+    noModels: 'Um mit diesen Stimmen zu sprechen, laden Sie Chatterbox (auf einem Mac Chatterbox MLX oder Qwen3-TTS) oder OpenVoice unter den Sprachvorlagen oben und installieren Sie ihre Engine.',
     empty: 'Noch keine Stimmen.',
     add: 'Stimme aufnehmen',
     name: 'Name der Stimme',

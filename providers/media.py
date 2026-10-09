@@ -362,6 +362,12 @@ def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[st
                                "response_format": fmt}
     if instructions and instructions.strip() and not model.startswith("tts-1"):
         payload["instructions"] = instructions.strip()
+    if ep.local and str(options.get("temperature") or "").strip():
+        # The hub's runtime reads it (a cloning model's sampling); a cloud API would refuse the field.
+        try:
+            payload["temperature"] = float(str(options["temperature"]).replace(",", "."))
+        except ValueError:
+            pass
     with _client() as client:
         resp = _check(client.post(f"{ep.base_url}/audio/speech", headers=_headers(ep), json=payload),
                       "Speech synthesis")

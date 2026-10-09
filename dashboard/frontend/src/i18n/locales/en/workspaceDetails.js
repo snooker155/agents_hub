@@ -212,7 +212,7 @@ export default {
     },
     options: {
       size: 'Size', quality: 'Quality', aspect_ratio: 'Aspect ratio', seconds: 'Default length, s',
-      voice: 'Voice', format: 'Format', language: 'Language',
+      voice: 'Voice', format: 'Format', language: 'Language', temperature: 'Temperature',
     },
     customTitle: 'Your own models',
     customHint: 'Any other model, for example one your team runs for a narrow job. Agents call it with ask_special_model by its id, and the description is how they know when to.',

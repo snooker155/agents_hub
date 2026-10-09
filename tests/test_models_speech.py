@@ -662,6 +662,9 @@ def test_speech_search_skips_gguf_keeps_runnable_repos_and_puts_presets_first(cl
                                        ("t3_cfg.safetensors", 2000)),
         "mlx-community/chatterbox-4bit": _tree(("model.safetensors", 600), ("tokenizer.json", 1), ("config.json", 1),
                                               ("conds.safetensors", 1)),
+        "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit": _tree(("config.json", 5), ("model.safetensors", 3000),
+                                                             ("speech_tokenizer/config.json", 2),
+                                                             ("speech_tokenizer/model.safetensors", 680)),
         "myshell-ai/OpenVoiceV2": _tree(("converter/config.json", 1), ("converter/checkpoint.pth", 130),
                                         ("base_speakers/ses/en-us.pth", 1)),
         "speaches-ai/piper-ru_RU-x-medium": _tree(("model.onnx", 60), ("config.json", 1)),
@@ -690,12 +693,14 @@ def test_speech_search_skips_gguf_keeps_runnable_repos_and_puts_presets_first(cl
     assert all("gguf" not in f for f, _ in queries)
     assert (["onnx"], "kokoro") in queries and (["onnx"], "piper") in queries
     assert (["onnx"], "kitten-tts") in queries and (["onnx"], "supertonic") in queries
+    assert (["mlx"], "qwen3-tts") in queries
     repos = [r["repo"] for r in body["results"]]
     assert repos == ["rhasspy/piper-voices", "fastrtc/kokoro-onnx", "Supertone/supertonic-3",
                      "KittenML/kitten-tts-nano-0.8-int8", "ResembleAI/chatterbox", "mlx-community/chatterbox-4bit",
-                     "myshell-ai/OpenVoiceV2", "speaches-ai/piper-ru_RU-x-medium"]
-    assert [r["engine"] for r in body["results"][2:7]] == ["supertonic", "kitten", "chatterbox", "chatterbox_mlx",
-                                                           "openvoice"]
+                     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit", "myshell-ai/OpenVoiceV2",
+                     "speaches-ai/piper-ru_RU-x-medium"]
+    assert [r["engine"] for r in body["results"][2:8]] == ["supertonic", "kitten", "chatterbox", "chatterbox_mlx",
+                                                           "qwen3_tts", "openvoice"]
     first = body["results"][0]
     assert first["engine"] == "piper" and first["kind"] == "speech" and first["packages"] == 2
     assert (first["size_min"], first["size_max"]) == (21, 61)

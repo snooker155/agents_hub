@@ -212,7 +212,7 @@ export default {
     },
     options: {
       size: 'Размер', quality: 'Качество', aspect_ratio: 'Соотношение сторон', seconds: 'Длина по умолчанию, с',
-      voice: 'Голос', format: 'Формат', language: 'Язык',
+      voice: 'Голос', format: 'Формат', language: 'Язык', temperature: 'Температура',
     },
     customTitle: 'Свои модели',
     customHint: 'Любая другая модель, например та, что ваша команда держит для узкой задачи. Агенты вызывают её через ask_special_model по id, а по описанию понимают, когда она нужна.',

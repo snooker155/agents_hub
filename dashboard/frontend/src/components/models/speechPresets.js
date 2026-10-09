@@ -21,6 +21,9 @@ export const MODEL_PRESETS = [
   { id: 'chatterbox', kind: 'speech', repo: 'ResembleAI/chatterbox', package: 'chatterbox-multilingual', label: 'Chatterbox, your voice, 23 languages (3.2 GB)' },
   // `engine`: shown only where the runtime lists that engine (Apple silicon).
   { id: 'chatterbox-mlx', kind: 'speech', engine: 'chatterbox_mlx', repo: 'mlx-community/chatterbox-4bit', package: 'chatterbox-4bit-mlx', label: 'Chatterbox MLX, your voice fast on a Mac (1.1 GB)' },
+  // Qwen3-TTS Base clones a recorded voice from its sample alone; Apple silicon only.
+  { id: 'qwen3-tts-1.7b', kind: 'speech', engine: 'qwen3_tts', repo: 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit', package: 'Qwen3-TTS-12Hz-1.7B-Base-8bit', label: 'Qwen3-TTS 1.7B, your voice, 10 languages (3.1 GB)' },
+  { id: 'qwen3-tts-0.6b', kind: 'speech', engine: 'qwen3_tts', repo: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit', package: 'Qwen3-TTS-12Hz-0.6B-Base-8bit', label: 'Qwen3-TTS 0.6B, your voice, lighter (2 GB)' },
   { id: 'openvoice', kind: 'speech', repo: 'myshell-ai/OpenVoiceV2', package: 'OpenVoiceV2-converter', label: 'OpenVoice, your voice fast (130 MB)' },
   // Pictures, on Apple silicon through mflux (the mflux engine).
   { id: 'qwen-image-8bit', kind: 'image', engine: 'mflux', repo: 'mlx-community/Qwen-Image-2512-8bit', package: 'Qwen-Image-2512-8bit', label: 'Qwen-Image 2512, 8-bit (34 GB)' },
@@ -44,6 +47,8 @@ export const ENGINES = [
   { id: 'chatterbox', kind: 'speech' },
   // Apple silicon only: the runtime lists it nowhere else.
   { id: 'chatterbox_mlx', kind: 'speech' },
+  // Qwen3-TTS through mlx-audio; Apple silicon only too.
+  { id: 'qwen3_tts', kind: 'speech' },
   { id: 'openvoice', kind: 'speech' },
   // Pictures with Qwen-Image; Apple silicon only, an environment of its own.
   { id: 'mflux', kind: 'image' },
@@ -59,4 +64,4 @@ export const isSpeechKind = (kind) => kind === 'speech' || kind === 'transcripti
 export const isSpecialKind = (kind) => isSpeechKind(kind) || kind === 'image';
 
 // Engines whose voices are the recordings people made (the Recorded voices card).
-export const CLONING_ENGINES = ['chatterbox', 'chatterbox_mlx', 'openvoice'];
+export const CLONING_ENGINES = ['chatterbox', 'chatterbox_mlx', 'qwen3_tts', 'openvoice'];

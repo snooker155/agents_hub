@@ -694,7 +694,7 @@ class RuntimeClient:
 
 
 #: Runtime engines whose voices are recordings people made.
-CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "openvoice")
+CLONING_ENGINES = ("chatterbox", "chatterbox_mlx", "qwen3_tts", "openvoice")
 
 
 def voice_visible(record: Dict[str, Any], viewer: Any) -> bool:

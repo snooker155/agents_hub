@@ -105,7 +105,9 @@ PURPOSES: Tuple[Purpose, ...] = (
         {OPENAI: ("gpt-4o-mini-tts", "tts-1", "tts-1-hd"),
          GOOGLE: ("gemini-2.5-flash-preview-tts",)},
         {"voice": "for example alloy, nova (OpenAI) or Kore, Puck (Google)",
-         "format": "mp3, wav, opus (OpenAI)"},
+         "format": "mp3, wav, opus (OpenAI)",
+         # Only a model that reads it is offered the field (voices_for says which).
+         "temperature": "0.1 to 1.5; lower reads steadier, the model's own when empty"},
         {OPENAI: ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage",
                   "shimmer", "verse"),
          GOOGLE: ("Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")},
@@ -198,6 +200,9 @@ class Endpoint:
     base_url: str
     api_key: str = ""
     headers: Dict[str, str] = field(default_factory=dict)
+    #: The hub's own model runtime, which takes the sampling options
+    #: (temperature) a cloud API would refuse.
+    local: bool = False
 
 
 def _effective_settings(workspace: Optional[str]) -> Dict[str, Any]:
@@ -252,7 +257,7 @@ def endpoint(provider: str, workspace: Optional[str]) -> Endpoint:
     if pid == HUB_LOCAL_ID:
         headers.update(source_headers())
     return Endpoint(OPENAI, str(backend.get("base_url") or "").rstrip("/"),
-                    str(backend.get("api_key") or ""), headers)
+                    str(backend.get("api_key") or ""), headers, local=pid == HUB_LOCAL_ID)
 
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -306,6 +311,14 @@ def _normalize_purpose(purpose: Purpose, raw: Any) -> Optional[Dict[str, Any]]:
     if price is not None:
         out["price_usd"] = price
     options = _options(raw.get("options"), purpose.options)
+    if "temperature" in options:
+        try:
+            value = float(options["temperature"].replace(",", "."))
+        except ValueError:
+            value = -1.0
+        if not 0.1 <= value <= 1.5:
+            raise SpecialModelError(f"{purpose.id}: temperature must be a number from 0.1 to 1.5")
+        options["temperature"] = f"{value:g}"
     if options:
         out["options"] = options
     if purpose.id == "speech" and raw.get("languages"):
@@ -598,6 +611,19 @@ def _runtime_models() -> List[Dict[str, Any]]:
         return []
 
 
+def model_options(provider: str, model: str) -> List[str]:
+    """The request options one model takes beyond its voice, when its
+    server can say: the hub runtime lists each worker engine's (the cloning
+    models' ``temperature``); nothing for every other provider."""
+    from providers import local_models as lm
+    if str(provider or "").strip().lower() != lm.HUB_LOCAL_ID:
+        return []
+    for m in _runtime_models():
+        if m.get("name") == model:
+            return [str(o) for o in m.get("options") or []]
+    return []
+
+
 def model_voices(provider: str, model: str, viewer: Any = None) -> Optional[List[str]]:
     """The voices one model has, when its server can say: the hub runtime
     reads them from each speech model's files (a Piper voice with several
@@ -662,7 +688,8 @@ def voices_for(purpose_id: str, provider: str, model: str, viewer: Any = None) -
     voices = own if own is not None else list(purpose.voices.get(kind, ()))
     languages = {v: lang for v in voices if (lang := voice_language(model, v))}
     return {"purpose": purpose.id, "provider": pid, "model": model, "voices": voices,
-            "own": own is not None, "language": voice_language(model), "languages": languages}
+            "own": own is not None, "language": voice_language(model), "languages": languages,
+            "options": [o for o in (model_options(pid, model) if model else []) if o in purpose.options]}
 
 
 #: What a voice sample reads, per language: one short line, so a cloud model

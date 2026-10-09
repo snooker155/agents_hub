@@ -27,7 +27,7 @@ the release build for the platform (POST /engines/llama/install), or set
 ```sh
 pip install -r deploy/models/requirements.txt
 pip install -r deploy/models/requirements-speech.txt   # optional: speech models
-# Voice cloning (Chatterbox, Chatterbox MLX, OpenVoice) installs from the Local tab into environments of its own.
+# Voice cloning (Chatterbox, Chatterbox MLX, Qwen3-TTS, OpenVoice) installs from the Local tab into environments of its own.
 MODELS_TOKEN=<token> MODELS_DIR=$HOME/.agents_hub/models python deploy/models/app.py
 ```
 

@@ -127,7 +127,7 @@ export default {
 
   speech: {
     enginesTitle: 'Engines',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', qwen3_tts: 'Qwen3-TTS', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
     kinds: { speech: 'Speech', transcription: 'Transcription', image: 'Images', chat: 'Chat', cleanup: 'Voice cleanup' },
     installed: 'Installed',
     install: 'Install',
@@ -143,8 +143,8 @@ export default {
   voices: {
     title: 'Recorded voices',
     count: '{{count}} recorded',
-    hint: 'Record 20 to 30 seconds of your speech, and the voice shows up for the Chatterbox and OpenVoice models, in the same voice lists as every other model. Chatterbox reads text in this voice and comes closest; on a Mac take Chatterbox MLX, twice as fast as the speech itself, while plain Chatterbox is fast only on an NVIDIA GPU. OpenVoice quickly gives speech another model read this timbre, keeping that model\'s intonation.',
-    noModels: 'To speak in these voices, download Chatterbox (on a Mac, Chatterbox MLX) or OpenVoice among the speech presets above and install their engine.',
+    hint: 'Record 20 to 30 seconds of your speech, and the voice shows up for the Chatterbox, Qwen3-TTS and OpenVoice models, in the same voice lists as every other model. Chatterbox reads text in this voice and comes closest; on a Mac take Chatterbox MLX, twice as fast as the speech itself, while plain Chatterbox is fast only on an NVIDIA GPU. Qwen3-TTS (a Mac too) reads evenly in ten languages, Russian among them, from the sample alone. OpenVoice quickly gives speech another model read this timbre, keeping that model\'s intonation. A steadier reading: set a lower temperature on the speech model in the workspace.',
+    noModels: 'To speak in these voices, download Chatterbox (on a Mac, Chatterbox MLX or Qwen3-TTS) or OpenVoice among the speech presets above and install their engine.',
     empty: 'No voices yet.',
     add: 'Record a voice',
     name: 'Voice name',

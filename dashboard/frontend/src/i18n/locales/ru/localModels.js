@@ -127,7 +127,7 @@ export default {
 
   speech: {
     enginesTitle: 'Движки',
-    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
+    engines: { llama: 'llama.cpp', mlx: 'MLX', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro', kitten: 'Kitten', supertonic: 'Supertonic', chatterbox: 'Chatterbox', chatterbox_mlx: 'Chatterbox MLX', qwen3_tts: 'Qwen3-TTS', openvoice: 'OpenVoice', mflux: 'mflux (Qwen-Image)', deepfilternet: 'DeepFilterNet', resemble_enhance: 'Resemble Enhance' },
     kinds: { speech: 'Синтез речи', transcription: 'Распознавание', image: 'Картинки', chat: 'Чат', cleanup: 'Очистка голоса' },
     installed: 'Установлен',
     install: 'Установить',
@@ -143,8 +143,8 @@ export default {
   voices: {
     title: 'Свои голоса',
     count: 'записей: {{count}}',
-    hint: 'Запишите 20–30 секунд своей речи, и голос появится у моделей Chatterbox и OpenVoice, в тех же списках голосов, что и у остальных моделей. Chatterbox читает текст этим голосом и звучит ближе всего; на Mac берите Chatterbox MLX, он вдвое быстрее самой речи, обычный Chatterbox быстр только с видеокартой NVIDIA. OpenVoice быстро переносит тембр на речь другой модели, интонация остаётся её.',
-    noModels: 'Чтобы говорить этими голосами, скачайте Chatterbox (на Mac Chatterbox MLX) или OpenVoice среди готовых моделей речи выше и установите их движок.',
+    hint: 'Запишите 20–30 секунд своей речи, и голос появится у моделей Chatterbox, Qwen3-TTS и OpenVoice, в тех же списках голосов, что и у остальных моделей. Chatterbox читает текст этим голосом и звучит ближе всего; на Mac берите Chatterbox MLX, он вдвое быстрее самой речи, обычный Chatterbox быстр только с видеокартой NVIDIA. Qwen3-TTS (тоже на Mac) читает ровно на десяти языках, включая русский, по одной записи. OpenVoice быстро переносит тембр на речь другой модели, интонация остаётся её. Чтобы чтение было ровнее, задайте речевой модели в рабочем пространстве температуру пониже.',
+    noModels: 'Чтобы говорить этими голосами, скачайте Chatterbox (на Mac Chatterbox MLX или Qwen3-TTS) или OpenVoice среди готовых моделей речи выше и установите их движок.',
     empty: 'Голосов пока нет.',
     add: 'Записать голос',
     name: 'Имя голоса',

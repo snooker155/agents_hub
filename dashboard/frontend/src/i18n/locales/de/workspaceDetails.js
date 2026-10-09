@@ -212,7 +212,7 @@ export default {
     },
     options: {
       size: 'Größe', quality: 'Qualität', aspect_ratio: 'Seitenverhältnis', seconds: 'Standardlänge, s',
-      voice: 'Stimme', format: 'Format', language: 'Sprache',
+      voice: 'Stimme', format: 'Format', language: 'Sprache', temperature: 'Temperatur',
     },
     customTitle: 'Eigene Modelle',
     customHint: 'Jedes andere Modell, etwa eines, das Ihr Team für eine enge Aufgabe betreibt. Agenten rufen es mit ask_special_model über seine Id auf; an der Beschreibung erkennen sie, wann.',

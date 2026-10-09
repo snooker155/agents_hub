@@ -30,14 +30,14 @@ log = logging.getLogger("models_service")
 
 #: Engine -> purpose, the same words the hub's special models use.
 ENGINE_KIND = {"whisper": "transcription", "piper": "speech", "kokoro": "speech", "kitten": "speech",
-               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "openvoice": "speech",
-               "mflux": "image",
+               "supertonic": "speech", "chatterbox": "speech", "chatterbox_mlx": "speech", "qwen3_tts": "speech",
+               "openvoice": "speech", "mflux": "image",
                "mlx": "chat", "deepfilternet": "cleanup", "resemble_enhance": "cleanup"}
 #: Every engine the Models page lists, chat first.
 ALL_ENGINES = ("llama", "mlx", "whisper", "piper", "kokoro", "kitten", "supertonic", "chatterbox", "chatterbox_mlx",
-               "openvoice", "mflux", "deepfilternet", "resemble_enhance")
+               "qwen3_tts", "openvoice", "mflux", "deepfilternet", "resemble_enhance")
 #: Engines that run only on Apple silicon: listed nowhere else.
-APPLE_ENGINES = ("mlx", "chatterbox_mlx", "deepfilternet", "mflux")
+APPLE_ENGINES = ("mlx", "chatterbox_mlx", "qwen3_tts", "deepfilternet", "mflux")
 SPEECH_KINDS = ("speech", "transcription")
 IMAGE_KINDS = ("image",)
 #: Every kind a worker (speech_worker.py) serves: not chat.
@@ -49,6 +49,8 @@ ENGINE_MODULES = {"whisper": "faster_whisper", "piper": "piper", "kokoro": "koko
                   "kitten": "onnxruntime,phonemizer,espeakng_loader", "supertonic": "supertonic",
                   "chatterbox": "chatterbox,torch,librosa,perth,pkg_resources", "openvoice": "torch,numpy,av",
                   "chatterbox_mlx": "mlx_audio,mlx,av",
+                  # Qwen3-TTS reads its text tokenizer through transformers, which mlx-audio brings.
+                  "qwen3_tts": "mlx_audio,mlx,av,transformers",
                   # The worker's own modules too: a found interpreter (FOUND_ENGINES) may lack them.
                   "mflux": "mlx,mflux,fastapi,uvicorn,multipart",
                   "mlx": "mlx_lm",
@@ -79,6 +81,8 @@ ENGINE_PACKAGES = {
     "openvoice": [*_TORCH, "numpy>=1.24", "av>=12"],
     # mlx-audio's port of Chatterbox, the version it was checked with.
     "chatterbox_mlx": ["mlx-audio>=0.5.8,<0.6", "av>=12"],
+    # Qwen3-TTS through the same mlx-audio (speech_worker.py, Qwen3TTSMLX).
+    "qwen3_tts": ["mlx-audio>=0.5.8,<0.6", "av>=12"],
     # Qwen-Image on MLX (speech_worker.py, QwenImageMflux), the version it
     # was checked with; it brings torch and transformers, so an environment
     # of its own (ENGINE_VENVS).
@@ -99,7 +103,7 @@ ENGINE_NO_DEPS = {"chatterbox": ["chatterbox-tts==0.1.7"], "resemble_enhance": [
 #: by its name: torch and Chatterbox's exact pins, or mlx-audio's newer
 #: transformers, stay away from the light ONNX engines and from each other,
 #: and removing that directory removes them.
-ENGINE_VENVS = {"chatterbox": "torch", "openvoice": "torch", "chatterbox_mlx": "mlx-audio",
+ENGINE_VENVS = {"chatterbox": "torch", "openvoice": "torch", "chatterbox_mlx": "mlx-audio", "qwen3_tts": "mlx-audio",
                 "deepfilternet": "mlx-audio", "resemble_enhance": "torch", "mflux": "mflux"}
 #: Environment name -> the variable that points at an interpreter of one's
 #: own instead.
@@ -117,8 +121,8 @@ TORCH_ENGINES = tuple(e for e, v in ENGINE_VENVS.items() if v == "torch")
 WORKER_PACKAGES = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1", "python-multipart>=0.0.9", "numpy>=1.24", "av>=12"]
 #: Engine -> the format column of the model list.
 ENGINE_FORMAT = {"whisper": "ctranslate2", "piper": "onnx", "kokoro": "onnx", "kitten": "onnx",
-                 "supertonic": "onnx", "chatterbox": "torch", "chatterbox_mlx": "mlx", "openvoice": "torch",
-                 "mflux": "mlx", "mlx": "mlx", "deepfilternet": "mlx", "resemble_enhance": "torch"}
+                 "supertonic": "onnx", "chatterbox": "torch", "chatterbox_mlx": "mlx", "qwen3_tts": "mlx",
+                 "openvoice": "torch", "mflux": "mlx", "mlx": "mlx", "deepfilternet": "mlx", "resemble_enhance": "torch"}
 #: The folders of a Qwen-Image repo on Hugging Face (speech_worker.QWEN_IMAGE_DIRS).
 QWEN_IMAGE_DIRS = ("transformer", "text_encoder", "vae", "tokenizer")
 #: The files of a faster-whisper model directory worth fetching.
@@ -146,6 +150,13 @@ def speech_engine_of(path: Path) -> Optional[str]:
     """The worker engine (speech or image) that serves the directory
     ``path``, from its files; None for anything else."""
     return _worker().detect_engine(path) if path.is_dir() else None
+
+
+def engine_options(engine: str) -> List[str]:
+    """The request options a worker engine reads beyond voice and speed
+    (speech_worker.Engine.OPTIONS), for the hub to offer per model."""
+    cls = _worker().ENGINES.get(engine)
+    return list(getattr(cls, "OPTIONS", ()) or ())
 
 
 def pool_of(kind: str) -> str:
@@ -341,6 +352,10 @@ def speech_voices(path: Path, engine: str) -> List[str]:
                     return sorted(n[:-4] for n in z.namelist() if n.endswith(".npy"))
         if engine == "supertonic":
             return sorted(p.stem for p in (path / "voice_styles").glob("*.json"))
+        if engine == "qwen3_tts":
+            # A Base checkpoint's voices are the recordings, a CustomVoice one's its speakers.
+            kind, speakers = _worker().qwen3_tts_voices(path / "config.json")
+            return speakers if kind != "base" else _worker().recorded_voices(app_voices.voices_dir())
         if engine in _worker().CLONING_ENGINES:
             own = ["default"] if ((engine == "chatterbox" and (path / "conds.pt").is_file())
                                   or (engine == "chatterbox_mlx" and (path / "conds.safetensors").is_file())) else []
@@ -431,6 +446,12 @@ def speech_packages(repo: str, items: List[Dict[str, Any]]) -> List[Dict[str, An
         for src, size in zip(extra, S3_TOKENIZER_FILES.values()):
             sizes[src] = size
         add("chatterbox_mlx", f"{repo_name}-mlx", files + list(extra), save_as=extra)
+    if (repo.lower().startswith("mlx-community/qwen3-tts") and "model.safetensors" in top and "config.json" in top
+            and "speech_tokenizer" in by_dir):
+        # The checkpoint whole, its speech tokenizer folder kept as a folder;
+        # the model card and git's attributes stay behind.
+        files = sorted(p for p in sizes if not p.startswith(".") and not p.lower().endswith(".md"))
+        add("qwen3_tts", repo_name, files, save_as={f: f for f in files if "/" in f})
     if "openvoice" in repo.lower():
         for d, names in sorted(by_dir.items()):
             if {"config.json", "checkpoint.pth"} <= set(names) and (not d or d.rsplit("/", 1)[-1] == "converter"):
@@ -643,6 +664,8 @@ def list_models() -> List[Dict[str, Any]]:
                      "loaded": loaded is not None, "port": loaded.port if loaded else None,
                      "context_length": None, "loaded_at": loaded.loaded_at if loaded else None,
                      "voices": speech_voices(p, engine),
+                     # The sampling knobs the engine takes with a request (temperature).
+                     "options": engine_options(engine),
                      # A download records its repo, an import where it came from.
                      "source": _marker(p).get("repo") or _marker(p).get("source")}
             if not installed:

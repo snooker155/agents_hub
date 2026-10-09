@@ -394,7 +394,8 @@ SPEECH_PURPOSES = ("transcription", "speech", "image")
 #: Kitten have none) are found by name: (tags, the word searched when the
 #: person typed none; with a word, theirs is searched).
 SPEECH_NAME_QUERIES: Dict[str, List[Tuple[List[str], str]]] = {
-    "speech": [(["onnx"], "piper"), (["onnx"], "kokoro"), (["onnx"], "kitten-tts"), (["onnx"], "supertonic")],
+    "speech": [(["onnx"], "piper"), (["onnx"], "kokoro"), (["onnx"], "kitten-tts"), (["onnx"], "supertonic"),
+               (["mlx"], "qwen3-tts")],
     "transcription": [],
     "image": [([], "qwen-image")],
 }
@@ -402,7 +403,8 @@ SPEECH_NAME_QUERIES: Dict[str, List[Tuple[List[str], str]]] = {
 #: Hub reports no downloads for them, so a sort would bury them.
 SPEECH_FEATURED = {"speech": ["rhasspy/piper-voices", "fastrtc/kokoro-onnx", "Supertone/supertonic-3",
                               "KittenML/kitten-tts-nano-0.8-int8", "ResembleAI/chatterbox",
-                              "mlx-community/chatterbox-4bit", "myshell-ai/OpenVoiceV2"],
+                              "mlx-community/chatterbox-4bit", "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+                              "myshell-ai/OpenVoiceV2"],
                    "transcription": ["Systran/faster-whisper-small", "Systran/faster-whisper-large-v3"],
                    "image": ["mlx-community/Qwen-Image-2512-8bit", "mlx-community/Qwen-Image-2512-4bit",
                              "Qwen/Qwen-Image-2512"]}
@@ -430,6 +432,8 @@ def speech_engine_for(repo: str, tags: List[str], purpose: str) -> Optional[str]
         return "chatterbox"  # the multilingual weights live only here
     if low.startswith("mlx-community/chatterbox") and "turbo" not in low:
         return "chatterbox_mlx" if app_speech_models.mlx_platform() else None  # MLX runs on Apple silicon only
+    if low.startswith("mlx-community/qwen3-tts"):
+        return "qwen3_tts" if app_speech_models.mlx_platform() else None
     if "openvoice" in low:
         return "openvoice"  # its converter; a repo without one lists no package
     if "piper" in low or "piper" in tags:

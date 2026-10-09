@@ -277,6 +277,24 @@ def test_a_slow_video_hands_back_its_job_and_is_collected_later(ws, http, monkey
 
 # ── speech and transcription ─────────────────────────────────────────────────
 
+def test_the_temperature_goes_only_to_the_hubs_own_runtime(ws, http):
+    calls = http(lambda req: httpx.Response(200, content=b"MP3", headers={"content-type": "audio/mpeg"}))
+    options = {"voice": "anna", "temperature": "0,5"}
+    media.synthesize_speech(special.Endpoint(special.OPENAI, "http://rt/v1", local=True), "chatterbox-4bit-mlx",
+                            "hi", voice=None, instructions=None, options=options)
+    assert json.loads(calls[-1].content)["temperature"] == 0.5
+    media.synthesize_speech(special.Endpoint(special.OPENAI, "https://api.openai.com/v1", "sk"), "tts-1",
+                            "hi", voice=None, instructions=None, options=options)
+    assert "temperature" not in json.loads(calls[-1].content)
+    # Saved as a number in its range, or not at all.
+    saved = special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "0,5"}}})
+    assert saved["speech"]["options"]["temperature"] == "0.5"
+    with pytest.raises(special.SpecialModelError):
+        special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "2"}}})
+    with pytest.raises(special.SpecialModelError):
+        special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "warm"}}})
+
+
 def test_google_speech_comes_back_as_wav(ws, http):
     from files import service
     from tools.special_models import synthesize_speech

@@ -268,6 +268,83 @@ def test_text_is_read_in_whole_sentences(worker):
     assert chunks == ["Первое предложение. Второе?", "Третье! Четвёртое."]
     long = worker.sentence_chunks("слово " * 30, 50)
     assert all(len(c) <= 50 for c in long) and " ".join(long).split() == ["слово"] * 30
+    # A paragraph is read in one go, up to the limit; a blank line always
+    # starts a new piece, a single line break does not.
+    assert worker.sentence_chunks("Раз. Два.\nТри.\n\nЧетыре. Пять.", 100) == ["Раз. Два. Три.", "Четыре. Пять."]
+    assert worker.ChatterboxBase.CHUNK == 400 and worker.Qwen3TTSMLX.CHUNK == 600
+
+
+def qwen3_tts_dir(root: Path, name: str = "Qwen3-TTS-12Hz-1.7B-Base-8bit", kind: str = "base", speakers=None) -> Path:
+    d = root / name
+    (d / "speech_tokenizer").mkdir(parents=True)
+    for f in ("model.safetensors", "vocab.json", "merges.txt", "speech_tokenizer/model.safetensors"):
+        (d / f).write_bytes(b"q" * 10)
+    (d / "config.json").write_text(json.dumps({"model_type": "qwen3_tts", "tts_model_type": kind,
+                                               "talker_config": {"spk_id": speakers or {}}}))
+    return d
+
+
+def test_a_qwen3_tts_checkpoint_is_detected_and_its_voices_are_the_recordings(worker, client, svc, tmp_path,
+                                                                             monkeypatch, no_pyav):
+    assert worker.detect_engine(qwen3_tts_dir(tmp_path)) == "qwen3_tts"
+    custom = qwen3_tts_dir(tmp_path, "Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit", "custom_voice",
+                           {"vivian": 3, "ryan": 4})
+    assert worker.detect_engine(custom) == "qwen3_tts"
+    assert worker.qwen3_tts_voices(custom / "config.json") == ("custom_voice", ["ryan", "vivian"])
+    _record(client, "anna")
+    models = {m["name"]: m for m in client.get("/models", headers=AUTH).json()["models"]}
+    base = models["Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+    assert (base["engine"], base["format"], base["voices"], base["options"]) == ("qwen3_tts", "mlx", ["anna"], ["temperature"])
+    assert models["Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"]["voices"] == ["ryan", "vivian"]
+    # Chatterbox takes its two knobs and the temperature; a Piper voice takes none.
+    assert svc.app_speech_models.engine_options("chatterbox_mlx") == ["exaggeration", "cfg_weight", "temperature"]
+    assert svc.app_speech_models.engine_options("piper") == []
+
+
+def test_qwen3_tts_reads_recordings_and_speakers(worker, tmp_path, monkeypatch):
+    voices = tmp_path / "voices"
+    monkeypatch.setenv("MODELS_VOICES_DIR", str(voices))
+    (voices / "anna").mkdir(parents=True)
+    (voices / "anna" / "sample.wav").write_bytes(_wav())
+    (voices / "anna" / "voice.json").write_text(json.dumps({"language": "ru"}))
+    engine = object.__new__(worker.Qwen3TTSMLX)
+    engine.speakers, engine.clones, engine.languages = [], True, ["russian", "english"]
+    assert engine.voices() == ["anna"]
+    picked = engine._pick("anna")
+    assert picked == {"ref_audio": str(voices / "anna" / "sample.wav"), "_language": "ru"}
+    assert engine._pick("alloy") == picked  # an unknown name: the first recording
+    # The language by its name, the model's own list deciding; else auto.
+    assert worker.qwen3_language("Привет!", None, engine.languages) == "russian"
+    assert worker.qwen3_language("Hello, how are you today?", None, engine.languages) == "english"
+    assert worker.qwen3_language("Hello, how are you today?", None, ["russian"]) == "auto"
+    assert worker.qwen3_language("Bonjour, comment allez-vous aujourd'hui ?", None, None) == "french"
+    custom = object.__new__(worker.Qwen3TTSMLX)
+    custom.speakers, custom.clones, custom.languages = ["Vivian", "Ryan"], False, []
+    assert custom.voices() == ["Vivian", "Ryan"]
+    assert custom._pick("ryan") == {"voice": "Ryan"} and custom._pick("anna") == {"voice": "Vivian"}
+    empty = object.__new__(worker.Qwen3TTSMLX)
+    empty.speakers, empty.clones = [], False
+    with pytest.raises(worker.WorkerError):
+        empty._pick("anna")
+
+
+def test_qwen3_tts_packages_and_search(svc, monkeypatch):
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: True)
+    tree = _tree(("config.json", 5), ("model.safetensors", 3000), ("model.safetensors.index.json", 1),
+                 ("speech_tokenizer/config.json", 2), ("speech_tokenizer/model.safetensors", 680),
+                 ("vocab.json", 2), ("README.md", 1), (".gitattributes", 1))
+    [pkg] = svc.app_speech_models.speech_packages("mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit", tree)
+    assert (pkg["name"], pkg["engine"], pkg["kind"]) == ("Qwen3-TTS-12Hz-1.7B-Base-8bit", "qwen3_tts", "speech")
+    assert pkg["files"] == ["config.json", "model.safetensors", "model.safetensors.index.json",
+                            "speech_tokenizer/config.json", "speech_tokenizer/model.safetensors", "vocab.json"]
+    assert pkg["save_as"] == {"speech_tokenizer/config.json": "speech_tokenizer/config.json",
+                              "speech_tokenizer/model.safetensors": "speech_tokenizer/model.safetensors"}
+    assert pkg["size_bytes"] == 3690
+    # Qwen's own torch checkpoint has no speech tokenizer folder of this shape: not a package.
+    assert svc.app_speech_models.speech_packages("Qwen/Qwen3-TTS-12Hz-1.7B-Base", tree) == []
+    assert svc.app_hardware_search.speech_engine_for("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", [], "speech") == "qwen3_tts"
+    monkeypatch.setattr(svc.app_speech_models, "mlx_platform", lambda: False)
+    assert svc.app_hardware_search.speech_engine_for("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", [], "speech") is None
 
 
 # ── the fast path: a reading model, then OpenVoice ───────────────────────────
@@ -448,9 +525,9 @@ def test_the_worker_converts_and_passes_chatterbox_options(worker):
     assert engine.calls[-1] == ("convert", b"RIFF", "anton", "piper/x", 0.5)
     assert c.post("/v1/audio/convert", data={"voice": "anton"}).status_code == 400
     r = c.post("/v1/audio/speech", json={"input": "hi", "voice": "anton", "response_format": "wav",
-                                         "exaggeration": 0.8, "cfg_weight": 0.2, "other": 1})
+                                         "exaggeration": 0.8, "cfg_weight": 0.2, "temperature": 0.5, "other": 1})
     assert r.status_code == 200
-    assert engine.calls[-1] == ("speak", "hi", "anton", {"exaggeration": 0.8, "cfg_weight": 0.2})
+    assert engine.calls[-1] == ("speak", "hi", "anton", {"exaggeration": 0.8, "cfg_weight": 0.2, "temperature": 0.5})
 
 
 def test_engines_that_convert_nothing_say_so(worker):
@@ -578,8 +655,8 @@ def _fake_chatterbox(worker, tmp_path, default=None):
         def _save_cached(self, conds, cache):
             cache.write_text(conds)
 
-        def _generate(self, text, conds, lang, exaggeration, cfg_weight):
-            self.calls.append(("generate", text, conds, lang, exaggeration, cfg_weight))
+        def _generate(self, text, conds, lang, exaggeration, cfg_weight, temperature):
+            self.calls.append(("generate", text, conds, lang, exaggeration, cfg_weight, temperature))
             return [0.1] * 2400
 
     return Fake()
@@ -596,12 +673,17 @@ def test_conditionals_are_prepared_once_and_kept(worker, tmp_path, monkeypatch):
     assert wav[:4] == b"RIFF"
     gen = [c for c in engine.calls if c[0] == "generate"]
     # Russian text, an English recording: guidance off so the accent stays out.
-    assert gen == [("generate", "Привет. Как дела?", "conds:anna", "ru", 0.9, 0.0)]
+    assert gen == [("generate", "Привет. Как дела?", "conds:anna", "ru", 0.9, 0.0, 0.8)]
+    # The temperature is a request option too, within its range.
+    engine.speak("Hello.", "anna", 1.0, {"temperature": 0.4})
+    assert engine.calls[-1][1:] == ("Hello.", "conds:anna", "en", 0.5, 0.5, 0.4)
+    engine.speak("Hello.", "anna", 1.0, {"temperature": "9"})
+    assert engine.calls[-1][-1] == 1.5
     assert ("prepare", "anna") in engine.calls
     assert (voices / "anna" / "cache" / "fake-model-best10.bin").read_text() == "conds:anna"
     engine.speak("Hello there.", "anna", 1.0)
     assert [c for c in engine.calls if c[0] == "prepare"] == [("prepare", "anna")]
-    assert engine.calls[-1][-1] == 0.5  # same language: guidance on
+    assert engine.calls[-1][-2] == 0.5  # same language: guidance on
     # A restarted worker reads the cache instead of preparing again.
     again = _fake_chatterbox(worker, tmp_path)
     again.speak("Hello.", "anna", 1.0)
