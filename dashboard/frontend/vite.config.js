@@ -68,8 +68,10 @@ export default defineConfig({
       include: ['src/**/*.{js,jsx}'],
       exclude: ['src/**/__tests__/**', 'src/test/**', 'src/demo/fixtures/**', 'src/main.jsx'],
       // A floor, not a goal: CI fails when coverage drops below what the suite
-      // reached when the gate was added (2026-10-09). Raise it as tests grow.
-      thresholds: { lines: 66, statements: 66, functions: 54, branches: 73 },
+      // reached, so raise it as tests grow. Re-measured 2026-10-10 on Vitest 5,
+      // whose v8 coverage counts by syntax tree: the same suite that read
+      // 66.7% lines under Vitest 3 reads 52.4% here.
+      thresholds: { lines: 52, statements: 49, functions: 41, branches: 41 },
     },
   },
 })

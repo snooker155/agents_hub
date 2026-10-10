@@ -241,10 +241,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node 20
+      # 22, as in dashboard/frontend/Dockerfile: vitest 5 needs 22.12 or later.
+      - name: Set up Node 22
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
 
