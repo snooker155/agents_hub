@@ -3,14 +3,3 @@
 # anything not listed here, and on a listed id that no longer appears, so the
 # list never outlives the problem.
 #
-# LangChain 0.3: the fixes exist only in the 1.x line, which needs a migration
-# (requirements-agents.txt pins <1.0). None of the affected functions is called
-# from our code (checked 2026-10-09): load_prompt / load_prompt_from_config,
-# get_num_tokens_from_messages with image URLs, HTMLHeaderTextSplitter
-# .split_text_from_url, the file-search agent middleware.
-PYSEC-2026-2192  langchain path confinement in file search middleware; not used
-PYSEC-2026-2556  langchain-anthropic, same advisory as PYSEC-2026-2192; not used
-PYSEC-2026-2193  langchain-core load_prompt path traversal; not used
-PYSEC-2026-2562  langchain-core SSRF in image token counting; not used
-PYSEC-2026-76    langchain-openai SSRF in image token counting; not used
-PYSEC-2026-77    langchain-text-splitters SSRF via redirect in split_text_from_url; not used

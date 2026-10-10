@@ -10,6 +10,10 @@ the API, a worker or a run subprocess, for a tokenizer only used by
 The guard below makes that single import fail as if transformers were absent.
 Anyone else importing transformers, sentence-transformers above all, gets the
 real package, and the guard removes itself once langchain_core has loaded.
+
+langchain_core 1.x (what requirements.lock pins) imports transformers lazily,
+inside ``get_tokenizer``, so there the guard never fires; it stays for an
+environment still on 0.3 and costs one meta path entry.
 """
 from __future__ import annotations
 
