@@ -240,8 +240,8 @@ def test_a_deferred_tool_called_without_loading_still_runs():
 # ── Anthropic: deferred loading and tool references ──────────────────────────
 
 def _anthropic(model: str = "claude-opus-4-6"):
-    from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model=model, api_key="test-key")
+    from providers.anthropic_driver import AnthropicChatModel
+    return AnthropicChatModel(model=model, api_key="test-key")
 
 
 def _capture(llm) -> List[dict]:
@@ -255,7 +255,7 @@ def _capture(llm) -> List[dict]:
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
             "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 2}})
 
-    llm.__dict__["_client"] = anthropic.Client(
+    llm.root_client = anthropic.Client(
         api_key="test-key", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     return sent
 
@@ -406,7 +406,7 @@ def test_anthropic_run_end_to_end_sends_a_constant_tool_array(monkeypatch):
                               content=_sse(next(replies), f"msg_{len(sent)}").encode())
 
     llm = _anthropic()
-    llm.__dict__["_client"] = anthropic.Client(
+    llm.root_client = anthropic.Client(
         api_key="test-key", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     calls: List[str] = []
     agent = _agent(_tools(extra=25, calls=calls), provider="anthropic",

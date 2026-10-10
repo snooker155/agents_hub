@@ -271,8 +271,8 @@ def test_the_agent_loop_sends_the_cleared_trail(window):
 # ── Anthropic's server-side clearing ─────────────────────────────────────────
 
 def _anthropic(model: str = "claude-opus-4-6", **kw):
-    from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model=model, api_key="test-key", **kw)
+    from providers.anthropic_driver import AnthropicChatModel
+    return AnthropicChatModel(model=model, api_key="test-key", **kw)
 
 
 def _capture(llm, response: dict) -> List[dict]:
@@ -285,7 +285,7 @@ def _capture(llm, response: dict) -> List[dict]:
                      "body": json.loads(request.content)})
         return httpx.Response(200, json=response)
 
-    llm.__dict__["_client"] = anthropic.Client(
+    llm.root_client = anthropic.Client(
         api_key="test-key", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     return sent
 

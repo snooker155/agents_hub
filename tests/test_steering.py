@@ -228,7 +228,7 @@ def test_injected_sequence_is_valid_for_openai_and_anthropic(monkeypatch):
     roles = [_convert_message_to_dict(m)["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool", "user"]
 
-    from langchain_anthropic.chat_models import _format_messages
+    from providers.anthropic_driver import format_messages as _format_messages
     _system, formatted = _format_messages(messages)
     assert [m["role"] for m in formatted] == ["user", "assistant", "user"]
     last = formatted[-1]["content"]

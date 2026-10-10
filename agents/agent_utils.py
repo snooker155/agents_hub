@@ -251,7 +251,7 @@ def build_chat_model(
         )
 
     if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
+        from providers.anthropic_driver import AnthropicChatModel
         key = api_key or os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key
         mdl = model or os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-6"
         if effort:
@@ -264,15 +264,15 @@ def build_chat_model(
                 thinking = {"type": "enabled", "budget_tokens": budget}
             # The API rejects a custom temperature when thinking is on
             # (and rejects temperature entirely on Opus 4.7+), so omit it.
-            return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, thinking=thinking,
-                                 streaming=streaming,
-                                 default_request_timeout=req_timeout)
+            return AnthropicChatModel(model=mdl, api_key=key, max_tokens=tok, thinking=thinking,
+                                      streaming=streaming,
+                                      default_request_timeout=req_timeout)
         if any(m in mdl.lower() for m in _ANTHROPIC_NO_SAMPLING_MARKERS):
-            return ChatAnthropic(model=mdl, api_key=key, max_tokens=tok, streaming=streaming,
-                                 default_request_timeout=req_timeout)
-        return ChatAnthropic(model=mdl, api_key=key, temperature=_temp(mdl), max_tokens=tok,
-                             streaming=streaming,
-                             default_request_timeout=req_timeout)
+            return AnthropicChatModel(model=mdl, api_key=key, max_tokens=tok, streaming=streaming,
+                                      default_request_timeout=req_timeout)
+        return AnthropicChatModel(model=mdl, api_key=key, temperature=_temp(mdl), max_tokens=tok,
+                                  streaming=streaming,
+                                  default_request_timeout=req_timeout)
 
     if provider == "google":
         # No `streaming` here on purpose: the installed ChatGoogleGenerativeAI

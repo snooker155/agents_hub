@@ -163,7 +163,7 @@ def test_the_append_form_is_valid_for_anthropic_and_openai(monkeypatch):
     _run(_executor(_replies()), LoopState(run_id=run_id))
     messages = _ToolModel.seen[1]
 
-    from langchain_anthropic.chat_models import _format_messages
+    from providers.anthropic_driver import format_messages as _format_messages
     system, formatted = _format_messages(messages)
     assert "cite every source" in str(system)
     assert [m["role"] for m in formatted] == ["user", "assistant", "user"]

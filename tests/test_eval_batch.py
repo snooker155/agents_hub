@@ -138,7 +138,7 @@ def test_custom_ids_are_validated():
 
 
 def test_chat_model_target_and_request_body():
-    from langchain_anthropic import ChatAnthropic
+    from providers.anthropic_driver import AnthropicChatModel as ChatAnthropic
     from langchain_core.tools import tool
     from providers.openai_driver import OpenAIChatModel as ChatOpenAI
 

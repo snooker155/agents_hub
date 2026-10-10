@@ -122,7 +122,7 @@ def chat_model_target(llm: Any) -> Optional[BatchTarget]:
             return None
         key = _secret(getattr(llm, "openai_api_key", None))
         return BatchTarget("openai", base, key, model) if key else None
-    if name == "ChatAnthropic":
+    if name in ("AnthropicChatModel", "ChatAnthropic"):
         base = str(getattr(llm, "anthropic_api_url", None) or ANTHROPIC_DEFAULT_BASE).rstrip("/")
         if "api.anthropic.com" not in base:
             return None

@@ -391,11 +391,10 @@ def _native_llm(agent: Any) -> Any:
 def _anthropic_tools(tools: Sequence[Any], core: Set[str]) -> List[Dict[str, Any]]:
     """Every tool in Anthropic's own shape, the non-core ones deferred.
 
-    A dict already in that shape passes through ``bind_tools`` of the
-    installed client with its extra keys, which is how ``defer_loading``
-    reaches the request.
+    A dict already in that shape passes through the driver's ``bind_tools``
+    with its extra keys, which is how ``defer_loading`` reaches the request.
     """
-    from langchain_anthropic.chat_models import convert_to_anthropic_tool
+    from providers.anthropic_driver import convert_to_anthropic_tool
     out = []
     for t in tools:
         spec = dict(convert_to_anthropic_tool(t))
