@@ -5,7 +5,7 @@
 # SSRF check (common/ssrf.py) instead of a re-typed copy:
 #   docker build -f deploy/browser/Dockerfile -t agents-hub-browser .
 # docker-compose.yml builds it that way under the `browser` profile.
-FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

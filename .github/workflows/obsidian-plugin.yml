@@ -19,8 +19,8 @@ jobs:
       run:
         working-directory: clients/obsidian-agents-hub
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: node --check main.js
@@ -38,9 +38,9 @@ jobs:
       run:
         working-directory: clients/obsidian-agents-hub
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: zip agents-hub.zip main.js manifest.json styles.css
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             clients/obsidian-agents-hub/main.js

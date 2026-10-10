@@ -11,7 +11,17 @@ updates:
     target-branch: dev
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
+    # A package goes to the first group it matches.
     groups:
+      # vite, vitest and their plugins only resolve at matching majors: a lone
+      # @vitest/coverage-v8 5 against vitest 3 fails npm ci.
+      build-and-test:
+        patterns: ["vite", "vitest", "@vitest/*", "@vitejs/*"]
+      # Lint plugins add rules in minor releases (react-hooks 7.1 brought the
+      # React Compiler rules, 226 findings), so they move on their own and do
+      # not hold the rest back.
+      lint:
+        patterns: ["eslint", "eslint-*", "@eslint/*", "globals"]
       minor-and-patch:
         update-types: [minor, patch]
 
@@ -36,3 +46,8 @@ updates:
     directories: [/, /dashboard/frontend, /deploy/models, /deploy/browser]
     target-branch: dev
     schedule: { interval: monthly }
+    ignore:
+      # Node majors move by hand, to the next LTS line; Dependabot offers
+      # odd, short-lived releases (25) as well.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

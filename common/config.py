@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+import json
 import os
-from typing import Tuple, List, Optional, Union, Literal
+import re
+from typing import Annotated, Any, Tuple, List, Optional, Union, Literal
 from pathlib import Path
-from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, BeforeValidator, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from dataclasses import dataclass, field
 
 from common.paths import PROJECT_ROOT
+
+def _list_setting(value: Any) -> Any:
+    """A list setting the way a .env file writes it.
+
+    pydantic-settings reads a tuple or list field from the environment as JSON,
+    so ``ALLOW_SHELL="python,pytest,ruff,black"``, the line .env.example ships,
+    stopped the backend at start with a SettingsError. ``StrList`` fields skip
+    that decoding and land here instead: a JSON array still works, anything
+    else is split on commas and whitespace.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.startswith("["):
+        try:
+            items = json.loads(text)
+        except ValueError as exc:
+            raise ValueError(f"not a valid JSON array: {text[:60]}") from exc
+        if not isinstance(items, list):
+            raise ValueError("a JSON list setting must be an array")
+        return tuple(str(item).strip() for item in items if str(item).strip())
+    return tuple(part for part in re.split(r"[,\s]+", text) if part)
+
+
+# A setting that holds a list of strings: "a,b", "a b" or '["a", "b"]'.
+StrList = Annotated[Tuple[str, ...], NoDecode, BeforeValidator(_list_setting)]
+
 
 DEFAULT_IGNORE: List[str] = [
     ".git",
@@ -121,7 +152,7 @@ class Settings(BaseSettings):
     # location is fixed, not configurable, so there is no workspace_root setting.
 
     # Policies / safety
-    allow_shell: Tuple[str, ...] = Field(
+    allow_shell: StrList = Field(
         default_factory=lambda: tuple(("python,pytest,ruff,black").split(",")),
     )
 
@@ -456,11 +487,11 @@ class Settings(BaseSettings):
     web_domain_policy_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("WEB_DOMAIN_POLICY_ENABLED", "web_domain_policy_enabled"))
-    web_allow_domains: Tuple[str, ...] = Field(
+    web_allow_domains: StrList = Field(
         default_factory=tuple,
         validation_alias=AliasChoices("WEB_ALLOW_DOMAINS", "web_allow_domains"))
     # Denied always, whether or not the allow-policy is on.
-    web_deny_domains: Tuple[str, ...] = Field(
+    web_deny_domains: StrList = Field(
         default_factory=tuple,
         validation_alias=AliasChoices("WEB_DENY_DOMAINS", "web_deny_domains"))
 
