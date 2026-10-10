@@ -15,7 +15,8 @@ import openai
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult, LLMResult
-from langchain_openai import ChatOpenAI
+from providers import openai_driver
+from providers.openai_driver import OpenAIChatModel as ChatOpenAI
 
 from agents import agent_utils
 from agents.agent_utils import build_chat_model, is_openai_reasoning_model
@@ -149,7 +150,7 @@ def _refusal():
 
 @pytest.fixture
 def no_refusals(monkeypatch):
-    monkeypatch.setattr(agent_utils, "_SUMMARY_REFUSED", set())
+    monkeypatch.setattr(openai_driver, "_SUMMARY_REFUSED", set())
 
 
 def test_a_refused_summary_retries_without_it_and_is_remembered(monkeypatch, no_refusals):
@@ -161,7 +162,7 @@ def test_a_refused_summary_retries_without_it_and_is_remembered(monkeypatch, no_
             raise _refusal()
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content="391"))])
 
-    monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
+    monkeypatch.setattr(ChatOpenAI, "_generate_once", fake_generate)
     llm = build_chat_model(provider="openai", model="gpt-5", api_key="sk-a",
                            thinking_level="low")
     assert llm.invoke("17*23?").content == "391"
@@ -182,7 +183,7 @@ def test_a_refused_summary_reopens_the_stream(monkeypatch, no_refusals):
             raise _refusal()
         yield _chunk(content="391")
 
-    monkeypatch.setattr(ChatOpenAI, "_stream", fake_stream)
+    monkeypatch.setattr(ChatOpenAI, "_stream_once", fake_stream)
     llm = build_chat_model(provider="openai", model="gpt-5", api_key="sk-a",
                            thinking_level="low", streaming=True)
     assert "".join(c.content for c in llm.stream("17*23?")) == "391"
@@ -196,7 +197,7 @@ def test_any_other_bad_request_is_raised(monkeypatch, no_refusals):
     def fake_generate(self, *a, **kw):
         raise other
 
-    monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
+    monkeypatch.setattr(ChatOpenAI, "_generate_once", fake_generate)
     llm = build_chat_model(provider="openai", model="gpt-5", api_key="sk-a",
                            thinking_level="low")
     with pytest.raises(openai.BadRequestError):
@@ -205,19 +206,31 @@ def test_any_other_bad_request_is_raised(monkeypatch, no_refusals):
 
 
 def test_the_stream_still_reaches_the_callbacks(monkeypatch, no_refusals):
-    # langchain passes the callbacks to _generate only when its signature
-    # names run_manager; a wrapper without it cut the chat off from the stream.
-    seen = []
+    # Whichever side drives the stream (langchain_core 0.3 hands the run
+    # manager to the driver, 1.x streams from the base class and reports the
+    # tokens itself), a token callback on a streaming model hears every token.
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class Tokens(BaseCallbackHandler):
+        def __init__(self):
+            self.seen = []
+
+        def on_llm_new_token(self, token, **kwargs):
+            self.seen.append(token)
 
     def fake_stream(self, messages, stop=None, run_manager=None, **kwargs):
-        seen.append(run_manager)
-        yield _chunk(content="391")
+        chunk = _chunk(content="391")
+        if run_manager is not None:
+            run_manager.on_llm_new_token("391", chunk=chunk)
+        yield chunk
 
-    monkeypatch.setattr(ChatOpenAI, "_stream", fake_stream)
+    monkeypatch.setattr(ChatOpenAI, "_stream_once", fake_stream)
     llm = build_chat_model(provider="openai", model="gpt-5", api_key="sk-a",
                            thinking_level="low", streaming=True)
-    assert llm.invoke("17*23?").content == "391"
-    assert seen and seen[0] is not None
+    tokens = Tokens()
+    assert llm.invoke("17*23?", config={"callbacks": [tokens]}).content == "391"
+    # 1.x also reports an empty token for a chunk that carries no text.
+    assert [t for t in tokens.seen if t] == ["391"]
 
 
 @pytest.mark.parametrize("env_base", [None, "https://api.openai.com/v1", "https://proxy.example/v1/"])
@@ -230,5 +243,5 @@ def test_a_refusal_is_found_whatever_spelling_the_base_url_had(monkeypatch, no_r
     else:
         monkeypatch.setenv("OPENAI_BASE_URL", env_base)
     resolved = (env_base or "https://api.openai.com/v1").rstrip("/")
-    agent_utils._SUMMARY_REFUSED.add(agent_utils._summary_key("sk-a", resolved))
+    openai_driver._SUMMARY_REFUSED.add(openai_driver.summary_key("sk-a", resolved))
     assert agent_utils.openai_reasoning_param("low", "sk-a", None) == {"effort": "low"}

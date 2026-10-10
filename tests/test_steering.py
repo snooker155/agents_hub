@@ -224,7 +224,7 @@ def test_injected_sequence_is_valid_for_openai_and_anthropic(monkeypatch):
     _run(_executor(_two_tool_calls()), LoopState(run_id=run_id))
     messages = _ToolModel.seen[1]
 
-    from langchain_openai.chat_models.base import _convert_message_to_dict
+    from providers.openai_driver import message_to_dict as _convert_message_to_dict
     roles = [_convert_message_to_dict(m)["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool", "user"]
 

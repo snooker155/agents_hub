@@ -140,7 +140,7 @@ def test_custom_ids_are_validated():
 def test_chat_model_target_and_request_body():
     from langchain_anthropic import ChatAnthropic
     from langchain_core.tools import tool
-    from langchain_openai import ChatOpenAI
+    from providers.openai_driver import OpenAIChatModel as ChatOpenAI
 
     @tool
     def add(a: int, b: int) -> int:

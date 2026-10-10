@@ -168,7 +168,7 @@ def test_the_append_form_is_valid_for_anthropic_and_openai(monkeypatch):
     assert "cite every source" in str(system)
     assert [m["role"] for m in formatted] == ["user", "assistant", "user"]
 
-    from langchain_openai.chat_models.base import _convert_message_to_dict
+    from providers.openai_driver import message_to_dict as _convert_message_to_dict
     roles = [_convert_message_to_dict(m)["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool"]
 

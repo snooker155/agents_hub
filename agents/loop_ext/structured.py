@@ -133,8 +133,8 @@ def _count(llm: Any, response: Any, ref: Tuple[Optional[str], Optional[str]]) ->
 def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str,
                    ref: Tuple[Optional[str], Optional[str]] = (None, None)) -> Tuple[Any, Optional[str]]:
     """Repair through OpenAI's strict Structured Outputs (``method="json_schema"``,
-    ``strict=True``), the one combination the installed langchain-openai
-    guarantees will validate exactly. On any failure (a schema shape the
+    ``strict=True``), the one combination the API guarantees will validate
+    exactly. On any failure (a schema shape the
     strict mode rejects, a transport error) the caller falls back to a plain
     JSON prompt, so this never has to be the only path."""
     tool_schema = {
@@ -243,9 +243,9 @@ def finalize_output(agent: Any, state: Any, text: str) -> Tuple[str, Optional[st
 # properties in ``required`` and to never allow additional properties
 # (https://platform.openai.com/docs/guides/structured-outputs/supported-schemas);
 # an optional argument (the common shape for a pydantic ``Optional[...]``
-# field with a default) breaks that. langchain-openai enforces the
-# ``additionalProperties: false`` half automatically once ``strict=True`` is
-# passed, but not the "every property required" half, so a schema that fails
+# field with a default) breaks that. ``convert_to_openai_tool(strict=True)``
+# adds the ``additionalProperties: false`` half automatically, but not the
+# "every property required" half, so a schema that fails
 # it is only caught here, before the call, or by OpenAI as a 400 otherwise.
 # The compatibility rule below is exactly that structural check, applied to
 # every property recursively (nested objects, array items, and any

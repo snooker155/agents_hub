@@ -4,145 +4,29 @@ import logging
 from typing import Optional
 from pathlib import Path
 
-import hashlib
 import os
 
-from langchain_openai import ChatOpenAI
+from providers.openai_driver import OpenAIChatModel, summary_refused
 
 from common.config import settings
 from common.hostnet import host_service_url
-
-
-# Keys (by base URL and a key fingerprint) whose organisation OpenAI refused a
-# reasoning summary for: an unverified organisation gets a 400 on
-# ``reasoning.summary``. Remembered per process so each later model built for
-# that key asks without it instead of paying the failed request again.
-_SUMMARY_REFUSED: set = set()
-
-
-_OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
-
-
-def _summary_key(api_key, base_url) -> str:
-    # The model is built with the base URL its caller passed, often none, while
-    # the refusal is recorded with the one ChatOpenAI settled on, which may come
-    # from the environment. Both sides resolve it the same way, or a refusal
-    # recorded under one spelling is never found under the other.
-    base = (base_url or os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL")
-            or _OPENAI_DEFAULT_BASE).rstrip("/")
-    secret = api_key.get_secret_value() if hasattr(api_key, "get_secret_value") else (api_key or "")
-    return f"{base}|{hashlib.sha256(str(secret).encode()).hexdigest()[:16]}"
-
-
-def _is_summary_refusal(exc: BaseException) -> bool:
-    """A 400 that rejects the reasoning summary itself, nothing else."""
-    try:
-        import openai
-    except ImportError:
-        return False
-    if not isinstance(exc, openai.BadRequestError):
-        return False
-    param = str(getattr(exc, "param", "") or "")
-    return param == "reasoning.summary" or "summar" in str(exc).lower()
 
 
 def openai_reasoning_param(effort: str, api_key=None, base_url=None) -> dict:
     """The Responses API ``reasoning`` parameter for a thinking level.
 
     OpenAI never returns the raw reasoning of its models; asking for a summary
-    is the only way any of it reaches the chat. A key refused one before is
-    asked without it.
+    is the only way any of it reaches the chat. A key refused one before
+    (``providers.openai_driver`` remembers the refusal) is asked without it.
     """
-    if _summary_key(api_key, base_url) in _SUMMARY_REFUSED:
+    if summary_refused(api_key, base_url):
         return {"effort": effort}
     return {"effort": effort, "summary": "auto"}
 
 
-class ReasoningChatOpenAI(ChatOpenAI):
-    """ChatOpenAI that keeps whatever reasoning the server returns.
-
-    LM Studio (and other OpenAI-compatible servers) return native model
-    reasoning as a separate ``reasoning_content`` / ``reasoning`` field on the
-    message — gpt-oss never uses inline ``<think>`` tags, only this field.
-    Base ChatOpenAI drops unknown response fields, so the reasoning is lost
-    before any callback sees it. These overrides copy it into the message's
-    ``additional_kwargs["reasoning_content"]``, where the chat callbacks and
-    ``reasoning.native_reasoning`` already look for it.
-
-    On the Responses API the model asks for a reasoning summary
-    (``openai_reasoning_param``). An organisation OpenAI has not verified gets a
-    400 for that, so the request is repeated once without the summary and the
-    key is remembered: the run goes on, only without the summary.
-
-    ``forced_temperature`` is sent whatever langchain thinks of it. langchain
-    strips the temperature from every gpt-5 request, but the 5.1 and later
-    families take one at effort ``none``, which is how thinking level off
-    reaches them (``providers.reasoning_profile``).
-    """
-
-    forced_temperature: Optional[float] = None
-
-    def _get_request_payload(self, input_, *, stop=None, **kwargs):
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        if self.forced_temperature is not None:
-            payload["temperature"] = self.forced_temperature
-        return payload
-
-    def _drop_summary_after(self, exc: BaseException) -> bool:
-        if not (isinstance(self.reasoning, dict) and "summary" in self.reasoning
-                and _is_summary_refusal(exc)):
-            return False
-        _SUMMARY_REFUSED.add(_summary_key(self.openai_api_key, self.openai_api_base))
-        self.reasoning = {k: v for k, v in self.reasoning.items() if k != "summary"}
-        return True
-
-    # Explicit ``run_manager`` parameters: langchain hands the callbacks to
-    # ``_generate`` only when its signature names one, so a bare ``*args``
-    # wrapper would silently cut the token stream off from the chat.
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        try:
-            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-        except Exception as exc:
-            if not self._drop_summary_after(exc):
-                raise
-            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        try:
-            return await super()._agenerate(
-                messages, stop=stop, run_manager=run_manager, **kwargs)
-        except Exception as exc:
-            if not self._drop_summary_after(exc):
-                raise
-            return await super()._agenerate(
-                messages, stop=stop, run_manager=run_manager, **kwargs)
-
-    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
-        # The refusal comes before the first chunk, so nothing was yielded yet
-        # when the stream is opened again.
-        started = False
-        try:
-            for chunk in super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
-                started = True
-                yield chunk
-        except Exception as exc:
-            if started or not self._drop_summary_after(exc):
-                raise
-            yield from super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
-
-    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
-        started = False
-        try:
-            async for chunk in super()._astream(
-                    messages, stop=stop, run_manager=run_manager, **kwargs):
-                started = True
-                yield chunk
-        except Exception as exc:
-            if started or not self._drop_summary_after(exc):
-                raise
-            async for chunk in super()._astream(
-                    messages, stop=stop, run_manager=run_manager, **kwargs):
-                yield chunk
+#: The hub's own OpenAI-protocol model (providers/openai_driver.py). The old
+#: name stays for callers that imported the subclass of ChatOpenAI it replaced.
+ReasoningChatOpenAI = OpenAIChatModel
 
 
 # ── Native reasoning (thinking_level → model API) ─────────────────────────────
@@ -203,7 +87,7 @@ def openai_reasoning_kwargs(
         sends_effort and reasoning_model and not base_url)
     out: dict = {}
     if responses:
-        # langchain-openai rewrites the whole request for that endpoint:
+        # The driver rewrites the whole request for that endpoint:
         # max_tokens → max_output_tokens, and the tool schemas into their
         # Responses shape.
         out["use_responses_api"] = True
@@ -351,11 +235,11 @@ def build_chat_model(
         mdl = model or os.environ.get("LMSTUDIO_MODEL") or settings.lmstudio_model
         if not mdl:
             raise ValueError("LM Studio model is not configured. Set LMSTUDIO_MODEL in Settings.")
-        # ReasoningChatOpenAI keeps the reasoning_content field that models
-        # like gpt-oss return separately (no inline <think> tags).
-        # LM Studio honours reasoning_effort for models that support it
-        # (gpt-oss) and ignores it for the rest.
-        return ReasoningChatOpenAI(
+        # The driver keeps the reasoning_content field that models like
+        # gpt-oss return separately (no inline <think> tags). LM Studio honours
+        # reasoning_effort for models that support it (gpt-oss) and ignores it
+        # for the rest.
+        return OpenAIChatModel(
             model=mdl,
             base_url=f"{url}/v1",
             api_key="lm-studio",  # LM Studio ignores the key value
@@ -411,29 +295,15 @@ def build_chat_model(
         streaming=streaming,
         timeout=req_timeout,
     )
-    # A streamed completion only carries a usage block when
-    # `stream_options.include_usage` is requested. langchain-openai turns that
-    # on by itself for the real OpenAI API, but its check is whether the name
-    # ``OPENAI_BASE_URL`` exists in the environment at all: the backend seeds
-    # every .env key into os.environ, an empty one included, and every process
-    # it spawns inherits it, so streamed runs came back without usage and the
-    # money cap (agents/callbacks/guards.py) priced them as free. Asked for
-    # explicitly whenever no gateway is configured; a custom base_url is left
-    # alone, since a gateway may reject the option, and StatsCollectorCallback
-    # falls back to its own estimate there.
+    # The driver asks for usage on streamed completions when the request goes
+    # to OpenAI's own API and leaves the option out for a gateway, which may
+    # reject it (StatsCollectorCallback estimates there). It also never reads
+    # an empty ``OPENAI_BASE_URL`` the backend's .env seeding leaves behind.
     gateway = common["base_url"]
-    if not gateway:
-        common["stream_usage"] = True
-        # The same seeding leaves ``OPENAI_BASE_URL=""`` in the environment,
-        # and the OpenAI SDK reads an empty value as the address itself
-        # (``URL('')``): every call then fails with "Connection error". Name
-        # the default address outright so the empty variable is never read.
-        if os.environ.get("OPENAI_BASE_URL") == "":
-            common["base_url"] = "https://api.openai.com/v1"
     common.update(openai_reasoning_kwargs(
         mdl, thinking_level, _temp(mdl),
         api_key=common["api_key"], base_url=gateway))
-    return ReasoningChatOpenAI(**common)
+    return OpenAIChatModel(**common)
 
 
 # ── Callbacks moved to agents/callbacks/ ──────────────────────────────────────

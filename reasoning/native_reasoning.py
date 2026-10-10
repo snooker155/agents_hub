@@ -5,17 +5,17 @@ using the `think` scratchpad tool — e.g. LM Studio / Ollama reasoning models
 (qwen3, deepseek-r1, ...). The reasoning arrives in one of two shapes:
 
 - a separate ``reasoning_content`` field on the message (LM Studio's
-  "separate reasoning_content" setting, Ollama's ``reasoning=True``), surfaced
-  by LangChain in ``message.additional_kwargs``;
+  "separate reasoning_content" setting, Ollama's ``reasoning=True``), which
+  the hub's OpenAI driver (providers/openai_driver.py) copies into
+  ``message.additional_kwargs["reasoning_content"]``, in full responses and
+  in stream deltas;
 - inline ``<think>...</think>`` tags inside the message content (LM Studio's
-  default pass-through). NOTE: langchain-openai (<= 0.3.x) does NOT copy a
-  separate ``reasoning_content`` response field into ``additional_kwargs``, so
-  with LM Studio the inline-tags shape is the one that reliably survives;
+  default pass-through);
 - an OpenAI Responses API reasoning item (o-series, gpt-5). OpenAI never
   returns the raw reasoning, only a summary of it when one is requested, as
   ``{"type": "reasoning", "summary": [{"type": "summary_text", "text": ...}]}``:
-  in ``additional_kwargs["reasoning"]`` (langchain's v0 output) or as a
-  content block (``responses/v1``).
+  in ``additional_kwargs["reasoning"]`` (the driver's output) or as a content
+  block (the ``responses/v1`` shape other integrations produce).
 
 This module extracts that reasoning so the harness can:
 
@@ -96,7 +96,7 @@ def extract_reasoning_from_message(message: Any) -> str:
     if message is None:
         return ""
     # 1. Separate field (Ollama reasoning=True, DeepSeek-style APIs, future
-    #    langchain-openai versions).
+    #    integrations).
     kwargs = getattr(message, "additional_kwargs", None) or {}
     reasoning = kwargs.get("reasoning_content") or kwargs.get("reasoning")
     if isinstance(reasoning, str) and reasoning.strip():
