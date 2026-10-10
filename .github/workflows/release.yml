@@ -33,8 +33,8 @@ jobs:
       prerelease: ${{ steps.v.outputs.prerelease }}
       owner: ${{ steps.v.outputs.owner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Tag matches the versioned files and the CHANGELOG
@@ -75,9 +75,9 @@ jobs:
         AGENTS_HUB_VERSION=${{ needs.check.outputs.version }}
         AGENTS_HUB_GIT_SHA=${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -85,7 +85,7 @@ jobs:
 
       - name: backend
         id: backend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -100,7 +100,7 @@ jobs:
 
       - name: agents
         id: agents
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -115,7 +115,7 @@ jobs:
 
       - name: backend-rag
         id: backend-rag
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -130,7 +130,7 @@ jobs:
 
       - name: agents-rag
         id: agents-rag
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -145,7 +145,7 @@ jobs:
 
       - name: frontend
         id: frontend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: dashboard/frontend
           file: dashboard/frontend/Dockerfile
@@ -158,7 +158,7 @@ jobs:
 
       - name: models
         id: models
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/models/Dockerfile
@@ -170,7 +170,7 @@ jobs:
 
       - name: browser
         id: browser
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/browser/Dockerfile
@@ -191,7 +191,7 @@ jobs:
           record models      "${{ steps.models.outputs.digest }}"
           record browser     "${{ steps.browser.outputs.digest }}"
           find digests -type f -exec sh -c 'echo "$1: $(cat "$1")"' _ {} \;
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: digests-${{ matrix.arch }}
           path: digests/
@@ -229,19 +229,19 @@ jobs:
             repository: browser
             suffix: ""
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: digests-*
           path: digests
           merge-multiple: true
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ needs.check.outputs.owner }}/agents-hub-${{ matrix.repository }}
           flavor: |
@@ -266,8 +266,8 @@ jobs:
     needs: [check, manifests]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Notes from the CHANGELOG
