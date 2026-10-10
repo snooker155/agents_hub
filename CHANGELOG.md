@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-10
+
 ### Added
 
 - **`tests_pass` grader**: the first eval grader that reads the files a run
