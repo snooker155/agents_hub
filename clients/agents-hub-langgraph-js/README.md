@@ -92,7 +92,8 @@ This runs inside your process, so it is built to be boring:
 - **It never grows without bound.** The buffer is capped and drops the oldest
   events when the hub is unreachable.
 - **It adds no dependencies.** Not even LangChain: a callback handler may be a
-  plain object, and `fetch` is in the runtime (Node 18+).
+  plain object, and `fetch` is in the runtime (Node 18+). CI runs the tests
+  against a real graph on LangGraph.js 0.4 and 1.x.
 
 A hub that is down costs you telemetry, not a run.
 

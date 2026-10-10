@@ -1,0 +1,53 @@
+name: LangGraph.js client
+
+# clients/agents-hub-langgraph-js reports a LangGraph.js graph's runs to a hub.
+# It does not depend on LangGraph itself: people attach it to their own graph,
+# on whichever line they use. Its tracer tests drive a real graph, so this job
+# runs them against both lines that are in use.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "clients/agents-hub-langgraph-js/**"
+      - ".github/workflows/langgraph-js.yml"
+  pull_request:
+    paths:
+      - "clients/agents-hub-langgraph-js/**"
+      - ".github/workflows/langgraph-js.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        langgraph: ["1", "0.4"]
+    defaults:
+      run:
+        working-directory: clients/agents-hub-langgraph-js
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/agents-hub-langgraph-js/package-lock.json
+
+      - name: Install (the lock carries the 1.x line)
+        run: npm ci
+
+      - name: Swap in LangGraph 0.4 and the core it was built on
+        if: matrix.langgraph == '0.4'
+        run: npm install --no-save "@langchain/langgraph@^0.4" "@langchain/core@^0.3"
+
+      # The tracer tests skip when LangGraph cannot be imported; here that
+      # would be a green job that tested nothing, so it is checked first.
+      - name: LangGraph is importable
+        run: >
+          node --input-type=module -e "await import('@langchain/langgraph');
+          const m = await import('@langchain/langgraph/package.json', { with: { type: 'json' } });
+          console.log('LangGraph', m.default.version);"
+
+      - name: Test
+        run: npm test
