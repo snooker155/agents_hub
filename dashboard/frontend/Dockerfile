@@ -18,7 +18,7 @@
 
 # ---------- deps ----------
 # Split from the source copy so a source-only change does not reinstall.
-FROM node:22-alpine AS deps
+FROM node:25-alpine AS deps
 
 WORKDIR /app
 
