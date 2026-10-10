@@ -60,7 +60,7 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
   const [selectedPreset, setSelectedPreset] = useState(preselectPreset || '');
 
   const [inspection, setInspection] = useState(null);
-  const [checking, setChecking] = useState(false);
+  const [checking, setChecking] = useState(!!preselectPreset);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
 
@@ -75,14 +75,6 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
       .then(({ data }) => setPresets(data.presets || []))
       .catch(() => setPresets([]));
   }, []);
-
-  // Opened via "Add Claude Code" / "Add Codex": run the check immediately so
-  // the operator lands on the readiness report, not an empty form they still
-  // have to know to submit.
-  useEffect(() => {
-    if (preselectPreset) runCheck({ preset: preselectPreset });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preselectPreset]);
 
   // A staged clone left on the server when the dialog is closed without
   // importing would linger until the sweeper runs; drop it eagerly instead.
@@ -99,6 +91,13 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
     if (!preset && !repoUrl.trim()) return;
     setChecking(true);
     setError('');
+    await inspectNow(preset);
+  };
+
+  // The part of the check that runs after the busy flag is up. The mount
+  // effect calls this directly (``checking`` starts true for a preselected
+  // preset) so no state is set synchronously inside the effect.
+  const inspectNow = async (preset) => {
     // Re-checking supersedes the previous staged clone.
     if (inspection?.token) discardAgentImport(inspection.token).catch(() => {});
     try {
@@ -125,6 +124,14 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
       setChecking(false);
     }
   };
+
+  // Opened via "Add Claude Code" / "Add Codex": run the check immediately so
+  // the operator lands on the readiness report, not an empty form they still
+  // have to know to submit.
+  useEffect(() => {
+    if (preselectPreset) inspectNow(preselectPreset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselectPreset]);
 
   // Re-run the checks against edited fields without re-cloning is not possible
   // server-side (the report is computed from the clone), so this simply repeats

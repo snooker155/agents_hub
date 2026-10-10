@@ -17,7 +17,7 @@ BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -162,7 +162,7 @@ def test_wrap_model_returns_bound_unchanged_without_fallbacks():
     assert ext.wrap_model(LoopState(), bound, rebind=lambda llm: llm) is bound
 
 
-# ── the full loop (build_agent_runnable + AgentExecutor), tool calls included ─
+# ── the full loop (build_agent_runnable + LoopExecutor), tool calls included ─
 
 def test_fallback_extension_in_full_loop_with_tool_calls():
     """The fallback extension must not break streaming or tool calls when the
@@ -196,7 +196,7 @@ def test_fallback_extension_in_full_loop_with_tool_calls():
         fallbacks=[({"provider": "anthropic", "model": "claude"}, secondary)],
     )
     runnable = build_agent_runnable(primary, [echo], prompt, [ext])
-    executor = AgentExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
+    executor = LoopExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
 
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)

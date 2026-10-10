@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import { getView, applyViewOps, saveViewSnapshot } from '../api';
 import { applyOp as applyOpLocal } from './opsClient';
-import ViewRenderer, { FILL_KINDS } from './ViewRenderer';
+import ViewRenderer from './ViewRenderer';
+import { FILL_KINDS } from './fillKinds';
 import { useI18n } from '../i18n';
 
 // A view card — the surface-agnostic embed for a view reference (view_ref). It

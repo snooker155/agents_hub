@@ -401,6 +401,7 @@ html.dark {
 :where(html) .divide-indigo-400 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-purple-400 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-violet-400 > :not([hidden]) ~ :not([hidden]),
+:where(html) .focus\:border-indigo-400:focus,
 :where(html) .hover\:border-indigo-400:hover { border-color: var(--brand-400); }
 :where(html) .border-fuchsia-50,
 :where(html) .border-indigo-50,
@@ -864,6 +865,7 @@ html.dark {
 :where(html.dark) .divide-indigo-400 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-purple-400 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-violet-400 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .focus\:border-indigo-400:focus,
 :where(html.dark) .hover\:border-indigo-400:hover { border-color: var(--brand-border-400); }
 :where(html.dark) .border-fuchsia-50,
 :where(html.dark) .border-indigo-50,

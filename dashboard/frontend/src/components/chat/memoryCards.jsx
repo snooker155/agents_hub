@@ -364,4 +364,4 @@ function RecallToolCard({ entry }) {
   );
 }
 
-export { EPISODE_KIND_CLS, ExtractionRationale, ExtractionSection, ModeBadge, ExtractionProposalBody, SaveResultBody, ExtractionToolCard, RECALL_LAYER_LABEL, RECALL_SOURCE_BADGE, RecallResultRow, RecallToolCard };
+export { ExtractionRationale, ExtractionSection, ModeBadge, ExtractionProposalBody, SaveResultBody, ExtractionToolCard, RecallResultRow, RecallToolCard };

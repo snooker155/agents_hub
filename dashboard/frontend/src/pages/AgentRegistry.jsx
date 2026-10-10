@@ -396,7 +396,10 @@ export default function AgentRegistry() {
     }
   }, [hub, selectedWorkspace]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the Refresh button and withRefresh; it sets state after its await
+    load();
+  }, [load]);
 
   const toggleSetting = async (key, value) => {
     try {

@@ -34,44 +34,62 @@ export function useAgentDocker({ id, activeTab, t, toast }) {
   const [containerLogsLoading, setContainerLogsLoading] = useState(false);
   const [dockerActionBusy, setDockerActionBusy] = useState({});
 
-  const fetchDockerData = useCallback(async () => {
-    setDockerLoading(true);
-    setDockerError('');
+  // Which agent each load has completed for. The tab opening is a load too,
+  // so its spinner is derived from this instead of set inside the effect.
+  const [dataLoadedFor, setDataLoadedFor] = useState(null);
+  const [fileLoadedFor, setFileLoadedFor] = useState(null);
+
+  // The load itself sets no state until the answers arrive, so an effect may
+  // call it; the manual refresh below raises the spinner first. Written as a
+  // promise chain because the React Compiler lint treats an async function
+  // called from an effect as a synchronous setState.
+  const loadDockerData = useCallback(() => {
     // Each list on its own: one failing must not hide the other.
-    const [imagesResult, containersResult] = await Promise.allSettled([
+    return Promise.allSettled([
       getContainerImages(),
       getContainers(),
-    ]);
-    if (imagesResult.status === 'fulfilled') {
-      setDockerImages(imagesResult.value.data?.images || []);
-      setImagesKnown(true);
-    } else {
-      setDockerImages([]);
-      setImagesKnown(false);
-      setDockerError(errorDetail(imagesResult.reason) || t('agentDetails.errors.dockerData'));
-    }
-    if (containersResult.status === 'fulfilled') {
-      const allContainers = containersResult.value.data?.containers || [];
-      setDockerContainers(allContainers.filter(c => c.agent_id === id || c.name?.includes(id)));
-    } else {
-      setDockerContainers([]);
+    ]).then(([imagesResult, containersResult]) => {
       if (imagesResult.status === 'fulfilled') {
-        toast.error(t('agentDetails.errors.dockerData'), errorDetail(containersResult.reason));
+        setDockerError('');
+        setDockerImages(imagesResult.value.data?.images || []);
+        setImagesKnown(true);
+      } else {
+        setDockerImages([]);
+        setImagesKnown(false);
+        setDockerError(errorDetail(imagesResult.reason) || t('agentDetails.errors.dockerData'));
       }
-    }
-    setDockerLoading(false);
+      if (containersResult.status === 'fulfilled') {
+        const allContainers = containersResult.value.data?.containers || [];
+        setDockerContainers(allContainers.filter(c => c.agent_id === id || c.name?.includes(id)));
+      } else {
+        setDockerContainers([]);
+        if (imagesResult.status === 'fulfilled') {
+          toast.error(t('agentDetails.errors.dockerData'), errorDetail(containersResult.reason));
+        }
+      }
+      setDockerLoading(false);
+      setDataLoadedFor(id);
+    });
   }, [id, t, toast]);
 
-  const fetchDockerfile = useCallback(async () => {
+  const fetchDockerData = useCallback(() => {
+    setDockerLoading(true);
+    setDockerError('');
+    return loadDockerData();
+  }, [loadDockerData]);
+
+  const loadDockerfile = useCallback(() => getDockerfile(id)
+    .then((resp) => setDockerfileContent(resp.data))
+    .catch(() => setDockerfileContent(''))
+    .then(() => {
+      setDockerfileLoading(false);
+      setFileLoadedFor(id);
+    }), [id]);
+
+  const fetchDockerfile = useCallback(() => {
     setDockerfileLoading(true);
-    try {
-      const resp = await getDockerfile(id);
-      setDockerfileContent(typeof resp.data === 'string' ? resp.data : resp.data);
-    } catch {
-      setDockerfileContent('');
-    }
-    setDockerfileLoading(false);
-  }, [id]);
+    return loadDockerfile();
+  }, [loadDockerfile]);
 
   const handleBuildBase = async () => {
     setBuildingBase(true);
@@ -142,12 +160,17 @@ export function useAgentDocker({ id, activeTab, t, toast }) {
   // Load Docker data + Dockerfile when the docker tab opens
   useEffect(() => {
     if (activeTab !== 'docker') return;
-    fetchDockerData();
-    fetchDockerfile();
-  }, [activeTab, fetchDockerData, fetchDockerfile]);
+    loadDockerData();
+    loadDockerfile();
+  }, [activeTab, loadDockerData, loadDockerfile]);
+
+  const opening = activeTab === 'docker';
+  const dockerLoadingNow = dockerLoading || (opening && dataLoadedFor !== id);
+  const dockerfileLoadingNow = dockerfileLoading || (opening && fileLoadedFor !== id);
 
   return {
-    dockerfileContent, dockerfileLoading, dockerImages, dockerContainers, dockerLoading,
+    dockerfileContent, dockerfileLoading: dockerfileLoadingNow, dockerImages, dockerContainers,
+    dockerLoading: dockerLoadingNow,
     dockerError, imagesKnown,
     buildingBase, buildingAgent, buildLog, buildError,
     containerLogsName, setContainerLogsName, containerLogsText, containerLogsLoading,

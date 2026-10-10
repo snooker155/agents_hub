@@ -21,36 +21,50 @@ export default function WidgetPreview({ widget }) {
   const { t, language } = useI18n();
   const [doc, setDoc] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  // The preview on screen is for this key; a different one shows the loader
+  // again without a setState inside the effect.
+  const previewKey = `${widget.widget_id}|${widget.updated_at}|${widget.public_key}|${language}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const [reloading, setReloading] = useState(false);
+  const loading = reloading || loadedKey !== previewKey;
   const [generation, setGeneration] = useState(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await createWidgetPreview(widget.widget_id);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => createWidgetPreview(widget.widget_id)
+    .then(({ data }) => {
       const hub = API_ORIGIN || window.location.origin;
       setDoc(previewDocument({
         hub, widgetId: data.widget_id, publicKey: data.public_key, ticket: data.ticket,
         scriptPath: data.script_path, text: t('widgets.preview.pageText'), lang: language,
       }));
       setGeneration((g) => g + 1);
-    } catch (err) {
+      setError('');
+    })
+    .catch((err) => {
       setDoc('');
       setError(errorDetail(err) || t('widgets.preview.failed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [widget.widget_id, t, language]);
+    })
+    .then(() => setReloading(false)), [widget.widget_id, t, language]);
+
+  const reload = () => {
+    setReloading(true);
+    setError('');
+    return load();
+  };
 
   // A changed look, text or key is a new preview.
-  useEffect(() => { load(); }, [load, widget.updated_at, widget.public_key]);
+  useEffect(() => {
+    let cancelled = false;
+    load().then(() => { if (!cancelled) setLoadedKey(previewKey); });
+    return () => { cancelled = true; };
+  }, [load, previewKey]);
 
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-gray-500">{t('widgets.preview.hint')}</p>
-        <button type="button" onClick={load} disabled={loading}
+        <button type="button" onClick={reload} disabled={loading}
           className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 shrink-0">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('widgets.preview.reload')}
         </button>

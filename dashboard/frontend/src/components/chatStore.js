@@ -94,7 +94,7 @@ function readLegacy() {
  * is the only safety net if this ever imports the wrong thing.
  */
 async function migrateLegacyChats() {
-  let alreadyDone = false;
+  let alreadyDone;
   try { alreadyDone = localStorage.getItem(MIGRATED_FLAG_KEY) === '1'; } catch { return; }
   if (alreadyDone) return;
   const legacy = readLegacy();
@@ -152,7 +152,7 @@ export function useConversationStore(currentConvId, { paused = false } = {}) {
       try {
         await migrateLegacyChats();
       } catch { /* retried on the next load */ }
-      let items = null;
+      let items;
       try {
         const { data } = await listChats({ limit: 200 });
         items = data?.items || [];

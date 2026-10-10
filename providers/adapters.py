@@ -109,10 +109,11 @@ def _build_openai_compatible(
     streaming: bool,
     thinking_level: Optional[str],
 ):
-    # ReasoningChatOpenAI preserves servers' separate ``reasoning_content`` field
-    # (gpt-oss et al.). Imported lazily so this module stays import-cheap and free
-    # of an agent-stack dependency at load time.
-    from agents.agent_utils import ReasoningChatOpenAI, openai_reasoning_kwargs
+    # The hub's own driver keeps servers' separate ``reasoning_content`` field
+    # (gpt-oss et al.). The reasoning kwargs come from the agent stack, imported
+    # lazily so this module stays import-cheap at load time.
+    from agents.agent_utils import openai_reasoning_kwargs
+    from providers.openai_driver import OpenAIChatModel
     from common.config import settings
     from common.hostnet import host_service_url
 
@@ -150,7 +151,7 @@ def _build_openai_compatible(
     kwargs.update(openai_reasoning_kwargs(
         model, thinking_level, temp,
         api_key=kwargs["api_key"], base_url=base_url, lenient=True))
-    return ReasoningChatOpenAI(**kwargs)
+    return OpenAIChatModel(**kwargs)
 
 
 register_adapter(Adapter(

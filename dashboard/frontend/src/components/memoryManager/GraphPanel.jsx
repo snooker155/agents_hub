@@ -61,7 +61,10 @@ function GraphPanel({ poolId, stats, onChange }) {
     }
   }, [poolId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the edge and node handlers and owns the loading flag
+    load();
+  }, [load]);
 
   const handleAddEdge = async (e) => {
     e.preventDefault();

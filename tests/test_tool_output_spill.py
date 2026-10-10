@@ -14,7 +14,7 @@ import uuid
 from typing import Any, List
 
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -183,7 +183,7 @@ def test_in_a_run_the_model_and_the_tool_record_see_the_preview(operating_dir):
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
-    executor = AgentExecutor(agent=build_agent_runnable(model, tools, prompt, []), tools=tools,
+    executor = LoopExecutor(agent=build_agent_runnable(model, tools, prompt, []), tools=tools,
                              return_intermediate_steps=True)
     stats = StatsCollectorCallback()
     state = LoopState(run_id=f"run-{uuid.uuid4().hex[:8]}")

@@ -80,25 +80,27 @@ export default function Widgets() {
   const workspace = selectedWorkspace || 'default';
   const [widgets, setWidgets] = useState([]);
   const [options, setOptions] = useState(FALLBACK_OPTIONS);
-  const [loading, setLoading] = useState(true);
+  // The workspace the list was last loaded for; loading is derived from it.
+  const [loadedWorkspace, setLoadedWorkspace] = useState(null);
+  const loading = loadedWorkspace !== workspace;
   const [selectedId, setSelectedId] = useState(null);
   const [tab, setTab] = useState('embed');
   const [creating, setCreating] = useState(false);
 
-  const fetchWidgets = useCallback(async () => {
-    try {
-      const { data } = await getWidgets(workspace);
-      const rows = Array.isArray(data) ? data : [];
-      setWidgets(rows);
-      setSelectedId((current) => (rows.some((w) => w.widget_id === current) ? current : rows[0]?.widget_id || null));
-    } catch (err) {
-      toast.error(t('widgets.loadFailed'), errorDetail(err));
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const fetchWidgets = useCallback(() => {
+    getWidgets(workspace)
+      .then(({ data }) => {
+        const rows = Array.isArray(data) ? data : [];
+        setWidgets(rows);
+        setSelectedId((current) => (rows.some((w) => w.widget_id === current) ? current : rows[0]?.widget_id || null));
+      })
+      .catch((err) => toast.error(t('widgets.loadFailed'), errorDetail(err)))
+      .finally(() => setLoadedWorkspace(workspace));
   }, [workspace, toast, t]);
 
-  useEffect(() => { setLoading(true); fetchWidgets(); }, [fetchWidgets]);
+  useEffect(() => { fetchWidgets(); }, [fetchWidgets]);
 
   useEffect(() => {
     getWidgetOptions().then(({ data }) => { if (data) setOptions(data); }).catch(() => {});

@@ -73,7 +73,10 @@ const show = (path = '/artifacts') => render(
 const pick = (label) => fireEvent.click(screen.getByRole('button', { name: label }));
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // resetAllMocks puts back each vi.fn's own implementation; since Vitest 4
+  // restoreMocks no longer does, and a mockImplementation from one test
+  // answered the next ones.
+  vi.resetAllMocks();
   try { localStorage.removeItem('files.view'); } catch { /* storage unavailable */ }
 });
 

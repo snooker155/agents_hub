@@ -404,7 +404,7 @@ def test_prune_events_disabled_with_zero():
 # ── StandardAgent integration ─────────────────────────────────────────────────
 
 class _FakeExecutor:
-    """Stands in for AgentExecutor: records whether it was ever invoked."""
+    """Stands in for the loop executor: records whether it was ever invoked."""
 
     def __init__(self, output: str):
         self.output = output

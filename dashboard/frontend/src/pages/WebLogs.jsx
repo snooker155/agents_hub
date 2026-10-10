@@ -63,19 +63,19 @@ const WebLogs = () => {
   const [filters, setFilters] = useState({ kind: '', status: '', min_severity: '', search: '' });
   const [search, setSearch] = useState('');
 
-  const fetchData = async (next = filters) => {
-    try {
-      const params = { limit: 200 };
-      Object.entries(next).forEach(([k, v]) => { if (v) params[k] = v; });
-      const [logs, s] = await Promise.all([getWebLogs(params), getWebLogStats()]);
-      setRows(logs.data.items || []);
-      setTotal(logs.data.total || 0);
-      setStats(s.data);
-    } catch (error) {
-      console.error('Error fetching web logs:', error);
-    } finally {
-      setLoading(false);
-    }
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const fetchData = (next = filters) => {
+    const params = { limit: 200 };
+    Object.entries(next).forEach(([k, v]) => { if (v) params[k] = v; });
+    return Promise.all([getWebLogs(params), getWebLogStats()])
+      .then(([logs, s]) => {
+        setRows(logs.data.items || []);
+        setTotal(logs.data.total || 0);
+        setStats(s.data);
+      })
+      .catch((error) => { console.error('Error fetching web logs:', error); })
+      .finally(() => setLoading(false));
   };
 
   // Initial load only. Filter changes call fetchData(next) directly with the

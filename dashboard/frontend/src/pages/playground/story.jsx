@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle, Check, Copy, Download, Loader, ScrollText, Sparkles,
 } from 'lucide-react';
@@ -37,30 +37,34 @@ export default function StoryPane({ runId, status, ticksDone = 0, heightClass = 
   const { t, language } = useI18n();
   const [chronicle, setChronicle] = useState('');
   const [narration, setNarration] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the run and language the story was fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loadKey = `${runId || ''}|${language}`;
+  const loading = !!runId && loadedFor !== loadKey;
   const [narrating, setNarrating] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    if (!runId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const { data } = await getSimStory(runId, language);
-      setChronicle(data.chronicle || '');
-      setNarration(data.narration?.text ? data.narration : null);
-    } catch (e) {
-      setError(e.response?.data?.detail || t('playground.story.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [runId, language, t]);
-
   // Recomposed as the run grows: the chronicle is a pure function of the
   // ticks, so a live run's reading is simply the newest one.
-  useEffect(() => { load(); }, [load, ticksDone]);
+  useEffect(() => {
+    if (!runId) return undefined;
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await getSimStory(runId, language);
+        if (ignore) return;
+        setChronicle(data.chronicle || '');
+        setNarration(data.narration?.text ? data.narration : null);
+      } catch (e) {
+        if (!ignore) setError(e.response?.data?.detail || t('playground.story.loadFailed'));
+      } finally {
+        if (!ignore) setLoadedFor(loadKey);
+      }
+    };
+    load();
+    return () => { ignore = true; };
+  }, [runId, language, loadKey, t, ticksDone]);
 
   // The retelling as it is written. Same channel the page already follows for
   // ticks — a draft is one more thing happening to this run.

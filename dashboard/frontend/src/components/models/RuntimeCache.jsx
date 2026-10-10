@@ -73,26 +73,27 @@ export default function RuntimeCache({ usage, standalone = false, ready = false 
   const [asTable, setAsTable] = useState(false);
   const [now, setNow] = useState(() => Date.now() / 1000);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await getRuntimeCache();
-      setData(res.data || null);
-    } catch (err) {
-      setData({ ok: false, error: errorDetail(err) });
-    } finally {
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getRuntimeCache()
+    .then((res) => setData(res.data || null))
+    .catch((err) => setData({ ok: false, error: errorDetail(err) }))
+    .finally(() => {
       setLoading(false);
       setNow(Date.now() / 1000);
-    }
-  }, []);
+    }), []);
+
+  // The refresh button, the timer and a save show the spinner; the first load
+  // after opening does not.
+  const refresh = useCallback(() => { setLoading(true); load(); }, [load]);
 
   const warming = (data?.models || []).some((m) => m.warmup?.state === 'running');
   useEffect(() => {
     if (!open) return undefined;
     load();
-    const id = setInterval(load, warming ? BUSY_POLL_MS : POLL_MS);
+    const id = setInterval(refresh, warming ? BUSY_POLL_MS : POLL_MS);
     return () => clearInterval(id);
-  }, [open, load, warming]);
+  }, [open, load, refresh, warming]);
 
   const models = useMemo(() => modelStats(usage?.rows), [usage]);
   const overall = useMemo(() => overallStats(models), [models]);
@@ -201,7 +202,7 @@ export default function RuntimeCache({ usage, standalone = false, ready = false 
         </button>
         {open && (
           <div className="flex items-center gap-1.5 shrink-0 pr-4">
-            <button type="button" onClick={load} disabled={loading} className={btnCls}>
+            <button type="button" onClick={refresh} disabled={loading} className={btnCls}>
               {loading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               {t('common.refresh')}
             </button>

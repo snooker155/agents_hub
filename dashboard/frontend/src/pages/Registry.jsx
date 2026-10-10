@@ -69,14 +69,15 @@ function EntityCard({ entity }) {
 export default function Registry() {
   const { t } = useI18n();
   const [groups, setGroups] = useState({});
-  const [loading, setLoading] = useState(true);
+  // Derived from the workspace the groups were fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const { selectedWorkspace } = useWorkspace();
+  const loading = loadedFor !== (selectedWorkspace || '');
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
     (async () => {
       try {
         // Scope the palette to the active workspace so only its agents appear
@@ -86,7 +87,7 @@ export default function Registry() {
       } catch (e) {
         if (active) setError(e?.response?.data?.detail || e.message || t('registry.loadFailed'));
       } finally {
-        if (active) setLoading(false);
+        if (active) setLoadedFor(selectedWorkspace || '');
       }
     })();
     return () => { active = false; };

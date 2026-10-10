@@ -39,26 +39,32 @@ export default function Audit() {
   const [error, setError] = useState('');
   const [openRow, setOpenRow] = useState(null);
 
-  const load = useCallback(async (nextOffset) => {
-    setLoading(true);
-    try {
-      const params = { ...filters, limit: PAGE_SIZE, offset: nextOffset };
-      Object.keys(params).forEach((k) => { if (params[k] === '') delete params[k]; });
-      const { data } = await getAuditLog(params);
-      setRows(Array.isArray(data.items) ? data.items : []);
-      setTotal(Number(data.total) || 0);
-      setOffset(nextOffset);
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('audit.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls the fetch directly (`loading` starts true); paging and
+  // Refresh go through `load`, which raises the busy flag first.
+  const fetchPage = useCallback((nextOffset) => {
+    const params = { ...filters, limit: PAGE_SIZE, offset: nextOffset };
+    Object.keys(params).forEach((k) => { if (params[k] === '') delete params[k]; });
+    return getAuditLog(params)
+      .then(({ data }) => {
+        setRows(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number(data.total) || 0);
+        setOffset(nextOffset);
+        setError('');
+      })
+      .catch((err) => setError(err?.response?.data?.detail || t('audit.loadFailed')))
+      .finally(() => setLoading(false));
   }, [filters, t]);
+
+  const load = useCallback((nextOffset) => {
+    setLoading(true);
+    return fetchPage(nextOffset);
+  }, [fetchPage]);
 
   // A filter change always restarts at the first page: an offset kept from
   // the previous filter set would land on an arbitrary, unrelated page.
-  useEffect(() => { load(0); }, [load]);
+  useEffect(() => { fetchPage(0); }, [fetchPage]);
 
   useEffect(() => {
     getAuditActions().then(({ data }) => setActions(Array.isArray(data) ? data : [])).catch(() => {});

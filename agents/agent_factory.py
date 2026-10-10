@@ -1423,7 +1423,7 @@ def create_agent(agent_id: str, workspace: Optional[str] = None, **params) -> Ag
 
 
 def build_agent_executor(agent_id: str, workspace: Optional[str] = None, **params) -> Any:
-    """Entrypoint for orchestrator registry that returns a LangChain AgentExecutor."""
+    """Entrypoint for orchestrator registry that returns the agent's loop executor."""
     agent = create_agent(agent_id, workspace=workspace, **params)
     return agent.executor
 

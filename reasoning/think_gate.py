@@ -259,7 +259,7 @@ def _merge_tool_input(args: tuple, kwargs: dict) -> Any:
 
 
 def make_reviewing_executor(executor, gate: ThinkGate):
-    """Wrap an ``AgentExecutor`` so a finish is gated on a closing review ``think``.
+    """Wrap a ``LoopExecutor`` so a finish is gated on a closing review ``think``.
 
     When ``gate.enforces_finish_review`` is true and the agent tries to finish
     without having called ``think`` since its last real work, the executor turns
@@ -274,8 +274,9 @@ def make_reviewing_executor(executor, gate: ThinkGate):
     if gate is None or not gate.enforces:
         return executor
 
-    from langchain.agents import AgentExecutor
     from langchain_core.agents import AgentAction, AgentFinish, AgentStep
+
+    from agents.loop_executor import LoopExecutor
 
     # A synthetic action so the forced review shows up as a normal step in the
     # scratchpad/intermediate_steps rather than a mysterious bare observation.
@@ -318,18 +319,13 @@ def make_reviewing_executor(executor, gate: ThinkGate):
         forced["count"] = 0
         return item
 
-    class ReviewingAgentExecutor(AgentExecutor):
-        def _iter_next_step(self, *args, **kwargs):
-            for item in super()._iter_next_step(*args, **kwargs):
-                yield _intercept(item)
-
-        async def _aiter_next_step(self, *args, **kwargs):
-            async for item in super()._aiter_next_step(*args, **kwargs):
-                yield _intercept(item)
+    class ReviewingExecutor(LoopExecutor):
+        def _review(self, plan):
+            return _intercept(plan)
 
     # Re-class the already-built executor in place; all validated fields carry
-    # over since ReviewingAgentExecutor only overrides two methods.
-    executor.__class__ = ReviewingAgentExecutor
+    # over since ReviewingExecutor only overrides one hook.
+    executor.__class__ = ReviewingExecutor
     return executor
 
 

@@ -4,6 +4,8 @@ import {
 } from '../api';
 import { useI18n } from '../i18n';
 
+const EMPTY = [];
+
 /**
  * The threads one entity chat has been, and the two things you can do to them.
  *
@@ -44,16 +46,15 @@ export function useChatSessions(chatRef, refreshKey = 0) {
     setHasHistory(Boolean(data?.has_history));
   }, []);
 
-  const reload = useCallback(async () => {
-    if (!kind || !entityId) { take(null); return; }
-    try {
-      const { data } = await getEntityChatSessions({ kind, id: entityId });
-      take(data);
-    } catch {
+  // A promise chain rather than an async body: the effect below calls it, and
+  // it must not set state before a response (or a failure) arrives.
+  const reload = useCallback(() => {
+    if (!kind || !entityId) return Promise.resolve();
+    return getEntityChatSessions({ kind, id: entityId })
+      .then(({ data }) => take(data))
       // The history is an affordance, not the chat: a failure here leaves the
       // conversation working and simply offers no way back into the archive.
-      take(null);
-    }
+      .catch(() => take(null));
   }, [kind, entityId, take]);
 
   useEffect(() => { reload(); }, [reload, refreshKey]);
@@ -90,12 +91,14 @@ export function useChatSessions(chatRef, refreshKey = 0) {
     }
   }, [kind, entityId, working, take, t]);
 
+  // Without a chat to read there is no history, whatever an earlier one left.
+  const hasChat = Boolean(kind && entityId);
   return {
-    sessions,
+    sessions: hasChat ? sessions : EMPTY,
     // Whether the control exists at all, and what it counts: every thread,
     // the one being read included, because that is what the list shows.
-    hasHistory,
-    count: sessions.length,
+    hasHistory: hasChat && hasHistory,
+    count: hasChat ? sessions.length : 0,
     working,
     error,
     activate,

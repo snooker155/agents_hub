@@ -160,7 +160,10 @@ export default function Cluster() {
     }
   }, [t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the interval, Refresh and forget; it sets state after its await
+    load();
+  }, [load]);
   useEffect(() => {
     const id = setInterval(load, 15000);
     return () => clearInterval(id);

@@ -195,7 +195,7 @@ export function useChatSteering(page) {
     wasRunning.current = runningKey;
     const now = new Set(runningKey ? runningKey.split('\n') : []);
     for (const convId of before) {
-      if (!now.has(convId)) sendWhatWaited(convId); // eslint-disable-line react-hooks/set-state-in-effect
+      if (!now.has(convId)) sendWhatWaited(convId);
     }
   }, [runningKey, sendWhatWaited]);
 

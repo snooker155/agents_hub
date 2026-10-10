@@ -63,10 +63,14 @@ const show = () => render(
   </I18nProvider>,
 );
 
+// mockReset, not mockClear: several tests swap getConnection's answer with
+// mockImplementation, and since Vitest 4 restoreMocks no longer undoes that
+// for vi.fn, so the swap leaked into the tests after it. mockReset puts back
+// the implementation each vi.fn was created with.
 beforeEach(() => {
-  getConnection.mockClear();
-  rotateConnectionToken.mockClear();
-  updateConnection.mockClear();
+  getConnection.mockReset();
+  rotateConnectionToken.mockReset();
+  updateConnection.mockReset();
 });
 
 const waitingRun = {

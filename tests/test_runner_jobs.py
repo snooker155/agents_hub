@@ -536,10 +536,11 @@ def test_an_openai_model_streams_its_usage_even_with_an_empty_base_url_in_the_en
     monkeypatch.setenv("OPENAI_BASE_URL", "")
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
     model = build_chat_model(provider="openai", model="gpt-4o-mini", api_key="sk-test", streaming=True)
-    assert model.stream_usage is True
+    # The driver decides by the address the request goes to, not by the variable.
+    assert model.is_openai_api and model._should_stream_usage(None, {}) is True
     # And the SDK must not read the empty value as its address: URL('') made
     # every call fail with "Connection error".
     assert str(model.root_client.base_url).startswith("https://api.openai.com/v1")
     gateway = build_chat_model(provider="openai", model="gpt-4o-mini", api_key="sk-test",
                                base_url="http://gateway.local/v1", streaming=True)
-    assert not gateway.stream_usage
+    assert not gateway.is_openai_api and gateway._should_stream_usage(None, {}) is False

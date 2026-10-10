@@ -66,17 +66,15 @@ export default function Services() {
   const [showDeploy, setShowDeploy] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getServices({ workspace: workspaceFilter || undefined });
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getServices({ workspace: workspaceFilter || undefined })
+    .then(({ data }) => {
       setItems(data.items || []);
       setError('');
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceFilter]);
+    })
+    .catch((e) => setError(e.response?.data?.detail || e.message))
+    .finally(() => setLoading(false)), [workspaceFilter]);
 
   useEffect(() => { load(); }, [load]);
   useLiveRefetch(load, { type: 'services.changed', enabled: liveUpdates });

@@ -58,22 +58,29 @@ function Badge({ children, color = 'gray' }) {
 function LogViewer({ name, onClose }) {
   const { t } = useI18n();
   const [logs, setLogs] = useState('');
-  const [loading, setLoading] = useState(true);
   const [tail, setTail] = useState(200);
+  // The logs on screen are for this name and tail; another pair shows the
+  // loader, derived rather than set inside the effect.
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = refreshing || loadedFor !== `${name}|${tail}`;
 
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get(`/api/containers/${name}/logs`, { params: { tail } });
-      setLogs(data);
-    } catch (e) {
-      setLogs(`Error fetching logs: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [name, tail]);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const loadLogs = useCallback(() => api.get(`/api/containers/${name}/logs`, { params: { tail } })
+    .then(({ data }) => setLogs(data))
+    .catch((e) => setLogs(`Error fetching logs: ${e.message}`))
+    .then(() => {
+      setRefreshing(false);
+      setLoadedFor(`${name}|${tail}`);
+    }), [name, tail]);
 
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  const fetchLogs = useCallback(() => {
+    setRefreshing(true);
+    return loadLogs();
+  }, [loadLogs]);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -153,9 +160,12 @@ export default function Containers() {
   const { workspaceFilter } = useWorkspace();
   const [activeTab, setActiveTab] = useState('agents');
   const [agentsStatus, setAgentsStatus] = useState([]);
-  const [wsAgentIds, setWsAgentIds] = useState(null); // null = show all
+  // The agent ids of the filtered workspace, kept with the filter they were
+  // fetched for; null = show all.
+  const [wsAgents, setWsAgents] = useState({ filter: '', ids: null });
+  const wsAgentIds = workspaceFilter && wsAgents.filter === workspaceFilter ? wsAgents.ids : null;
   const [containers, setContainers] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [buildingBase, setBuildingBase] = useState(false);
   const [building, setBuilding] = useState({});   // agent_id -> bool
   const [stopping, setStopping] = useState({});
@@ -167,24 +177,29 @@ export default function Containers() {
   const [buildLog, setBuildLog] = useState('');
   const [noCache, setNoCache] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [agRes, ctrRes] = await Promise.all([
-        api.get('/api/containers/agents-status'),
-        api.get('/api/containers'),
-      ]);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const loadAll = useCallback(() => Promise.all([
+    api.get('/api/containers/agents-status'),
+    api.get('/api/containers'),
+  ])
+    .then(([agRes, ctrRes]) => {
+      setError('');
       setAgentsStatus(agRes.data.agents || []);
       setContainers(ctrRes.data.containers || []);
-    } catch (e) {
+    })
+    .catch((e) => {
       setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    })
+    .then(() => setLoading(false)), []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const refresh = useCallback(() => {
+    setLoading(true);
+    setError('');
+    return loadAll();
+  }, [loadAll]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // Live container status pushed over the shared stream while this page is open
   // (the backend emits `containers` snapshots only while subscribed).
@@ -194,13 +209,13 @@ export default function Containers() {
 
   // Re-fetch workspace agent list when workspace changes
   useEffect(() => {
-    if (!workspaceFilter) {
-      setWsAgentIds(null);
-      return;
-    }
+    if (!workspaceFilter) return;
     getAgents(workspaceFilter)
-      .then(({ data }) => setWsAgentIds(new Set((Array.isArray(data) ? data : (data.agents || [])).map(a => a.id))))
-      .catch(() => setWsAgentIds(null));
+      .then(({ data }) => setWsAgents({
+        filter: workspaceFilter,
+        ids: new Set((Array.isArray(data) ? data : (data.agents || [])).map(a => a.id)),
+      }))
+      .catch(() => setWsAgents({ filter: workspaceFilter, ids: null }));
   }, [workspaceFilter]);
 
   const buildBase = async () => {

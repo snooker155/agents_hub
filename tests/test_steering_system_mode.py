@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -102,7 +102,7 @@ def _executor(replies, system: Any = "sys"):
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
     runnable = build_agent_runnable(model, [echo], prompt, [steer_ext.SteeringExtension()])
-    return AgentExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
+    return LoopExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
 
 
 def _replies():
@@ -163,12 +163,12 @@ def test_the_append_form_is_valid_for_anthropic_and_openai(monkeypatch):
     _run(_executor(_replies()), LoopState(run_id=run_id))
     messages = _ToolModel.seen[1]
 
-    from langchain_anthropic.chat_models import _format_messages
+    from providers.anthropic_driver import format_messages as _format_messages
     system, formatted = _format_messages(messages)
     assert "cite every source" in str(system)
     assert [m["role"] for m in formatted] == ["user", "assistant", "user"]
 
-    from langchain_openai.chat_models.base import _convert_message_to_dict
+    from providers.openai_driver import message_to_dict as _convert_message_to_dict
     roles = [_convert_message_to_dict(m)["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool"]
 

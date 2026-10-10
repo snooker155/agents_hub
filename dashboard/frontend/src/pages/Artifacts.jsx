@@ -444,11 +444,8 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
   useEffect(() => {
     let cancelled = false;
     let objectUrl = '';
-    setLoading(true);
-    setError('');
-    setPreview(null);
-    setImageUrl('');
-    setUsage(null);
+    // No resets here: the panel is keyed by the file, so a new file starts from
+    // the initial state (loading, nothing shown).
     (async () => {
       try {
         const { data } = await getWorkspaceFileRecord(fileId);

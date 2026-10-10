@@ -147,7 +147,10 @@ export default function Evals() {
   const [activeRun, setActiveRun] = useState(null);
   const [graderCatalog, setGraderCatalog] = useState([]);
   const [catalogs, setCatalogs] = useState({ agent: [], flow: [], team: [], loop: [], scenario: [] });
-  const [loading, setLoading] = useState(true);
+  // The workspace the sets were fetched for: loading is derived from it, and a
+  // refresh after an edit swaps the list in place.
+  const [loadedFor, setLoadedFor] = useState(undefined);
+  const loading = loadedFor !== (currentWorkspace ?? null);
   const [running, setRunning] = useState(false);
   const [estimate, setEstimate] = useState(null);
   const [message, setMessage] = useState('');
@@ -166,17 +169,12 @@ export default function Evals() {
   const [mode, setMode] = useState('live');
   const chat = useChatColumn(false);
 
-  const loadSets = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getEvalSets(currentWorkspace);
-      setSets(data.eval_sets || []);
-    } catch {
-      setSets([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentWorkspace]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const loadSets = useCallback(() => getEvalSets(currentWorkspace)
+    .then(({ data }) => setSets(data.eval_sets || []))
+    .catch(() => setSets([]))
+    .finally(() => setLoadedFor(currentWorkspace ?? null)), [currentWorkspace]);
 
   useEffect(() => { loadSets(); }, [loadSets]);
 
@@ -207,15 +205,11 @@ export default function Evals() {
 
   // `runId` opens that run of the set instead of the newest one: a deep link
   // (?set=&run=) from the page that started the run lands on it.
-  const selectSet = async (id, runId = null) => {
-    setActiveRun(null);
-    setEstimate(null);
-    setMessage('');
-    setDiffResult(null);
-    try {
-      const [{ data: set }, { data: hist }] = await Promise.all([
-        getEvalSet(id), getEvalRuns(id),
-      ]);
+  // The fetching half of selecting a set. A promise chain rather than an async
+  // body, so the deep link effect below may call it without a synchronous
+  // setState.
+  const fetchSet = (id, runId = null) => Promise.all([getEvalSet(id), getEvalRuns(id)])
+    .then(async ([{ data: set }, { data: hist }]) => {
       setSelected(set);
       setRuns(hist.eval_runs || []);
       const baseline = targetOf(set);
@@ -228,9 +222,17 @@ export default function Evals() {
         const { data: run } = await getEvalRun(wanted || history[0].eval_run_id);
         setActiveRun(run);
       }
-    } catch {
+    })
+    .catch(() => {
       setMessage(t('evals.loadFailed'));
-    }
+    });
+
+  const selectSet = (id, runId = null) => {
+    setActiveRun(null);
+    setEstimate(null);
+    setMessage('');
+    setDiffResult(null);
+    return fetchSet(id, runId);
   };
 
   // Deep link: /evals?set=<eval_set_id>&run=<eval_run_id>, the link the
@@ -244,8 +246,9 @@ export default function Evals() {
     const setId = searchParams.get('set');
     if (!setId) return;
     deepLinkConsumed.current = true;
-    selectSet(setId, searchParams.get('run'));
-    // selectSet is a plain closure over state setters and t; it is stable enough
+    // Nothing is selected yet, so there is no pane to reset first.
+    fetchSet(setId, searchParams.get('run'));
+    // fetchSet is a plain closure over state setters and t; it is stable enough
     // for a once-only effect and listing it would re-run this on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, searchParams]);

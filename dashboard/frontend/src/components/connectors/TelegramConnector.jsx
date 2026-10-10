@@ -28,7 +28,9 @@ export default function TelegramConnector() {
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   const isDefaultWorkspace = workspace === 'default';
-  const [loading, setLoading] = useState(true);
+  // The workspace the settings were last loaded for; loading is derived.
+  const [loadedFor, setLoadedFor] = useState(undefined);
+  const loading = loadedFor !== (workspace ?? null);
   const [config, setConfig] = useState({ enabled: false, has_token: false, bot_username: null, running: false });
   const [status, setStatus] = useState({});
   const [bindings, setBindings] = useState([]);
@@ -42,25 +44,25 @@ export default function TelegramConnector() {
   // bot (connectors/channels/store.py).
   const [editing, setEditing] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    setEditing(false);
-    try {
-      const [cfgResp, statusResp, bindingsResp] = await Promise.all([
-        getTelegramConfig(workspace),
-        getTelegramStatus(workspace),
-        getTelegramBindings(workspace),
-      ]);
+  // A promise chain rather than an async body, so nothing is set before a
+  // response arrives and the effect below may call it.
+  const load = useCallback(() => Promise.all([
+    getTelegramConfig(workspace),
+    getTelegramStatus(workspace),
+    getTelegramBindings(workspace),
+  ])
+    .then(([cfgResp, statusResp, bindingsResp]) => {
+      setError('');
+      setEditing(false);
       setConfig(cfgResp.data);
       setStatus(statusResp.data);
       setBindings(bindingsResp.data || []);
-    } catch (e) {
+    })
+    .catch((e) => {
+      setEditing(false);
       setError(`${t('settings.errors.telegramLoad')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-  }, [workspace, t]);
+    })
+    .finally(() => setLoadedFor(workspace ?? null)), [workspace, t]);
 
   useEffect(() => { load(); }, [load]);
 

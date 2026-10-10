@@ -92,9 +92,9 @@ chunk carries `usage` when the request set `stream_options.include_usage`.
 A provider failure after the headers were sent arrives as one chunk with
 `finish_reason: "error"` and an `error` object, then `[DONE]`.
 
-`tools` in the OpenAI function format are bound to the model with LangChain's
+`tools` in the OpenAI function format are bound to the model with the driver's
 `bind_tools`, so they work with every provider that supports tool calling.
-`tool_choice` `required` becomes LangChain's `any`, a named function becomes
+`tool_choice` `required` becomes the driver's `any`, a named function becomes
 that name, `none` skips binding. The model's tool calls come back in the
 OpenAI shape with `finish_reason: "tool_calls"`; the client runs the tool and
 sends an `assistant` message with the `tool_calls` and a `tool` message with

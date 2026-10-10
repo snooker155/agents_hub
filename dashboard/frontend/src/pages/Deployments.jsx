@@ -159,6 +159,9 @@ function targetLabel(job, agents, flows, loops) {
 
 // ---- create / edit modal ----------------------------------------------------
 
+const NO_VERSIONS = [];
+
+
 function DeploymentModal({ job, agents, flows, loops, environments, resources, workspace, onClose, onSaved }) {
   const { t } = useI18n();
   const isEdit = !!job;
@@ -176,7 +179,9 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   const [environmentId, setEnvironmentId] = useState(job?.environment_id || '');
   const [budgetUsd, setBudgetUsd] = useState(job?.budget_usd ?? '');
   const [agentVersion, setAgentVersion] = useState(job?.agent_version ?? '');
-  const [agentVersions, setAgentVersions] = useState([]);
+  // The versions of one agent: kept with the id they were fetched for, so a
+  // change of agent never shows the last agent's list.
+  const [versionsOf, setVersionsOf] = useState({ agentId: '', list: [] });
   const [autoPauseAfter, setAutoPauseAfter] = useState(job?.auto_pause_after ?? 3);
   // The deployment's resources (agent_task only, docs/deployments.md
   // "Resources"): copied onto every task the job creates, never onto the
@@ -200,17 +205,23 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   // still names it) — either way, the version list is this agent's own, so a
   // change of agent on create clears whatever version was picked for the last one.
   const pinnedAgentId = isEdit ? (job?.agent_id || '') : agentId;
+  const agentVersions = pinnedAgentId && kind === 'agent_task' && versionsOf.agentId === pinnedAgentId
+    ? versionsOf.list : NO_VERSIONS;
   useEffect(() => {
-    if (!pinnedAgentId || kind !== 'agent_task') { setAgentVersions([]); return; }
+    if (!pinnedAgentId || kind !== 'agent_task') return undefined;
     let cancelled = false;
     getAgentVersions(pinnedAgentId)
-      .then(({ data }) => { if (!cancelled) setAgentVersions(data?.versions || []); })
-      .catch(() => { if (!cancelled) setAgentVersions([]); });
+      .then(({ data }) => { if (!cancelled) setVersionsOf({ agentId: pinnedAgentId, list: data?.versions || [] }); })
+      .catch(() => { if (!cancelled) setVersionsOf({ agentId: pinnedAgentId, list: [] }); });
     return () => { cancelled = true; };
   }, [pinnedAgentId, kind]);
-  useEffect(() => {
+  // Another agent picked on create: the version chosen for the last one goes
+  // (adjusted while rendering, not in an effect).
+  const [seenAgentId, setSeenAgentId] = useState(agentId);
+  if (agentId !== seenAgentId) {
+    setSeenAgentId(agentId);
     if (!isEdit) setAgentVersion('');
-  }, [agentId, isEdit]);
+  }
 
   const handleSave = async () => {
     if (!title.trim()) { setError(t('deployments.errors.titleRequired')); return; }
@@ -724,24 +735,23 @@ export default function Deployments() {
   // names and memory pools. Any list that cannot be loaded (no access, no
   // store) is simply empty; the form still saves ids typed elsewhere.
   const [resources, setResources] = useState({ projects: [], files: [], secrets: [], pools: [] });
-  const [loading, setLoading] = useState(true);
+  // The workspace filter the list was fetched for; loading is derived from it,
+  // and the Refresh button swaps the rows in place.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== (workspaceFilter ?? '');
   const [showFinished, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
   const [journalJob, setJournalJob] = useState(null);
   const [acting, setActing] = useState({});
 
-  const fetchData = useCallback(async () => {
-    try {
-      const { data } = await getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat']);
-      setJobs(data || []);
-    } catch (err) {
-      console.error('Failed to load deployments', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceFilter]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const fetchData = useCallback(() => getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat'])
+    .then(({ data }) => setJobs(data || []))
+    .catch((err) => { console.error('Failed to load deployments', err); })
+    .finally(() => setLoadedFor(workspaceFilter ?? '')), [workspaceFilter]);
 
-  useEffect(() => { setLoading(true); fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
     getAgents(workspaceFilter).then((r) => setAgents(r.data || [])).catch(() => {});

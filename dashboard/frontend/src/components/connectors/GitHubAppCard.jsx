@@ -53,6 +53,7 @@ export default function GitHubAppCard() {
   }, [workspace]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load is shared with the sync handler and sets state only after its await
     load();
     getWorkspaces()
       .then(({ data }) => setWorkspaces((Array.isArray(data) ? data : []).map((w) => w.name).filter(Boolean)))

@@ -76,6 +76,8 @@ import useChatTurns from '../components/chat/useChatTurns';
 import useChatSteering from '../components/chat/useChatSteering';
 import useRunningChats from '../components/chat/useRunningChats';
 
+const EMPTY_MESSAGES = [];
+
 // ---------------------------------------------------------------------------
 // Page-local preferences
 // ---------------------------------------------------------------------------
@@ -146,7 +148,13 @@ export default function Chat() {
   // On a phone the conversation list is a drawer (ChatSidebar), open from the
   // top bar and closed again by picking or starting a conversation.
   const [listOpen, setListOpen] = useState(false);
-  useEffect(() => { setListOpen(false); }, [urlConvId]);
+  // Closed again whenever the URL moves to another conversation (adjusted while
+  // rendering, not in an effect).
+  const [listOpenFor, setListOpenFor] = useState(urlConvId);
+  if (urlConvId !== listOpenFor) {
+    setListOpenFor(urlConvId);
+    setListOpen(false);
+  }
   // The turns this tab is sending, one per conversation at most, so several
   // conversations can be answering at once (components/chat/useChatTurns.js).
   // `loading` is the open conversation's: declared here because both the
@@ -278,34 +286,30 @@ export default function Chat() {
   }, [telegramBindings, currentConvId]);
 
   const currentConv = conversations.find((c) => c.id === currentConvId) || null;
-  // Memoised: the `|| []` fallback would otherwise be a new array on every
-  // render, re-running every effect that watches the transcript.
-  const messages = useMemo(() => currentConv?.messages || [], [currentConv]);
+  // A stable fallback (EMPTY_MESSAGES): a fresh `[]` per render would re-run
+  // every effect that watches the transcript.
+  const currentMessages = currentConv?.messages;
+  const messages = currentMessages || EMPTY_MESSAGES;
   // Context fill for the open conversation: whatever the most recent turn that
   // reported it left behind. Read off the transcript rather than tracked live,
   // so it is still right after a reload or a switch between conversations, and
   // empties by itself when /clear empties the messages.
   const contextUsage = useMemo(() => {
-    const msgs = currentConv?.messages || [];
-    for (let i = msgs.length - 1; i >= 0; i -= 1) {
-      const m = msgs[i];
-      if (m?.context_window || m?.context_overflow) {
-        return {
-          used: m.context_used || 0,
-          window: m.context_window || 0,
-          overflow: Boolean(m.context_overflow),
-        };
-      }
-    }
-    return { used: 0, window: 0, overflow: false };
-  }, [currentConv]);
+    const m = (currentMessages || []).findLast((x) => x?.context_window || x?.context_overflow);
+    if (!m) return { used: 0, window: 0, overflow: false };
+    return {
+      used: m.context_used || 0,
+      window: m.context_window || 0,
+      overflow: Boolean(m.context_overflow),
+    };
+  }, [currentMessages]);
   const conversationRunIds = useMemo(() => {
     const ids = new Set();
-    for (const m of (currentConv?.messages || [])) {
+    for (const m of (currentMessages || [])) {
       if (m?.role === 'agent' && m?.run_id) ids.add(String(m.run_id));
     }
     return ids;
-  }, [currentConv]);
+  }, [currentMessages]);
 
   // A turn someone else is running in this same conversation — another tab,
   // another device, Telegram, an agent writing to its own inbox. It is mirrored
@@ -413,10 +417,20 @@ export default function Chat() {
   const agentTopology = _agentObj.remote?.topology || null;
   // The highlight belongs to the run being watched, not to the page: switching
   // agent or conversation leaves a lit node that nothing is running in.
-  useEffect(() => { setGraphRun(EMPTY_GRAPH_RUN); }, [selectedAgent, currentConvId]);
+  // Reset while rendering when either changes, not in an effect.
+  const graphRunKey = `${selectedAgent}|${currentConvId}`;
+  const [graphRunFor, setGraphRunFor] = useState(graphRunKey);
+  if (graphRunKey !== graphRunFor) {
+    setGraphRunFor(graphRunKey);
+    setGraphRun(EMPTY_GRAPH_RUN);
+  }
   // A snippet opened from a reply belongs to that conversation: the Code panel
   // of the next one must not pick it up again when it refetches its list.
-  useEffect(() => { setCodeFocus(null); }, [currentConvId]);
+  const [codeFocusFor, setCodeFocusFor] = useState(currentConvId);
+  if (currentConvId !== codeFocusFor) {
+    setCodeFocusFor(currentConvId);
+    setCodeFocus(null);
+  }
   // provider/model are top-level fields on AgentSpec
   const agentProvider = _agentObj.provider || 'inherit';
   const agentModel = _agentObj.model || '';
@@ -447,9 +461,12 @@ export default function Chat() {
   ) ? (liveTurnSeen.runId || null) : null;
 
   // ---- sync URL → state ----
-  useEffect(() => {
+  // Adjusted while rendering when the URL moves, not in an effect.
+  const [seenUrlConvId, setSeenUrlConvId] = useState(urlConvId);
+  if (urlConvId !== seenUrlConvId) {
+    setSeenUrlConvId(urlConvId);
     setCurrentConvId(urlConvId || null);
-  }, [urlConvId]);
+  }
 
   // ---- close the active conversation when its workspace doesn't match ----
   // Each workspace owns its own chat history; switching workspace should drop
@@ -506,8 +523,19 @@ export default function Chat() {
     setTelegramBindings,
   });
   // ---- load projects for selected workspace ----
+  // Leaving every workspace clears what was loaded for the last one (adjusted
+  // while rendering); the allowed agents below reset with it.
+  const [seenWorkspace, setSeenWorkspace] = useState(selectedWorkspace);
+  if (selectedWorkspace !== seenWorkspace) {
+    setSeenWorkspace(selectedWorkspace);
+    if (!selectedWorkspace) {
+      setProjects([]);
+      setSelectedProject('');
+      setWorkspaceAllowedAgentIds(null);
+    }
+  }
   useEffect(() => {
-    if (!selectedWorkspace) { setProjects([]); setSelectedProject(''); return; }
+    if (!selectedWorkspace) return;
     getProjects(selectedWorkspace)
       .then((r) => setProjects(r.data || []))
       .catch(() => setProjects([]));
@@ -515,10 +543,7 @@ export default function Chat() {
 
   // ---- load allowed agents for selected workspace ----
   useEffect(() => {
-    if (!selectedWorkspace) {
-      setWorkspaceAllowedAgentIds(null);
-      return;
-    }
+    if (!selectedWorkspace) return;
     // One summary request shared with the header and the palette
     // (api/workspaceSummary.js), not the full record with its task list.
     loadWorkspaceSummary(selectedWorkspace)
@@ -531,17 +556,14 @@ export default function Chat() {
   }, [selectedWorkspace]);
 
   // ---- ensure selected agent is valid for current workspace ----
-  useEffect(() => {
-    if (!selectableAgents.length) {
-      if (selectedAgent) setSelectedAgent('');
-      return;
-    }
-    const stillValid = selectableAgents.some((a) => a.id === selectedAgent);
-    if (!stillValid) {
-      const defaultAgent = selectableAgents.find((a) => a.is_default_chat_agent);
-      setSelectedAgent((defaultAgent || selectableAgents[0]).id);
-    }
-  }, [selectableAgents, selectedAgent]);
+  // Adjusted while rendering, so the page never draws an agent the workspace
+  // does not offer.
+  if (!selectableAgents.length) {
+    if (selectedAgent) setSelectedAgent('');
+  } else if (!selectableAgents.some((a) => a.id === selectedAgent)) {
+    const defaultAgent = selectableAgents.find((a) => a.is_default_chat_agent);
+    setSelectedAgent((defaultAgent || selectableAgents[0]).id);
+  }
 
   // ---- focus textarea on mount and whenever loading ends ----
   useEffect(() => {
@@ -557,16 +579,21 @@ export default function Chat() {
   }, [loading]);
 
   // Select latest run when switching conversations
-  useEffect(() => {
+  // Adjusted while rendering whenever the conversation or its record changes.
+  const [runPickedId, setRunPickedId] = useState(undefined);
+  const [runPickedConv, setRunPickedConv] = useState(undefined);
+  if (runPickedId !== currentConvId || runPickedConv !== currentConv) {
+    setRunPickedId(currentConvId);
+    setRunPickedConv(currentConv);
     if (!currentConv) {
       setActiveRunId(null);
-      return;
+    } else {
+      const latestRunMsg = [...(currentConv.messages || [])]
+        .reverse()
+        .find((m) => m.role === 'agent' && m.run_id);
+      setActiveRunId(latestRunMsg?.run_id || null);
     }
-    const latestRunMsg = [...(currentConv.messages || [])]
-      .reverse()
-      .find((m) => m.role === 'agent' && m.run_id);
-    setActiveRunId(latestRunMsg?.run_id || null);
-  }, [currentConvId, currentConv]);
+  }
 
   // Merge a streamed/persisted artifact into the per-path map (last write wins).
   const mergeArtifact = useCallback((art) => {
@@ -590,11 +617,15 @@ export default function Chat() {
   // Back in a conversation whose turn is still running: the panels were reset
   // for it above, and the turn's run and session (said before the switch) are
   // what they follow until it ends.
-  useEffect(() => {
-    const turn = getTurn(currentConvId);
+  // Adjusted while rendering when the conversation changes (and on the first
+  // render), reading the turn from `turns` state, which mirrors the turn ref.
+  const [turnAdoptedFor, setTurnAdoptedFor] = useState(undefined);
+  if (turnAdoptedFor !== (currentConvId ?? null)) {
+    setTurnAdoptedFor(currentConvId ?? null);
+    const turn = currentConvId ? turns[currentConvId] : null;
     if (turn?.sessionId) setSessionId(turn.sessionId);
     if (turn?.runId) setActiveRunId(turn.runId);
-  }, [currentConvId, getTurn]);
+  }
 
   const { codeRows, codeListLoading, codeListError } = useConversationCode({
     conversationRunIds, currentConvId, codeFocus, t,

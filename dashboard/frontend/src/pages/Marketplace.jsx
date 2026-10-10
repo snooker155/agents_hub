@@ -32,34 +32,34 @@ const Marketplace = () => {
   const [flows, setFlows] = useState([]);
   const [kits, setKits] = useState([]);
   const [installingKit, setInstallingKit] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // The workspace the catalog was fetched for: loading is derived from it.
+  const [loadedFor, setLoadedFor] = useState(null);
   const [query, setQuery] = useState('');
   const [addingId, setAddingId] = useState(null);
   const [message, setMessage] = useState('');
 
+  const catalogWorkspace = selectedWorkspace || 'default';
+  const loading = loadedFor !== catalogWorkspace;
   const isDefaultWs = !selectedWorkspace || selectedWorkspace === 'default';
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [agentsResp, flowsResp, kitsResp] = await Promise.all([
-        getMarketplaceAgents(selectedWorkspace || 'default'),
-        getMarketplaceFlows(selectedWorkspace || 'default'),
-        listKits(selectedWorkspace || 'default'),
-      ]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const fetchData = useCallback(() => Promise.all([
+    getMarketplaceAgents(catalogWorkspace),
+    getMarketplaceFlows(catalogWorkspace),
+    listKits(catalogWorkspace),
+  ])
+    .then(([agentsResp, flowsResp, kitsResp]) => {
       setAgents(agentsResp.data || []);
       setFlows(flowsResp.data || []);
       setKits(kitsResp.data || []);
-    } catch (error) {
+    })
+    .catch((error) => {
       console.error('Error fetching marketplace catalog:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedWorkspace]);
+    })
+    .finally(() => setLoadedFor(catalogWorkspace)), [catalogWorkspace]);
 
-  useEffect(() => {
-    setLoading(true);
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleAdd = async (agentId) => {
     if (isDefaultWs) return;

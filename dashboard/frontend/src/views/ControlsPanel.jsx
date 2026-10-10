@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Play, Pause, ChevronRight, ChevronDown } from 'lucide-react';
 import { cssVar } from '../lib/themeColors';
 
@@ -98,7 +98,9 @@ function PlayControl({ c, value, onChange }) {
   const [playing, setPlaying] = useState(false);
   const raf = useRef(null);
   const valRef = useRef(typeof value === 'number' ? value : (c.min ?? 0));
-  valRef.current = typeof value === 'number' ? value : valRef.current;
+  useLayoutEffect(() => {
+    if (typeof value === 'number') valRef.current = value;
+  });
 
   useEffect(() => {
     if (!playing) return undefined;

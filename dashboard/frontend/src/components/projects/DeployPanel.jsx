@@ -150,22 +150,19 @@ function ServiceEditor({ svc, onChange, onRemove, t }) {
 
 function ConfigForm({ dep, environments, onSaved, t }) {
   const toast = useToast();
-  const [form, setForm] = useState(null);
+  // The parent keys this form on the deployment's id and updated_at, so a
+  // changed deployment starts a fresh form from `dep`.
+  const [form, setForm] = useState(() => ({
+    mode: dep.mode,
+    compose_file: dep.compose_file || '',
+    environment_id: dep.environment_id || '',
+    primary_service: dep.primary_service || '',
+    restart_on_exit: !!dep.restart_on_exit,
+    env: envToText(dep.env),
+    services: (dep.services || []).map((s) => ({ ...s })),
+  }));
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    setForm({
-      mode: dep.mode,
-      compose_file: dep.compose_file || '',
-      environment_id: dep.environment_id || '',
-      primary_service: dep.primary_service || '',
-      restart_on_exit: !!dep.restart_on_exit,
-      env: envToText(dep.env),
-      services: (dep.services || []).map((s) => ({ ...s })),
-    });
-  }, [dep.id, dep.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!form) return null;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setService = (i, svc) => setForm((f) => ({ ...f, services: f.services.map((s, j) => (j === i ? svc : s)) }));
 
@@ -256,29 +253,34 @@ function ConfigForm({ dep, environments, onSaved, t }) {
 
 function LogsPane({ projectId, dep, t }) {
   const services = useMemo(() => [...(dep.services || []).map((s) => s.name), 'build'], [dep.services]);
-  const [service, setService] = useState(services[0] || 'build');
+  const [pickedService, setService] = useState(services[0] || 'build');
+  // A service that left the list falls back to the first, derived rather than
+  // reset by an effect.
+  const service = services.includes(pickedService) ? pickedService : (services[0] || 'build');
   const [text, setText] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const logsKey = `${projectId}|${service}`;
+  const loading = refreshing || loadedFor !== logsKey;
   const [follow, setFollow] = useState(true);
   const pre = useRef(null);
 
-  useEffect(() => {
-    if (!services.includes(service)) setService(services[0] || 'build');
-  }, [services, service]);
+  // Promise chain rather than an async function: the React Compiler lint
+  // treats an async function called from an effect as a synchronous setState.
+  const loadLogs = useCallback(() => getProjectDeploymentLogs(projectId, service, 400)
+    .then(({ data }) => setText(data.text || ''))
+    .catch((err) => setText(errorDetail(err) || ''))
+    .then(() => {
+      setRefreshing(false);
+      setLoadedFor(`${projectId}|${service}`);
+    }), [projectId, service]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getProjectDeploymentLogs(projectId, service, 400);
-      setText(data.text || '');
-    } catch (err) {
-      setText(errorDetail(err) || '');
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, service]);
+  const load = useCallback(() => {
+    setRefreshing(true);
+    return loadLogs();
+  }, [loadLogs]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadLogs(); }, [loadLogs]);
   useEffect(() => {
     if (!follow) return undefined;
     const timer = setInterval(load, 3000);
@@ -351,15 +353,16 @@ export default function DeployPanel({ project }) {
   const [previewService, setPreviewService] = useState('');
   const [showKey, setShowKey] = useState(false);
 
-  const load = useCallback(async (refresh = true) => {
-    try {
-      const { data } = await getProjectDeployment(projectId, refresh);
+  // Promise chain rather than an async function: the React Compiler lint
+  // treats an async function called from an effect as a synchronous setState.
+  const load = useCallback((refresh = true) => getProjectDeployment(projectId, refresh)
+    .then(({ data }) => {
       setDep(data);
       setError('');
-    } catch (err) {
+    })
+    .catch((err) => {
       setError(errorDetail(err) || t('projectDeploy.loadFailed'));
-    }
-  }, [projectId, t]);
+    }), [projectId, t]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -374,9 +377,14 @@ export default function DeployPanel({ project }) {
     return () => clearInterval(timer);
   }, [dep?.desired, active, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
+  // Open the config form for a deployment with no services yet, once per
+  // deployment (set while rendering instead of in an effect).
+  const depId = dep?.id;
+  const [seenDepId, setSeenDepId] = useState(null);
+  if (depId !== seenDepId) {
+    setSeenDepId(depId);
     if (dep && !dep.services?.length) setShowConfig(true);
-  }, [dep?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   const act = async (name, fn, okMessage) => {
     setBusy(name);
@@ -461,7 +469,7 @@ export default function DeployPanel({ project }) {
 
       {showConfig && (
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <ConfigForm dep={dep} environments={environments} t={t} onSaved={(d) => { setDep(d); }} />
+          <ConfigForm key={`${dep.id}:${dep.updated_at}`} dep={dep} environments={environments} t={t} onSaved={(d) => { setDep(d); }} />
         </div>
       )}
 

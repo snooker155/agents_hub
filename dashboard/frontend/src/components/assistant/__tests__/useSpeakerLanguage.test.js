@@ -1,4 +1,4 @@
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import useSpeaker from '../useSpeaker';
 
@@ -16,6 +16,9 @@ describe('useSpeaker with the browser voice', () => {
     };
   });
   afterEach(() => {
+    // Unmount while the stubs are still there: the hook cancels its speech on
+    // unmount, and the library's own cleanup runs after this hook.
+    cleanup();
     delete window.SpeechSynthesisUtterance;
     delete window.speechSynthesis;
   });

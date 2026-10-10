@@ -48,21 +48,23 @@ export default function BlenderConnector() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const loadConfig = useCallback(async () => {
-    try {
-      const { data } = await getBlenderConfig();
-      setConfig(data);
-      setPathInput(data.binary_path || '');
-    } catch (e) {
-      setError(`${t('settings.blender.loadFailed')}: ` + (e.response?.data?.detail || e.message));
-    }
+  // Promise chains rather than try/await: the lint rule cannot tell that
+  // nothing is set before the first await of an async function with a catch.
+  const loadConfig = useCallback(() => {
+    getBlenderConfig()
+      .then(({ data }) => {
+        setConfig(data);
+        setPathInput(data.binary_path || '');
+      })
+      .catch((e) => {
+        setError(`${t('settings.blender.loadFailed')}: ` + (e.response?.data?.detail || e.message));
+      });
   }, [t]);
 
-  const loadDaemons = useCallback(async () => {
-    try {
-      const { data } = await getBlenderDaemons();
-      setDaemons(data);
-    } catch { /* the engines list is a live view; a failed poll is not an error state */ }
+  const loadDaemons = useCallback(() => {
+    getBlenderDaemons()
+      .then(({ data }) => setDaemons(data))
+      .catch(() => { /* the engines list is a live view; a failed poll is not an error state */ });
   }, []);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);

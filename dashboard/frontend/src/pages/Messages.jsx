@@ -93,7 +93,6 @@ export default function Messages() {
   const [totalMessages, setTotalMessages] = useState(0);
   const [agents, setAgents]           = useState([]);
   const [workspaces, setWorkspaces]   = useState([]);
-  const [loading, setLoading]         = useState(true);
 
   const [filterWorkspace, setFilterWorkspace] = useState(selectedWorkspace || '');
   const [filterAgent,     setFilterAgent]     = useState('');
@@ -102,6 +101,14 @@ export default function Messages() {
   const [filterChannel,   setFilterChannel]   = useState('');
   const [filterFrom,      setFilterFrom]      = useState('');
   const [filterTo,        setFilterTo]        = useState('');
+
+  // Following the workspace picked in the header: set while rendering when it
+  // changes, not mirrored by an effect.
+  const [seenSelected, setSeenSelected] = useState(selectedWorkspace);
+  if (seenSelected !== selectedWorkspace) {
+    setSeenSelected(selectedWorkspace);
+    setFilterWorkspace(selectedWorkspace || '');
+  }
 
   const [stopping,      setStopping]      = useState({});
   const [deleting,      setDeleting]      = useState({});
@@ -113,6 +120,13 @@ export default function Messages() {
   // workspace the page is locked to it and the dropdown is hidden.
   const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const effectiveWorkspace = filterWorkspace || '';
+
+  // The agent filter belongs to a workspace: another workspace starts over.
+  const [seenEffective, setSeenEffective] = useState(effectiveWorkspace);
+  if (seenEffective !== effectiveWorkspace) {
+    setSeenEffective(effectiveWorkspace);
+    setFilterAgent('');
+  }
 
   // The Workspace column is only shown in the default workspace. The grid
   // template literals are written out in full so Tailwind's JIT can detect them.
@@ -137,32 +151,36 @@ export default function Messages() {
   // the page asks for the one page on screen, so a workspace with a hundred
   // thousand runs costs the same first paint as an empty one.
   const [refreshing, setRefreshing] = useState(false);
-  const fetchMessages = useCallback(async () => {
-    try {
-      const params = { ...pageParams };
-      if (effectiveWorkspace) params.workspace = effectiveWorkspace;
-      if (filterAgent)  params.agent_id = filterAgent;
-      if (filterStatus) params.status   = filterStatus;
-      if (filterFrom)   params.from_date = filterFrom;
-      if (filterTo)     params.to_date   = filterTo;
-      if (filterFlow === 'true')  params.is_flow = true;
-      if (filterFlow === 'false') params.is_flow = false;
-      if (filterChannel) params.channel = filterChannel;
-      const res = await getMessages(params);
-      const data = res.data || {};
-      const items = Array.isArray(data) ? data : (data.items || []);
-      setMessages(items);
-      setTotalMessages(Array.isArray(data) ? items.length : (data.total || 0));
-    } catch (err) {
-      console.error('Failed to load messages', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo, filterFlow, filterChannel, pageParams]);
-
-  useEffect(() => {
-    setFilterWorkspace(selectedWorkspace || '');
-  }, [selectedWorkspace]);
+  // The rows on screen are for this query; a different one shows the loader,
+  // derived rather than set inside the effect.
+  const queryKey = JSON.stringify([effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo,
+    filterFlow, filterChannel, pageParams]);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== queryKey;
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const fetchMessages = useCallback(() => {
+    const params = { ...pageParams };
+    if (effectiveWorkspace) params.workspace = effectiveWorkspace;
+    if (filterAgent)  params.agent_id = filterAgent;
+    if (filterStatus) params.status   = filterStatus;
+    if (filterFrom)   params.from_date = filterFrom;
+    if (filterTo)     params.to_date   = filterTo;
+    if (filterFlow === 'true')  params.is_flow = true;
+    if (filterFlow === 'false') params.is_flow = false;
+    if (filterChannel) params.channel = filterChannel;
+    return getMessages(params)
+      .then((res) => {
+        const data = res.data || {};
+        const items = Array.isArray(data) ? data : (data.items || []);
+        setMessages(items);
+        setTotalMessages(Array.isArray(data) ? items.length : (data.total || 0));
+      })
+      .catch((err) => {
+        console.error('Failed to load messages', err);
+      })
+      .then(() => setLoadedKey(queryKey));
+  }, [effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo, filterFlow, filterChannel, pageParams, queryKey]);
 
   useEffect(() => {
     getWorkspaces().then(r => setWorkspaces(r.data)).catch(() => {});
@@ -170,11 +188,9 @@ export default function Messages() {
 
   useEffect(() => {
     getAgents(effectiveWorkspace || undefined).then(r => setAgents(r.data)).catch(() => {});
-    setFilterAgent('');
   }, [effectiveWorkspace]);
 
   useEffect(() => {
-    setLoading(true);
     fetchMessages();
   }, [fetchMessages, liveUpdates]);
   // Coarse invalidations still arrive from bulk operations; a single run's
@@ -196,7 +212,11 @@ export default function Messages() {
     });
   }, [liveUpdates]));
 
-  useEffect(() => {
+  // Checked rows that left the list are dropped when the list changes (set
+  // while rendering, not in an effect).
+  const [seenMessages, setSeenMessages] = useState(messages);
+  if (seenMessages !== messages) {
+    setSeenMessages(messages);
     const visible = new Set(messages.map(m => m.run_id));
     setSelectedIds(prev => {
       const next = {};
@@ -205,7 +225,7 @@ export default function Messages() {
       });
       return next;
     });
-  }, [messages]);
+  }
 
   const handleStop = async (runId) => {
     setStopping(s => ({ ...s, [runId]: true }));

@@ -272,16 +272,16 @@ export default function Connections() {
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await listConnections(selectedWorkspace);
-      setConnections(data.connections || []);
-      setError('');
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message);
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => {
+    listConnections(selectedWorkspace)
+      .then(({ data }) => {
+        setConnections(data.connections || []);
+        setError('');
+      })
+      .catch((err) => setError(err.response?.data?.detail || err.message))
+      .finally(() => setLoading(false));
   }, [selectedWorkspace]);
 
   useEffect(() => { load(); }, [load]);

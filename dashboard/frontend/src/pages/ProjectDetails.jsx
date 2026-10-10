@@ -166,7 +166,10 @@ export default function ProjectDetails() {
     }
   }, [id, navigate]);
 
-  useEffect(() => { fetchProject(); }, [fetchProject, id]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with edit and repo handlers; it sets state after its await
+    fetchProject();
+  }, [fetchProject, id]);
 
   const replaceFileUrl = useCallback((next) => {
     if (fileUrlRef.current) URL.revokeObjectURL?.(fileUrlRef.current);
@@ -271,12 +274,6 @@ export default function ProjectDetails() {
     }
   }, [id, loadFileContent, t, linkedFile]);
 
-  useEffect(() => {
-    if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
-    if (activeTab === 'Files') loadFiles();
-    if (activeTab === 'Repository') loadGitStatus();
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- loaders and backendBase are declared below; naming them here would hit the TDZ
-
   const loadTasks = async () => {
     setTasksLoading(true);
     try {
@@ -299,6 +296,16 @@ export default function ProjectDetails() {
       setGitMsg(e.response?.data?.detail || t('projectDetails.errors.gitStatus'));
     } finally { setGitLoading(false); }
   };
+
+  // The loaders are plain functions that change every render, so the effect is
+  // keyed on the tab alone: a tab opening is what loads its data.
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- shared loaders, state is set after their awaits */
+    if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
+    if (activeTab === 'Files') loadFiles();
+    if (activeTab === 'Repository') loadGitStatus();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- only a tab change reloads; the loaders are recreated every render
 
   const handleClone = async () => {
     setCloning(true);

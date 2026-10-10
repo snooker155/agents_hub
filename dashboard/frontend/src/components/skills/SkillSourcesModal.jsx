@@ -22,19 +22,23 @@ export default function SkillSourcesModal({ workspace, onClose, onChanged }) {
   const [url, setUrl] = useState('');
   const [branch, setBranch] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await listSkillSources(workspace);
-      setSources(data || []);
-    } catch (e) {
-      toast.error(t('skillsCatalog.sources.loadFailed'), errorDetail(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [workspace, t, toast]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls this directly (`loading` starts true); reloads after an
+  // action go through `load`, which raises the busy flag first.
+  const fetchSources = useCallback(() => (
+    listSkillSources(workspace)
+      .then(({ data }) => setSources(data || []))
+      .catch((e) => toast.error(t('skillsCatalog.sources.loadFailed'), errorDetail(e)))
+      .finally(() => setLoading(false))
+  ), [workspace, t, toast]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchSources();
+  }, [fetchSources]);
+
+  useEffect(() => { fetchSources(); }, [fetchSources]);
 
   const connect = async (sourceUrl, sourceBranch = '') => {
     setBusy(sourceUrl);

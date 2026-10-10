@@ -18,10 +18,18 @@ export default function AgentVersion({ run, onChanged, compact = false }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  // Another run (or another pinned version): forget what the last one showed.
+  // Adjusted while rendering, not in an effect.
+  const infoKey = `${runId}|${version}`;
+  const [seenInfoKey, setSeenInfoKey] = useState(infoKey);
+  if (infoKey !== seenInfoKey) {
+    setSeenInfoKey(infoKey);
     setInfo(null);
     setError('');
-    if (!runId || version == null) return;
+  }
+
+  useEffect(() => {
+    if (!runId || version == null) return undefined;
     let cancelled = false;
     getRunAgentVersion(runId)
       .then(({ data }) => { if (!cancelled) setInfo(data); })

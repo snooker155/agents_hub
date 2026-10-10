@@ -65,6 +65,13 @@ vi.mock('../../api/system', () => ({
   getSystemBranches: (...a) => getSystemBranches(...a),
 }));
 
+// The SLO card loads on mount too; without this mock its call reached the
+// partly mocked api module and only a swallowed exception hid that.
+vi.mock('../../api/support', () => ({
+  getSlo: () => ok({ status: 'ok', objectives: {} }),
+  getSupportBundle: () => Promise.resolve({ data: new Blob([]) }),
+}));
+
 vi.mock('../../api', () => ({
   getHealth: () => ok({ status: 'ok', database: {}, services: {}, storage: {}, providers: {} }),
   getServiceChat: () => ok({ messages: [] }),

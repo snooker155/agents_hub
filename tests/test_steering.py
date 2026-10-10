@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -147,7 +147,7 @@ def _executor(replies):
     _ToolModel.seen = []
     model = _ToolModel(disable_streaming=True, messages=iter(replies))
     runnable = build_agent_runnable(model, [echo], _prompt(), [steer_ext.SteeringExtension()])
-    return AgentExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
+    return LoopExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
 
 
 def _two_tool_calls():
@@ -224,11 +224,11 @@ def test_injected_sequence_is_valid_for_openai_and_anthropic(monkeypatch):
     _run(_executor(_two_tool_calls()), LoopState(run_id=run_id))
     messages = _ToolModel.seen[1]
 
-    from langchain_openai.chat_models.base import _convert_message_to_dict
+    from providers.openai_driver import message_to_dict as _convert_message_to_dict
     roles = [_convert_message_to_dict(m)["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool", "user"]
 
-    from langchain_anthropic.chat_models import _format_messages
+    from providers.anthropic_driver import format_messages as _format_messages
     _system, formatted = _format_messages(messages)
     assert [m["role"] for m in formatted] == ["user", "assistant", "user"]
     last = formatted[-1]["content"]

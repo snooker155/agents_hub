@@ -120,4 +120,4 @@ function LiveThoughts({ text }) {
   );
 }
 
-export { REASONING_META, GraphNodeStep, ReasoningStep, LiveThoughts };
+export { GraphNodeStep, ReasoningStep, LiveThoughts };

@@ -71,22 +71,30 @@ export default function CodePanel() {
   } = useChatPage();
 
   const [envelopes, setEnvelopes] = useState({});
-  const [selectedViewId, setSelectedViewId] = useState(null);
+  const [pickedViewId, setSelectedViewId] = useState(null);
 
   // Another conversation: its snippets are not this one's. Drop the selection
   // at once rather than keep showing the old snippet (still in the envelope
   // cache) until the new list arrives.
-  useEffect(() => { setSelectedViewId(null); }, [currentConvId]);
+  const [seenConvId, setSeenConvId] = useState(currentConvId);
+  if (seenConvId !== currentConvId) {
+    setSeenConvId(currentConvId);
+    setSelectedViewId(null);
+  }
 
   // "Open in Code panel" on a reply's code block selects that block under
   // "From replies"; a view just saved comes with its envelope and is selected.
-  useEffect(() => {
-    if (codeFocus?.replyId) { setSelectedViewId(codeFocus.replyId); return; }
+  const [seenFocus, setSeenFocus] = useState(null);
+  if (seenFocus !== codeFocus) {
+    setSeenFocus(codeFocus);
     const view = codeFocus?.view;
-    if (!view?.view_id) return;
-    setEnvelopes((prev) => ({ ...prev, [view.view_id]: view }));
-    setSelectedViewId(view.view_id);
-  }, [codeFocus]);
+    if (codeFocus?.replyId) {
+      setSelectedViewId(codeFocus.replyId);
+    } else if (view?.view_id) {
+      setEnvelopes((prev) => ({ ...prev, [view.view_id]: view }));
+      setSelectedViewId(view.view_id);
+    }
+  }
 
   // The replies' blocks not yet saved as views: newest first, minus the ones
   // saved this visit and the ones a loaded view already holds word for word
@@ -140,12 +148,12 @@ export default function CodePanel() {
 
   // Select the newest snippet when nothing is selected, or when the selected one
   // has left the list (a conversation switch, a list refetch without it).
-  useEffect(() => {
-    if (selectedViewId && (rows.some((r) => r.view_id === selectedViewId)
-        || replies.some((b) => b.id === selectedViewId))) return;
-    const first = groups[0]?.latest?.view_id || replies[0]?.id || null;
-    if (first !== selectedViewId) setSelectedViewId(first);
-  }, [groups, rows, replies, selectedViewId]);
+  // Derived, not mirrored into state by an effect.
+  const pickedStillListed = pickedViewId && (rows.some((r) => r.view_id === pickedViewId)
+    || replies.some((b) => b.id === pickedViewId));
+  const selectedViewId = pickedStillListed
+    ? pickedViewId
+    : (groups[0]?.latest?.view_id || replies[0]?.id || null);
 
   const isReply = isReplyId(selectedViewId);
   const selectedReply = isReply ? replies.find((b) => b.id === selectedViewId) || null : null;

@@ -52,7 +52,10 @@ export default function PlaygroundRuns() {
     }
   }, [selectedWorkspace, limit, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the live refetch and owns the loading flag
+    load();
+  }, [load]);
 
   // "tick 7 / 20" needs the cap. A run carries its own in its launch snapshot
   // and the row prefers that; this catalogue fetch is the fallback for runs

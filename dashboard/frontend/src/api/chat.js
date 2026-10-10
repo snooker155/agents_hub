@@ -25,7 +25,7 @@ export const consumeSSE = async (response, onEvent) => {
     for (const chunk of chunks) {
       const line = chunk.split('\n').map((l) => l.trim()).find((l) => l.startsWith('data: '));
       if (!line) continue;
-      let event = null;
+      let event;
       try { event = JSON.parse(line.slice(6)); } catch { continue; }
       if (event && event.type) onEvent(event);
     }

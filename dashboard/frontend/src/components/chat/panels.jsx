@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getWorkspaceFileContent } from '../../api';
 import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
+import { ARTIFACT_OP_META } from './artifactOps';
 
 function ProcessPanelContent({ processInsights, topology = null, graphRun = null, workspace = null }) {
   const { t } = useI18n();
@@ -102,12 +103,6 @@ function DiffView({ diff }) {
     </div>
   );
 }
-
-const ARTIFACT_OP_META = {
-  add: { label: 'A', cls: 'bg-emerald-100 text-emerald-700' },
-  modify: { label: 'M', cls: 'bg-amber-100 text-amber-700' },
-  delete: { label: 'D', cls: 'bg-red-100 text-red-700' },
-};
 
 function ArtifactItem({ artifact, defaultOpen = false }) {
   const { t } = useI18n();
@@ -303,4 +298,4 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
   );
 }
 
-export { ProcessPanelContent, DiffView, ARTIFACT_OP_META, ArtifactItem, ArtifactsPanel };
+export { ProcessPanelContent, DiffView, ArtifactItem, ArtifactsPanel };

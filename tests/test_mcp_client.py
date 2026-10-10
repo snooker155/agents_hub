@@ -434,7 +434,7 @@ def test_end_to_end_against_a_real_stdio_server(workspace):
     Everything the mocked tests above assert separately, against something that
     does not agree with us by construction: the handshake, the rename, the
     allowlist, and — the part no mock can show — a sync call from a thread with
-    no event loop, which is how ``AgentExecutor`` calls every tool.
+    no event loop, which is how the loop executor calls every tool.
     """
     pytest.importorskip("mcp.server.fastmcp")
 

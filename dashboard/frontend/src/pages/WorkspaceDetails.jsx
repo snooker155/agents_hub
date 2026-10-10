@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
@@ -225,9 +225,14 @@ const WorkspaceDetails = () => {
     } finally {
       setLoading(false);
     }
-  }, [name, t]);
+    // The state setters are stable and listed only because the React Compiler
+    // infers them as dependencies here and rejects a list without them.
+  }, [name, t, setWs, setFiles, setFolders, setFileIds, setAllAgents, setAllFlows]);
 
-  useEffect(() => { fetchData(); }, [name, liveUpdates, fetchData]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with live refetch and the handlers; it sets state after its awaits
+    fetchData();
+  }, [name, liveUpdates, fetchData]);
   useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   const handleDelete = async () => {
@@ -281,7 +286,8 @@ const WorkspaceDetails = () => {
     } catch {
       return null;
     }
-  }, [name]);
+    // setFileIds is stable; listed because the React Compiler infers it.
+  }, [name, setFileIds]);
 
   // Opens a file; ``link`` puts its id in the address (?file=<id>), for a
   // file the user picked or a link opened, not for the first one shown.
@@ -440,6 +446,9 @@ const WorkspaceDetails = () => {
 
   useEffect(() => {
     if (!files.length && !folders.length) {
+      // The selection follows the file list, and picking the first file also
+      // loads its content, so this stays an effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- selection must track the fetched file list
       setSelectedFilePath('');
       setSelectedFileContent('');
       setSelectedFileSize(0);
@@ -484,7 +493,7 @@ const WorkspaceDetails = () => {
   // forward) switches the open file. The selection is read through a ref so
   // a click, which selects before its id reaches the address, is not undone.
   const selectedPathRef = React.useRef('');
-  selectedPathRef.current = selectedFilePath;
+  useLayoutEffect(() => { selectedPathRef.current = selectedFilePath; });
   useEffect(() => {
     const current = selectedPathRef.current;
     if (linkedPath && current && linkedPath !== current) {
@@ -1407,30 +1416,35 @@ function WorkspacePaletteDefault({ workspace }) {
   const [overrides, setOverrides] = useState(null);
   const [draft, setDraft] = useState(PRESETS.navy);
   const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the workspace the overrides were fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [busy, setBusy] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    if (!workspace || !visible) return;
-    setLoading(true);
-    try {
-      const { data } = await getWorkspaceSettingsOverrides(workspace);
-      const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
-      setOverrides(all);
-      const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
-      setDraft({ ...PRESETS.navy, ...(p || {}) });
-      setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('workspaceDetails.palette.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    if (!workspace || !visible) return undefined;
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await getWorkspaceSettingsOverrides(workspace);
+        if (ignore) return;
+        const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
+        setOverrides(all);
+        const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
+        setDraft({ ...PRESETS.navy, ...(p || {}) });
+        setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
+        setError('');
+      } catch (err) {
+        if (!ignore) setError(err?.response?.data?.detail || t('workspaceDetails.palette.loadFailed'));
+      } finally {
+        if (!ignore) setLoadedFor(workspace);
+      }
+    };
+    load();
+    return () => { ignore = true; };
   }, [workspace, visible, t]);
-
-  useEffect(() => { load(); }, [load]);
 
   if (!visible) return null;
 

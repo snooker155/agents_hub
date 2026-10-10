@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RefreshCw, Save, Trash2, Wifi } from 'lucide-react';
 import {
   getGitConfig, updateGitConfig, deleteGitConfig, testGitConnection,
@@ -205,27 +205,31 @@ export default function GitConnector() {
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   const isDefaultWorkspace = workspace === 'default';
-  const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [config, setConfig] = useState({
     github: { has_token: false }, gitlab: { has_token: false, base_url: 'https://gitlab.com' },
     bitbucket: { has_token: false, username: '' }, gitea: { has_token: false, base_url: '' },
   });
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await getGitConfig(workspace);
-      setConfig(data);
-    } catch (e) {
-      setError(`${t('settings.errors.gitLoad')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await getGitConfig(workspace);
+        if (cancelled) return;
+        setError('');
+        setConfig(data);
+      } catch (e) {
+        if (cancelled) return;
+        setError(`${t('settings.errors.gitLoad')}: ` + (e.response?.data?.detail || e.message));
+      } finally {
+        if (!cancelled) setLoadedFor(workspace);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [workspace, t]);
-
-  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (

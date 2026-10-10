@@ -13,20 +13,16 @@ Two of the loop's policies have a server-side counterpart on Anthropic models:
   array can be the same on every request of a run (cache friendly, and again
   no edited history) while the model still sees a short list.
 
-Both reach the API only through what the installed ``langchain-anthropic``
-(0.3.14) forwards, checked against its source and with a mock transport:
-``bind(betas=[...], context_management={...})`` sends the request to the beta
-endpoint with the header and the body field; a dict tool in Anthropic's own
-shape keeps ``defer_loading``; a ``tool_reference`` block inside a tool
-result's content is sent unchanged. What it does not carry is Anthropic's own
-tool search tool: ``bind_tools`` fails on its type, and a streamed response
-loses the ``tool_search_tool_result`` block, so the next request would send
-the search call without its result. The agent executor streams every model
-call of the loop, so that is the normal case, not a corner. The hub's
-``search_tools`` therefore answers with ``tool_reference`` blocks instead (the
-API's documented custom tool search). A streamed response also drops the
-``context_management.applied_edits`` report, so how much the server cleared
-is known only for a call that was not streamed.
+Both reach the API through the hub's own driver
+(``providers.anthropic_driver``): ``bind(betas=[...], context_management={...})``
+sends the request to the beta endpoint with the header and the body field; a
+dict tool in Anthropic's own shape keeps ``defer_loading``; a ``tool_reference``
+block inside a tool result's content is sent unchanged; the
+``context_management.applied_edits`` report arrives in ``response_metadata``
+on streamed and unstreamed calls alike. The hub's ``search_tools`` answers
+with ``tool_reference`` blocks (the API's documented custom tool search)
+rather than Anthropic's own tool search tool, so the catalogue search stays
+the same on every provider.
 """
 from __future__ import annotations
 
@@ -44,11 +40,8 @@ _FAMILY = re.compile(r"(opus|sonnet|haiku)-(\d{1,2})(?!\d)(?:-(\d{1,2})(?!\d))?"
 def is_anthropic_client(llm: Any) -> bool:
     """True for the built-in Anthropic chat model (not a gateway that speaks
     another protocol under an Anthropic model name)."""
-    try:
-        from langchain_anthropic import ChatAnthropic
-    except ImportError:
-        return False
-    return isinstance(llm, ChatAnthropic)
+    from providers.anthropic_driver import AnthropicChatModel
+    return isinstance(llm, AnthropicChatModel)
 
 
 def model_id(llm: Any) -> str:

@@ -47,7 +47,10 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
   // The stored versions of the chosen agent, for the version pin
   // (agents/versions.py): a widget answers with the live definition, or
   // with the version picked here.
-  const [versions, setVersions] = useState([]);
+  // Remembers which agent the list belongs to, so a cleared or changed agent
+  // never shows another agent's versions.
+  const [versionsOf, setVersionsOf] = useState({ agentId: '', list: [] });
+  const versions = form.agentId && versionsOf.agentId === form.agentId ? versionsOf.list : [];
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -65,11 +68,12 @@ export default function WidgetForm({ widget, workspace, options, onSaved, onCanc
   }, [workspace]);
 
   useEffect(() => {
-    if (!form.agentId) { setVersions([]); return undefined; }
+    if (!form.agentId) return undefined;
     let alive = true;
-    getAgentVersions(form.agentId)
-      .then(({ data }) => { if (alive) setVersions(data?.versions || []); })
-      .catch(() => { if (alive) setVersions([]); });
+    const agentId = form.agentId;
+    getAgentVersions(agentId)
+      .then(({ data }) => { if (alive) setVersionsOf({ agentId, list: data?.versions || [] }); })
+      .catch(() => { if (alive) setVersionsOf({ agentId, list: [] }); });
     return () => { alive = false; };
   }, [form.agentId]);
 

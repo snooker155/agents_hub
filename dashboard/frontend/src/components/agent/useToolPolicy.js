@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getAgentToolPolicy, getToolPolicyDecisions, updateAgentToolPolicy } from '../../api/toolPolicy';
 
 export const TOOL_POLICY_MODES = ['always_allow', 'always_ask', 'auto'];
@@ -31,30 +31,39 @@ export default function useToolPolicy({ agentId, workspace, onSaved, loadFailedT
 
   // Read through refs so new text (a language switch) does not refetch.
   const textRef = useRef({ loadFailedText, saveFailedText });
-  textRef.current = { loadFailedText, saveFailedText };
+  useLayoutEffect(() => { textRef.current = { loadFailedText, saveFailedText }; });
 
-  const load = useCallback(async () => {
-    if (!agentId) return;
-    setLoading(true);
-    setError('');
-    try {
-      const { data: body } = await getAgentToolPolicy(agentId, workspace);
-      setData(body);
-      setDraft(body?.tool_policy || {});
-    } catch (e) {
-      setError(e?.response?.data?.detail || textRef.current.loadFailedText);
-    } finally {
-      setLoading(false);
-    }
-    try {
-      const { data: rows } = await getToolPolicyDecisions({ agentId, limit: 10 });
-      setDecisions(Array.isArray(rows?.decisions) ? rows.decisions : []);
-    } catch {
-      setDecisions([]);
-    }
+  // A promise chain rather than an async body: nothing sets state
+  // synchronously, so the effect below can call it.
+  const load = useCallback(() => {
+    if (!agentId) return Promise.resolve();
+    return getAgentToolPolicy(agentId, workspace)
+      .then(({ data: body }) => {
+        setError('');
+        setData(body);
+        setDraft(body?.tool_policy || {});
+      })
+      .catch((e) => {
+        setError(e?.response?.data?.detail || textRef.current.loadFailedText);
+      })
+      .finally(() => setLoading(false))
+      .then(() => getToolPolicyDecisions({ agentId, limit: 10 }))
+      .then(({ data: rows }) => {
+        setDecisions(Array.isArray(rows?.decisions) ? rows.decisions : []);
+      })
+      .catch(() => {
+        setDecisions([]);
+      });
   }, [agentId, workspace]);
 
   useEffect(() => { load(); }, [load]);
+
+  // A user-triggered reload shows the loading state; the first load already does.
+  const reload = useCallback(() => {
+    setLoading(true);
+    setError('');
+    return load();
+  }, [load]);
 
   const dirty = useMemo(() => !sameMap(draft, data?.tool_policy || {}), [draft, data]);
   const effective = useMemo(
@@ -102,7 +111,7 @@ export default function useToolPolicy({ agentId, workspace, onSaved, loadFailedT
 
   return {
     data, draft, decisions, loading, saving, error, saved, dirty,
-    effective, groupOf, setMode, save, reload: load,
+    effective, groupOf, setMode, save, reload,
     modes: Array.isArray(data?.modes) && data.modes.length ? data.modes : TOOL_POLICY_MODES,
   };
 }

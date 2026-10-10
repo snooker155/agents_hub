@@ -14,7 +14,7 @@ const PROVIDERS = ['none', 'jira', 'linear'];
 export default function TrackerCard({ projectId, workspace }) {
   const { t } = useI18n();
   const [tracker, setTracker] = useState({ provider: 'none', remote_id: '' });
-  const [choices, setChoices] = useState([]);
+  const [fetchedChoices, setFetchedChoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -29,12 +29,15 @@ export default function TrackerCard({ projectId, workspace }) {
     return () => { alive = false; };
   }, [projectId]);
 
+  // No provider means no choices, derived rather than reset in the effect.
+  const choices = tracker.provider === 'none' ? [] : fetchedChoices;
+
   useEffect(() => {
-    if (tracker.provider === 'none') { setChoices([]); return; }
+    if (tracker.provider === 'none') return undefined;
     let alive = true;
     listTrackerProjects(tracker.provider, workspace)
-      .then((r) => { if (alive) setChoices(r.data || []); })
-      .catch(() => { if (alive) setChoices([]); });
+      .then((r) => { if (alive) setFetchedChoices(r.data || []); })
+      .catch(() => { if (alive) setFetchedChoices([]); });
     return () => { alive = false; };
   }, [tracker.provider, workspace]);
 

@@ -96,20 +96,21 @@ function MemoryConsolidationPanel({ poolId, onClose, onApplied }) {
   const [busy, setBusy] = useState(false);
   const pollRef = useRef(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const resp = await listMemoryConsolidations(poolId, { limit: 20 });
+  // A promise chain rather than an async body, so the effect below may call
+  // it without a synchronous setState. The first render already shows the
+  // loading state; `reload` raises it again for later refreshes.
+  const load = useCallback(() => listMemoryConsolidations(poolId, { limit: 20 })
+    .then((resp) => {
       const items = resp.data.consolidations || [];
       setRows(items);
-      if (!selected && items[0]) setSelected(items[0].id);
-    } catch (e) {
+      setSelected((cur) => (!cur && items[0] ? items[0].id : cur));
+    })
+    .catch((e) => {
       toast.error(t('memoryConsolidation.errors.load'), errorDetail(e));
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poolId, toast, t]);
+    })
+    .finally(() => setLoading(false)), [poolId, toast, t]);
+
+  const reload = () => { setLoading(true); load(); };
 
   useEffect(() => { load(); }, [load]);
 
@@ -155,7 +156,7 @@ function MemoryConsolidationPanel({ poolId, onClose, onApplied }) {
       await applyMemoryConsolidation(jobId, { agent_id: applyAgentId });
       toast.success(t('memoryConsolidation.applied'));
       onApplied?.();
-      load();
+      reload();
     } catch (e) {
       toast.error(t('memoryConsolidation.errors.apply'), errorDetail(e));
     } finally {
@@ -167,7 +168,7 @@ function MemoryConsolidationPanel({ poolId, onClose, onApplied }) {
     setBusy(true);
     try {
       await discardMemoryConsolidation(jobId);
-      load();
+      reload();
     } catch (e) {
       toast.error(t('memoryConsolidation.errors.discard'), errorDetail(e));
     } finally {

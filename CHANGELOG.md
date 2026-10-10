@@ -79,6 +79,24 @@ turns that section into the next release.
 
 ### Changed
 
+- **The model layer and the agent loop are the hub's own.** `langchain-openai`
+  and `langchain-anthropic` are replaced by `providers/openai_driver.py` and
+  `providers/anthropic_driver.py`, two `langchain_core` chat models on the
+  official SDKs; LangChain's `AgentExecutor` is replaced by
+  `agents/loop_executor.py` with the same contract and the same callback
+  events. What changes for a run: a local server's separate
+  `reasoning_content` shows in the chat on full answers and in the stream
+  alike; gpt-5.x at reasoning level off gets its temperature; usage on
+  streamed OpenAI calls is asked for by the address the request goes to, so
+  an empty `OPENAI_BASE_URL` in the environment no longer prices them as
+  free; Anthropic's context editing reports what it cleared on streamed calls
+  too. The `langchain` monolith, `langchain-community` and `tiktoken` leave
+  the requirements; `langchain-core` moves to the 1.x line (with
+  `langchain-google-genai` 4, `langchain-ollama` 1 and
+  `langchain-mcp-adapters` 0.3), which closes the last two accepted
+  advisories in `scripts/ci/audit_ignore.txt`. The code runs on
+  `langchain-core` 0.3 as well, so an environment not yet reinstalled from
+  `requirements.lock` keeps working.
 - Chatterbox and Qwen3-TTS read a paragraph in one go (up to 400 and 600
   characters) instead of a few sentences at a time, so the pace and the
   intonation hold through it; a blank line still starts a new piece.

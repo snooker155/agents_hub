@@ -63,7 +63,11 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
   const { t } = useI18n();
   const toast = useToast();
   const [state, setState] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // A reload the person asked for (the Refresh button); the first load and a
+  // refreshKey change are derived from `loadedRefresh` below.
+  const [reloading, setReloading] = useState(false);
+  const [loadedRefresh, setLoadedRefresh] = useState(null);
+  const loading = reloading || loadedRefresh !== refreshKey;
   const [busyFile, setBusyFile] = useState('');
   const [loadForm, setLoadForm] = useState({}); // file -> { context_length, gpu_layers }
   const [openLoadFor, setOpenLoadFor] = useState('');
@@ -92,25 +96,32 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
   const onStatusRef = useRef(onStatus);
   useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
 
-  const load = useCallback(async (silent) => {
-    if (!silent) setLoading(true);
-    let next;
-    try {
-      const { data } = await getRuntimeStatus();
-      next = data || { configured: false };
-    } catch (e) {
-      next = { configured: true, ok: false, error: errorDetail(e) };
-    } finally {
-      if (!silent) setLoading(false);
-    }
-    setState(next);
-    onStatusRef.current?.(next);
-  }, []);
+  // Promise chains, not async functions: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const refresh = useCallback(() => getRuntimeStatus()
+    .then(
+      ({ data }) => data || { configured: false },
+      (e) => ({ configured: true, ok: false, error: errorDetail(e) }),
+    )
+    .then((next) => {
+      setState(next);
+      onStatusRef.current?.(next);
+    }), []);
 
-  useEffect(() => { load(false); }, [load, refreshKey]);
+  const load = useCallback((silent) => {
+    if (silent) return refresh();
+    setReloading(true);
+    return refresh().then(() => setReloading(false));
+  }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    refresh().then(() => { if (!cancelled) setLoadedRefresh(refreshKey); });
+    return () => { cancelled = true; };
+  }, [refresh, refreshKey]);
   // A reload asked for from outside (the usage card's Refresh) runs without
   // this section's spinner.
-  useEffect(() => { if (reloadKey) load(true); }, [load, reloadKey]);
+  useEffect(() => { if (reloadKey) refresh(); }, [refresh, reloadKey]);
 
   // Poll every 10s while this section stays mounted (i.e. while the Local
   // tab is open), independent of the shared job list's own faster polling.

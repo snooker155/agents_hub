@@ -28,7 +28,10 @@ const MarketplaceAgent = () => {
   const { id } = useParams();
   const { selectedWorkspace } = useWorkspace();
   const [agent, setAgent] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // The agent and workspace last fetched for; loading is derived from it.
+  const fetchKey = `${id}|${selectedWorkspace || 'default'}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== fetchKey;
   const [notFound, setNotFound] = useState(false);
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState('');
@@ -36,13 +39,13 @@ const MarketplaceAgent = () => {
   const isDefaultWs = !selectedWorkspace || selectedWorkspace === 'default';
 
   useEffect(() => {
-    setLoading(true);
-    setNotFound(false);
+    let cancelled = false;
     getMarketplaceAgent(id, selectedWorkspace || 'default')
-      .then(resp => setAgent(resp.data))
-      .catch(() => setNotFound(true))
-      .finally(() => setLoading(false));
-  }, [id, selectedWorkspace]);
+      .then(resp => { if (!cancelled) { setNotFound(false); setAgent(resp.data); } })
+      .catch(() => { if (!cancelled) setNotFound(true); })
+      .finally(() => { if (!cancelled) setLoadedKey(fetchKey); });
+    return () => { cancelled = true; };
+  }, [id, selectedWorkspace, fetchKey]);
 
   const handleAdd = async () => {
     if (isDefaultWs || !agent) return;

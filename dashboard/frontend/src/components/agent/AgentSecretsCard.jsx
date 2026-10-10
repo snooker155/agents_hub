@@ -31,14 +31,15 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
   const [savedIdentity, setSavedIdentity] = useState('app');
   const [available, setAvailable] = useState([]);
   const [draft, setDraft] = useState('');
-  const [loading, setLoading] = useState(true);
+  // Derived from the agent the names were fetched for, not set in the effect.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== agentId;
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getAgentSecrets(agentId)
       .then(({ data }) => {
         if (cancelled) return;
@@ -50,7 +51,7 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
         setSavedIdentity(who);
       })
       .catch(() => { if (!cancelled) { setNames([]); setSaved([]); } })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedFor(agentId); });
     return () => { cancelled = true; };
   }, [agentId]);
 

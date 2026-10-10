@@ -228,7 +228,23 @@ def test_loop_fires_due_jobs_skips_future_and_leased(store, no_side_effects, fas
         lease_owner="stale", lease_until=now - timedelta(seconds=1),
     ))
 
-    asyncio.run(_run_for(fast_scheduler, 0.1))
+    # Run until the loop has done what is checked below, not for a fixed time:
+    # on a loaded machine a 0.1s window held fewer ticks than asserted. The
+    # escalation interval is far longer than the run, so it sweeps once (the
+    # first tick) however slow the ticks are.
+    fast_scheduler.ESCALATION_INTERVAL_SECONDS = 3600.0
+
+    async def _until_done():
+        await fast_scheduler.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            fired = set(no_side_effects)
+            if len(maintenance_calls) >= 3 and {str(due.id), str(expired_lease.id)} <= fired:
+                break
+            await asyncio.sleep(0.01)
+        await fast_scheduler.stop()
+
+    asyncio.run(_until_done())
 
     fired_ids = set(no_side_effects)
     assert str(due.id) in fired_ids
@@ -240,10 +256,9 @@ def test_loop_fires_due_jobs_skips_future_and_leased(store, no_side_effects, fas
     assert store.get(future.id).status == JobStatus.scheduled
     assert store.get(leased.id).lease_owner == "other"  # untouched by the loop
 
-    # Maintenance ticks every loop pass; escalation only every ~0.03s, both
-    # driven by the same 0.1s run, so maintenance must clearly outpace it.
+    # Maintenance runs every pass; escalation is throttled to its interval.
     assert len(maintenance_calls) >= 3
-    assert 1 <= len(escalation_calls) < len(maintenance_calls)
+    assert len(escalation_calls) == 1
 
 
 def test_stop_ends_the_loop_promptly_even_with_a_long_tick(store, monkeypatch):

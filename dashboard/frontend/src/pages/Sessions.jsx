@@ -42,13 +42,20 @@ export default function Sessions() {
   const [sessions, setSessions]     = useState([]);
   const [totalSessions, setTotalSessions] = useState(0);
   const [workspaces, setWorkspaces] = useState([]);
-  const [loading, setLoading]       = useState(true);
 
   const [filterWorkspace, setFilterWorkspace] = useState(selectedWorkspace || '');
   const [filterStatus,    setFilterStatus]    = useState('');
   const [filterFlow,      setFilterFlow]      = useState('');
   const [filterFrom,      setFilterFrom]      = useState('');
   const [filterTo,        setFilterTo]        = useState('');
+
+  // Following the workspace picked in the header: set while rendering when it
+  // changes, not mirrored by an effect.
+  const [seenSelected, setSeenSelected] = useState(selectedWorkspace);
+  if (seenSelected !== selectedWorkspace) {
+    setSeenSelected(selectedWorkspace);
+    setFilterWorkspace(selectedWorkspace || '');
+  }
 
   const [stopping,     setStopping]     = useState({});
   const [deleting,     setDeleting]     = useState({});
@@ -82,40 +89,48 @@ export default function Sessions() {
   // The backend filters, orders and pages in SQL and answers {items, total, ...};
   // the page asks for the one page on screen.
   const [refreshing, setRefreshing] = useState(false);
-  const fetchSessions = useCallback(async () => {
-    try {
-      const params = { ...pageParams };
-      if (effectiveWorkspace) params.workspace = effectiveWorkspace;
-      if (filterStatus) params.status = filterStatus;
-      if (filterFrom)   params.from_date = filterFrom;
-      if (filterTo)     params.to_date = filterTo;
-      if (filterFlow === 'true')  params.is_flow = true;
-      if (filterFlow === 'false') params.is_flow = false;
-      const res = await getSessions(params);
-      const data = res.data || {};
-      const items = Array.isArray(data) ? data : (data.items || []);
-      setSessions(items);
-      setTotalSessions(Array.isArray(data) ? items.length : (data.total || 0));
-    } catch (err) {
-      console.error('Failed to load sessions', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow, pageParams]);
-
-  useEffect(() => { setFilterWorkspace(selectedWorkspace || ''); }, [selectedWorkspace]);
+  // The rows on screen are for this query; a different one shows the loader,
+  // derived rather than set inside the effect.
+  const queryKey = JSON.stringify([effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow, pageParams]);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== queryKey;
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const fetchSessions = useCallback(() => {
+    const params = { ...pageParams };
+    if (effectiveWorkspace) params.workspace = effectiveWorkspace;
+    if (filterStatus) params.status = filterStatus;
+    if (filterFrom)   params.from_date = filterFrom;
+    if (filterTo)     params.to_date = filterTo;
+    if (filterFlow === 'true')  params.is_flow = true;
+    if (filterFlow === 'false') params.is_flow = false;
+    return getSessions(params)
+      .then((res) => {
+        const data = res.data || {};
+        const items = Array.isArray(data) ? data : (data.items || []);
+        setSessions(items);
+        setTotalSessions(Array.isArray(data) ? items.length : (data.total || 0));
+      })
+      .catch((err) => {
+        console.error('Failed to load sessions', err);
+      })
+      .then(() => setLoadedKey(queryKey));
+  }, [effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow, pageParams, queryKey]);
 
   useEffect(() => {
     getWorkspaces().then(r => setWorkspaces(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     fetchSessions();
   }, [fetchSessions, liveUpdates]);
   useLiveRefetch(() => fetchSessions(), { type: 'sessions.changed', enabled: liveUpdates });
 
-  useEffect(() => {
+  // Checked rows that left the list are dropped when the list changes (set
+  // while rendering, not in an effect).
+  const [seenSessions, setSeenSessions] = useState(sessions);
+  if (seenSessions !== sessions) {
+    setSeenSessions(sessions);
     const visible = new Set(sessions.map(s => s.session_id));
     setSelectedIds(prev => {
       const next = {};
@@ -124,7 +139,7 @@ export default function Sessions() {
       });
       return next;
     });
-  }, [sessions]);
+  }
 
   const handleStop = async (sessionId) => {
     setStopping(s => ({ ...s, [sessionId]: true }));

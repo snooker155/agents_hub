@@ -1,9 +1,9 @@
 """
 The model call inside the agent loop, with room for the loop's own policies.
 
-LangChain's ``create_tool_calling_agent`` is one fixed chain: format the tool
-trail into messages, fill the prompt, call the model with every tool bound,
-parse the answer. Several things the hub needs happen exactly between those
+The classic tool-calling chain is four fixed stages: format the tool trail
+into messages, fill the prompt, call the model with every tool bound, parse
+the answer. Several things the hub needs happen exactly between those
 steps and nowhere else:
 
 * a message the user sent while the run was working has to reach the model
@@ -18,11 +18,11 @@ steps and nowhere else:
   tools/handoff.py) has to end the turn without another model call
   (:func:`end_turn`, and ``return_direct`` honoured through tool wrappers).
 
-So the chain is rebuilt here with the same four stages and a hook between each.
+So the chain is built here with the same four stages and a hook between each.
 Every hook is an optional method on a :class:`LoopExtension`; an extension
 module decides for itself, from the agent it is handed, whether it applies
 (``extension_for(agent)`` returns None when it does not), and with no extension
-active the chain is exactly LangChain's: same messages, same bound tools, same
+active the chain is the classic one: same messages, same bound tools, same
 parser, so an agent that uses none of this behaves as it always has.
 
 What one run learns on the way (which model answered, what was folded, which
@@ -30,12 +30,13 @@ messages were injected, which tools were loaded) lives on a :class:`LoopState`.
 The state is per run, never per agent: a built agent is cached and reused
 across runs (agents/agent_cache.py), so it travels in a context variable that
 ``StandardAgent.run`` sets for the length of one executor call. The executor
-runs tools and model calls in the caller's context (``asyncio.to_thread`` and
-LangChain's executor both copy it), so every hook sees the state of its own run.
+(agents/loop_executor.py) runs tools and model calls in the caller's context,
+so every hook sees the state of its own run.
 """
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 import os
 import threading
@@ -44,6 +45,9 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from langchain_core.agents import AgentActionMessageLog, AgentFinish
+from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 
 log = logging.getLogger(__name__)
@@ -195,7 +199,7 @@ def pop_cancelled_summary(run_id: str) -> Dict[str, Any]:
 def end_turn(output: str, *, tool: str = "", prefer_model_text: bool = False) -> bool:
     """Called by a tool that has done what the turn was for: end the turn now.
 
-    LangChain's ``return_direct`` is a fixed property of a tool, so a tool
+    A tool's ``return_direct`` is a fixed property of the tool, so a tool
     that sometimes succeeds and sometimes refuses (and wants the model to try
     again) cannot use it. This is the per-call form: the loop's next pass
     answers with *output* without calling the model again. With
@@ -326,7 +330,7 @@ class LoopExtension:
                        scratchpad: List[Any]) -> List[Any]:
         """Change the tool-trail messages before the prompt is filled.
 
-        ``scratchpad`` is what LangChain's ``format_to_tool_messages`` made of
+        ``scratchpad`` is what :func:`format_steps` made of
         ``inputs["intermediate_steps"]`` (possibly already changed by an
         earlier extension). ``inputs`` also carries ``chat_history`` when the
         caller passed one; an extension that wants to shorten it returns the
@@ -396,6 +400,7 @@ def load_extensions(agent: Any) -> List[LoopExtension]:
 
     out: List[LoopExtension] = []
     for mod_name in EXTENSION_MODULES:
+        ext: Any = None
         try:
             mod = importlib.import_module(mod_name)
             factory = getattr(mod, "extension_for", None)
@@ -409,22 +414,83 @@ def load_extensions(agent: Any) -> List[LoopExtension]:
     return out
 
 
-def _format_steps(steps: Any) -> List[Any]:
-    from langchain.agents.format_scratchpad.tools import format_to_tool_messages
-    return format_to_tool_messages(steps or [])
+class ToolAgentAction(AgentActionMessageLog):
+    """One tool call the model made, with the message that carried it and
+    the call id its result answers to."""
+
+    tool_call_id: str
+
+
+def tool_message_for(action: ToolAgentAction, observation: Any) -> ToolMessage:
+    """The tool message that answers *action* with *observation*."""
+    if isinstance(observation, str):
+        content = observation
+    else:
+        try:
+            content = json.dumps(observation, ensure_ascii=False)
+        except (TypeError, ValueError):
+            content = str(observation)
+    return ToolMessage(tool_call_id=action.tool_call_id, content=content,
+                       additional_kwargs={"name": action.tool})
+
+
+def format_steps(steps: Any) -> List[Any]:
+    """The tool trail as messages: each model message that made tool calls,
+    once, followed by the tool messages answering it."""
+    messages: List[Any] = []
+    for action, observation in steps or []:
+        if isinstance(action, ToolAgentAction):
+            for message in [*list(action.message_log), tool_message_for(action, observation)]:
+                if message not in messages:
+                    messages.append(message)
+        else:
+            messages.append(AIMessage(content=action.log))
+    return messages
+
+
+def parse_actions(message: Any) -> Any:
+    """What the model asked for: a list of :class:`ToolAgentAction`, one per
+    tool call, or an ``AgentFinish`` when it answered without one."""
+    if not isinstance(message, AIMessage):
+        raise TypeError(f"Expected an AI message, got {type(message)}")
+    tool_calls: List[Any] = list(message.tool_calls)
+    if not tool_calls:
+        raw = message.additional_kwargs.get("tool_calls")
+        if not raw:
+            return AgentFinish(return_values={"output": message.content}, log=str(message.content))
+        for call in raw:
+            function = call.get("function") or {}
+            try:
+                args = json.loads(function.get("arguments") or "{}")
+            except json.JSONDecodeError as exc:
+                raise OutputParserException(
+                    f"Could not parse tool input: {function} because the arguments are not valid JSON."
+                ) from exc
+            tool_calls.append({"name": function.get("name"), "args": args, "id": call.get("id")})
+    actions = []
+    for call in tool_calls:
+        args = call["args"]
+        tool_input = args.get("__arg1", args) if isinstance(args, dict) else args
+        said = f"responded: {message.content}\n" if message.content else "\n"
+        actions.append(ToolAgentAction(
+            tool=call["name"], tool_input=tool_input,
+            log=f"\nInvoking: `{call['name']}` with `{tool_input}`\n{said}\n",
+            message_log=[message], tool_call_id=str(call.get("id") or "")))
+    return actions
+
+
+_format_steps = format_steps
 
 
 def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
                          extensions: Optional[List[LoopExtension]] = None) -> Runnable:
-    """The agent runnable for ``AgentExecutor``: LangChain's tool-calling chain
-    with the extension hooks between its stages.
+    """The agent runnable for :class:`agents.loop_executor.LoopExecutor`: the
+    tool-calling chain with the extension hooks between its stages.
 
     Streaming is preserved: the per-call chain (prompt, bound model) is returned
     from a ``RunnableLambda``, which LangChain then streams with the same input
     and config, so token callbacks fire exactly as before.
     """
-    from langchain.agents.output_parsers.tools import ToolsAgentOutputParser
-
     exts = list(extensions or [])
     all_tools = list(tools)
     by_name = {getattr(t, "name", ""): t for t in all_tools}
@@ -462,8 +528,7 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
         # the run's final answer.
         finished = _finish_output(state, steps, by_name)
         if finished is not None:
-            from langchain_core.messages import AIMessage
-            return RunnableLambda(lambda _x, _text=finished: AIMessage(content=_text))
+            return RunnableLambda(lambda _x: AIMessage(content=finished))
         state.model_calls += 1
         scratchpad = _format_steps(steps)
         payload = dict(inputs)
@@ -489,9 +554,9 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
             except Exception:  # noqa: BLE001
                 log.warning("agent_loop: %s.wrap_model failed", ext.name, exc_info=True)
         if prompt_shapers:
-            return (RunnableLambda(lambda _x, _p=payload: _p) | prompt
-                    | RunnableLambda(lambda value, _s=state: _shape_prompt(_s, value)) | bound)
-        return RunnableLambda(lambda _x, _p=payload: _p) | prompt | bound
+            return (RunnableLambda(lambda _x: payload) | prompt
+                    | RunnableLambda(lambda value: _shape_prompt(state, value)) | bound)
+        return RunnableLambda(lambda _x: payload) | prompt | bound
 
     prompt_shapers = [e for e in exts if type(e).shape_prompt is not LoopExtension.shape_prompt]
 
@@ -508,7 +573,7 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
                 log.warning("agent_loop: %s.shape_prompt failed", ext.name, exc_info=True)
         return ChatPromptValue(messages=messages)
 
-    return RunnableLambda(_route, name="agent_loop") | ToolsAgentOutputParser()
+    return RunnableLambda(_route, name="agent_loop") | RunnableLambda(parse_actions, name="tool_actions")
 
 
 __all__ = [

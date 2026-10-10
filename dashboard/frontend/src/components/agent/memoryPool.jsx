@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Database, FileSearch, FileText, Hash, Layers, Loader, Zap } from 'lucide-react';
+import {
+  BarChart2, CheckCircle, ChevronDown, ChevronUp, Copy, Database, ExternalLink, Eye, FileSearch, FileText,
+  Hash, Layers, Link2, Loader, Zap,
+} from 'lucide-react';
 import { fmtBytes } from './formatBytes';
 import { useI18n } from '../../i18n';
 import { poolDescription, poolName } from '../memoryManager/helpers';
@@ -227,4 +230,4 @@ function MemoryPoolDetails({ pool, withWorkspace = false }) {
 
 // Tool ids the planning toggle owns; static data, kept out of the component so
 
-export { RAG_STATUS, RagBadge, MemoryFileCard, MemoryPoolDetails };
+export { RagBadge, MemoryFileCard, MemoryPoolDetails };

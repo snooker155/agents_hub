@@ -248,22 +248,22 @@ function DiagnosticsSection() {
   const toast = useToast();
   const [doctor, setDoctor] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
+  // Running from the first render: the page opens with a run under way.
+  const [running, setRunning] = useState(true);
 
-  const load = useCallback(async () => {
-    setRunning(true);
-    try {
-      const { data } = await getDoctor();
-      setDoctor(data);
-    } catch (e) {
-      toast.error(t('health.diagnostics.unreachable'), errorDetail(e));
-    } finally {
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getDoctor()
+    .then(({ data }) => setDoctor(data))
+    .catch((e) => toast.error(t('health.diagnostics.unreachable'), errorDetail(e)))
+    .finally(() => {
       setLoading(false);
       setRunning(false);
-    }
-  }, [t, toast]);
+    }), [t, toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const run = () => { setRunning(true); load(); };
 
   const checks = doctor?.checks || [];
 
@@ -277,7 +277,7 @@ function DiagnosticsSection() {
       actions={(
         <button
           type="button"
-          onClick={load}
+          onClick={run}
           disabled={running}
           className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
@@ -344,19 +344,16 @@ function SloCard() {
   const [slo, setSlo] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getSlo();
-      setSlo(data);
-    } catch (e) {
-      toast.error(t('health.slo.unreachable'), errorDetail(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [t, toast]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getSlo()
+    .then(({ data }) => setSlo(data))
+    .catch((e) => toast.error(t('health.slo.unreachable'), errorDetail(e)))
+    .finally(() => setLoading(false)), [t, toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const refresh = () => { setLoading(true); load(); };
 
   const objectives = slo?.objectives || {};
 
@@ -368,7 +365,7 @@ function SloCard() {
       actions={(
         <button
           type="button"
-          onClick={load}
+          onClick={refresh}
           disabled={loading}
           className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
@@ -409,24 +406,23 @@ function SystemWorkspaceCard() {
   const [pruning, setPruning] = useState(false);
   const [everyHours, setEveryHours] = useState(24);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getSystem();
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getSystem()
+    .then(({ data }) => {
       setSystem(data);
       setDisabled(false);
       if (data?.loop?.every_hours) setEveryHours(data.loop.every_hours);
-    } catch (e) {
+    })
+    .catch((e) => {
       if (e?.response?.status === 404) {
         setDisabled(true);
         setSystem(null);
       } else {
         toast.error(t('health.system.unreachable'), errorDetail(e));
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [t, toast]);
+    })
+    .finally(() => setLoading(false)), [t, toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -618,17 +614,17 @@ export default function Health() {
   const [bundling, setBundling] = useState(false);
   const chat = useChatColumn(true);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getHealth();
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getHealth()
+    .then(({ data }) => {
       setHealth(data);
       setError('');
-    } catch (e) {
+    })
+    .catch((e) => {
       setError(e?.response?.data?.detail || e.message || t('health.unreachable'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+    })
+    .finally(() => setLoading(false)), [t]);
 
   useEffect(() => { load(); }, [load]);
 

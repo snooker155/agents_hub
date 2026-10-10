@@ -65,14 +65,13 @@ export default function ExperimentCard({ agentId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [{ data: vers }, { data: exp }] = await Promise.all([
-        getAgentVersions(agentId), getAgentExperiment(agentId),
-      ]);
+  // A promise chain rather than an async body: nothing here sets state
+  // synchronously, so the effect below can call it. The first render already
+  // shows the loading state, and later reloads run behind `busy`.
+  const load = useCallback(() => Promise.all([getAgentVersions(agentId), getAgentExperiment(agentId)])
+    .then(async ([{ data: vers }, { data: exp }]) => {
       const list = vers?.versions || [];
+      setError('');
       setVersions(list);
       setArmA((cur) => (cur !== '' ? cur : (list.length ? String(list[list.length - 1].version) : '')));
       setExperiment(exp?.experiment || null);
@@ -83,12 +82,11 @@ export default function ExperimentCard({ agentId }) {
       } else {
         setReport(null);
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       setError(e?.response?.data?.detail || e?.message || t('agentDetails.experiment.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [agentId, t]);
+    })
+    .finally(() => setLoading(false)), [agentId, t]);
 
   useEffect(() => { load(); }, [load]);
 

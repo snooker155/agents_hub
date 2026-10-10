@@ -4,7 +4,7 @@
 // for the workspace picked in the header, and the Settings tab of a workspace,
 // for that workspace. Both render these sections over one useWorkspaceSettings
 // state (useWorkspaceSettings.js), so a field added here shows up in both places.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getWorkspaceWebPolicy, updateWorkspaceWebPolicy } from '../../api';
 import { RefreshCw, CheckCircle, AlertCircle, Wifi, Lock, Save } from 'lucide-react';
@@ -1006,17 +1006,18 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
   const [allowEdit, setAllowEdit] = useState(null);
   const [denyEdit, setDenyEdit] = useState(null);
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
-  const load = useCallback(async () => {
-    setError('');
-    try {
-      const { data: body } = await getWorkspaceWebPolicy(workspace);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => getWorkspaceWebPolicy(workspace)
+    .then(({ data: body }) => {
+      setError('');
       setData(body);
-    } catch (e) {
+    })
+    .catch((e) => {
       setError(e.response?.data?.detail || tRef.current('settings.errors.webSearchSave'));
-    }
-  }, [workspace]);
+    }), [workspace]);
   useEffect(() => { load(); }, [load]);
 
   const policy = data?.policy || { enabled: false, allow_domains: [], deny_domains: [] };

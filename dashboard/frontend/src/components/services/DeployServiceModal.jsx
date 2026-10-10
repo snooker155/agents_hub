@@ -37,24 +37,29 @@ export default function DeployServiceModal({ open, onClose, agentId = null, defa
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!open) return;
-    setSelectedAgentId(agentId || '');
-    setWorkspace(defaultWorkspace || selectedWorkspace || '');
-    setEnvironmentId('');
-    setName('');
-    setReplicasMin('1');
-    setReplicasMax('1');
-    setConcurrency('4');
-    setIdleStopMinutes('10');
-    setTakeTasks(false);
-    setPublish(false);
-    setShowAdvanced(false);
-    setBudget('');
-    setVersion('');
-    setError('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, agentId, defaultWorkspace]);
+  // Start the form over each time the dialog opens or its target changes:
+  // adjusted during render so the previous values are never painted.
+  const resetKey = open ? `${agentId}|${defaultWorkspace}` : null;
+  const [seenResetKey, setSeenResetKey] = useState(null);
+  if (seenResetKey !== resetKey) {
+    setSeenResetKey(resetKey);
+    if (resetKey !== null) {
+      setSelectedAgentId(agentId || '');
+      setWorkspace(defaultWorkspace || selectedWorkspace || '');
+      setEnvironmentId('');
+      setName('');
+      setReplicasMin('1');
+      setReplicasMax('1');
+      setConcurrency('4');
+      setIdleStopMinutes('10');
+      setTakeTasks(false);
+      setPublish(false);
+      setShowAdvanced(false);
+      setBudget('');
+      setVersion('');
+      setError('');
+    }
+  }
 
   useEffect(() => {
     if (!open) return;

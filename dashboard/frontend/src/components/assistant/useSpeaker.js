@@ -14,7 +14,7 @@
  * talk button's press: it starts the shared element on a silent clip, and
  * every later answer plays through that same element.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AssistantError, speakAssistant } from '../../api/assistant';
 import { SpeechQueue } from './speechQueue';
 import { plainSpeech } from './sentences';
@@ -37,34 +37,32 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('aborted', 'AbortError')); });
 });
 
-export default function useSpeaker({ serverSpeech = true, language = 'en', voice = '', onFallback = null } = {}) {
-  const [speaking, setSpeaking] = useState(false);
-  const [useBrowser, setUseBrowser] = useState(!serverSpeech);
-  const audioRef = useRef(null);
-  const settings = useRef({ language, voice, useBrowser, onFallback });
-  // One answer, one voice: the language a turn is read in, told from its
-  // first sentence and kept for the rest of it (as the hub does).
-  const turnLanguages = useRef(new Map());
-  useEffect(() => {
-    settings.current = { language, voice, useBrowser, onFallback };
-  }, [language, voice, useBrowser, onFallback]);
+// The queue's callbacks outlive a render, so they read the latest settings
+// from a mutable holder (`ctx`, created once per hook like a ref) rather than
+// from a closure. Writes go through these helpers and happen only in effects
+// and while speaking, never during render.
+function publishSettings(ctx, settings) {
+  ctx.settings = settings;
+}
 
-  useEffect(() => { setUseBrowser(!serverSpeech); }, [serverSpeech]);
+function audioOf(ctx) {
+  if (!ctx.audioEl && typeof Audio === 'function') ctx.audioEl = new Audio();
+  return ctx.audioEl;
+}
 
-  const audio = useCallback(() => {
-    if (!audioRef.current && typeof Audio === 'function') audioRef.current = new Audio();
-    return audioRef.current;
-  }, []);
-
-  const queue = useMemo(() => new SpeechQueue({
+// Built outside the hook, over a plain context object (settings, turn
+// languages, the audio element), so what it reads is touched only when a
+// sentence is spoken, never in render.
+function createQueue({ ctx, setUseBrowser, setSpeaking }) {
+  return new SpeechQueue({
     synthesize: async (item, signal) => {
       const browserClip = () => {
         const text = item.text ? plainSpeech(item.text) : item.fallback;
         if (!text) return null;
-        const page = settings.current.language;
+        const page = ctx.settings.language;
         let lang = textLanguage(text, page) || page;
         if (item.run_id && item.text) {
-          const turns = turnLanguages.current;
+          const turns = ctx.turnLanguages;
           if (!turns.has(item.run_id)) {
             turns.set(item.run_id, lang);
             if (turns.size > 64) turns.delete(turns.keys().next().value);
@@ -75,8 +73,8 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
       };
       // A phrase of the page's own (a refusal said aloud) has no turn to
       // read it from: always the browser's voice.
-      if (item.local || settings.current.useBrowser) return browserSpeechAvailable() ? browserClip() : null;
-      const body = { ...item, language: settings.current.language, voice: settings.current.voice || '' };
+      if (item.local || ctx.settings.useBrowser) return browserSpeechAvailable() ? browserClip() : null;
+      const body = { ...item, language: ctx.settings.language, voice: ctx.settings.voice || '' };
       delete body.fallback;
       for (let attempt = 0; ; attempt += 1) {
         try {
@@ -92,8 +90,8 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
           if (code === 'model_not_added' || code === 'provider_error' || !(err instanceof AssistantError)) {
             // The hub cannot speak here: the browser's voice for the rest of the visit.
             setUseBrowser(true);
-            settings.current.useBrowser = true;
-            if (settings.current.onFallback) settings.current.onFallback(code || 'network');
+            ctx.settings.useBrowser = true;
+            if (ctx.settings.onFallback) ctx.settings.onFallback(code || 'network');
             return browserSpeechAvailable() ? browserClip() : null;
           }
           return null;   // refused (not this turn's words, budget): skip it
@@ -104,15 +102,17 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
       if (clip.kind === 'browser') {
         const utterance = new window.SpeechSynthesisUtterance(clip.text);
         // The answer's language picks the browser's voice, as the hub's does.
-        const lang = clip.lang || settings.current.language;
+        const lang = clip.lang || ctx.settings.language;
         utterance.lang = LOCALES[lang] || lang;
         utterance.onend = () => resolve();
         utterance.onerror = (e) => (e.error === 'interrupted' || e.error === 'canceled' ? resolve() : reject(e));
-        signal.addEventListener('abort', () => { window.speechSynthesis.cancel(); resolve(); });
+        // The abort can come at unmount, when the page (or a test) may already
+        // have lost speechSynthesis.
+        signal.addEventListener('abort', () => { window.speechSynthesis?.cancel(); resolve(); });
         window.speechSynthesis.speak(utterance);
         return;
       }
-      const el = audio();
+      const el = audioOf(ctx);
       if (!el) { resolve(); return; }
       const done = () => { el.onended = null; el.onerror = null; resolve(); };
       el.onended = done;
@@ -124,7 +124,32 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
     }),
     release: (clip) => { if (clip?.kind === 'audio') URL.revokeObjectURL(clip.url); },
     onState: setSpeaking,
-  }), [audio]);
+  });
+}
+
+export default function useSpeaker({ serverSpeech = true, language = 'en', voice = '', onFallback = null } = {}) {
+  const [speaking, setSpeaking] = useState(false);
+  const [useBrowser, setUseBrowser] = useState(!serverSpeech);
+  // One answer, one voice: `turnLanguages` keeps the language a turn is read
+  // in, told from its first sentence (as the hub does).
+  const [ctx] = useState(() => ({
+    settings: { language, voice, useBrowser, onFallback },
+    turnLanguages: new Map(),
+    audioEl: null,
+  }));
+  useEffect(() => {
+    publishSettings(ctx, { language, voice, useBrowser, onFallback });
+  }, [ctx, language, voice, useBrowser, onFallback]);
+
+  // A change of serverSpeech starts over from what the workspace offers, set
+  // while rendering so no extra effect pass is needed.
+  const [seenServerSpeech, setSeenServerSpeech] = useState(serverSpeech);
+  if (seenServerSpeech !== serverSpeech) {
+    setSeenServerSpeech(serverSpeech);
+    setUseBrowser(!serverSpeech);
+  }
+
+  const [queue] = useState(() => createQueue({ ctx, setUseBrowser, setSpeaking }));
 
   useEffect(() => () => queue.cancel(), [queue]);
 
@@ -136,13 +161,13 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
 
   /** Call from a click or key press: lets later answers play without one. */
   const unlock = useCallback(() => {
-    const el = audio();
+    const el = audioOf(ctx);
     if (el && el.paused && !queue.busy) {
       el.src = SILENCE;
       const p = el.play();
       if (p && typeof p.catch === 'function') p.catch(() => {});
     }
-  }, [audio, queue]);
+  }, [ctx, queue]);
 
   return { say, cancel, unlock, speaking, browser: useBrowser };
 }

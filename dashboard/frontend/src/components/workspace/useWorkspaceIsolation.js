@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { getWorkspaceIsolation } from '../../api/isolation';
 import { patchWorkspaceSummary } from '../../api/workspaceSummary';
 
@@ -31,38 +31,60 @@ export function setWorkspaceIsolationCache(workspace, data) {
   if (data) patchWorkspaceSummary(workspace, { isolated: Boolean(data.isolated) });
 }
 
-export default function useWorkspaceIsolation(workspace) {
-  const [data, setData] = useState(() => (workspace ? cache.get(workspace) ?? null : null));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+function subscribeTo(workspace, onChange) {
+  if (!workspace) return () => {};
+  const set = listeners.get(workspace) || new Set();
+  set.add(onChange);
+  listeners.set(workspace, set);
+  return () => { set.delete(onChange); };
+}
 
-  const load = useCallback(async () => {
-    if (!workspace) { setData(null); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const { data: body } = await getWorkspaceIsolation(workspace);
-      setWorkspaceIsolationCache(workspace, body);
-    } catch (e) {
-      // Not the owner, the workspace is gone, or the network is down: the
-      // badge shows nothing and the tool picker gates nothing rather than
-      // blocking on an error the user did not ask to see here.
-      setError(e?.response?.data?.detail || e?.message || '');
-    } finally {
-      setLoading(false);
-    }
+export default function useWorkspaceIsolation(workspace) {
+  // The cache is an external store: read it with useSyncExternalStore rather
+  // than mirroring it into state from an effect.
+  const subscribe = useCallback((onChange) => subscribeTo(workspace, onChange), [workspace]);
+  const data = useSyncExternalStore(
+    subscribe,
+    () => (workspace ? cache.get(workspace) ?? null : null),
+  );
+  // `reloading` is an explicit reload(); a first fetch shows as `settled`
+  // lagging behind the workspace while nothing is cached for it.
+  const [reloading, setReloading] = useState(false);
+  const [settled, setSettled] = useState(null);
+  const [error, setError] = useState('');
+  const loading = reloading || Boolean(workspace && !cache.has(workspace) && settled !== workspace);
+
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const fetchState = useCallback(() => {
+    if (!workspace) return;
+    getWorkspaceIsolation(workspace)
+      .then(({ data: body }) => {
+        setError('');
+        setWorkspaceIsolationCache(workspace, body);
+      })
+      .catch((e) => {
+        // Not the owner, the workspace is gone, or the network is down: the
+        // badge shows nothing and the tool picker gates nothing rather than
+        // blocking on an error the user did not ask to see here.
+        setError(e?.response?.data?.detail || e?.message || '');
+      })
+      .finally(() => {
+        setReloading(false);
+        setSettled(workspace);
+      });
   }, [workspace]);
 
+  const load = useCallback(() => {
+    if (!workspace) return;
+    setReloading(true);
+    setError('');
+    fetchState();
+  }, [workspace, fetchState]);
+
   useEffect(() => {
-    if (!workspace) { setData(null); return undefined; }
-    setData(cache.get(workspace) ?? null);
-    const set = listeners.get(workspace) || new Set();
-    const onChange = () => setData(cache.get(workspace) ?? null);
-    set.add(onChange);
-    listeners.set(workspace, set);
-    if (!cache.has(workspace)) load();
-    return () => { set.delete(onChange); };
-  }, [workspace, load]);
+    if (workspace && !cache.has(workspace)) fetchState();
+  }, [workspace, fetchState]);
 
   return { data, loading, error, reload: load };
 }

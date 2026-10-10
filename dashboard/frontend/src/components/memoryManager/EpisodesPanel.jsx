@@ -12,29 +12,49 @@ function EpisodesPanel({ poolId, stats, onChange }) {
   const { t } = useI18n();
   const toast = useToast();
   const [episodes, setEpisodes] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [kindFilter, setKindFilter] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('');
   const [query, setQuery] = useState('');
 
-  const load = useCallback(async () => {
-    if (!poolId) return;
-    setLoading(true);
+  // Only reads: callers decide what to do with the list, so the effect below
+  // sets no state until the answer arrives.
+  const fetchEpisodes = useCallback(async () => {
     try {
       const params = { limit: 100 };
       if (kindFilter) params.kind = kindFilter;
       if (outcomeFilter) params.outcome = outcomeFilter;
       if (query.trim()) params.query = query.trim();
       const r = await listMemoryEpisodes(poolId, params);
-      setEpisodes(r.data?.episodes || []);
+      return r.data?.episodes || [];
     } catch {
-      setEpisodes([]);
-    } finally {
-      setLoading(false);
+      return [];
     }
   }, [poolId, kindFilter, outcomeFilter, query]);
 
-  useEffect(() => { load(); }, [load]);
+  // The list on screen is for these filters; a different set shows "loading"
+  // until its answer lands, without a setState in the effect.
+  const requestKey = poolId ? `${poolId}|${kindFilter}|${outcomeFilter}|${query.trim()}` : null;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = refreshing || (requestKey !== null && loadedKey !== requestKey);
+
+  useEffect(() => {
+    if (!poolId) return undefined;
+    let cancelled = false;
+    fetchEpisodes().then((list) => {
+      if (cancelled) return;
+      setEpisodes(list);
+      setLoadedKey(requestKey);
+    });
+    return () => { cancelled = true; };
+  }, [poolId, fetchEpisodes, requestKey]);
+
+  const load = async () => {
+    if (!poolId) return;
+    setRefreshing(true);
+    setEpisodes(await fetchEpisodes());
+    setRefreshing(false);
+  };
 
   const handleDelete = async (epId) => {
     if (!window.confirm(t('memoryManager.confirmDeleteEpisode'))) return;

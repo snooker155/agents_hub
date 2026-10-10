@@ -13,7 +13,7 @@ from typing import Any, List
 
 import httpx
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompt_values import ChatPromptValue
@@ -194,7 +194,7 @@ def _run(agent, ext, replies):
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
     runnable = build_agent_runnable(model, agent._tools, prompt, [ext])
-    executor = AgentExecutor(agent=runnable, tools=agent._tools, return_intermediate_steps=True)
+    executor = LoopExecutor(agent=runnable, tools=agent._tools, return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)
     try:
@@ -240,8 +240,8 @@ def test_a_deferred_tool_called_without_loading_still_runs():
 # ── Anthropic: deferred loading and tool references ──────────────────────────
 
 def _anthropic(model: str = "claude-opus-4-6"):
-    from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model=model, api_key="test-key")
+    from providers.anthropic_driver import AnthropicChatModel
+    return AnthropicChatModel(model=model, api_key="test-key")
 
 
 def _capture(llm) -> List[dict]:
@@ -255,7 +255,7 @@ def _capture(llm) -> List[dict]:
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
             "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 2}})
 
-    llm.__dict__["_client"] = anthropic.Client(
+    llm.root_client = anthropic.Client(
         api_key="test-key", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     return sent
 
@@ -406,7 +406,7 @@ def test_anthropic_run_end_to_end_sends_a_constant_tool_array(monkeypatch):
                               content=_sse(next(replies), f"msg_{len(sent)}").encode())
 
     llm = _anthropic()
-    llm.__dict__["_client"] = anthropic.Client(
+    llm.root_client = anthropic.Client(
         api_key="test-key", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     calls: List[str] = []
     agent = _agent(_tools(extra=25, calls=calls), provider="anthropic",
@@ -416,7 +416,7 @@ def test_anthropic_run_end_to_end_sends_a_constant_tool_array(monkeypatch):
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
-    executor = AgentExecutor(agent=build_agent_runnable(llm, agent._tools, prompt, exts),
+    executor = LoopExecutor(agent=build_agent_runnable(llm, agent._tools, prompt, exts),
                              tools=agent._tools, return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)

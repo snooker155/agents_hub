@@ -24,8 +24,11 @@ export default function Guardrails() {
   const { workspaceFilter } = useWorkspace();
   const [guardrails, setGuardrails] = useState([]);
   const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [includeArchived, setIncludeArchived] = useState(false);
+  // Loading is derived from the scope the lists were fetched for.
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loadKey = `${workspaceFilter}|${includeArchived}`;
+  const loading = loadedKey !== loadKey;
   const [modalGuardrail, setModalGuardrail] = useState(undefined); // undefined closed, null create, object edit
   const [testingId, setTestingId] = useState(null);
   const [acting, setActing] = useState({});
@@ -41,11 +44,14 @@ export default function Guardrails() {
     } catch (err) {
       console.error('Failed to load guardrails', err);
     } finally {
-      setLoading(false);
+      setLoadedKey(loadKey);
     }
-  }, [workspaceFilter, includeArchived]);
+  }, [workspaceFilter, includeArchived, loadKey]);
 
-  useEffect(() => { setLoading(true); fetchData(); }, [fetchData]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with Refresh and act; it sets state after its await
+    fetchData();
+  }, [fetchData]);
 
   const act = async (id, fn) => {
     setActing((s) => ({ ...s, [id]: true }));

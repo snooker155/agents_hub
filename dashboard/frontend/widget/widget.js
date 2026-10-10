@@ -347,7 +347,7 @@
         for (;;) {
           const cr = buffer.indexOf('\r');
           const lf = buffer.indexOf('\n');
-          let end = -1;
+          let end;
           if (cr !== -1 && (lf === -1 || cr < lf)) end = cr;
           else end = lf;
           if (end === -1) break;

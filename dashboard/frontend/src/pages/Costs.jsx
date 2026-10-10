@@ -68,24 +68,26 @@ function ReportSection({ t, workspace }) {
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  // Loading is derived from the filters the report was fetched for.
+  const [loadedKey, setLoadedKey] = useState(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
 
   const params = { group_by: groupBy, since: since || undefined, until: until || undefined,
     workspace: workspace || undefined };
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError('');
-    getAccountingReport(params)
-      .then(({ data }) => setData(data))
-      .catch((e) => setError(e?.response?.data?.detail || t('costs.report.loadFailed')))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupBy, since, until, workspace, t]);
+  const reportKey = `${groupBy}|${since}|${until}|${workspace}`;
+  const loading = loadedKey !== reportKey;
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let ignore = false;
+    getAccountingReport({ group_by: groupBy, since: since || undefined, until: until || undefined,
+      workspace: workspace || undefined })
+      .then(({ data }) => { if (!ignore) { setData(data); setError(''); } })
+      .catch((e) => { if (!ignore) setError(e?.response?.data?.detail || t('costs.report.loadFailed')); })
+      .finally(() => { if (!ignore) setLoadedKey(reportKey); });
+    return () => { ignore = true; };
+  }, [groupBy, since, until, workspace, reportKey, t]);
 
   const exportCsv = async () => {
     setExporting(true);
@@ -178,7 +180,7 @@ export default function Costs() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const [budget, setBudgetState] = useState(null);
+  const [budgetRaw, setBudgetState] = useState(null);
   const [savingBudget, setSavingBudget] = useState(false);
 
   const wsParam = scope === 'workspace' ? (selectedWorkspace || undefined) : undefined;
@@ -191,15 +193,22 @@ export default function Costs() {
       .finally(() => setLoading(false));
   }, [wsParam, since, until]);
 
-  const loadBudget = useCallback(() => {
-    if (!selectedWorkspace) { setBudgetState(null); return; }
-    getBudget(selectedWorkspace)
-      .then(({ data }) => setBudgetState(data))
-      .catch((e) => console.error('Error fetching budget:', e));
-  }, [selectedWorkspace]);
+  // No workspace means no budget; derived instead of reset in the effect.
+  const budget = selectedWorkspace ? budgetRaw : null;
 
-  useEffect(() => { loadCosts(); }, [loadCosts]);
-  useEffect(() => { loadBudget(); }, [loadBudget]);
+  useEffect(() => {
+    // loadCosts is shared with the Refresh button and owns the loading flag.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- shared loader
+    loadCosts();
+  }, [loadCosts]);
+  useEffect(() => {
+    if (!selectedWorkspace) return undefined;
+    let ignore = false;
+    getBudget(selectedWorkspace)
+      .then(({ data }) => { if (!ignore) setBudgetState(data); })
+      .catch((e) => console.error('Error fetching budget:', e));
+    return () => { ignore = true; };
+  }, [selectedWorkspace]);
 
   const saveBudget = async () => {
     if (!selectedWorkspace || !budget) return;

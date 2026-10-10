@@ -43,7 +43,10 @@ export default function ReadySetCard({ onJobStarted }) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the poll timer and the start handler; it sets state after its await
+    load();
+  }, [load]);
 
   const job = data?.job;
   const running = !!job && ACTIVE.has(job.status);

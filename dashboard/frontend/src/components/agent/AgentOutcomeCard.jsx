@@ -30,7 +30,9 @@ const formFrom = (outcome) => ({
 export default function AgentOutcomeCard({ agentId, readOnly = false }) {
   const { t } = useI18n();
   const [outcome, setOutcome] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // The agent id the outcome was last loaded for; loading is derived from it.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== agentId;
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(formFrom(null));
   const [models, setModels] = useState([]);
@@ -39,11 +41,10 @@ export default function AgentOutcomeCard({ agentId, readOnly = false }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getAgentDefaultOutcome(agentId)
       .then(({ data }) => { if (!cancelled) setOutcome(data?.default_outcome || null); })
       .catch(() => { if (!cancelled) setError(t('agentOutcome.loadFailed')); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedFor(agentId); });
     return () => { cancelled = true; };
   }, [agentId, t]);
 

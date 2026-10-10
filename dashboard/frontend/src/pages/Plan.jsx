@@ -491,8 +491,10 @@ export default function Plan() {
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
   const [pools, setPools] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showFinished, setShowFinished] = useState(false);
+  // Loading is derived from the workspace the data was fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspaceFilter;
+  const [finishedPicked, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
   const [acting, setActing] = useState({});
   const [telegram, setTelegram] = useState({ enabled: false, has_token: false });
@@ -508,12 +510,14 @@ export default function Plan() {
     } catch (err) {
       console.error('Failed to load plan data', err);
     } finally {
-      setLoading(false);
+      setLoadedFor(workspaceFilter);
     }
   }, [workspaceFilter]);
 
   useEffect(() => {
-    setLoading(true);
+    // fetchData is shared with live refetch and the mutation handlers; it sets
+    // state only after its awaits, which the rule cannot see through a call.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- shared loader
     fetchData();
   }, [fetchData, liveUpdates]);
   // One hook, one debounce: jobs and notifications come from the same
@@ -531,11 +535,11 @@ export default function Plan() {
 
   // A linked job that already ran sits in the "finished" group, which is hidden
   // by default — reveal it rather than landing the user on an empty list.
-  useEffect(() => {
-    if (!linkedJobId || showFinished) return;
-    const job = jobs.find(j => j.id === linkedJobId);
-    if (job && !['scheduled', 'paused'].includes(job.status)) setShowFinished(true);
-  }, [linkedJobId, jobs, showFinished]);
+  // Derived, so the reveal needs no effect: the group shows when it was asked
+  // for or when the linked job sits in it.
+  const linkedJob = linkedJobId ? jobs.find(j => j.id === linkedJobId) : null;
+  const showFinished = finishedPicked
+    || (!!linkedJob && !['scheduled', 'paused'].includes(linkedJob.status));
 
   useEffect(() => {
     if (linkedRowRef.current) {

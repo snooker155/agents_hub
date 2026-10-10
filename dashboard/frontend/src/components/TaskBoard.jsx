@@ -537,15 +537,27 @@ export default function TaskBoard({
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from which scope the data was fetched for, so a scope
+  // change shows the spinner without a synchronous setState in the effect.
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loadKey = `${workspace}|${projectId}|${liveUpdates}`;
+  const loading = loadedKey !== loadKey;
 
   const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban'
 
   // Persist showSubtasks per workspace in localStorage
   const _subtasksKey = `task_manager_show_subtasks_${selectedWorkspace || 'default'}`;
-  const [showSubtasks, setShowSubtasks] = useState(() => {
+  const readShowSubtasks = () => {
     try { return localStorage.getItem(_subtasksKey) === 'true'; } catch { return false; }
-  });
+  };
+  const [showSubtasks, setShowSubtasks] = useState(readShowSubtasks);
+  // Reload the preference when the workspace changes (adjusted during render,
+  // not in an effect, so the old value never paints).
+  const [subtasksFor, setSubtasksFor] = useState(_subtasksKey);
+  if (subtasksFor !== _subtasksKey) {
+    setSubtasksFor(_subtasksKey);
+    setShowSubtasks(readShowSubtasks());
+  }
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createDefaultStatus, setCreateDefaultStatus] = useState('todo');
@@ -583,24 +595,18 @@ export default function TaskBoard({
     } catch (err) {
       console.error('Error fetching tasks:', err);
     } finally {
-      setLoading(false);
+      setLoadedKey(loadKey);
     }
   };
 
   useEffect(() => {
-    setLoading(true);
+    // fetchData is shared with live refetch and the mutation handlers; it sets
+    // state only after its awaits, which the rule cannot see through a call.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- shared loader, state is set after the await
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, projectId, liveUpdates]);
   useLiveRefetch(fetchData, { type: 'tasks.changed', enabled: liveUpdates });
-
-  // Reload showSubtasks preference when workspace changes
-  useEffect(() => {
-    try {
-      const key = `task_manager_show_subtasks_${selectedWorkspace || 'default'}`;
-      setShowSubtasks(localStorage.getItem(key) === 'true');
-    } catch { /* storage unavailable — subtasks stay hidden */ }
-  }, [selectedWorkspace]);
 
   // Delete
   const handleDelete = async (taskId, taskTitle) => {

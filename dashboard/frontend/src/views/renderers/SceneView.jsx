@@ -255,9 +255,10 @@ function Lights({ lights }) {
 
 function CameraRig({ camera, controlsRef }) {
   const { camera: cam } = useThree();
+  // eslint-disable-next-line react-hooks/immutability -- the effect applies the camera to the three.js camera object, which lives outside React and is updated in place
   useEffect(() => {
     if (camera?.position && Array.isArray(camera.position)) cam.position.set(...camera.position);
-    // eslint-disable-next-line react-hooks/immutability -- the three.js camera is mutated in place
+    // eslint-disable-next-line react-hooks/immutability -- the three.js camera is a mutable scene object owned by the canvas, updated in place
     if (camera?.fov) { cam.fov = camera.fov; cam.updateProjectionMatrix(); }
     if (controlsRef.current && camera?.target) {
       controlsRef.current.target.set(...camera.target);

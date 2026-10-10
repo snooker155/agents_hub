@@ -87,15 +87,16 @@ function DemoWorkspaceTab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getDemo();
-      setState(data || {});
-      setError(null);
-    } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || t('settings.demo.loadFailed'));
-    }
-  }, [t]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => (
+    getDemo()
+      .then(({ data }) => {
+        setState(data || {});
+        setError(null);
+      })
+      .catch((e) => setError(e?.response?.data?.detail || e?.message || t('settings.demo.loadFailed')))
+  ), [t]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -12,10 +12,9 @@ Two independent policies live here, both driven by ``AgentSpec`` fields
   before giving up.
 * Strict tool schemas: when the workspace turns on ``settings.loop.strict_tools``
   and every tool bound for a call has a strict-compatible schema, ``bind_kwargs``
-  asks the model to enforce it. Only OpenAI's ``bind_tools`` accepts a
-  ``strict`` keyword in the installed langchain-openai; the installed
-  langchain-anthropic has no equivalent (see the module docstring below the
-  compatibility check), so this is OpenAI-only for now.
+  asks the model to enforce it. Sent on the OpenAI path only: its strict mode
+  is the one checked against the schema rule below; the Anthropic driver
+  accepts the keyword too, but its strict mode has not been exercised here.
 """
 from __future__ import annotations
 
@@ -133,8 +132,8 @@ def _count(llm: Any, response: Any, ref: Tuple[Optional[str], Optional[str]]) ->
 def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str,
                    ref: Tuple[Optional[str], Optional[str]] = (None, None)) -> Tuple[Any, Optional[str]]:
     """Repair through OpenAI's strict Structured Outputs (``method="json_schema"``,
-    ``strict=True``), the one combination the installed langchain-openai
-    guarantees will validate exactly. On any failure (a schema shape the
+    ``strict=True``), the one combination the API guarantees will validate
+    exactly. On any failure (a schema shape the
     strict mode rejects, a transport error) the caller falls back to a plain
     JSON prompt, so this never has to be the only path."""
     tool_schema = {
@@ -159,8 +158,7 @@ def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str,
 def _repair_plain(llm: Any, prompt: str,
                   ref: Tuple[Optional[str], Optional[str]] = (None, None)) -> Tuple[Any, Optional[str]]:
     """Repair through a plain JSON-only prompt: the fallback for every provider
-    whose langchain integration has no strict/schema-forced structured-output
-    call (Anthropic, in the installed langchain-anthropic; see the module
+    without a schema-forced structured-output call (Anthropic; see the module
     docstring)."""
     from agents.callbacks.run_statistics import content_text
     try:
@@ -243,21 +241,18 @@ def finalize_output(agent: Any, state: Any, text: str) -> Tuple[str, Optional[st
 # properties in ``required`` and to never allow additional properties
 # (https://platform.openai.com/docs/guides/structured-outputs/supported-schemas);
 # an optional argument (the common shape for a pydantic ``Optional[...]``
-# field with a default) breaks that. langchain-openai enforces the
-# ``additionalProperties: false`` half automatically once ``strict=True`` is
-# passed, but not the "every property required" half, so a schema that fails
+# field with a default) breaks that. ``convert_to_openai_tool(strict=True)``
+# adds the ``additionalProperties: false`` half automatically, but not the
+# "every property required" half, so a schema that fails
 # it is only caught here, before the call, or by OpenAI as a 400 otherwise.
 # The compatibility rule below is exactly that structural check, applied to
 # every property recursively (nested objects, array items, and any
 # ``$defs``/``definitions`` a pydantic schema draws on).
 #
-# The installed langchain-anthropic (0.3.14) has no equivalent: its
-# ``bind_tools`` takes no ``strict`` keyword, and its own tool conversion
-# (``convert_to_anthropic_tool``) drops any such key from a tool dict that is
-# not already Anthropic-shaped. Anthropic's raw Messages API does support a
-# per-tool ``strict: true`` field (no beta header), but nothing in this
-# dependency stack sends it, so strict tool binding here is OpenAI-only until
-# langchain-anthropic adds the parameter.
+# The Anthropic driver (providers/anthropic_driver.py) sends the Messages
+# API's per-tool ``strict: true`` when asked, but its schema rules differ from
+# OpenAI's and have not been checked against this rule, so strict tool
+# binding stays OpenAI-only for now.
 
 def _schema_all_required(schema: Any) -> bool:
     if not isinstance(schema, dict):

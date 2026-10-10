@@ -80,11 +80,14 @@ export function useAgentModel({ id, t }) {
   };
 
   // Switching agents empties the form before the read below refills it, so the
-  // previous agent's settings are never on screen attached to this one.
-  useEffect(() => {
+  // previous agent's settings are never on screen attached to this one. Adjusted
+  // during render rather than in an effect, so the old values never paint.
+  const [formFor, setFormFor] = useState(id);
+  if (formFor !== id) {
+    setFormFor(id);
     setModelForm(EMPTY_MODEL);
     setModelMessage('');
-  }, [id]);
+  }
 
   useEffect(() => {
     getAgentModel(id)

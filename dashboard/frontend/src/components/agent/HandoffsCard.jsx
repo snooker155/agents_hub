@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, Loader } from 'lucide-react';
 import {
   formatHistoryFilter, getAgentHandoffs, getAgents, parseHistoryFilter, updateAgentHandoffs,
@@ -29,14 +29,17 @@ export default function HandoffsCard({ agentId, agent, onSaved }) {
   const [targets, setTargets] = useState([]);
   const [kind, setKind] = useState('full');
   const [lastN, setLastN] = useState(DEFAULT_LAST_N);
-  const [loading, setLoading] = useState(true);
+  // The agent and workspace the lists were last loaded for; loading is derived.
+  const loadKey = `${agentId}|${workspace || ''}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== loadKey;
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   // Read through a ref so a language switch (a new `t`) does not refetch.
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
   const apply = useCallback((body) => {
     const list = Array.isArray(body?.handoffs) ? [...body.handoffs] : [];
@@ -48,22 +51,21 @@ export default function HandoffsCard({ agentId, agent, onSaved }) {
     setLastN(parsed.kind === 'last_n' ? parsed.n : DEFAULT_LAST_N);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [{ data: body }, { data: rows }] = await Promise.all([
-        getAgentHandoffs(agentId), getAgents(workspace),
-      ]);
-      apply(body);
-      const list = Array.isArray(rows) ? rows : (rows?.agents || rows?.items || []);
-      setAgents(list.filter((a) => (a.id || a) !== agentId));
-    } catch (e) {
-      setError(e?.response?.data?.detail || tRef.current('handoffs.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [agentId, workspace, apply]);
+  // A promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => {
+    Promise.all([getAgentHandoffs(agentId), getAgents(workspace)])
+      .then(([{ data: body }, { data: rows }]) => {
+        apply(body);
+        setError('');
+        const list = Array.isArray(rows) ? rows : (rows?.agents || rows?.items || []);
+        setAgents(list.filter((a) => (a.id || a) !== agentId));
+      })
+      .catch((e) => {
+        setError(e?.response?.data?.detail || tRef.current('handoffs.loadFailed'));
+      })
+      .finally(() => setLoadedKey(loadKey));
+  }, [agentId, workspace, loadKey, apply]);
 
   useEffect(() => { load(); }, [load]);
 

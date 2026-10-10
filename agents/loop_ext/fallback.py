@@ -25,7 +25,7 @@ Refusal and error-class detection both go through a small
 ``on_llm_error`` records the exception's class so the candidate that
 eventually answers can say what it was standing in for. Attaching callbacks
 this way (rather than wrapping the model in a ``RunnableLambda``) keeps the
-candidate itself a genuine streaming Runnable, so ``AgentExecutor``'s
+candidate itself a genuine streaming Runnable, so the executor's
 token-level streaming of the bound model is unaffected.
 """
 from __future__ import annotations

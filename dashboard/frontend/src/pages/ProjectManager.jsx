@@ -108,16 +108,12 @@ export default function ProjectManager() {
   const [importNotice, setImportNotice] = useState('');
   const chat = useChatColumn(false);
 
-  const fetchProjects = useCallback(async () => {
-    try {
-      const resp = await getProjects(selectedWorkspace !== 'default' ? selectedWorkspace : undefined);
-      setProjects(resp.data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedWorkspace]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const fetchProjects = useCallback(() => getProjects(selectedWorkspace !== 'default' ? selectedWorkspace : undefined)
+    .then((resp) => setProjects(resp.data))
+    .catch((e) => { console.error(e); })
+    .finally(() => setLoading(false)), [selectedWorkspace]);
 
   useEffect(() => {
     fetchProjects();
@@ -127,9 +123,12 @@ export default function ProjectManager() {
   const registryChat = useRegistryChatDescriptor(selectedWorkspace, fetchProjects);
   usePageChat(registryChat);
 
-  useEffect(() => {
+  // The create form follows the workspace switcher (adjusted while rendering).
+  const [formWorkspaceFor, setFormWorkspaceFor] = useState(selectedWorkspace);
+  if (selectedWorkspace !== formWorkspaceFor) {
+    setFormWorkspaceFor(selectedWorkspace);
     setForm(f => ({ ...f, workspace: selectedWorkspace || '' }));
-  }, [selectedWorkspace]);
+  }
 
   const openImport = async () => {
     setShowImport(true);

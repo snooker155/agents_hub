@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Loader, Sparkles, X } from 'lucide-react';
 import {
   flattenModelCatalog, getAgentLoopSettings, getModelsCatalog, updateAgentLoopSettings,
@@ -33,14 +33,15 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const [toolSearch, setToolSearch] = useState('');
   const [compaction, setCompaction] = useState('');
   const [dirty, setDirty] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== agentId;
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   // Read through a ref so a language switch (a new `t`) does not refetch.
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
   const applyLoaded = useCallback((body) => {
     setFallbackModels(Array.isArray(body?.fallback_models) ? [...body.fallback_models] : []);
@@ -54,23 +55,26 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
     setDirty(false);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [{ data: body }, { data: rawCatalog }] = await Promise.all([
-        getAgentLoopSettings(agentId), getModelsCatalog(),
-      ]);
-      applyLoaded(body);
-      setCatalog(flattenModelCatalog(rawCatalog));
-    } catch (e) {
-      setError(e?.response?.data?.detail || tRef.current('agentLoop.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ data: body }, { data: rawCatalog }] = await Promise.all([
+          getAgentLoopSettings(agentId), getModelsCatalog(),
+        ]);
+        if (cancelled) return;
+        applyLoaded(body);
+        setCatalog(flattenModelCatalog(rawCatalog));
+        setError('');
+      } catch (e) {
+        if (cancelled) return;
+        setError(e?.response?.data?.detail || tRef.current('agentLoop.loadFailed'));
+      } finally {
+        if (!cancelled) setLoadedFor(agentId);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [agentId, applyLoaded]);
-
-  useEffect(() => { load(); }, [load]);
 
   const markDirty = () => { setMessage(''); setDirty(true); };
 

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -120,7 +120,7 @@ def _executor(model, extensions, system: Any = "sys"):
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
     runnable = build_agent_runnable(model, [echo], prompt, extensions)
-    return AgentExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
+    return LoopExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
 
 
 def _run(executor, state):
@@ -182,7 +182,7 @@ def test_the_run_moves_to_the_new_model_with_the_same_tools_and_trail(switching)
 
 
 def test_anthropic_history_converts_for_openai_after_the_switch(switching):
-    from langchain_openai.chat_models.base import _convert_message_to_dict
+    from providers.openai_driver import message_to_dict as _convert_message_to_dict
 
     run_id = _rid()
     _DURING_TOOL["one"] = (run_id, "openai/gpt-b")

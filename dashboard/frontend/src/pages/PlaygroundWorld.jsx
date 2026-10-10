@@ -156,7 +156,7 @@ export default function PlaygroundWorld() {
   const { inlineSuppressed: panelHoldsChat, setOpen: setPanelOpen } = usePageChatPanel();
   // What the layout reacts to: the toggle stays as the user set it, but the
   // second column is only reserved when something is actually drawn in it.
-  const chatVisible = chatOpen && !panelHoldsChat && !!worldChat;
+  const chatVisible = chatOpen && !panelHoldsChat && !!worldId;
 
   const set = useCallback((patch) => setDraft((d) => ({ ...d, ...patch })), []);
 
