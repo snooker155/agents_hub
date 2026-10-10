@@ -154,7 +154,12 @@ def test_wake_of_a_disabled_pulse_is_refused_quietly(store):
 
 def test_quiet_hours_keep_the_events_for_the_window_end(store, launched):
     _agent()
-    profile = _enable(quiet_hours={"from": "00:00", "to": "23:59"}, timezone="UTC")
+    # Around now rather than 00:00 to 23:59, which is open in the last minute
+    # of the day (tests/test_proactive.py, _quiet_around_now).
+    now = datetime.now(UTC)
+    quiet = {"from": (now - timedelta(hours=1)).strftime("%H:%M"),
+             "to": (now + timedelta(hours=2)).strftime("%H:%M")}
+    profile = _enable(quiet_hours=quiet, timezone="UTC")
     svc.wake_agent("watcher", ev.make_event("file", "one"), window_seconds=0)
     result = ps.fire_job(_job(profile))
     assert result["skipped"] == "quiet_hours"

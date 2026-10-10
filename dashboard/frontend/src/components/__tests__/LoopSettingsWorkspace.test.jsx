@@ -58,17 +58,19 @@ describe('LoopSettingsWorkspace', () => {
   it('shows the workspace source for an overridden key and disables its reset otherwise', async () => {
     api.getWorkspaceLoopSettings.mockResolvedValue({ data: payload({ compaction: false }) });
     render(<LoopSettingsWorkspace workspace="w1" />);
-    await waitFor(() => expect(screen.getByLabelText('loopSettings.fields.compaction.label')).not.toBeChecked());
+    const compactionReset = () => screen.getByLabelText(
+      'loopSettings.resetFor {"field":"loopSettings.fields.compaction.label"}',
+    );
+    // Wait for the loaded settings themselves: before the load the checkbox is
+    // already unchecked (no values yet), so waiting on it raced the response.
+    await waitFor(() => expect(compactionReset()).toBeEnabled());
+    expect(screen.getByLabelText('loopSettings.fields.compaction.label')).not.toBeChecked();
 
     const resetButtons = screen.getAllByText('loopSettings.reset');
     // compaction is overridden: its reset is enabled; native (not overridden) stays disabled.
-    const compactionReset = screen.getByLabelText(
-      'loopSettings.resetFor {"field":"loopSettings.fields.compaction.label"}',
-    );
     const nativeReset = screen.getByLabelText(
       'loopSettings.resetFor {"field":"loopSettings.fields.native.label"}',
     );
-    expect(compactionReset).toBeEnabled();
     expect(nativeReset).toBeDisabled();
     expect(resetButtons.length).toBe(Object.keys(DEFAULTS).length);
   });
@@ -99,11 +101,14 @@ describe('LoopSettingsWorkspace', () => {
     api.getWorkspaceLoopSettings.mockResolvedValue({ data: payload({ compaction: false }) });
     api.updateWorkspaceLoopSettings.mockResolvedValue({ data: payload({}) });
     render(<LoopSettingsWorkspace workspace="w1" />);
-    await waitFor(() => expect(screen.getByLabelText('loopSettings.fields.compaction.label')).not.toBeChecked());
-
-    fireEvent.click(screen.getByLabelText(
+    const reset = () => screen.getByLabelText(
       'loopSettings.resetFor {"field":"loopSettings.fields.compaction.label"}',
-    ));
+    );
+    // The reset turns on once the overridden settings have loaded; a click on
+    // it any earlier lands on a disabled button and does nothing.
+    await waitFor(() => expect(reset()).toBeEnabled());
+
+    fireEvent.click(reset());
 
     await waitFor(() => expect(api.updateWorkspaceLoopSettings).toHaveBeenCalledWith('w1', { compaction: null }));
     await waitFor(() => expect(screen.getByLabelText('loopSettings.fields.compaction.label')).toBeChecked());

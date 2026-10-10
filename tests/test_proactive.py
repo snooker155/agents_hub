@@ -222,8 +222,17 @@ def test_a_tick_starts_a_task_with_the_prompt_and_the_schema(store, agent, launc
     assert ps.get_job(job.id).created_task_ids == [call["task_id"]]
 
 
+def _quiet_around_now():
+    # A window that started an hour ago and ends in two. A fixed 00:00 to 23:59
+    # failed near midnight UTC: after 23:45 the next 15 minute slot already
+    # lies past the window's end, so the scheduler (rightly) kept that slot.
+    now = datetime.now(UTC)
+    return {"from": (now - timedelta(hours=1)).strftime("%H:%M"),
+            "to": (now + timedelta(hours=2)).strftime("%H:%M")}
+
+
 def test_quiet_hours_skip_and_move_the_next_run(store, agent, launched, monkeypatch):
-    profile = _enable(quiet_hours={"from": "00:00", "to": "23:59"}, timezone="UTC")
+    profile = _enable(quiet_hours=_quiet_around_now(), timezone="UTC")
     job = _due(profile["job_id"])
     result = ps.fire_job(job)
 
@@ -238,7 +247,7 @@ def test_quiet_hours_skip_and_move_the_next_run(store, agent, launched, monkeypa
 
 
 def test_manual_wake_passes_quiet_hours(store, agent, launched):
-    _enable(quiet_hours={"from": "00:00", "to": "23:59"}, timezone="UTC")
+    _enable(quiet_hours=_quiet_around_now(), timezone="UTC")
     result = svc.wake("watcher")
     assert result["ok"] is True
     assert result.get("task_id") == launched[0]["task_id"]
