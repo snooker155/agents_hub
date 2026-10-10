@@ -46,24 +46,32 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function formFromService(service) {
+  return {
+    name: service.name || '',
+    replicas_min: String(service.replicas_min ?? 0),
+    replicas_max: String(service.replicas_max ?? 1),
+    concurrency: String(service.concurrency ?? 4),
+    idle_stop_minutes: String(Math.round((service.idle_stop_seconds || 0) / 60)),
+    take_tasks: !!service.take_tasks,
+    budget_usd: service.budget_usd != null ? String(service.budget_usd) : '',
+    agent_version: service.agent_version != null ? String(service.agent_version) : '',
+  };
+}
+
 function SettingsForm({ service, onSaved, t }) {
-  const [form, setForm] = useState({});
+  const [form, setForm] = useState(() => formFromService(service));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    setForm({
-      name: service.name || '',
-      replicas_min: String(service.replicas_min ?? 0),
-      replicas_max: String(service.replicas_max ?? 1),
-      concurrency: String(service.concurrency ?? 4),
-      idle_stop_minutes: String(Math.round((service.idle_stop_seconds || 0) / 60)),
-      take_tasks: !!service.take_tasks,
-      budget_usd: service.budget_usd != null ? String(service.budget_usd) : '',
-      agent_version: service.agent_version != null ? String(service.agent_version) : '',
-    });
-  }, [service]);
+  // A refreshed service object (a save, a live change) refills the form:
+  // adjusted during render so the stale values are never painted.
+  const [seenService, setSeenService] = useState(service);
+  if (seenService !== service) {
+    setSeenService(service);
+    setForm(formFromService(service));
+  }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const field = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none';
@@ -171,16 +179,16 @@ export default function ServiceDetail() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getService(serviceId);
-      setService(data);
-      setError('');
-    } catch {
-      setService(null);
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => {
+    getService(serviceId)
+      .then(({ data }) => {
+        setService(data);
+        setError('');
+      })
+      .catch(() => setService(null))
+      .finally(() => setLoading(false));
   }, [serviceId]);
 
   useEffect(() => { load(); }, [load]);

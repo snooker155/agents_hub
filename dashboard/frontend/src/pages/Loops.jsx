@@ -261,17 +261,19 @@ export default function Loops() {
     setParams({}, { replace: true });
   };
 
-  const loadLoops = useCallback(async () => {
-    try {
-      const { data } = await getLoops(selectedWorkspace);
+  // Promise chains, not async functions: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const loadLoops = useCallback(() => getLoops(selectedWorkspace)
+    .then(({ data }) => {
       setLoops(data.loops || []);
       closeMissing(data.loops || []);
-    } catch {
+    })
+    .catch(() => {
       setLoops([]);
       closeMissing([]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWorkspace]);
+    }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [selectedWorkspace]);
 
   useEffect(() => { loadLoops(); }, [loadLoops]);
 
@@ -287,10 +289,10 @@ export default function Loops() {
     }
   };
 
-  const selectLoop = async (id, preferredRunId) => {
-    setMessage(''); setEstimate(null); setRun(null); setIterations([]);
-    try {
-      const [{ data: loop }, { data: hist }] = await Promise.all([getLoop(id), getLoopRuns(id)]);
+  // Fetches a loop and its history and shows them; sets nothing before the
+  // answer arrives (a promise chain, see loadLoops).
+  const openLoop = (id, preferredRunId) => Promise.all([getLoop(id), getLoopRuns(id)])
+    .then(([{ data: loop }, { data: hist }]) => {
       setSelected(loop);
       setDraft(loop);
       setGoal(loop.description || '');
@@ -301,9 +303,14 @@ export default function Loops() {
         ? preferredRunId : history[0]?.loop_run_id;
       if (wanted) loadRun(wanted, id);
       else setParams({ loop: id }, { replace: true });
-    } catch {
+    })
+    .catch(() => {
       setMessage(t('loops.loadLoopFailed'));
-    }
+    });
+
+  const selectLoop = (id, preferredRunId) => {
+    setMessage(''); setEstimate(null); setRun(null); setIterations([]);
+    return openLoop(id, preferredRunId);
   };
 
   // Open the loop (and run) the address names, once the catalogue is here.
@@ -314,7 +321,7 @@ export default function Loops() {
     if (!loopId || !loops.length) return;
     if (!loops.some((l) => l.loop_id === loopId)) return;
     openedFromUrl.current = true;
-    selectLoop(loopId, params.get('run'));
+    openLoop(loopId, params.get('run'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loops]);
 

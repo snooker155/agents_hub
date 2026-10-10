@@ -50,19 +50,25 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
   const [docker, setDocker] = useState(null);
   const [dockerBusy, setDockerBusy] = useState('');
 
+  const agentId = agent?.id;
   const loadDocker = useCallback(async () => {
-    if (!dockerCapable || !agent?.id) return;
+    if (!dockerCapable || !agentId) return;
     try {
-      const { data } = await getImportedAgentDocker(agent.id);
+      const { data } = await getImportedAgentDocker(agentId);
       setDocker(data);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
     }
-  }, [dockerCapable, agent?.id]);
+  }, [dockerCapable, agentId]);
 
   useEffect(() => {
-    if (mode === 'docker') loadDocker();
-  }, [mode, loadDocker]);
+    if (mode !== 'docker' || !dockerCapable || !agentId) return undefined;
+    let cancelled = false;
+    getImportedAgentDocker(agentId)
+      .then(({ data }) => { if (!cancelled) setDocker(data); })
+      .catch((e) => { if (!cancelled) setError(e.response?.data?.detail || e.message); });
+    return () => { cancelled = true; };
+  }, [mode, dockerCapable, agentId]);
 
   if (!remote) return null;
 

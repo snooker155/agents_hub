@@ -179,11 +179,11 @@ export default function Watchers() {
   const [probeResult, setProbeResult] = useState(null);
 
   const load = useCallback(async () => {
-    setError('');
     try {
       const [{ data }, { data: meta }] = await Promise.all([
         getWatchers(workspaceFilter), getWatcherKinds(currentWorkspace),
       ]);
+      setError('');
       setRows(Array.isArray(data) ? data : []);
       setKinds(meta?.kinds || []);
       if (meta?.interval) setInterval_(meta.interval);
@@ -195,7 +195,10 @@ export default function Watchers() {
     }
   }, [workspaceFilter, currentWorkspace, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the live refetch and the action handlers; it sets state after its await
+    load();
+  }, [load]);
   useLiveRefetch(load, { type: 'watchers.changed' });
 
   const act = async (id, fn) => {

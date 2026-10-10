@@ -68,7 +68,10 @@ const SkillsCatalog = () => {
   const [mine, setMine] = useState([]);
   const [global, setGlobal] = useState([]);
   const [targets, setTargets] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The catalogue on screen is for this workspace; another one shows the
+  // loader, derived rather than set inside the effect.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -87,25 +90,24 @@ const SkillsCatalog = () => {
     setTimeout(() => setMessage(''), 5000);
   };
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [minResp, globalResp, targetResp] = await Promise.all([
-        getSkills(workspace),
-        getMarketplaceSkills(workspace),
-        getSkillTargets(workspace),
-      ]);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const fetchData = useCallback(() => Promise.all([
+    getSkills(workspace),
+    getMarketplaceSkills(workspace),
+    getSkillTargets(workspace),
+  ])
+    .then(([minResp, globalResp, targetResp]) => {
       setMine(minResp.data || []);
       setGlobal(globalResp.data || []);
       setTargets(targetResp.data || []);
-    } catch (error) {
+    })
+    .catch((error) => {
       console.error('Error fetching skills:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspace]);
+    })
+    .then(() => setLoadedFor(workspace)), [workspace]);
 
   useEffect(() => {
-    setLoading(true);
     fetchData();
   }, [fetchData]);
 

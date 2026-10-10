@@ -26,7 +26,12 @@ export default function CredentialConnector({ name, children, title, intro }) {
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   const isDefaultWorkspace = workspace === 'default';
-  const [loading, setLoading] = useState(true);
+  // `reloading` is a user-triggered reload (children call `reload`); the first
+  // load and a change of connector or workspace show up as `loadedKey` lagging.
+  const loadKey = `${name}|${workspace}`;
+  const [reloading, setReloading] = useState(false);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = reloading || loadedKey !== loadKey;
   const [spec, setSpec] = useState(null);
   const [payload, setPayload] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -36,23 +41,40 @@ export default function CredentialConnector({ name, children, title, intro }) {
   // "Define for this workspace" was clicked: the inherited, read only form
   // becomes editable, and a save is what creates this workspace's own copy.
   const [editing, setEditing] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  // Another connector or workspace starts read only again.
+  const [editKey, setEditKey] = useState(loadKey);
+  if (editKey !== loadKey) {
+    setEditKey(loadKey);
     setEditing(false);
-    try {
-      const [specs, cfg] = await Promise.all([listConnectors(), getConnectorConfig(name, workspace)]);
-      setSpec((specs.data || []).find((s) => s.name === name) || { name, fields: [] });
-      setPayload(cfg.data);
-    } catch (e) {
-      setError(`${t('connectors.channels.loadFailed')}: ${e.response?.data?.detail || e.message}`);
-    } finally {
-      setLoading(false);
-    }
+  }
+
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const fetchConfig = useCallback(() => {
+    Promise.all([listConnectors(), getConnectorConfig(name, workspace)])
+      .then(([specs, cfg]) => {
+        setError('');
+        setSpec((specs.data || []).find((s) => s.name === name) || { name, fields: [] });
+        setPayload(cfg.data);
+      })
+      .catch((e) => {
+        setError(`${t('connectors.channels.loadFailed')}: ${e.response?.data?.detail || e.message}`);
+      })
+      .finally(() => {
+        setReloading(false);
+        setLoadedKey(`${name}|${workspace}`);
+      });
   }, [name, workspace, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+
+  // Handed to children: shows the loader again and starts over.
+  const load = () => {
+    setReloading(true);
+    setError('');
+    setEditing(false);
+    fetchConfig();
+  };
 
   const save = async (body) => {
     setSaving(true);

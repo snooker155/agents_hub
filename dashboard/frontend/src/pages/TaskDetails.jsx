@@ -35,6 +35,9 @@ import { errorDetail, useToast } from '../components/toast';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
+// A stable empty list, so memoised children do not see a new array per render.
+const EMPTY_FLOW_RUNS = [];
+
 const TaskDetails = () => {
   const { t } = useI18n();
   const toast = useToast();
@@ -72,17 +75,15 @@ const TaskDetails = () => {
   // The new cap offered on a budget pause card, seeded once at twice the
   // limit the run just hit (a plausible next stop, not a guess the operator
   // has to type from scratch) and left alone after that so an edit sticks.
-  const [budgetCapDraft, setBudgetCapDraft] = useState('');
-  useEffect(() => {
-    if (task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget' && !budgetCapDraft) {
-      const limit = Number(task.pending_approval.limit_usd) || 0;
-      setBudgetCapDraft(String(limit > 0 ? limit * 2 : 10));
-    }
-    if (!(task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget') && budgetCapDraft) {
-      setBudgetCapDraft('');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.status, task?.pending_approval?.kind, task?.pending_approval?.limit_usd]);
+  // `null` means the operator has not edited it, so the seed applies.
+  const [budgetCapEdit, setBudgetCapDraft] = useState(null);
+  const budgetPending = task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget';
+  const budgetLimit = Number(task?.pending_approval?.limit_usd) || 0;
+  const budgetCapDraft = budgetPending
+    ? (budgetCapEdit ?? String(budgetLimit > 0 ? budgetLimit * 2 : 10))
+    : '';
+  // Leaving the budget pause forgets an edit, so the next pause seeds again.
+  if (!budgetPending && budgetCapEdit !== null) setBudgetCapDraft(null);
   const [activeTab, setActiveTab] = useState('execution');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
@@ -138,57 +139,59 @@ const TaskDetails = () => {
     }
   }, [id, fetchLogs, t, toast]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [taskResp, projectsResp] = await Promise.all([
-        getTask(id),
-        getProjects().catch(() => ({ data: [] })),
-      ]);
-      setTask(taskResp.data);
-      setProjects(projectsResp.data || []);
-      const agentsResp = await getAgents(taskResp.data.workspace || undefined).catch(() => ({ data: [] }));
-      setAgents(agentsResp.data);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const fetchData = useCallback(() => (
+    Promise.all([
+      getTask(id),
+      getProjects().catch(() => ({ data: [] })),
+    ])
+      .then(([taskResp, projectsResp]) => {
+        setTask(taskResp.data);
+        setProjects(projectsResp.data || []);
+        return getAgents(taskResp.data.workspace || undefined)
+          .catch(() => ({ data: [] }))
+          .then((agentsResp) => {
+            setAgents(agentsResp.data);
 
-      if (taskResp.data.parent_id) {
-        getTask(taskResp.data.parent_id).then(r => setParentTask(r.data)).catch(() => {});
-      } else {
-        setParentTask(null);
-      }
+            if (taskResp.data.parent_id) {
+              getTask(taskResp.data.parent_id).then(r => setParentTask(r.data)).catch(() => {});
+            } else {
+              setParentTask(null);
+            }
 
-      // Load the tasks this one depends on (for the "Depends on" section)
-      const depIds = taskResp.data.depends || [];
-      if (depIds.length > 0) {
-        Promise.all(depIds.map(d => getTask(d).then(r => r.data).catch(() => null)))
-          .then(list => setDepTasks(list.filter(Boolean)));
-      } else {
-        setDepTasks([]);
-      }
+            // Load the tasks this one depends on (for the "Depends on" section)
+            const depIds = taskResp.data.depends || [];
+            if (depIds.length > 0) {
+              Promise.all(depIds.map(d => getTask(d).then(r => r.data).catch(() => null)))
+                .then(list => setDepTasks(list.filter(Boolean)));
+            } else {
+              setDepTasks([]);
+            }
 
-      if (taskResp.data.assigned_agent_run_id) {
-        setActiveRunId(taskResp.data.assigned_agent_run_id);
-        fetchLogs(taskResp.data.assigned_agent_run_id);
-      } else {
-        setActiveRunId(null);
-        setLogs('');
-      }
-      // Always fetch execution log — sidecar file persists independently of
-      // assigned_agent_run_id. When the task has no active assignment (run
-      // completed and assignment cleared), fall back to the most recent run
-      // from the execution log so the Logs / Results tabs still have content.
-      fetchExecutionLog(taskResp.data.assigned_agent_run_id);
+            if (taskResp.data.assigned_agent_run_id) {
+              setActiveRunId(taskResp.data.assigned_agent_run_id);
+              fetchLogs(taskResp.data.assigned_agent_run_id);
+            } else {
+              setActiveRunId(null);
+              setLogs('');
+            }
+            // Always fetch execution log — sidecar file persists independently of
+            // assigned_agent_run_id. When the task has no active assignment (run
+            // completed and assignment cleared), fall back to the most recent run
+            // from the execution log so the Logs / Results tabs still have content.
+            fetchExecutionLog(taskResp.data.assigned_agent_run_id);
 
-      getTaskActivityLog(id).then(r => setActivityLog(r.data.activity_log || [])).catch(() => {});
-      getTaskResult(id).then(r => {
-        setTaskResults(r.data.results || []);
-        setWorkspaceFiles(r.data.files || []);
-      }).catch(() => {});
-
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching task details:', err);
-      setLoading(false);
-    }
-  }, [fetchExecutionLog, fetchLogs, id]);
+            getTaskActivityLog(id).then(r => setActivityLog(r.data.activity_log || [])).catch(() => {});
+            getTaskResult(id).then(r => {
+              setTaskResults(r.data.results || []);
+              setWorkspaceFiles(r.data.files || []);
+            }).catch(() => {});
+          });
+      })
+      .catch((err) => console.error('Error fetching task details:', err))
+      .finally(() => setLoading(false))
+  ), [fetchExecutionLog, fetchLogs, id]);
 
   useEffect(() => {
     fetchData();
@@ -200,14 +203,14 @@ const TaskDetails = () => {
   // Per-run insights carry the same message_runs shape the Chat page renders,
   // so the Execution tab can show one continuous flow across all agent runs
   // instead of flat per-run records.
-  const [flowRuns, setFlowRuns] = useState([]);
-  const [flowLoading, setFlowLoading] = useState(false);
+  const [flowRunsLoaded, setFlowRuns] = useState([]);
+  const [flowLoadingRaw, setFlowLoading] = useState(false);
   const insightsCacheRef = useRef({}); // run_id -> { status, message_runs }
 
   useEffect(() => {
     let cancelled = false;
     const entries = (executionLog || []).filter((e) => e.run_id);
-    if (!entries.length) { setFlowRuns([]); setFlowLoading(false); return undefined; }
+    if (!entries.length) return undefined;
 
     const load = async () => {
       if (!Object.keys(insightsCacheRef.current).length) setFlowLoading(true);
@@ -254,6 +257,11 @@ const TaskDetails = () => {
     load();
     return () => { cancelled = true; };
   }, [executionLog]);
+  // Without any run in the execution log there is nothing to show, whatever
+  // an earlier log produced.
+  const hasFlowEntries = (executionLog || []).some((e) => e.run_id);
+  const flowRuns = hasFlowEntries ? flowRunsLoaded : EMPTY_FLOW_RUNS;
+  const flowLoading = hasFlowEntries && flowLoadingRaw;
 
   // Size the flow so the page content fits the viewport exactly — the flow
   // takes all the height left below the header card and the page itself never
@@ -289,28 +297,37 @@ const TaskDetails = () => {
   }, [activeTab, flowLoading, flowRuns.length]);
 
   // ── Files tab: load/preview ────────────────────────────────────────────────
-  const loadFileContent = useCallback(async (path) => {
-    if (!path) return;
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // `fetchFileContent` sets nothing before the response, so the auto-select
+  // effect below can call it; a click goes through `loadFileContent`, which
+  // raises the loading flag first.
+  const fetchFileContent = useCallback((path) => (
+    getTaskFileContent(id, path)
+      .then((resp) => {
+        setSelectedFileContent(resp.data?.content || '');
+        setSelectedFileSize(Number(resp.data?.size || 0));
+        setSelectedFileIsPdf(!!resp.data?.is_pdf);
+        setPdfViewMode('render');
+        setMdViewMode('rendered');
+      })
+      .catch((e) => {
+        const detail = e?.response?.data?.detail || t('taskDetails.errors.fileContent');
+        setFileContentError(detail);
+        setSelectedFileContent('');
+        setSelectedFileSize(0);
+        setSelectedFileIsPdf(false);
+      })
+      .finally(() => setFileContentLoading(false))
+  ), [id, t]);
+
+  const loadFileContent = useCallback((path) => {
+    if (!path) return undefined;
     setSelectedFilePath(path);
     setFileContentLoading(true);
     setFileContentError('');
-    try {
-      const resp = await getTaskFileContent(id, path);
-      setSelectedFileContent(resp.data?.content || '');
-      setSelectedFileSize(Number(resp.data?.size || 0));
-      setSelectedFileIsPdf(!!resp.data?.is_pdf);
-      setPdfViewMode('render');
-      setMdViewMode('rendered');
-    } catch (e) {
-      const detail = e?.response?.data?.detail || t('taskDetails.errors.fileContent');
-      setFileContentError(detail);
-      setSelectedFileContent('');
-      setSelectedFileSize(0);
-      setSelectedFileIsPdf(false);
-    } finally {
-      setFileContentLoading(false);
-    }
-  }, [id, t]);
+    return fetchFileContent(path);
+  }, [fetchFileContent]);
 
   const toggleFolder = (folderPath) => {
     setExpandedFolders((prev) => {
@@ -323,24 +340,38 @@ const TaskDetails = () => {
 
   const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
 
-  // Auto-expand folders and select the first file when the list changes.
-  useEffect(() => {
+  // The list changing is handled during render, where state may be adjusted:
+  // an empty list clears the preview; otherwise every parent folder opens and,
+  // when the shown file is gone, the first one is selected. The fetch for that
+  // selection is started by the effect below (`autoFilePath`).
+  const [seenFiles, setSeenFiles] = useState(workspaceFiles);
+  const [autoFilePath, setAutoFilePath] = useState(null);
+  if (seenFiles !== workspaceFiles) {
+    setSeenFiles(workspaceFiles);
     if (!workspaceFiles.length) {
       setSelectedFilePath('');
       setSelectedFileContent('');
       setSelectedFileSize(0);
       setExpandedFolders(new Set());
-      return;
+      setAutoFilePath(null);
+    } else {
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        workspaceFiles.forEach((p) => parentDirPaths(p).forEach((dir) => next.add(dir)));
+        return next;
+      });
+      if (!selectedFilePath || !workspaceFiles.includes(selectedFilePath)) {
+        setSelectedFilePath(workspaceFiles[0]);
+        setFileContentLoading(true);
+        setFileContentError('');
+        setAutoFilePath(workspaceFiles[0]);
+      }
     }
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      workspaceFiles.forEach((p) => parentDirPaths(p).forEach((dir) => next.add(dir)));
-      return next;
-    });
-    if (!selectedFilePath || !workspaceFiles.includes(selectedFilePath)) {
-      loadFileContent(workspaceFiles[0]);
-    }
-  }, [workspaceFiles, loadFileContent, selectedFilePath]);
+  }
+
+  useEffect(() => {
+    if (autoFilePath) fetchFileContent(autoFilePath);
+  }, [autoFilePath, fetchFileContent]);
 
   // ── Patch helper ─────────────────────────────────────────────────────────
   const patch = async (fields, taskId = id) => {
@@ -458,7 +489,7 @@ const TaskDetails = () => {
       const resp = await approveTaskCall(id, approved, approvalNote.trim(), approved ? Number(budgetCapDraft) : undefined);
       if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
       setApprovalNote('');
-      setBudgetCapDraft('');
+      setBudgetCapDraft(null);
       fetchData();
     } catch (err) {
       alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));

@@ -111,7 +111,8 @@ export default function RunGroups() {
   const [total, setTotal] = useState(0);
   const [kinds, setKinds] = useState([]);
   const [filterKind, setFilterKind] = useState('');
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the query the groups were fetched for.
+  const [loadedKey, setLoadedKey] = useState(null);
   const [stopping, setStopping] = useState({});
   const [expanded, setExpanded] = useState({});
 
@@ -130,6 +131,9 @@ export default function RunGroups() {
   });
   const pageParams = paging.params;
 
+  const queryKey = JSON.stringify([filterKind, isDefaultWorkspace, selectedWorkspace, pageParams]);
+  const loading = loadedKey !== queryKey;
+
   const fetchGroups = useCallback(async () => {
     try {
       const params = { ...pageParams };
@@ -144,12 +148,12 @@ export default function RunGroups() {
     } catch (err) {
       console.error('Failed to load run groups', err);
     } finally {
-      setLoading(false);
+      setLoadedKey(queryKey);
     }
-  }, [filterKind, isDefaultWorkspace, selectedWorkspace, pageParams]);
+  }, [filterKind, isDefaultWorkspace, selectedWorkspace, pageParams, queryKey]);
 
   useEffect(() => {
-    setLoading(true);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the live refetch; it sets state after its await
     fetchGroups();
   }, [fetchGroups, liveUpdates]);
 

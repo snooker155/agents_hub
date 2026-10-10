@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, RefreshCw, Send, Trash2, Wifi } from 'lucide-react';
 import {
   listNotifyEndpoints, createNotifyEndpoint, deleteNotifyEndpoint, testNotifyEndpoint,
@@ -141,24 +141,29 @@ function EndpointForm({ workspace, onCreated }) {
 function EndpointsSection({ workspace }) {
   const { t } = useI18n();
   const [endpoints, setEndpoints] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [testing, setTesting] = useState(null);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await listNotifyEndpoints(workspace);
-      setEndpoints(data.endpoints || []);
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
+  // The list is only loaded here, so the effect owns the request and the
+  // ignore flag drops an answer for a workspace that was left meanwhile.
+  useEffect(() => {
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await listNotifyEndpoints(workspace);
+        if (!ignore) setEndpoints(data.endpoints || []);
+      } catch (e) {
+        if (!ignore) setError(e.response?.data?.detail || e.message);
+      } finally {
+        if (!ignore) setLoadedFor(workspace);
+      }
+    };
+    load();
+    return () => { ignore = true; };
   }, [workspace]);
-
-  useEffect(() => { load(); }, [load]);
 
   const handleDelete = async (id) => {
     if (!window.confirm(t('connectors.webhooks.confirmRemoveEndpoint'))) return;
@@ -383,22 +388,27 @@ function RuleForm({ workspace, onCreated }) {
 function RulesSection({ workspace }) {
   const { t } = useI18n();
   const [rules, setRules] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await listNotifyRules(workspace);
-      setRules(data.rules || []);
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
+  // The list is only loaded here, so the effect owns the request and the
+  // ignore flag drops an answer for a workspace that was left meanwhile.
+  useEffect(() => {
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await listNotifyRules(workspace);
+        if (!ignore) setRules(data.rules || []);
+      } catch (e) {
+        if (!ignore) setError(e.response?.data?.detail || e.message);
+      } finally {
+        if (!ignore) setLoadedFor(workspace);
+      }
+    };
+    load();
+    return () => { ignore = true; };
   }, [workspace]);
-
-  useEffect(() => { load(); }, [load]);
 
   const handleToggle = async (rule) => {
     try {

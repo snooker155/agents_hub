@@ -430,17 +430,17 @@ export default function Distribution() {
   const [workspaces, setWorkspaces] = useState([]);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getDistribution();
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => getDistribution()
+    .then(({ data }) => {
       setInfo(data);
       setError('');
-    } catch (err) {
+    })
+    .catch((err) => {
       toast.error(t('distribution.loadFailed'), errorDetail(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [toast, t]);
+    })
+    .then(() => setLoading(false)), [toast, t]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

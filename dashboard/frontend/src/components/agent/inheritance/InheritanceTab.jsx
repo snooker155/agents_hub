@@ -35,13 +35,14 @@ export default function InheritanceTab({ agentId, agent, onChanged, onEditOwnIns
 
   const load = useCallback(() => {
     if (!agentId) return;
-    setLoading(true);
-    setError('');
+    // Nothing is set before the response: `loading` starts true for the first
+    // load, and a reload keeps showing the current data until the new arrives.
     Promise.all([
       getAgentInheritance(agentId),
       getAgents().catch(() => ({ data: [] })),
     ])
       .then(([inhResp, agentsResp]) => {
+        setError('');
         setData(inhResp.data || null);
         const list = agentsResp.data?.agents || agentsResp.data || [];
         setAgents(Array.isArray(list) ? list : []);

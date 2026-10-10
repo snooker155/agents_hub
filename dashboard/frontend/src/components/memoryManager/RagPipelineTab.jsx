@@ -65,7 +65,9 @@ function RagPipelineTab({ memories, workspaceFilter }) {
   const { t } = useI18n();
   const toast = useToast();
   const [poolId, setPoolId] = useState(memories[0]?.id || '');
-  const [files, setFiles] = useState([]);
+  const [loadedFiles, setLoadedFiles] = useState([]);
+  // Nothing to list without a pool and a workspace, whatever was loaded before.
+  const files = poolId && workspaceFilter ? loadedFiles : [];
   const [loading, setLoading] = useState(false);
   const [indexing, setIndexing] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -78,23 +80,29 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     getRagConfig().then(r => setRagCfg(r.data)).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!poolId && memories.length > 0) setPoolId(memories[0].id);
-  }, [memories, poolId]);
+  // Pick the first pool once the list arrives: adjusted during render.
+  if (!poolId && memories.length > 0) setPoolId(memories[0].id);
 
-  const loadFiles = useCallback(async (id, workspace) => {
-    if (!id || !workspace) return;
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls this directly; explicit reloads go through `loadFiles`,
+  // which raises the busy flag first.
+  const fetchFiles = useCallback((id, workspace) => (
+    listMemoryFiles(id, workspace)
+      .then((resp) => setLoadedFiles(resp.data.files || []))
+      .catch(() => setLoadedFiles([]))
+      .finally(() => setLoading(false))
+  ), []);
+
+  const loadFiles = useCallback((id, workspace) => {
+    if (!id || !workspace) return Promise.resolve();
     setLoading(true);
-    try {
-      const resp = await listMemoryFiles(id, workspace);
-      setFiles(resp.data.files || []);
-    } catch { setFiles([]); } finally { setLoading(false); }
-  }, []);
+    return fetchFiles(id, workspace);
+  }, [fetchFiles]);
 
   useEffect(() => {
-    if (poolId && workspaceFilter) loadFiles(poolId, workspaceFilter);
-    else setFiles([]);
-  }, [poolId, workspaceFilter, loadFiles]);
+    if (poolId && workspaceFilter) fetchFiles(poolId, workspaceFilter);
+  }, [poolId, workspaceFilter, fetchFiles]);
 
   const handleUploadFiles = async (fileList) => {
     if (!poolId || !workspaceFilter) return;

@@ -70,7 +70,11 @@ export default function Playground() {
   const { selectedWorkspace, liveUpdates } = useWorkspace();
   const [environments, setEnvironments] = useState([]);
   const [scenarios, setScenarios] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The catalogue on screen is for this workspace; another one shows the
+  // loader, derived rather than set inside the effect.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const [reloading, setReloading] = useState(false);
+  const loading = reloading || loadedFor !== selectedWorkspace;
   const [message, setMessage] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
@@ -91,17 +95,17 @@ export default function Playground() {
 
   // `quiet` refetches keep the cards on screen: a live update must not blank
   // the list it is updating.
-  const loadScenarios = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    try {
-      const { data } = await getScenarios(selectedWorkspace);
-      setScenarios(data.scenarios || []);
-    } catch {
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const loadScenarios = useCallback((quiet = false) => getScenarios(selectedWorkspace)
+    .then(({ data }) => setScenarios(data.scenarios || []))
+    .catch(() => {
       if (!quiet) setScenarios([]);
-    } finally {
-      if (!quiet) setLoading(false);
-    }
-  }, [selectedWorkspace]);
+    })
+    .then(() => {
+      setLoadedFor(selectedWorkspace);
+      setReloading(false);
+    }), [selectedWorkspace]);
 
   useEffect(() => { loadScenarios(); }, [loadScenarios]);
 
@@ -115,6 +119,7 @@ export default function Playground() {
     e.stopPropagation();
     try {
       await deleteScenario(scenarioId);
+      setReloading(true);
       loadScenarios();
     } catch (err) {
       setMessage(err.response?.data?.detail || t('playground.deleteFailed'));

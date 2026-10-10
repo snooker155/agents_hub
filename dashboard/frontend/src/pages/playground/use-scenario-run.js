@@ -45,12 +45,18 @@ export function useScenarioRun({
   // not leave the previous one's tick list or in-flight bubbles on screen
   // while the new one loads. Mirrors the reset ``useScenarioDocument`` does
   // for the scenario itself, on the same dependency.
-  useEffect(() => {
+  // The state half is adjusted while rendering; the ref is cleared in an
+  // effect, which runs ahead of the URL-follows effect below.
+  const [seenScenarioId, setSeenScenarioId] = useState(scenarioId);
+  if (scenarioId !== seenScenarioId) {
+    setSeenScenarioId(scenarioId);
     setRun(null);
     setTicks([]);
     setInFlight([]);
     setActivity([]);
     setWaitingForTrigger(false);
+  }
+  useEffect(() => {
     shownRunRef.current = null;
   }, [scenarioId]);
 
@@ -220,9 +226,14 @@ export function useScenarioRun({
     [onRefetch, catchUpTicks, refreshRuns]);
 
   // Following pins the scrubber to the newest tick until the user scrubs back.
-  useEffect(() => {
-    if (following && ticks.length) setCursor(ticks.length - 1);
-  }, [ticks.length, following]);
+  // Adjusted while rendering, and only when the tick count or the following
+  // flag changes, so scrubbing is not undone on the next render.
+  const tickCount = ticks.length;
+  const [pinnedAt, setPinnedAt] = useState({ tickCount: 0, following: false });
+  if (pinnedAt.tickCount !== tickCount || pinnedAt.following !== following) {
+    setPinnedAt({ tickCount, following });
+    if (following && tickCount) setCursor(tickCount - 1);
+  }
 
   const handleStart = useCallback(async () => {
     if (!scenario) return;
@@ -250,18 +261,19 @@ export function useScenarioRun({
     }
   }, [scenario, selectedWorkspace, setMessage, setMode, navigate, refreshRuns, t]);
 
+  const simRunId = run?.sim_run_id;
   const handleStop = useCallback(async () => {
-    if (!run?.sim_run_id) return;
+    if (!simRunId) return;
     // The backend interrupts the calls in flight, so the tick in progress is
     // abandoned rather than finished — the button means now, not next tick.
     try {
-      await stopSimulation(run.sim_run_id);
+      await stopSimulation(simRunId);
       setRun((prev) => ({ ...prev, status: 'stopping' }));
       setInFlight([]);
       setActivity([]);
       setWaitingForTrigger(false);
     } catch { /* already finished */ }
-  }, [run?.sim_run_id]);
+  }, [simRunId]);
 
   /** Ask the server for the run again — status, ticks and the history row.
       The page is already fed by the stream and a poll, but both are
@@ -269,30 +281,30 @@ export function useScenarioRun({
       another tab all leave the page a little behind, and "is it still like
       that?" should not require a reload that loses the tick you scrubbed to. */
   const handleRefresh = useCallback(async () => {
-    if (!run?.sim_run_id) {
+    if (!simRunId) {
       refreshRuns();
       return;
     }
     setRefreshing(true);
     try {
-      await Promise.all([loadRun(run.sim_run_id), refreshRuns()]);
+      await Promise.all([loadRun(simRunId), refreshRuns()]);
     } finally {
       setRefreshing(false);
     }
-  }, [run?.sim_run_id, loadRun, refreshRuns]);
+  }, [simRunId, loadRun, refreshRuns]);
 
   /** Poke one agent from outside the world while the run is live. */
   const handleTrigger = useCallback(async (agent, text) => {
-    if (!run?.sim_run_id) return false;
+    if (!simRunId) return false;
     try {
-      await triggerSimAgent(run.sim_run_id, agent, text);
+      await triggerSimAgent(simRunId, agent, text);
       setMessage('');
       return true;
     } catch (e) {
       setMessage(e.response?.data?.detail || t('playground.triggerFailed'));
       return false;
     }
-  }, [run?.sim_run_id, setMessage, t]);
+  }, [simRunId, setMessage, t]);
 
   /** Relaunch a stopped or failed run from its checkpoint, under the same id
       (POST /runs/{id}/resume, playground.launcher.resume_scenario_run). */

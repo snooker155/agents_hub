@@ -50,7 +50,10 @@ export default function MemoryManager() {
     } finally { setLoading(false); }
   }, [workspaceFilter, t, toast]);
 
-  useEffect(() => { fetchMemories(); }, [fetchMemories]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with Refresh and the pool chat, and owns the loading flag
+    fetchMemories();
+  }, [fetchMemories]);
 
   // The pool chat, drawn in the column beside the pools or in the floating
   // panel. Registered only on the Pools tab: that is the only tab it is about.

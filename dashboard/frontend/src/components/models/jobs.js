@@ -34,16 +34,18 @@ export function useLocalJobs() {
   const timerRef = useRef(null);
   const mountedRef = useRef(true);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getLocalJobs();
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => getLocalJobs()
+    .then(({ data }) => {
       if (mountedRef.current) setJobs(data?.jobs || []);
-    } catch {
+    })
+    .catch(() => {
       // Best-effort: keep showing the last known list rather than clearing it.
-    } finally {
+    })
+    .then(() => {
       if (mountedRef.current) setLoading(false);
-    }
-  }, []);
+    }), []);
 
   useEffect(() => {
     mountedRef.current = true;

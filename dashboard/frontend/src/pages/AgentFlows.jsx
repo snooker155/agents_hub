@@ -48,7 +48,11 @@ const AgentFlows = () => {
   const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter } = useWorkspace();
   const [flows, setFlows] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The list is for this workspace filter; another filter shows the loader
+  // again, derived instead of set inside the effect.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const [reloading, setReloading] = useState(false);
+  const loading = reloading || loadedFor !== workspaceFilter;
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newFlow, setNewFlow] = useState({ name: '', description: '' });
@@ -77,17 +81,23 @@ const AgentFlows = () => {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
 
-  const loadFlows = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await listFlows(workspaceFilter);
-      setFlows(response.data || []);
-    } catch (error) {
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const loadFlows = useCallback(() => listFlows(workspaceFilter)
+    .then((response) => setFlows(response.data || []))
+    .catch((error) => {
       console.error('Failed to load flows', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceFilter]);
+    })
+    .then(() => {
+      setLoadedFor(workspaceFilter);
+      setReloading(false);
+    }), [workspaceFilter]);
+
+  // A reload after an action shows the loader as before.
+  const reloadFlows = () => {
+    setReloading(true);
+    return loadFlows();
+  };
 
   useEffect(() => {
     loadFlows();
@@ -117,7 +127,7 @@ const AgentFlows = () => {
     if (!confirm(t('agentFlows.confirmDelete'))) return;
     try {
       await deleteFlow(flowId);
-      await loadFlows();
+      await reloadFlows();
     } catch (error) {
       alert(`${t('agentFlows.deleteFailed')}: ${error.response?.data?.detail || error.message}`);
     }
@@ -131,7 +141,7 @@ const AgentFlows = () => {
     if (!confirm(prompt)) return;
     try {
       await updateFlowSharing(flow.id, next);
-      await loadFlows();
+      await reloadFlows();
     } catch (error) {
       alert(`Failed to update sharing: ${error.response?.data?.detail || error.message}`);
     }

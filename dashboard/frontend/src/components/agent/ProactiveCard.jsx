@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Activity, Loader, Pause, Play, X, Zap } from 'lucide-react';
 import {
   INTERVAL_MINUTES, NOTIFY_CHANNELS, TRIGGER_FILTERS, TRIGGER_KINDS, collapseTicks, getAgentProactive,
@@ -74,14 +74,16 @@ export default function ProactiveCard({ agentId, onSaved }) {
   const [body, setBody] = useState(null);
   const [form, setForm] = useState(null);
   const [dirty, setDirty] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the agent the profile was fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== agentId;
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
   const applyLoaded = useCallback((data) => {
     setBody(data);
@@ -104,20 +106,24 @@ export default function ProactiveCard({ agentId, onSaved }) {
     setDirty(false);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await getAgentProactive(agentId);
-      applyLoaded(data);
-    } catch (e) {
-      setError(e?.response?.data?.detail || tRef.current('proactive.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await getAgentProactive(agentId);
+        if (ignore) return;
+        setError('');
+        applyLoaded(data);
+      } catch (e) {
+        if (ignore) return;
+        setError(e?.response?.data?.detail || tRef.current('proactive.loadFailed'));
+      } finally {
+        if (!ignore) setLoadedFor(agentId);
+      }
+    };
+    load();
+    return () => { ignore = true; };
   }, [agentId, applyLoaded]);
-
-  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const ws = selectedWorkspace || body?.profile?.workspace || undefined;
     getWatchers(ws).then(({ data }) => setWatchers(Array.isArray(data) ? data : [])).catch(() => setWatchers([]));

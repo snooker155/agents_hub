@@ -105,7 +105,7 @@ export default function CodeWorkbench({
   const spec = envelope?.spec || {};
   const viewId = envelope?.view_id || null;
 
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(spec.body || '');
   const [saveNote, setSaveNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [savingInPlace, setSavingInPlace] = useState(false);
@@ -120,8 +120,8 @@ export default function CodeWorkbench({
   const [versions, setVersions] = useState([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [pickedVersions, setPickedVersions] = useState([]);
-  const [diffText, setDiffText] = useState(null);
-  const [diffLoading, setDiffLoading] = useState(false);
+  // The compared pair the diff was fetched for; text and loading derive from it.
+  const [diffRes, setDiffRes] = useState({ key: null, text: null });
 
   const [runsOpen, setRunsOpen] = useState(false);
   const [runs, setRuns] = useState([]);
@@ -134,7 +134,13 @@ export default function CodeWorkbench({
   const [saveProjectStatus, setSaveProjectStatus] = useState('');
   const [saveProjectBusy, setSaveProjectBusy] = useState(false);
 
-  useEffect(() => {
+  // Reset the editor when a different snippet is selected or a save/version
+  // switch replaced this one's content server-side: only the identity of the
+  // loaded envelope matters, a fresh object means new content. Adjusted
+  // during render so the stale draft is never painted.
+  const [seen, setSeen] = useState({ viewId, envelope });
+  if (seen.viewId !== viewId || seen.envelope !== envelope) {
+    setSeen({ viewId, envelope });
     setDraft(spec.body || '');
     setRunResult(null);
     setRunError('');
@@ -142,22 +148,11 @@ export default function CodeWorkbench({
     setSaveNote('');
     setVersionsOpen(false);
     setPickedVersions([]);
-    setDiffText(null);
     setRunsOpen(false);
     setSaveProjectOpen(false);
     setSaveProjectStatus('');
     setMountHelpOpen(false);
-    // Only the identity of the loaded envelope matters here: a fresh object
-    // means either a different snippet was selected or a save/version-switch
-    // replaced this one's content server-side.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewId, envelope]);
-
-  useEffect(() => {
-    if (!saveProjectOpen) return;
-    setSaveProjectPath(spec.filename || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveProjectOpen]);
+  }
 
   useEffect(() => { if (onDraftChange) onDraftChange(draft); }, [draft, onDraftChange]);
 
@@ -311,19 +306,22 @@ export default function CodeWorkbench({
     });
   };
 
+  const sortedPick = [...pickedVersions].sort((x, y) => x - y);
+  const diffKey = pickedVersions.length === 2 && viewId ? `${viewId}:${sortedPick[0]}:${sortedPick[1]}` : null;
+  const diffText = diffKey && diffRes.key === diffKey ? diffRes.text : null;
+  const diffLoading = Boolean(diffKey) && diffRes.key !== diffKey;
+
   useEffect(() => {
-    if (pickedVersions.length !== 2 || !viewId) { setDiffText(null); return undefined; }
-    const [a, b] = [...pickedVersions].sort((x, y) => x - y);
+    if (!diffKey) return undefined;
+    const [a, b] = sortedPick;
     let cancelled = false;
-    setDiffLoading(true);
     (isReply ? getSnippetDiff(replyKey, a, b, workspace) : getCodeDiff(viewId, a, b))
-      .then((res) => { if (!cancelled) setDiffText(res.data?.diff || ''); })
-      .catch(() => { if (!cancelled) setDiffText(''); })
-      .finally(() => { if (!cancelled) setDiffLoading(false); });
+      .then((res) => { if (!cancelled) setDiffRes({ key: diffKey, text: res.data?.diff || '' }); })
+      .catch(() => { if (!cancelled) setDiffRes({ key: diffKey, text: '' }); });
     return () => { cancelled = true; };
-    // replyKey and workspace follow the envelope.
+    // sortedPick, replyKey and workspace follow the envelope and the picks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedVersions, viewId]);
+  }, [diffKey]);
 
   const handleSaveToProject = async () => {
     if (!viewId || !saveProjectId || !saveProjectPath) return;
@@ -497,7 +495,7 @@ export default function CodeWorkbench({
           <ToolbarButton
             icon={FolderGit2}
             label={t('chat.code.saveToProject')}
-            onClick={() => { const next = !saveProjectOpen; closeAll(); setSaveProjectOpen(next); }}
+            onClick={() => { const next = !saveProjectOpen; closeAll(); setSaveProjectOpen(next); if (next) setSaveProjectPath(spec.filename || ''); }}
             active={saveProjectOpen}
           />
           {saveProjectOpen && (

@@ -21,7 +21,7 @@ export function focusRow(view) {
 
 export function useConversationCode({ conversationRunIds, currentConvId, codeFocus, t }) {
   const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [fetchedKey, setFetchedKey] = useState('');
   const [error, setError] = useState('');
 
   // A stable key so the fetch only re-runs when the set of run ids changes
@@ -31,12 +31,38 @@ export function useConversationCode({ conversationRunIds, currentConvId, codeFoc
     [conversationRunIds],
   );
 
+  // Loading is derived: the list is loading while the ids have not been fetched.
+  const loading = !!runIdsKey && fetchedKey !== runIdsKey;
+
+  // Reset on input changes, adjusted during render instead of in effects. The
+  // order matches what the effects did: ids, then conversation, then focus.
+  const [idsFor, setIdsFor] = useState(runIdsKey);
+  if (idsFor !== runIdsKey) {
+    setIdsFor(runIdsKey);
+    setError('');
+    if (!runIdsKey) setRows([]);
+  }
+  // Another conversation: its snippets are not this one's.
+  const [convFor, setConvFor] = useState(currentConvId);
+  if (convFor !== currentConvId) {
+    setConvFor(currentConvId);
+    setRows([]);
+  }
+  // "Open in Code panel" on a reply's code block: the snippet's run is already
+  // in the conversation, but the list was fetched before the snippet existed.
+  const [focusFor, setFocusFor] = useState(codeFocus);
+  if (focusFor !== codeFocus) {
+    setFocusFor(codeFocus);
+    const view = codeFocus?.view;
+    if (view?.view_id) {
+      setRows((prev) => (prev.some((r) => r.view_id === view.view_id) ? prev : [focusRow(view), ...prev]));
+    }
+  }
+
   useEffect(() => {
     const ids = runIdsKey ? runIdsKey.split(',') : [];
-    if (!ids.length) { setRows([]); return undefined; }
+    if (!ids.length) return undefined;
     let cancelled = false;
-    setLoading(true);
-    setError('');
     Promise.all(ids.map((id) => listViews({ run_id: id }).then((r) => r.data?.views || []).catch(() => [])))
       .then((lists) => {
         if (cancelled) return;
@@ -52,22 +78,11 @@ export function useConversationCode({ conversationRunIds, currentConvId, codeFoc
         setRows(Array.from(merged.values()));
       })
       .catch((e) => { if (!cancelled) setError(e?.response?.data?.detail || t('chat.code.listFailed')); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setFetchedKey(runIdsKey); });
     return () => { cancelled = true; };
-    // codeFocus is read, not watched: the effect below adds a focused snippet.
+    // codeFocus is read, not watched: the focus adjustment above adds a focused snippet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runIdsKey, t]);
-
-  // Another conversation: its snippets are not this one's.
-  useEffect(() => { setRows([]); }, [currentConvId]);
-
-  // "Open in Code panel" on a reply's code block: the snippet's run is already
-  // in the conversation, but the list was fetched before the snippet existed.
-  useEffect(() => {
-    const view = codeFocus?.view;
-    if (!view?.view_id) return;
-    setRows((prev) => (prev.some((r) => r.view_id === view.view_id) ? prev : [focusRow(view), ...prev]));
-  }, [codeFocus]);
 
   return { codeRows: rows, codeListLoading: loading, codeListError: error };
 }

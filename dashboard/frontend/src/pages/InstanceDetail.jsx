@@ -180,7 +180,6 @@ export default function InstanceDetail() {
   const [runs, setRuns] = useState({ items: [], total: 0 });
   const [context, setContext] = useState(null);
   const [logs, setLogs] = useState('');
-  const [logsLoading, setLogsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('timeline');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -221,31 +220,38 @@ export default function InstanceDetail() {
       .catch(() => setAgentChoices([]));
   }, [instance]);
 
-  const load = useCallback(async () => {
-    try {
-      const inst = await getInstance(instanceId);
-      setInstance(inst.data);
-      if (inst.data.resident) {
-        const convResp = await getInstanceConversations(instanceId).catch(() => ({ data: { items: [{ conversation_id: 'main' }] } }));
-        const items = convResp.data?.items?.length ? convResp.data.items : [{ conversation_id: 'main' }];
-        setConversations((prev) => {
-          // Keep a locally created, not-yet-used conversation in the list
-          // (the server does not know about it until the first message).
-          const extra = prev.filter((p) => !items.some((i) => i.conversation_id === p.conversation_id) && p.local);
-          return [...items, ...extra];
-        });
-      } else {
-        setConversations([{ conversation_id: 'main' }]);
-      }
-      const tl = await getInstanceTimeline(instanceId, inst.data.resident ? { conversation_id: selectedConversation } : undefined);
-      setTimeline(tl.data);
-    } catch (e) {
-      console.error('Failed to load instance', e);
-      setInstance(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [instanceId, selectedConversation]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => (
+    getInstance(instanceId)
+      .then((inst) => {
+        setInstance(inst.data);
+        let conversationsDone = Promise.resolve();
+        if (inst.data.resident) {
+          conversationsDone = getInstanceConversations(instanceId)
+            .catch(() => ({ data: { items: [{ conversation_id: 'main' }] } }))
+            .then((convResp) => {
+              const items = convResp.data?.items?.length ? convResp.data.items : [{ conversation_id: 'main' }];
+              setConversations((prev) => {
+                // Keep a locally created, not-yet-used conversation in the list
+                // (the server does not know about it until the first message).
+                const extra = prev.filter((p) => !items.some((i) => i.conversation_id === p.conversation_id) && p.local);
+                return [...items, ...extra];
+              });
+            });
+        } else {
+          setConversations([{ conversation_id: 'main' }]);
+        }
+        return conversationsDone
+          .then(() => getInstanceTimeline(instanceId, inst.data.resident ? { conversation_id: selectedConversation } : undefined))
+          .then((tl) => setTimeline(tl.data));
+      })
+      .catch((e) => {
+        console.error('Failed to load instance', e);
+        setInstance(null);
+      })
+      .finally(() => setLoading(false))
+  ), [instanceId, selectedConversation]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -256,17 +262,18 @@ export default function InstanceDetail() {
       .then((r) => setContext(r.data)).catch(() => setContext(null));
   }, [activeTab, instanceId, resident, selectedConversation]);
 
-  const fetchLogs = useCallback(async () => {
-    setLogsLoading(true);
-    try {
-      const r = await getInstanceLogs(instanceId);
-      setLogs(r.data?.logs || '');
-    } catch {
-      setLogs('');
-    } finally {
-      setLogsLoading(false);
-    }
-  }, [instanceId]);
+  // The first fetch on opening the tab shows as `logsLoadedFor` lagging; the
+  // Refresh button raises `logsRefreshing` itself.
+  const [logsRefreshing, setLogsRefreshing] = useState(false);
+  const [logsLoadedFor, setLogsLoadedFor] = useState(null);
+  const logsLoading = logsRefreshing || (activeTab === 'logs' && logsLoadedFor !== instanceId);
+  const fetchLogs = useCallback(() => (
+    getInstanceLogs(instanceId)
+      .then((r) => setLogs(r.data?.logs || ''))
+      .catch(() => setLogs(''))
+      .finally(() => { setLogsRefreshing(false); setLogsLoadedFor(instanceId); })
+  ), [instanceId]);
+  const refreshLogs = () => { setLogsRefreshing(true); fetchLogs(); };
 
   useEffect(() => {
     if (activeTab === 'logs') fetchLogs();
@@ -622,7 +629,7 @@ export default function InstanceDetail() {
         <div className="bg-gray-900 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
             <span className="text-xs text-gray-400">{resident ? t('instanceDetail.logs.carrierLog') : t('instanceDetail.logs.runLog')}</span>
-            <button type="button" onClick={fetchLogs} className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800">
+            <button type="button" onClick={refreshLogs} className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800">
               <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>

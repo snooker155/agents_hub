@@ -447,10 +447,13 @@ function ContextWindowsPanel({ insightsMap }) {
   );
 }
 
+// A stable default: a fresh `{}` per render would look like a changed prop.
+const NO_INSIGHTS = {};
+
 function SessionMessagesGraph({
   messages = [],
   onNavigate,
-  initialInsightsMap = {},
+  initialInsightsMap = NO_INSIGHTS,
   scrollToRunId = null,
   onScrollHandled = null,
 }) {
@@ -460,9 +463,12 @@ function SessionMessagesGraph({
   const [loadingIds, setLoadingIds] = useState(new Set());
   const nodeRefs = React.useRef({});
 
-  useEffect(() => {
+  // Merge the parent's insights when they change: adjusted during render.
+  const [seenInitialInsights, setSeenInitialInsights] = useState(initialInsightsMap);
+  if (seenInitialInsights !== initialInsightsMap) {
+    setSeenInitialInsights(initialInsightsMap);
     setInsightsMap(prev => ({ ...prev, ...initialInsightsMap }));
-  }, [initialInsightsMap]);
+  }
 
   const loadInsights = useCallback(async (runId) => {
     if (insightsMap[runId] !== undefined) return;
@@ -631,49 +637,52 @@ export default function SessionDetails() {
   const [error, setError]             = useState('');
   const [stopping, setStopping]       = useState(false);
   const [insightsMap, setInsightsMap] = useState({});
-  const [composerAgentId, setComposerAgentId] = useState('');
+  // The agent picked in the composer; until one is picked the session's own
+  // agent (or the first one) is used, derived below.
+  const [pickedAgentId, setComposerAgentId] = useState('');
   const [composerPrompt, setComposerPrompt] = useState('');
   const [composerError, setComposerError] = useState('');
   const [composerSending, setComposerSending] = useState(false);
   const [showNewMessageModal, setShowNewMessageModal] = useState(false);
   const [scrollToRunId, setScrollToRunId] = useState(null);
 
-  const load = useCallback(async () => {
-    if (!sessionId) return;
-    setLoading(true);
-    setError('');
-    try {
-      const [sessionRes, messagesRes] = await Promise.all([
-        getSession(sessionId),
-        getSessionMessages(sessionId),
-      ]);
-      setSession(sessionRes.data || null);
-      const msgs = messagesRes.data || [];
-      setMessages(msgs);
-      // Load all insights in parallel (for context window panel + pre-populate expanded nodes)
-      const insightResults = await Promise.allSettled(
-        msgs.map(m => getMessageInsights(m.run_id))
-      );
-      const map = {};
-      insightResults.forEach((r, i) => {
-        map[msgs[i].run_id] = r.status === 'fulfilled' ? (r.value.data || {}) : {};
-      });
-      setInsightsMap(map);
-    } catch (err) {
-      setError(err.response?.data?.detail || t('sessionDetails.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls the fetch directly (`loading` starts true); reloads after
+  // an action go through `load`, which raises the busy flag first.
+  const fetchSession = useCallback(() => {
+    if (!sessionId) return Promise.resolve();
+    return Promise.all([getSession(sessionId), getSessionMessages(sessionId)])
+      .then(([sessionRes, messagesRes]) => {
+        setError('');
+        setSession(sessionRes.data || null);
+        const msgs = messagesRes.data || [];
+        setMessages(msgs);
+        // Load all insights in parallel (for context window panel + pre-populate expanded nodes)
+        return Promise.allSettled(msgs.map(m => getMessageInsights(m.run_id))).then((insightResults) => {
+          const map = {};
+          insightResults.forEach((r, i) => {
+            map[msgs[i].run_id] = r.status === 'fulfilled' ? (r.value.data || {}) : {};
+          });
+          setInsightsMap(map);
+        });
+      })
+      .catch((err) => setError(err.response?.data?.detail || t('sessionDetails.loadFailed')))
+      .finally(() => setLoading(false));
   }, [sessionId, t]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    if (!sessionId) return Promise.resolve();
+    setLoading(true);
+    setError('');
+    return fetchSession();
+  }, [sessionId, fetchSession]);
+
+  useEffect(() => { fetchSession(); }, [fetchSession]);
   useEffect(() => { getAgents().then(r => setAgents(r.data)).catch(() => {}); }, []);
-  useEffect(() => {
-    if (composerAgentId) return;
-    if (!agents.length) return;
-    const preferred = (session?.agents || []).find(a => agents.some(x => x.id === a));
-    setComposerAgentId(preferred || agents[0].id || '');
-  }, [agents, session, composerAgentId]);
+  const composerAgentId = pickedAgentId || (agents.length
+    ? ((session?.agents || []).find(a => agents.some(x => x.id === a)) || agents[0].id || '')
+    : '');
 
   const handleStop = async () => {
     setStopping(true);

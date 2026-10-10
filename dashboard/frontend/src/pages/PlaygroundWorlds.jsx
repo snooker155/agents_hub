@@ -29,21 +29,22 @@ export default function PlaygroundWorlds() {
   const navigate = useNavigate();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
   const [worlds, setWorlds] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The workspace the catalogue was last loaded for; loading is derived, so a
+  // quiet live refetch never flashes the loader.
+  const wsKey = selectedWorkspace ?? '';
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== wsKey;
   const [message, setMessage] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
 
-  const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    try {
-      const { data } = await getWorlds(selectedWorkspace);
-      setWorlds(data.worlds || []);
-    } catch {
-      if (!quiet) setWorlds([]);
-    } finally {
-      if (!quiet) setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback((quiet = false) => {
+    getWorlds(selectedWorkspace)
+      .then(({ data }) => setWorlds(data.worlds || []))
+      .catch(() => { if (!quiet) setWorlds([]); })
+      .finally(() => setLoadedKey(selectedWorkspace ?? ''));
   }, [selectedWorkspace]);
 
   useEffect(() => { load(); }, [load]);

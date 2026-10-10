@@ -284,7 +284,10 @@ export default function MessageDetails() {
   const { t } = useI18n();
   const { runId } = useParams();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  // The run the record was loaded for (null while a reload is under way):
+  // loading is derived from it.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== runId;
   const [message, setMessage] = useState(null);
   const [insights, setInsights] = useState({ tools: [], thinking: [] });
   const [logs, setLogs] = useState('');
@@ -306,30 +309,38 @@ export default function MessageDetails() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [caseSavedMessage, setCaseSavedMessage] = useState('');
 
-  const load = useCallback(async () => {
-    if (!runId) return;
-    setLoading(true);
-    setError('');
-    try {
-      // The live tail is fetched with everything else, not after it: the panel
-      // below must have what already streamed *before* it subscribes, or the
-      // text it shows starts in the middle of a word (see components/LiveRunStream).
-      const [msgRes, insightsRes, logsRes, liveRes] = await Promise.all([
-        getMessage(runId),
-        getMessageInsights(runId),
-        getMessageLogs(runId),
-        getMessageLive(runId).catch(() => ({ data: { turn: null } })),
-      ]);
-      setMessage(msgRes.data || null);
-      setInsights(insightsRes.data || { tools: [], thinking: [] });
-      setLogs(logsRes.data?.logs || '');
-      setLiveTurn(liveRes.data?.turn || null);
-    } catch (err) {
-      setError(err.response?.data?.detail || t('messageDetails.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => {
+    if (!runId) return Promise.resolve();
+    // The live tail is fetched with everything else, not after it: the panel
+    // below must have what already streamed *before* it subscribes, or the
+    // text it shows starts in the middle of a word (see components/LiveRunStream).
+    return Promise.all([
+      getMessage(runId),
+      getMessageInsights(runId),
+      getMessageLogs(runId),
+      getMessageLive(runId).catch(() => ({ data: { turn: null } })),
+    ])
+      .then(([msgRes, insightsRes, logsRes, liveRes]) => {
+        setError('');
+        setMessage(msgRes.data || null);
+        setInsights(insightsRes.data || { tools: [], thinking: [] });
+        setLogs(logsRes.data?.logs || '');
+        setLiveTurn(liveRes.data?.turn || null);
+      })
+      .catch((err) => {
+        setError(err.response?.data?.detail || t('messageDetails.loadFailed'));
+      })
+      .finally(() => setLoadedFor(runId));
   }, [runId, t]);
+
+  // A reload the user (or a finished run) asks for shows the loader again.
+  const reload = useCallback(() => {
+    setLoadedFor(null);
+    setError('');
+    return load();
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -339,14 +350,14 @@ export default function MessageDetails() {
   const isLive = message?.status === 'running' || liveTurn?.status === 'running';
   useChannel(isLive && message?.session_id ? message.session_id : null, (ev) => {
     if (!ev || String(ev.run_id || '') !== String(runId)) return;
-    if (ev.type === 'done' || ev.type === 'session_done') load();
+    if (ev.type === 'done' || ev.type === 'session_done') reload();
   });
 
   const handleStop = async () => {
     setStopping(true);
     try {
       await stopMessage(runId);
-      await load();
+      await reload();
     } catch (err) {
       console.error('Failed to stop message', err);
     } finally {
@@ -479,7 +490,7 @@ export default function MessageDetails() {
             </button>
           )}
           <button
-            onClick={load}
+            onClick={reload}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4" />
@@ -490,7 +501,7 @@ export default function MessageDetails() {
 
       {/* What the agent loop did beyond its tool trail: the model that answered, compactions,
           steering messages, guardrail checks (components/run/RunLoopPanel). */}
-      <RunLoopPanel run={message} onChanged={load} showVersion={false} />
+      <RunLoopPanel run={message} onChanged={reload} showVersion={false} />
 
       {terminalOpen && (
         <LazyTerminalPanel kind="run" id={runId}
@@ -577,7 +588,7 @@ export default function MessageDetails() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className={META_LABEL}>{t('messageDetails.agent')}</span>
           <span className={META_VALUE}>{message?.agent_id || '—'}</span>
-          <AgentVersion run={message} onChanged={load} compact />
+          <AgentVersion run={message} onChanged={reload} compact />
         </div>
         <div><span className={META_LABEL}>{t('messageDetails.model')}</span> <span className={META_VALUE}>{message?.model || insights?.model || '—'}</span></div>
         <div className="flex items-center gap-2"><span className={META_LABEL}>{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>

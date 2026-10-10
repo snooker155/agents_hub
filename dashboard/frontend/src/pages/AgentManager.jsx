@@ -135,9 +135,13 @@ const AgentManager = () => {
   }, [workspaceFilter]);
 
   useEffect(() => {
+    // The loaders are shared with live refetch and the mutation handlers; they
+    // set state only after their awaits, which the rule cannot see through a call.
+    /* eslint-disable react-hooks/set-state-in-effect -- shared loaders, state is set after the await */
     fetchData();
     fetchTools();
     fetchServices();
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchServices]);
   useLiveRefetch(fetchData, { type: 'agents.changed', enabled: liveUpdates });
   // Replica counts ride on the services, so a copy starting or stopping is
@@ -145,23 +149,29 @@ const AgentManager = () => {
   useLiveRefetch(fetchServices, { type: 'services.changed', enabled: liveUpdates });
   useLiveRefetch(fetchServices, { type: 'instances.changed', enabled: liveUpdates });
 
-  // Sync agent order with fetched agents, restoring saved order from localStorage
-  useEffect(() => {
-    if (agents.length === 0) return;
-    const key = `agent_order_${selectedWorkspace || 'default'}`;
-    const saved = localStorage.getItem(key);
-    let order = agents.map(a => a.id);
-    if (saved) {
-      try {
-        const savedOrder = JSON.parse(saved);
-        const knownIds = new Set(order);
-        const filtered = savedOrder.filter(id => knownIds.has(id));
-        const newIds = order.filter(id => !filtered.includes(id));
-        order = [...filtered, ...newIds];
-      } catch { /* a corrupt saved order falls back to the default */ }
+  // Sync agent order with fetched agents, restoring saved order from
+  // localStorage. Adjusted during render when the agents or the workspace
+  // change, so the grid never paints in the previous order.
+  const [orderInputs, setOrderInputs] = useState({ agents: null, ws: null });
+  if (orderInputs.agents !== agents || orderInputs.ws !== selectedWorkspace) {
+    setOrderInputs({ agents, ws: selectedWorkspace });
+    if (agents.length > 0) {
+      const key = `agent_order_${selectedWorkspace || 'default'}`;
+      let saved = null;
+      try { saved = localStorage.getItem(key); } catch { /* storage unavailable */ }
+      let order = agents.map(a => a.id);
+      if (saved) {
+        try {
+          const savedOrder = JSON.parse(saved);
+          const knownIds = new Set(order);
+          const filtered = savedOrder.filter(id => knownIds.has(id));
+          const newIds = order.filter(id => !filtered.includes(id));
+          order = [...filtered, ...newIds];
+        } catch { /* a corrupt saved order falls back to the default */ }
+      }
+      setAgentOrder(order);
     }
-    setAgentOrder(order);
-  }, [agents, selectedWorkspace]);
+  }
 
   const handleDragStart = (id) => setDragId(id);
 

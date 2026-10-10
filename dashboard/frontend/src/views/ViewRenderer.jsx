@@ -8,6 +8,7 @@ import { useI18n } from '../i18n';
 // subscription: a toggle re-renders every view with the new theme, so a chart
 // embedded light is re-embedded dark instead of keeping the palette it mounted with.
 import { useAppliedMode } from '../lib/themeColors';
+import { FILL_KINDS } from './fillKinds';
 
 // The kind → renderer dispatcher, mounted everywhere a view is shown (chat card,
 // Studio, gallery, message/task details). Heavy renderers (chart/diagram) are
@@ -46,11 +47,6 @@ const RENDERERS = {
   code: CodeView,
 };
 
-// Kinds whose renderer sizes itself to the frame it is given (canvas/iframe/
-// graph roots that use h-full) rather than to its content. They only fill when
-// the wrapper is a definite-height flex column — content kinds must NOT get one,
-// or a long table/document would be clamped to the frame and cut off.
-export const FILL_KINDS = new Set(['html', 'scene3d', 'graph', 'simulation', 'slides', 'process', 'math', 'chart']);
 
 function Fallback({ view }) {
   const text = view?.fallback?.text || view?.summary || '';

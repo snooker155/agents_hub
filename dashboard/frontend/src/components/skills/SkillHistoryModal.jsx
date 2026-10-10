@@ -50,21 +50,20 @@ export default function SkillHistoryModal({ skill, onClose, onChanged }) {
   const readOnly = skill.source === 'repo' && !skill.agent_id;
   const attached = Boolean(skill.agent_id);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await listSkillVersions(skill.id);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState (the modal opens already loading).
+  const load = useCallback(() => listSkillVersions(skill.id)
+    .then(({ data }) => {
       const rows = data?.versions || [];
       setVersions(rows);
       setPinned(data?.pinned ?? null);
       setCurrent(data?.current ?? null);
       setSelected((prev) => prev ?? rows[0]?.version ?? null);
-    } catch (e) {
+    })
+    .catch((e) => {
       toast.error(t('skillsCatalog.history.loadFailed'), errorDetail(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [skill.id, t, toast]);
+    })
+    .finally(() => setLoading(false)), [skill.id, t, toast]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -35,14 +35,20 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!open) return;
-    setSelectedAgentId(agentId || '');
-    setWorkspace(defaultWorkspace || selectedWorkspace || '');
-    setEnvironmentId('');
-    setError('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, agentId, defaultWorkspace]);
+  // Opening the modal (or pointing it at another agent or workspace) starts
+  // the form over. Adjusted while rendering; `selectedWorkspace` is read but
+  // deliberately not part of the key, as before.
+  const resetKey = open ? `${agentId}|${defaultWorkspace}` : null;
+  const [seenResetKey, setSeenResetKey] = useState(resetKey);
+  if (resetKey !== seenResetKey) {
+    setSeenResetKey(resetKey);
+    if (open) {
+      setSelectedAgentId(agentId || '');
+      setWorkspace(defaultWorkspace || selectedWorkspace || '');
+      setEnvironmentId('');
+      setError('');
+    }
+  }
 
   useEffect(() => {
     if (!open || agentId || agents) return;

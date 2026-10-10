@@ -16,25 +16,35 @@ import {
  */
 export function useScenarioDocument({ scenarioId, navigate, setMode, setMessage, t }) {
   const [scenario, setScenario] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // The scenario the page was last loaded for: loading is derived from it.
+  const [loadedFor, setLoadedFor] = useState(undefined);
+  const loading = loadedFor !== scenarioId;
   const [missing, setMissing] = useState(false);
   const [runs, setRuns] = useState([]);
   const [estimate, setEstimate] = useState(null);
+
+  // Another scenario: what was known about the last one goes (adjusted while
+  // rendering, not in an effect).
+  const [seenScenarioId, setSeenScenarioId] = useState(scenarioId);
+  if (scenarioId !== seenScenarioId) {
+    setSeenScenarioId(scenarioId);
+    setMissing(false);
+    setEstimate(null);
+  }
 
   // Reloading on scenarioId keeps the page honest when navigated to directly or
   // when the id changes underneath us.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setMissing(false);
-    setMessage('');
-    setEstimate(null);
     (async () => {
       try {
         const [{ data: sc }, { data: hist }] = await Promise.all([
           getScenario(scenarioId), getSimRuns(scenarioId),
         ]);
         if (cancelled) return;
+        // The page's message belongs to the last scenario; it goes once this
+        // one has arrived (the setter is the parent's, so not during render).
+        setMessage('');
         setScenario(sc);
         setRuns(hist.runs || []);
         // Watching is only worth opening on when there is something to
@@ -43,9 +53,9 @@ export function useScenarioDocument({ scenarioId, navigate, setMode, setMessage,
         // form — so a fresh scenario opens on its parameters.
         setMode(sc.roles?.length && (hist.runs || []).length ? 'watch' : 'setup');
       } catch {
-        if (!cancelled) setMissing(true);
+        if (!cancelled) { setMessage(''); setMissing(true); }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setLoadedFor(scenarioId);
       }
     })();
     return () => { cancelled = true; };

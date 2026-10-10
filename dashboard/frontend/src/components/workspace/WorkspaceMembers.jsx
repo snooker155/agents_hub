@@ -47,7 +47,10 @@ export default function WorkspaceMembers({ workspace }) {
     }
   }, [mode, workspace, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with add, role and remove handlers and owns the loading flag
+    load();
+  }, [load]);
 
   // The picker needs every account, which only an admin may list. An owner who
   // is not an admin adds members by typing an id instead, so a failure here

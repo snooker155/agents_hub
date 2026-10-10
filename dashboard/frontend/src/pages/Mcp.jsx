@@ -496,18 +496,18 @@ export default function Mcp() {
   const [testing, setTesting] = useState('');
   const [result, setResult] = useState(null);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await listMcpServers(selectedWorkspace);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => listMcpServers(selectedWorkspace)
+    .then(({ data }) => {
       setServers(data.servers || []);
       setTransports(data.transports || ['stdio']);
       setError('');
-    } catch (err) {
+    })
+    .catch((err) => {
       setError(err.response?.data?.detail || err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedWorkspace]);
+    })
+    .then(() => setLoading(false)), [selectedWorkspace]);
 
   useEffect(() => { load(); }, [load]);
 

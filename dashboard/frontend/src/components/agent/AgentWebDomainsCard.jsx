@@ -24,14 +24,16 @@ export default function AgentWebDomainsCard({ agentId, readOnly = false }) {
   const [allowed, setAllowed] = useState('');
   const [blocked, setBlocked] = useState('');
   const [effective, setEffective] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the scope the lists were fetched for.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const scopeKey = `${agentId}|${selectedWorkspace || ''}`;
+  const loading = loadedFor !== scopeKey;
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getAgentWebDomains(agentId, selectedWorkspace || undefined)
       .then(({ data }) => {
         if (cancelled) return;
@@ -43,9 +45,9 @@ export default function AgentWebDomainsCard({ agentId, readOnly = false }) {
         setEffective(data?.effective || null);
       })
       .catch(() => { if (!cancelled) setError(t('webDomains.loadFailed')); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedFor(scopeKey); });
     return () => { cancelled = true; };
-  }, [agentId, selectedWorkspace, t]);
+  }, [agentId, selectedWorkspace, scopeKey, t]);
 
   const dirty = allowed !== saved.allowed || blocked !== saved.blocked;
 

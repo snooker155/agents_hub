@@ -41,27 +41,35 @@ export default function Users() {
   const [limits, setLimits] = useState(null);
   const [defaultDraft, setDefaultDraft] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getUsers();
+  // The core sets no state until the answers arrive, so the effect may call
+  // it; `load` (reloads after an action, the Refresh button) raises the
+  // spinner first. Promise chains, not async functions: the React Compiler
+  // lint treats an async function called from an effect as a synchronous
+  // setState.
+  const fetchAll = useCallback(() => getUsers()
+    .then(({ data }) => {
       setUsers(Array.isArray(data) ? data : []);
-      try {
-        const { data: spend } = await getSpendLimits();
-        setLimits(spend);
-        setDefaultDraft(String(spend?.default_limit_usd ?? 0));
-      } catch {
-        setLimits(null);
-      }
-      setError('');
-    } catch (err) {
+      return getSpendLimits()
+        .then(({ data: spend }) => {
+          setLimits(spend);
+          setDefaultDraft(String(spend?.default_limit_usd ?? 0));
+        })
+        .catch(() => {
+          setLimits(null);
+        })
+        .then(() => setError(''));
+    })
+    .catch((err) => {
       setError(err?.response?.data?.detail || t('auth.users.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+    })
+    .then(() => setLoading(false)), [t]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchAll();
+  }, [fetchAll]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const fail = (err, fallbackKey) => setError(
     err?.response?.data?.detail || t(fallbackKey),
@@ -353,18 +361,18 @@ function GroupsAndMappings({ users }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    try {
-      const [g, m] = await Promise.all([getGroups(), getGroupMappings()]);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => Promise.all([getGroups(), getGroupMappings()])
+    .then(([g, m]) => {
       setGroups(Array.isArray(g.data) ? g.data : []);
       setMappings(Array.isArray(m.data) ? m.data : []);
       setError('');
-    } catch (err) {
+    })
+    .catch((err) => {
       setError(err?.response?.data?.detail || t('groups.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+    })
+    .then(() => setLoading(false)), [t]);
 
   useEffect(() => { load(); }, [load]);
 

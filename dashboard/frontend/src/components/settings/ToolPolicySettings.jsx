@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, Plus, Save, X } from 'lucide-react';
 import { getModelsCatalog, getWorkspacePolicy, updateWorkspacePolicy } from '../../api/toolPolicy';
 import { useI18n } from '../../i18n';
@@ -32,21 +32,24 @@ export default function ToolPolicySettings({ workspace }) {
   // Read through a ref so a new `t` (a language switch) does not reload and
   // throw away unsaved edits.
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
-  const load = useCallback(async () => {
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => {
     if (!workspace) return;
-    setError('');
-    try {
-      const { data } = await getWorkspacePolicy(workspace);
-      const loaded = data?.tool_policy || {};
-      const loadedModel = data?.tool_policy_model || '';
-      setPolicy(loaded);
-      setModel(loadedModel);
-      setSaved({ policy: loaded, model: loadedModel });
-    } catch (e) {
-      setError(e?.response?.data?.detail || tRef.current('toolPolicy.loadFailed'));
-    }
+    getWorkspacePolicy(workspace)
+      .then(({ data }) => {
+        const loaded = data?.tool_policy || {};
+        const loadedModel = data?.tool_policy_model || '';
+        setError('');
+        setPolicy(loaded);
+        setModel(loadedModel);
+        setSaved({ policy: loaded, model: loadedModel });
+      })
+      .catch((e) => {
+        setError(e?.response?.data?.detail || tRef.current('toolPolicy.loadFailed'));
+      });
   }, [workspace]);
 
   useEffect(() => { load(); }, [load]);

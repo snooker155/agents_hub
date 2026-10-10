@@ -9,7 +9,7 @@ import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
 import { MessageViews } from './messageParts';
 import { messageViews } from './turnViews';
-import { ARTIFACT_OP_META } from './panels';
+import { ARTIFACT_OP_META } from './artifactOps';
 import { GraphNodeStep, ReasoningStep } from './reasoning';
 import { DelegationCard, TimelineToolCard } from './timeline';
 import { foldDelegationTools, withFinalText } from './trail';

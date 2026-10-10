@@ -165,23 +165,24 @@ function PaletteSection({ t }) {
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getMyPreferences();
-      const p = data?.palette && Object.keys(data.palette).length ? data.palette : null;
-      setSaved(p);
-      setDraft({ ...PRESETS.navy, ...(p || {}) });
-      setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('account.palette.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls the fetch directly (`loading` starts true); explicit
+  // reloads go through `load`, which raises the busy flag first.
+  const fetchPalette = useCallback(() => (
+    getMyPreferences()
+      .then(({ data }) => {
+        const p = data?.palette && Object.keys(data.palette).length ? data.palette : null;
+        setSaved(p);
+        setDraft({ ...PRESETS.navy, ...(p || {}) });
+        setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
+        setError('');
+      })
+      .catch((err) => setError(err?.response?.data?.detail || t('account.palette.loadFailed')))
+      .finally(() => setLoading(false))
+  ), [t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchPalette(); }, [fetchPalette]);
 
   const applyPreset = (name) => {
     setDraft(PRESETS[name]);
@@ -341,20 +342,26 @@ function SessionsSection({ t }) {
   const [busyId, setBusyId] = useState('');
   const [revokingOthers, setRevokingOthers] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getMySessions();
-      setSessions(Array.isArray(data) ? data : []);
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('account.sessions.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls the fetch directly (`loading` starts true); explicit
+  // reloads go through `load`, which raises the busy flag first.
+  const fetchSessions = useCallback(() => (
+    getMySessions()
+      .then(({ data }) => {
+        setSessions(Array.isArray(data) ? data : []);
+        setError('');
+      })
+      .catch((err) => setError(err?.response?.data?.detail || t('account.sessions.loadFailed')))
+      .finally(() => setLoading(false))
+  ), [t]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchSessions();
+  }, [fetchSessions]);
+
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   const revoke = async (session) => {
     setBusyId(session.id);
@@ -468,25 +475,28 @@ function GitHubSection({ t }) {
   const { formatDate } = useFormatters();
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState(null);
+  // The callback lands the browser on a #github=... hash: read and clear it
+  // once when the section mounts, not in an effect.
+  const [notice, setNotice] = useState(() => {
+    const back = takeGitHubOutcome();
+    if (back?.outcome === 'connected') return { ok: true, text: t('account.github.connectedToast') };
+    if (back) return { ok: false, text: t('account.github.errorToast', { reason: back.reason || back.outcome }) };
+    return null;
+  });
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getMyGitHub();
-      setStatus(data || null);
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('account.github.loadFailed'));
-    }
-  }, [t]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const load = useCallback(() => (
+    getMyGitHub()
+      .then(({ data }) => {
+        setStatus(data || null);
+        setError('');
+      })
+      .catch((err) => setError(err?.response?.data?.detail || t('account.github.loadFailed')))
+  ), [t]);
 
-  useEffect(() => {
-    const back = takeGitHubOutcome();
-    if (back?.outcome === 'connected') setNotice({ ok: true, text: t('account.github.connectedToast') });
-    else if (back) setNotice({ ok: false, text: t('account.github.errorToast', { reason: back.reason || back.outcome }) });
-    load();
-  }, [load, t]);
+  useEffect(() => { load(); }, [load]);
 
   const disconnect = async () => {
     if (!window.confirm(t('account.github.disconnectConfirm'))) return;
@@ -663,20 +673,26 @@ function ApiKeysSection({ t, isAdmin }) {
   const [editingBudgetValue, setEditingBudgetValue] = useState('');
   const [savingBudgetId, setSavingBudgetId] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getMyApiKeys();
-      setKeys(Array.isArray(data) ? data : []);
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('account.apiKeys.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls the fetch directly (`loading` starts true); explicit
+  // reloads go through `load`, which raises the busy flag first.
+  const fetchKeys = useCallback(() => (
+    getMyApiKeys()
+      .then(({ data }) => {
+        setKeys(Array.isArray(data) ? data : []);
+        setError('');
+      })
+      .catch((err) => setError(err?.response?.data?.detail || t('account.apiKeys.loadFailed')))
+      .finally(() => setLoading(false))
+  ), [t]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchKeys();
+  }, [fetchKeys]);
+
+  useEffect(() => { fetchKeys(); }, [fetchKeys]);
 
   useEffect(() => {
     (async () => {

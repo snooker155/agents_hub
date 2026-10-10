@@ -190,14 +190,11 @@ export default function Browser() {
     getWorkspaces().then(({ data }) => setWorkspaces(Array.isArray(data) ? data : [])).catch(() => {});
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const { data } = await listBrowserSessions(workspace);
-      setSessions(data?.sessions || []);
-    } catch {
-      setSessions([]);
-    }
-  }, [workspace]);
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const refresh = useCallback(() => listBrowserSessions(workspace)
+    .then(({ data }) => setSessions(data?.sessions || []))
+    .catch(() => setSessions([])), [workspace]);
 
   useEffect(() => {
     if (!status?.configured) return undefined;

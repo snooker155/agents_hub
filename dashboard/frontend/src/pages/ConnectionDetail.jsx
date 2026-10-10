@@ -204,17 +204,18 @@ export default function ConnectionDetail() {
   const [keep, setKeep] = useState('');
   const [pruned, setPruned] = useState(null);
 
-  const load = useCallback(async () => {
-    try {
-      const resp = await getConnection(connectionId, selectedWorkspace);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => getConnection(connectionId, selectedWorkspace)
+    .then((resp) => {
       setData(resp.data.connection);
       setRuns(resp.data.runs || []);
       setKeep(String(resp.data.connection?.retention?.runs ?? ''));
       setError('');
-    } catch (err) {
+    })
+    .catch((err) => {
       setError(err.response?.data?.detail || err.message);
-    }
-  }, [connectionId, selectedWorkspace]);
+    }), [connectionId, selectedWorkspace]);
 
   useEffect(() => { load(); }, [load]);
 

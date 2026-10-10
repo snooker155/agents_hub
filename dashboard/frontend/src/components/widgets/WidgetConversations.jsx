@@ -80,16 +80,12 @@ export default function WidgetConversations({ widget }) {
   const [transcript, setTranscript] = useState(null);
   const [reading, setReading] = useState(false);
 
-  const loadThreads = useCallback(async () => {
-    try {
-      const { data } = await getWidgetThreads(widget.widget_id);
-      setThreads(Array.isArray(data) ? data : []);
-    } catch (err) {
-      toast.error(t('widgets.loadFailed'), errorDetail(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [widget.widget_id, toast, t]);
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const loadThreads = useCallback(() => getWidgetThreads(widget.widget_id)
+    .then(({ data }) => setThreads(Array.isArray(data) ? data : []))
+    .catch((err) => toast.error(t('widgets.loadFailed'), errorDetail(err)))
+    .finally(() => setLoading(false)), [widget.widget_id, toast, t]);
 
   useEffect(() => { loadThreads(); }, [loadThreads]);
 

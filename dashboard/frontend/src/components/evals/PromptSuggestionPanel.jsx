@@ -30,23 +30,27 @@ export default function PromptSuggestionPanel({ evalRun, evalSet, onApplied }) {
   const runId = evalRun?.eval_run_id;
   const applicable = evalSet?.target_kind === 'agent' && evalRun?.status === 'completed';
 
-  useEffect(() => {
+  // A different run starts over: adjusted during render, then the effect
+  // below loads that run's suggestions.
+  const loadKey = runId && applicable ? runId : null;
+  const [seenKey, setSeenKey] = useState(loadKey);
+  if (seenKey !== loadKey) {
+    setSeenKey(loadKey);
     setSuggestions([]);
     setLoaded(false);
     setError('');
     setAppliedNote('');
-    if (!runId || !applicable) return;
-    (async () => {
-      try {
-        const { data } = await getPromptSuggestions(runId);
-        setSuggestions(data.suggestions || []);
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, [runId, applicable]);
+  }
+
+  useEffect(() => {
+    if (!loadKey) return undefined;
+    let cancelled = false;
+    getPromptSuggestions(loadKey)
+      .then(({ data }) => { if (!cancelled) setSuggestions(data.suggestions || []); })
+      .catch(() => { if (!cancelled) setSuggestions([]); })
+      .finally(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
+  }, [loadKey]);
 
   if (!applicable || !loaded) return null;
 

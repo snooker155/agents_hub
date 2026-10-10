@@ -194,11 +194,17 @@ function BindingForm({ name, onCreated, t }) {
   const [flows, setFlows] = useState([]);
   const [chatKey, setChatKey] = useState('');
   const [target, setTarget] = useState('');
+  // A target chosen in another workspace is not offered here: reset it while
+  // rendering when the workspace changes.
+  const [targetWorkspace, setTargetWorkspace] = useState(workspace);
+  if (targetWorkspace !== workspace) {
+    setTargetWorkspace(workspace);
+    setTarget('');
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setTarget('');
     getAgents(workspace).then((r) => setAgents(r.data || [])).catch(() => setAgents([]));
     listFlows(workspace).then((r) => setFlows(r.data || [])).catch(() => setFlows([]));
   }, [workspace]);
@@ -250,7 +256,11 @@ export default function ChannelConnector({ name }) {
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   const isDefaultWorkspace = workspace === 'default';
-  const [loading, setLoading] = useState(true);
+  // Derived from the channel and workspace the data was fetched for, so a
+  // switch shows the loader again without a setState in the effect.
+  const loadKey = `${name}|${workspace}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== loadKey;
   const [spec, setSpec] = useState(null);
   const [config, setConfig] = useState(null);
   const [status, setStatus] = useState({});
@@ -265,28 +275,31 @@ export default function ChannelConnector({ name }) {
   // own definition (connectors/channels/store.py).
   const [editing, setEditing] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    setEditing(false);
-    try {
-      const [specs, cfg, st, bs] = await Promise.all([
-        listChannels(), getChannelConfig(name, workspace), getChannelStatus(name, workspace),
-        getChannelBindings(name, workspace),
-      ]);
-      setSpec((specs.data || []).find((s) => s.name === name) || { name, fields: [] });
-      setConfig(cfg.data);
-      setAllowed((cfg.data?.allowed || []).join('\n'));
-      setStatus(st.data || {});
-      setBindings(bs.data || []);
-    } catch (e) {
-      setError(`${t('connectors.channels.loadFailed')}: ${e.response?.data?.detail || e.message}`);
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [specs, cfg, st, bs] = await Promise.all([
+          listChannels(), getChannelConfig(name, workspace), getChannelStatus(name, workspace),
+          getChannelBindings(name, workspace),
+        ]);
+        if (cancelled) return;
+        setError('');
+        setEditing(false);
+        setSpec((specs.data || []).find((s) => s.name === name) || { name, fields: [] });
+        setConfig(cfg.data);
+        setAllowed((cfg.data?.allowed || []).join('\n'));
+        setStatus(st.data || {});
+        setBindings(bs.data || []);
+      } catch (e) {
+        if (cancelled) return;
+        setError(`${t('connectors.channels.loadFailed')}: ${e.response?.data?.detail || e.message}`);
+      } finally {
+        if (!cancelled) setLoadedKey(`${name}|${workspace}`);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [name, workspace, t]);
-
-  useEffect(() => { load(); }, [load]);
 
   const refreshStatus = useCallback(async () => {
     try {

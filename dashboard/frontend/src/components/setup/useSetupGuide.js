@@ -52,7 +52,10 @@ export function useSetupGuide() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh is shared with the poll timer and the refresh event; it sets state after its await
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     window.addEventListener(REFRESH_EVENT, refresh);

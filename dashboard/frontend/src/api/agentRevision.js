@@ -96,7 +96,7 @@ export function installAgentRevision(api) {
       }
       const target = parseAgentUrl(config.url);
       if (!target || !conflictHandler || config.__revisionRetried) return Promise.reject(error);
-      let decision = 'cancel';
+      let decision;
       try {
         decision = await conflictHandler({
           agentId: target.id,

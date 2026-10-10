@@ -60,7 +60,7 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
     const s = session.current;
     if (!s) return null;
     const seconds = (performance.now() - s.started) / 1000;
-    let take = null;
+    let take;
     if (s.recorder) {
       if (s.recorder.state !== 'inactive') {
         await new Promise((resolve) => {

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createRuntime } from './index';
 
 // Drives a client runtime, preferring a Web Worker (runtimeWorker.js) so the
@@ -33,7 +33,9 @@ export function useRuntime({ runtimeName, spec, getParams, timeline }) {
   const rafRef = useRef(null);
   const lastRef = useRef(0);
   const paramsRef = useRef(getParams);
-  paramsRef.current = getParams;
+  // The latest getter, written after each render so effects and the clock read
+  // the current one without resubscribing.
+  useLayoutEffect(() => { paramsRef.current = getParams; });
 
   const count = spec?.params?.count;
   const structureKey = `${runtimeName}|${count}|${JSON.stringify(spec?.bounds || [])}|${JSON.stringify(spec?.entities || {})}`;
@@ -96,23 +98,23 @@ export function useRuntime({ runtimeName, spec, getParams, timeline }) {
   }, [speed]);
 
   // ── main-thread fallback clock (only when no worker) ──────────────────────
-  const tick = useCallback((now) => {
-    const rt = rtRef.current;
-    if (rt) {
-      const dt = Math.min(MAX_DT, (now - lastRef.current) / 1000 || 0) * speed;
-      lastRef.current = now;
-      try { rt.step(dt, paramsRef.current ? paramsRef.current() : {}); setFrame(rt.output()); } catch { /* keep last */ }
-      setT((prev) => prev + dt);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-  }, [speed]);
-
+  // The tick lives inside the effect so it can schedule itself.
   useEffect(() => {
     if (!playing || workerRef.current) return undefined;
     lastRef.current = performance.now();
+    const tick = (now) => {
+      const rt = rtRef.current;
+      if (rt) {
+        const dt = Math.min(MAX_DT, (now - lastRef.current) / 1000 || 0) * speed;
+        lastRef.current = now;
+        try { rt.step(dt, paramsRef.current ? paramsRef.current() : {}); setFrame(rt.output()); } catch { /* keep last */ }
+        setT((prev) => prev + dt);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, tick]);
+  }, [playing, speed]);
 
   const stepOnce = useCallback(() => {
     if (workerRef.current) { workerRef.current.postMessage({ type: 'step' }); return; }

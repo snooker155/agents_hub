@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, Save } from 'lucide-react';
 import { getWorkspaceLoopSettings, updateWorkspaceLoopSettings } from '../../api/loopSettings';
 import { useI18n } from '../../i18n';
@@ -72,20 +72,23 @@ export default function LoopSettingsWorkspace({ workspace }) {
   // Read through a ref so a new `t` (a language switch) does not reload and
   // throw away unsaved edits.
   const tRef = useRef(t);
-  tRef.current = t;
+  useLayoutEffect(() => { tRef.current = t; });
 
-  const load = useCallback(async () => {
-    if (!workspace) return;
-    setError('');
-    try {
-      const { data: loaded } = await getWorkspaceLoopSettings(workspace);
-      setData(loaded);
-      const merged = mergedValues(loaded);
-      setValues(merged);
-      setBaseline(merged);
-    } catch (e) {
-      setError(e?.response?.data?.detail || tRef.current('loopSettings.loadFailed'));
-    }
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => {
+    if (!workspace) return Promise.resolve();
+    return getWorkspaceLoopSettings(workspace)
+      .then(({ data: loaded }) => {
+        setError('');
+        setData(loaded);
+        const merged = mergedValues(loaded);
+        setValues(merged);
+        setBaseline(merged);
+      })
+      .catch((e) => {
+        setError(e?.response?.data?.detail || tRef.current('loopSettings.loadFailed'));
+      });
   }, [workspace]);
 
   useEffect(() => { load(); }, [load]);

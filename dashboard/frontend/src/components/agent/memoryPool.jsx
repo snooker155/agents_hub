@@ -230,4 +230,4 @@ function MemoryPoolDetails({ pool, withWorkspace = false }) {
 
 // Tool ids the planning toggle owns; static data, kept out of the component so
 
-export { RAG_STATUS, RagBadge, MemoryFileCard, MemoryPoolDetails };
+export { RagBadge, MemoryFileCard, MemoryPoolDetails };

@@ -53,7 +53,7 @@ export default function OnboardingChecklist({ onNavigate }) {
     // from inside the app, so it is reported as a warning rather than an
     // unticked box — otherwise a backend that is simply down looks identical
     // to a step not started yet, and the only evidence is a console error.
-    let backend = STATUS.TODO;
+    let backend;
     try {
       await getSystemHealth();
       backend = STATUS.DONE;

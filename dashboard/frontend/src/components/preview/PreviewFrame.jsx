@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { RefreshCw, ExternalLink, Loader } from 'lucide-react';
 
 import { mintPreviewTicket, renewPreviewTicket } from '../../api/preview';
@@ -50,7 +50,7 @@ export default function PreviewFrame({ target, height = 480 }) {
   // Read by the renewal timer, which must not restart every time a parent
   // passes a new but equal target object.
   const targetRef = useRef(target);
-  targetRef.current = target;
+  useLayoutEffect(() => { targetRef.current = target; });
 
   const mint = useCallback(async () => {
     setLoading(true);
@@ -69,10 +69,20 @@ export default function PreviewFrame({ target, height = 480 }) {
 
   const targetKey = `${target?.kind || ''}:${target?.name || target?.project_id || target?.deployment_id || ''}:${target?.service || ''}`;
 
-  useEffect(() => {
-    reMintedRef.current = false;
+  // A new target starts the address bar over (adjusted during render, so the
+  // old path never paints against the new target).
+  const [pathFor, setPathFor] = useState(targetKey);
+  if (pathFor !== targetKey) {
+    setPathFor(targetKey);
     setPath('');
     setPathInput('');
+  }
+
+  useEffect(() => {
+    reMintedRef.current = false;
+    // mint is shared with the expired-ticket handler and the retry button, and
+    // owns the loading flag; it sets state only after its await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- shared loader
     mint();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetKey]);

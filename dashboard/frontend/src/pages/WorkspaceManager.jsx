@@ -14,19 +14,23 @@ const WorkspaceManager = () => {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState('');
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const resp = await getWorkspaces();
-      setItems(resp.data || []);
-    } catch (e) {
+  // The core sets no state until the answer arrives, so the effect may call
+  // it; `fetchData` (after a delete or create) raises the spinner first. A
+  // promise chain, because the React Compiler lint treats an async function
+  // called from an effect as a synchronous setState.
+  const loadItems = () => getWorkspaces()
+    .then((resp) => setItems(resp.data || []))
+    .catch((e) => {
       console.error('Error loading workspaces', e);
-    } finally {
-      setLoading(false);
-    }
+    })
+    .then(() => setLoading(false));
+
+  const fetchData = () => {
+    setLoading(true);
+    return loadItems();
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { loadItems(); }, []);
 
   const handleDelete = async (wsName, e) => {
     e.stopPropagation();

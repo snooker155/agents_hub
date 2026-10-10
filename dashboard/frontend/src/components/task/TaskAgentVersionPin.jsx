@@ -14,17 +14,24 @@ import { useI18n } from '../../i18n';
 export default function TaskAgentVersionPin({ task, onChanged }) {
   const { t } = useI18n();
   const agentId = task?.assigned_agent_type || '';
-  const [versions, setVersions] = useState([]);
+  // The versions are kept with the agent they were fetched for, so another
+  // agent shows none until its own arrive (no reset inside the effect).
+  const [loaded, setLoaded] = useState({ agentId: '', versions: [] });
+  const versions = agentId && loaded.agentId === agentId ? loaded.versions : [];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [seenAgentId, setSeenAgentId] = useState(agentId);
+  if (seenAgentId !== agentId) {
+    setSeenAgentId(agentId);
+    setError('');
+  }
 
   useEffect(() => {
-    setError('');
-    if (!agentId) { setVersions([]); return; }
+    if (!agentId) return undefined;
     let cancelled = false;
     getAgentVersions(agentId)
-      .then(({ data }) => { if (!cancelled) setVersions(data?.versions || []); })
-      .catch(() => { if (!cancelled) setVersions([]); });
+      .then(({ data }) => { if (!cancelled) setLoaded({ agentId, versions: data?.versions || [] }); })
+      .catch(() => { if (!cancelled) setLoaded({ agentId, versions: [] }); });
     return () => { cancelled = true; };
   }, [agentId]);
 

@@ -28,7 +28,9 @@ export default function ImportModels({ refreshKey, onImported, onJobStarted }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState('');
 
-  const load = useCallback(async () => {
+  // Only reads; the callers store the answer, so the effect sets no state
+  // until it arrives.
+  const fetchSources = useCallback(async () => {
     const next = {};
     await Promise.all(SOURCES.map(async (src) => {
       try {
@@ -38,10 +40,16 @@ export default function ImportModels({ refreshKey, onImported, onJobStarted }) {
         // An older runtime without the route: nothing to offer from there.
       }
     }));
-    setData(next);
+    return next;
   }, []);
 
-  useEffect(() => { load(); }, [load, refreshKey]);
+  const load = useCallback(() => fetchSources().then(setData), [fetchSources]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSources().then((next) => { if (!cancelled) setData(next); });
+    return () => { cancelled = true; };
+  }, [fetchSources, refreshKey]);
 
   const shown = SOURCES.filter((src) => data[src.id]);
   if (shown.length === 0) return null;

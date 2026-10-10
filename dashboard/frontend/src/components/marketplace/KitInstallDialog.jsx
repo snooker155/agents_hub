@@ -18,21 +18,23 @@ const ACTION_STYLES = {
 export default function KitInstallDialog({ kit, workspace, onClose, onInstalled }) {
   const { t } = useI18n();
   const toast = useToast();
-  const [loading, setLoading] = useState(true);
+  // The kit and workspace the plan was last fetched for; loading is derived.
+  const planKey = `${kit.id}|${workspace}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== planKey;
   const [plan, setPlan] = useState(null);
   const [installing, setInstalling] = useState(false);
   const [result, setResult] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
     getKit(kit.id, workspace)
       .then(({ data }) => { if (alive) setPlan(data.plan); })
       .catch((e) => alive && toast.error(t('marketplace.kits.planFailed'), errorDetail(e)))
-      .finally(() => alive && setLoading(false));
+      .finally(() => alive && setLoadedKey(planKey));
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kit.id, workspace]);
+  }, [kit.id, workspace, planKey]);
 
   const submit = async () => {
     setInstalling(true);

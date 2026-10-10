@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components -- a registry, not a component module */
 /**
  * Registry of the Docs sections and the corpus id to section lookup.
  */

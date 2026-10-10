@@ -55,32 +55,32 @@ const Orchestrator = () => {
   const [starting, setStarting] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
 
-  const fetchData = useCallback(async () => {
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  const fetchData = useCallback(() => {
     const settingsWorkspace = selectedWorkspace || 'default';
-    try {
-      const [settingsResp, agentsResp, routingResp, projectsResp, instancesResp, globalSettingsResp, wsResp] = await Promise.allSettled([
-        getOrchestratorSettings(settingsWorkspace),
-        getAgents(workspaceFilter),
-        getOrchestratorRoutingLog(workspaceFilter),
-        workspaceFilter ? getProjects(workspaceFilter) : Promise.resolve({ data: [] }),
-        getInstances({ agent_id: 'orchestrator', workspace: workspaceFilter, live: true, limit: 50 }),
-        getSettings(),
-        workspaceFilter && workspaceFilter !== 'default' ? getWorkspace(workspaceFilter) : Promise.resolve(null),
-      ]);
-      if (settingsResp.status === 'fulfilled') setSettings(settingsResp.value.data);
-      if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
-      if (routingResp.status === 'fulfilled') setRoutingLog(routingResp.value.data || []);
-      if (projectsResp.status === 'fulfilled') setProjects(projectsResp.value.data || []);
-      if (instancesResp.status === 'fulfilled') setOrchestratorInstances(instancesResp.value.data?.items || []);
-      // Agent mode: workspace-specific override takes priority over global setting
-      const globalMode = globalSettingsResp.status === 'fulfilled' ? (globalSettingsResp.value.data.agent_mode || 'local') : 'local';
-      const wsMode = wsResp.status === 'fulfilled' && wsResp.value ? (wsResp.value.data?.metadata?.settings?.agent_mode || null) : null;
-      setAgentMode(wsMode || globalMode);
-    } catch (error) {
-      console.error('Error fetching orchestrator data:', error);
-    } finally {
-      setLoading(false);
-    }
+    return Promise.allSettled([
+      getOrchestratorSettings(settingsWorkspace),
+      getAgents(workspaceFilter),
+      getOrchestratorRoutingLog(workspaceFilter),
+      workspaceFilter ? getProjects(workspaceFilter) : Promise.resolve({ data: [] }),
+      getInstances({ agent_id: 'orchestrator', workspace: workspaceFilter, live: true, limit: 50 }),
+      getSettings(),
+      workspaceFilter && workspaceFilter !== 'default' ? getWorkspace(workspaceFilter) : Promise.resolve(null),
+    ])
+      .then(([settingsResp, agentsResp, routingResp, projectsResp, instancesResp, globalSettingsResp, wsResp]) => {
+        if (settingsResp.status === 'fulfilled') setSettings(settingsResp.value.data);
+        if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
+        if (routingResp.status === 'fulfilled') setRoutingLog(routingResp.value.data || []);
+        if (projectsResp.status === 'fulfilled') setProjects(projectsResp.value.data || []);
+        if (instancesResp.status === 'fulfilled') setOrchestratorInstances(instancesResp.value.data?.items || []);
+        // Agent mode: workspace-specific override takes priority over global setting
+        const globalMode = globalSettingsResp.status === 'fulfilled' ? (globalSettingsResp.value.data.agent_mode || 'local') : 'local';
+        const wsMode = wsResp.status === 'fulfilled' && wsResp.value ? (wsResp.value.data?.metadata?.settings?.agent_mode || null) : null;
+        setAgentMode(wsMode || globalMode);
+      })
+      .catch((error) => console.error('Error fetching orchestrator data:', error))
+      .finally(() => setLoading(false));
   }, [selectedWorkspace, workspaceFilter]);
 
   useEffect(() => {

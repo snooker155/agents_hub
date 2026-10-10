@@ -36,28 +36,32 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
   const [rows, setRows] = useState([]);
   const [users, setUsers] = useState([]);
   const [visible, setVisible] = useState(true);
-  const [loading, setLoading] = useState(true);
+  // The workspace the list was fetched for: loading is derived from it, and a
+  // refresh after a save swaps the rows in place.
+  const [loadedFor, setLoadedFor] = useState(null);
+  const loading = loadedFor !== workspace;
   const [error, setError] = useState('');
   const [noKey, setNoKey] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   // The row whose hosts are being edited: its key and the text in the box.
   const [hostEdit, setHostEdit] = useState(null);
 
-  const load = useCallback(async () => {
-    if (!workspace) return;
-    setLoading(true);
-    try {
-      const { data } = await getWorkspaceSecrets(workspace);
-      setRows(Array.isArray(data) ? data : []);
-      setVisible(true);
-      setError('');
-    } catch (err) {
-      const status = err?.response?.status;
-      if (status === 403 || status === 404) setVisible(false);
-      else setError(err?.response?.data?.detail || t('secrets.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  // A promise chain rather than an async body, so the effect below may call it
+  // without a synchronous setState.
+  const load = useCallback(() => {
+    if (!workspace) return Promise.resolve();
+    return getWorkspaceSecrets(workspace)
+      .then(({ data }) => {
+        setRows(Array.isArray(data) ? data : []);
+        setVisible(true);
+        setError('');
+      })
+      .catch((err) => {
+        const status = err?.response?.status;
+        if (status === 403 || status === 404) setVisible(false);
+        else setError(err?.response?.data?.detail || t('secrets.loadFailed'));
+      })
+      .finally(() => setLoadedFor(workspace));
   }, [workspace, t]);
 
   useEffect(() => { load(); }, [load]);

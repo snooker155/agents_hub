@@ -193,12 +193,14 @@ function ProjectGraph({ projectId }) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [source, setSource] = useState('auto');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);        // a chat/generate run is active
   const [stopping, setStopping] = useState(false); // a stop request is in flight
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
+  // Current selection for the inspector: { kind: 'node'|'edge', id } | null.
+  const [sel, setSel] = useState(null);
 
   // Chat
   const [feed, setFeed] = useState([]);           // unified transcript + tool steps
@@ -266,8 +268,6 @@ function ProjectGraph({ projectId }) {
   }, []);
 
   // ── Manual editing ────────────────────────────────────────────────────────
-  // Current selection for the inspector: { kind: 'node'|'edge', id } | null.
-  const [sel, setSel] = useState(null);
   const rfRef = useRef(null);            // the ReactFlow instance (for placement)
   const canvasWrapRef = useRef(null);    // the canvas viewport element
 
@@ -332,32 +332,41 @@ function ProjectGraph({ projectId }) {
     setDirty(true);
   }, [sel]);
 
-  const load = useCallback(async (v) => {
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls this directly (`loading` starts true); user-triggered
+  // reloads go through `load`, which raises the busy flag first.
+  const fetchGraph = useCallback((v) => (
+    Promise.all([
+      getProjectGraph(projectId, v),
+      getProjectGraphMessages(projectId, v).catch(() => ({ data: { messages: [], trace: [] } })),
+    ])
+      .then(([g, m]) => {
+        setError('');
+        applyGraph(g.data);
+        // Prefer the rich trace (thinking + tool/graph steps) so a reload restores
+        // the full session; fall back to the bare user/assistant transcript.
+        const trace = m.data.trace;
+        if (Array.isArray(trace) && trace.length) {
+          setFeed(trace);
+        } else {
+          setFeed((m.data.messages || []).map((x) => ({ k: x.role, text: x.content })));
+        }
+      })
+      .catch((e) => {
+        setError(e?.response?.data?.detail || e.message || t('flowProjectGraph.loadFailed'));
+        setNodes([]); setEdges([]); setFeed([]);
+      })
+      .finally(() => setLoading(false))
+  ), [projectId, applyGraph, t]);
+
+  const load = useCallback((v) => {
     setLoading(true);
     setError('');
-    try {
-      const [g, m] = await Promise.all([
-        getProjectGraph(projectId, v),
-        getProjectGraphMessages(projectId, v).catch(() => ({ data: { messages: [], trace: [] } })),
-      ]);
-      applyGraph(g.data);
-      // Prefer the rich trace (thinking + tool/graph steps) so a reload restores
-      // the full session; fall back to the bare user/assistant transcript.
-      const trace = m.data.trace;
-      if (Array.isArray(trace) && trace.length) {
-        setFeed(trace);
-      } else {
-        setFeed((m.data.messages || []).map((x) => ({ k: x.role, text: x.content })));
-      }
-    } catch (e) {
-      setError(e?.response?.data?.detail || e.message || t('flowProjectGraph.loadFailed'));
-      setNodes([]); setEdges([]); setFeed([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, applyGraph, t]);
+    return fetchGraph(v);
+  }, [fetchGraph]);
 
-  useEffect(() => { load(view); }, [view, load]);
+  useEffect(() => { fetchGraph(view); }, [view, fetchGraph]);
 
   // Drive one build turn over the SSE stream.
   const runChat = useCallback(async (message) => {

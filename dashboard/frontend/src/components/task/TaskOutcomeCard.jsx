@@ -139,11 +139,15 @@ export default function TaskOutcomeCard({ task, onChanged }) {
   // it. The form keeps its own copy, so a refresh never wipes what is being typed.
   const taskOutcomeKey = JSON.stringify(task?.outcome || null);
   const taskEvalsKey = JSON.stringify(task?.outcome_evaluations || []);
-  useEffect(() => {
+  // Adjusted during render: the local copies restart from the task whenever
+  // its outcome or evaluations change.
+  const taskKey = `${taskOutcomeKey}|${taskEvalsKey}`;
+  const [syncedKey, setSyncedKey] = useState(taskKey);
+  if (syncedKey !== taskKey) {
+    setSyncedKey(taskKey);
     setOutcome(task?.outcome || null);
     setEvaluations(task?.outcome_evaluations || []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskOutcomeKey, taskEvalsKey]);
+  }
 
   useEffect(() => {
     if (!editing || models.length) return;

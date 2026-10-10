@@ -50,19 +50,23 @@ function MemoryHistoryPanel({ poolId, kind, itemKey, itemLabel, onClose, onChang
   const [busy, setBusy] = useState(null);
   const [alsoCurrentByRow, setAlsoCurrentByRow] = useState({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const resp = await listMemoryVersions(poolId, { kind, item_key: itemKey, limit: 200 });
-      setRows(resp.data.versions || []);
-    } catch (e) {
-      toast.error(t('memoryVersions.errors.load'), errorDetail(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [poolId, kind, itemKey, t, toast]);
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // The effect calls this directly (`loading` starts true); reloads after an
+  // action go through `load`, which raises the busy flag first.
+  const fetchRows = useCallback(() => (
+    listMemoryVersions(poolId, { kind, item_key: itemKey, limit: 200 })
+      .then((resp) => setRows(resp.data.versions || []))
+      .catch((e) => toast.error(t('memoryVersions.errors.load'), errorDetail(e)))
+      .finally(() => setLoading(false))
+  ), [poolId, kind, itemKey, t, toast]);
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchRows();
+  }, [fetchRows]);
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
 
   // The previous version of the SAME item, wherever this list happens to sit
   // (one item's own history, or the whole pool's): the diff is always against

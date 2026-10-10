@@ -35,7 +35,9 @@ function Field({ label, children }) {
 export default function ProcessTab({ instance, onInstanceUpdated }) {
   const { t } = useI18n();
   const [carriers, setCarriers] = useState([]);
-  const [loadingCarriers, setLoadingCarriers] = useState(true);
+  // The instance the list was loaded for; null while a refresh is under way.
+  const [carriersFor, setCarriersFor] = useState(null);
+  const loadingCarriers = carriersFor !== instance.instance_id;
 
   const [takeTasks, setTakeTasks] = useState(!!instance.take_tasks);
   const [concurrency, setConcurrency] = useState(instance.concurrency != null ? String(instance.concurrency) : '');
@@ -43,24 +45,21 @@ export default function ProcessTab({ instance, onInstanceUpdated }) {
   const [saveError, setSaveError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const fetchCarriers = useCallback(async () => {
-    setLoadingCarriers(true);
-    try {
-      const { data } = await getInstanceCarriers(instance.instance_id);
-      setCarriers(data?.items || []);
-    } catch {
-      setCarriers([]);
-    } finally {
-      setLoadingCarriers(false);
-    }
-  }, [instance.instance_id]);
+  const fetchCarriers = useCallback(() => getInstanceCarriers(instance.instance_id)
+    .then(({ data }) => setCarriers(data?.items || []))
+    .catch(() => setCarriers([]))
+    .finally(() => setCarriersFor(instance.instance_id)), [instance.instance_id]);
 
   useEffect(() => { fetchCarriers(); }, [fetchCarriers]);
 
-  useEffect(() => {
+  // The saved inputs changed (here or elsewhere): the form starts from them again.
+  const savedInputs = `${instance.take_tasks}|${instance.concurrency}`;
+  const [seenInputs, setSeenInputs] = useState(savedInputs);
+  if (savedInputs !== seenInputs) {
+    setSeenInputs(savedInputs);
     setTakeTasks(!!instance.take_tasks);
     setConcurrency(instance.concurrency != null ? String(instance.concurrency) : '');
-  }, [instance.take_tasks, instance.concurrency]);
+  }
 
   const dirty = takeTasks !== !!instance.take_tasks
     || concurrency !== (instance.concurrency != null ? String(instance.concurrency) : '');
@@ -158,7 +157,7 @@ export default function ProcessTab({ instance, onInstanceUpdated }) {
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-800">{t('instanceDetail.process.carrierHistory')}</h3>
-          <button type="button" onClick={fetchCarriers} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+          <button type="button" onClick={() => { setCarriersFor(null); fetchCarriers(); }} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100">
             <RefreshCw className={`w-3.5 h-3.5 ${loadingCarriers ? 'animate-spin' : ''}`} />
           </button>
         </div>

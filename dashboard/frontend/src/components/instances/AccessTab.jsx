@@ -84,7 +84,10 @@ export default function AccessTab({ instance, onInstanceUpdated, actions = null,
     }
   }, [instance.instance_id, api]);
 
-  useEffect(() => { fetchConnections(); }, [fetchConnections]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the Refresh button and owns the spinner flag
+    fetchConnections();
+  }, [fetchConnections]);
 
   const handleTogglePublish = async () => {
     setToggling(true);

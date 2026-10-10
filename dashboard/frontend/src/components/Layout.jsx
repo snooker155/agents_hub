@@ -87,7 +87,6 @@ const Layout = ({ children }) => {
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [providerStatuses, setProviderStatuses] = useState({});
   const [providersTesting, setProvidersTesting] = useState({});
-  const [backendOnline, setBackendOnline] = useState(null);
   const [sidebarPref, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
@@ -102,7 +101,13 @@ const Layout = ({ children }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const sidebarCollapsed = narrow ? false : sidebarPref;
   const modelPickerRef = useRef(null);
-  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
+  // Any navigation closes the drawer: adjust state while rendering rather
+  // than in an effect, so the stale open frame is never painted.
+  const [drawerPath, setDrawerPath] = useState(location.pathname);
+  if (drawerPath !== location.pathname) {
+    setDrawerPath(location.pathname);
+    setDrawerOpen(false);
+  }
 
   const toggleSidebar = () => {
     if (narrow) { setDrawerOpen((v) => !v); return; }
@@ -174,7 +179,7 @@ const Layout = ({ children }) => {
   // Backend health is implied by the shared stream connection: if our single
   // EventSource is open, the backend is up. No separate polling needed.
   const { connected } = useStream();
-  useEffect(() => { setBackendOnline(connected); }, [connected]);
+  const backendOnline = connected;
 
   useEffect(() => {
     const handleClickOutside = (e) => {

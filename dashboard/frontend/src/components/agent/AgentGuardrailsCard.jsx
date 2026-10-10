@@ -17,28 +17,34 @@ export default function AgentGuardrailsCard({ agentId, agent, onSaved }) {
   const [guardrails, setGuardrails] = useState([]);
   const [selected, setSelected] = useState(agent?.guardrails || []);
   const [saved, setSaved] = useState(agent?.guardrails || []);
-  const [loading, setLoading] = useState(true);
+  // The workspace the list was fetched for: loading is derived from it.
+  const [loadedFor, setLoadedFor] = useState(undefined);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   const workspace = agent?.owner_workspace || selectedWorkspace || null;
 
+  const loading = loadedFor !== workspace;
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getGuardrails(workspace, false)
       .then(({ data }) => { if (!cancelled) setGuardrails(data || []); })
       .catch(() => { if (!cancelled) setGuardrails([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedFor(workspace); });
     return () => { cancelled = true; };
   }, [workspace]);
 
-  useEffect(() => {
+  // The record changed under us (saved elsewhere, another agent): start the
+  // picker from it again. Adjusted while rendering, not in an effect.
+  const [seenGuardrails, setSeenGuardrails] = useState(agent?.guardrails);
+  if (agent?.guardrails !== seenGuardrails) {
     const ids = agent?.guardrails || [];
+    setSeenGuardrails(agent?.guardrails);
     setSelected(ids);
     setSaved(ids);
-  }, [agent?.guardrails]);
+  }
 
   const already = useMemo(() => guardrails.filter((g) => g.applies_to === 'all'), [guardrails]);
   const selectable = useMemo(() => guardrails.filter((g) => g.applies_to === 'selected'), [guardrails]);

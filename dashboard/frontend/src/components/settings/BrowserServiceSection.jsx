@@ -50,19 +50,20 @@ export default function BrowserServiceSection() {
   const [showLog, setShowLog] = useState(false);
   const dirty = useRef(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getBrowserService();
+  // A promise chain, not an async function: the React Compiler lint treats an
+  // async function called from an effect as a synchronous setState.
+  const load = useCallback(() => getBrowserService()
+    .then(({ data }) => {
       setStatus(data);
       setError('');
       if (!dirty.current) {
         setUrl(data.url || '');
         setMode(data.mode || 'local');
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       setError(errorDetail(e) || t('settings.browser.loadFailed'));
-    }
-  }, [t]);
+    }), [t]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

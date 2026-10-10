@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Brain, Loader2, MessageSquare, MessageSquarePlus, PanelRightClose, Send, StopCircle } from 'lucide-react';
 import { streamEntityChat } from '../api';
@@ -152,7 +152,7 @@ export default function EntityChat({
   // rebuilt (and the composer re-rendered) every time the page beneath the
   // chat changes what it is showing.
   const bodyRef = useRef(body);
-  bodyRef.current = body;
+  useLayoutEffect(() => { bodyRef.current = body; });
 
   // The threads this chat has been. Loaded from the key the server reports, so
   // no page has to know its own chat's storage key.
@@ -169,22 +169,28 @@ export default function EntityChat({
 
   // The stored session: the live thread, plus the key the switcher needs to
   // reach the ones behind it.
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await loadChat();
-      setFeed(feedFrom(data));
-      setChatRef(data?.chat_ref || null);
-      setError('');
-    } catch (e) {
-      setError(e?.response?.data?.detail || e.message || t('entityChat.loadFailed'));
-      setFeed([]);
-    } finally {
-      setLoading(false);
-    }
+  // `loading` starts true, so the first load needs no synchronous reset here.
+  // The ignore flag drops a response that arrives after the chat was swapped.
+  useEffect(() => {
+    let ignore = false;
+    const load = async () => {
+      try {
+        const { data } = await loadChat();
+        if (ignore) return;
+        setFeed(feedFrom(data));
+        setChatRef(data?.chat_ref || null);
+        setError('');
+      } catch (e) {
+        if (ignore) return;
+        setError(e?.response?.data?.detail || e.message || t('entityChat.loadFailed'));
+        setFeed([]);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    };
+    load();
+    return () => { ignore = true; };
   }, [loadChat, feedFrom, t]);
-
-  useEffect(() => { load(); }, [load]);
 
   // Abort the reader on unmount. The run itself is detached server-side, so it
   // finishes and persists regardless — this only drops our listener.

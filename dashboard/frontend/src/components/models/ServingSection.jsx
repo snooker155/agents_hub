@@ -36,18 +36,18 @@ export default function ServingSection() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [infoRes, usageRes] = await Promise.all([getServingInfo(), getServingUsage({})]);
-      setInfo(infoRes.data || {});
-      setUsage(usageRes.data || {});
-    } catch (e) {
-      setError(errorDetail(e) || t('localModels.serving.unreachable'));
-    } finally {
-      setLoading(false);
-    }
+  // Promise chain rather than try/await: the lint rule cannot tell that no
+  // state is set before the first await of an async function with a catch.
+  // `loading` starts true, so the effect sets nothing before the response.
+  const load = useCallback(() => {
+    Promise.all([getServingInfo(), getServingUsage({})])
+      .then(([infoRes, usageRes]) => {
+        setError('');
+        setInfo(infoRes.data || {});
+        setUsage(usageRes.data || {});
+      })
+      .catch((e) => setError(errorDetail(e) || t('localModels.serving.unreachable')))
+      .finally(() => setLoading(false));
   }, [t]);
 
   useEffect(() => { load(); }, [load]);

@@ -30,7 +30,11 @@ export default function AgentConsentCard({ agentId, readOnly = false }) {
   const [scopes, setScopes] = useState({});
   const [saved, setSaved] = useState({ providers: [], scopes: {} });
   const [grants, setGrants] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Loading is derived from the key the settings were fetched for, so a new
+  // agent or workspace shows the spinner without a setState in the effect.
+  const loadKey = `${agentId}|${workspace}`;
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== loadKey;
   const [saving, setSaving] = useState(false);
   const [revoking, setRevoking] = useState('');
   const [message, setMessage] = useState('');
@@ -51,13 +55,12 @@ export default function AgentConsentCard({ agentId, readOnly = false }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     getConsentSettings(agentId, workspace)
       .then(({ data }) => { if (!cancelled) apply(data); })
       .catch(() => { if (!cancelled) setError(t('consent.loadFailed')); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedKey(loadKey); });
     return () => { cancelled = true; };
-  }, [agentId, workspace, t]);
+  }, [agentId, workspace, loadKey, t]);
 
   useEffect(() => { loadGrants(); }, [loadGrants]);
 

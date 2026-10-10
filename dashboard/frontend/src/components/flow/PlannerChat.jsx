@@ -34,20 +34,24 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
   const feedRef = useRef(null);
   const textareaRef = useRef(null);
 
-  const load = useCallback(async () => {
-    setError('');
-    try {
-      const { data } = await getProjectTasksChat(projectId);
-      const trace = data.trace;
-      if (Array.isArray(trace) && trace.length) setFeed(trace);
-      else setFeed((data.messages || []).map((x) => ({ k: x.role, text: x.content })));
-    } catch (e) {
-      setError(e?.response?.data?.detail || e.message || t('flowPlannerChat.loadFailed'));
-      setFeed([]);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await getProjectTasksChat(projectId);
+        if (cancelled) return;
+        setError('');
+        const trace = data.trace;
+        if (Array.isArray(trace) && trace.length) setFeed(trace);
+        else setFeed((data.messages || []).map((x) => ({ k: x.role, text: x.content })));
+      } catch (e) {
+        if (cancelled) return;
+        setError(e?.response?.data?.detail || e.message || t('flowPlannerChat.loadFailed'));
+        setFeed([]);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [projectId, t]);
-
-  useEffect(() => { load(); }, [load]);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
   useEffect(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; }, [feed]);
 
