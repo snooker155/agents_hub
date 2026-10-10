@@ -460,11 +460,16 @@ def test_a_real_pty_round_trip():
                                               "stty size"], cols=77, rows=21)
     seen = b""
     try:
-        deadline = time.time() + 5
+        # Each phase has its own allowance, and a generous one: under a full
+        # parallel run, starting sh and then stty took longer than the single
+        # 5s budget both phases used to share.
+        deadline = time.time() + 20
         while b"ready" not in seen and time.time() < deadline:
             seen += proc.read(0.2) or b""
+        assert b"ready" in seen
         proc.write(b"abc\n")
-        while time.time() < deadline:
+        deadline = time.time() + 20
+        while not (b"got:abc" in seen and b"21 77" in seen) and time.time() < deadline:
             chunk = proc.read(0.2)
             if chunk is None:
                 break

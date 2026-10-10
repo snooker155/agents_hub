@@ -35,7 +35,10 @@ class PlanScheduler:
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
-        self._last_escalation: float = 0.0
+        # -inf, not 0.0: time.monotonic() counts from boot, so on a machine up
+        # for less than ESCALATION_INTERVAL_SECONDS a 0.0 start held the first
+        # sweep back. The first tick sweeps, wherever the clock starts.
+        self._last_escalation: float = float("-inf")
         self._leader = False
 
     def is_running(self) -> bool:
