@@ -22,8 +22,13 @@ updates:
       # not hold the rest back.
       lint:
         patterns: ["eslint", "eslint-*", "@eslint/*", "globals"]
+      # Dependabot ranks a group without patterns as more specific than one
+      # with them, so without these exclusions this group swallowed both
+      # groups above (job log: "belongs to more specific group").
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["vite", "vitest", "@vitest/*", "@vitejs/*",
+                           "eslint", "eslint-*", "@eslint/*", "globals"]
 
   - package-ecosystem: npm
     directories: [/clients/agents-hub-ts, /clients/agents-hub-langgraph-js, /site]
