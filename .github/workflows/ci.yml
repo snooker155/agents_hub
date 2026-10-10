@@ -13,10 +13,10 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -85,7 +85,7 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Trade the test database's durability for speed
         # fsync, synchronous_commit and full_page_writes make every commit
@@ -103,7 +103,7 @@ jobs:
           docker exec ${{ job.services.postgres.id }} psql -U ah -d agents_hub_test -c "SHOW fsync" -c "SHOW synchronous_commit"
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -129,10 +129,10 @@ jobs:
   backup-restore:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -192,7 +192,7 @@ jobs:
   oidc-keycloak:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Start Keycloak
         run: |
@@ -202,7 +202,7 @@ jobs:
             quay.io/keycloak/keycloak:26.0 start-dev --import-realm
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -239,10 +239,10 @@ jobs:
       run:
         working-directory: dashboard/frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -272,16 +272,16 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # backend and agents are two targets of one Dockerfile sharing its
       # dependency stages; the builder keeps those between the two steps, so
       # the second build only adds its own final layers.
       - name: Build backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: backend
@@ -290,7 +290,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=python-amd64
 
       - name: Build agents image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: agents
@@ -298,7 +298,7 @@ jobs:
           cache-from: type=gha,scope=python-amd64
 
       - name: Build frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: dashboard/frontend
           push: false
@@ -313,10 +313,10 @@ jobs:
   cli-binary:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
