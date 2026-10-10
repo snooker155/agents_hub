@@ -57,7 +57,7 @@ RUN npm run build
 
 
 # ---------- runtime ----------
-FROM nginx:1.27-alpine AS nginx
+FROM nginx:1.31-alpine AS nginx
 
 ARG AGENTS_HUB_VERSION=""
 ARG AGENTS_HUB_GIT_SHA=""
