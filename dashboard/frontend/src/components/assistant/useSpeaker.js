@@ -108,7 +108,9 @@ export default function useSpeaker({ serverSpeech = true, language = 'en', voice
         utterance.lang = LOCALES[lang] || lang;
         utterance.onend = () => resolve();
         utterance.onerror = (e) => (e.error === 'interrupted' || e.error === 'canceled' ? resolve() : reject(e));
-        signal.addEventListener('abort', () => { window.speechSynthesis.cancel(); resolve(); });
+        // The abort can come at unmount, when the page (or a test) may already
+        // have lost speechSynthesis.
+        signal.addEventListener('abort', () => { window.speechSynthesis?.cancel(); resolve(); });
         window.speechSynthesis.speak(utterance);
         return;
       }
