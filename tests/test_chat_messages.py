@@ -184,7 +184,7 @@ def test_a_caller_that_cannot_send_messages_can_still_embed_the_history():
 # ── what the executor receives ───────────────────────────────────────────────
 
 class _Executor:
-    """Stands in for the LangChain AgentExecutor: records what it was invoked
+    """Stands in for the loop executor: records what it was invoked
     with and answers with a finished run."""
 
     def __init__(self):
@@ -270,7 +270,8 @@ def test_the_prompt_template_has_a_place_for_the_conversation():
 def test_a_real_executor_passes_the_conversation_through_to_the_model():
     """The placeholder is only useful if the executor forwards the extra key: the
     agent runnable, not just the template, has to carry it to the model."""
-    from langchain.agents import AgentExecutor, create_tool_calling_agent
+    from agents.agent_loop import build_agent_runnable
+    from agents.loop_executor import LoopExecutor
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -291,7 +292,7 @@ def test_a_real_executor_passes_the_conversation_through_to_the_model():
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
-    executor = AgentExecutor(agent=create_tool_calling_agent(llm, [], prompt), tools=[])
+    executor = LoopExecutor(agent=build_agent_runnable(llm, [], prompt, []), tools=[])
 
     out = executor.invoke({"input": "now", "chat_history": [
         HumanMessage(content="then"), AIMessage(content="ok")]})

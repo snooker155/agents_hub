@@ -340,10 +340,10 @@ def test_versions_fingerprint_the_handoff_fields():
 # ── the agent loop ends a turn on a tool's word ──────────────────────────────
 
 def _executor(tool, replies):
-    """A real AgentExecutor over the hub's loop runnable, streaming as in a
+    """A real executor over the hub's loop runnable, streaming as in a
     chat turn. The fake model has no stream of its own, so LangChain streams
     each reply whole, tool calls included."""
-    from langchain.agents import AgentExecutor
+    from agents.loop_executor import LoopExecutor
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -356,7 +356,7 @@ def _executor(tool, replies):
         ("system", "SYS"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
-    return AgentExecutor(agent=agent_loop.build_agent_runnable(llm, [tool], prompt),
+    return LoopExecutor(agent=agent_loop.build_agent_runnable(llm, [tool], prompt),
                          tools=[tool], return_intermediate_steps=True)
 
 

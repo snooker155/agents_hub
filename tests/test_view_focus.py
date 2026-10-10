@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, List
 
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -287,7 +287,7 @@ def _run(tools, exts, replies):
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
     runnable = build_agent_runnable(model, tools, prompt, exts)
-    executor = AgentExecutor(agent=runnable, tools=tools, return_intermediate_steps=True)
+    executor = LoopExecutor(agent=runnable, tools=tools, return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)
     binding = current_view_binding.set({})

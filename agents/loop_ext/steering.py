@@ -153,8 +153,8 @@ def injection_message(injection: Dict[str, Any]) -> Any:
 
 
 def _format_steps(steps: Any) -> List[Any]:
-    from langchain.agents.format_scratchpad.tools import format_to_tool_messages
-    return format_to_tool_messages(list(steps or []))
+    from agents.agent_loop import format_steps
+    return format_steps(list(steps or []))
 
 
 def place_injections(scratchpad: List[Any], steps: List[Any],
@@ -162,9 +162,9 @@ def place_injections(scratchpad: List[Any], steps: List[Any],
     """``scratchpad`` with one user message per injection, each right after
     the tool results of its ``after_step``.
 
-    ``scratchpad`` is what ``format_to_tool_messages(steps)`` made; its
+    ``scratchpad`` is what ``format_steps(steps)`` made; its
     messages for the first ``k`` steps are exactly
-    ``format_to_tool_messages(steps[:k])`` (it only appends), which is how the
+    ``format_steps(steps[:k])`` (it only appends), which is how the
     position after step ``k`` is found. A step past the end (never expected)
     lands at the end.
     """

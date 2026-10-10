@@ -14,7 +14,7 @@ from typing import Any, List
 
 import httpx
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.agents import AgentActionMessageLog
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -225,7 +225,7 @@ def test_a_long_history_is_shortened(window):
 
 
 def test_the_agent_loop_sends_the_cleared_trail(window):
-    """End to end through AgentExecutor: later model calls see the notes."""
+    """End to end through the executor: later model calls see the notes."""
 
     @tool
     def read_file(path: str) -> str:
@@ -251,7 +251,7 @@ def test_the_agent_loop_sends_the_cleared_trail(window):
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
     runnable = build_agent_runnable(model, [read_file], prompt, [ext])
-    executor = AgentExecutor(agent=runnable, tools=[read_file], return_intermediate_steps=True)
+    executor = LoopExecutor(agent=runnable, tools=[read_file], return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)
     try:

@@ -143,8 +143,8 @@ agents and entities from this registry, its state is `FlowState` with the
 mutability rule, and its runs are flow-run records the dashboard already reads.
 A LangGraph checkpointer saves a LangGraph graph, which is not what a flow is,
 so adopting it would mean translating the DAG both ways and keeping two
-sources of truth about where a run had got to. Moving the agent loop itself off
-AgentExecutor is a separate question, and this is not it.
+sources of truth about where a run had got to. The agent loop itself runs on the
+hub's own executor (`agents/loop_executor.py`), likewise independent of LangGraph.
 
 ## Gotchas
 

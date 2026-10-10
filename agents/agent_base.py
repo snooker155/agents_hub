@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, SerializeAsAny
 
 from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 
 from agents.agent_utils import build_chat_model
 from agents.agent_response import AgentResponse
@@ -148,7 +148,7 @@ class AgentBase(ABC):
         return SystemMessage(content=content)
 
     def build_executor(self) -> Any:
-        """Build and return the LangChain AgentExecutor."""
+        """Build and return the loop executor (agents/loop_executor.py)."""
 
         llm = build_chat_model(
             provider=self.provider,
@@ -183,12 +183,11 @@ class AgentBase(ABC):
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         
-        # LangChain's tool-calling chain, rebuilt with the loop's hooks between
-        # its stages. With no extension active it is the same chain
-        # create_tool_calling_agent builds.
+        # The tool-calling chain with the loop's hooks between its stages
+        # (agents/agent_loop.py), run by the hub's own executor.
         agent = build_agent_runnable(llm, self._tools, prompt, self._loop_extensions)
 
-        executor = AgentExecutor(
+        executor = LoopExecutor(
             agent=agent,
             tools=self._tools,
             verbose=self.verbose,

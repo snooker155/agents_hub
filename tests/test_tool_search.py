@@ -13,7 +13,7 @@ from typing import Any, List
 
 import httpx
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompt_values import ChatPromptValue
@@ -194,7 +194,7 @@ def _run(agent, ext, replies):
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
     runnable = build_agent_runnable(model, agent._tools, prompt, [ext])
-    executor = AgentExecutor(agent=runnable, tools=agent._tools, return_intermediate_steps=True)
+    executor = LoopExecutor(agent=runnable, tools=agent._tools, return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)
     try:
@@ -416,7 +416,7 @@ def test_anthropic_run_end_to_end_sends_a_constant_tool_array(monkeypatch):
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content="sys"), ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")])
-    executor = AgentExecutor(agent=build_agent_runnable(llm, agent._tools, prompt, exts),
+    executor = LoopExecutor(agent=build_agent_runnable(llm, agent._tools, prompt, exts),
                              tools=agent._tools, return_intermediate_steps=True)
     state = LoopState(run_id="r1")
     token = agent_loop.set_state(state)

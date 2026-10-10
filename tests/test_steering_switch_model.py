@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -120,7 +120,7 @@ def _executor(model, extensions, system: Any = "sys"):
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
     runnable = build_agent_runnable(model, [echo], prompt, extensions)
-    return AgentExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
+    return LoopExecutor(agent=runnable, tools=[echo], return_intermediate_steps=True)
 
 
 def _run(executor, state):

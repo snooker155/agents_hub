@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from langchain.agents import AgentExecutor
+from agents.loop_executor import LoopExecutor
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -68,7 +68,7 @@ def _model():
 def _executor(extensions=None):
     tools = [echo, other]
     runnable = build_agent_runnable(_model(), tools, _prompt(), extensions)
-    return AgentExecutor(agent=runnable, tools=tools, return_intermediate_steps=True)
+    return LoopExecutor(agent=runnable, tools=tools, return_intermediate_steps=True)
 
 
 def test_plain_chain_runs_tools_and_finishes():

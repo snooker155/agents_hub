@@ -205,7 +205,7 @@ exceed what the task already spent. Spend for this purpose is the same
 number the Costs page shows, summed over every run of the task including
 resumes, evaluation channels excluded.
 
-**This is enforced only for the built-in LangChain agent loop
+**This is enforced only for the built-in agent loop
 (`StandardAgent`).** A CLI backend (Claude Code, Codex), a remote agent or an
 imported agent is not stopped mid-run when it crosses the cap. Its spend is
 still counted toward the task's total and the cap still applies to the
