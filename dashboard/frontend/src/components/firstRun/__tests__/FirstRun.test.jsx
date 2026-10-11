@@ -186,7 +186,10 @@ describe('FirstRun', () => {
     localApi.startReadySet.mockResolvedValue({ data: { job: { id: 'j1', status: 'running' } } });
     localApi.getReadySet.mockResolvedValue({ data: { available: true, chat: { label: 'Qwen3 8B', size_bytes: 5e9 }, job: { status: 'running', percent: 10 } } });
     firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...EMPTY, runtime: true, local_set: { status: 'running' } } });
-    fireEvent.click(screen.getByTestId('first-run-download'));
+    // The button stays disabled until the ready set answers; click only once it is enabled.
+    const downloadButton = await screen.findByTestId('first-run-download');
+    await waitFor(() => expect(downloadButton).not.toBeDisabled());
+    fireEvent.click(downloadButton);
     await waitFor(() => expect(localApi.startReadySet).toHaveBeenCalledWith('default'));
     // The way on appears once the download is seen running.
     fireEvent.click(await screen.findByTestId('first-run-continue'));
