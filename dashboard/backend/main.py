@@ -898,6 +898,11 @@ app.include_router(agent_outcome_router.router)
 from routes import kits as kits_router
 app.include_router(kits_router.router)
 
+# Agent templates: one ready agent to start from in the create wizard
+# (docs/agent-templates.md, ``agents/templates/``).
+from routes import agent_templates as agent_templates_router
+app.include_router(agent_templates_router.router)
+
 # ============================================================================
 # Entry Point
 # ============================================================================

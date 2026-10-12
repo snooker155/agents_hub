@@ -25,7 +25,8 @@
         "secrets",
         "services",
         "proactive",
-        "agent-inheritance"
+        "agent-inheritance",
+        "agent-templates"
       ],
       "headings": [
         "What an agent is made of",
@@ -605,7 +606,8 @@
         "connectors",
         "channels",
         "tools-and-capabilities",
-        "agent-inheritance"
+        "agent-inheritance",
+        "agent-templates"
       ],
       "headings": [
         "The Kits tab",
@@ -616,6 +618,26 @@
         "The lock",
         "Specializing a system agent",
         "Writing a kit"
+      ]
+    },
+    {
+      "id": "agent-templates",
+      "title": "Agent templates",
+      "surface": "Agents",
+      "summary": "Ready single agents to start from in the create wizard: SRE agent, AI teammate, GitHub issue agent, data agent, invoice agent and contract review agent, each with a prompt, a safe tool set and a default outcome rubric.",
+      "related": [
+        "agents",
+        "kits",
+        "outcomes",
+        "tools-and-capabilities",
+        "connectors",
+        "flow-templates"
+      ],
+      "headings": [
+        "In the create wizard",
+        "Over the API",
+        "Why some channels are left out",
+        "Writing a template"
       ]
     },
     {

@@ -24,6 +24,11 @@ turns that section into the next release.
   shared memory pool and one paused scheduled job. Jobs that read untrusted
   text and jobs that send are split across two agents, so no kit agent forms
   the lethal trifecta.
+- **Agent templates** (docs/agent-templates.md): the create wizard starts
+  from one of twelve ready agents (SRE agent, AI teammate, GitHub issue
+  agent, data agent, invoice agent, contract review and more), each with a
+  prompt, a safe tool set and a default outcome rubric, adjustable before
+  creating. `GET /api/agent-templates`, `POST /api/agent-templates/{id}/create`.
 
 ### Fixed
 
