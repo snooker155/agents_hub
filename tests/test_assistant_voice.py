@@ -509,7 +509,7 @@ def test_the_models_page_offers_the_speech_voices():
 
 # ── the threads on the Chat page ─────────────────────────────────────────────
 
-def test_assistant_threads_are_read_only_text_on_the_chat_page(multi, client, seeded, fake_agent):
+def test_assistant_threads_are_text_on_the_chat_page(multi, client, seeded, fake_agent):
     _, admin = _admin(client)
     _, bob = _member(client, admin)
     _, alice = _member(client, admin, "alice")
@@ -517,8 +517,9 @@ def test_assistant_threads_are_read_only_text_on_the_chat_page(multi, client, se
     _turn(client, bob, "and yesterday?")
 
     [entry] = [c for c in client.get("/api/chats", headers=bob).json()["items"] if c.get("origin") == "assistant"]
-    assert entry["read_only"] is True and entry["title"] == "what failed today"
-    assert entry["message_count"] == 4 and entry["messages"] == []
+    # Continued on the Chat page through /api/assistant, never written through /api/chats.
+    assert entry["read_only"] is False and entry["title"] == "what failed today"
+    assert entry["messages"] == []
     assert entry["assistant_thread"] == {"mode": "personal", "session_id": entry["id"].rsplit("~", 1)[1],
                                          "active": True}
 
@@ -527,8 +528,12 @@ def test_assistant_threads_are_read_only_text_on_the_chat_page(multi, client, se
     assert said[0] == ("user", "what failed today", True)
     assert said[2] == ("user", "and yesterday?", False)
     assert said[1][0] == "assistant" and said[1][1].startswith("Done, the task")
+    # Each reply names its run, which is what the Process panel opens.
+    runs = [m.get("run_id") for m in chat["messages"]]
+    assert runs[0] is None and runs[2] is None and runs[1] and runs[3] and runs[1] != runs[3]
+    assert client.get(f"/api/messages/{runs[1]}/insights", headers=bob).status_code == 200
 
-    # Written and cleared only on the Assistant page; nobody else's to read.
+    # Never written or cleared through /api/chats; nobody else's to read.
     assert client.put(f"/api/chats/{entry['id']}", json={"id": entry["id"], "messages": []},
                       headers=bob).status_code == 409
     assert client.delete(f"/api/chats/{entry['id']}", headers=bob).status_code == 409
@@ -541,6 +546,92 @@ def test_assistant_threads_are_read_only_text_on_the_chat_page(multi, client, se
     threads = [c for c in client.get("/api/chats", headers=bob).json()["items"] if c.get("origin") == "assistant"]
     assert [c["title"] for c in threads] == ["new topic", "what failed today"]
     assert [c["assistant_thread"]["active"] for c in threads] == [True, False]
+
+
+def test_an_older_reply_finds_its_run(client, seeded, fake_agent):
+    """A reply saved before replies named their run is paired with the run that
+    finished as it was written, so its process still opens."""
+    run_id, _ = _turn(client, {}, "what failed today")
+    from common.entity_chat_store import entity_chat_store
+    store = entity_chat_store()
+    [key] = [k.split(":", 1)[1] for k in store.docs.keys() if k.startswith("assistant:")]
+    with store.docs.transaction():
+        entry = store.docs.get(f"assistant:{key}")
+        for m in entry["messages"]:
+            m.pop("run_id", None)
+        store.docs.put(f"assistant:{key}", entry)
+
+    [conv] = [c for c in client.get("/api/chats").json()["items"] if c.get("origin") == "assistant"]
+    messages = client.get(f"/api/chats/{conv['id']}").json()["messages"]
+    assert [m.get("run_id") for m in messages] == [None, run_id]
+
+
+def test_a_reply_carries_the_context_fill(client, seeded, fake_agent):
+    """The Chat page shows the context fill the last turn left; the reply keeps
+    it, and one saved before replies did reads it off its run."""
+    run_id, _ = _turn(client, {}, "what failed today")
+    from common.entity_chat_store import entity_chat_store
+    from managers.run_manager import update_run
+    store = entity_chat_store()
+    [key] = [k for k in store.docs.keys() if k.startswith("assistant:")]
+
+    def stored(**fields):
+        with store.docs.transaction():
+            entry = store.docs.get(key)
+            reply = entry["messages"][-1]
+            for name in ("context_used", "context_window"):
+                reply.pop(name, None)
+            reply.update(fields)
+            store.docs.put(key, entry)
+        [conv] = [c for c in client.get("/api/chats").json()["items"] if c.get("origin") == "assistant"]
+        return client.get(f"/api/chats/{conv['id']}").json()["messages"][-1]
+
+    reply = stored(context_used=1200, context_window=128000)
+    assert (reply["context_used"], reply["context_window"]) == (1200, 128000)
+
+    update_run(run_id, {"model": "gpt-4o", "provider": "openai",
+                        "process": {"token_usage": {"inbound_tokens": 900}}})
+    reply = stored()
+    assert reply["context_used"] == 900 and reply["context_window"] > 900
+
+
+def test_the_chat_page_continues_a_past_conversation(client, seeded, fake_agent):
+    """The Chat page reopens a past conversation (sessions/activate) and sends
+    to /api/assistant with its workspace: the turn lands in that conversation."""
+    _turn(client, {}, "first topic")
+    assert client.delete("/api/assistant").status_code == 200
+    _turn(client, {}, "second topic")
+
+    def threads():
+        items = client.get("/api/chats").json()["items"]
+        return {c["title"]: c for c in items if c.get("origin") == "assistant"}
+
+    past = threads()["first topic"]
+    assert past["assistant_thread"]["active"] is False
+    key = past["id"][len("assistant~"):].rsplit("~", 1)[0]
+    activated = client.post("/api/entity-chats/sessions/activate", json={
+        "kind": "assistant", "entity_id": key, "session_id": past["assistant_thread"]["session_id"]})
+    assert activated.status_code == 200, activated.text
+    _turn(client, {}, "back to the first", workspace=past["workspace"])
+
+    now = threads()
+    assert now["first topic"]["assistant_thread"]["active"] is True
+    assert now["second topic"]["assistant_thread"]["active"] is False
+    said = [m["content"] for m in client.get(f"/api/chats/{past['id']}").json()["messages"] if m["role"] == "user"]
+    assert said == ["first topic", "back to the first"]
+
+
+def test_the_voice_models_route_leaves_the_conversation_alone(client, speech_models, fake_agent):
+    """The Chat page's microphone asks which models a turn would use without
+    moving the live conversation to another workspace."""
+    from workspace import create_workspace_folder
+    create_workspace_folder("sales")
+    _turn(client, {}, "a default question")
+    out = client.get("/api/assistant/voice", params={"workspace": "sales"}).json()
+    assert out["workspace"] == "sales"
+    assert out["voice"]["transcription"]["model"] == TRANSCRIPTION["model"]
+    [thread] = [c for c in client.get("/api/chats").json()["items"] if c.get("origin") == "assistant"]
+    assert thread["assistant_thread"]["active"] is True and thread["workspace"] == "default"
 
 
 def test_a_conversation_stays_in_its_workspace(client, seeded, fake_agent):

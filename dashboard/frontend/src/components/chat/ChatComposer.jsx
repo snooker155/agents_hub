@@ -2,9 +2,17 @@ import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
 import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
 import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
+import { useI18n } from '../../i18n';
+import ComposerMic from './ComposerMic';
+import useChatVoice from './useChatVoice';
+
+function isTyping(target) {
+  const tag = target?.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable;
+}
 
 /**
  * While a turn runs: how a message typed now reaches it (Steer, Interrupt,
@@ -84,7 +92,7 @@ export default function ChatComposer() {
   const {
     addReferences, addWorkspaceFiles, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage,
-    currentTelegramBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
+    currentConv, currentTelegramBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
     onPickFiles, pendingAttachments, pendingReferences, pickerKind, removeAttachment,
     removeReference, resizeTextarea, selectCommand, selectedProject, selectedWorkspace,
     sendAsBot, sendMessage, setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen,
@@ -119,6 +127,46 @@ export default function ChatComposer() {
   // Enter while a turn runs goes to the turn (in the chosen mode) instead of
   // starting a new one, which the page's own handler would refuse. That is
   // also a turn this tab is not sending (`steering.busy`, see useChatSteering).
+  // A voice message: in the Send button's place while the box is empty, and
+  // Space held in the empty box (or anywhere outside a text field).
+  const { language } = useI18n();
+  const [voiceNote, setVoiceNote] = useState('');
+  const sendSpoken = useCallback((text) => { setVoiceNote(''); sendMessage(text, { voice: true }); }, [sendMessage]);
+  const onVoiceError = useCallback((code) => {
+    setVoiceNote(t(`chat.voice.errors.${code}`, { defaultValue: code }));
+  }, [t]);
+  const voice = useChatVoice({
+    workspace: currentConv?.workspace || selectedWorkspace || undefined,
+    mode: currentConv?.assistant_thread?.mode,
+    language, onText: sendSpoken, onError: onVoiceError,
+  });
+  const boxEmpty = !input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0;
+  const micShown = boxEmpty && voice.available && !steering.busy && !currentTelegramBinding;
+  const micUsable = micShown && hasTarget && !loading;
+  useEffect(() => {
+    if (!micUsable) return undefined;
+    const down = (e) => {
+      if (e.code !== 'Space' || e.altKey || e.ctrlKey || e.metaKey) return;
+      const inBox = e.target === textareaRef.current;
+      if (!inBox && isTyping(e.target)) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      setVoiceNote('');
+      voice.start();
+    };
+    const up = (e) => {
+      if (e.code !== 'Space' || !voice.active()) return;
+      e.preventDefault();
+      voice.end();
+    };
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup', up, true);
+    return () => {
+      window.removeEventListener('keydown', down, true);
+      window.removeEventListener('keyup', up, true);
+    };
+  }, [micUsable, textareaRef, voice]);
+
   const onKeyDown = (e) => {
     if (steering.busy && e.key === 'Enter' && !e.shiftKey && !(commandMenuOpen && commandSuggestions.length > 0)) {
       e.preventDefault();
@@ -372,6 +420,8 @@ export default function ChatComposer() {
                   <SendIcon className="w-3.5 h-3.5" />
                   {telegramSending ? t('chat.sending') : t('chat.sendAsBot')}
                 </button>
+              ) : micShown ? (
+                <ComposerMic voice={voice} disabled={!micUsable} t={t} />
               ) : (
                 <button
                   onClick={sendMessage}
@@ -390,6 +440,12 @@ export default function ChatComposer() {
             )}
             {attachmentError && (
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
+            )}
+            {(voice.talking || voice.transcribing || voiceNote) && (
+              <p className={`text-xs mt-2 ${voiceNote && !voice.talking && !voice.transcribing ? 'text-red-600' : 'text-gray-500'}`}
+                data-testid="composer-voice-note">
+                {voice.talking ? t('chat.voice.recording') : voice.transcribing ? t('chat.voice.transcribing') : voiceNote}
+              </p>
             )}
 
             {filePickerOpen && (

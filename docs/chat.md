@@ -177,9 +177,23 @@ ambiguous.
 
 The [Assistant](assistant.md)'s conversations, by voice or text, are listed
 here too, as text, with an **Assistant** badge and in every workspace (they
-are the person's own, not a workspace's). They are read only: they are
-continued, or started afresh, on the Assistant page, and a line that was
-spoken is marked *spoken*. See [Assistant, in the Chat page](assistant.md#the-page).
+are the person's own, not a workspace's). Opening one picks the Assistant,
+and a message sent there continues the conversation, a past one included
+(it becomes the Assistant's live conversation). Picking another agent
+instead starts an ordinary conversation that carries the Assistant
+conversation's text. A line that was spoken is marked *spoken*. See
+[Assistant, in the Chat page](assistant.md#the-page).
+
+## Voice messages
+
+While the box is empty, a microphone stands in the Send button's place.
+Hold it, or hold Space in the empty box or anywhere outside a text field,
+speak, and let go: what was said is sent as the message and marked
+*spoken*. As soon as anything is typed or attached, the Send button is back.
+The recording is turned into text by the workspace's transcription model
+(the conversation's workspace, through `/api/assistant/transcribe`), or by
+the browser's own recognition where the workspace has none. With neither,
+the microphone is not shown.
 
 ## Telegram
 

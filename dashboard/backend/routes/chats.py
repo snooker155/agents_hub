@@ -103,8 +103,9 @@ async def list_chats(
     page = chat_store.list_chats(workspace=workspace, limit=limit, offset=offset)
     principal = identity.request_principal(request)
     items = [c for c in page["items"] if _chat_visible(principal, c)]
-    # The caller's conversations with the Assistant, as text and read only,
-    # on the first page and in the same newest-first order.
+    # The caller's conversations with the Assistant, as text, on the first
+    # page and in the same newest-first order. The page continues one through
+    # /api/assistant; this router never writes them.
     if offset == 0:
         threads = _assistant_threads(workspace)
         if threads:
@@ -143,7 +144,8 @@ def _refuse_assistant_write(chat_id: str) -> None:
     if chat_id.startswith(CHAT_ID_PREFIX):
         raise HTTPException(status_code=409, detail={
             "code": "read_only",
-            "message": "A conversation with the Assistant is continued or cleared on the Assistant page."})
+            "message": "A conversation with the Assistant is continued through /api/assistant, "
+                       "on the Assistant page or the Chat page, and cleared on the Assistant page."})
 
 
 @router.get("/running")

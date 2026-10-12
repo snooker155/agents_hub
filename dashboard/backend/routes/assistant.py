@@ -188,7 +188,10 @@ def own_thread_ids() -> List[str]:
 # ── the threads on the Chat page ─────────────────────────────────────────────
 
 #: The person's assistant threads are listed among the Chat page's
-#: conversations as text, read only: ``assistant~<thread key>~<session id>``.
+#: conversations as text: ``assistant~<thread key>~<session id>``. The Chat
+#: page continues one through this router (``POST /api/assistant`` after
+#: ``/api/entity-chats/sessions/activate`` for a past one), never through
+#: ``/api/chats``, which refuses to write them.
 CHAT_ID_PREFIX = "assistant~"
 CHAT_ORIGIN = "assistant"
 
@@ -216,7 +219,8 @@ def _chat_record(key: str, thread: Dict[str, Any], *, with_messages: bool) -> Di
         "id": f"{CHAT_ID_PREFIX}{key}~{thread['id']}",
         "title": thread.get("title") or "Assistant",
         "origin": CHAT_ORIGIN,
-        "read_only": True,
+        # Continued on the Chat page too, through /api/assistant.
+        "read_only": False,
         # A conversation stays in the workspace it started in.
         "workspace": thread_workspace(thread, thread_home(key, identity.current_user_id())),
         "agent_id": ASSISTANT_AGENT_ID,
@@ -224,19 +228,99 @@ def _chat_record(key: str, thread: Dict[str, Any], *, with_messages: bool) -> Di
                              "session_id": thread["id"], "active": bool(thread.get("active"))},
         "created_at": thread.get("started_at"),
         "updated_at": thread.get("updated_at"),
-        "message_count": len(transcript),
         "preview": str((transcript[-1] if transcript else {}).get("content") or "")[:200],
         "messages": [],
     }
     if with_messages:
+        runs = _reply_runs(key, thread, transcript)
         record["messages"] = [
             {"id": f"{thread['id']}-{i}", "role": m.get("role") or "assistant",
              "content": str(m.get("content") or ""), "at": m.get("at"),
-             **({"voice": True} if m.get("voice") else {})}
+             **({"voice": True} if m.get("voice") else {}),
+             **({"run_id": runs[i]} if runs.get(i) else {}),
+             **{k: m[k] for k in ("context_used", "context_window") if m.get(k)}}
             for i, m in enumerate(transcript)
             if m.get("role") in ("user", "assistant")
         ]
+        _fill_last_context(record["messages"])
     return record
+
+
+def _fill_last_context(messages: List[Dict[str, Any]]) -> None:
+    """The context fill of the last reply, read off its run when the reply was
+    saved before replies carried it: the Chat page shows only the last one."""
+    last = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
+    if last is None or last.get("context_window") or not last.get("run_id"):
+        return
+    from managers.run_manager import get_run_by_id, get_run_process
+    from routes.sessions import (
+        _build_context_window_metrics, _resolve_session_model, _resolve_session_provider,
+    )
+    try:
+        run = get_run_by_id(last["run_id"])
+        if not run:
+            return
+        process = get_run_process(last["run_id"]) or {}
+        # The largest single prompt, as the Process panel measures it
+        # (routes/messages.py): a loop resends the thread on every step.
+        peak = max((int(((inv or {}).get("token_usage") or {}).get("inbound_tokens") or 0)
+                    for inv in (process.get("llm_invocations") or []) if isinstance(inv, dict)),
+                   default=0) or int((process.get("token_usage") or {}).get("inbound_tokens") or 0)
+        metrics = _build_context_window_metrics(_resolve_session_model(run), peak,
+                                                 _resolve_session_provider(run))
+    except Exception:  # noqa: BLE001 - the thread still reads as text without it
+        log.debug("assistant: could not read the context of %s", last["run_id"], exc_info=True)
+        return
+    if peak and metrics.get("context_window_tokens"):
+        last["context_used"] = int(metrics["input_tokens_used"])
+        last["context_window"] = int(metrics["context_window_tokens"])
+
+
+#: How far apart a reply's save and its run's finish may be and still be paired.
+_REPLY_RUN_SLACK_S = 5.0
+
+
+def _reply_runs(key: str, thread: Dict[str, Any], transcript: List[dict]) -> Dict[int, str]:
+    """The run behind each reply of a thread, by transcript index: what the
+    Process panel loads. A reply carries its run id (chat/entity_chat.py);
+    one saved before it did is paired with the thread's run that finished as
+    it was written, since the reply is stored right after its run closes."""
+    out = {i: str(m["run_id"]) for i, m in enumerate(transcript)
+           if m.get("role") == "assistant" and m.get("run_id")}
+    missing = [i for i, m in enumerate(transcript)
+               if m.get("role") == "assistant" and i not in out and m.get("at")]
+    if not missing:
+        return out
+    from datetime import datetime
+    from common import db
+
+    def when(value: Any) -> Optional[float]:
+        try:
+            return datetime.fromisoformat(str(value)).timestamp()
+        except (TypeError, ValueError):
+            return None
+
+    epoch = int(thread.get("epoch") or 0)
+    conv_id = f"{ASSISTANT_CHAT_KIND}chat:{key}" + (f":{epoch}" if epoch else "")
+    try:
+        rows = db.get_conn().execute(
+            "SELECT run_id, finished_at FROM runs WHERE task_id = ? AND finished_at IS NOT NULL",
+            (conv_id,)).fetchall()
+    except Exception:  # noqa: BLE001 - a thread without its runs still reads as text
+        log.debug("assistant: could not read the runs of %s", conv_id, exc_info=True)
+        return out
+    runs = [(str(r["run_id"]), when(r["finished_at"])) for r in rows]
+    taken = set(out.values())
+    for i in missing:
+        at = when(transcript[i].get("at"))
+        if at is None:
+            continue
+        best = min(((abs(at - fin), rid) for rid, fin in runs if fin is not None and rid not in taken),
+                   default=None)
+        if best is not None and best[0] <= _REPLY_RUN_SLACK_S:
+            out[i] = best[1]
+            taken.add(best[1])
+    return out
 
 
 def chat_threads() -> List[Dict[str, Any]]:
@@ -689,6 +773,16 @@ async def transcribe(request: Request):
             "seconds": seconds,
             # Whether sending it would answer a waiting card rather than start a turn.
             "consent": voice.consent(text)}
+
+
+@router.get("/api/assistant/voice")
+async def voice_models(request: Request):
+    """The voice models a turn in ``?workspace=`` would use, for a page other
+    than the Assistant's (the Chat page's microphone). Unlike ``GET
+    /api/assistant`` it leaves the live conversation where it is."""
+    ctx = resolve_thread(request, request.query_params.get("mode"))
+    workspace = _voice_workspace(ctx, request.query_params.get("workspace"))
+    return {"voice": voice_status(workspace, ctx.home, ctx.principal), "workspace": workspace}
 
 
 class SpeakIn(BaseModel):

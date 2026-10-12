@@ -76,8 +76,8 @@ export default function ChatSidebar() {
               onClick={() => {
                 setListOpen(false);
                 navigate(`/chat/${conv.id}`);
-                // Read only: it does not change what the next chat talks to.
-                if (conv.origin === 'assistant') return;
+                // A conversation with the Assistant opens with the Assistant
+                // picked (its record's agent_id), like any other agent's.
                 if (conv.target_mode === 'flow' && conv.flow_id) {
                   setTargetMode('flow');
                   setSelectedFlow(conv.flow_id);

@@ -71,7 +71,7 @@ function Segment({ active, onClick, icon: Icon, label, title, tone = 'indigo', f
 export default function ChatTopBar() {
   const {
     agentModel, agentProvider, agentTopology, artifactCount, artifactsOpen, codeCount, codeOpen, currentConv,
-    currentConvId, flows, graphRun, messages, processOpen, projects, selectableAgents, selectedAgent,
+    currentConvId, flows, graphRun, processOpen, projects, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen, setCodeOpen,
     setConversations, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
     setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode, setListOpen,
@@ -186,16 +186,6 @@ export default function ChatTopBar() {
 
       {/* View: the messages, or the whole transcript */}
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        {/* What the person wrote, not every bubble: a turn's tool calls and
-            steering notes are part of one message's answer. */}
-        {(() => {
-          const sent = messages.filter((m) => m.role === 'user' && !m.steer).length;
-          return sent > 0 ? (
-            <div className="hidden sm:block text-xs text-gray-400 tabular-nums">
-              {t('chat.messageCount', { count: sent })}
-            </div>
-          ) : null;
-        })()}
         {/* The process, in the chat view only: the build view already shows
             the run inline. */}
         {!isBuild && (
