@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Globe,
   Search,
@@ -18,6 +18,8 @@ import {
 import { getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 const SEVERITY_STYLES = {
@@ -34,6 +36,9 @@ const STATUS_STYLES = {
   unsupported: 'bg-gray-50 text-gray-600 border-gray-200',
   not_configured: 'bg-gray-50 text-gray-600 border-gray-200',
 };
+
+// Sort keys the backend orders by (tools/web_log.py SORT_KEYS).
+const SORT_KEYS = ['created', 'kind', 'status', 'agent', 'duration', 'severity'];
 
 const Badge = ({ className = '', children, title }) => (
   <span title={title} className={`text-[10px] px-2 py-0.5 rounded border font-semibold uppercase ${className}`}>
@@ -57,17 +62,30 @@ const WebLogs = () => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [entry, setEntry] = useState(null);
   const [entryLoading, setEntryLoading] = useState(false);
   const [filters, setFilters] = useState({ kind: '', status: '', min_severity: '', search: '' });
   const [search, setSearch] = useState('');
 
+  const paging = useListPaging('webLogs', {
+    sorts: SORT_KEYS,
+    defaultSort: 'created',
+    resetOn: [filters],
+  });
+  const pageParams = paging.params;
+
+  // The rows on screen are for this query; a different one shows the loader
+  // (or, with rows already shown, the load-more spinner), derived rather than
+  // set inside the effect.
+  const queryKey = JSON.stringify([filters, pageParams]);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const loading = loadedKey !== queryKey;
+
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
-  const fetchData = (next = filters) => {
-    const params = { limit: 200 };
-    Object.entries(next).forEach(([k, v]) => { if (v) params[k] = v; });
+  const fetchData = useCallback(() => {
+    const params = { ...pageParams };
+    Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
     return Promise.all([getWebLogs(params), getWebLogStats()])
       .then(([logs, s]) => {
         setRows(logs.data.items || []);
@@ -75,20 +93,12 @@ const WebLogs = () => {
         setStats(s.data);
       })
       .catch((error) => { console.error('Error fetching web logs:', error); })
-      .finally(() => setLoading(false));
-  };
+      .then(() => setLoadedKey(queryKey));
+  }, [filters, pageParams, queryKey]);
 
-  // Initial load only. Filter changes call fetchData(next) directly with the
-  // new filters, so depending on it here would fetch every page twice.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  const applyFilter = (patch) => {
-    const next = { ...filters, ...patch };
-    setFilters(next);
-    setLoading(true);
-    fetchData(next);
-  };
+  const applyFilter = (patch) => setFilters((prev) => ({ ...prev, ...patch }));
 
   const submitSearch = (e) => {
     e.preventDefault();
@@ -112,7 +122,7 @@ const WebLogs = () => {
     try {
       const { data } = await clearWebLogs();
       setEntry(null);
-      setLoading(true);
+      setLoadedKey(null);
       await fetchData();
       alert(t('webLogs.clearedEntries', { count: data.deleted }));
     } catch (error) {
@@ -137,7 +147,7 @@ const WebLogs = () => {
         </>}
         actions={<>
           <button
-            onClick={() => { setLoading(true); fetchData(); }}
+            onClick={() => fetchData()}
             className="inline-flex items-center px-3 py-2 text-sm font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4 mr-1.5" /> {t('webLogs.refresh')}
@@ -228,11 +238,17 @@ const WebLogs = () => {
             className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
           />
         </form>
+        <ListPagingControls
+          paging={paging}
+          options={SORT_KEYS}
+          labels={{ created: t('webLogs.when'), severity: t('webLogs.review') }}
+          compact
+        />
         <span className="text-xs text-gray-400">{t('webLogs.matching', { count: total })}</span>
       </div>
 
       {/* Rows */}
-      {loading ? (
+      {loading && !rows.length ? (
         <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('webLogs.loadingWebCalls')} /></div>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
@@ -313,6 +329,7 @@ const WebLogs = () => {
           </table>
         </div>
       )}
+      <ListLoadMore paging={paging} shown={rows.length} total={total} loading={loading} />
 
       {/* Detail drawer */}
       {(entry || entryLoading) && (

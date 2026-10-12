@@ -1,7 +1,7 @@
 """
 Web access log API — review what ``web_search`` and ``fetch_url`` actually read.
 
-- ``GET    /api/web-logs``            newest-first, filterable page of calls
+- ``GET    /api/web-logs``            sortable, filterable page of calls
 - ``GET    /api/web-logs/stats``      volume, failures, flagged calls, top hosts
 - ``GET    /api/web-logs/{entry_id}`` one call including the stored response text
 - ``DELETE /api/web-logs``            clear the log
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/web-logs", tags=["web-logs"])
 
 @router.get("")
 async def list_web_logs(
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=web_log.MAX_PAGE),
     offset: int = Query(0, ge=0),
     kind: Optional[str] = Query(None, description="search | fetch"),
     status: Optional[str] = Query(None, description="ok | refused | error | unsupported | not_configured"),
@@ -29,11 +29,17 @@ async def list_web_logs(
     agent_id: Optional[str] = None,
     min_severity: Optional[str] = Query(None, description="low | medium | high"),
     search: Optional[str] = Query(None, description="Substring of the query, URL, agent or error"),
+    sort: Optional[str] = Query(None, description="created | kind | status | agent | duration | severity"),
+    order: Optional[str] = Query(None, description="desc | asc"),
 ):
     if kind and kind not in ("search", "fetch"):
         raise HTTPException(status_code=400, detail="kind must be 'search' or 'fetch'")
     if min_severity and min_severity not in web_log.SEVERITY_ORDER:
         raise HTTPException(status_code=400, detail="min_severity must be low, medium or high")
+    if sort and sort not in web_log.SORT_KEYS:
+        raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(web_log.SORT_KEYS)}")
+    if order and order not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
     return web_log.query(
         limit=limit,
         offset=offset,
@@ -43,6 +49,8 @@ async def list_web_logs(
         agent_id=agent_id,
         min_severity=min_severity,
         search=search,
+        sort=sort,
+        order=order,
     )
 
 

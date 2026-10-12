@@ -85,6 +85,22 @@ def test_query_is_newest_first(log_file):
     assert urls == ["https://ok.test/2", "https://ok.test/1", "https://ok.test/0"]
 
 
+def test_query_sorts_and_pages(log_file):
+    for i, agent in enumerate(["carol", "alice", "bob"]):
+        _record(log_file, url=f"https://ok.test/{i}", agent_id=agent)
+
+    def by(**kw):
+        return [row["agent_id"] for row in web_log.query(**kw)["items"]]
+
+    assert by(sort="agent") == ["carol", "bob", "alice"]
+    assert by(sort="agent", order="asc") == ["alice", "bob", "carol"]
+    oldest_first = [row["url"] for row in web_log.query(order="asc")["items"]]
+    assert oldest_first == ["https://ok.test/0", "https://ok.test/1", "https://ok.test/2"]
+    # The page loads a growing window from the top; offset still cuts it.
+    page = web_log.query(limit=1, offset=1)
+    assert page["total"] == 3 and [row["url"] for row in page["items"]] == ["https://ok.test/1"]
+
+
 def test_list_rows_omit_bodies_but_detail_keeps_them(log_file):
     _record(log_file, body="the whole page text")
     row = web_log.query()["items"][0]

@@ -379,6 +379,21 @@ def _summarize(record: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
+# The most rows one list request returns (the page loads more in batches).
+MAX_PAGE = 2000
+
+# Sort keys for ``query``. Each maps a record to a value that compares across
+# every record, missing fields included.
+SORT_KEYS = {
+    "created": lambda r: r.get("ts") or "",
+    "kind": lambda r: r.get("kind") or "",
+    "status": lambda r: r.get("status") or "",
+    "agent": lambda r: (r.get("agent_id") or "").lower(),
+    "duration": lambda r: r.get("duration_ms") or 0,
+    "severity": lambda r: SEVERITY_ORDER.get(r.get("max_severity") or "none", 0),
+}
+
+
 def query(
     *,
     limit: int = 200,
@@ -389,8 +404,14 @@ def query(
     agent_id: Optional[str] = None,
     min_severity: Optional[str] = None,
     search: Optional[str] = None,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Newest-first page of log rows plus the totals for the current filter."""
+    """A page of log rows plus the totals for the current filter.
+
+    ``sort`` is one of ``SORT_KEYS`` (``created`` by default), ``order`` is
+    ``desc`` (default) or ``asc``; ties keep the newest call first.
+    """
     records = list(reversed(_read_all()))
     floor = SEVERITY_ORDER.get((min_severity or "none").lower(), 0)
     needle = (search or "").strip().lower()
@@ -414,7 +435,10 @@ def query(
         return True
 
     matched = [r for r in records if keep(r)]
-    page = matched[offset: offset + max(1, min(limit, 500))]
+    key = SORT_KEYS.get(sort or "created", SORT_KEYS["created"])
+    # Stable in both directions, so ties stay newest-first.
+    matched.sort(key=key, reverse=(order or "desc") != "asc")
+    page = matched[offset: offset + max(1, min(limit, MAX_PAGE))]
     return {
         "items": [_summarize(r) for r in page],
         "total": len(matched),
