@@ -5,10 +5,16 @@ local set").
 In order, as one background job on the hub's job list (``kind`` ``local_set``):
 start the hub's model runtime, install the llama.cpp engine, download one chat
 model sized to this machine's memory and load it (which registers it in the
-catalog), install Whisper and download a transcription model, install Kokoro
-and download a speech model, and give the workspace those two as its speech
-models. The chat model becomes the global default only when nothing else is
-configured: a hub with a cloud key keeps its choice.
+catalog), install Whisper and download a transcription model, download one
+voice that speaks the hub's language, and give the workspace those two as its
+speech models. The chat model becomes the global default only when nothing
+else is configured: a hub with a cloud key keeps its choice.
+
+**What is already there counts.** Any chat model on the runtime does for the
+chat step (the one loaded, else the largest that fits this machine), and any
+loaded chat model for the load step. Any ready voice (not a cloning engine,
+which needs a recorded sample) that speaks the hub's language does for the
+voice step.
 
 **Safe to press again.** Every step first looks at what is already there (the
 engine installed, the file in the runtime's listing, the special model set) and
@@ -46,11 +52,11 @@ CHAT_LADDER = [
     ("qwen3-14b", "Qwen3 14B", "Qwen/Qwen3-14B-GGUF", "Qwen3-14B-Q4_K_M.gguf", 9_000_000_000, 8192),
 ]
 #: The speech engines and models of the set, taken from the setup presets.
-SPEECH_ID = "kokoro"
 TRANSCRIPTION_ID = "whisper-small"
-#: Kokoro speaks no Russian or German: a Piper voice reads each of those
-#: (providers/speech_languages.py), downloaded in the voice step.
-LANGUAGE_VOICE_IDS = {"ru": "piper-ru", "de": "piper-de"}
+#: The voice the set downloads for each hub language: Kokoro speaks no
+#: Russian or German, a Piper voice does.
+VOICE_IDS = {"en": "kokoro", "ru": "piper-ru", "de": "piper-de"}
+DEFAULT_LANGUAGE = "en"
 
 #: Seconds between looks at a runtime job, and the longest a step may wait.
 POLL_SECONDS = 2.0
@@ -62,11 +68,11 @@ START_TIMEOUT_SECONDS = 20 * 60
 #: Step ids, in order, with their labels.
 STEPS = [
     ("runtime", "Start the model runtime"),
-    ("engine", "Install the llama.cpp engine"),
+    ("engine", "Install the chat model's engine"),
     ("chat", "Download the chat model"),
     ("load", "Load the chat model"),
     ("hearing", "Install Whisper and download its model"),
-    ("voice", "Install Kokoro and download its model"),
+    ("voice", "Download a voice for the hub's language"),
     ("assign", "Set the workspace speech models"),
 ]
 
@@ -105,11 +111,74 @@ def _preset(table: List[tuple], wanted: str) -> tuple:
     return row
 
 
-def presets() -> Dict[str, tuple]:
+def system_language(given: Optional[str] = None) -> str:
+    """The hub's language for the voice: the page's (``given``), else the one
+    chosen in the first run, else the environment's; English otherwise."""
+    import os
+    from common import first_run
+    for raw in (given, first_run.language(), os.environ.get("AGENTS_HUB_LANGUAGE"),
+                os.environ.get("LC_ALL"), os.environ.get("LANG")):
+        code = str(raw or "").strip().lower()[:2]
+        if code in VOICE_IDS:
+            return code
+    return DEFAULT_LANGUAGE
+
+
+def presets(language: Optional[str] = None) -> Dict[str, Any]:
     from cli.onboard.presets import VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION
-    return {"speech": _preset(VOICE_LOCAL_SPEECH, SPEECH_ID),
+    lang = system_language(language)
+    return {"speech": _preset(VOICE_LOCAL_SPEECH, VOICE_IDS[lang]),
             "transcription": _preset(VOICE_LOCAL_TRANSCRIPTION, TRANSCRIPTION_ID),
-            "languages": {lang: _preset(VOICE_LOCAL_SPEECH, pid) for lang, pid in LANGUAGE_VOICE_IDS.items()}}
+            "language": lang}
+
+
+def speaks(name: str, language: str) -> bool:
+    """Whether the ready voice ``name`` reads ``language``: a Piper voice its
+    locale, Kokoro and Kitten English (of the hub's languages), Supertonic
+    all of them. Cloning engines need a recorded sample and never count."""
+    low = str(name or "").lower()
+    if "supertonic" in low:
+        return True
+    if "kokoro" in low or "kitten" in low:
+        return language == "en"
+    if low.startswith("piper-"):
+        from providers import special
+        return special.voice_language(name) == language
+    return False
+
+
+def voice_for(names: Any, language: str, preferred: str = "") -> Optional[str]:
+    """The voice on the runtime that speaks ``language``: the set's own when
+    it is there, else any other that speaks it."""
+    if preferred and preferred in names:
+        return preferred
+    return next((n for n in sorted(names) if speaks(n, language)), None)
+
+
+def _is_chat(model: Dict[str, Any]) -> bool:
+    kind = model.get("kind")
+    return kind == "chat" if kind else str(model.get("file") or "").endswith(".gguf")
+
+
+def existing_chat(models: List[Dict[str, Any]], hardware: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The chat model already on the runtime the set would use: a loaded one,
+    else the largest that fits this machine, else the smallest there is."""
+    chats = [m for m in models if isinstance(m, dict) and _is_chat(m)]
+    if not chats:
+        return None
+    loaded = [m for m in chats if m.get("loaded")]
+    if loaded:
+        return loaded[0]
+    size = lambda m: int(m.get("size_bytes") or 0)  # noqa: E731
+    budget = budget_bytes(hardware or {})
+    fitting = [m for m in chats if not budget or int(size(m) * 1.25) + 500_000_000 <= budget * 0.9]
+    return max(fitting, key=size) if fitting else min(chats, key=size)
+
+
+def _chat_info(model: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(model.get("name") or lm.model_name(str(model.get("file") or "")))
+    return {"id": name, "label": name, "file": model.get("file"), "size_bytes": model.get("size_bytes"),
+            "existing": True}
 
 
 def _have(client: "lm.RuntimeClient") -> Dict[str, Any]:
@@ -118,9 +187,11 @@ def _have(client: "lm.RuntimeClient") -> Dict[str, Any]:
         listing = client.listing()
     except lm.LocalModelError:
         return {}
+    models = [m for m in listing.get("models") or [] if isinstance(m, dict)]
     return {"engines": listing.get("engines") or {},
-            "files": {str(m.get("file")) for m in listing.get("models") or [] if isinstance(m, dict)},
-            "names": {str(m.get("name")) for m in listing.get("models") or [] if isinstance(m, dict)}}
+            "models": models,
+            "files": {str(m.get("file")) for m in models},
+            "names": {str(m.get("name")) for m in models}}
 
 
 def _hardware(client: "lm.RuntimeClient") -> Dict[str, Any]:
@@ -130,7 +201,7 @@ def _hardware(client: "lm.RuntimeClient") -> Dict[str, Any]:
         return {}
 
 
-def plan(workspace: str = "default") -> Dict[str, Any]:
+def plan(workspace: str = "default", language: Optional[str] = None) -> Dict[str, Any]:
     """What pressing the button would do, with nothing changed: the chosen
     chat model, and each step as ``todo`` or ``skipped`` (already there).
     ``ready`` is every step present, ``installed`` every step but ``load``.
@@ -142,24 +213,38 @@ def plan(workspace: str = "default") -> Dict[str, Any]:
     have = _have(client)
     hardware = _hardware(client)
     row = pick_chat(hardware)
-    pre = presets()
+    pre = presets(language)
+    models = have.get("models") or []
+    existing = existing_chat(models, hardware)
     out["hardware"] = {k: hardware.get(k) for k in ("kind", "name", "ram_bytes", "gpu_bytes")}
-    out["chat"] = {"id": row[0], "label": row[1], "repo": row[2], "file": row[3], "size_bytes": row[4]}
+    out["language"] = pre["language"]
+    out["chat"] = (_chat_info(existing) if existing else
+                   {"id": row[0], "label": row[1], "repo": row[2], "file": row[3], "size_bytes": row[4]})
     out["default_would_change"] = not _other_provider_usable()
     engines = have.get("engines") or {}
-    files = have.get("files") or set()
     names = have.get("names") or set()
+    loaded_chat = next((m for m in models if _is_chat(m) and m.get("loaded")), None)
+    voice = voice_for(names, pre["language"], pre["speech"][4])
+    # What each speech step still lacks, by name.
+    missing: Dict[str, List[str]] = {
+        "hearing": _missing(engines, names, [("whisper", pre["transcription"][4], pre["transcription"][1])]),
+        "voice": [] if voice else [pre["speech"][1]],
+    }
+    # The model a step found, shown beside it.
+    found = {"chat": existing and _chat_info(existing)["label"],
+             "load": loaded_chat and _chat_info(loaded_chat)["label"], "voice": voice}
     done = {
         "runtime": bool(have),
-        "engine": bool(engines.get("llama")),
-        "chat": row[3] in files,
-        "load": _chat_loaded(client, row[3]),
-        "hearing": bool(engines.get("whisper")) and pre["transcription"][4] in names,
-        "voice": bool(engines.get(pre["speech"][5])) and pre["speech"][4] in names
-        and all(bool(engines.get(row[5])) and row[4] in names for row in pre["languages"].values()),
+        "engine": bool(engines.get(str((existing or {}).get("engine") or "llama"))),
+        "chat": existing is not None,
+        "load": loaded_chat is not None,
+        "hearing": not missing["hearing"],
+        "voice": not missing["voice"],
         "assign": _assigned(workspace, pre),
     }
-    out["steps"] = [{"id": sid, "label": label, "status": "skipped" if done[sid] else "todo"}
+    out["steps"] = [{"id": sid, "label": label, "status": "skipped" if done[sid] else "todo",
+                     **({"detail": found[sid]} if done[sid] and found.get(sid) else {}),
+                     **({"missing": missing[sid]} if missing.get(sid) else {})}
                     for sid, label in STEPS]
     out["ready"] = all(done.values())
     # Everything is on disk; only loading the chat model (lost on a runtime
@@ -168,11 +253,11 @@ def plan(workspace: str = "default") -> Dict[str, Any]:
     return out
 
 
-def _chat_loaded(client: "lm.RuntimeClient", file: str) -> bool:
-    try:
-        return any(m.get("loaded") and m.get("file") == file for m in client.models())
-    except lm.LocalModelError:
-        return False
+def _missing(engines: Dict[str, Any], names: set, wanted: List[tuple]) -> List[str]:
+    """The labels of ``wanted`` (engine, package, label) not on this runtime:
+    a model whose engine is missing counts as missing too."""
+    return [label for engine, package, label in wanted
+            if not (bool(engines.get(engine)) and package in names)]
 
 
 def _assigned(workspace: str, pre: Dict[str, tuple]) -> bool:
@@ -201,7 +286,8 @@ def latest_job() -> Optional[Dict[str, Any]]:
     return next((j for j in lm.JOBS.list() if j.get("kind") == JOB_KIND), None)
 
 
-def start(workspace: str = "default", *, background: bool = True) -> Dict[str, Any]:
+def start(workspace: str = "default", *, background: bool = True,
+          language: Optional[str] = None) -> Dict[str, Any]:
     """Begin the set as a job (or return the one already running). With
     ``background`` False the work runs inline, which the tests use."""
     existing = running_job()
@@ -209,13 +295,15 @@ def start(workspace: str = "default", *, background: bool = True) -> Dict[str, A
         return {**existing, "already_running": True}
     steps = [{"id": sid, "label": label, "status": "todo", "percent": 0, "detail": ""}
              for sid, label in STEPS]
-    job = lm.JOBS.create(JOB_KIND, "Ready local set", meta={"steps": steps, "workspace": workspace})
+    lang = system_language(language)
+    job = lm.JOBS.create(JOB_KIND, "Ready local set",
+                         meta={"steps": steps, "workspace": workspace, "language": lang})
     _cancel[job["id"]] = threading.Event()
     if background:
-        threading.Thread(target=_run, args=(job["id"], workspace), name=f"local-set-{job['id']}",
+        threading.Thread(target=_run, args=(job["id"], workspace, lang), name=f"local-set-{job['id']}",
                          daemon=True).start()
     else:
-        _run(job["id"], workspace)
+        _run(job["id"], workspace, lang)
     return lm.JOBS.get(job["id"]) or job
 
 
@@ -351,9 +439,10 @@ def _make_default(name: str) -> bool:
     return True
 
 
-def _assign(workspace: str, pre: Dict[str, tuple]) -> List[str]:
+def _assign(workspace: str, pre: Dict[str, Any], voice: str = "") -> List[str]:
     """Fill the workspace's speech and transcription models with the downloaded
-    ones where it has none (an existing choice is left alone)."""
+    ones where it has none (an existing choice is left alone). ``voice`` is
+    the one found for the hub's language, the set's own by default."""
     from providers import special
     from workspace import create_workspace_folder, get_workspace_folder
     if not get_workspace_folder(workspace):
@@ -361,15 +450,8 @@ def _assign(workspace: str, pre: Dict[str, tuple]) -> List[str]:
     stored = special.stored(workspace)
     entries = dict(stored)
     set_now: List[str] = []
-    languages = {lang: {"model": row[4]} for lang, row in pre["languages"].items()}
-    speech = stored.get("speech") or {}
-    if not speech.get("model"):
-        entries["speech"] = {"provider": lm.HUB_LOCAL_ID, "model": pre["speech"][4], "options": {},
-                             "languages": languages}
-        set_now.append("speech")
-    elif speech.get("model") == pre["speech"][4] and not speech.get("languages"):
-        # The set's own Kokoro, given before it had a voice per language.
-        entries["speech"] = {**speech, "languages": languages}
+    if not (stored.get("speech") or {}).get("model"):
+        entries["speech"] = {"provider": lm.HUB_LOCAL_ID, "model": voice or pre["speech"][4], "options": {}}
         set_now.append("speech")
     if not (stored.get("transcription") or {}).get("model"):
         entries["transcription"] = {"provider": lm.HUB_LOCAL_ID, "model": pre["transcription"][4],
@@ -380,11 +462,11 @@ def _assign(workspace: str, pre: Dict[str, tuple]) -> List[str]:
     return set_now
 
 
-def _run(job_id: str, workspace: str) -> None:
+def _run(job_id: str, workspace: str, language: Optional[str] = None) -> None:
     progress = _Progress(job_id)
     lm.JOBS.update(job_id, status="running")
     try:
-        _steps(job_id, workspace, progress)
+        _steps(job_id, workspace, progress, language)
     except Cancelled:
         lm.JOBS.update(job_id, status="error", error="cancelled", resumable=True,
                        finished_at=lm._now(), message="cancelled; press the button again to continue")
@@ -398,12 +480,12 @@ def _run(job_id: str, workspace: str) -> None:
         _cancel.pop(job_id, None)
 
 
-def _steps(job_id: str, workspace: str, progress: _Progress) -> None:
+def _steps(job_id: str, workspace: str, progress: _Progress, language: Optional[str] = None) -> None:
     try:
         from routes.models import _load_catalog  # the seed of a first catalog, as the Local routes pass it
     except ImportError:
         from dashboard.backend.routes.models import _load_catalog
-    pre = presets()
+    pre = presets(language)
     cur = "runtime"
     try:
         # 1. the runtime
@@ -426,75 +508,84 @@ def _steps(job_id: str, workspace: str, progress: _Progress) -> None:
         lm.ensure_hub_local_backend()
         progress.check()
 
-        # 2. the llama.cpp engine
+        # 2. the chat model's engine: llama.cpp, or the one of a model already there
         cur = "engine"
-        if (_have(client).get("engines") or {}).get("llama"):
-            progress.set("engine", "skipped")
+        have = _have(client)
+        engine = str((existing_chat(have.get("models") or [], _hardware(client)) or {}).get("engine") or "llama")
+        if (have.get("engines") or {}).get(engine):
+            progress.set("engine", "skipped", detail=engine)
         else:
-            progress.set("engine", "running", detail="installing llama.cpp")
-            _install_engine(client, "llama", progress, "engine")
-            progress.set("engine", "done")
+            progress.set("engine", "running", detail=f"installing {engine}")
+            _install_engine(client, engine, progress, "engine")
+            progress.set("engine", "done", detail=engine)
 
-        # 3. the chat model, sized to this machine
+        # 3. the chat model: one already there, else one sized to this machine
         cur = "chat"
-        row = pick_chat(_hardware(client))
-        lm.JOBS.update(job_id, meta={**(lm.JOBS.get(job_id) or {}).get("meta", {}),
-                                     "chat": {"id": row[0], "label": row[1], "repo": row[2]}})
-        file = _resolve_file(client, row)
-        if file in (_have(client).get("files") or set()):
-            progress.set("chat", "skipped", detail=row[1])
+        hardware = _hardware(client)
+        row = pick_chat(hardware)
+        models = _have(client).get("models") or []
+        existing = existing_chat(models, hardware)
+        if existing:
+            info = _chat_info(existing)
+            file, label, context = str(existing.get("file")), info["label"], 8192
+            chat_meta = {"id": info["id"], "label": label}
+            progress.set("chat", "skipped", detail=label)
         else:
-            progress.set("chat", "running", detail=f"downloading {row[1]}")
-            _download(client, row[2], progress, "chat", f"Downloading {row[1]}", file=file)
-            progress.set("chat", "done", detail=row[1])
+            file, label, context = _resolve_file(client, row), row[1], row[5]
+            chat_meta = {"id": row[0], "label": row[1], "repo": row[2]}
+            progress.set("chat", "running", detail=f"downloading {label}")
+            _download(client, row[2], progress, "chat", f"Downloading {label}", file=file)
+            progress.set("chat", "done", detail=label)
+        lm.JOBS.update(job_id, meta={**(lm.JOBS.get(job_id) or {}).get("meta", {}), "chat": chat_meta})
 
         # 4. load it: that registers it in the catalog
         cur = "load"
         name = lm.model_name(file)
-        if _chat_loaded(client, file):
-            progress.set("load", "skipped", detail=row[1])
+        loaded_chat = next((m for m in _have(client).get("models") or []
+                            if _is_chat(m) and m.get("loaded")), None)
+        if loaded_chat:
+            progress.set("load", "skipped", detail=_chat_info(loaded_chat)["label"])
         else:
-            progress.set("load", "running", detail=f"loading {row[1]}")
-            loaded = client.load(file, row[5], -1, None)
+            progress.set("load", "running", detail=f"loading {label}")
+            loaded = client.load(file, context, -1, None)
             for evicted in loaded.get("evicted") or []:
                 lm.catalog_set_enabled(lm.model_name(evicted), False, seed=_load_catalog)
-            lm.catalog_set_enabled(name, True, context_window=int(loaded.get("context_length") or row[5]),
+            lm.catalog_set_enabled(name, True, context_window=int(loaded.get("context_length") or context),
                                    seed=_load_catalog)
             made_default = _make_default(name)
-            progress.set("load", "done", detail=row[1] + (", now the default model" if made_default else ""))
+            progress.set("load", "done", detail=label + (", now the default model" if made_default else ""))
         progress.check()
 
-        # 5. hearing and 6. speaking
-        for cur, kind, engine, repo, package, label in (
-                ("hearing", "transcription", "whisper", pre["transcription"][3], pre["transcription"][4],
-                 pre["transcription"][1]),
-                ("voice", "speech", pre["speech"][5], pre["speech"][3], pre["speech"][4], pre["speech"][1])):
-            have = _have(client)
-            if (have.get("engines") or {}).get(engine) and package in (have.get("names") or set()):
-                progress.set(cur, "skipped", detail=label)
-                continue
-            progress.set(cur, "running", detail=f"installing the {engine} engine")
-            _install_engine(client, engine, progress, cur)
-            progress.set(cur, "running", detail=f"downloading {label}")
-            _download(client, repo, progress, cur, f"Downloading {label}", package=package)
-            progress.set(cur, "done", detail=label)
+        # 5. hearing
+        cur = "hearing"
+        hear = pre["transcription"]
+        have = _have(client)
+        if (have.get("engines") or {}).get("whisper") and hear[4] in (have.get("names") or set()):
+            progress.set(cur, "skipped", detail=hear[1])
+        else:
+            progress.set(cur, "running", detail="installing the whisper engine")
+            _install_engine(client, "whisper", progress, cur)
+            progress.set(cur, "running", detail=f"downloading {hear[1]}")
+            _download(client, hear[3], progress, cur, f"Downloading {hear[1]}", package=hear[4])
+            progress.set(cur, "done", detail=hear[1])
 
-        # 6b. a voice for each language Kokoro does not speak, in the same step
+        # 6. one voice that speaks the hub's language
         cur = "voice"
-        for row in pre["languages"].values():
-            have = _have(client)
-            if (have.get("engines") or {}).get(row[5]) and row[4] in (have.get("names") or set()):
-                continue
-            if not (have.get("engines") or {}).get(row[5]):
-                progress.set(cur, "running", detail=f"installing the {row[5]} engine")
-                _install_engine(client, row[5], progress, cur)
-            progress.set(cur, "running", detail=f"downloading {row[1]}")
-            _download(client, row[3], progress, cur, f"Downloading {row[1]}", package=row[4])
-            progress.set(cur, "done", detail=row[1])
+        speech = pre["speech"]
+        voice = voice_for(_have(client).get("names") or set(), pre["language"], speech[4])
+        if voice:
+            progress.set(cur, "skipped", detail=voice)
+        else:
+            progress.set(cur, "running", detail=f"installing the {speech[5]} engine")
+            _install_engine(client, speech[5], progress, cur)
+            progress.set(cur, "running", detail=f"downloading {speech[1]}")
+            _download(client, speech[3], progress, cur, f"Downloading {speech[1]}", package=speech[4])
+            voice = speech[4]
+            progress.set(cur, "done", detail=speech[1])
 
         # 7. the workspace's speech models
         cur = "assign"
-        set_now = _assign(workspace, pre)
+        set_now = _assign(workspace, pre, voice)
         progress.set("assign", "done" if set_now else "skipped",
                      detail=", ".join(set_now) if set_now else "the workspace already has its own")
     except Exception as exc:
@@ -504,5 +595,5 @@ def _steps(job_id: str, workspace: str, progress: _Progress) -> None:
         raise
 
 
-__all__ = ["CHAT_LADDER", "JOB_KIND", "STEPS", "budget_bytes", "cancel", "latest_job", "pick_chat",
-           "plan", "running_job", "start"]
+__all__ = ["CHAT_LADDER", "JOB_KIND", "STEPS", "VOICE_IDS", "budget_bytes", "cancel", "existing_chat",
+           "latest_job", "pick_chat", "plan", "running_job", "speaks", "start", "system_language", "voice_for"]

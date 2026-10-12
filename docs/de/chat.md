@@ -79,7 +79,11 @@ Alles, was echtes Geld kostet, hält an und fragt nach. Bietet ein Agent an, ein
 
 ## Gespräche mit dem Assistenten
 
-Die Gespräche des [Assistenten](assistant.md), per Stimme oder Text, werden auch hier aufgelistet, als Text, mit dem Etikett **Assistent** und in jedem Workspace (sie gehören der Person, nicht einem Workspace). Sie sind nur lesbar: Fortgesetzt oder neu begonnen werden sie auf der Seite Assistent, und eine Zeile, die gesprochen wurde, ist als *gesprochen* markiert. Siehe [Assistent, auf der Chat-Seite](assistant.md#the-page).
+Die Gespräche des [Assistenten](assistant.md), per Stimme oder Text, werden auch hier aufgelistet, als Text, mit dem Etikett **Assistent** und in jedem Workspace (sie gehören der Person, nicht einem Workspace). Beim Öffnen ist der Assistent gewählt, und eine hier gesendete Nachricht setzt die Unterhaltung fort, auch eine frühere (sie wird zur aktuellen Unterhaltung des Assistenten). Mit einem anderen Agenten beginnt die Nachricht ein gewöhnliches Gespräch, das den Text der Unterhaltung mitnimmt. Eine gesprochene Zeile ist als *gesprochen* markiert. Siehe [Assistent, auf der Chat-Seite](assistant.md#the-page).
+
+## Sprachnachrichten
+
+Solange das Eingabefeld leer ist, steht an Stelle des Senden-Knopfs ein Mikrofon. Halten Sie es gedrückt, oder die Leertaste im leeren Feld (oder außerhalb jedes Textfelds), sprechen Sie und lassen Sie los: das Gesagte wird als Nachricht gesendet und als *gesprochen* markiert. Sobald etwas getippt oder angehängt ist, kehrt der Senden-Knopf zurück. Die Aufnahme wandelt das Transkriptionsmodell des Workspace der Unterhaltung in Text um (über `/api/assistant/transcribe`), ohne eines die Spracherkennung des Browsers. Gibt es keins von beiden, erscheint kein Mikrofon.
 
 ## Telegram
 

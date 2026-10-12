@@ -21,6 +21,7 @@ export default {
     label: 'Name',
     kind: 'Art',
     duration: 'Dauer',
+    model: 'Modell',
     tokens: 'Tokens',
     messages: 'Läufe',
     runs: 'Läufe',

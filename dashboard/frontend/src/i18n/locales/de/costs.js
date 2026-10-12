@@ -35,6 +35,19 @@ export default {
   ofWhichCached: 'davon {{count}} aus dem Cache',
   cost: 'Kosten',
 
+  tabs: {
+    overview: 'Übersicht',
+    runs: 'Läufe',
+  },
+  runsTab: {
+    run: 'Lauf',
+    status: 'Status',
+    agent: 'Agent',
+    model: 'Modell',
+    workspace: 'Arbeitsbereich',
+    inOut: 'ein {{input}}, aus {{output}}',
+    loadFailed: 'Die Läufe konnten nicht geladen werden.',
+  },
   report: {
     title: 'Bericht',
     groupBy: {

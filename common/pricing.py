@@ -296,6 +296,22 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
     return own + _aux_cost(run, prices) + container_cost_usd(run)
 
 
+# Providers that run on this machine: their tokens cost nothing, so a $0
+# estimate for them is the real figure, not a missing catalog price.
+LOCAL_PROVIDERS = frozenset({"hub-local", "ollama", "lmstudio"})
+
+
+def cost_is_known(run: Dict[str, Any], prices: PriceMap, cost: float) -> bool:
+    """Whether ``cost`` is an estimate rather than a gap: the catalog prices the
+    run's model, the model is local, the run reported its own cost, or something
+    on it (a fallback, an aux call, a container) priced above zero. False means
+    a page should say "no price" instead of showing $0."""
+    if cost > 0 or isinstance(run.get("reported_cost_usd"), (int, float)):
+        return True
+    provider = (run.get("provider") or "").strip()
+    return provider in LOCAL_PROVIDERS or (provider, (run.get("model") or "").strip()) in prices
+
+
 def _price_factor(run: Dict[str, Any]) -> float:
     """The share of the catalog price a run's own calls bill at: 0.5 for a
     call that went through a provider batch API (an eval cell of a batch run,

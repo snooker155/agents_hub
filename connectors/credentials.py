@@ -63,6 +63,7 @@ BUILTIN_MODULES = (
     "connectors.microsoft",
     "connectors.knowledge",
     "connectors.databases",
+    "connectors.n8n",
 )
 
 

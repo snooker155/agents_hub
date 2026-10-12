@@ -1,34 +1,35 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { applyEdgeChanges, applyNodeChanges } from 'reactflow';
 import {
-  exportFlow, getAgents, getFlow, getTasks, listFlowEntities, updateFlow,
+  exportFlow, getAgents, getFlow, listFlowEntities, updateFlow,
 } from '../../api';
 import { errorDetail } from '../toast';
-import { normalizeNode, serializeEdge, serializeNode } from './graphHelpers';
+import { isUnchosenAgent, normalizeNode, serializeEdge, serializeNode } from './graphHelpers';
 
 // Agents that exist for internal wiring (orchestration, flow-as-agent, tests)
-// but should never show up as a node a person drags onto a canvas.
-const EXCLUDED_AGENT_IDS = new Set([
+// but should never be offered as the agent of a node.
+export const EXCLUDED_AGENT_IDS = new Set([
   'orchestrator', 'agent_creator', 'flow-graph', 'flow-custom-graph', 'test-agent',
   'research-remote', 'example-agent',
 ]);
 
+const EDGE_STYLE = { stroke: '#0891b2', strokeWidth: 2 };
+
+export const toCanvasEdges = (edges) =>
+  (edges || []).map((edge) => ({ ...edge, animated: false, style: EDGE_STYLE }));
+
 /**
- * The flow document itself: loading it plus the agent/entity registries it
- * draws nodes from, editing nodes and flow-level settings, and saving. Runs
- * (executions, history, live logs) are a separate concern, see useFlowRuns.
- *
- * `onRunNode` is a stable callback (identity never changes across renders):
- * the page hands it to normalizeNode so a node's onRunNode always dispatches
- * to whatever useFlowRuns's handleRunNode currently is, without this hook
- * needing to depend on that hook directly.
+ * The flow document on the editor page (pages/FlowEditor.jsx): loading it
+ * plus the agent/entity registries it draws nodes from, editing nodes and
+ * flow-level settings, saving and exporting. Running the flow and its
+ * history belong to the run page (pages/FlowRun.jsx, useFlowRuns).
  */
 export function useFlowDocument(deps) {
   const {
     availableAgents, dirty, edges, flow, flowId, navigate,
-    nodes, onRunNode, selectedNodeId, selectedWorkspace, setAvailableAgents,
+    nodes, selectedNodeId, selectedWorkspace, setAvailableAgents,
     setDirty, setEdges, setEntitiesByCategory, setFlow, setLoading, setNodes,
-    setSaving, setTasks, t, tasks, toast,
+    setSaving, t, toast, entitiesByCategory,
   } = deps;
 
   const loadFlow = async () => {
@@ -40,16 +41,14 @@ export function useFlowDocument(deps) {
       ]);
       const nextFlow = flowResponse.data;
       setFlow(nextFlow);
-      setNodes((nextFlow.nodes || []).map((node) => normalizeNode(node, onRunNode)));
-      setEdges((nextFlow.edges || []).map((edge) => ({
-        ...edge,
-        animated: false,
-        style: { stroke: '#0891b2', strokeWidth: 2 },
-      })));
+      setNodes((nextFlow.nodes || []).map((node) => normalizeNode(node)));
+      setEdges(toCanvasEdges(nextFlow.edges));
       setAvailableAgents(
         (agentsResponse.data || []).filter((agent) => !EXCLUDED_AGENT_IDS.has(agent.id))
       );
-      // Build the registry palette map, applying the same agent exclusions.
+      // Build the registry map, applying the same agent exclusions. The
+      // palette shows the agent category as one abstract node; the list
+      // itself feeds the inspector's agent picker.
       const grouped = entitiesResponse.data || {};
       const filteredGrouped = {};
       for (const [cat, list] of Object.entries(grouped)) {
@@ -67,22 +66,10 @@ export function useFlowDocument(deps) {
     }
   };
 
-  // Reloads on flow or workspace change only. loadFlow captures onRunNode, a
-  // stable wrapper, so this is safe to run only on the ids that actually
-  // identify which flow to load.
+  // Reloads on flow or workspace change only.
   useEffect(() => {
     loadFlow();
   }, [flowId, selectedWorkspace]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadWorkspaceTasks = async (workspaceName) => {
-    if (!workspaceName) return;
-    try {
-      const response = await getTasks(workspaceName);
-      setTasks(response.data || []);
-    } catch (error) {
-      console.error('Failed to load tasks', error);
-    }
-  };
 
   const persistFlow = async (override = {}) => {
     if (!flow) return null;
@@ -92,7 +79,6 @@ export function useFlowDocument(deps) {
         name: flow.name,
         description: flow.description,
         workspace: flow.workspace || selectedWorkspace || null,
-        task_id: flow.task_id || null,
         nodes: nodes.map(serializeNode),
         edges: edges.map(serializeEdge),
         // Flow-level meta (logic). Send only when set so we never clobber
@@ -109,16 +95,12 @@ export function useFlowDocument(deps) {
       };
       const response = await updateFlow(flowId, payload);
       setFlow(response.data);
-      setNodes((response.data.nodes || []).map((node) => normalizeNode(node, onRunNode)));
-      setEdges((response.data.edges || []).map((edge) => ({
-        ...edge,
-        animated: false,
-        style: { stroke: '#0891b2', strokeWidth: 2 },
-      })));
+      setNodes((response.data.nodes || []).map((node) => normalizeNode(node)));
+      setEdges(toCanvasEdges(response.data.edges));
       setDirty(false);
       return response.data;
     } catch (error) {
-      alert(`Failed to save flow: ${error.response?.data?.detail || error.message}`);
+      toast.error(t('flowEditor.saveFailed'), errorDetail(error));
       return null;
     } finally {
       setSaving(false);
@@ -130,44 +112,42 @@ export function useFlowDocument(deps) {
     setNodes((current) =>
       current.map((node) =>
         node.id === selectedNodeId
-          ? { ...node, data: { ...node.data, ...patch, onRunNode } }
+          ? { ...node, data: { ...node.data, ...patch } }
           : node
       )
     );
     setDirty(true);
   };
 
-  const patchNodeHandlers = (items) => items.map((node) => normalizeNode(node, onRunNode));
-
   const handleCanvasNodesChange = useCallback((changes) => {
     setNodes((current) => applyNodeChanges(changes, current).map((node) => ({
       ...node,
       style: { width: 90, ...(node.style || {}) },
-      data: { ...node.data, onRunNode },
     })));
-    setDirty(true);
-  }, [onRunNode, setDirty, setNodes]);
+    // Selecting, measuring and clicking a node are changes React Flow reports
+    // too (a click is a position change with no position); only edits dirty
+    // the document.
+    if (changes.some((c) => (c.type === 'position' ? !!c.position : c.type !== 'select' && c.type !== 'dimensions'))) {
+      setDirty(true);
+    }
+  }, [setDirty, setNodes]);
 
   const handleCanvasEdgesChange = useCallback((changes) => {
     setEdges((current) => applyEdgeChanges(changes, current));
-    setDirty(true);
+    if (changes.some((c) => c.type !== 'select')) setDirty(true);
   }, [setDirty, setEdges]);
 
   const setCanvasNodes = useCallback((value) => {
     setNodes((current) => {
       const next = typeof value === 'function' ? value(current) : value;
-      setDirty(true);
-      return patchNodeHandlers(next);
+      return next.map((node) => normalizeNode(node));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onRunNode, setDirty, setNodes]);
+    setDirty(true);
+  }, [setDirty, setNodes]);
 
   const setCanvasEdges = useCallback((value) => {
-    setEdges((current) => {
-      const next = typeof value === 'function' ? value(current) : value;
-      setDirty(true);
-      return next;
-    });
+    setEdges((current) => (typeof value === 'function' ? value(current) : value));
+    setDirty(true);
   }, [setDirty, setEdges]);
 
   const handleExportFlow = async () => {
@@ -190,7 +170,7 @@ export function useFlowDocument(deps) {
       link.remove();
       URL.revokeObjectURL(url);
     } catch (error) {
-      alert(`Failed to export flow: ${error.response?.data?.detail || error.message}`);
+      toast.error(t('flowEditor.exportFailed'), errorDetail(error));
     }
   };
 
@@ -206,51 +186,27 @@ export function useFlowDocument(deps) {
     }
   };
 
-  // Called by the Create Task modal once a task is created. Attach the new task
-  // to this flow (mirroring the old inline form) and refresh the task list.
-  const handleTaskCreated = async (task) => {
-    const workspaceName = flow?.workspace || selectedWorkspace;
-    if (task?.id) {
-      const nextDescription = flow?.description?.trim()
-        ? flow.description
-        : (task.description || '').trim();
-      setFlow((current) => ({
-        ...current,
-        workspace: workspaceName || current.workspace,
-        task_id: String(task.id),
-        description: nextDescription,
-      }));
-      setDirty(true);
-    }
-    await loadWorkspaceTasks(workspaceName);
-  };
-
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
     [nodes, selectedNodeId]
   );
 
-  const agentLabels = useMemo(() => {
-    const map = {};
-    for (const agent of availableAgents) map[agent.id] = agent.name;
-    for (const node of nodes) {
-      if (node.data?.agent_id) map[node.data.agent_id] = node.data.label || map[node.data.agent_id];
-    }
-    return map;
-  }, [availableAgents, nodes]);
-
-  const assignedTask = useMemo(
-    () => tasks.find((task) => String(task.id) === String(flow?.task_id)) || null,
-    [tasks, flow?.task_id]
+  // What the inspector's agent picker offers: the workspace's agents as the
+  // flow registry lists them, else the plain agent list.
+  const agentOptions = useMemo(
+    () => (entitiesByCategory?.agent?.length ? entitiesByCategory.agent : availableAgents),
+    [entitiesByCategory, availableAgents]
   );
 
-  const chatWorkspace = flow?.workspace || selectedWorkspace;
+  const unchosenCount = useMemo(
+    () => nodes.filter((node) => isUnchosenAgent(node.data)).length,
+    [nodes]
+  );
 
   return {
-    agentLabels, assignedTask, chatWorkspace, handleCanvasEdgesChange,
-    handleCanvasNodesChange, handleExportFlow, handleSetWebhookSecret, handleTaskCreated,
-    loadFlow, loadWorkspaceTasks, patchNodeHandlers, persistFlow, selectedNode,
-    setCanvasEdges, setCanvasNodes, updateSelectedNode,
+    agentOptions, handleCanvasEdgesChange, handleCanvasNodesChange, handleExportFlow,
+    handleSetWebhookSecret, loadFlow, persistFlow, selectedNode, setCanvasEdges,
+    setCanvasNodes, unchosenCount, updateSelectedNode,
   };
 }
 

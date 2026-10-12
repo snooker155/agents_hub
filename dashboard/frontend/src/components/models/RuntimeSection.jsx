@@ -68,7 +68,14 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
   const [reloading, setReloading] = useState(false);
   const [loadedRefresh, setLoadedRefresh] = useState(null);
   const loading = reloading || loadedRefresh !== refreshKey;
-  const [busyFile, setBusyFile] = useState('');
+  // Every model with a load, unload or delete in flight: several loads may
+  // run at once and each row keeps its own spinner until its call returns.
+  const [busyFiles, setBusyFiles] = useState(() => new Set());
+  const markBusy = useCallback((file, on) => setBusyFiles((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(file); else next.delete(file);
+    return next;
+  }), []);
   const [loadForm, setLoadForm] = useState({}); // file -> { context_length, gpu_layers }
   const [openLoadFor, setOpenLoadFor] = useState('');
 
@@ -232,21 +239,21 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
     const f = speech ? {} : (loadForm[file] || {});
     const contextLength = Number(f.context_length ?? 4096) || 4096;
     const gpuLayers = f.gpu_layers === '' || f.gpu_layers == null ? -1 : Number(f.gpu_layers);
-    setBusyFile(file);
+    markBusy(file, true);
     try {
       await loadRuntimeModel(file, contextLength, gpuLayers);
       toast.success(t('localModels.runtime.loaded', { file }));
-      setOpenLoadFor('');
+      setOpenLoadFor((cur) => (cur === file ? '' : cur));
       load(true);
     } catch (e) {
       toast.error(t('localModels.runtime.loadFailed'), errorDetail(e));
     } finally {
-      setBusyFile('');
+      markBusy(file, false);
     }
   };
 
   const handleUnload = async (file) => {
-    setBusyFile(file);
+    markBusy(file, true);
     try {
       await unloadRuntimeModel(file);
       toast.success(t('localModels.runtime.unloaded', { file }));
@@ -254,13 +261,13 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
     } catch (e) {
       toast.error(t('localModels.runtime.unloadFailed'), errorDetail(e));
     } finally {
-      setBusyFile('');
+      markBusy(file, false);
     }
   };
 
   const handleDelete = async (file) => {
     if (!window.confirm(t('localModels.runtime.confirmDelete', { file }))) return;
-    setBusyFile(file);
+    markBusy(file, true);
     try {
       await deleteRuntimeModel(file);
       toast.success(t('localModels.runtime.deleted', { file }));
@@ -268,7 +275,7 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
     } catch (e) {
       toast.error(t('localModels.runtime.deleteFailed'), errorDetail(e));
     } finally {
-      setBusyFile('');
+      markBusy(file, false);
     }
   };
 
@@ -360,7 +367,7 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
                   <tbody>
                     {models.map((m) => {
                       const f = loadForm[m.file] || { context_length: 4096, gpu_layers: -1 };
-                      const busy = busyFile === m.file;
+                      const busy = busyFiles.has(m.file);
                       const speech = isSpecialKind(m.kind);
                       // Speech, image and MLX models take no context length: they load at once.
                       const quickLoad = speech || m.engine === 'mlx';
@@ -418,13 +425,13 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
                                 ) : (
                                   <button
                                     type="button"
-                                                    onClick={() => (quickLoad ? handleLoad(m.file, true) : setOpenLoadFor((cur) => (cur === m.file ? '' : m.file)))}
+                                    onClick={() => (quickLoad ? handleLoad(m.file, true) : setOpenLoadFor((cur) => (cur === m.file ? '' : m.file)))}
                                     disabled={busy || (quickLoad && m.loadable === false)}
                                     title={t('localModels.runtime.load')}
                                     data-testid={`runtime-load-${m.file}`}
                                     className="text-gray-400 hover:text-green-600 disabled:opacity-50"
                                   >
-                                    {busy && quickLoad ? <Loader className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                                    {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
                                   </button>
                                 )}
                                 <button
@@ -457,8 +464,9 @@ export default function RuntimeSection({ refreshKey, reloadKey, onJobStarted, on
                                     type="button"
                                     onClick={() => handleLoad(m.file)}
                                     disabled={busy}
-                                    className="px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-medium disabled:opacity-50"
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-medium disabled:opacity-50"
                                   >
+                                    {busy && <Loader className="w-3.5 h-3.5 animate-spin" />}
                                     {t('localModels.runtime.load')}
                                   </button>
                                 </div>

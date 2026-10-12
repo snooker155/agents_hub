@@ -35,6 +35,19 @@ export default {
   ofWhichCached: 'из них {{count}} отдано из кеша',
   cost: 'Стоимость',
 
+  tabs: {
+    overview: 'Сводка',
+    runs: 'Запуски',
+  },
+  runsTab: {
+    run: 'Запуск',
+    status: 'Статус',
+    agent: 'Агент',
+    model: 'Модель',
+    workspace: 'Пространство',
+    inOut: 'вход {{input}}, выход {{output}}',
+    loadFailed: 'Не удалось загрузить запуски.',
+  },
   report: {
     title: 'Отчёт',
     groupBy: {

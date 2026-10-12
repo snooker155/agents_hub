@@ -154,6 +154,24 @@ From a terminal: `ah costs report --by user [--since ISO] [--until ISO]
 The Costs page's own **Report** section offers the same grouping, date range
 and CSV export.
 
+## Runs
+
+The Costs page has two tabs. **Overview** holds the totals, the budget, the
+breakdowns and the report. **Runs** (`/costs?tab=runs`) lists every run those
+numbers count, one row each with its agent, model, tokens and estimated cost.
+Its filter bar holds the same scope and date range as the Overview (moved out
+of the page header while the tab is open), so the unfiltered rows add up to
+the totals, plus an agent and a status filter of its own. Rows load in batches
+with a "Load more" button and sort by start time, cost, tokens, agent or
+model. A "to" date includes that whole day, on both tabs. A run whose model the catalog has no price for shows
+"no price" rather than $0; a local model (hub runtime, Ollama, LM Studio)
+shows $0, which is its real cost. Each row opens the run, whose page shows
+the same estimate next to its token counts.
+
+The list comes from `GET /api/costs/runs?workspace=&since=&until=&agent_id=&status=&sort=&order=&limit=&offset=`
+(`common/costs_report.py` `costs_runs`), and in `multi` mode it only lists
+runs from workspaces the caller can see.
+
 ## Budgets
 
 A budget belongs to a workspace: a **hard limit**, a **soft limit** and a

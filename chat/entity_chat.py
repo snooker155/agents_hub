@@ -574,7 +574,14 @@ async def run_entity_chat_turn(
         "error": err, "response": reply, "process": process_payload,
     })
 
-    store.append_message(spec.kind, entity_id, "assistant", reply)
+    # The run rides on the reply, so the text version of the thread on the
+    # Chat page can open the turn's process, and so does the context fill the
+    # turn left behind, which that page shows beside the composer.
+    reply_meta: Dict[str, Any] = {"run_id": run_id}
+    if usage.get("context_window"):
+        reply_meta.update(context_used=int(usage.get("context_used") or 0),
+                          context_window=int(usage["context_window"]))
+    store.append_message(spec.kind, entity_id, "assistant", reply, meta=reply_meta)
     thread = list(history) + [{"role": "assistant", "content": reply}]
     if spec.fold_history and session_id and fold_due(session_id, thread):
         # After the reply, off the turn's path: a spoken answer must not wait

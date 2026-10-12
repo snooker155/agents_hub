@@ -52,5 +52,7 @@ export const getStatsOverview = (workspace, days = 14) => api.get('/stats/overvi
 
 // Costs API — spend breakdowns + per-workspace budget caps
 export const getCosts = (params) => api.get('/costs', { params });
+// One row per counted run with its tokens and cost, sorted and windowed.
+export const getCostRuns = (params) => api.get('/costs/runs', { params });
 export const getBudget = (workspace) => api.get('/costs/budget', { params: { workspace } });
 export const setBudget = (workspace, data) => api.post('/costs/budget', data, { params: { workspace } });

@@ -24,6 +24,7 @@ export default {
   noMessagesFound: 'Keine Läufe gefunden.',
   message: 'Lauf',
   duration: 'Dauer',
+  model: 'Modell',
   actions: 'Aktionen',
   noTitle: 'Kein Titel',
   stop: 'Stoppen',

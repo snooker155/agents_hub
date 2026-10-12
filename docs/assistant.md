@@ -88,13 +88,24 @@ the page itself.
 is also listed among the [Chat page](chat.md)'s conversations as text, with
 an **Assistant** badge, whichever workspace is picked: the current one and
 the earlier ones that **New conversation** filed away (up to 30). A spoken
-line is marked *spoken*. They are read only there: no text field, no delete,
-and the current one has **Continue on the Assistant page**. `GET /api/chats`
-lists them as `origin: "assistant"`, `read_only: true`, with id
+line is marked *spoken*. Opening one picks the Assistant, and a message
+typed or said there continues it: a past conversation becomes the live one
+(`POST /api/entity-chats/sessions/activate`, the one that was live is filed
+away) and the turn goes to `POST /api/assistant` with the conversation's
+workspace and mode. Another agent picked instead starts an ordinary
+conversation that carries the Assistant conversation's text. The live one
+has **Open on the Assistant page**. `GET /api/chats` lists them as
+`origin: "assistant"`, `read_only: false`, with id
 `assistant~<thread>~<session>` and `assistant_thread` (`mode`, `session_id`,
-`active`); `GET /api/chats/{id}` gives the transcript; a write or a delete is
-409 `read_only`. Only the person's own threads (and an administrator's
-service thread) are listed.
+`active`); `GET /api/chats/{id}` gives the transcript; a write or a delete
+through `/api/chats` is 409 `read_only`, and clearing stays on the Assistant
+page. Only the person's own threads (and an administrator's service thread)
+are listed.
+
+`GET /api/assistant/voice?workspace=` names the transcription and speech
+models a turn in that workspace would use without moving the live
+conversation, which `GET /api/assistant` does. The Chat page's microphone
+asks it.
 
 Without speech models the page still works: with no transcription model it
 uses the browser's own speech recognition (the page says that the audio then

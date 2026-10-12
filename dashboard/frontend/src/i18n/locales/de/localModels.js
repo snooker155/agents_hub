@@ -63,7 +63,7 @@ export default {
 
   readySet: {
     title: 'Fertiges lokales Set',
-    intro: 'Ein Knopf für den Umstieg auf lokale Modelle: die llama.cpp-Engine, ein Chatmodell passend zum Speicher dieses Rechners, Whisper zum Zuhören und Kokoro zum Sprechen. Es läuft im Hintergrund, überspringt, was schon da ist, und lässt sich gefahrlos erneut drücken.',
+    intro: 'Ein Knopf für den Umstieg auf lokale Modelle: ein Chatmodell (ein schon vorhandenes oder eines passend zum Speicher dieses Rechners), Whisper zum Zuhören und eine Stimme für die Sprache der Oberfläche. Es läuft im Hintergrund, überspringt, was schon da ist, und lässt sich gefahrlos erneut drücken.',
     start: 'Alles einrichten',
     again: 'Prüfen und abschließen',
     cancel: 'Abbrechen',
@@ -71,6 +71,7 @@ export default {
     startFailed: 'Das lokale Set konnte nicht gestartet werden.',
     cancelFailed: 'Abbrechen nicht möglich.',
     planModel: 'Chatmodell für diesen Rechner: {{label}}, etwa {{size}}',
+    planExisting: 'Chatmodell schon vorhanden: {{label}}, etwa {{size}}',
     ready: 'Alles ist schon vorhanden.',
     allThere: 'Alles vorhanden',
     allThereUnloaded: 'Alles vorhanden, Modell nicht geladen',
@@ -78,13 +79,14 @@ export default {
     inProgress: 'Wird vorbereitet',
     partly: '{{present}} von {{total}} schon vorhanden',
     stepStatus: { todo: 'Offen', running: 'Läuft', done: 'Fertig', skipped: 'Schon vorhanden', error: 'Fehlgeschlagen' },
+    missing: 'Es fehlt: {{items}}',
     steps: {
       runtime: 'Modell-Runtime starten',
-      engine: 'llama.cpp-Engine installieren',
+      engine: 'Die Engine des Chatmodells installieren',
       chat: 'Chatmodell herunterladen',
       load: 'Chatmodell laden',
       hearing: 'Whisper installieren und sein Modell herunterladen',
-      voice: 'Kokoro installieren und sein Modell herunterladen',
+      voice: 'Eine Stimme für die Sprache der Oberfläche herunterladen',
       assign: 'Sprachmodelle des Arbeitsbereichs setzen',
     },
     defaultNote: 'Es wird nur dann zum Standardmodell, wenn kein anderes Modell eingerichtet ist.',

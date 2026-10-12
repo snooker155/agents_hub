@@ -87,4 +87,10 @@ export default {
   chatSuggestReviewer: 'Gib dieser Schleife einen eigenen Prüfer, statt den Flow sich selbst bewerten zu lassen',
   chatSuggestCeilings: 'Setze Grenzen für einen günstigen ersten Lauf und erkläre, wann sie stoppt',
   chatSuggestRun: 'Schätze die Kosten eines Laufs und starte ihn, wenn ich zustimme',
+  confirmDelete: 'Den Loop „{{name}}“ und alle seine Läufe löschen?',
+  deleteLoop: 'Loop löschen',
+  deleteFailed: 'Der Loop konnte nicht gelöscht werden',
+  noLoopsYet: 'Noch keine Loops. Wählen Sie einen Flow, schreiben Sie das Kriterium, das er erfüllen muss, und lassen Sie den letzten Agenten entscheiden, wann er fertig ist.',
+  listUpTo: 'bis zu {{count}}x',
+  listTarget: 'Ziel {{score}}',
 };

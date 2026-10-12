@@ -58,8 +58,9 @@ export const getRuntimeHardware = () => api.get('/models/local/runtime/hardware'
 // The ready local set (engine, a chat model sized to this machine, Whisper,
 // Kokoro) as one background job: the plan and the latest run, start (dry_run
 // only describes it), cancel.
-export const getReadySet = () => api.get('/models/local/runtime/ready-set');
-export const startReadySet = (workspace) => api.post('/models/local/runtime/ready-set', workspace ? { workspace } : {});
+export const getReadySet = (language) => api.get('/models/local/runtime/ready-set', { params: language ? { language } : {} });
+export const startReadySet = (workspace, language) => api.post('/models/local/runtime/ready-set',
+  { ...(workspace ? { workspace } : {}), ...(language ? { language } : {}) });
 export const cancelReadySet = () => api.post('/models/local/runtime/ready-set/cancel');
 
 // Resets the runtime's call counts, which getRuntimeStatus carries as `usage`

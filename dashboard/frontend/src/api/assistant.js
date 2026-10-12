@@ -20,6 +20,10 @@ export const clearAssistant = (mode) => api.delete('/assistant', { params: param
 /** Clear the transcript: the conversation in progress is dropped, not kept among the past ones. */
 export const forgetAssistantConversation = (mode) => api.delete('/assistant/conversation', { params: params(mode) });
 export const stopAssistant = (mode) => api.post('/assistant/stop', null, { params: params(mode) });
+/** The voice models a turn in `workspace` would use, without moving the live conversation (the Chat page's microphone). */
+export const getAssistantVoice = (workspace, mode) => api.get('/assistant/voice', {
+  params: { ...params(mode), ...(workspace ? { workspace } : {}) },
+});
 
 /** A refusal from the assistant's routes: `status`, and `code` when the body had one. */
 export class AssistantError extends Error {

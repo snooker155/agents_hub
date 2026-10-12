@@ -67,6 +67,7 @@ export default {
     studio: 'Студия',
     flows: 'Потоки агентов',
     flowEditor: 'Редактор потока',
+    flowRun: 'Запуск потока',
     loops: 'Циклы',
     teams: 'Команды',
     team: 'Команда',

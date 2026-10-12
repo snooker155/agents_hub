@@ -119,14 +119,25 @@ const Marketplace = () => {
     );
   });
 
+  const visibleKits = kits.filter(k => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      k.id.toLowerCase().includes(q) ||
+      (k.name || '').toLowerCase().includes(q) ||
+      (k.description || '').toLowerCase().includes(q) ||
+      (k.industry || '').toLowerCase().includes(q)
+    );
+  });
+
   return (
     <PageContainer className="space-y-6">
       <PageHeader
         icon={Store}
         title={t('marketplace.marketplace')}
         description={t('marketplace.agentsAndFlowsPublishedBy')}
-        actions={<>
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+        badges={
+          <div className="ml-2 flex rounded-lg border border-gray-200 overflow-hidden">
             <button
               onClick={() => setTab('agents')}
               className={`inline-flex items-center px-3 py-2 text-xs font-semibold transition-colors ${
@@ -152,19 +163,21 @@ const Marketplace = () => {
               <Package className="w-3.5 h-3.5 mr-1.5" /> {t('marketplace.kits.tab')} ({kits.length})
             </button>
           </div>
-          {tab !== 'kits' && (
-            <div className="relative">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder={tab === 'flows' ? t('marketplace.searchFlows') : t('marketplace.searchAgents')}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-64"
-              />
-            </div>
-          )}
-        </>}
+        }
+        actions={
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder={tab === 'flows'
+                ? t('marketplace.searchFlows')
+                : tab === 'kits' ? t('marketplace.kits.search') : t('marketplace.searchAgents')}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-64"
+            />
+          </div>
+        }
       />
 
       {message && (
@@ -183,14 +196,16 @@ const Marketplace = () => {
       {loading ? (
         <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('marketplace.loadingMarketplace')} /></div>
       ) : tab === 'kits' ? (
-        kits.length === 0 ? (
+        visibleKits.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
             <Package className="w-10 h-10 text-gray-300 mb-3" />
-            <p className="text-gray-500 font-medium">{t('marketplace.kits.none')}</p>
+            <p className="text-gray-500 font-medium">
+              {query ? t('marketplace.kits.noMatch') : t('marketplace.kits.none')}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {kits.map((kit) => (
+            {visibleKits.map((kit) => (
               <KitCard key={kit.id} kit={kit} onInstall={setInstallingKit} />
             ))}
           </div>

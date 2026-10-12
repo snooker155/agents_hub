@@ -23,6 +23,7 @@ export default {
     label: 'Имя',
     kind: 'Тип',
     duration: 'Длительность',
+    model: 'Модель',
     tokens: 'Токены',
     messages: 'Запуски',
     runs: 'Запуски',

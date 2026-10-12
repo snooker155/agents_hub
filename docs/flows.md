@@ -5,21 +5,67 @@ order, and the whole thing streams as it goes.
 
 ## Building one
 
-Drag from the palette onto the canvas: agents, processors, conditions,
-transforms. Connect them to define the order of work. The **Flow Creator** has
-its own chat on the page and can design, validate and create a flow from a
-description of what you want.
+A flow has two pages. The **editor** (`/flows/<id>/edit`) changes the graph
+and nothing else: palette on the left, canvas in the middle, the selected
+node or the graph settings on the right, Save and Export at the top. The
+**run page** (`/flows/<id>`) runs it: pick a task, Run, chat with the flow,
+follow the nodes live on a read only canvas, run one node on its own, and go
+through the history. A new, imported or generated flow opens in the editor;
+links to a run (`?run=<id>`) open the run page. The editor's Run button saves
+first, the run page's Edit button leads back.
+
+Drag from the palette onto the canvas: the **Agent** node, processors,
+conditions, transforms, nested runs. Connect them to define the order of work.
+The palette does not list every agent: there is one Agent node, and which
+agent runs in it is picked in the node panel. The label follows the agent
+until you rename the node.
+
+An Agent node with no agent yet is drawn dashed and saves like any node, but a
+run refuses the flow until every such node has one, naming them. The run page
+says so above the canvas and keeps Run off until then.
+
+The **Flow Creator** has its own chat on the page and can design, validate
+and create a flow from a description of what you want.
 
 Validation is separate from creation on purpose: a design can be checked before
 it costs anything to run.
 
+## n8n workflows
+
+With the n8n connector set up (Connectors, n8n tab: the base URL, plus an API
+key to list workflows), **Import from n8n** on the Flows page takes a
+workflow from your n8n, or an exported workflow pasted as JSON, in one of two
+ways:
+
+- **Run in n8n**: one `run_n8n` node. The workflow keeps running in n8n; the
+  node starts it through its Webhook or Chat trigger, waits, and writes the
+  answer into its output key (`result`). Put agents before and after it like
+  any node. The workflow has to have one of those triggers and be active.
+- **Convert to hub nodes**: every step becomes an Agent node whose task says
+  what the step did (an AI step's system message and prompt, any other step's
+  operation and settings, the model and tools wired into it, the credential
+  names it used). Triggers and sticky notes are dropped, No Op steps are wired
+  through, a two way IF becomes a `state_branch` condition on a state key
+  named after it. You then pick an agent for each node in the editor.
+
+Either way a report lists what became what and what did not carry over.
+Credentials never travel: an n8n export only names them.
+
+The `run_n8n` node never takes a URL. It takes a workflow id (its trigger is
+read through the API at run time, so renaming the webhook in n8n does not
+break the flow) or a trigger path, joined to the connector's base URL. A
+Webhook trigger gets `{goal, state, flow_run_id}` as JSON, `state` holding the
+keys listed in `send_keys`; a Chat trigger gets the goal as `chatInput` with
+the flow run as its session. An n8n AI Agent's `output` is unwrapped.
+
 ## Node kinds
 
-- **Agent** — runs one agent with the input it receives.
+- **Agent**: runs the agent picked for it with the input it receives.
 - **Condition** — routes down one branch or another.
 - **Transform** — reshapes data between nodes without a model call.
 - **Processor** — non-agent work in the middle of a pipeline.
-- **Container**: runs a whole team, loop or flow as a nested run (see below).
+- **Container**: runs a whole team, loop or flow as a nested run (see below),
+  or an n8n workflow (see above).
 
 ## Running
 

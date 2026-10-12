@@ -31,19 +31,19 @@ function gb(bytes) {
 }
 
 /** The ready local set: what it would download here, then how far it got. */
-function useReadySet(enabled) {
+function useReadySet(enabled, language) {
   const [data, setData] = useState(null);
   const load = useCallback(async () => {
-    try { const { data: d } = await getReadySet(); setData(d); } catch { setData({ available: false }); }
-  }, []);
+    try { const { data: d } = await getReadySet(language); setData(d); } catch { setData({ available: false }); }
+  }, [language]);
   useEffect(() => {
     if (!enabled) return undefined;
     let live = true;
-    getReadySet()
+    getReadySet(language)
       .then(({ data: d }) => { if (live) setData(d); })
       .catch(() => { if (live) setData({ available: false }); });
     return () => { live = false; };
-  }, [enabled]);
+  }, [enabled, language]);
   const running = ACTIVE.has(data?.job?.status);
   useEffect(() => {
     if (!running) return undefined;
@@ -54,7 +54,7 @@ function useReadySet(enabled) {
 }
 
 export function ModelStep({ ctx, refreshCtx, next }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const connected = (ctx?.providers || []).length > 0;
   const [way, setWay] = useState(connected || localSetStarted(ctx) ? 'connected' : '');
   const [provider, setProvider] = useState('openai');
@@ -63,7 +63,7 @@ export function ModelStep({ ctx, refreshCtx, next }) {
   const [baseUrl, setBaseUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const ready = useReadySet(Boolean(ctx?.runtime));
+  const ready = useReadySet(Boolean(ctx?.runtime), language);
   const setRunning = ready.running || localSetStarted(ctx);
 
   const connect = async () => {
@@ -88,7 +88,7 @@ export function ModelStep({ ctx, refreshCtx, next }) {
     setBusy(true);
     setError('');
     try {
-      await startReadySet('default');
+      await startReadySet('default', language);
       await ready.reload();
       await refreshCtx();
     } catch (e) {

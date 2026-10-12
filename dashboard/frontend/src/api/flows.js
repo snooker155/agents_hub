@@ -19,6 +19,12 @@ export const getFlow = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}
 export const updateFlow = (flowId, data) => api.put(`/flows/${encodeURIComponent(flowId)}`, data);
 export const deleteFlow = (flowId) => api.delete(`/flows/${encodeURIComponent(flowId)}`);
 export const importFlow = (data) => api.post('/flows/import', data);
+// n8n: the connected instance's workflows, and turning one (by id, or a
+// pasted export) into a hub flow. mode 'run' keeps it running in n8n behind
+// one node; 'convert' makes its steps hub nodes. Returns { flow, report }.
+export const listN8nWorkflows = (workspace) =>
+  api.get('/flows/n8n/workflows', { params: workspace ? { workspace } : {} });
+export const importN8nFlow = (data) => api.post('/flows/import/n8n', data);
 export const exportFlow = (flowId) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/export`, { responseType: 'blob' });
 export const runFlow = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run`, data);

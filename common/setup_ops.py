@@ -234,9 +234,9 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
                 + f" and {hear[1] if hear else '?'} ({hear[2] if hear else '?'}), "
                 f"downloaded in the background, free to use.")
     if operation == "local_set":
-        return ("Set the hub up to run locally: install the llama.cpp engine, download one chat model sized "
-                "to this machine's memory, then Whisper and Kokoro for voice. Runs in the background and "
-                "becomes the default model only if no other model is configured.")
+        return ("Set the hub up to run locally: use a chat model already on the runtime or download one sized "
+                "to this machine's memory, then Whisper and one voice for the hub's language. Runs in the "
+                "background and becomes the default model only if no other model is configured.")
     if operation == "seed_demo":
         return "Add the demo workspace with four agents, their chats, views, a team and a pulse."
     return ""

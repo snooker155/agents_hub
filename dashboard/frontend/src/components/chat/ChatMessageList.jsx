@@ -134,7 +134,7 @@ export default function ChatMessageList() {
           </div>
         )}
 
-        {/* A conversation with the Assistant, by voice or text, as its text: read only. */}
+        {/* A conversation with the Assistant, by voice or text, as its text; continued here too. */}
         {currentConv?.origin === 'assistant' && (
           <div className="flex-shrink-0 px-4 py-2 border-b border-indigo-200 bg-indigo-50 text-xs text-indigo-800 flex items-center gap-2"
             data-testid="assistant-thread-banner">
@@ -144,7 +144,6 @@ export default function ChatMessageList() {
               {currentConv.assistant_thread?.mode === 'service' && <> · {t('chat.assistantThread.service')}</>}
               {' '}· {t('chat.assistantThread.hint')}
             </div>
-            <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">{t('chat.readOnly')}</span>
             {currentConv.assistant_thread?.active && (
               <Link to="/assistant" className="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium hover:bg-indigo-700">
                 {t('chat.assistantThread.continue')}

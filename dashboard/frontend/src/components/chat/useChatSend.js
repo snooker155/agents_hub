@@ -11,6 +11,10 @@ import { handleTeamEvent } from './send/handleTeamResponse';
 import { mapSendError, noStreamPatch } from './send/errors';
 import { DETACHED, streamChatOverChannel } from './send/channelStream';
 import { claimTurn, releaseTurn } from '../chatLiveTurn';
+import {
+  ASSISTANT_AGENT_ID, assistantErrorText, forkMessages, isAssistantThread, markLive,
+  sendAssistantTurn, stopAssistantTurn,
+} from './send/assistantThread';
 
 // How long a turn followed over its own streaming response stays claimed after
 // the response ends: its last events reach the channel after the response
@@ -53,19 +57,94 @@ function targetOf(conv) {
  * `sendMessage(text, {convId})` sends to a conversation other than the open
  * one (a message that waited for that conversation's turn to end); it talks
  * to whatever that conversation talks to and leaves the composer as it is.
+ * `{voice: true}` marks a message that was said, not typed.
+ *
+ * A conversation with the Assistant (send/assistantThread) is continued
+ * through the Assistant's own route while the Assistant is the target; with
+ * another agent picked, the message starts an ordinary conversation that
+ * carries the Assistant conversation's text.
  */
 export function useChatSend(deps) {
   const {
     beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
-    pendingReferences, processOpen, selectCommand, selectedAgent, selectedFlow, selectedProject,
+    pendingReferences, processOpen, reloadChat, selectCommand, selectedAgent, selectedFlow, selectedProject,
     selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
     setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences,
     setProcessInsights, setSelectedAgent, setSessionId, stream, t, targetMode, textareaRef,
   } = deps;
 
+  // ---- a turn of a conversation with the Assistant ----
+  const sendToAssistant = useCallback(async (conv, userMsg, { background, voice }) => {
+    const convId = conv.id;
+    const here = () => currentConvIdRef.current === convId;
+    if (!background) {
+      setInput('');
+      setPendingAttachments([]);
+      setPendingReferences([]);
+      setAttachmentError('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    }
+    const assistantId = genId();
+    setConversations((prev) => prev.map((c) => (c.id !== convId ? c : {
+      ...c,
+      messages: [...(c.messages || []), userMsg, buildAssistantBubble(assistantId, ASSISTANT_AGENT_ID)],
+    })));
+    const ctrl = new AbortController();
+    beginTurn(convId, ctrl, { stop: () => stopAssistantTurn(conv) });
+    const state = { runId: null, finalPayload: null, currentNodeId: null, nodeMsgIds: {}, handoffs: [] };
+    const ctx = {
+      convId, setConversations,
+      setActiveRunId: (id) => { noteTurn(convId, { runId: id }); if (here()) setActiveRunId(id); },
+      setSessionId: (id) => { noteTurn(convId, { sessionId: id }); if (here()) setSessionId(id); },
+      setGraphRun: (update) => { if (here()) setGraphRun(update); },
+      setProcessInsights: (update) => { if (here()) setProcessInsights(update); },
+      mergeArtifact: (art) => { if (here()) mergeArtifact(art); },
+      processOpen, isMultiAgent: false, isFlowMode: false,
+      assistantId, userMsgText: userMsg.content, t, state,
+    };
+    const fail = (text) => setConversations((prev) => prev.map((c) => (c.id !== convId ? c : {
+      ...c,
+      messages: c.messages.map((m) => (m.id === assistantId ? { ...m, content: m.content || text, error: true } : m)),
+    })));
+    let reload = true;
+    try {
+      // The conversation becomes the live one of its thread before the turn.
+      setConversations((prev) => markLive(prev, convId));
+      await sendAssistantTurn({
+        conv, text: userMsg.content, voice, signal: ctrl.signal,
+        onEvent: (event) => {
+          if (event.type === 'run' && event.run_id) { state.runId = event.run_id; ctx.setActiveRunId(event.run_id); return; }
+          if (event.type === 'error') { fail(event.error || t('chat.assistantThread.failed')); return; }
+          if (event.type === 'stopped') return;
+          handleAgentEvent(event, ctx);
+        },
+      });
+      if (!state.finalPayload) {
+        setConversations((prev) => prev.map((c) => (c.id !== convId ? c : {
+          ...c,
+          messages: c.messages.map((m) => (m.id === assistantId && !m.content ? { ...m, ...noStreamPatch(t) } : m)),
+        })));
+      }
+    } catch (err) {
+      // A stop aborts the request: the transcript is read back below. A
+      // refused turn wrote nothing, so what is shown stays, error included.
+      if (!ctrl.signal.aborted) {
+        fail(assistantErrorText(err, t));
+        reload = false;
+      }
+    } finally {
+      endTurn(convId, ctrl);
+      // What the Assistant stored is the transcript: read it back (a turn
+      // may also have opened another past conversation, see routes/assistant.py).
+      if (reload && reloadChat) reloadChat(convId);
+    }
+  }, [beginTurn, currentConvIdRef, endTurn, mergeArtifact, noteTurn, processOpen, reloadChat,
+    setActiveRunId, setAttachmentError, setConversations, setGraphRun, setInput, setPendingAttachments,
+    setPendingReferences, setProcessInsights, setSessionId, t, textareaRef]);
+
   // ---- send message ----
-  const sendMessage = useCallback(async (overrideText, { convId: toConvId = null } = {}) => {
+  const sendMessage = useCallback(async (overrideText, { convId: toConvId = null, voice = false } = {}) => {
     const background = Boolean(toConvId && toConvId !== currentConvId);
     const backgroundConv = background ? conversations.find((c) => c.id === toConvId) : null;
     if (background && !backgroundConv) return;
@@ -101,16 +180,31 @@ export function useChatSend(deps) {
 
     const attachmentLine = buildAttachmentLine(t, { pendingAttachments: attachments, pendingReferences: references });
     const userMsgText = [text, attachmentLine].filter(Boolean).join('\n');
-    const userMsg = { id: genId(), role: 'user', content: userMsgText };
+    const userMsg = { id: genId(), role: 'user', content: userMsgText, ...(voice ? { voice: true } : {}) };
+
+    const openConv = background ? backgroundConv : conversations.find((c) => c.id === currentConvId);
+    if (isAssistantThread(openConv) && target.targetMode === 'agent' && target.selectedAgent === ASSISTANT_AGENT_ID) {
+      await sendToAssistant(openConv, userMsg, { background, voice });
+      return;
+    }
+    // Another target for an Assistant conversation: a new conversation that
+    // carries its text (send/assistantThread).
+    const forkFrom = !background && isAssistantThread(openConv) ? openConv : null;
 
     // Ensure there is an active conversation
-    let convId = background ? toConvId : currentConvId;
+    let convId = background ? toConvId : (forkFrom ? null : currentConvId);
+    let createdConv = null;
     if (!convId) {
       convId = genId();
       const newConv = buildNewConversation({
         convId, text, attachmentLine, t, targetMode, isFlowMode, isTeamMode,
         selectedAgent, selectedFlow, selectedTeam, selectedWorkspace, selectedProject,
       });
+      if (forkFrom) {
+        newConv.messages = forkMessages(forkFrom.messages);
+        newConv.title = forkFrom.title || newConv.title;
+      }
+      createdConv = newConv;
       setConversations((prev) => [newConv, ...prev]);
       setCurrentConvId(convId);
       // Ahead of the render, so the turn's first events already count as
@@ -152,7 +246,7 @@ export function useChatSend(deps) {
 
     // Use the conversation's own workspace (set at creation time), not the current global selection.
     // This locks the conversation to the workspace it was started in.
-    const convRecord = conversations.find((c) => c.id === convId);
+    const convRecord = createdConv || conversations.find((c) => c.id === convId);
     const effectiveWorkspace = convRecord?.workspace || selectedWorkspace;
     const historyPayload = buildHistoryPayload(convRecord?.messages);
     const convTitle = resolveConversationTitle({ text, attachmentLine, convRecord, t });
@@ -263,7 +357,7 @@ export function useChatSend(deps) {
         ),
       );
     }
-  }, [input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
+  }, [sendToAssistant, input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.

@@ -584,8 +584,11 @@ class Whisper(Engine):
         if len(samples) == 0:
             return {"text": "", "language": language or "", "duration": 0.0, "segments": []}
         with self._lock:  # one decode at a time: CPU-bound, and it keeps memory flat
+            # The voice activity filter cuts the silence out before decoding:
+            # given silence, Whisper writes the subtitle credits it was
+            # trained on ("Субтитры сделал ...", "Thanks for watching").
             segments, info = self.model.transcribe(samples, language=language or None,
-                                                   initial_prompt=prompt or None)
+                                                   initial_prompt=prompt or None, vad_filter=True)
             segs = [{"id": i, "start": round(s.start, 2), "end": round(s.end, 2), "text": s.text}
                     for i, s in enumerate(segments)]
         return {"text": "".join(s["text"] for s in segs).strip(), "language": info.language,

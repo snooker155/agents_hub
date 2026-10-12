@@ -15,6 +15,7 @@ import {
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import RunStatusBadge from '../components/RunStatusBadge';
+import ModelCell from '../components/run/RunModelCell';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { isExternalRun } from '../components/runOrigin';
 import { useI18n, statusLabel } from '../i18n';
@@ -131,13 +132,13 @@ export default function Messages() {
   // The Workspace column is only shown in the default workspace. The grid
   // template literals are written out in full so Tailwind's JIT can detect them.
   const mdGridCols = isDefaultWorkspace
-    ? 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_1fr_1fr_0.7fr_0.6fr_140px]'
-    : 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_1fr_0.7fr_0.6fr_140px]';
+    ? 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_minmax(0,1.3fr)_1fr_1fr_0.7fr_0.6fr_140px]'
+    : 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1.1fr_minmax(0,1.3fr)_1fr_0.7fr_0.6fr_140px]';
 
   // Sort keys the backend orders by (managers/runs/store.py RUN_SORTS); the
   // workspace one only where the Workspace column is shown.
   const sortKeys = [
-    'started', 'finished', 'status', 'agent', 'title', 'duration', 'tokens', 'channel',
+    'started', 'finished', 'status', 'agent', 'model', 'title', 'duration', 'tokens', 'channel',
     ...(isDefaultWorkspace ? ['workspace'] : []),
   ];
   const paging = useListPaging('runs', {
@@ -473,6 +474,7 @@ export default function Messages() {
               <div>{t('messages.message')}</div>
               <div className="text-center">{t('messages.status')}</div>
               <div className="text-center">{t('messages.agent')}</div>
+              <div className="text-center">{t('messages.model')}</div>
               <div className="text-center">{t('messages.type')}</div>
               {isDefaultWorkspace && <div className="text-center">{t('messages.workspace')}</div>}
               <div className="text-center">{t('messages.duration')}</div>
@@ -530,6 +532,11 @@ export default function Messages() {
                   <div className="text-sm text-gray-700 md:self-center md:text-center">
                     <div className="md:hidden text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('messages.agent')}</div>
                     <span className="text-xs">{msg.agent_id || '—'}</span>
+                  </div>
+
+                  <div className="text-sm text-gray-700 md:self-center md:text-center min-w-0">
+                    <div className="md:hidden text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('messages.model')}</div>
+                    <ModelCell run={msg} />
                   </div>
 
                   <div className="md:self-center md:flex md:justify-center">

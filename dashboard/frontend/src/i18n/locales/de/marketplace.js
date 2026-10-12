@@ -30,6 +30,8 @@ export default {
   kits: {
     tab: 'Kits',
     none: 'Keine Kits verfügbar.',
+    search: 'Kits suchen…',
+    noMatch: 'Keine Kits entsprechen Ihrer Suche.',
     connectors: 'Connectors',
     configured: 'Konfiguriert',
     notConfigured: 'Noch nicht konfiguriert',

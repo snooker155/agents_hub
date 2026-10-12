@@ -10,6 +10,10 @@
  *   const rec = useRecorder({ maxSeconds: 60 });
  *   await rec.start();               // on press: asks for the microphone once
  *   const take = await rec.stop();   // on release: { blob, type, seconds } or null
+ *   rec.wasSilent()                  // null because the microphone heard no voice
+ *
+ * A take in which the level never rose to a voice is not handed over: given
+ * silence, Whisper writes the subtitle credits it was trained on.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WAV_RATE, encodeWav, levelOf, resample } from './wav';
@@ -32,6 +36,9 @@ export function recordingSupported() {
 /** A press shorter than this is a click, not something said. */
 const MIN_SECONDS = 0.35;
 
+/** The meter's peak below which a take held no voice (`levelOf`: speech reaches 0.17 and up). */
+export const SILENCE_LEVEL = 0.06;
+
 export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
   const [recording, setRecording] = useState(false);
   const onLimitRef = useRef(onLimit);
@@ -39,6 +46,7 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
   const [level, setLevel] = useState(0);
   const [error, setError] = useState('');
   const session = useRef(null);
+  const silentRef = useRef(false);
 
   const teardown = useCallback(() => {
     const s = session.current;
@@ -75,7 +83,9 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
       take = { blob: new Blob([encodeWav(samples)], { type: 'audio/wav' }), type: 'audio/wav', seconds };
     }
     teardown();
-    return seconds < MIN_SECONDS ? null : take;
+    // Measured only where there is an AudioContext; without one the take goes.
+    silentRef.current = seconds >= MIN_SECONDS && s.metered && s.peak < SILENCE_LEVEL;
+    return seconds < MIN_SECONDS || silentRef.current ? null : take;
   }, [teardown]);
 
   const start = useCallback(async () => {
@@ -97,7 +107,8 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
     const format = pickFormat();
     const Ctx = window.AudioContext || window.webkitAudioContext;
     const context = Ctx ? new Ctx() : null;
-    const s = { stream, context, format, chunks: [], started: performance.now(), raf: 0, limit: 0 };
+    const s = { stream, context, format, chunks: [], started: performance.now(), raf: 0, limit: 0,
+                peak: 0, metered: false };
     session.current = s;
     if (context) {
       s.source = context.createMediaStreamSource(stream);
@@ -110,7 +121,10 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
         if (session.current !== s) return;
         if (now - last > 60) {
           analyser.getByteTimeDomainData(frame);
-          setLevel(levelOf(frame));
+          const lvl = levelOf(frame);
+          s.peak = Math.max(s.peak, lvl);
+          s.metered = true;
+          setLevel(lvl);
           last = now;
         }
         s.raf = requestAnimationFrame(tick);
@@ -147,5 +161,7 @@ export default function useRecorder({ maxSeconds = 60, onLimit = null } = {}) {
     teardown();
   }, [teardown]);
 
-  return { start, stop: finish, cancel, recording, level, error, supported: recordingSupported() };
+  const wasSilent = useCallback(() => silentRef.current, []);
+
+  return { start, stop: finish, cancel, wasSilent, recording, level, error, supported: recordingSupported() };
 }
