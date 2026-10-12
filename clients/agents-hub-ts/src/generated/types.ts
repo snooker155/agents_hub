@@ -1471,6 +1471,7 @@ export type QueryRequest = {
 
 export type ReadySetBody = {
   "workspace"?: string;
+  "language"?: string | null;
   "dry_run"?: boolean;
 };
 
@@ -2660,6 +2661,9 @@ export interface ApiPaths {
   "/api/assistant/transcribe": {
     post: { response: unknown };
   };
+  "/api/assistant/voice": {
+    get: { response: unknown };
+  };
   "/api/assistant/voice-sample": {
     post: { body: SampleIn; response: unknown };
   };
@@ -3002,6 +3006,9 @@ export interface ApiPaths {
   "/api/costs/budget": {
     get: { response: unknown };
     post: { body: BudgetSettings; response: unknown };
+  };
+  "/api/costs/runs": {
+    get: { response: unknown };
   };
   "/api/databases/connections": {
     get: { response: unknown };

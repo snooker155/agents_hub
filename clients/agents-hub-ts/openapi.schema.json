@@ -8819,6 +8819,18 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "workspace": {
             "default": "default",
             "maxLength": 200,
@@ -19274,6 +19286,25 @@
         ]
       }
     },
+    "/api/assistant/voice": {
+      "get": {
+        "description": "The voice models a turn in ``?workspace=`` would use, for a page other\nthan the Assistant's (the Chat page's microphone). Unlike ``GET\n/api/assistant`` it leaves the live conversation where it is.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Voice Models",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
     "/api/assistant/voice-sample": {
       "post": {
         "description": "A short line read with the speech model the turns use and ``voice``,\nso the settings can play a voice before it is picked: in the voice's own\nlanguage, else the page's (:func:`providers.special.sample_text`). Charged\nlike a transcription, as a ``voice`` run of its own. The line and its\nlanguage come in ``X-Sample-Text`` (URL-encoded) and ``X-Sample-Language``.",
@@ -24984,6 +25015,172 @@
           }
         },
         "summary": "Set Budget",
+        "tags": [
+          "costs"
+        ]
+      }
+    },
+    "/api/costs/runs": {
+      "get": {
+        "description": "The runs the breakdowns above add up, each with its tokens and\nestimated cost, under the same filters. ``sort`` is ``started``\n(default), ``cost``, ``tokens``, ``agent`` or ``model``; ``order`` is\n``asc`` or ``desc``. ``agent_id`` and ``status`` narrow the list. Rows are limited to the workspaces the caller may\nsee (common/access.py), since a run's title and agent are its own record.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Cost Runs",
         "tags": [
           "costs"
         ]
@@ -35732,7 +35929,26 @@
     },
     "/api/models/local/runtime/ready-set": {
       "get": {
-        "description": "What the button would do (the chosen model, each step done or not) and\nthe latest run of it.",
+        "description": "What the button would do (the chosen model, each step done or not) and\nthe latest run of it; ``language`` is the page's, for the voice step.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "language",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 10,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Language"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -35745,6 +35961,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Ready Set Status",
@@ -54229,7 +54455,7 @@
             "required": false,
             "schema": {
               "default": 200,
-              "maximum": 500,
+              "maximum": 2000,
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
@@ -54348,6 +54574,42 @@
               ],
               "description": "Substring of the query, URL, agent or error",
               "title": "Search"
+            }
+          },
+          {
+            "description": "created | kind | status | agent | duration | severity",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "created | kind | status | agent | duration | severity",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "desc | asc",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "desc | asc",
+              "title": "Order"
             }
           }
         ],
