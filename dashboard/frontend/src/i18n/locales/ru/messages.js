@@ -24,6 +24,7 @@ export default {
   noMessagesFound: 'Запуски не найдены.',
   message: 'Запуск',
   duration: 'Длительность',
+  model: 'Модель',
   actions: 'Действия',
   noTitle: 'Без заголовка',
   stop: 'Остановить',

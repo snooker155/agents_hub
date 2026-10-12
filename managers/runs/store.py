@@ -204,6 +204,7 @@ RUN_SORTS = {
     "agent": "COALESCE(agent_id, '')",
     "workspace": "COALESCE(workspace, '')",
     "channel": "COALESCE(channel, '')",
+    "model": "COALESCE(model, '')",
     "title": "LOWER(COALESCE(title, ''))",
     "duration": "COALESCE(duration_ms, 0)",
     "tokens": "COALESCE(total_tokens, 0)",

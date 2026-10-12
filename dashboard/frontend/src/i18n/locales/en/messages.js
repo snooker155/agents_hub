@@ -24,6 +24,7 @@ export default {
   noMessagesFound: 'No runs found.',
   message: 'Run',
   duration: 'Duration',
+  model: 'Model',
   actions: 'Actions',
   noTitle: 'No title',
   stop: 'Stop',
