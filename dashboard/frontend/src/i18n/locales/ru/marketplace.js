@@ -30,6 +30,8 @@ export default {
   kits: {
     tab: 'Наборы',
     none: 'Наборы пока недоступны.',
+    search: 'Поиск наборов…',
+    noMatch: 'Наборов по запросу не найдено.',
     connectors: 'Коннекторы',
     configured: 'Настроен',
     notConfigured: 'Пока не настроен',
