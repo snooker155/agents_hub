@@ -329,6 +329,31 @@ def test_transcription_reads_a_workspace_recording(ws, http):
     assert refused["ok"] is False and "not an audio" in refused["error"]
 
 
+@pytest.mark.parametrize("heard, said", [
+    ("Редактор субтитров О.Голубкина Корректор А.Егорова", ""),
+    ("Субтитры сделал DimaTorzok", ""),
+    ("Продолжение следует...", ""),
+    ("Thank you for watching!", ""),
+    ("Untertitel im Auftrag des ZDF, 2017", ""),
+    ("Создай задачу на завтра. Субтитры сделал DimaTorzok", "Создай задачу на завтра."),
+    ("Добавь субтитры к видео", "Добавь субтитры к видео"),
+    ("Спасибо за внимание, теперь открой отчёт.", "Спасибо за внимание, теперь открой отчёт."),
+])
+def test_a_transcript_loses_what_whisper_makes_up_for_silence(heard, said):
+    from providers.media import drop_phantom_text
+    assert drop_phantom_text(heard) == said
+
+
+def test_a_silent_recording_transcribes_to_nothing(ws, http):
+    from files import service
+    from tools.special_models import transcribe_audio
+    special.save(WS, {"transcription": {"provider": "openai", "model": "whisper-1"}})
+    rec = service.create_file(WS, "quiet.mp3", b"ID3audio", source="upload")
+    http(lambda req: httpx.Response(200, json={"text": "Субтитры сделал DimaTorzok"}))
+    out = _call(transcribe_audio, file_id=rec["file_id"])
+    assert out["text"] == ""
+
+
 # ── the workspace's own models ───────────────────────────────────────────────
 
 def test_an_http_model_gets_its_token_from_the_workspace_variables(ws, http):

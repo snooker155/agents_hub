@@ -381,6 +381,31 @@ def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[st
 
 # ── transcription ────────────────────────────────────────────────────────────
 
+#: What Whisper writes for a recording with no speech in it: the subtitle
+#: credits and video sign-offs of its training data. A sentence matching one of
+#: these is never what a person said into the microphone.
+_PHANTOM_CREDITS = re.compile(
+    r"субтитр\w*\s*(?::|сделал|создавал|делал|подготовил|подогнал|выполнил|by\b)|редактор субтитров"
+    r"|корректор\s+[а-я]\.|dimatorzok|amara\.org|untertitel(?:ung)?\s+(?:im auftrag|des|von|der)\b"
+    r"|im auftrag des zdf|(?:subtitles|captions) by|transcribed by|www\.\S+\.(?:com|ru|de|org)",
+    re.IGNORECASE)
+#: Sign-offs that are phantoms only when they are all there is.
+_PHANTOM_ALONE = re.compile(
+    r"^(?:продолжение следует|спасибо за (?:просмотр|внимание)|подпис\w* на (?:канал|наш канал)"
+    r"|thanks? (?:you )?for watching|vielen dank (?:fürs|für's) zuschauen|bis zum nächsten mal)[.!…]*$",
+    re.IGNORECASE)
+
+
+def drop_phantom_text(text: str) -> str:
+    """``text`` without the sentences Whisper makes up for silence: what is
+    left is what was said, ``""`` when nothing was."""
+    sentences = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", str(text or "").strip()) if p.strip()]
+    kept = [p for p in sentences if not _PHANTOM_CREDITS.search(p)]
+    if len(kept) == 1 and _PHANTOM_ALONE.match(kept[0]):
+        kept = []
+    return " ".join(kept)
+
+
 def transcribe(ep: Endpoint, model: str, audio: Tuple[str, bytes, str], *, language: Optional[str],
                prompt: Optional[str]) -> str:
     name, data, mime = audio
@@ -398,7 +423,7 @@ def transcribe(ep: Endpoint, model: str, audio: Tuple[str, bytes, str], *, langu
         with _client() as client:
             resp = client.post(f"{ep.base_url}/models/{model}:generateContent", headers=_headers(ep), json=body)
             parts = _google_parts(_check(resp, "Transcription").json())
-        return "".join(str(p.get("text") or "") for p in parts).strip()
+        return drop_phantom_text("".join(str(p.get("text") or "") for p in parts))
     form: Dict[str, str] = {"model": model, "response_format": "json"}
     if language:
         form["language"] = language
@@ -409,9 +434,9 @@ def transcribe(ep: Endpoint, model: str, audio: Tuple[str, bytes, str], *, langu
                            data=form, files={"file": (name, data, mime)})
         body = _check(resp, "Transcription")
     try:
-        return str(body.json().get("text") or "").strip()
+        return drop_phantom_text(str(body.json().get("text") or ""))
     except ValueError:
-        return body.text.strip()
+        return drop_phantom_text(body.text)
 
 
 # ── a workspace's own models ─────────────────────────────────────────────────

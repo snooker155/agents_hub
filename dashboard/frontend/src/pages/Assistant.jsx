@@ -449,7 +449,10 @@ export default function Assistant() {
     setTalking(false);
     if (how === 'browser') { heard(await browserRec.stop()); return; }
     const take = await recorder.stop();
-    if (!take) return;
+    if (!take) {
+      if (recorder.wasSilent?.()) heard('');
+      return;
+    }
     setTranscribing(true);
     try {
       const res = await transcribeRecording(take.blob, { mode, workspace, language });
