@@ -93,9 +93,11 @@ export default function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {/* Top right, above everything: the largest z-index a browser keeps. */}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
+        data-testid="toasts"
+        className="pointer-events-none fixed top-4 right-4 z-[2147483647] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
       >
         {toasts.map((toast) => <Toast key={toast.id} toast={toast} onDismiss={dismiss} />)}
       </div>
