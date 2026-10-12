@@ -596,7 +596,7 @@
       "id": "kits",
       "title": "Industry agent kits",
       "surface": "Marketplace",
-      "summary": "A ready set of agents for one line of work, with the connectors it needs and an outcome rubric for each agent, installed into a workspace in one step. Support, finance operations and recruiting ship with the hub.",
+      "summary": "A ready set of agents for one line of work, with the connectors it needs and an outcome rubric for each agent, installed into a workspace in one step. Ten ship with the hub: support, finance, recruiting, sales, marketing, engineering, legal, helpdesk, meetings and competitive intelligence.",
       "related": [
         "apply",
         "outcomes",

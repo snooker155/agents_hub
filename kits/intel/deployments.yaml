@@ -1,0 +1,15 @@
+# A weekly scan of the watched competitors. Starts paused: turn it on once
+# the competitor list is in the Competitor watch pool.
+kind: deployment
+id: weekly-competitor-scan
+title: Weekly competitor scan
+agent: intel_scout
+message: >
+  Check each competitor in the Competitor watch pool for changes since the
+  last scan: pricing, new features or products, notable hires or layoffs,
+  funding, partnerships and messaging. Log each real change with its date
+  and source, then hand the week's changes to Analyst for the brief.
+recurrence: weekly
+run_at: 2026-10-12T06:30:00+00:00
+timezone: UTC
+paused: true

@@ -1,0 +1,15 @@
+# A weekly look at upcoming renewal and notice dates. Starts paused: turn it
+# on once contracts have been reviewed into the playbook pool.
+kind: deployment
+id: weekly-renewal-watch
+title: Weekly renewal and notice-date watch
+agent: legal_obligations
+message: >
+  Check the contract dates in the Contract playbook pool for anything due in
+  the next 60 days: renewals, notice periods for termination or price
+  changes, payment milestones and reporting duties. List each with the
+  contract, the clause and the last day to act, soonest first.
+recurrence: weekly
+run_at: 2026-10-12T08:00:00+00:00
+timezone: UTC
+paused: true

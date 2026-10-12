@@ -13,6 +13,26 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- **Seven more industry kits**, ten in all (docs/kits.md): `sales`
+  (Prospector, Outreach), `marketing` (Strategist, Writer, Editor),
+  `engineering` (Triager, Issue keeper, Release notes), `legal` (contract
+  review: Reviewer, Drafter, Obligations), `helpdesk` (internal IT and HR:
+  Librarian, Desk), `meetings` (Notetaker, Follow-up) and `intel`
+  (competitive intelligence: Scout, Analyst). Each has outcome rubrics, a
+  shared memory pool and one paused scheduled job. Jobs that read untrusted
+  text and jobs that send are split across two agents, so no kit agent forms
+  the lethal trifecta.
+
+### Fixed
+
+- Installing a kit into a workspace other than the default one now renames
+  a `+item` / `-item` list delta that names one of the kit's own agents
+  (`handoffs: [-@verifier, +marketing_editor]`), keeping its sign; before,
+  the added sibling kept its bare id and pointed at an agent that did not
+  exist in that workspace.
+
 ## [0.11.0] - 2026-10-10
 
 ### Added

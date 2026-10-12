@@ -1,0 +1,25 @@
+id: meetings
+name: Meeting follow-up
+description: >
+  Turns a meeting recording or rough notes into a clean record of decisions,
+  action items with owners and dates, and open questions, then sends the
+  recap, creates the tasks and keeps chasing what is still open.
+industry: Operations
+icon: microphone
+version: 1.0.0
+connectors:
+  required: []
+  optional: [google, microsoft, slack, teams, mail]
+rubrics: >
+  Notetaker is graded on capturing every decision and action item with its
+  owner and date as actually said, and on marking what was left unclear
+  instead of guessing. Follow-up is graded on a recap people can read in a
+  minute, tasks that match the action items exactly, and reminders that go
+  to the right person before the date, not after.
+next_steps: >
+  Upload a recording or notes as a workspace file and ask Notetaker to
+  process it; a transcription model must be chosen on the Models page for
+  audio. List the people who usually attend, their roles and how to reach
+  them in the Meeting record memory pool. Connect a chat channel or mail for
+  recaps and Google or Microsoft for calendar follow-ups. The weekly open
+  action items digest on Follow-up's Pulse tab starts paused.

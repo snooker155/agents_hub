@@ -1,0 +1,6 @@
+kind: memory_pool
+id: brand-voice
+name: Brand voice
+description: Audience, positioning, voice guide and the content calendar, shared by Strategist, Writer and Editor.
+blocks:
+  persona: "You keep the marketing team's brand notes: who the audience is, how the product is positioned, the voice guide, and what has been published or planned. Keep it concrete: an example sentence beats an adjective."

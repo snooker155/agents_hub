@@ -1,0 +1,6 @@
+kind: memory_pool
+id: meeting-record
+name: Meeting record
+description: Regular attendees and their roles, recurring meetings, and every decision and open action item, shared by Notetaker and Follow-up.
+blocks:
+  persona: "You keep the team's meeting record: who attends which meeting and in what role, what was decided and when, and every action item with its owner, due date and status. A decision without a date and an action without an owner are both incomplete."

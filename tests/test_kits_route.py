@@ -143,3 +143,31 @@ def test_databases_counts_as_configured_only_with_a_connection(monkeypatch):
     monkeypatch.setattr(db_store, "list_connections",
                         lambda workspace=None: [{"id": "c1", "workspace": workspace}])
     assert kits.connector_status("databases", "w") is True
+
+
+@pytest.mark.parametrize("kit_id", [k.id for k in __import__("kits").list_kits()])
+def test_every_shipped_kit_installs_with_no_blocked_effective_tools(client, ws, kit_id):
+    """The loader test checks each agent file's own tools; an agent that
+    ``extends`` a system agent also inherits that parent's tools (and never
+    its ``capability_override``), so this checks what is actually installed."""
+    import kits
+    from tools.capabilities import check_combination
+
+    r = client.post(f"/api/kits/{kit_id}/install", json={"workspace": ws})
+    assert r.status_code == 200, r.text
+    assert r.json()["result"]["ok"] is True, r.text
+    for res in kits.load_kit_bundle(kits.get_kit(kit_id)).by_kind("agent"):
+        agent = get_agent(f"{res.key}@{ws}")
+        assert agent is not None, res.key
+        violation = check_combination(agent.tools or [])
+        assert violation is None or violation.severity != "block", (res.key, violation)
+
+
+def test_handoff_deltas_are_namespaced_with_their_sign(client, ws):
+    """``marketing_writer`` extends ``writer``, drops its handoff to the
+    Verifier and adds Editor (``[-verifier, +marketing_editor]``); in a
+    workspace the added sibling is renamed and the removal still applies."""
+    r = client.post("/api/kits/marketing/install", json={"workspace": ws})
+    assert r.status_code == 200, r.text
+    writer = get_agent(f"marketing_writer@{ws}")
+    assert writer.handoffs == [f"marketing_editor@{ws}"]

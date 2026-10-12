@@ -1,0 +1,23 @@
+id: intel
+name: Competitive intelligence
+description: >
+  Watches a named list of competitors on the open web for pricing, product,
+  hiring and positioning changes, keeps a dated and sourced record of each,
+  and turns it into a weekly brief and battlecards the sales team can use.
+industry: Strategy
+icon: radar
+version: 1.0.0
+connectors:
+  required: []
+  optional: [slack, notion]
+rubrics: >
+  Scout is graded on recording only real, dated changes with the source for
+  each, and on not repeating what the record already holds. Analyst is
+  graded on briefs and battlecards that separate what was observed from
+  what it might mean, and that never state a competitor fact the record
+  cannot source.
+next_steps: >
+  Write the competitors to watch, their sites and what matters about each
+  (pricing, features, target customers) into the Competitor watch memory
+  pool, along with your own positioning for the battlecards. The weekly
+  competitor scan on Scout's Pulse tab starts paused.

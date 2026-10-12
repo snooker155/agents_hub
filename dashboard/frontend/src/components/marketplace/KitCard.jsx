@@ -1,9 +1,15 @@
-import { Headphones, Calculator, Award, Package, CheckCircle2, XCircle } from 'lucide-react';
+import {
+  Headphones, Calculator, Award, Target, Megaphone, Bug, Scale, LifeBuoy, Mic, Radar,
+  Package, CheckCircle2, XCircle,
+} from 'lucide-react';
 import { useI18n } from '../../i18n';
 
 // kit.icon is a plain word from kit.yaml; a handful get their own glyph, the
 // rest fall back to a generic one rather than guessing at an icon name.
-const ICONS = { headset: Headphones, calculator: Calculator, badge: Award };
+const ICONS = {
+  headset: Headphones, calculator: Calculator, badge: Award, target: Target, megaphone: Megaphone,
+  bug: Bug, scale: Scale, lifebuoy: LifeBuoy, microphone: Mic, radar: Radar,
+};
 
 const KitCard = ({ kit, onInstall, installing }) => {
   const { t } = useI18n();

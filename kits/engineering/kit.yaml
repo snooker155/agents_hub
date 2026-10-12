@@ -1,0 +1,25 @@
+id: engineering
+name: Engineering issue triage
+description: >
+  Reads new issues as they land in Jira or Linear, finds duplicates and the
+  part of the code they touch, and keeps the tracker tidy with labels,
+  priorities and owners. A third agent turns what shipped into release notes.
+industry: Software engineering
+icon: bug
+version: 1.0.0
+connectors:
+  required: []
+  optional: [jira, linear, slack]
+rubrics: >
+  Triager is graded on finding real duplicates, pointing at the code an issue
+  most likely touches, and proposing a priority with a reason. Issue keeper
+  is graded on applying only what Triager proposed, with a comment that
+  explains each change, and asking the reporter for what is missing. Release
+  notes is graded on covering what actually shipped, in words a user
+  understands, without inventing a change.
+next_steps: >
+  Connect Jira or Linear on the Connectors page (Slack to post the triage
+  summary). Put the components, their owners and the label and priority
+  scheme into the Engineering triage memory pool, and open the repository
+  as this workspace's project so Triager can search the code. The daily
+  triage on Triager's Pulse tab starts paused.

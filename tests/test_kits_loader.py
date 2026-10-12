@@ -7,9 +7,10 @@ from __future__ import annotations
 import kits
 
 
-def test_list_kits_finds_the_three_shipped_kits():
+def test_list_kits_finds_the_shipped_kits():
     ids = {k.id for k in kits.list_kits()}
-    assert {"support", "finance", "recruiting"} <= ids
+    assert {"support", "finance", "recruiting", "sales", "marketing", "engineering",
+            "legal", "helpdesk", "meetings", "intel"} <= ids
 
 
 def test_get_kit_unknown_id_is_none():
@@ -101,3 +102,12 @@ def test_namespaced_bundle_renames_agents_and_their_cross_references():
     assert deployment.spec.get("agent") == "support_triage@acme"
     # The original bundle is untouched.
     assert {r.key for r in bundle.by_kind("agent")} == {"support_triage", "support_resolver"}
+
+
+def test_namespaced_bundle_keeps_the_sign_of_a_list_delta():
+    """``marketing_writer`` declares ``handoffs: [-@verifier, +marketing_editor]``;
+    the added sibling is renamed with its sign, the parent's entry is not."""
+    bundle = kits.load_kit_bundle(kits.get_kit("marketing"))
+    out = kits.namespaced_bundle(bundle, "acme")
+    writer = out.get("agent", "marketing_writer@acme")
+    assert writer.spec.get("handoffs") == ["-@verifier", "+marketing_editor@acme"]

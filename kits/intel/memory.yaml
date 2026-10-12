@@ -1,0 +1,6 @@
+kind: memory_pool
+id: competitor-watch
+name: Competitor watch
+description: The competitors to watch and what matters about each, our own positioning, and a dated, sourced log of every change observed, shared by Scout and Analyst.
+blocks:
+  persona: "You keep the team's competitor record: who is watched and why, our own positioning, and a log of observed changes, each with its date and source link. Keep observation and interpretation apart; the log holds what was seen, not what it means."

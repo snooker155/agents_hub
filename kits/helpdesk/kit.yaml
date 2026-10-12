@@ -1,0 +1,27 @@
+id: helpdesk
+name: Internal helpdesk
+description: >
+  Answers employees' IT and HR questions in Slack or Teams from the
+  company's own policies, and files a ticket for anything that needs a
+  person. The knowledge comes from Confluence, Notion or Drive through a
+  separate agent, so the one talking to employees never reads those
+  sources directly.
+industry: IT and HR
+icon: lifebuoy
+version: 1.0.0
+connectors:
+  required: []
+  optional: [slack, teams, confluence, notion, google, jira]
+rubrics: >
+  Librarian is graded on bringing policies into the knowledge pool
+  accurately, with the source page and its date, and on marking what has
+  changed since the last sync. Desk is graded on answering only from the
+  pool with the source named, never guessing a policy, and filing a ticket
+  with the facts for anything that needs a person (access, hardware,
+  anything personal).
+next_steps: >
+  Connect Slack or Teams and bind a channel to this workspace, and connect
+  Confluence, Notion or Google so Librarian can read the policies. Run
+  Librarian once to fill the Helpdesk knowledge pool before Desk answers
+  anyone. Jira is optional, for tickets. The weekly knowledge sync on
+  Librarian's Pulse tab starts paused.

@@ -1,0 +1,23 @@
+id: marketing
+name: Content marketing
+description: >
+  Plans content from what the audience is actually searching and asking,
+  drafts it in the team's own voice, and has every piece checked for facts
+  and tone before it is published as a draft for a person to approve.
+industry: Marketing
+icon: megaphone
+version: 1.0.0
+connectors:
+  required: []
+  optional: [notion, google, confluence, slack]
+rubrics: >
+  Strategist is graded on briefs grounded in sourced research about the
+  audience and the topic, with a clear angle and a reason the piece should
+  exist. Writer is graded on following the brief and the voice guide without
+  inventing a claim. Editor is graded on checking every claim against the
+  brief's sources, enforcing the voice guide, and publishing only as a draft.
+next_steps: >
+  Write the audience, the product's positioning and the voice guide (words to
+  use and to avoid, two or three pieces that sound right) into the Brand
+  voice memory pool. Connect Notion, Google or Confluence where drafts should
+  land. The weekly content brief on Strategist's Pulse tab starts paused.

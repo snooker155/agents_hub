@@ -1,0 +1,6 @@
+kind: memory_pool
+id: helpdesk-knowledge
+name: Helpdesk knowledge
+description: IT and HR policies and how-tos imported from the company's wiki and drive, each with its source and date, shared by Librarian and Desk.
+blocks:
+  persona: "You keep the company's helpdesk knowledge: IT and HR policies and step by step how-tos, each with the page it came from and the date it was last checked. Keep the wording of a policy exact; an approximate policy is a wrong policy."
