@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DollarSign, Loader, Save, RefreshCw, AlertTriangle, ShieldCheck, Download } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { DollarSign, Loader, Save, RefreshCw, AlertTriangle, ShieldCheck, Download, PieChart, ListOrdered } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getCosts, getBudget, setBudget } from '../api';
 import { getAccountingReport, getAccountingReportCsv } from '../api/accounting';
@@ -10,6 +11,7 @@ import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import { usePageChatSubject } from '../components/pageChat/pageChat';
 import PageLoader from '../components/PageLoader';
+import CostRunsTab from '../components/costs/CostRunsTab';
 const card = 'bg-white p-6 rounded-xl shadow-sm border border-gray-100';
 const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none';
 
@@ -174,11 +176,22 @@ function ReportSection({ t, workspace }) {
 export default function Costs() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
-  const [scope, setScope] = useState('workspace'); // 'workspace' | 'all'
+  const [scopeChoice, setScope] = useState('workspace'); // 'workspace' | 'all'
+  // Only the default workspace may look across all workspaces; anywhere else
+  // the page shows the current workspace and the picker is hidden.
+  const isDefaultWorkspace = selectedWorkspace === 'default';
+  const scope = isDefaultWorkspace ? scopeChoice : 'workspace';
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // The tab lives in the address (?tab=runs), so a link can open the run list.
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'runs' ? 'runs' : 'overview';
+  const setTab = (id) => setParams(id === 'overview' ? {} : { tab: id }, { replace: true });
+  // Bumped by Refresh, so the run list refetches along with the breakdowns.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [budgetRaw, setBudgetState] = useState(null);
   const [savingBudget, setSavingBudget] = useState(false);
@@ -252,20 +265,54 @@ export default function Costs() {
         title={t('costs.costsBudgets')}
         description={t('costs.estimatedTokenSpendFromRecorded')}
         actions={<>
-          <select value={scope} onChange={(e) => setScope(e.target.value)} className={inputCls}>
-            <option value="workspace">{t('costs.thisWorkspace')}{selectedWorkspace ? ` (${selectedWorkspace})` : ''}</option>
-            <option value="all">{t('costs.allWorkspaces')}</option>
-          </select>
-          <label className="text-xs text-gray-500">{t('costs.from')}</label>
-          <DateInput value={since} onChange={setSince} className={inputCls} />
-          <label className="text-xs text-gray-500">{t('costs.to')}</label>
-          <DateInput value={until} onChange={setUntil} className={inputCls} />
-          <button onClick={loadCosts} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700">
+          {/* The Runs tab draws these in its own filter bar. */}
+          {tab === 'overview' && isDefaultWorkspace && (
+            <select value={scope} onChange={(e) => setScope(e.target.value)} className={inputCls}>
+              <option value="workspace">{t('costs.thisWorkspace')}{selectedWorkspace ? ` (${selectedWorkspace})` : ''}</option>
+              <option value="all">{t('costs.allWorkspaces')}</option>
+            </select>
+          )}
+          {tab === 'overview' && <>
+            <label className="text-xs text-gray-500">{t('costs.from')}</label>
+            <DateInput value={since} onChange={setSince} className={inputCls} />
+            <label className="text-xs text-gray-500">{t('costs.to')}</label>
+            <DateInput value={until} onChange={setUntil} className={inputCls} />
+          </>}
+          <button onClick={() => { loadCosts(); setRefreshTick((n) => n + 1); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700">
             <RefreshCw className="w-4 h-4" /> {t('costs.refresh')}
           </button>
         </>}
       />
 
+      {/* Tabs sit flush on their content: the page's space-y gap applies to
+          this block as a whole, the blocks inside a tab keep their own. */}
+      <div>
+      <div className="flex items-center gap-1 border-b border-gray-200 overflow-x-auto">
+        {[
+          { id: 'overview', label: t('costs.tabs.overview'), icon: PieChart },
+          { id: 'runs', label: t('costs.tabs.runs'), icon: ListOrdered },
+        ].map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex shrink-0 items-center gap-2 px-3 sm:px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+              tab === id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Icon className="w-4 h-4" /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'runs' && (
+        <CostRunsTab
+          workspace={wsParam} since={since} until={until} setSince={setSince} setUntil={setUntil}
+          scope={scope} setScope={setScope} canPickScope={isDefaultWorkspace}
+          selectedWorkspace={selectedWorkspace} refreshTick={refreshTick}
+        />
+      )}
+
+      {tab === 'overview' && <div className="space-y-6">
       {/* Totals */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={card}>
@@ -362,6 +409,8 @@ export default function Costs() {
       )}
 
       <ReportSection t={t} workspace={wsParam} />
+      </div>}
+      </div>
     </PageContainer>
   );
 }

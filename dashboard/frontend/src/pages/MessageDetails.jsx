@@ -18,6 +18,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { fmtRunUsd } from '../components/dashboard/format';
 // One label and one value style for every field of the metadata card, so an
 // id, a date and a name read at the same size.
 const META_LABEL = 'text-gray-500';
@@ -709,6 +710,13 @@ export default function MessageDetails() {
           <TokenPill label={t('messageDetails.in')} value={insights?.token_usage?.inbound_tokens || 0} />
           <TokenPill label={t('messageDetails.out')} value={insights?.token_usage?.outbound_tokens || 0} />
           <TokenPill label={t('messageDetails.total')} value={insights?.token_usage?.total_tokens || 0} />
+          {insights?.cost && (
+            <TokenPill
+              label={t('messageDetails.cost')}
+              value={insights.cost.priced ? `≈ ${fmtRunUsd(insights.cost.usd)}` : t('messageDetails.costNoPrice')}
+              title={t(insights.cost.priced ? 'messageDetails.costTooltip' : 'messageDetails.costNoPriceTooltip')}
+            />
+          )}
           {/* The three pills above are the run's token bill, summed over every
               step of the agent loop. This one is the largest single prompt it
               sent, the figure the context window has to hold. */}

@@ -9,9 +9,9 @@ Spend is derived from the ``runs`` table joined against catalog pricing
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
-from common.pricing import (EVALUATION_CHANNELS, container_cost_usd, load_price_map,
+from common.pricing import (EVALUATION_CHANNELS, container_cost_usd, cost_is_known, load_price_map,
                             run_cached_tokens, run_cost_usd, run_tokens)
 
 log = logging.getLogger(__name__)
@@ -20,6 +20,10 @@ log = logging.getLogger(__name__)
 def _in_range(ts: str, since: Optional[str], until: Optional[str]) -> bool:
     if since and ts and ts < since:
         return False
+    # A bare day (the page's date pickers send YYYY-MM-DD) includes that whole
+    # day: "2026-10-10T09:00" sorts after "2026-10-10" and would be cut.
+    if until and len(until) == 10:
+        until += "T99"
     if until and ts and ts > until:
         return False
     return True
@@ -41,6 +45,28 @@ def _run_cost(run: dict, prices) -> float:
         # the hub ran it in, so the container hours are still added.
         return float(reported) + container_cost_usd(run)
     return run_cost_usd(run, prices)
+
+
+def _counted_runs(runs: Iterable[dict], workspace: Optional[str], since: Optional[str],
+                  until: Optional[str], launched_by: Optional[str],
+                  allowed: Optional[set]) -> Iterator[dict]:
+    """The runs the Costs page counts, under its filters. Replay and eval runs
+    are evaluation, not production spend, and are never counted: both channels
+    are tagged at run creation for exactly this."""
+    for r in runs:
+        if (r.get("channel") or "") in EVALUATION_CHANNELS:
+            continue
+        ws = (r.get("workspace") or "").strip()
+        if workspace and ws != workspace:
+            continue
+        if allowed is not None and (ws or "default") not in allowed:
+            continue
+        if launched_by and str(r.get("launched_by") or "") != str(launched_by):
+            continue
+        ts = r.get("started_at") or r.get("created_at") or ""
+        if not _in_range(ts, since, until):
+            continue
+        yield r
 
 
 def costs_breakdown(workspace: Optional[str] = None, since: Optional[str] = None,
@@ -102,22 +128,8 @@ def costs_breakdown(workspace: Optional[str] = None, since: Optional[str] = None
         b["total_tokens"] += inbound + outbound
         b["cost"] += cost
 
-    for r in runs:
-        # Replay and eval runs are evaluation, not production spend — never
-        # count them. Both channels are tagged at run creation for exactly this.
-        if (r.get("channel") or "") in EVALUATION_CHANNELS:
-            continue
+    for r in _counted_runs(runs, workspace, since, until, launched_by, allowed):
         ws = (r.get("workspace") or "").strip()
-        if workspace and ws != workspace:
-            continue
-        if allowed is not None and (ws or "default") not in allowed:
-            continue
-        if launched_by and str(r.get("launched_by") or "") != str(launched_by):
-            continue
-        ts = r.get("started_at") or r.get("created_at") or ""
-        if not _in_range(ts, since, until):
-            continue
-
         inbound, outbound = run_tokens(r)
         cached = max(0, min(run_cached_tokens(r), inbound))
         cost = _run_cost(r, prices)
@@ -160,4 +172,92 @@ def costs_breakdown(workspace: Optional[str] = None, since: Optional[str] = None
     }
 
 
-__all__ = ["costs_breakdown", "_run_cost"]
+#: Sort keys of :func:`costs_runs`, each read off a row.
+RUN_SORTS = {
+    "started": lambda row: row["started_at"] or "",
+    "cost": lambda row: row["cost"],
+    "tokens": lambda row: row["total_tokens"],
+    "agent": lambda row: (row["agent_name"] or "").lower(),
+    "model": lambda row: (row["model"] or "").lower(),
+}
+
+
+def costs_runs(workspace: Optional[str] = None, since: Optional[str] = None,
+               until: Optional[str] = None, *, workspaces: Optional[Iterable[str]] = None,
+               agent_id: Optional[str] = None, status: Optional[str] = None,
+               sort: str = "started", order: str = "desc",
+               limit: int = 20, offset: int = 0) -> dict:
+    """The runs behind :func:`costs_breakdown`, one row each with its tokens
+    and cost, sorted and cut to a window. Same filters, so the rows add up to
+    the page's totals. ``priced`` is False on a row whose model the catalog
+    has no price for (common/pricing.py ``cost_is_known``). ``agent_id`` and
+    ``status`` narrow the list further; the breakdowns have no such filter."""
+    from agents import registry
+    from managers import run_manager
+
+    allowed = set(workspaces) if workspaces is not None else None
+    prices = load_price_map()
+    agent_names = {}
+    try:
+        agent_names = {a.id: getattr(a, "name", a.id) for a in registry.list_agents()}
+    except Exception:  # noqa: BLE001 - agents are then listed by id
+        log.debug("costs: agent names unavailable", exc_info=True)
+
+    rows = []
+    for r in _counted_runs(run_manager.load_runs(), workspace, since, until, None, allowed):
+        if agent_id and (r.get("agent_id") or "").strip() != agent_id:
+            continue
+        if status and (r.get("status") or "") != status:
+            continue
+        inbound, outbound = run_tokens(r)
+        cost = _run_cost(r, prices)
+        run_agent = (r.get("agent_id") or "").strip()
+        rows.append({
+            "run_id": r.get("run_id"),
+            "title": r.get("title") or r.get("conversation_title") or "",
+            "task_id": str(r.get("task_id") or ""),
+            "is_flow": bool(r.get("is_flow")),
+            "started_at": r.get("started_at") or r.get("created_at") or "",
+            "status": r.get("status") or "",
+            "session_type": r.get("session_type") or "",
+            "workspace": (r.get("workspace") or "").strip() or "default",
+            "agent_id": run_agent,
+            "agent_name": agent_names.get(run_agent, run_agent),
+            "provider": (r.get("provider") or "").strip(),
+            "model": (r.get("model") or "").strip(),
+            "inbound_tokens": inbound,
+            "outbound_tokens": outbound,
+            "cached_tokens": max(0, min(run_cached_tokens(r), inbound)),
+            "total_tokens": inbound + outbound,
+            "cost": round(cost, 6),
+            "priced": cost_is_known(r, prices, cost),
+        })
+
+    key = RUN_SORTS.get(sort) or RUN_SORTS["started"]
+    rows.sort(key=key, reverse=order != "asc")
+    offset = max(0, int(offset))
+    items = rows[offset:offset + max(0, int(limit))]
+    _title_from_tasks(items)
+    return {"items": items, "total": len(rows)}
+
+
+def _title_from_tasks(items: list) -> None:
+    """Title the rows on screen the way the Runs page does: a task's title
+    beats the run's own. Only the window is looked up, in one query."""
+    from tasks import service as tasks_service
+
+    ids = {row["task_id"] for row in items if row["task_id"]}
+    if not ids:
+        return
+    try:
+        tasks = tasks_service.get_tasks(ids)
+    except Exception:  # noqa: BLE001 - rows keep the run's own title
+        log.debug("costs: task titles unavailable", exc_info=True)
+        return
+    for row in items:
+        task = tasks.get(row["task_id"])
+        if task is not None and getattr(task, "title", None):
+            row["title"] = task.title
+
+
+__all__ = ["costs_breakdown", "costs_runs", "_run_cost"]

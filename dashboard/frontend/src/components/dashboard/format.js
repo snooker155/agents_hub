@@ -8,6 +8,14 @@ export const fmtUsd = (n) => {
   return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+// One run often costs a fraction of a cent, so small sums keep four decimals
+// where fmtUsd would round them to "< $0.01".
+export const fmtRunUsd = (n) => {
+  const v = Number(n) || 0;
+  if (v > 0 && v < 0.0001) return '< $0.0001';
+  return `$${v.toFixed(v >= 1 ? 2 : 4)}`;
+};
+
 export const fmtMs = (ms) => {
   if (ms === null || ms === undefined) return '—';
   if (ms < 1000) return `${Math.round(ms)} ms`;

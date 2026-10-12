@@ -397,6 +397,8 @@ async def get_message_insights(run_id: str, request: Request):
         model, peak_prompt, _resolve_session_provider(run)
     )
 
+    cost = _run_cost(run, model, _resolve_session_provider(run), token_usage)
+
     # Structured response (buttons / keyboard) recorded on the unified payload,
     # if the agent emitted one — the response JSON connected to this run.
     response_block = rr_process.get("response") if isinstance(rr_process.get("response"), dict) else None
@@ -426,8 +428,37 @@ async def get_message_insights(run_id: str, request: Request):
         "input_contexts": input_contexts,
         "structured_response": structured_response,
         "token_usage": token_usage,
+        "cost": cost,
         "context_window": context_window,
     }
+
+
+def _run_cost(run: dict, model: str, provider: str, token_usage: dict) -> dict:
+    """The run's estimated cost, the same figure the Costs page and budgets
+    count (common/costs_report.py ``_run_cost``). ``priced`` is False when the
+    catalog has no price for the run's model and it is not a local one, so the
+    page can say "no price" instead of a misleading $0. Chat runs parse their
+    totals from the log, so those replace the record's slim totals when it has
+    none."""
+    from common.costs_report import _run_cost as costs_run_cost
+    from common.pricing import cost_is_known, load_price_map, run_tokens
+
+    prices = load_price_map()
+    priced_run = dict(run)
+    if not (priced_run.get("model") or "").strip():
+        priced_run["model"] = model
+    if not (priced_run.get("provider") or "").strip():
+        priced_run["provider"] = provider
+    if run_tokens(run) == (0, 0) and token_usage.get("total_tokens"):
+        process = dict(run.get("process") or {})
+        process["token_usage"] = {**(process.get("token_usage") or {}), **token_usage}
+        priced_run["process"] = process
+    try:
+        usd = costs_run_cost(priced_run, prices)
+    except Exception:  # noqa: BLE001 - a cost estimate never breaks the run page
+        log.debug("could not price run %s", run.get("run_id"), exc_info=True)
+        return {"usd": 0.0, "priced": False}
+    return {"usd": round(usd, 6), "priced": cost_is_known(priced_run, prices, usd)}
 
 
 @router.post("/{run_id}/stop")
