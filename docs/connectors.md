@@ -106,6 +106,13 @@ Google Workspace (Drive, Docs, Sheets, Calendar), Microsoft Graph (Outlook
 Calendar), Notion and Confluence pages, and read-only database connections.
 See [integrations](integrations.md).
 
+## n8n
+
+The base URL of your n8n (self hosted on localhost or the LAN is fine), an API
+key to list and import workflows, and the header a Webhook trigger checks when
+it uses Header Auth. Flows run n8n workflows through their triggers and import
+them on the Flows page; see [flows](flows.md#n8n-workflows).
+
 ## Blender
 
 The geometry engine agents model 3D objects with. Point it at an installed

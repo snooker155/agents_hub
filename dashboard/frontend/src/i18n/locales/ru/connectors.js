@@ -14,6 +14,7 @@ export default {
     alsoDefinedIn: 'Также задан в: {{list}}',
   },
   tabs: {
+    n8n: "n8n",
     telegram: 'Telegram',
     git: 'GitHub и GitLab',
     blender: 'Blender',
@@ -126,6 +127,12 @@ export default {
     mail: "Адрес почты",
   },
   fields: {
+    n8n: {
+      base_url: "Адрес",
+      api_key: "API ключ",
+      webhook_header_name: "Заголовок авторизации вебхука",
+      webhook_header_value: "Значение заголовка",
+    },
     slack: {
       bot_token: "Bot token (xoxb)",
       app_token: "App token (xapp)",
@@ -199,6 +206,11 @@ export default {
     },
   },
   fieldHints: {
+    n8n: {
+      base_url: "Адрес вашего n8n, например http://localhost:5678 или https://n8n.example.com.",
+      api_key: "Создаётся в n8n в Settings, n8n API. Без него потоки всё равно запускают воркфлоу по пути вебхука, но список воркфлоу и импорт из инстанса недоступны.",
+      webhook_header_name: "Только если триггер Webhook использует Header Auth: имя заголовка, которого он ждёт.",
+    },
     slack: {
       mode: "socket держит открытый websocket (публичный URL не нужен); events ждёт, что Slack вызовет входящий URL.",
       distribution: "Закрытое: только установки, которые вы начинаете на странице «Дистрибуция»; открытое: ставить может кто угодно, а вы подтверждаете каждую.",
@@ -226,6 +238,7 @@ export default {
   },
   credentials: {
     title: {
+      n8n: "n8n",
       jira: "Jira Cloud",
       linear: "Linear",
       microsoft: "Microsoft Graph",
@@ -234,6 +247,7 @@ export default {
       confluence: "Confluence",
     },
     intro: {
+      n8n: "Запускайте воркфлоу n8n из потоков через их триггер Webhook или Chat и импортируйте воркфлоу n8n как потоки хаба на странице Потоки.",
       jira: "Читает задачи проекта в задачи хаба и даёт агентам комментировать, менять статус и создавать задачи. Подключите проект к проекту Jira на его странице.",
       linear: "Читает задачи команды в задачи хаба и даёт агентам комментировать, менять состояние и создавать задачи. Подключите проект к команде Linear на его странице.",
       microsoft: "Регистрация приложения Entra с application permissions. Даёт агентам инструменты календаря Outlook; то же приложение может обслуживать бота Teams.",

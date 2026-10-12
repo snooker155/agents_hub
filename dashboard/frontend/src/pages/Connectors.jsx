@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook } from 'lucide-react';
+import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook, Workflow } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
 import ChannelConnector from '../components/connectors/ChannelConnector';
@@ -9,6 +9,7 @@ import GoogleConnector from '../components/connectors/GoogleConnector';
 import KnowledgeConnector from '../components/connectors/KnowledgeConnector';
 import MicrosoftConnector from '../components/connectors/MicrosoftConnector';
 import TrackersConnector from '../components/connectors/TrackersConnector';
+import CredentialConnector from '../components/connectors/CredentialConnector';
 import GitConnector from '../components/connectors/GitConnector';
 import TelegramConnector from '../components/connectors/TelegramConnector';
 import WebhooksConnector from '../components/connectors/WebhooksConnector';
@@ -91,6 +92,7 @@ const TABS = [
   { id: 'microsoft', icon: Calendar, Component: MicrosoftConnector },
   { id: 'knowledge', icon: BookOpen, Component: KnowledgeConnector },
   { id: 'databases', icon: Database, Component: DatabasesConnector },
+  { id: 'n8n', icon: Workflow, Component: () => <CredentialConnector name="n8n" /> },
   { id: 'blender', icon: Boxes, Component: BlenderConnector },
   { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
 ];

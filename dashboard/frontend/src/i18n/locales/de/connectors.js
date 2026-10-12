@@ -14,6 +14,7 @@ export default {
     alsoDefinedIn: 'Auch festgelegt in: {{list}}',
   },
   tabs: {
+    n8n: "n8n",
     telegram: 'Telegram',
     git: 'GitHub und GitLab',
     blender: 'Blender',
@@ -126,6 +127,12 @@ export default {
     mail: "E-Mail-Adresse",
   },
   fields: {
+    n8n: {
+      base_url: "Basis-URL",
+      api_key: "API-Schlüssel",
+      webhook_header_name: "Webhook-Auth-Header",
+      webhook_header_value: "Webhook-Auth-Wert",
+    },
     slack: {
       bot_token: "Bot-Token (xoxb)",
       app_token: "App-Token (xapp)",
@@ -199,6 +206,11 @@ export default {
     },
   },
   fieldHints: {
+    n8n: {
+      base_url: "Die Adresse Ihres n8n, z. B. http://localhost:5678 oder https://n8n.example.com.",
+      api_key: "In n8n unter Settings, n8n API erstellt. Ohne ihn starten Flows Workflows weiterhin über den Webhook-Pfad, aber Workflow-Liste und Import aus der Instanz sind aus.",
+      webhook_header_name: "Nur wenn der Webhook-Trigger Header Auth nutzt: der erwartete Header-Name.",
+    },
     slack: {
       mode: "socket hält einen Websocket offen (keine öffentliche URL nötig); events erwartet, dass Slack die eingehende URL aufruft.",
       distribution: "Privat: nur Installationen, die Sie auf der Seite Verteilung starten; öffentlich: jeder kann installieren, und Sie bestätigen jede einzelne.",
@@ -226,6 +238,7 @@ export default {
   },
   credentials: {
     title: {
+      n8n: "n8n",
       jira: "Jira Cloud",
       linear: "Linear",
       microsoft: "Microsoft Graph",
@@ -234,6 +247,7 @@ export default {
       confluence: "Confluence",
     },
     intro: {
+      n8n: "n8n-Workflows aus Flows über ihren Webhook- oder Chat-Trigger starten und n8n-Workflows auf der Flows-Seite als Hub-Flows importieren.",
       jira: "Liest die Vorgänge eines Projekts als Aufgaben ein und lässt Agenten kommentieren, Status wechseln und Vorgänge anlegen. Ein Projekt wird auf seiner Seite mit einem Jira-Projekt verbunden.",
       linear: "Liest die Issues eines Teams als Aufgaben ein und lässt Agenten kommentieren, den Status ändern und Issues anlegen. Ein Projekt wird auf seiner Seite mit einem Linear-Team verbunden.",
       microsoft: "Eine Entra-App-Registrierung mit Anwendungsberechtigungen. Gibt Agenten die Outlook-Kalenderwerkzeuge; dieselbe App kann den Teams-Bot tragen.",

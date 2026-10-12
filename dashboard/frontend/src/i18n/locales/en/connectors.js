@@ -14,6 +14,7 @@ export default {
     alsoDefinedIn: 'Also defined in: {{list}}',
   },
   tabs: {
+    n8n: "n8n",
     telegram: 'Telegram',
     git: 'GitHub & GitLab',
     blender: 'Blender',
@@ -126,6 +127,12 @@ export default {
     mail: "Email address",
   },
   fields: {
+    n8n: {
+      base_url: "Base URL",
+      api_key: "API key",
+      webhook_header_name: "Webhook auth header",
+      webhook_header_value: "Webhook auth value",
+    },
     slack: {
       bot_token: "Bot token (xoxb)",
       app_token: "App token (xapp)",
@@ -199,6 +206,11 @@ export default {
     },
   },
   fieldHints: {
+    n8n: {
+      base_url: "The address of your n8n, e.g. http://localhost:5678 or https://n8n.example.com.",
+      api_key: "Created in n8n under Settings, n8n API. Without it flows can still run workflows by their webhook path, but the workflow list and import from the instance are off.",
+      webhook_header_name: "Only when the Webhook trigger uses Header Auth: the header name it expects.",
+    },
     slack: {
       mode: "socket keeps a websocket open (no public URL needed); events expects Slack to call the inbound URL.",
       distribution: "Private keeps installs to the ones you start on the Distribution page; public lets anyone install, and you approve each one.",
@@ -226,6 +238,7 @@ export default {
   },
   credentials: {
     title: {
+      n8n: "n8n",
       jira: "Jira Cloud",
       linear: "Linear",
       microsoft: "Microsoft Graph",
@@ -234,6 +247,7 @@ export default {
       confluence: "Confluence",
     },
     intro: {
+      n8n: "Run n8n workflows from flows through their Webhook or Chat trigger, and import n8n workflows as hub flows on the Flows page.",
       jira: "Read a project's issues into tasks and let agents comment, transition and create issues. Connect a project to a Jira project on its page.",
       linear: "Read a team's issues into tasks and let agents comment, change state and create issues. Connect a project to a Linear team on its page.",
       microsoft: "An Entra app registration with application permissions. Gives agents the Outlook calendar tools; the same app can back the Teams bot.",
