@@ -1,0 +1,53 @@
+id: metrics_report
+name: Metrics report
+description: >
+  An analyst pulls the numbers from the connected databases, sheets or files,
+  a writer turns them into a readable report, and a verifier recomputes the
+  figures before you see them.
+category: Data
+icon: chart
+examples:
+  en:
+    - "Weekly report: signups, activation and churn for the last 8 weeks"
+    - "How did revenue by region change this quarter versus last?"
+    - "Which products had the highest return rate last month, and why might that be?"
+    - "Monthly support report: ticket volume, first response time, top categories"
+    - "Summarise the marketing funnel from the attached CSV, step by step"
+    - "Compare this year's cloud costs by service with last year's"
+  ru:
+    - "Недельный отчёт: регистрации, активация и отток за последние 8 недель"
+    - "Как изменилась выручка по регионам в этом квартале по сравнению с прошлым?"
+    - "У каких товаров был самый высокий процент возвратов в прошлом месяце и почему?"
+    - "Месячный отчёт поддержки: число обращений, время первого ответа, главные категории"
+    - "Разбери маркетинговую воронку по приложенному CSV, шаг за шагом"
+    - "Сравни расходы на облако по сервисам за этот год с прошлым"
+  de:
+    - "Wochenbericht: Anmeldungen, Aktivierung und Abwanderung der letzten 8 Wochen"
+    - "Wie hat sich der Umsatz nach Region in diesem Quartal gegenüber dem letzten verändert?"
+    - "Welche Produkte hatten letzten Monat die höchste Retourenquote, und woran könnte das liegen?"
+    - "Monatlicher Supportbericht: Ticketvolumen, erste Antwortzeit, wichtigste Kategorien"
+    - "Fass den Marketingfunnel aus der angehängten CSV Schritt für Schritt zusammen"
+    - "Vergleiche die Cloudkosten dieses Jahres nach Dienst mit denen des Vorjahres"
+nodes:
+  - key: analyze
+    agent: analyst
+    label: {en: Pull numbers, ru: Цифры, de: Zahlen holen}
+    task: |
+      Answer the request from the connected data (databases, spreadsheets, workspace files).
+      Start your output with a "Request" section restating the metrics, period and filters.
+      Then give each metric as a small table with the query or calculation behind it, units and period. Point out gaps, spikes and anything that does not reconcile.
+  - key: write
+    agent: writer
+    label: {en: Write report, ru: Отчёт, de: Bericht schreiben}
+    task: |
+      Write the report the request asks for from the analysis above: the three most important findings first, then a section per metric with its table, then caveats.
+      Do not add numbers that are not in the analysis. Keep the queries in an appendix.
+  - key: verify
+    agent: verifier
+    label: {en: Recheck figures, ru: Сверка цифр, de: Zahlen prüfen}
+    task: |
+      Recheck the report's figures against the analysis: totals add up, percentages are computed from the right base, periods and units are stated, trends described in words match the numbers.
+      Return the corrected report and a short "Checks" note.
+edges:
+  - {from: analyze, to: write}
+  - {from: write, to: verify}

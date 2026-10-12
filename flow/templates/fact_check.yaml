@@ -1,0 +1,59 @@
+id: fact_check
+name: Fact check
+description: >
+  Splits a text into its factual claims, looks for primary sources for each
+  in parallel with a web search, rates every claim, and writes a verdict with
+  corrections you can paste back.
+category: Research
+icon: check
+examples:
+  en:
+    - "Fact check this paragraph from our landing page: (paste it here)"
+    - "Is it true that 70% of digital transformations fail? Where does that number come from?"
+    - "Check the statistics in the attached slide deck before the board meeting"
+    - "Verify the claims in this LinkedIn post about remote work"
+    - "Our press release says we are the first to do X. Is that defensible?"
+    - "Check the dates and figures in this blog draft about the history of the company"
+  ru:
+    - "Проверь факты в этом абзаце с нашего лендинга: (вставь текст)"
+    - "Правда ли, что 70% цифровых трансформаций проваливаются? Откуда эта цифра?"
+    - "Проверь статистику в приложенной презентации перед советом директоров"
+    - "Проверь утверждения в этом посте в LinkedIn про удалённую работу"
+    - "В нашем пресс-релизе сказано, что мы первые сделали X. Можно ли это отстоять?"
+    - "Проверь даты и цифры в черновике статьи об истории компании"
+  de:
+    - "Prüf die Fakten in diesem Absatz unserer Landingpage: (hier einfügen)"
+    - "Stimmt es, dass 70 % der digitalen Transformationen scheitern? Woher kommt die Zahl?"
+    - "Prüf die Statistiken im angehängten Foliensatz vor der Vorstandssitzung"
+    - "Überprüfe die Aussagen in diesem LinkedIn Beitrag über Remote Arbeit"
+    - "Unsere Pressemitteilung sagt, wir seien die Ersten mit X. Ist das haltbar?"
+    - "Prüf Daten und Zahlen im Blogentwurf über die Firmengeschichte"
+nodes:
+  - key: claims
+    agent: researcher
+    label: {en: Extract and check, ru: Утверждения, de: Aussagen prüfen}
+    task: |
+      List every checkable factual claim in the text or question the person gave (numbers, dates, firsts, quotes, causal claims). Skip opinions.
+      Start your output with a "Request" section that quotes the text being checked.
+      For each claim, check it against the workspace's files and memory and what you know, and note the best source you found.
+  - key: sources
+    agent: web_searcher
+    label: {en: Primary sources, ru: Первоисточники, de: Primärquellen}
+    task: |
+      Find primary sources on the web for the claims in the person's text: the original study, report, statistic or announcement, not articles repeating it.
+      Start your output with a "Request" section quoting the text. For each claim give the primary source URL, what it actually says, and its date.
+  - key: rate
+    agent: verifier
+    label: {en: Rate claims, ru: Оценка, de: Bewerten}
+    task: |
+      Using both inputs above, rate each claim: supported, partly supported, unsupported or false. Give the deciding source and one sentence of reasoning for each rating.
+      Be strict: a number repeated by many blogs but with no traceable origin is unsupported.
+  - key: verdict
+    agent: writer
+    label: {en: Verdict, ru: Вердикт, de: Fazit}
+    task: |
+      Write the fact check result: an overall verdict in one sentence, a table of claims with their rating and source, then a corrected version of the original text with changes marked, ready to paste back.
+edges:
+  - {from: claims, to: rate}
+  - {from: sources, to: rate}
+  - {from: rate, to: verdict}

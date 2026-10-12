@@ -19,6 +19,14 @@ export const getFlow = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}
 export const updateFlow = (flowId, data) => api.put(`/flows/${encodeURIComponent(flowId)}`, data);
 export const deleteFlow = (flowId) => api.delete(`/flows/${encodeURIComponent(flowId)}`);
 export const importFlow = (data) => api.post('/flows/import', data);
+// Example requests for the flow's empty chat in the UI language: its own,
+// else its first agent's ({ source: 'flow' | 'agent' | null, examples }).
+export const getFlowExamples = (flowId, lang) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/examples`, { params: lang ? { lang } : {} });
+// Flow templates (flow/templates/): ready flows of system agents.
+export const getFlowTemplates = (lang) => api.get('/flow-templates', { params: lang ? { lang } : {} });
+export const createFlowFromTemplate = (templateId, data) =>
+  api.post(`/flow-templates/${encodeURIComponent(templateId)}/create`, data);
 // n8n: the connected instance's workflows, and turning one (by id, or a
 // pasted export) into a hub flow. mode 'run' keeps it running in n8n behind
 // one node; 'convert' makes its steps hub nodes. Returns { flow, report }.

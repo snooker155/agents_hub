@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- What can I do here?
+- What should I set up next?
+- How do I connect Slack?
+- Where do I add an API key?
+- What is a loop?
+- Why does nothing answer in Chat?
+ru:
+- Что здесь можно делать?
+- Что мне настроить дальше?
+- Как подключить Slack?
+- Где добавить API-ключ?
+- Что такое цикл?
+- Почему в чате никто не отвечает?
+de:
+- Was kann ich hier tun?
+- Was sollte ich als Nächstes einrichten?
+- Wie verbinde ich Slack?
+- Wo füge ich einen API-Schlüssel hinzu?
+- Was ist ein Loop?
+- Warum antwortet im Chat niemand?

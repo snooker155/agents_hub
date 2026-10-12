@@ -60,6 +60,38 @@ export function WebhookSecret({ flow, onSet }) {
   );
 }
 
+// The flow's example requests, shown in its empty chat (FlowChat, the Chat
+// page in flow mode). Stored by language ({en: [...], ru: [...]}, a plain
+// list counts as English, as flow/templates normalize_examples reads it);
+// this edits the interface language's list, one request per line. Lines are
+// kept as typed, the backend drops empty ones on save.
+function examplesByLanguage(value) {
+  if (Array.isArray(value)) return { en: value };
+  return value && typeof value === 'object' ? value : {};
+}
+
+export function FlowExamplesField({ flow, onPatch }) {
+  const { t, language } = useI18n();
+  const byLang = examplesByLanguage(flow.examples);
+  const lines = byLang[language] || [];
+  return (
+    <div>
+      <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {t('flowEditor.examples')}
+      </label>
+      <textarea
+        rows={5}
+        value={lines.join('\n')}
+        onChange={(e) => onPatch({ examples: { ...byLang, [language]: e.target.value.split('\n') } })}
+        placeholder={t('flowEditor.examplesPlaceholder')}
+        className={INPUT_CLS}
+        data-testid="flow-examples"
+      />
+      <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.examplesHint')}</p>
+    </div>
+  );
+}
+
 // Flow-level meta editor: entry_point, mutability, recordability, and the
 // initial state-key defaults. Patches go to `flow` and mark the editor dirty.
 export function FlowSettings({ flow, nodes, onPatch, onSetWebhookSecret }) {
@@ -144,6 +176,8 @@ export function FlowSettings({ flow, nodes, onPatch, onSetWebhookSecret }) {
             />
             <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.maxParallelHint')}</p>
           </div>
+
+          <FlowExamplesField flow={flow} onPatch={onPatch} />
 
           <WebhookSecret flow={flow} onSet={onSetWebhookSecret} />
         </div>

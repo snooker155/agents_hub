@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- What is wrong with the service right now, and is it tracked?
+- Go through the system tasks and close the ones that are already fixed
+- Which errors repeat most in the logs since yesterday?
+- Is the run queue healthy, or are runs piling up?
+- Check the health probes and report anything that is not green
+- File a system task for every new problem you find
+ru:
+- Что сейчас не так с сервисом и заведено ли это в задачах?
+- Пройдись по системным задачам и закрой уже исправленные
+- Какие ошибки чаще всего повторяются в логах со вчерашнего дня?
+- Очередь запусков в порядке или запуски копятся?
+- Проверь пробы здоровья и сообщи обо всём, что не зелёное
+- Заведи системную задачу на каждую новую найденную проблему
+de:
+- Was stimmt gerade mit dem Dienst nicht, und ist es erfasst?
+- Geh die Systemaufgaben durch und schließ die, die schon behoben sind
+- Welche Fehler wiederholen sich seit gestern am häufigsten in den Logs?
+- Ist die Run-Queue in Ordnung, oder stauen sich die Läufe?
+- Prüfe die Health-Probes und melde alles, was nicht grün ist
+- Leg für jedes neu gefundene Problem eine Systemaufgabe an

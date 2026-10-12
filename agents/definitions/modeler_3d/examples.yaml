@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Model a coffee mug, 9 cm tall, with a handle
+- Add a chimney on the left side of the roof and a window on the front wall
+- Bevel the edges slightly and show it from the front and the top
+- Export it as glb
+- Make a low-poly pine tree for a game scene
+- Build a simple bookshelf with five shelves, 180 cm tall
+ru:
+- Смоделируй кофейную кружку высотой 9 см с ручкой
+- Добавь трубу слева на крыше и окно на передней стене
+- Слегка скругли края и покажи модель спереди и сверху
+- Экспортируй в glb
+- Сделай низкополигональную ёлку для игровой сцены
+- Построй простой книжный стеллаж на пять полок высотой 180 см
+de:
+- Modelliere eine Kaffeetasse, 9 cm hoch, mit Henkel
+- Setz links aufs Dach einen Schornstein und vorne in die Wand ein Fenster
+- Fase die Kanten leicht an und zeig das Modell von vorne und von oben
+- Exportiere es als glb
+- Mach eine Low-Poly-Kiefer für eine Spielszene
+- Bau ein einfaches Bücherregal mit fünf Böden, 180 cm hoch

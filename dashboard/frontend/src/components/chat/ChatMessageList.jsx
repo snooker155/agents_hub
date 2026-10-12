@@ -1,3 +1,4 @@
+import AgentExamples, { FlowExamples } from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
@@ -185,6 +186,7 @@ export default function ChatMessageList() {
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
                       {t('chat.emptyFlow')}
                     </p>
+                    <FlowExamples />
                   </>
                 ) : (
                   <>
@@ -198,6 +200,7 @@ export default function ChatMessageList() {
                       {t('chat.emptyAgent')}
                       {selectedWorkspace && <> {t('chat.agentWorksIn')} <strong className="text-gray-700">{selectedWorkspace}</strong> {t('chat.workspace')}</>}
                     </p>
+                    <AgentExamples />
                   </>
                 )}
               </div>

@@ -30,6 +30,16 @@ and create a flow from a description of what you want.
 Validation is separate from creation on purpose: a design can be checked before
 it costs anything to run.
 
+## Templates and examples
+
+**Create flow** offers a blank canvas or one of twelve ready flows of the
+hub's system agents (research report, competitor brief, fact check, pull
+request review, candidate screening and more), each step with its task
+written; a flow made from one opens on its run page, ready to run. Every flow
+can also carry example requests that its empty chat shows as buttons: a
+template's own, ones written in the editor's Flow settings, or else those of
+the agent its first step runs. See [Flow templates](flow-templates.md).
+
 ## n8n workflows
 
 With the n8n connector set up (Connectors, n8n tab: the base URL, plus an API

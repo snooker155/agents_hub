@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- 'Review the changes for task X: pass or block'
+- Audit the diff produced by the SWE agent against the task description
+- Check this branch for missing error handling and tests
+- Is this change safe to merge as it is?
+- Look for security problems in the files changed today
+- Explain what this diff does and what could break
+ru:
+- 'Проверь изменения по задаче X: пропустить или заблокировать'
+- Сверь дифф, сделанный SWE-агентом, с описанием задачи
+- Проверь эту ветку на пропущенную обработку ошибок и тесты
+- Можно ли влить это изменение как есть?
+- Поищи проблемы безопасности в файлах, изменённых сегодня
+- Объясни, что делает этот дифф и что может сломаться
+de:
+- 'Prüfe die Änderungen zu Aufgabe X: freigeben oder blockieren'
+- Gleiche den Diff des SWE-Agenten mit der Aufgabenbeschreibung ab
+- Prüfe diesen Branch auf fehlende Fehlerbehandlung und Tests
+- Kann diese Änderung so gemergt werden?
+- Such in den heute geänderten Dateien nach Sicherheitsproblemen
+- Erkläre, was dieser Diff macht und was dabei kaputtgehen kann

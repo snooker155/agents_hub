@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Write up these research notes as a two-page report
+- Draft a cover letter for this posting using my CV in the workspace
+- Turn this into a page of docs in our usual voice
+- I need a short update email summarising what changed this week
+- Rewrite this text so it is half as long and easier to read
+- Write release notes from these merged changes
+ru:
+- Оформи эти заметки исследования в отчёт на две страницы
+- Напиши сопроводительное письмо к этой вакансии по моему резюме из пространства
+- Преврати это в страницу документации в нашем обычном стиле
+- 'Нужно короткое письмо с обновлением: что изменилось за эту неделю'
+- Перепиши этот текст вдвое короче и проще для чтения
+- Напиши заметки к релизу по этим влитым изменениям
+de:
+- Mach aus diesen Recherchenotizen einen zweiseitigen Bericht
+- Entwirf ein Anschreiben für diese Stelle anhand meines Lebenslaufs im Workspace
+- Mach daraus eine Doku-Seite in unserem üblichen Ton
+- Ich brauche eine kurze Update-Mail, was sich diese Woche geändert hat
+- Schreib diesen Text halb so lang und leichter lesbar
+- Schreib Release Notes zu diesen gemergten Änderungen

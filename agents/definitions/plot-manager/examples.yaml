@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Create a quest in an abandoned lighthouse with three scenes
+- Design a short detective quest whose goal is to find the stolen key
+- Add a hidden exit from the cellar to the garden
+- 'Make the quest harder: raise the completion threshold'
+- Split this legacy quest file into quest.json and state.json
+- Write a quest for kids about a lost puppy in the park
+ru:
+- Создай квест в заброшенном маяке из трёх сцен
+- Придумай короткий детективный квест с целью найти украденный ключ
+- Добавь скрытый выход из подвала в сад
+- 'Сделай квест сложнее: подними порог завершения'
+- Раздели старый файл квеста на quest.json и state.json
+- Напиши детский квест про потерявшегося щенка в парке
+de:
+- Erstelle eine Quest in einem verlassenen Leuchtturm mit drei Szenen
+- Entwirf eine kurze Detektiv-Quest, deren Ziel es ist, den gestohlenen Schlüssel zu finden
+- Füg einen versteckten Ausgang vom Keller in den Garten hinzu
+- 'Mach die Quest schwieriger: heb die Abschlussschwelle an'
+- Teile diese alte Quest-Datei in quest.json und state.json auf
+- Schreib eine Kinder-Quest über einen verlorenen Welpen im Park

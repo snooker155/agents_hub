@@ -902,6 +902,10 @@ app.include_router(kits_router.router)
 # (docs/agent-templates.md, ``agents/templates/``).
 from routes import agent_templates as agent_templates_router
 app.include_router(agent_templates_router.router)
+# Flow templates: a ready flow of system agents to start from
+# (docs/flow-templates.md, ``flow/templates/``).
+from routes import flow_templates as flow_templates_router
+app.include_router(flow_templates_router.router)
 
 # ============================================================================
 # Entry Point

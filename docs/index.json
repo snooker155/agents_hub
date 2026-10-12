@@ -411,14 +411,34 @@
       "related": [
         "agents",
         "loops",
-        "teams"
+        "teams",
+        "flow-templates"
       ],
       "headings": [
         "Building one",
+        "Templates and examples",
         "n8n workflows",
         "Node kinds",
         "Running",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "flow-templates",
+      "title": "Flow templates",
+      "summary": "Ready flows of the hub's system agents to start from in the Create flow dialog, twelve of them from a research report to a product spec, each step with its task written, plus example requests every flow can show in its empty chat.",
+      "surface": "Agent Flows",
+      "related": [
+        "flows",
+        "agent-templates",
+        "system-agents",
+        "kits"
+      ],
+      "headings": [
+        "In the Create flow dialog",
+        "Example requests",
+        "Over the API",
+        "Writing a template"
       ]
     },
     {

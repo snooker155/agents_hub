@@ -20,6 +20,7 @@ from managers import run_manager
 from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
+from flow import templates as flow_templates
 from flow.engine import ON_ERROR_POLICIES
 from flow.estimate import estimate_flow_cost
 from models import FlowListItem, FlowDetail, FlowPage
@@ -97,6 +98,9 @@ class FlowUpdate(BaseModel):
     # Write-only: the shared secret POST /{flow_id}/trigger requires a signature
     # against. Sending "" clears it; the flow is never read back with it.
     webhook_secret: Optional[str] = None
+    # Example requests shown in the flow's empty chat: {lang: [text, ...]},
+    # or a plain list for every language (flow.templates.normalize_examples).
+    examples: Optional[Union[List[str], Dict[str, List[str]]]] = None
 
 
 class FlowImport(BaseModel):
@@ -259,6 +263,8 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                     patch["webhook_secret"] = secret
                 else:
                     f = {k: v for k, v in f.items() if k != "webhook_secret"}
+            if "examples" in patch:
+                patch["examples"] = flow_templates.normalize_examples(patch["examples"])
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -268,6 +274,50 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                 _authorize_flow_in_workspace(ws_name, flow_id)
             return _public_flow(flows[i])
     raise HTTPException(status_code=404, detail="Flow not found")
+
+
+@router.get("/{flow_id}/examples")
+async def get_flow_examples(flow_id: str, lang: str = "en"):
+    """Example requests for the flow's empty chat, in UI language *lang*:
+    the flow's own ``examples`` (a template's, or set in the editor), else
+    those of the agent its first step runs, since that step is the one the
+    message goes to. ``source`` says which; empty when neither has any."""
+    flow = flow_store.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    own = flow_templates.examples_for(flow.get("examples"), lang)
+    if own:
+        return {"flow_id": flow_id, "source": "flow", "examples": own[:6]}
+    entry = _entry_agent(flow)
+    if entry:
+        from routes.agents.definition import get_agent_examples
+        try:
+            found = (await get_agent_examples(entry, lang)).get("examples") or []
+        except HTTPException:
+            found = []
+        if found:
+            return {"flow_id": flow_id, "source": "agent", "agent_id": entry, "examples": found[:6]}
+    return {"flow_id": flow_id, "source": None, "examples": []}
+
+
+def _entry_agent(flow: Dict[str, Any]) -> Optional[str]:
+    """The agent of the step the person's message reaches first: the entry
+    point when one is set, else the first agent step with no incoming edge."""
+    nodes = [n for n in flow.get("nodes") or [] if isinstance(n, dict)]
+    targets = {e.get("target") for e in flow.get("edges") or [] if isinstance(e, dict)}
+
+    def agent_of(node: Dict[str, Any]) -> Optional[str]:
+        data = node.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        return data.get("agent_id") or node.get("agent_id") or None
+
+    entry = flow.get("entry_point")
+    ordered = [n for n in nodes if n.get("id") == entry] + [n for n in nodes if n.get("id") not in targets]
+    for node in ordered:
+        if agent_of(node):
+            return agent_of(node)
+    return None
 
 
 @router.delete("/{flow_id}")

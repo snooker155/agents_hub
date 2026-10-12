@@ -1,0 +1,52 @@
+id: pr_review
+name: Pull request review
+description: >
+  Two reviewers look at the same change in parallel, one for correctness and
+  one for security and reliability, and their findings are merged into one
+  review comment ready to post.
+category: Engineering
+icon: git
+examples:
+  en:
+    - "Review the changes on branch feature/billing against main"
+    - "Review the uncommitted changes in this project before I commit"
+    - "Review the last commit: is the new caching layer safe?"
+    - "Review the diff in changes.patch, focus on the database migrations"
+    - "Is the refactor of the auth middleware on branch auth-cleanup ready to merge?"
+    - "Review the new upload endpoint for correctness and security"
+  ru:
+    - "Сделай ревью изменений в ветке feature/billing относительно main"
+    - "Посмотри незакоммиченные изменения в этом проекте, прежде чем я их закоммичу"
+    - "Проверь последний коммит: безопасен ли новый слой кеширования?"
+    - "Сделай ревью диффа из changes.patch, особенно миграций базы"
+    - "Готов ли к слиянию рефакторинг auth middleware в ветке auth-cleanup?"
+    - "Проверь новый эндпоинт загрузки файлов на корректность и безопасность"
+  de:
+    - "Review die Änderungen im Branch feature/billing gegenüber main"
+    - "Review die nicht committeten Änderungen in diesem Projekt, bevor ich committe"
+    - "Review den letzten Commit: Ist die neue Cacheschicht sicher?"
+    - "Review den Diff in changes.patch, mit Fokus auf die Datenbankmigrationen"
+    - "Ist das Refactoring der Auth Middleware im Branch auth-cleanup bereit zum Mergen?"
+    - "Prüf den neuen Upload Endpunkt auf Korrektheit und Sicherheit"
+nodes:
+  - key: correctness
+    agent: code_reviewer
+    label: {en: Correctness, ru: Корректность, de: Korrektheit}
+    task: |
+      Review the change the person points to for correctness: logic errors, edge cases, error handling, tests that are missing or do not test what they claim, and breaking changes for callers.
+      Start your output with a "Request" section naming the change reviewed (branch, commit or files). List findings by severity with file and line.
+  - key: security
+    agent: code_reviewer
+    label: {en: Security, ru: Безопасность, de: Sicherheit}
+    task: |
+      Review the change the person points to for security and reliability only: injection, auth and permission checks, secrets in code, unsafe deserialisation, resource leaks, concurrency, and behaviour under failure or load.
+      Start your output with a "Request" section naming the change reviewed. List findings by severity with file and line, and say plainly when you found nothing.
+  - key: merge
+    agent: writer
+    label: {en: Review comment, ru: Итоговый отзыв, de: Reviewkommentar}
+    task: |
+      Merge both reviews above into one pull request review comment: a verdict (approve, approve with nits, request changes), then blocking findings, then suggestions, each with file and line. Drop duplicates, keep the more precise wording.
+      Write it in Markdown, ready to paste into the pull request.
+edges:
+  - {from: correctness, to: merge}
+  - {from: security, to: merge}

@@ -1,0 +1,59 @@
+id: blog_post
+name: Blog post
+description: >
+  Researches the topic, drafts a post in your voice, fact checks the draft,
+  and gives it a final edit with headline options.
+category: Content
+icon: pen
+examples:
+  en:
+    - "Blog post: five lessons from moving our monolith to services, for engineering leaders"
+    - "Write a beginner friendly post explaining what an AI agent is, about 1200 words"
+    - "A post for our customers announcing the new reporting feature and why we built it"
+    - "Write a how to guide on setting up two factor authentication for small teams"
+    - "Turn the notes in meeting-notes.md into a blog post about our pricing change"
+    - "A thought leadership piece on why most dashboards go unused, with examples"
+  ru:
+    - "Пост в блог: пять уроков перехода с монолита на сервисы, для руководителей разработки"
+    - "Напиши понятную новичкам статью о том, что такое ИИ-агент, около 1200 слов"
+    - "Пост для клиентов о новой функции отчётов и о том, зачем мы её сделали"
+    - "Напиши инструкцию по настройке двухфакторной аутентификации для небольших команд"
+    - "Преврати заметки из meeting-notes.md в пост о смене наших цен"
+    - "Экспертная колонка о том, почему большинством дашбордов никто не пользуется, с примерами"
+  de:
+    - "Blogbeitrag: fünf Lehren aus dem Umbau unseres Monolithen in Services, für Engineering Leads"
+    - "Schreib einen einsteigerfreundlichen Beitrag, was ein KI Agent ist, etwa 1200 Wörter"
+    - "Ein Beitrag für unsere Kunden zur neuen Reportingfunktion und warum wir sie gebaut haben"
+    - "Schreib eine Anleitung zur Einrichtung der Zwei Faktor Authentifizierung für kleine Teams"
+    - "Mach aus den Notizen in meeting-notes.md einen Blogbeitrag über unsere Preisänderung"
+    - "Ein Meinungsbeitrag, warum die meisten Dashboards ungenutzt bleiben, mit Beispielen"
+nodes:
+  - key: research
+    agent: researcher
+    label: {en: Research, ru: Исследование, de: Recherche}
+    task: |
+      Prepare the material for the blog post the person asked for. Check memory and workspace files for the brand voice, earlier posts and any notes they point to, then the web for facts, examples and numbers worth citing.
+      Start your output with a "Request" section restating the topic, audience, length and tone.
+      Then give an outline proposal and the facts to use, each with its source.
+  - key: draft
+    agent: writer
+    label: {en: Draft, ru: Черновик, de: Entwurf}
+    task: |
+      Write the full post from the material above, following the outline unless a better order is obvious. Match the voice described, keep paragraphs short, use concrete examples, and cite sources inline as links.
+      Do not invent quotes, numbers or customer names.
+  - key: check
+    agent: verifier
+    label: {en: Fact check, ru: Проверка фактов, de: Faktencheck}
+    task: |
+      Check the draft against the research: every fact and number must trace to a source, quotes must be exact, nothing may be overstated.
+      Return the draft with corrections applied and a short list of what you changed.
+  - key: edit
+    agent: writer
+    label: {en: Final edit, ru: Финальная правка, de: Schlussredaktion}
+    task: |
+      Give the checked draft a final edit: tighten sentences, cut repetition, make the opening hook the reader in two sentences, and end with a clear takeaway.
+      Return the finished post in Markdown, then three headline options and a one sentence meta description.
+edges:
+  - {from: research, to: draft}
+  - {from: draft, to: check}
+  - {from: check, to: edit}

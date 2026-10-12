@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Put together a team that can take a feature from spec to reviewed code
+- Add a security reviewer to the platform team and say what it owns
+- Switch this team to autonomous mode and make the BA the entry point
+- Cut this team's rounds to 4 and cap it at $1.50
+- Run it on this spec and give me the answer
+- How did the last run end?
+ru:
+- Собери команду, которая проведёт фичу от спецификации до проверенного кода
+- Добавь в команду платформы ревьюера по безопасности и опиши, за что он отвечает
+- Переведи эту команду в автономный режим и сделай аналитика точкой входа
+- Сократи число раундов этой команды до 4 и ограничь её суммой $1.50
+- Запусти её на этой спецификации и дай мне ответ
+- Чем закончился последний запуск?
+de:
+- Stell ein Team zusammen, das ein Feature von der Spezifikation bis zum geprüften Code bringt
+- Füg dem Plattform-Team einen Security-Reviewer hinzu und beschreib, wofür er zuständig ist
+- Stell dieses Team auf autonomen Modus um und mach den BA zum Einstiegspunkt
+- Senk die Runden dieses Teams auf 4 und deckel es bei $1.50
+- Lass es auf dieser Spezifikation laufen und gib mir die Antwort
+- Wie ist der letzte Lauf ausgegangen?

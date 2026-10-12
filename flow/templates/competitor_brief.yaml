@@ -1,0 +1,60 @@
+id: competitor_brief
+name: Competitor brief
+description: >
+  Two researchers work in parallel, one on what you already know about the
+  competitors and one on the latest public news, then a writer merges both
+  into a side by side brief that is checked before delivery.
+category: Research
+icon: target
+examples:
+  en:
+    - "Brief me on how Notion, Coda and Confluence compare for a 50 person company"
+    - "What have our three main competitors shipped in the last quarter?"
+    - "Compare pricing and packaging of the top four CRM tools for small businesses"
+    - "How does competitor X position itself against us, and where are they weak?"
+    - "Which new players entered the AI meeting notes market this year?"
+    - "Compare the onboarding experience of Stripe, Adyen and Mollie for a new merchant"
+  ru:
+    - "Сделай сводку: как Notion, Coda и Confluence соотносятся для компании на 50 человек"
+    - "Что выпустили наши три главных конкурента за последний квартал?"
+    - "Сравни цены и тарифы четырёх ведущих CRM для малого бизнеса"
+    - "Как конкурент X позиционирует себя против нас и где он слаб?"
+    - "Какие новые игроки вышли на рынок ИИ для заметок со встреч в этом году?"
+    - "Сравни подключение нового продавца в Stripe, Adyen и Mollie"
+  de:
+    - "Gib mir einen Überblick, wie Notion, Coda und Confluence für ein Unternehmen mit 50 Leuten abschneiden"
+    - "Was haben unsere drei Hauptwettbewerber im letzten Quartal veröffentlicht?"
+    - "Vergleiche Preise und Pakete der vier führenden CRM Tools für kleine Unternehmen"
+    - "Wie positioniert sich Wettbewerber X gegen uns, und wo ist er schwach?"
+    - "Welche neuen Anbieter sind dieses Jahr in den Markt für KI Meetingnotizen eingestiegen?"
+    - "Vergleiche das Onboarding neuer Händler bei Stripe, Adyen und Mollie"
+nodes:
+  - key: known
+    agent: researcher
+    label: {en: What we know, ru: Что мы знаем, de: Was wir wissen}
+    task: |
+      Gather what the workspace already knows about the competitors in the request: files, memory, earlier notes, plus their own product and pricing pages.
+      Start your output with a "Request" section restating which competitors and which questions are in scope.
+      Then one section per competitor: product, pricing, target customers, strengths, weaknesses, each point with its source.
+  - key: news
+    agent: web_searcher
+    label: {en: Latest news, ru: Свежие новости, de: Aktuelles}
+    task: |
+      Search the web for the latest public news on the competitors in the request: launches, pricing changes, funding, hires, partnerships, customer complaints, from roughly the last six months.
+      Start your output with a "Request" section restating the competitors searched. List each item with its date and URL. Skip anything you cannot date.
+  - key: brief
+    agent: writer
+    label: {en: Write brief, ru: Сводка, de: Brief schreiben}
+    task: |
+      Merge both inputs above into one competitor brief: a short summary of what matters most, a comparison table (one column per competitor, rows for product, pricing, customers, recent moves, strengths, weaknesses), then "What this means for us" with two to four concrete implications.
+      Keep sources attached. Where the two inputs disagree, say so rather than picking one silently.
+  - key: verify
+    agent: verifier
+    label: {en: Check, ru: Проверка, de: Prüfen}
+    task: |
+      Check the brief against the two inputs it came from: dates, prices and claims must match their sources, and nothing older than the news input says may be presented as recent.
+      Return the corrected brief and a short "Checks" note.
+edges:
+  - {from: known, to: brief}
+  - {from: news, to: brief}
+  - {from: brief, to: verify}

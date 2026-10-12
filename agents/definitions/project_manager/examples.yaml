@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Create a research project called Pricing Study in this workspace
+- Point the hrms project at github.com/acme/hrms, branch develop
+- Archive every project that has no open tasks
+- Which projects are in this workspace and how much work is attached to each?
+- Mark the migration project completed and tag it legacy
+- Rename the website project to Website 2026 and update its description
+ru:
+- Создай в этом пространстве исследовательский проект Pricing Study
+- Привяжи проект hrms к github.com/acme/hrms, ветка develop
+- Отправь в архив все проекты без открытых задач
+- Какие проекты есть в этом пространстве и сколько работы привязано к каждому?
+- Отметь проект миграции завершённым и добавь ему тег legacy
+- Переименуй проект website в Website 2026 и обнови его описание
+de:
+- Leg in diesem Workspace ein Recherche-Projekt namens Pricing Study an
+- Verbinde das Projekt hrms mit github.com/acme/hrms, Branch develop
+- Archiviere alle Projekte ohne offene Aufgaben
+- Welche Projekte gibt es in diesem Workspace, und wie viel Arbeit hängt an jedem?
+- Markiere das Migrationsprojekt als abgeschlossen und versieh es mit dem Tag legacy
+- Benenne das Projekt website in Website 2026 um und aktualisiere seine Beschreibung

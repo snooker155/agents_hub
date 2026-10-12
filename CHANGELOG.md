@@ -29,6 +29,15 @@ turns that section into the next release.
   agent, data agent, invoice agent, contract review and more), each with a
   prompt, a safe tool set and a default outcome rubric, adjustable before
   creating. `GET /api/agent-templates`, `POST /api/agent-templates/{id}/create`.
+- **Flow templates** (docs/flow-templates.md): Create flow offers a blank
+  canvas or one of twelve ready flows of system agents, each step with its
+  task written. `GET /api/flow-templates`, `POST /api/flow-templates/{id}/create`.
+- **Example requests in empty chats**: an agent's `examples.yaml` (en, ru,
+  de), else its parent's along `extends`, else the "Good fits" bullets of
+  its usage text, shown under the agent as buttons that fill the message
+  box. A flow shows its own examples (a template's, or set in Flow
+  settings), else its first agent's. `GET /api/agents/{id}/examples`,
+  `GET /api/flows/{id}/examples`.
 
 ### Fixed
 

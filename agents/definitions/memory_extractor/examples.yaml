@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- What do we already know about this customer?
+- 'Here is a meeting transcript: what should we remember from it?'
+- Is this already in memory, or is it new?
+- Search memory for anything about the pricing decision
+- Which notes in memory contradict each other?
+- Save the key decisions from this thread to memory
+ru:
+- Что мы уже знаем об этом клиенте?
+- 'Вот расшифровка встречи: что из неё стоит запомнить?'
+- Это уже есть в памяти или это новое?
+- Найди в памяти всё про решение по ценам
+- Какие заметки в памяти противоречат друг другу?
+- Сохрани в память ключевые решения из этой переписки
+de:
+- Was wissen wir schon über diesen Kunden?
+- 'Hier ist ein Meeting-Transkript: was sollten wir uns davon merken?'
+- Ist das schon im Speicher, oder ist es neu?
+- Durchsuche den Speicher nach allem zur Preisentscheidung
+- Welche Notizen im Speicher widersprechen sich?
+- Leg die wichtigsten Entscheidungen aus diesem Verlauf im Speicher ab

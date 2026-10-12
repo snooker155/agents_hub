@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- What's running right now, and how did last night's loop go?
+- Run the nightly review flow
+- Remind me tomorrow morning to check the release, and open a task for it
+- Which agent should handle a competitor price comparison?
+- Summarise what happened in this workspace this week
+- Find the files about onboarding and tell me what's in them
+ru:
+- Что сейчас запущено и как прошёл ночной цикл?
+- Запусти ночной поток ревью
+- Напомни мне завтра утром проверить релиз и заведи на это задачу
+- Какой агент лучше справится со сравнением цен конкурентов?
+- 'Подведи итоги: что произошло в этом пространстве за неделю'
+- Найди файлы про онбординг и расскажи, что в них
+de:
+- Was läuft gerade, und wie ist der Loop letzte Nacht gelaufen?
+- Starte den nächtlichen Review-Flow
+- Erinnere mich morgen früh daran, das Release zu prüfen, und leg dafür eine Aufgabe an
+- Welcher Agent sollte einen Preisvergleich mit der Konkurrenz übernehmen?
+- Fass zusammen, was diese Woche in diesem Workspace passiert ist
+- Finde die Dateien zum Onboarding und sag mir, was drinsteht

@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Find machine learning engineer openings in Berlin and remote-EU, posted in the last two weeks
+- Find three vendors who could do this kind of work and tell me why each might fit
+- Who are the active players in this space right now?
+- Find open-source alternatives to this tool and compare how active they are
+- Collect upcoming conferences on AI agents in Europe this year
+- Find freelance designers with fintech experience and links to their work
+ru:
+- Найди вакансии ML-инженера в Берлине и удалённо по ЕС, опубликованные за последние две недели
+- Найди трёх подрядчиков, которые могли бы сделать такую работу, и объясни, почему каждый подходит
+- Кто сейчас активно работает в этой области?
+- Найди open-source альтернативы этому инструменту и сравни, насколько они живые
+- Собери ближайшие конференции по ИИ-агентам в Европе в этом году
+- Найди дизайнеров-фрилансеров с опытом в финтехе и ссылками на их работы
+de:
+- Finde Stellen als Machine-Learning-Engineer in Berlin und remote in der EU aus den letzten zwei Wochen
+- Finde drei Anbieter, die diese Art von Arbeit übernehmen könnten, und sag mir, warum jeder passen könnte
+- Wer sind gerade die aktiven Akteure in diesem Bereich?
+- Finde Open-Source-Alternativen zu diesem Tool und vergleiche, wie aktiv sie sind
+- Sammle anstehende Konferenzen zu KI-Agenten in Europa in diesem Jahr
+- Finde freiberufliche Designer mit Fintech-Erfahrung und Links zu ihren Arbeiten

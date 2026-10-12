@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Refactor this function to use async/await
+- Add a new utility module that parses dates from log lines
+- Apply this diff and update the imports it touches
+- Fix the failing test in tests/test_api.py
+- Add input validation and tests to this endpoint
+- Rename this class everywhere it is used
+ru:
+- Переведи эту функцию на async/await
+- Добавь вспомогательный модуль, который извлекает даты из строк логов
+- Примени этот дифф и поправь затронутые импорты
+- Почини падающий тест в tests/test_api.py
+- Добавь в этот эндпоинт проверку входных данных и тесты
+- Переименуй этот класс везде, где он используется
+de:
+- Stell diese Funktion auf async/await um
+- Füge ein Hilfsmodul hinzu, das Datumsangaben aus Logzeilen ausliest
+- Wende diesen Diff an und passe die betroffenen Importe an
+- Repariere den fehlschlagenden Test in tests/test_api.py
+- Ergänze diesen Endpunkt um Eingabeprüfung und Tests
+- Benenne diese Klasse überall um, wo sie verwendet wird

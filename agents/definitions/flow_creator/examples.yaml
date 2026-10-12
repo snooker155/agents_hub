@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Build a flow that researches a topic, writes an article, and reviews it
+- Add a QA step after the dev agent in flow X
+- Why is flow Y invalid?
+- Delete the obsolete onboarding flow
+- Run the writer and the verifier in parallel, then merge their output
+- Show me which flows use the researcher
+ru:
+- 'Собери поток: исследование темы, написание статьи и её проверка'
+- Добавь шаг QA после агента-разработчика в потоке X
+- Почему поток Y не проходит проверку?
+- Удали устаревший поток онбординга
+- Запусти writer и verifier параллельно, а потом объедини их результаты
+- Покажи, какие потоки используют researcher
+de:
+- Bau einen Flow, der ein Thema recherchiert, einen Artikel schreibt und ihn prüft
+- Füge im Flow X nach dem Dev-Agenten einen QA-Schritt ein
+- Warum ist Flow Y ungültig?
+- Lösche den veralteten Onboarding-Flow
+- Lass writer und verifier parallel laufen und führe ihre Ergebnisse zusammen
+- Zeig mir, welche Flows den researcher verwenden

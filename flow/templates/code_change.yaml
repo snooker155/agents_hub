@@ -1,0 +1,52 @@
+id: code_change
+name: Code change with review
+description: >
+  Plans a code change, implements it in the project, and has a reviewer
+  check the result against the plan before it is handed back.
+category: Engineering
+icon: code
+examples:
+  en:
+    - "Add pagination to the /api/orders endpoint, 50 per page by default"
+    - "Replace the hand written retry loop in the HTTP client with exponential backoff"
+    - "Add input validation to the signup form and show field errors"
+    - "Rename the user_id column to account_id everywhere it is used"
+    - "Add a --dry-run flag to the import command that prints what would change"
+    - "Extract the email sending code into its own module and add tests for it"
+  ru:
+    - "Добавь постраничный вывод в /api/orders, по умолчанию 50 записей"
+    - "Замени самописный цикл повторов в HTTP-клиенте на экспоненциальную задержку"
+    - "Добавь проверку ввода в форму регистрации и покажи ошибки у полей"
+    - "Переименуй столбец user_id в account_id везде, где он используется"
+    - "Добавь команде импорта флаг --dry-run, который печатает, что изменится"
+    - "Вынеси отправку писем в отдельный модуль и добавь для него тесты"
+  de:
+    - "Füg dem Endpunkt /api/orders eine Paginierung hinzu, standardmäßig 50 pro Seite"
+    - "Ersetze die handgeschriebene Wiederholungsschleife im HTTP Client durch exponentiellen Backoff"
+    - "Füg dem Registrierungsformular eine Eingabeprüfung hinzu und zeig Fehler am Feld"
+    - "Benenne die Spalte user_id überall in account_id um"
+    - "Füg dem Importbefehl ein Flag --dry-run hinzu, das zeigt, was sich ändern würde"
+    - "Lager den E-Mail Versand in ein eigenes Modul aus und schreib Tests dafür"
+nodes:
+  - key: plan
+    agent: decomposer
+    label: {en: Plan, ru: План, de: Plan}
+    task: |
+      Turn the requested change into an implementation plan for this project. Read the relevant code first.
+      Start your output with a "Request" section restating the change and its acceptance criteria.
+      Then list the files to touch, the steps in order, the tests to add or update, and the risks. Do not write the code yourself.
+  - key: implement
+    agent: swe_agent
+    label: {en: Implement, ru: Реализация, de: Umsetzen}
+    task: |
+      Implement the plan above in the project's code. Keep the change focused on what the plan lists, follow the surrounding code style, and add or update the tests it names.
+      Finish with a summary: files changed, what each change does, and anything from the plan you did differently and why.
+  - key: review
+    agent: code_reviewer
+    label: {en: Review, ru: Ревью, de: Review}
+    task: |
+      Review the change just made against the plan and the request: correctness, edge cases, tests, style, and anything the plan required that is missing.
+      Answer with a verdict (pass or block), then findings ordered by severity, each with file and line.
+edges:
+  - {from: plan, to: implement}
+  - {from: implement, to: review}

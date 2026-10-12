@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- What's the current stable version of React, and what changed in it?
+- Find out whether this library is still maintained
+- Get me the actual pricing page for this service
+- What is the latest on the EU AI Act deadlines?
+- Find the official docs for this API error message
+- Which laptops with 64 GB of RAM came out this year?
+ru:
+- Какая сейчас стабильная версия React и что в ней изменилось?
+- Выясни, поддерживается ли ещё эта библиотека
+- Найди настоящую страницу с ценами этого сервиса
+- Что нового по срокам EU AI Act?
+- Найди официальную документацию по этой ошибке API
+- Какие ноутбуки с 64 ГБ памяти вышли в этом году?
+de:
+- Was ist die aktuelle stabile Version von React, und was hat sich darin geändert?
+- Finde heraus, ob diese Bibliothek noch gepflegt wird
+- Such mir die echte Preisseite dieses Dienstes heraus
+- Was gibt es Neues zu den Fristen des EU AI Act?
+- Finde die offizielle Dokumentation zu dieser API-Fehlermeldung
+- Welche Laptops mit 64 GB RAM sind dieses Jahr erschienen?

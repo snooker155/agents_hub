@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Map the dependencies between the services in this project
+- Chart task throughput per agent this week
+- Show these components as a graph, then group them by layer and add a layout selector
+- Make a six-slide deck from these release notes
+- Draw a timeline of this project's milestones
+- Turn this table into a dashboard with three key numbers and a trend chart
+ru:
+- Покажи зависимости между сервисами этого проекта
+- Построй график выполненных задач по агентам за эту неделю
+- Покажи эти компоненты графом, сгруппируй их по слоям и добавь выбор раскладки
+- Сделай презентацию из шести слайдов по этим заметкам к релизу
+- Нарисуй временную шкалу вех этого проекта
+- Преврати эту таблицу в дашборд с тремя ключевыми показателями и графиком тренда
+de:
+- Stell die Abhängigkeiten zwischen den Services dieses Projekts dar
+- Zeig den Aufgabendurchsatz pro Agent in dieser Woche als Diagramm
+- Zeig diese Komponenten als Graph, gruppiere sie nach Schichten und füge eine Layout-Auswahl hinzu
+- Mach aus diesen Release Notes eine Präsentation mit sechs Folien
+- Zeichne eine Zeitleiste der Meilensteine dieses Projekts
+- Mach aus dieser Tabelle ein Dashboard mit drei Kennzahlen und einem Trenddiagramm

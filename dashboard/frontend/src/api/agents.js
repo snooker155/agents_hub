@@ -85,3 +85,5 @@ export const getAgentExperiment = (id) => api.get(`/agents/${id}/experiment`);
 export const putAgentExperiment = (id, data) => api.put(`/agents/${id}/experiment`, data);
 export const endAgentExperiment = (id) => api.delete(`/agents/${id}/experiment`);
 export const getAgentExperimentReport = (id) => api.get(`/agents/${id}/experiment/report`);
+// Example requests for the empty chat, in the UI language.
+export const getAgentExamples = (id, lang) => api.get(`/agents/${encodeURIComponent(id)}/examples`, { params: lang ? { lang } : {} });

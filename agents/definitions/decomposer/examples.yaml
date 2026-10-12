@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Break this feature spec into implementation subtasks
+- Decompose this BRD into work items the team can pick up
+- Sequence these subtasks with proper dependencies
+- Split this epic into pieces that each fit in a day
+- Which of these subtasks can run in parallel?
+- Turn this bug list into tasks with acceptance criteria
+ru:
+- Разбей эту спецификацию фичи на подзадачи для реализации
+- Разложи это BRD на рабочие задачи, которые команда сможет взять
+- Выстрой эти подзадачи по порядку с учётом зависимостей
+- Раздели этот эпик на части, каждая не больше дня работы
+- Какие из этих подзадач можно делать параллельно?
+- Преврати этот список багов в задачи с критериями приёмки
+de:
+- Zerlege diese Feature-Spezifikation in Umsetzungsaufgaben
+- Zerlege dieses BRD in Arbeitspakete, die das Team übernehmen kann
+- Bring diese Teilaufgaben mit ihren Abhängigkeiten in eine Reihenfolge
+- Teile dieses Epic in Stücke, die je in einen Tag passen
+- Welche dieser Teilaufgaben können parallel laufen?
+- Mach aus dieser Bugliste Aufgaben mit Abnahmekriterien

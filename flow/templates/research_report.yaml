@@ -1,0 +1,53 @@
+id: research_report
+name: Research report
+description: >
+  Researches a question in the workspace's files, memory and on the web,
+  writes a report with sources, then checks every claim before it reaches you.
+category: Research
+icon: search
+examples:
+  en:
+    - "What are the main approaches to retrieval augmented generation in 2026, and which fits a small team?"
+    - "Write a report on how EU AI Act obligations apply to a chatbot we sell to banks"
+    - "Is moving our Postgres to a managed service worth it at our size? Pros, cons, costs"
+    - "Summarise what is known about four day work weeks and productivity"
+    - "Compare the leading open source vector databases for a production setup"
+    - "What changed in browser privacy rules this year, and how does it affect our analytics?"
+  ru:
+    - "Какие сейчас основные подходы к RAG и какой подойдёт небольшой команде?"
+    - "Напиши отчёт о том, как требования EU AI Act касаются чат-бота, который мы продаём банкам"
+    - "Стоит ли переводить наш Postgres в управляемый сервис при нашем масштабе? Плюсы, минусы, стоимость"
+    - "Собери, что известно о четырёхдневной рабочей неделе и производительности"
+    - "Сравни ведущие векторные базы с открытым кодом для промышленного использования"
+    - "Что изменилось в правилах приватности браузеров в этом году и как это влияет на нашу аналитику?"
+  de:
+    - "Welche Ansätze für Retrieval Augmented Generation gibt es 2026, und welcher passt zu einem kleinen Team?"
+    - "Schreib einen Bericht, wie die Pflichten des EU AI Act für einen Chatbot gelten, den wir an Banken verkaufen"
+    - "Lohnt sich bei unserer Größe der Umzug unserer Postgres in einen Managed Service? Vor und Nachteile, Kosten"
+    - "Fass zusammen, was über die Viertagewoche und Produktivität bekannt ist"
+    - "Vergleiche die führenden Open Source Vektordatenbanken für den Produktiveinsatz"
+    - "Was hat sich dieses Jahr bei den Datenschutzregeln der Browser geändert, und was heißt das für unsere Analytics?"
+nodes:
+  - key: research
+    agent: researcher
+    label: {en: Research, ru: Исследование, de: Recherche}
+    task: |
+      Research the person's question. Look in the workspace files and memory first, then on the web.
+      Start your output with a "Request" section that restates the question in one or two sentences, so the next steps have it.
+      Then give your findings as numbered points, each with its source (file path or URL) and how confident you are.
+      End with what you could not find or where sources disagree.
+  - key: write
+    agent: writer
+    label: {en: Write report, ru: Отчёт, de: Bericht schreiben}
+    task: |
+      Turn the research above into a report for the person who asked: a one paragraph answer first, then sections with the detail, then a "Sources" list.
+      Use only facts present in the research and keep every source attached to the claim it supports. Mark uncertain points as uncertain.
+  - key: verify
+    agent: verifier
+    label: {en: Check claims, ru: Проверка, de: Prüfen}
+    task: |
+      Check the report above against the research it was written from: every claim must be supported by a listed source, numbers must match, nothing may be overstated.
+      Return the final report with any corrections applied, followed by a short "Checks" note listing what you changed and why. If something cannot be supported, remove it and say so.
+edges:
+  - {from: research, to: write}
+  - {from: write, to: verify}
