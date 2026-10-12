@@ -313,6 +313,18 @@ export default function Loops() {
     return openLoop(id, preferredRunId);
   };
 
+  // Deleting a loop takes its runs with it, so it asks first. loadLoops
+  // closes the loop if it was the open one.
+  const removeLoop = async (loop) => {
+    if (!window.confirm(t('loops.confirmDelete', { name: loop.name }))) return;
+    try {
+      await deleteLoop(loop.loop_id);
+    } catch {
+      setMessage(t('loops.deleteFailed'));
+    }
+    loadLoops();
+  };
+
   // Open the loop (and run) the address names, once the catalogue is here.
   const openedFromUrl = useRef(false);
   useEffect(() => {
@@ -501,45 +513,51 @@ export default function Loops() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
         {/* Loop list */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm h-fit">
-          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">{t('loops.loops')}</h2>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-fit overflow-hidden">
+          <h2 className="px-4 py-3 border-b border-gray-100 text-sm font-bold text-gray-700 uppercase tracking-wide">
+            {t('loops.loops')}
+            {loops.length > 0 && <span className="ml-1.5 font-normal text-gray-400">{loops.length}</span>}
+          </h2>
           {loops.length === 0 ? (
-            <p className="text-sm text-gray-500 italic py-3">
-              No loops yet. Pick a flow, write the criterion it must meet, and let
-              the final agent decide when it is done.
-            </p>
+            <p className="px-4 py-4 text-sm text-gray-500 italic">{t('loops.noLoopsYet')}</p>
           ) : (
-            <ul className="space-y-1">
-              {loops.map((l) => (
-                <li key={l.loop_id}>
-                  <div className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg ${
-                    selected?.loop_id === l.loop_id
-                      ? 'bg-indigo-50 border border-indigo-200'
-                      : 'hover:bg-gray-50 border border-transparent'
-                  }`}>
-                    <button onClick={() => selectLoop(l.loop_id)} className="min-w-0 flex-1 text-left">
-                      <div className="text-sm font-semibold text-gray-900 truncate">{l.name}</div>
+            <ul className="divide-y divide-gray-100">
+              {loops.map((l) => {
+                const active = selected?.loop_id === l.loop_id;
+                const hasTarget = l.target_score !== null && l.target_score !== undefined;
+                return (
+                  <li
+                    key={l.loop_id}
+                    className={`flex items-center gap-2 pl-3 pr-2 border-l-2 ${
+                      active ? 'border-indigo-500 bg-indigo-50/60' : 'border-transparent hover:bg-gray-50'
+                    }`}
+                  >
+                    <button onClick={() => selectLoop(l.loop_id)} className="min-w-0 flex-1 py-2 text-left">
+                      <div className={`text-sm truncate ${active ? 'font-semibold text-indigo-900' : 'font-medium text-gray-900'}`}>
+                        {l.name}
+                      </div>
                       <div className="text-xs text-gray-500 truncate">
-                        {l.flow_name} · up to {l.max_iterations}x
-                        {l.target_score !== null && l.target_score !== undefined ? ` · target ${l.target_score}` : ''}
+                        {[
+                          l.flow_name,
+                          t('loops.listUpTo', { count: l.max_iterations }),
+                          hasTarget ? t('loops.listTarget', { score: l.target_score }) : null,
+                        ].filter(Boolean).join(' · ')}
                       </div>
                       {!l.flow_exists && (
                         <div className="text-xs text-red-600">{t('loops.flowIsMissing')}</div>
                       )}
                     </button>
                     <button
-                      onClick={async () => {
-                        await deleteLoop(l.loop_id);
-                        if (selected?.loop_id === l.loop_id) { setSelected(null); setDraft(null); }
-                        loadLoops();
-                      }}
+                      onClick={() => removeLoop(l)}
+                      title={t('loops.deleteLoop')}
+                      aria-label={t('loops.deleteLoop')}
                       className="p-1 text-gray-400 hover:text-red-600 shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

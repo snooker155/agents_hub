@@ -87,4 +87,10 @@ export default {
   chatSuggestReviewer: 'Give this loop a dedicated reviewer instead of letting the flow judge itself',
   chatSuggestCeilings: 'Set ceilings for a cheap first run and explain when it will stop',
   chatSuggestRun: 'Estimate what a run would cost, then start it if I approve',
+  confirmDelete: 'Delete the loop "{{name}}" and all its runs?',
+  deleteLoop: 'Delete loop',
+  deleteFailed: 'Could not delete the loop',
+  noLoopsYet: 'No loops yet. Pick a flow, write the criterion it must meet, and let the final agent decide when it is done.',
+  listUpTo: 'up to {{count}}x',
+  listTarget: 'target {{score}}',
 };
