@@ -263,6 +263,15 @@ def test_a_server_error_body_is_raised(server):
         _local(server).invoke("hi")
 
 
+def test_openai_chat_completions_send_max_completion_tokens(server):
+    # gpt-5.x and the o-series refuse max_tokens on chat completions.
+    body = _openai(server, max_tokens=100)._get_request_payload([("human", "hi")])
+    assert body["max_completion_tokens"] == 100 and "max_tokens" not in body
+    # A local server keeps the name every compatible server understands.
+    body = _local(server, max_tokens=100)._get_request_payload([("human", "hi")])
+    assert body["max_tokens"] == 100 and "max_completion_tokens" not in body
+
+
 # ── Responses API ────────────────────────────────────────────────────────────
 
 def test_a_reasoning_parameter_sends_the_request_to_responses(server):

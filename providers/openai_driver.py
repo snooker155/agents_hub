@@ -20,6 +20,9 @@ change. What this driver does that the package did not:
 - asks for usage on streamed completions by the address the request goes to,
   not by whether a variable named ``OPENAI_BASE_URL`` exists in the
   environment, and never reads that variable when it is empty;
+- sends the token limit as ``max_completion_tokens`` on OpenAI's own chat
+  completions, which its reasoning models require, and as ``max_tokens``
+  everywhere else;
 - repeats a Responses request once without ``reasoning.summary`` when the
   organisation is not verified for summaries, and remembers the key.
 
@@ -959,6 +962,12 @@ class OpenAIChatModel(BaseChatModel):
         payload.pop("strict", None)
         if self._use_responses_api(payload):
             return responses_payload(messages, payload), True
+        if self.is_openai_api and "max_tokens" in payload:
+            # OpenAI deprecated max_tokens on chat completions, and its
+            # reasoning models (o-series, gpt-5.x) refuse it outright. Local
+            # servers and gateways keep the name they all understand.
+            limit = payload.pop("max_tokens")
+            payload.setdefault("max_completion_tokens", limit)
         payload["messages"] = [message_to_dict(m) for m in messages]
         return payload, False
 
