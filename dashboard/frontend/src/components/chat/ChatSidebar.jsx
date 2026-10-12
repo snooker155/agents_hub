@@ -1,4 +1,4 @@
-import { AlertCircle, AudioLines, FolderGit2, Loader, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
+import { AlertCircle, AudioLines, Copy, FolderGit2, Loader, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
@@ -156,6 +156,12 @@ export default function ChatSidebar() {
                       {conv.assistant_thread?.mode === 'service' && <> · {t('chat.assistantThread.service')}</>}
                       {/* A conversation stays in its workspace: named where all are listed. */}
                       {(!selectedWorkspace || selectedWorkspace === 'default') && conv.workspace && <> · {conv.workspace}</>}
+                    </span>
+                  )}
+                  {conv.origin === 'mirror' && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium" title={conv.mirror?.node} data-testid="mirror-badge">
+                      <Copy className="w-2.5 h-2.5 flex-shrink-0" />
+                      {t('chat.mirror.badge')}{conv.mirror?.node ? ` · ${conv.mirror.node}` : ''}
                     </span>
                   )}
                   {conv.origin === 'telegram' && (

@@ -30,7 +30,7 @@ import {
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
   GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck,
-  MessageSquareCode, Eye, AudioLines, Send,
+  MessageSquareCode, Eye, AudioLines, Send, Laptop,
 } from 'lucide-react';
 import { MULTI, isAdmin } from './auth';
 
@@ -140,6 +140,8 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.connectors'), path: '/connectors', icon: Link2, home: '/settings' },
         { name: t('nav.connections'), path: '/connections', icon: Share2, home: '/settings' },
         { name: t('nav.watchers'), path: '/watchers', icon: Eye, home: '/settings' },
+        // Other hubs that dial in and lend this one their models and sandbox (docs/hub-link.md).
+        { name: t('nav.nodes'), path: '/nodes', icon: Laptop, home: '/settings' },
         { name: t('nav.mcp'), path: '/mcp', icon: Plug, home: '/settings' },
         { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode, home: '/settings' },
         // The hub where people already work: IDE, notes, Slack, Teams.

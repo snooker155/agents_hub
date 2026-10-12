@@ -15,6 +15,18 @@ turns that section into the next release.
 
 ### Added
 
+- **Hub link** (docs/hub-link.md): a hub attaches to another one, usually a
+  shared hub in multi-user mode, with a personal key (Settings → System →
+  Remote hub, `ah hub link`). The remote's models become the custom backend
+  `hub-remote` and its agents MCP tools (`hub-remote` in the default
+  workspace); finished runs, conversations and personal notes are mirrored
+  there one way through an outbox, and never read back. Mirrored chats are
+  read-only copies badged with the node's name.
+- **Nodes** (docs/hub-link.md, "Nodes"): a linked hub can serve the remote
+  one as a node, lending its local models (the custom backend `node-<slug>`
+  there) and its sandbox (the provider `node:<id>`, pickable per
+  environment). The node dials out and long-polls for work; nothing listens
+  on it. Nodes page under Integrations, `ah hub nodes`.
 - **Seven more industry kits**, ten in all (docs/kits.md): `sales`
   (Prospector, Outreach), `marketing` (Strategist, Writer, Editor),
   `engineering` (Triager, Issue keeper, Release notes), `legal` (contract
@@ -46,6 +58,11 @@ turns that section into the next release.
   (`handoffs: [-@verifier, +marketing_editor]`), keeping its sign; before,
   the added sibling kept its bare id and pointed at an agent that did not
   exist in that workspace.
+
+### Upgrade notes
+
+- Migration 0042 adds the tables `node_jobs` and `node_job_chunks` (the
+  mailbox between a hub and its nodes). Applied on start, as usual.
 
 ## [0.11.0] - 2026-10-10
 

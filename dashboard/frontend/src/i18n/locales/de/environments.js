@@ -61,6 +61,7 @@ export default {
     local: 'Lokaler Prozess (ohne Isolation)',
     e2b: 'E2B (extern)',
     modal: 'Modal (extern)',
+    node: 'Knoten',
     available: 'verfügbar',
     unavailable: 'nicht verfügbar',
   },

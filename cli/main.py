@@ -1431,6 +1431,7 @@ from cli.commands.flow import flow_app  # noqa: E402
 from cli.commands.loop import loop_app  # noqa: E402
 from cli.commands.team import team_app  # noqa: E402
 from cli.commands.eval import eval_app  # noqa: E402
+from cli.commands.hub import hub_app  # noqa: E402
 from cli.commands.mcp import mcp_app  # noqa: E402
 from cli.commands.user import user_app  # noqa: E402
 from cli.commands.api import api_command  # noqa: E402
@@ -1451,6 +1452,7 @@ app.add_typer(flow_app, name="flow")
 app.add_typer(loop_app, name="loop")
 app.add_typer(team_app, name="team")
 app.add_typer(eval_app, name="eval")
+app.add_typer(hub_app, name="hub")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(user_app, name="user")
 app.add_typer(costs_app, name="costs")

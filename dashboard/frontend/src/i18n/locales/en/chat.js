@@ -97,6 +97,7 @@ export default {
   boundTo: 'bound to',
   debugMirror: 'debug mirror',
   readOnly: 'read-only',
+  mirror: { badge: 'mirror', banner: 'A copy of a conversation on {{node}}. It is written there; this copy is read-only.' },
   voice: {
     hold: 'Hold to speak, or hold Space',
     recording: 'Listening… let go to send',

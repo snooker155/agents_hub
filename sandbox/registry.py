@@ -27,6 +27,12 @@ def get_provider(name: str) -> SandboxProvider:
     anything outside :data:`PROVIDER_NAMES` — callers resolve a name through
     :func:`resolve` first, which never returns anything else."""
     name = (name or "").strip().lower()
+    if name.startswith("node:"):
+        # A linked node's sandbox (sandbox/node.py): one instance per node id.
+        if name not in _INSTANCES:
+            from sandbox.node import NodeProvider
+            _INSTANCES[name] = NodeProvider(name[len("node:"):])
+        return _INSTANCES[name]
     if name not in _INSTANCES:
         if name == "docker":
             from sandbox.docker import DockerProvider
@@ -56,6 +62,12 @@ def available() -> Dict[str, Dict[str, object]]:
         except Exception as exc:  # noqa: BLE001 - a broken provider reads as unavailable
             ok, reason = False, f"{type(exc).__name__}: {exc}"
         out[name] = {"available": ok, "reason": "" if ok else reason}
+    try:
+        from hublink import nodes
+        out.update(nodes.sandbox_availability())
+    except Exception:  # noqa: BLE001 - no nodes, or no database: the four stay
+        import logging
+        logging.getLogger(__name__).debug("node sandboxes not listed", exc_info=True)
     return out
 
 

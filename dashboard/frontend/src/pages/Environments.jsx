@@ -294,15 +294,18 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             value={sandboxProvider}
             onChange={(e) => setSandboxProvider(e.target.value)}
           >
-            {SANDBOX_PROVIDERS.map((p) => {
+            {[...SANDBOX_PROVIDERS, ...Object.keys(providerAvailability).filter((k) => k.startsWith('node:'))].map((p) => {
               const avail = providerAvailability[p];
               const hint = p === 'inherit' || !avail
                 ? ''
                 : avail.available
                   ? ` · ${t('environments.sandbox.available')}`
                   : ` · ${t('environments.sandbox.unavailable')}`;
+              // A linked node's sandbox (docs/hub-link.md) is named by the
+              // availability map, since nodes come and go.
+              const label = p.startsWith('node:') ? (avail?.label || `${t('environments.sandbox.node')}: ${p.slice(5)}`) : t(`environments.sandbox.${p}`);
               return (
-                <option key={p} value={p}>{t(`environments.sandbox.${p}`)}{hint}</option>
+                <option key={p} value={p}>{label}{hint}</option>
               );
             })}
           </select>

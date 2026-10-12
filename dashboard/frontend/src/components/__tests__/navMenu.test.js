@@ -22,7 +22,7 @@ describe('navMenu', () => {
   it('puts every page in exactly one place', () => {
     const all = paths(buildMenu({ t, auth: multiAdmin, features: { cluster: true } }));
     expect(new Set(all).size).toBe(all.length);
-    for (const p of ['/connectors', '/connections', '/mcp', '/watchers', '/widgets']) {
+    for (const p of ['/connectors', '/connections', '/mcp', '/watchers', '/nodes', '/widgets']) {
       expect(buildMenu({ t, auth: single }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain(p);
     }
   });

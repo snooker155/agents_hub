@@ -43,6 +43,18 @@ def _record_history(before: Optional[SharedMemory], after: Optional[SharedMemory
         log.warning("memory store: version history hook failed", exc_info=True)
 
 
+def _mirror(after: Optional[SharedMemory]) -> None:
+    """A personal pool written here is due for the hub link's mirror
+    (hublink/mirror.py), when one is on. Never blocks the write."""
+    try:
+        if after is None or getattr(after, "kind", "") != "personal":
+            return
+        from hublink.mirror import on_memory_saved
+        on_memory_saved(str(after.id))
+    except Exception:  # noqa: BLE001 - the mirror must never block a memory write
+        log.debug("memory store: mirror hook failed", exc_info=True)
+
+
 class MemoryStore:
     """Store for SharedMemory objects, kept in the ``documents`` table through
     :class:`common.docstore.DocStore` (one row per pool). ``path`` names the
@@ -79,6 +91,8 @@ class MemoryStore:
             for mem in memories:
                 _record_history(self.get(mem.id), mem)
         self.docs.replace_all({str(m.id): _model_to_dict(m) for m in memories})
+        for mem in memories:
+            _mirror(mem)
 
     def get(self, memory_id: UUID | str, timeout: float = 10.0) -> Optional[SharedMemory]:
         doc = self.docs.get(str(memory_id))
@@ -94,6 +108,7 @@ class MemoryStore:
         if record_history:
             _record_history(self.get(memory.id), memory)
         self.docs.put(str(memory.id), _model_to_dict(memory))
+        _mirror(memory)
         return memory
 
     def delete(self, memory_id: UUID | str, timeout: float = 10.0, *,

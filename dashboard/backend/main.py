@@ -232,6 +232,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the egress proxy: {e}")
 
+    # The hub link (hublink/runtime.py): the mirror's outbox drainer and the
+    # node loop, when this hub is linked to another. Nothing starts when it
+    # is not; a worker neither mirrors nor serves as a node.
+    if hub_role() != "worker":
+        try:
+            from hublink import runtime as _hublink_runtime
+            _hublink_runtime.start()
+        except Exception as e:  # noqa: BLE001 - the hub starts without its link; logged
+            log.warning(f"⚠ Could not start the hub link: {e}")
+
     # The service supervisor (services/supervisor.py): keeps every service's
     # replicas at its desired state, and the default runner warm, so a chat
     # turn never waits for a process to boot. A worker serves no chat and
@@ -267,6 +277,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        from hublink import runtime as _hublink_runtime
+        _hublink_runtime.stop()
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop the hub link", exc_info=True)
     try:
         from deployments.supervisor import supervisor as _deployment_supervisor
         await _deployment_supervisor.stop()
@@ -574,6 +589,13 @@ app.include_router(agent_import.router)
 # only report runs. See EXTERNAL_CONNECTIONS.md.
 app.include_router(connections_router.router)
 app.include_router(ingest_router.router)
+
+# Hub link domain (docs/hub-link.md): this hub's link to another, the nodes
+# attached to it, and the routes a node and the hub's own model drivers call.
+from routes import hublink as hublink_router  # noqa: E402
+app.include_router(hublink_router.router)
+app.include_router(hublink_router.nodes_router)
+app.include_router(hublink_router.node_link_router)
 
 # MCP domain: external MCP servers attached per workspace as a group of tools.
 # Beside the connectors in the sidebar, and the same direction: this hub reaches

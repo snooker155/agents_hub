@@ -57,6 +57,7 @@ const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
 const Environments = lazy(() => import('./pages/Environments'));
 const Watchers = lazy(() => import('./pages/Watchers'));
+const Nodes = lazy(() => import('./pages/Nodes'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
 const Widgets = lazy(() => import('./pages/Widgets'));
@@ -196,6 +197,7 @@ function AppRoutes() {
         <Route path="/connections/:connectionId" element={guard(<ConnectionDetail />)} />
         <Route path="/connectors" element={guard(<Connectors />)} />
         <Route path="/watchers" element={guard(<Watchers />)} />
+        <Route path="/nodes" element={guard(<Nodes />)} />
         <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />

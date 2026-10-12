@@ -2,7 +2,7 @@ import AgentExamples, { FlowExamples } from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { AudioLines, Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
+import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -132,6 +132,15 @@ export default function ChatMessageList() {
               </span>
             )}
             <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">{t('chat.debugMirror')}</span>
+          </div>
+        )}
+
+        {/* A copy of a conversation held on a linked hub (docs/hub-link.md): read here, written there. */}
+        {currentConv?.origin === 'mirror' && (
+          <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 bg-slate-50 text-xs text-slate-700 flex items-center gap-2"
+            data-testid="mirror-banner">
+            <Copy className="w-3.5 h-3.5 shrink-0" />
+            <span>{t('chat.mirror.banner', { node: currentConv.mirror?.node || '?' })}</span>
           </div>
         )}
 

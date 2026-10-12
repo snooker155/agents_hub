@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -29,7 +29,18 @@ SandboxSize = Literal["small", "medium", "large"]
 #: CODE_RUNNER_PROVIDER, then the historical local fallback — see
 #: sandbox.registry.resolve). Only the tool run_code and the code view read
 #: this; a task or node's own execution (``mode``, above) is unaffected.
-SandboxProviderType = Literal["inherit", "docker", "local", "e2b", "modal"]
+SANDBOX_PROVIDER_NAMES = ("inherit", "docker", "local", "e2b", "modal")
+#: One of SANDBOX_PROVIDER_NAMES, or ``node:<id>`` for a linked node's sandbox
+#: (sandbox/node.py, docs/hub-link.md); checked by the validator below.
+SandboxProviderType = str
+
+
+def validate_sandbox_provider(value: Any) -> str:
+    text = str(value or "inherit").strip().lower() or "inherit"
+    if text in SANDBOX_PROVIDER_NAMES or (text.startswith("node:") and len(text) > len("node:")):
+        return text
+    raise ValueError(f"unknown sandbox provider {text!r} (expected one of "
+                     f"{', '.join(SANDBOX_PROVIDER_NAMES)} or node:<id>)")
 
 #: Package registries a ``limited`` network may reach when
 #: ``allow_package_managers`` is on: pip's index and file host, npm's registry
@@ -297,6 +308,11 @@ class Environment(BaseModel):
     def _image(cls, value):
         return validate_image(value)
 
+    @field_validator("sandbox_provider", mode="before")
+    @classmethod
+    def _sandbox_provider(cls, value):
+        return validate_sandbox_provider(value)
+
     @field_validator("size", mode="before")
     @classmethod
     def _size(cls, value):
@@ -319,7 +335,7 @@ class Environment(BaseModel):
 
 
 __all__ = [
-    "Environment", "NetworkPolicy", "Limits", "Mode", "NetworkType", "SandboxProviderType",
+    "Environment", "NetworkPolicy", "Limits", "Mode", "NetworkType", "SANDBOX_PROVIDER_NAMES", "SandboxProviderType",
     "SandboxSize", "SIZE_PRESETS", "PACKAGE_MANAGER_HOSTS", "normalize_host", "validate_packages",
     "validate_image", "validate_env", "validate_name", "now_iso",
 ]

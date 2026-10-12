@@ -183,6 +183,9 @@ export function useChatSend(deps) {
     const userMsg = { id: genId(), role: 'user', content: userMsgText, ...(voice ? { voice: true } : {}) };
 
     const openConv = background ? backgroundConv : conversations.find((c) => c.id === currentConvId);
+    // A copy of a conversation held on a linked hub (docs/hub-link.md) is
+    // written there; nothing is sent from here.
+    if (openConv?.origin === 'mirror') return;
     if (isAssistantThread(openConv) && target.targetMode === 'agent' && target.selectedAgent === ASSISTANT_AGENT_ID) {
       await sendToAssistant(openConv, userMsg, { background, voice });
       return;

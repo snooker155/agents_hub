@@ -61,6 +61,7 @@ export default {
     local: 'Локальный процесс (без изоляции)',
     e2b: 'E2B (удалённо)',
     modal: 'Modal (удалённо)',
+    node: 'Узел',
     available: 'доступен',
     unavailable: 'недоступен',
   },

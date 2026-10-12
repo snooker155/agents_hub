@@ -97,6 +97,7 @@ export default {
   boundTo: 'gebunden an',
   debugMirror: 'Debug-Spiegel',
   readOnly: 'schreibgeschützt',
+  mirror: { badge: 'Spiegel', banner: 'Kopie einer Unterhaltung von {{node}}. Sie wird dort geführt; diese Kopie ist schreibgeschützt.' },
   voice: {
     hold: 'Gedrückt halten zum Sprechen, oder die Leertaste halten',
     recording: 'Ich höre zu… loslassen zum Senden',

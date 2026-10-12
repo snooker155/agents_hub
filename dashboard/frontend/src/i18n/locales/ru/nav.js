@@ -64,4 +64,5 @@ export default {
   watchers: 'Вотчеры',
   connectors: 'Коннекторы',
   mcp: 'MCP-серверы',
+  nodes: 'Узлы',
 };

@@ -61,6 +61,7 @@ export default {
     local: 'Local process (no isolation)',
     e2b: 'E2B (remote)',
     modal: 'Modal (remote)',
+    node: 'Node',
     available: 'available',
     unavailable: 'unavailable',
   },

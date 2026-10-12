@@ -18,6 +18,7 @@ import {
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
+import HubLinkSection from '../components/settings/HubLinkSection';
 import PageLoader from '../components/PageLoader';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
@@ -57,6 +58,8 @@ const GROUPS = [
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
+      // This hub's link to another hub, and whether it serves it as a node (docs/hub-link.md).
+      { id: 'hubLink',       key: 'hubLink',       icon: Link2 },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
       // The first run is a single operator's (docs/installation.md, "The first run in the browser").
       { id: 'firstRun',      key: 'firstRun',      icon: RotateCcw,  singleOnly: true },
@@ -603,6 +606,7 @@ export default function Settings() {
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
             {active.id === 'webSearch' && <WebSearchSection s={ws} />}
             {active.id === 'browser' && <BrowserServiceSection />}
+            {active.id === 'hubLink' && <HubLinkSection />}
           </div>
         </div>
       </div>

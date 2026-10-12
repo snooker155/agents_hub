@@ -215,7 +215,8 @@
         "connectors",
         "costs",
         "imported-agents",
-        "sessions-and-runs"
+        "sessions-and-runs",
+        "hub-link"
       ],
       "headings": [
         "Where it lives",
@@ -1519,7 +1520,8 @@
         "scheduling",
         "cli",
         "storage",
-        "deployment"
+        "deployment",
+        "hub-link"
       ],
       "headings": [
         "Roles",
@@ -2087,7 +2089,8 @@
         "environments",
         "containers",
         "tools-and-capabilities",
-        "service-health"
+        "service-health",
+        "hub-link"
       ],
       "headings": [
         "Choosing a provider",
@@ -2274,6 +2277,29 @@
         "Untrusted input",
         "Accounting",
         "Protocol details",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "hub-link",
+      "title": "Hub link: one hub attached to another",
+      "surface": "Settings",
+      "summary": "Attaching a hub (a laptop) to another (a shared, multi-user one): the remote's models as the custom backend hub-remote and its agents as MCP tools, a one-way mirror of finished runs, conversations and personal notes through an outbox, and the laptop serving the shared hub as a node that lends its local models and its sandbox over a long poll, never an inbound connection.",
+      "related": [
+        "connections",
+        "hub-as-mcp-server",
+        "api-keys",
+        "sandboxes",
+        "environments",
+        "workers",
+        "identity",
+        "cli"
+      ],
+      "headings": [
+        "The link",
+        "The mirror",
+        "Nodes",
         "Routes",
         "Gotchas"
       ]
