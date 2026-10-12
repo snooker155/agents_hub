@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import {
   getProjects, createProject, getWorkspaces,
@@ -10,45 +9,20 @@ import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ImportRepoModal from '../components/ImportRepoModal';
+import ProjectCard from '../components/projects/ProjectCard';
+import { PROJECT_GRID, TYPE_CONFIG } from '../components/projects/projectCardConfig';
 import {
   FolderGit2,
   Folder,
   Plus,
-  Tag,
-  Globe,
-  Server,
-  Code2,
-  BookOpen,
-  FileText,
   Search,
   GitBranch,
-  Github,
-  Gitlab,
   Download,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
-const TYPE_CONFIG = {
-  general:       { label: 'General',       icon: FolderGit2, color: 'bg-gray-100 text-gray-700' },
-  code:          { label: 'Code',          icon: Code2,       color: 'bg-blue-100 text-blue-700' },
-  research:      { label: 'Research',      icon: BookOpen,    color: 'bg-purple-100 text-purple-700' },
-  documentation: { label: 'Docs',          icon: FileText,    color: 'bg-yellow-100 text-yellow-700' },
-};
-
-const STATUS_CONFIG = {
-  active:    { label: 'Active',    color: 'bg-green-100 text-green-700' },
-  archived:  { label: 'Archived', color: 'bg-gray-100 text-gray-500' },
-  completed: { label: 'Done',     color: 'bg-blue-100 text-blue-700' },
-};
-
-const REPO_ICONS = {
-  github:    Github,
-  gitlab:    Gitlab,
-  bitbucket: GitBranch,
-  local:     FolderGit2,
-};
 
 const DEFAULT_FORM = {
   name: '', description: '', type: 'general', workspace: '',
@@ -94,7 +68,6 @@ function useRegistryChatDescriptor(workspace, onProjectsChanged) {
 
 export default function ProjectManager() {
   const { t } = useI18n();
-  const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -257,82 +230,9 @@ export default function ProjectManager() {
           <p className="text-sm mt-1">{t('projectManager.createYourFirstProjectTo')}</p>
         </div>
       ) : (
-        /* Fixed-width tracks, not breakpoints and not fluid ones.
-           Breakpoints measure the viewport while this grid lives in a column
-           that narrows when the chat opens, so a fixed column count rewrapped
-           every card's text. `1fr` tracks fixed that but resized every card
-           instead. A fixed track does neither: the card is always 17rem, and
-           opening the chat only changes how many fit on a row. The row is
-           left-aligned, so the leftover strip on the right is simply empty. */
-        <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(22rem,1fr))] gap-4 items-stretch">
-          {filtered.map(project => {
-            const typeConf = TYPE_CONFIG[project.type] || TYPE_CONFIG.general;
-            const statusConf = STATUS_CONFIG[project.status] || STATUS_CONFIG.active;
-            const TypeIcon = typeConf.icon;
-            const RepoIcon = REPO_ICONS[project.repo?.type] || GitBranch;
-            return (
-              <div
-                key={project.id}
-                role="link"
-                tabIndex={0}
-                onClick={() => navigate(`/projects/${project.id}`)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) navigate(`/projects/${project.id}`); }}
-                className="group bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-indigo-400 hover:ring-4 hover:ring-indigo-100 transition-all duration-200 ease-out flex flex-col h-full cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
-              >
-                <div className="p-5 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${typeConf.color}`}>
-                        <TypeIcon className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">{project.name}</h3>
-                        <span className="text-xs text-gray-400">{project.workspace}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusConf.color}`}>
-                        {statusConf.label}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Always three lines tall, so every card is the same height whether or
-                      not it has a description, and a long one is clamped rather than grown. */}
-                  <p className="text-sm text-gray-500 mt-3 line-clamp-3 min-h-[3.75rem] leading-5">
-                    {project.description || ''}
-                  </p>
-
-                  {/* Indicators */}
-                  <div className="flex items-center gap-2 mt-3 flex-wrap">
-                    {project.repo?.type && project.repo.type !== 'none' && (
-                      <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                        <RepoIcon className="w-3 h-3" />
-                        {project.repo.type}
-                      </span>
-                    )}
-                    {project.tasks_count > 0 && (
-                      <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
-                        {project.tasks_count} task{project.tasks_count !== 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Tags */}
-                  {project.tags?.length > 0 && (
-                    <div className="flex items-center gap-1 mt-2 flex-wrap">
-                      <Tag className="w-3 h-3 text-gray-400" />
-                      {project.tags.map(tag => (
-                        <span key={tag} className="text-xs text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        /* The grid and the card are shared with a workspace's Projects tab. */
+        <div className={PROJECT_GRID}>
+          {filtered.map(project => <ProjectCard key={project.id} project={project} />)}
         </div>
       )}
         </div>

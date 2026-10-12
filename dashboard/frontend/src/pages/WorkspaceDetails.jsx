@@ -3,9 +3,11 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
+import ProjectCard from '../components/projects/ProjectCard';
+import { PROJECT_GRID } from '../components/projects/projectCardConfig';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
@@ -662,52 +664,8 @@ const WorkspaceDetails = () => {
               </Link>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {wsProjects.map(project => (
-                <Link
-                  key={project.id}
-                  to={`/projects/${project.id}`}
-                  className="flex items-start gap-3 p-4 border border-gray-200 rounded-xl hover:bg-indigo-50 hover:border-indigo-200 transition-colors group"
-                >
-                  <div className="w-9 h-9 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
-                    <FolderGit2 className="w-4 h-4 text-indigo-600" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-gray-900 group-hover:text-indigo-700 truncate">{project.name}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ${
-                        project.status === 'active' ? 'bg-green-100 text-green-700' :
-                        project.status === 'completed' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                      }`}>{project.status}</span>
-                    </div>
-                    {project.description && (
-                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{project.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{project.type}</span>
-                      {project.repo?.type && project.repo.type !== 'none' && (
-                        <span className="flex items-center gap-0.5 text-xs text-gray-500">
-                          <GitBranch className="w-3 h-3" />{project.repo.type}
-                        </span>
-                      )}
-                      {project.frontend?.enabled && (
-                        <span className="flex items-center gap-0.5 text-xs text-blue-500">
-                          <Globe className="w-3 h-3" /> {t('workspaceDetails.frontend')}
-                        </span>
-                      )}
-                      {project.backend?.enabled && (
-                        <span className="flex items-center gap-0.5 text-xs text-green-600">
-                          <Server className="w-3 h-3" /> {t('workspaceDetails.backend')}
-                        </span>
-                      )}
-                      {project.tasks_count > 0 && (
-                        <span className="text-xs text-indigo-500">{t('workspaceDetails.taskCount', { count: project.tasks_count })}</span>
-                      )}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-indigo-400 shrink-0 mt-1" />
-                </Link>
-              ))}
+            <div className={PROJECT_GRID}>
+              {wsProjects.map(project => <ProjectCard key={project.id} project={project} />)}
             </div>
           )}
         </div>
