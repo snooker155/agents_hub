@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, NoReturn, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from common import identity
@@ -481,20 +481,23 @@ def runtime_job(job_id: str) -> Dict[str, Any]:
 
 # ── Ready local set ──────────────────────────────────────────────────────────
 # One action for going local (providers/local_set.py): engine, a chat model
-# sized to this machine, Whisper and Kokoro, as one job on the shared list.
+# sized to this machine, Whisper and a voice for the hub's language, as one
+# job on the shared list.
 
 class ReadySetBody(BaseModel):
     workspace: str = Field(default="default", max_length=200)
+    #: The page's language: the set downloads a voice that speaks it.
+    language: Optional[str] = Field(default=None, max_length=10)
     #: Only say what would happen.
     dry_run: bool = False
 
 
 @router.get("/runtime/ready-set")
-def ready_set_status() -> Dict[str, Any]:
+def ready_set_status(language: Optional[str] = Query(default=None, max_length=10)) -> Dict[str, Any]:
     """What the button would do (the chosen model, each step done or not) and
-    the latest run of it."""
+    the latest run of it; ``language`` is the page's, for the voice step."""
     from providers import local_set
-    return {**local_set.plan(), "job": local_set.latest_job()}
+    return {**local_set.plan(language=language), "job": local_set.latest_job()}
 
 
 @router.post("/runtime/ready-set")
@@ -507,8 +510,8 @@ def ready_set_start(body: ReadySetBody, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail="the hub has no model runtime of its own here "
                                                     "(AGENTS_HUB_MODELS_URL is empty)")
     if body.dry_run:
-        return {"dry_run": True, **local_set.plan(body.workspace)}
-    return {"job": local_set.start(body.workspace)}
+        return {"dry_run": True, **local_set.plan(body.workspace, language=body.language)}
+    return {"job": local_set.start(body.workspace, language=body.language)}
 
 
 @router.post("/runtime/ready-set/cancel")

@@ -190,7 +190,7 @@ describe('FirstRun', () => {
     const downloadButton = await screen.findByTestId('first-run-download');
     await waitFor(() => expect(downloadButton).not.toBeDisabled());
     fireEvent.click(downloadButton);
-    await waitFor(() => expect(localApi.startReadySet).toHaveBeenCalledWith('default'));
+    await waitFor(() => expect(localApi.startReadySet).toHaveBeenCalledWith('default', 'en'));
     // The way on appears once the download is seen running.
     fireEvent.click(await screen.findByTestId('first-run-continue'));
     // No provider with tiers: the model choice is skipped; the voice comes with the set,

@@ -161,12 +161,20 @@ first llama-server port), `MODELS_MAX_LOADED` (2), `MODELS_LOAD_TIMEOUT`
 ## Ready local set
 
 The top card of the Local tab goes local in one action: it starts the hub's
-runtime, installs the llama.cpp engine, downloads one chat model sized to this
-machine's memory and loads it (which registers it in the model catalog),
-installs Whisper and downloads its model, installs Kokoro and downloads its
-model, and sets them as the workspace's transcription and speech models where
+runtime, takes a chat model already there or downloads one sized to this
+machine's memory, installs its engine and loads it (which registers it in the
+model catalog), installs Whisper and downloads its model, downloads one voice
+for the interface language (Kokoro for English, a Piper voice for Russian or
+German), and sets them as the workspace's transcription and speech models where
 the workspace has none. The chat model becomes the global default only when no
 other provider is usable.
+
+What is already on the runtime counts. Any chat model does for the chat step:
+the loaded one, else the largest that fits this machine. Any loaded chat model
+does for the load step. Any ready voice that speaks the interface language
+does for the voice step; a cloning engine (Chatterbox, OpenVoice, Qwen3-TTS)
+needs a recorded sample and does not count. The card names what a step found,
+and what a step still lacks.
 
 It runs as one background job (kind `local_set`) on the shared job list, with
 each step shown as to do, running, done or already there. Pressing it again is
@@ -175,14 +183,15 @@ continues from its `.part` file. Cancel stops after the current wait; a
 download or install already started goes on in the runtime and is found done
 next time. Only an administrator starts it.
 
-The chat model is the largest rung of one ladder (`CHAT_LADDER` in
+With no chat model on the runtime, the download is the largest rung of one ladder (`CHAT_LADDER` in
 `providers/local_set.py`, Qwen3 0.6B, 1.7B, 4B, 8B, 14B) that fits the memory
 the runtime reports (the GPU's, else 80 % of RAM) with room for the context.
 The assistant's guided setup calls the same action as `setup_step`
-`local_set`. `GET /api/models/local/runtime/ready-set` gives the plan and the
+`local_set`. `GET /api/models/local/runtime/ready-set?language=ru` gives the plan and the
 latest run (`ready`: every step is there; `installed`: everything but loading
 the chat model, which a runtime restart undoes; the card folds on the
-latter), `POST` starts it (`{"dry_run": true}` only describes it), and
+latter), `POST` starts it (`{"language": "ru"}` picks the voice, `{"dry_run": true}`
+only describes it), and
 `POST /api/models/local/runtime/ready-set/cancel` cancels.
 
 ## Finding a model

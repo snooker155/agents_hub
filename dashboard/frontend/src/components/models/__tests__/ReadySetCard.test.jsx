@@ -104,4 +104,22 @@ describe('ReadySetCard', () => {
     await waitFor(() => expect(getReadySet).toHaveBeenCalled());
     expect(container.querySelector('[data-testid="ready-set"]')).toBeNull();
   });
+
+  it('shows the live plan, not the steps of a cancelled job, and names what is missing', async () => {
+    const stale = STEP_IDS.map((id) => ({ id, label: id, status: ['hearing', 'voice'].includes(id) ? 'todo' : 'done' }));
+    const live = plan({ runtime: 'skipped', engine: 'skipped', chat: 'skipped', hearing: 'skipped', assign: 'skipped' });
+    live.steps = live.steps.map((st) => (st.id === 'voice' ? { ...st, missing: ['Piper, German (Thorsten)'] } : st));
+    getReadySet.mockResolvedValue({ data: { ...live, job: { id: 'j0', status: 'error', error: 'cancelled', meta: { steps: stale } } } });
+    const { container } = renderCard();
+    await screen.findByText(/Piper, German/);
+    expect(container.querySelector('[data-step="hearing"]').getAttribute('data-status')).toBe('skipped');
+    expect(container.querySelector('[data-step="voice"]').getAttribute('data-status')).toBe('todo');
+  });
+
+  it('marks the step a failed job stopped at while the plan still lacks it', async () => {
+    const failed = STEP_IDS.map((id) => ({ id, label: id, status: id === 'hearing' ? 'error' : 'todo', detail: id === 'hearing' ? 'disk full' : '' }));
+    getReadySet.mockResolvedValue({ data: { ...plan(), job: { id: 'j0', status: 'error', error: 'disk full', meta: { steps: failed } } } });
+    const { container } = renderCard();
+    await waitFor(() => expect(container.querySelector('[data-step="hearing"]')?.getAttribute('data-status')).toBe('error'));
+  });
 });

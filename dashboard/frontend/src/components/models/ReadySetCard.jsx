@@ -25,7 +25,7 @@ const STEP_ICON = {
  * while a job runs or something is still missing.
  */
 export default function ReadySetCard({ onJobStarted }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const toast = useToast();
   const auth = useAuth();
   const canStart = !isMultiUser(auth) || isAdmin(auth);
@@ -35,13 +35,13 @@ export default function ReadySetCard({ onJobStarted }) {
 
   const load = useCallback(async () => {
     try {
-      const { data: d } = await getReadySet();
+      const { data: d } = await getReadySet(language);
       setData(d);
       return d;
     } catch {
       return null;
     }
-  }, []);
+  }, [language]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the poll timer and the start handler; it sets state after its await
@@ -61,7 +61,7 @@ export default function ReadySetCard({ onJobStarted }) {
   const start = async () => {
     setBusy(true);
     try {
-      await startReadySet();
+      await startReadySet(undefined, language);
       toast.success(t('localModels.readySet.started'));
       await load();
       if (onJobStarted) onJobStarted();
@@ -80,12 +80,16 @@ export default function ReadySetCard({ onJobStarted }) {
     }
   };
 
-  // The job's own steps while it runs or when it failed (the failed step
-  // shows there); otherwise the live plan, which knows what a restart undid.
-  const showJob = running || job?.status === 'error';
-  const steps = (showJob && job?.meta?.steps?.length ? job.meta.steps : data.steps) || [];
-  const chat = (showJob && job?.meta?.chat) || data.chat;
+  // The job's own steps while it runs; otherwise the live plan, which sees
+  // what is on the runtime now (a step a cancelled or failed job never
+  // reached may be done by hand since). A failed job marks its failed step,
+  // unless the plan finds that step done by now.
   const showJobFailure = job?.status === 'error' && job.error && job.error !== 'cancelled';
+  const failedStep = showJobFailure ? (job.meta?.steps || []).find((s) => s.status === 'error') : null;
+  const planSteps = (data.steps || []).map((s) => (failedStep && s.id === failedStep.id && s.status === 'todo'
+    ? { ...s, status: 'error', detail: failedStep.detail } : s));
+  const steps = (running && job?.meta?.steps?.length ? job.meta.steps : planSteps) || [];
+  const chat = (running && job?.meta?.chat) || data.chat;
   const allThere = !!(data.installed ?? data.ready) && !running;
   const onlyLoad = allThere && !data.ready;
   const open = userOpen ?? !allThere;
@@ -135,7 +139,8 @@ export default function ReadySetCard({ onJobStarted }) {
         <p className="text-xs text-gray-500">{t('localModels.readySet.intro')}</p>
         {chat && (
           <p className="text-xs text-gray-600">
-            {t('localModels.readySet.planModel', { label: chat.label, size: humanBytes(chat.size_bytes) || '?' })}
+            {t(chat.existing ? 'localModels.readySet.planExisting' : 'localModels.readySet.planModel',
+              { label: chat.label, size: humanBytes(chat.size_bytes) || '?' })}
             {data.default_would_change ? ` ${t('localModels.readySet.defaultNote')}` : ''}
           </p>
         )}
@@ -159,6 +164,11 @@ export default function ReadySetCard({ onJobStarted }) {
                 </div>
               )}
               {s.detail && s.status !== 'todo' && <p className="ml-6 text-xs text-gray-400">{s.detail}</p>}
+              {s.status !== 'running' && s.missing?.length > 0 && (
+                <p className="ml-6 text-xs text-gray-400" data-testid={`ready-set-missing-${s.id}`}>
+                  {t('localModels.readySet.missing', { items: s.missing.join(', ') })}
+                </p>
+              )}
             </li>
           ))}
         </ul>

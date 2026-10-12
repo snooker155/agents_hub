@@ -90,6 +90,11 @@ def env(monkeypatch):
     monkeypatch.setattr(local_set, "_other_provider_usable", lambda: False)
     monkeypatch.setattr(local_set, "_make_default", lambda name: True)
     monkeypatch.setattr(lm, "catalog_set_enabled", lambda *a, **k: {"id": a[0]})
+    # The hub's language comes from the test, not from this machine.
+    from common import first_run
+    monkeypatch.setattr(first_run, "language", lambda: None)
+    for key in ("AGENTS_HUB_LANGUAGE", "LC_ALL", "LANG"):
+        monkeypatch.delenv(key, raising=False)
     return monkeypatch
 
 
@@ -115,18 +120,45 @@ def test_the_whole_set_runs_in_order_and_is_registered(env):
     job = local_set.start(background=False)
     assert job["status"] == "done", job
     assert [c for c in runtime.calls if c[0] == "engine"] == [("engine", "llama"), ("engine", "whisper"),
-                                                              ("engine", "kokoro"), ("engine", "piper")]
+                                                              ("engine", "kokoro")]
     order = [c[1] for c in runtime.calls]
     assert order.index("llama") < order.index("Qwen3-8B-Q4_K_M.gguf") < order.index("faster-whisper-small") \
-        < order.index("kokoro-v1.0") < order.index("piper-ru_RU-irina-medium") < order.index("piper-de_DE-thorsten-medium")
+        < order.index("kokoro-v1.0")
+    # One voice, for the hub's language: no Piper voices besides Kokoro.
+    assert not any(str(c[1]).startswith("piper") for c in runtime.calls)
     assert ("load", "Qwen3-8B-Q4_K_M.gguf") in runtime.calls
     assert [s["status"] for s in job["meta"]["steps"]] == ["skipped"] + ["done"] * 6
     stored = special.stored("default")
     assert stored["speech"]["model"] == "kokoro-v1.0" and stored["transcription"]["model"] == "faster-whisper-small"
-    # Kokoro speaks English only: Russian and German get a Piper voice each.
-    assert stored["speech"]["languages"] == {"ru": {"model": "piper-ru_RU-irina-medium"},
-                                             "de": {"model": "piper-de_DE-thorsten-medium"}}
+    assert not stored["speech"].get("languages")
     assert job["meta"]["chat"]["id"] == "qwen3-8b" and job["percent"] == 100
+
+
+def test_a_russian_hub_gets_a_russian_voice(env):
+    from providers import special
+    runtime = _use(env, Runtime(ram_gb=16))
+    job = local_set.start(background=False, language="ru")
+    assert job["status"] == "done", job
+    voices = [c[1] for c in runtime.calls if c[0] == "download" and "whisper" not in str(c[1])
+              and not str(c[1]).endswith(".gguf")]
+    assert voices == ["piper-ru_RU-irina-medium"]
+    assert special.stored("default")["speech"]["model"] == "piper-ru_RU-irina-medium"
+
+
+def test_a_chat_model_already_there_is_used(env):
+    # Any chat model counts, not only one from the ladder: the largest that fits.
+    runtime = _use(env, Runtime(ram_gb=16, engines={"llama": True}, files={"Other-7B-Q4.gguf"}))
+    job = local_set.start(background=False)
+    assert job["status"] == "done", job
+    assert not any(c[0] == "download" and str(c[1]).startswith("Qwen3") for c in runtime.calls)
+    assert ("load", "Other-7B-Q4.gguf") in runtime.calls
+    steps = {s["id"]: s for s in job["meta"]["steps"]}
+    assert steps["chat"]["status"] == "skipped" and steps["chat"]["detail"] == "Other-7B-Q4"
+    # A loaded chat model does for the load step.
+    runtime.calls.clear()
+    plan = local_set.plan()
+    assert {s["id"]: s["status"] for s in plan["steps"]}["load"] == "skipped"
+    assert plan["chat"]["label"] == "Other-7B-Q4" and plan["chat"]["existing"] is True
 
 
 def test_pressing_again_skips_what_is_there(env):
@@ -222,15 +254,34 @@ def test_installed_ignores_only_the_load_step(env, monkeypatch):
     monkeypatch.setattr(local_set, "_have", lambda client: {
         "engines": {"llama": True, "whisper": True, "kokoro": True, "piper": True},
         "files": {"Qwen3-4B-Q4_K_M.gguf"},
-        "names": {local_set.presets()["transcription"][4], local_set.presets()["speech"][4],
-                  *(row[4] for row in local_set.presets()["languages"].values())},
+        "names": {local_set.presets()["transcription"][4], local_set.presets()["speech"][4]},
+        "models": [{"file": "Qwen3-4B-Q4_K_M.gguf", "kind": "chat"}],
     })
     monkeypatch.setattr(local_set, "_assigned", lambda workspace, pre: True)
-    monkeypatch.setattr(local_set, "_chat_loaded", lambda client, file: False)
     plan = local_set.plan()
     status = {s["id"]: s["status"] for s in plan["steps"]}
     assert status["load"] == "todo" and set(status.values()) == {"todo", "skipped"}
     assert plan["installed"] is True and plan["ready"] is False
+
+
+def test_the_voice_step_wants_one_voice_for_the_hubs_language(env, monkeypatch):
+    # Whisper, Kokoro and the Russian Piper voice on disk: a Russian or English
+    # hub has its voice, a German one names the voice it still lacks.
+    _use(env, Runtime(ram_gb=8, engines={"llama": True}))
+    monkeypatch.setattr(local_set, "_have", lambda client: {
+        "engines": {"llama": True, "whisper": True, "kokoro": True, "piper": True, "chatterbox_mlx": True},
+        "files": set(), "models": [],
+        "names": {"faster-whisper-small", "kokoro-v1.0", "piper-ru_RU-irina-medium", "chatterbox-4bit-mlx"},
+    })
+    def voice(lang):
+        return {s["id"]: s for s in local_set.plan(language=lang)["steps"]}["voice"]
+    assert voice("ru")["status"] == "skipped" and voice("ru")["detail"] == "piper-ru_RU-irina-medium"
+    assert voice("en")["status"] == "skipped" and voice("en")["detail"] == "kokoro-v1.0"
+    # A cloning engine needs a recorded sample: it is no voice for German.
+    assert voice("de")["status"] == "todo"
+    assert voice("de")["missing"] == [local_set.presets("de")["speech"][1]]
+    steps = {s["id"]: s for s in local_set.plan(language="de")["steps"]}
+    assert steps["hearing"]["status"] == "skipped" and "missing" not in steps["hearing"]
 
 
 def test_the_assistant_can_start_it(env):
@@ -238,7 +289,7 @@ def test_the_assistant_can_start_it(env):
     env.setattr(local_set, "_run", lambda *a: None)
     out = setup_ops.perform("local_set", {}, principal=LOCAL_PRINCIPAL)
     assert out["ok"] and out["job_id"] and out["step"] == "default_model"
-    assert "llama.cpp" in setup_ops.describe("local_set")
+    assert "voice for the hub's language" in setup_ops.describe("local_set")
     lm.JOBS.update(out["job_id"], status="done")
 
 

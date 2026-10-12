@@ -63,7 +63,7 @@ export default {
 
   readySet: {
     title: 'Ready local set',
-    intro: 'One button for going local: the llama.cpp engine, one chat model sized to this machine, Whisper to listen and Kokoro to speak. It runs in the background, skips what is already here and is safe to press again.',
+    intro: 'One button for going local: a chat model (one already here, or one sized to this machine), Whisper to listen and a voice for the interface language. It runs in the background, skips what is already here and is safe to press again.',
     start: 'Set up everything',
     again: 'Check and finish',
     cancel: 'Cancel',
@@ -71,6 +71,7 @@ export default {
     startFailed: 'Could not start the local set.',
     cancelFailed: 'Could not cancel.',
     planModel: 'Chat model for this machine: {{label}}, about {{size}}',
+    planExisting: 'Chat model already here: {{label}}, about {{size}}',
     ready: 'Everything is already in place.',
     allThere: 'All in place',
     allThereUnloaded: 'All in place, model not loaded',
@@ -78,13 +79,14 @@ export default {
     inProgress: 'In progress',
     partly: '{{present}} of {{total}} already there',
     stepStatus: { todo: 'To do', running: 'Running', done: 'Done', skipped: 'Already there', error: 'Failed' },
+    missing: 'Missing: {{items}}',
     steps: {
       runtime: 'Start the model runtime',
-      engine: 'Install the llama.cpp engine',
+      engine: "Install the chat model's engine",
       chat: 'Download the chat model',
       load: 'Load the chat model',
       hearing: 'Install Whisper and download its model',
-      voice: 'Install Kokoro and download its model',
+      voice: 'Download a voice for the interface language',
       assign: 'Set the workspace speech models',
     },
     defaultNote: 'It becomes the default model only if no other model is set up.',
