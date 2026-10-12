@@ -1,6 +1,8 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
 import { Boxes } from 'lucide-react';
+import { useI18n } from '../../i18n';
+import { isUnchosenAgent } from '../flowEditor/graphHelpers';
 
 const TAG_STYLES = {
   management: 'bg-cyan-50 text-cyan-700',
@@ -10,13 +12,19 @@ const TAG_STYLES = {
   testing: 'bg-rose-50 text-rose-700',
   operations: 'bg-orange-50 text-orange-700',
   automation: 'bg-slate-100 text-slate-600',
+  // Steps imported from an n8n workflow.
+  n8n: 'bg-rose-50 text-rose-700',
   // A node that runs a team, a loop or a flow as a nested run.
   container: 'bg-indigo-50 text-indigo-700',
   general: 'bg-slate-100 text-slate-600',
 };
 
 function FlowNode({ data, selected }) {
+  const { t } = useI18n();
   const isContainer = data.category === 'container';
+  // The abstract agent node before an agent is picked: drawn dashed, and
+  // says so, since a run refuses the flow until it has one.
+  const unchosen = isUnchosenAgent(data);
   const tagStyle = TAG_STYLES[isContainer ? 'container' : data.domain] || TAG_STYLES.general;
   const { isActive } = data;
 
@@ -27,6 +35,8 @@ function FlowNode({ data, selected }) {
           ? 'border-cyan-500 shadow-lg shadow-cyan-200 ring-2 ring-cyan-400 ring-offset-1'
           : selected
           ? 'border-cyan-400 shadow-md shadow-cyan-100'
+          : unchosen
+          ? 'border-dashed border-amber-400'
           : 'border-slate-200'
       }`}
     >
@@ -44,6 +54,9 @@ function FlowNode({ data, selected }) {
       <div className="text-[9px] font-semibold leading-tight text-slate-900 line-clamp-2">
         {data.label}
       </div>
+      {unchosen ? (
+        <div className="mt-0.5 text-[7px] font-semibold text-amber-600">{t('flowFlowCanvas.chooseAgent')}</div>
+      ) : null}
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-2 !border-white !bg-cyan-500" />
     </div>
   );

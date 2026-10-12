@@ -37,6 +37,7 @@ const WorkspaceDetails = lazy(() => import('./pages/WorkspaceDetails'));
 const MemoryManager = lazy(() => import('./pages/MemoryManager'));
 const AgentFlows = lazy(() => import('./pages/AgentFlows'));
 const FlowEditor = lazy(() => import('./pages/FlowEditor'));
+const FlowRun = lazy(() => import('./pages/FlowRun'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ToolsExplorer = lazy(() => import('./pages/ToolsExplorer'));
 const Orchestrator = lazy(() => import('./pages/Orchestrator'));
@@ -180,7 +181,8 @@ function AppRoutes() {
         <Route path="/workspaces/:name" element={guard(<WorkspaceDetails />)} />
         <Route path="/memory" element={guard(<MemoryManager />)} />
         <Route path="/flows" element={guard(<AgentFlows />)} />
-        <Route path="/flows/:flowId" element={guard(<FlowEditor />)} />
+        <Route path="/flows/:flowId" element={guard(<FlowRun />)} />
+        <Route path="/flows/:flowId/edit" element={guard(<FlowEditor />)} />
         <Route path="/loops" element={guard(<Loops />)} />
         <Route path="/teams" element={guard(<Teams />)} />
         <Route path="/teams/:teamId" element={guard(<TeamDetails />)} />

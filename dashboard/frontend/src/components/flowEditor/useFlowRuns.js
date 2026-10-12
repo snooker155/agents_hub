@@ -16,17 +16,19 @@ import { NODE_LIFECYCLE_TYPES } from './graphHelpers';
 export const newChatNonce = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * Everything about executing the flow and watching it run: the runs list and
- * History records, the live chat-stream translation into flow-log events, the
- * derived node statuses and log slices the canvas/Logs panel render, and the
- * run/stop/resume/estimate actions. The document itself (flow, nodes, edges,
- * saving) is useFlowDocument's; `persistFlow` and `loadWorkspaceTasks` are
- * passed in from there because a manual Run flushes unsaved edits first.
+ * Everything about executing the flow and watching it run, for the run page
+ * (pages/FlowRun.jsx): the runs list and History records, the live
+ * chat-stream translation into flow-log events, the derived node statuses
+ * and log slices the canvas/Logs panel render, and the run/stop/resume/
+ * estimate actions. The run page never edits the flow, so a run starts from
+ * the saved document; editing is the editor page's (useFlowDocument).
+ * `taskId` is the task picked for the next run, `loadTasks` refreshes the
+ * list it is picked from.
  */
 export function useFlowRuns(deps) {
   const {
-    chatNonce, flow, flowId, flowSessionId, liveUpdates, loadWorkspaceTasks, logs,
-    nodes, persistFlow, resumedChat, running, runs,
+    chatNonce, flow, flowId, flowSessionId, liveUpdates, loadTasks, logs,
+    nodes, resumedChat, running, runs, taskId,
     selectedNode, selectedNodeId, selectedRunGroup, selectedWorkspace, setCenterTab,
     setChatNonce, setEstimate, setEstimating, setFlow, setFlowSessionId, setInstances, setLogs,
     setResumedChat, setResumingRun, setRightTab, setRunNodeId, setRunning, setRuns,
@@ -179,7 +181,7 @@ export function useFlowRuns(deps) {
   useEffect(() => {
     const workspaceName = flow?.workspace || selectedWorkspace;
     if (!workspaceName) return;
-    loadWorkspaceTasks(workspaceName);
+    loadTasks(workspaceName);
     loadLogs(workspaceName);
     loadRuns(workspaceName);
     if (!liveUpdates) return undefined;
@@ -209,7 +211,7 @@ export function useFlowRuns(deps) {
     // `visibleLogs` scope the stream to this node (logs for this node within
     // this record) instead of jumping to the Node inspector. Outside of a
     // selected record, open the inspector so the node's edits are visible.
-    setRightTab(selectedRunGroup ? 'logs' : 'graph');
+    setRightTab(selectedRunGroup ? 'logs' : 'node');
   }, [selectedNodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeNodeId = useMemo(() => {
@@ -376,17 +378,15 @@ export function useFlowRuns(deps) {
     if (!flow) return;
     const workspaceName = flow.workspace || selectedWorkspace;
     if (!workspaceName) {
-      alert(t('flowEditor.selectWorkspaceFirst'));
+      toast.error(t('flowEditor.selectWorkspaceFirst'));
       return;
     }
-    const saved = await persistFlow({ workspace: workspaceName });
-    if (!saved) return;
     setRunning(true);
     try {
       const started = await runFlow(flowId, {
         workspace: workspaceName,
         description: flow.description || '',
-        task_id: flow.task_id || undefined,
+        task_id: taskId || undefined,
       });
       // The run endpoint prices the flow on the way out, so what a run is about
       // to cost lands in front of whoever pressed Run, not only on Estimate.
@@ -399,7 +399,7 @@ export function useFlowRuns(deps) {
       await loadLogs(workspaceName);
       setRightTab('logs');
     } catch (error) {
-      alert(`Failed to start flow: ${error.response?.data?.detail || error.message}`);
+      toast.error(t('flowEditor.runFailed'), errorDetail(error));
     } finally {
       setRunning(false);
     }
@@ -438,7 +438,7 @@ export function useFlowRuns(deps) {
       const updated = await getFlow(flowId);
       setFlow(updated.data);
     } catch (error) {
-      alert(`Failed to stop flow: ${error.response?.data?.detail || error.message}`);
+      toast.error(t('flowEditor.stopFailed'), errorDetail(error));
     } finally {
       setStopping(false);
     }
@@ -448,11 +448,9 @@ export function useFlowRuns(deps) {
     if (!flow) return;
     const workspaceName = flow.workspace || selectedWorkspace;
     if (!workspaceName) {
-      alert(t('flowEditor.selectWorkspaceFirst'));
+      toast.error(t('flowEditor.selectWorkspaceFirst'));
       return;
     }
-    const saved = await persistFlow({ workspace: workspaceName });
-    if (!saved) return;
     setRunNodeId(nodeId);
     setSelectedNodeId(nodeId);
     try {
@@ -464,7 +462,7 @@ export function useFlowRuns(deps) {
       await loadLogs(workspaceName);
       setRightTab('logs');
     } catch (error) {
-      alert(`Failed to run node: ${error.response?.data?.detail || error.message}`);
+      toast.error(t('flowEditor.runNodeFailed'), errorDetail(error));
     } finally {
       setRunNodeId(null);
     }

@@ -108,3 +108,14 @@ export const fmtKeys = (arr) => (Array.isArray(arr) ? arr.join(', ') : '');
 export const NODE_LIFECYCLE_TYPES = new Set([
   'agent_start', 'agent_finish', 'agent_error', 'agent_stopped', 'node_skip',
 ]);
+
+// The palette offers one abstract agent node instead of every agent: it is
+// dropped with no agent and the inspector picks which one runs there. This id
+// marks that palette entry; it is never saved on a node.
+export const AGENT_SLOT_ID = '__agent__';
+
+// An agent node nobody has picked an agent for yet. It saves and loads like
+// any node, but a run refuses the flow until every such node has one
+// (flow/validate.py resolve_entities).
+export const isUnchosenAgent = (data) =>
+  data?.category === 'agent' && !data?.agent_id && !data?.entity_id;

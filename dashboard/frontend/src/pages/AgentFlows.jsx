@@ -1,12 +1,13 @@
 import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Plus, RefreshCw, Share2, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Pencil, Plus, RefreshCw, Share2, Sparkles, Trash2, Upload, Workflow, X } from 'lucide-react';
 import { createFlow, deleteFlow, exportFlow, generateFlow, importFlow, listFlows, testLocalModel, updateFlowSharing } from '../api';
 import { useWorkspace } from '../components/workspace';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import N8nImportModal from '../components/flow/N8nImportModal';
 const PROVIDERS = [
   { value: '', labelKey: 'agentFlows.providers.inherit' },
   { value: 'openai', label: 'OpenAI' },
@@ -80,6 +81,7 @@ const AgentFlows = () => {
   const [importFileName, setImportFileName] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
+  const [n8nOpen, setN8nOpen] = useState(false);
 
   // A promise chain, not an async function: the React Compiler lint treats an
   // async function called from an effect as a synchronous setState.
@@ -115,7 +117,7 @@ const AgentFlows = () => {
         name: newFlow.name.trim(),
         description: newFlow.description.trim(),
       });
-      navigate(`/flows/${response.data.id}`);
+      navigate(`/flows/${response.data.id}/edit`);
     } catch (error) {
       alert(`Failed to create flow: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -194,7 +196,7 @@ const AgentFlows = () => {
         name: importName.trim() || undefined,
       });
       closeImport();
-      navigate(`/flows/${response.data.id}`);
+      navigate(`/flows/${response.data.id}/edit`);
     } catch (error) {
       setImportError(error.response?.data?.detail || error.message || t('agentFlows.importFailed'));
     } finally {
@@ -239,7 +241,7 @@ const AgentFlows = () => {
       setWizardOpen(false);
       setWizardResult(null);
       setWizardReq('');
-      navigate(`/flows/${flowId}`);
+      navigate(`/flows/${flowId}/edit`);
       return;
     }
     setApplyingFlow(true);
@@ -271,7 +273,7 @@ const AgentFlows = () => {
       setWizardOpen(false);
       setWizardResult(null);
       setWizardReq('');
-      navigate(`/flows/${flowId}`);
+      navigate(`/flows/${flowId}/edit`);
     } catch (error) {
       alert(`Failed to create flow: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -348,6 +350,14 @@ const AgentFlows = () => {
             <Share2 className="w-4 h-4" />
             {t('agentFlows.mirrorExternal')}
           </Link>
+          <button
+            onClick={() => setN8nOpen(true)}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+            data-testid="flows-import-n8n"
+          >
+            <Workflow className="w-4 h-4" />
+            {t('n8nImport.button')}
+          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
@@ -432,6 +442,13 @@ const AgentFlows = () => {
                   </div>
 
                   <div className="flex justify-end gap-1">
+                    <Link
+                      to={`/flows/${flow.id}/edit`}
+                      className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
+                      title={t('agentFlows.editFlow')}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Link>
                     <button
                       onClick={() => handleShare(flow)}
                       className={`rounded-lg border border-transparent p-1.5 transition ${
@@ -602,6 +619,18 @@ const AgentFlows = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {n8nOpen && (
+        <N8nImportModal
+          workspace={workspaceFilter}
+          onClose={() => setN8nOpen(false)}
+          onOpen={(flow, mode) => {
+            setN8nOpen(false);
+            // A run-in-n8n flow runs as it is; a converted one has agents to pick.
+            navigate(mode === 'run' ? `/flows/${flow.id}` : `/flows/${flow.id}/edit`);
+          }}
+        />
       )}
 
       {/* AI Wizard Modal */}

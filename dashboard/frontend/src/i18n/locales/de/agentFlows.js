@@ -1,4 +1,5 @@
 export default {
+  editFlow: "Flow bearbeiten",
   agentFlows: 'Agenten-Flows',
   buildReusableDeliveryPipelinesAnd: 'Bauen Sie wiederverwendbare Pipelines und führen Sie Agenten als visuelle Flows aus.',
   loadingFlows: 'Flows werden geladen…',

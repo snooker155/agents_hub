@@ -1,4 +1,5 @@
 export default {
+  editFlow: "Редактировать поток",
   agentFlows: 'Потоки агентов',
   buildReusableDeliveryPipelinesAnd: 'Стройте переиспользуемые пайплайны и запускайте агентов как визуальные потоки.',
   loadingFlows: 'Загрузка потоков…',

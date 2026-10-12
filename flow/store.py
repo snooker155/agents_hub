@@ -337,6 +337,10 @@ def _check_entities_exist(flow_id: str, merged: Dict[str, Any]) -> None:
     for node in merged.get("nodes", []):
         if flow_dispatch.FlowEntity.for_node(node) is not None:
             continue
+        if flow_dispatch.is_unchosen_agent(node):
+            # An agent slot nobody filled yet: saved and loaded as is, refused
+            # only when the flow runs (flow.validate.resolve_entities).
+            continue
         ref = (
             flow_dispatch.node_field(node, "entity_id")
             or flow_dispatch.node_field(node, "agent_id")

@@ -253,6 +253,7 @@
         "Telegram",
         "Issue trackers",
         "Integrations",
+        "n8n",
         "Blender",
         "Setting up from the chat",
         "Gotchas"
@@ -413,6 +414,7 @@
       ],
       "headings": [
         "Building one",
+        "n8n workflows",
         "Node kinds",
         "Running",
         "Gotchas"

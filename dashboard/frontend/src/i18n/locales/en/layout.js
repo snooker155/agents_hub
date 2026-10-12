@@ -67,6 +67,7 @@ export default {
     studio: 'Studio',
     flows: 'Agent Flows',
     flowEditor: 'Flow Editor',
+    flowRun: 'Flow Run',
     loops: 'Loops',
     teams: 'Teams',
     team: 'Team',

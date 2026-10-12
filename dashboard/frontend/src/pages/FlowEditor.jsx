@@ -1,123 +1,66 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  ClipboardList, DollarSign, Download, Factory, FileText, History, Loader2, MessageSquare,
-  Play, Plus, Save, Square, SquareTerminal, Workflow,
-} from 'lucide-react';
-import LiveRunStream from '../components/LiveRunStream';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { AlertTriangle, Download, Factory, Loader2, Play, Save, SquareTerminal } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import CreateTaskModal from '../components/CreateTaskModal';
 import FlowCanvas, { EntityPalette } from '../components/flow/FlowCanvas';
-import FlowChat from '../components/flow/FlowChat';
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { useToast } from '../components/toast';
 import { NodeInspector } from '../components/flowEditor/NodeInspector';
 import { FlowSettings } from '../components/flowEditor/FlowSettings';
 import { GraphStateBlock } from '../components/flowEditor/RuntimeState';
-import { FlowHistory, FlowRunMessages } from '../components/flowEditor/FlowHistory';
-import { reconstructRunMessages } from '../components/flowEditor/runFormat';
-import { FlowLog } from '../components/flowEditor/FlowLog';
 import { useFlowDocument } from '../components/flowEditor/useFlowDocument';
-import { newChatNonce, useFlowRuns } from '../components/flowEditor/useFlowRuns';
 import PageLoader from '../components/PageLoader';
 
-// FlowEditor is the shell: it owns the page's state and wires it into the
-// document hook (the flow, its nodes/edges, saving), the runs hook (execution,
-// history, the live log stream) and the sub-components under
-// components/flowEditor/. See that folder for the pieces this page used to
-// hold inline.
+// The flow editor (/flows/:flowId/edit): the graph and nothing that runs it.
+// Left, the registry palette (one abstract agent node plus processors,
+// conditions, nested runs); center, the canvas; right, the selected node's
+// inspector or the graph-level settings. Running, history, chat and logs are
+// the run page's (pages/FlowRun.jsx, /flows/:flowId), which the Run button
+// opens after saving.
 function FlowEditor() {
   const { t } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
   const { flowId } = useParams();
-  const { selectedWorkspace, liveUpdates } = useWorkspace();
+  const { selectedWorkspace } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [running, setRunning] = useState(false);
-  // Session the currently-running flow publishes its agent events on. Captured
-  // from the run response so the live panel can attach before any log arrives.
-  const [flowSessionId, setFlowSessionId] = useState(null);
-  const [stopping, setStopping] = useState(false);
-  const [runNodeId, setRunNodeId] = useState(null);
   const [flow, setFlow] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [availableAgents, setAvailableAgents] = useState([]);
-  // Registry entities grouped by category, for the canvas palette + inspector.
   const [entitiesByCategory, setEntitiesByCategory] = useState({});
-  const [tasks, setTasks] = useState([]);
-  const [logs, setLogs] = useState([]);
-  // Live execution events for the active chat run, fed directly from the chat
-  // stream (FlowChat -> onStreamEvent) and translated into the flow-log event
-  // shape the editor's derivations already understand. This is what drives the
-  // canvas highlight, node statuses, and Logs panel live during a chat run,
-  // with no per-event refetch of /logs or /runs. REST stays the source of truth
-  // for the History list, manual flow runs, and replay of a selected record.
-  const [streamLogs, setStreamLogs] = useState([]);
-  const [runs, setRuns] = useState([]);
-  // One record per execution (flow/run_store.py), keyed by flow_run_id. The
-  // History list is built from the log, which knows nothing about a run's
-  // checkpoint; these records are what say whether a run can be resumed.
-  const [instances, setInstances] = useState({});
-  const [resumingRun, setResumingRun] = useState(null);
-  const [estimate, setEstimate] = useState(null);
-  const [estimating, setEstimating] = useState(false);
-  // ?run=<flow_run_id> opens one execution's History record in particular
-  // (the owner chip on a view, a run group): the record is selected and its
-  // logs shown as soon as the history loads. Written back when the user picks
-  // a record here, so the address stays shareable.
-  const [params, setParams] = useSearchParams();
-  const runFromUrl = params.get('run');
-  const [selectedRunGroup, setSelectedRunGroup] = useState(runFromUrl || null); // History record being viewed
   const [dirty, setDirty] = useState(false);
-  const [rightTab, setRightTab] = useState(runFromUrl ? 'logs' : 'graph'); // graph | logs
-  const [leftTab, setLeftTab] = useState(runFromUrl ? 'history' : 'tasks'); // tasks | history
-  const [centerTab, setCenterTab] = useState('canvas'); // canvas | chat
-  // A fresh, unique token per chat thread. Generated on mount and regenerated by
-  // "New chat" so each thread gets its own conversation id. It must be unique
-  // (not a 0-based counter): the conversation id derives from it deterministically
-  // and resetting to a counter on reload would collide with already-persisted
-  // conversations (reusing their record + showing their old logs).
-  const [chatNonce, setChatNonce] = useState(newChatNonce); // bumped to start a fresh chat thread
-  // A resumed chat History record: sticky so continuing it keeps appending to
-  // the same conversation even after the History selection is cleared (e.g. when
-  // the new turn starts executing). { conversationId, messages, key } or null.
-  const [resumedChat, setResumedChat] = useState(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-
-  // Stable indirection so useFlowDocument's node.data.onRunNode always calls
-  // whatever useFlowRuns's handleRunNode currently is, without the two hooks
-  // needing to import each other (the run needs persistFlow from the document
-  // hook, and the document needs onRunNode for every node it builds).
-  const handleRunNodeRef = useRef(() => {});
-  const runNode = useCallback((nodeId) => handleRunNodeRef.current(nodeId), []);
 
   const docApi = useFlowDocument({
-    availableAgents, dirty, edges, flow, flowId, navigate, nodes, onRunNode: runNode,
+    availableAgents, dirty, edges, entitiesByCategory, flow, flowId, navigate, nodes,
     selectedNodeId, selectedWorkspace, setAvailableAgents, setDirty, setEdges,
-    setEntitiesByCategory, setFlow, setLoading, setNodes, setSaving, setTasks, t, tasks, toast,
+    setEntitiesByCategory, setFlow, setLoading, setNodes, setSaving, t, toast,
   });
 
-  const runApi = useFlowRuns({
-    chatNonce, flow, flowId, flowSessionId, liveUpdates, loadWorkspaceTasks: docApi.loadWorkspaceTasks,
-    logs, nodes, persistFlow: docApi.persistFlow, resumedChat, running, runs,
-    selectedNode: docApi.selectedNode, selectedNodeId, selectedRunGroup, selectedWorkspace,
-    setCenterTab, setChatNonce, setEstimate, setEstimating, setFlow, setFlowSessionId,
-    setInstances, setLogs, setResumedChat, setResumingRun, setRightTab, setRunNodeId,
-    setRunning, setRuns, setSelectedNodeId, setSelectedRunGroup, setStopping, setStreamLogs,
-    streamLogs, t, toast,
-  });
+  // Unsaved edits survive neither a reload nor closing the tab without a word.
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
-  useEffect(() => { handleRunNodeRef.current = runApi.handleRunNode; });
+  const openRunPage = async () => {
+    if (dirty && !(await docApi.persistFlow())) return;
+    navigate(`/flows/${flowId}`);
+  };
 
   if (loading || !flow) {
     return (
       <div className="h-full bg-white"><PageLoader /></div>
     );
   }
+
+  const patchFlow = (patch) => { setFlow((prev) => ({ ...prev, ...patch })); setDirty(true); };
+  const selected = docApi.selectedNode;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -130,9 +73,12 @@ function FlowEditor() {
         actions={<>
           <button
             onClick={() => docApi.persistFlow()}
-            className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-100"
+            disabled={saving || !dirty}
+            className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-100 disabled:cursor-default disabled:opacity-70"
           >
-            <Save className="mr-2 h-4 w-4 text-cyan-500" />
+            {saving
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin text-cyan-500" />
+              : <Save className="mr-2 h-4 w-4 text-cyan-500" />}
             {saving ? t('common.saving') : dirty ? t('flowEditor.saveFlow') : t('common.saved')}
           </button>
           <button
@@ -143,424 +89,98 @@ function FlowEditor() {
             <Download className="mr-2 h-4 w-4 text-cyan-500" />
             {t('flowEditor.export')}
           </button>
-          {(running || flow?.running) && (
-            <button
-              onClick={runApi.handleStopFlow}
-              disabled={stopping}
-              className="flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-600 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {stopping
-                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                : <Square className="mr-2 h-4 w-4" />}
-              {stopping ? 'Stopping…' : 'Stop'}
-            </button>
-          )}
+          <button
+            onClick={openRunPage}
+            className="flex items-center rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-700"
+            title={dirty ? t('flowEditor.saveAndOpenRunPage') : t('flowEditor.openRunPage')}
+            data-testid="flow-open-run-page"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            {t('flowEditor.runPage')}
+          </button>
         </>}
       />
 
       <section className="flex min-h-0 flex-1 overflow-hidden bg-white">
-        {/* Left column — tasks */}
-        <div className="hidden w-[340px] shrink-0 flex-col overflow-hidden border-r border-slate-200 lg:flex">
-          <div className="flex gap-2 border-b border-slate-200 px-3 pt-3">
-            {[
-              { id: 'tasks', label: 'Tasks', icon: ClipboardList },
-              { id: 'history', label: 'History', icon: History },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = leftTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setLeftTab(tab.id)}
-                  className={`inline-flex flex-1 items-center justify-center gap-2 rounded-t-2xl px-4 py-2.5 text-sm font-semibold transition ${
-                    isActive
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'tasks' ? '' : 'hidden'}`}>
-            <div className="space-y-5">
-              <button
-                type="button"
-                onClick={runApi.handleNewChat}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
-              >
-                <MessageSquare className="h-4 w-4" />
-                {t('flowEditor.newChat')}
-              </button>
-
-              {docApi.assignedTask ? (
-                <div className="rounded-[20px] border border-cyan-100 bg-cyan-50/70 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{t('flowEditor.currentTask')}</div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFlow((current) => ({ ...current, task_id: null }));
-                        setDirty(true);
-                      }}
-                      className="text-xs font-medium text-slate-400 transition hover:text-rose-500"
-                    >
-                      {t('flowEditor.detach')}
-                    </button>
-                  </div>
-                  <div className="mt-2 text-sm font-bold text-slate-900">{docApi.assignedTask.title}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-600">{docApi.assignedTask.description || t('flowEditor.noTaskDescription')}</div>
-                </div>
-              ) : (
-                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                  {t('flowEditor.noTaskIsCurrentlyAttached')}
-                </div>
-              )}
-
-              <button
-                onClick={runApi.handleRunFlow}
-                disabled={running || !!flow?.running}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-400"
-              >
-                {(running || flow?.running)
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <Play className="h-4 w-4" />}
-                {(running || flow?.running) ? t('common.running') : docApi.assignedTask ? t('flowEditor.runFlowWithTask') : t('flowEditor.runFlow')}
-              </button>
-
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={runApi.handleEstimate}
-                  disabled={estimating}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <DollarSign className="h-4 w-4" />
-                  {estimating ? t('flowEditor.estimating') : t('flowEditor.estimateCost')}
-                </button>
-                {estimate ? (
-                  <div className="rounded-[20px] border border-slate-200 bg-white p-4">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <div className="text-sm font-bold text-slate-900">
-                        ${Number(estimate.total_usd || 0).toFixed(4)}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setEstimate(null)}
-                        className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
-                      >
-                        {t('flowEditor.hideEstimate')}
-                      </button>
-                    </div>
-                    <div className="mt-2 space-y-1">
-                      {(estimate.per_node || []).map((row) => (
-                        <div key={row.node_id} className="flex items-baseline justify-between gap-2 text-[11px]">
-                          <span className="truncate text-slate-600">{row.label || row.node_id}</span>
-                          <span className="shrink-0 font-mono text-slate-500">
-                            {row.model || t('flowEditor.noModelCall')} · ${Number(row.usd || 0).toFixed(4)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-[11px] leading-5 text-slate-400">
-                      {t('flowEditor.flowEstimateNote')}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-bold text-slate-900">{t('flowEditor.tasks')}</div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t('flowEditor.newTask')}
-                  </button>
-                </div>
-                {tasks.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
-                    {t('flowEditor.noTasksYetCreateOne')}
-                  </div>
-                ) : (
-                  <div className="space-y-2 overflow-y-auto pr-1">
-                    {tasks.map((task) => {
-                      const isAttachedTask = String(task.id) === String(flow?.task_id);
-                      return (
-                        <button
-                          key={task.id}
-                          type="button"
-                          onClick={() => {
-                            const nextDescription = flow?.description?.trim() ? flow.description : task.description?.trim() || '';
-                            setFlow((current) => ({
-                              ...current,
-                              task_id: String(task.id),
-                              description: nextDescription,
-                            }));
-                            setDirty(true);
-                          }}
-                          className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                            isAttachedTask
-                              ? 'border-cyan-300 bg-cyan-50'
-                              : 'border-slate-200 bg-slate-50 hover:border-cyan-300 hover:bg-cyan-50'
-                          }`}
-                        >
-                          <div className="text-sm font-semibold text-slate-800">{task.title}</div>
-                          {task.description && (
-                            <div className="mt-0.5 truncate text-xs text-slate-400">{task.description}</div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'history' ? '' : 'hidden'}`}>
-            <FlowHistory
-              runs={runApi.displayRuns}
-              instances={instances}
-              onResume={runApi.handleResumeRun}
-              resumingRun={resumingRun}
-              selectedRunGroup={selectedRunGroup}
-              onSelect={(run) => {
-                const group = run.run_group;
-                const isReselect = selectedRunGroup === group;
-                setSelectedRunGroup(isReselect ? null : group);
-                setParams(isReselect ? {} : { run: group }, { replace: true });
-                setSelectedNodeId(null);
-                setRightTab('logs');
-                setCenterTab('chat');
-                if (run.kind === 'chat' && !isReselect) {
-                  // Resume this conversation in the live chat so it can continue.
-                  setResumedChat({
-                    conversationId: run.conversation_id || run.run_group,
-                    messages: reconstructRunMessages(run),
-                    key: run.run_group,
-                  });
-                } else {
-                  // Deselecting, or opening a read-only task-run record: clear the
-                  // resumed conversation so the chat returns to an empty new chat.
-                  setResumedChat(null);
-                }
-              }}
-            />
-          </div>
+        {/* Left column — registry palette */}
+        <div className="hidden w-[300px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 p-3 lg:flex">
+          <EntityPalette entitiesByCategory={entitiesByCategory} />
         </div>
 
-        {/* Center column — switch between canvas and chat */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {/* Header — canvas / chat switch */}
-          <div className="border-b border-slate-200 px-4 pt-3">
-            <div className="flex gap-2">
-              {[
-                { id: 'canvas', label: 'Canvas', icon: Workflow },
-                { id: 'chat', label: 'Chat', icon: MessageSquare },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const isActive = centerTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setCenterTab(tab.id)}
-                    className={`inline-flex items-center justify-center gap-2 rounded-t-2xl px-5 py-2.5 text-sm font-semibold transition ${
-                      isActive
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
+        {/* Center — canvas */}
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <FlowCanvas
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={docApi.handleCanvasNodesChange}
+            onEdgesChange={docApi.handleCanvasEdgesChange}
+            setEdges={docApi.setCanvasEdges}
+            setNodes={docApi.setCanvasNodes}
+            setSelectedNodeId={setSelectedNodeId}
+          />
+        </div>
+
+        {/* Right column — node inspector or graph settings */}
+        <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100">
+              <SquareTerminal className="h-4 w-4 text-slate-600" />
             </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-slate-900">
+                {selected ? t('flowEditor.node') : t('flowEditor.graphOverview')}
+              </div>
+              <div className="truncate text-[11px] text-slate-400">
+                {t('flowEditor.graphCounts', { nodes: nodes.length, edges: edges.length })}
+              </div>
+            </div>
+            {selected ? (
+              <button
+                type="button"
+                onClick={() => setSelectedNodeId(null)}
+                className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+              >
+                {t('flowEditor.close')}
+              </button>
+            ) : null}
           </div>
-
-          {/* Canvas — kept mounted so ReactFlow viewport/state survives tab switches.
-              Visible only on the Canvas tab; on the Chat tab the chat takes the full pane. */}
-          <div className={`relative min-h-0 min-w-0 flex-1 basis-1/2 ${centerTab === 'canvas' ? 'block' : 'hidden'}`}>
-            <FlowCanvas
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={docApi.handleCanvasNodesChange}
-              onEdgesChange={docApi.handleCanvasEdgesChange}
-              activeNodeId={runApi.activeNodeId}
-              onRunNode={runApi.handleRunNode}
-              setEdges={docApi.setCanvasEdges}
-              setNodes={docApi.setCanvasNodes}
-              setSelectedNodeId={setSelectedNodeId}
-            />
-          </div>
-
-          {/* Chat — always mounted (thread survives tab switches). On the Canvas tab it's a
-              fixed bottom strip; on the Chat tab it grows to fill the whole pane.
-              When a chat History record is selected it is resumed in the live chat
-              (turns append to the same conversation); a task-run record shows a
-              read-only transcript instead. */}
-          <div
-            className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${
-              centerTab === 'chat' ? 'flex-1' : 'flex-1 basis-1/2 border-t border-slate-200'
-            }`}
-          >
-            {runApi.selectedRun && runApi.selectedRun.kind !== 'chat' ? (
-              <FlowRunMessages
-                run={runApi.selectedRun}
-                messages={runApi.runMessages}
-                onClose={() => setSelectedRunGroup(null)}
-                workspace={docApi.chatWorkspace}
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {selected ? (
+              <NodeInspector
+                key={selected.id}
+                node={selected}
+                isAgent={(selected.data.category || 'agent') === 'agent'}
+                agents={docApi.agentOptions}
+                onPatch={docApi.updateSelectedNode}
               />
             ) : (
-              <FlowChat
-                flow={flow}
-                flowId={flowId}
-                workspace={docApi.chatWorkspace}
-                agentLabels={docApi.agentLabels}
-                chatNonce={chatNonce}
-                resumeConversationId={resumedChat?.conversationId || null}
-                resumeMessages={resumedChat?.messages || null}
-                resumeKey={resumedChat?.key || null}
-                onStreamEvent={runApi.handleStreamEvent}
-                onActivity={runApi.handleChatActivity}
-              />
+              <div className="space-y-3">
+                {docApi.unchosenCount > 0 ? (
+                  <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <span>{t('flowEditor.unchosenAgents', { count: docApi.unchosenCount })}</span>
+                  </div>
+                ) : null}
+                <GraphStateBlock key={flow.id} flow={flow} nodes={nodes} onPatch={patchFlow} />
+                <div className="-mx-3 border-t border-slate-200" />
+                <FlowSettings
+                  flow={flow}
+                  nodes={nodes}
+                  onPatch={patchFlow}
+                  onSetWebhookSecret={docApi.handleSetWebhookSecret}
+                />
+                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  {t('flowEditor.selectNodeHint')}
+                </div>
+                {/* Below lg the left column is hidden; the palette moves here. */}
+                <div className="lg:hidden">
+                  <EntityPalette entitiesByCategory={entitiesByCategory} />
+                </div>
+              </div>
             )}
           </div>
         </div>
-
-        {/* Right column — graph (nodes / palette) and execution log */}
-        <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-4 pt-3">
-            <div className="flex gap-2">
-              {[
-                { id: 'graph', label: docApi.selectedNode ? 'Node' : 'Graph', icon: SquareTerminal },
-                { id: 'logs', label: 'Logs', icon: FileText },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const isActive = rightTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => {
-                      setRightTab(tab.id);
-                      // Opening the Graph/Node tab brings the canvas into view so
-                      // the selected node and its edits are visible together.
-                      if (tab.id === 'graph') setCenterTab('canvas');
-                    }}
-                    className={`inline-flex flex-1 items-center justify-center gap-2 rounded-t-2xl px-4 py-2.5 text-sm font-semibold transition ${
-                      isActive
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div
-            className={`flex-1 min-h-0 ${
-              rightTab === 'logs'
-                ? 'overflow-hidden'
-                : rightTab === 'graph' && !docApi.selectedNode
-                ? 'flex flex-col overflow-hidden'
-                : 'overflow-y-auto p-3'
-            }`}
-          >
-            {rightTab === 'graph' ? (
-              docApi.selectedNode ? (
-                <NodeInspector
-                  key={docApi.selectedNode.id}
-                  node={docApi.selectedNode}
-                  isAgent={(docApi.selectedNode.data.category || 'agent') === 'agent'}
-                  onPatch={docApi.updateSelectedNode}
-                  onRun={() => runApi.handleRunNode(docApi.selectedNode.id)}
-                  running={runNodeId === docApi.selectedNode.id}
-                />
-              ) : (
-                <>
-                  {/* Header bar — matches the chat panel header height. */}
-                  <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100">
-                      <SquareTerminal className="h-4 w-4 text-slate-600" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-bold text-slate-900">{t('flowEditor.graphOverview')}</div>
-                      <div className="truncate text-[11px] text-slate-400">
-                        {nodes.length} nodes · {edges.length} connections
-                      </div>
-                    </div>
-                  </div>
-                  {/* Fixed graph settings — stay put while the registry list below scrolls. */}
-                  <div className="shrink-0 p-3">
-                    <GraphStateBlock
-                      key={flow.id}
-                      flow={flow}
-                      nodes={nodes}
-                      onPatch={(patch) => { setFlow((prev) => ({ ...prev, ...patch })); setDirty(true); }}
-                    />
-                    <div className="-mx-3 my-3 border-t border-slate-200" />
-                    <FlowSettings
-                      flow={flow}
-                      nodes={nodes}
-                      onPatch={(patch) => { setFlow((prev) => ({ ...prev, ...patch })); setDirty(true); }}
-                      onSetWebhookSecret={docApi.handleSetWebhookSecret}
-                    />
-                  </div>
-                  {/* Separator between settings and the node registry. */}
-                  <div className="shrink-0 border-t border-slate-200" />
-                  {/* Scrollable registry list. */}
-                  <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-                    <EntityPalette entitiesByCategory={entitiesByCategory} />
-                    <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                      Select a node on the canvas to edit its contract (inputs/outputs/config), node-specific task, and run it.
-                    </div>
-                  </div>
-                </>
-              )
-            ) : null}
-
-            {rightTab === 'logs' ? (
-              <>
-              <LiveRunStream sessionId={runApi.liveSessionId} title={t('flowEditor.liveNodeOutput')} className="mb-3" />
-              <FlowLog
-                logs={runApi.visibleLogs}
-                stateLogs={runApi.baseLogs}
-                filterLabel={
-                  runApi.selectedRun && docApi.selectedNode
-                    ? `${runApi.selectedRun.title || t('flowEditor.selectedRun')} · ${docApi.selectedNode.data.label}`
-                    : runApi.selectedRun
-                    ? (runApi.selectedRun.title || t('flowEditor.selectedRun'))
-                    : docApi.selectedNode?.data.label
-                }
-                running={runApi.isExecuting && !runApi.selectedRun}
-                nodeStatuses={runApi.nodeStatuses}
-              />
-              </>
-            ) : null}
-          </div>
-        </div>
       </section>
-
-      {showCreateModal && (
-        <CreateTaskModal
-          selectedWorkspace={docApi.chatWorkspace}
-          onClose={() => setShowCreateModal(false)}
-          onCreated={docApi.handleTaskCreated}
-        />
-      )}
     </div>
   );
 }

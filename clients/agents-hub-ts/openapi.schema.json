@@ -7562,6 +7562,65 @@
         "title": "MemoryStructuredSlotUpsert",
         "type": "object"
       },
+      "N8nImport": {
+        "properties": {
+          "mode": {
+            "default": "convert",
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "N8nImport",
+        "type": "object"
+      },
       "NetworkIn": {
         "properties": {
           "allow_package_managers": {
@@ -28787,6 +28846,92 @@
           }
         },
         "summary": "Import Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/import/n8n": {
+      "post": {
+        "description": "Create a hub flow from an n8n workflow. Returns ``{flow, report}``; the\nreport says what each n8n step became and what did not carry over.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/N8nImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import N8N Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/n8n/workflows": {
+      "get": {
+        "description": "The connected n8n instance's workflows, with the trigger a run would use.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List N8N Workflows",
         "tags": [
           "flows"
         ]

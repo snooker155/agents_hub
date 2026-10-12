@@ -358,7 +358,10 @@ def resolve_entities(nodes: List[Dict[str, Any]]) -> Dict[str, flow_registry.Flo
     for node in nodes:
         nid = node.get("id")
         spec = flow_dispatch.resolve_entity(node)
-        if spec is None:
+        if spec is None and flow_dispatch.is_unchosen_agent(node):
+            label = flow_dispatch.node_field(node, "label") or nid
+            errors.append(f"node '{label}' has no agent chosen: pick one in the flow editor")
+        elif spec is None:
             ref = (
                 flow_dispatch.node_field(node, "entity_id")
                 or flow_dispatch.node_field(node, "agent_id")

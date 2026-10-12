@@ -1254,6 +1254,14 @@ export type MemoryStructuredSlotUpsert = {
   "data": Record<string, unknown>;
 };
 
+export type N8nImport = {
+  "mode"?: string;
+  "workflow_id"?: string | null;
+  "workflow"?: string | Record<string, unknown> | null;
+  "name"?: string | null;
+  "workspace"?: string | null;
+};
+
 export type NetworkIn = {
   "type"?: string | null;
   "allowed_hosts"?: string[] | null;
@@ -3230,6 +3238,12 @@ export interface ApiPaths {
   };
   "/api/flows/import": {
     post: { body: FlowImport; response: unknown };
+  };
+  "/api/flows/import/n8n": {
+    post: { body: N8nImport; response: unknown };
+  };
+  "/api/flows/n8n/workflows": {
+    get: { response: unknown };
   };
   "/api/flows/runs/{flow_run_id}/resume": {
     post: { body: FlowResume | null; response: unknown };
