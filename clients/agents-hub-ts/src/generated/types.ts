@@ -606,6 +606,10 @@ export type CustomBackendInput = {
   "default_model"?: string | null;
 };
 
+export type DataClassPut = {
+  "data_class": string;
+};
+
 export type DecideBody = {
   "decision": string;
   "note"?: string;
@@ -998,6 +1002,7 @@ export type HelloBody = {
   "version"?: string;
   "models"?: unknown[];
   "capabilities"?: Record<string, unknown>;
+  "capacity"?: number | null;
 };
 
 export type ImportIn = {
@@ -1239,6 +1244,7 @@ export type LoopSettingsUpdate = {
   "max_concurrent_delegates"?: number | null;
   "tool_search"?: boolean | null;
   "compaction"?: boolean | null;
+  "data_class"?: string | null;
 };
 
 export type MappingCreate = {
@@ -1324,6 +1330,7 @@ export type NodeSettings = {
   "share_models"?: boolean | null;
   "sandbox"?: boolean | null;
   "shared_providers"?: string[] | null;
+  "capacity"?: number | null;
 };
 
 export type NotifyChange = {
@@ -2217,6 +2224,13 @@ export type UpdateEndpoint = {
   "secret"?: string | null;
   "events"?: string[] | null;
   "enabled"?: boolean | null;
+};
+
+export type UpdateNode = {
+  "trust"?: string | null;
+  "max_parallel"?: number | null;
+  "workspaces"?: string[] | null;
+  "disabled"?: boolean | null;
 };
 
 export type UpdateRule = {
@@ -3837,6 +3851,15 @@ export interface ApiPaths {
   "/api/node-link/poll": {
     get: { response: unknown };
   };
+  "/api/node-link/pool/exec": {
+    post: { response: unknown };
+  };
+  "/api/node-link/pool/v1/models": {
+    get: { response: unknown };
+  };
+  "/api/node-link/pool/v1/{path}": {
+    post: { response: unknown };
+  };
   "/api/node-link/self/exec": {
     post: { response: unknown };
   };
@@ -3851,8 +3874,12 @@ export interface ApiPaths {
     get: { response: unknown };
     post: { body: CreateNode; response: unknown };
   };
+  "/api/nodes/pool": {
+    get: { response: unknown };
+  };
   "/api/nodes/{node_id}": {
     get: { response: unknown };
+    patch: { body: UpdateNode; response: unknown };
     delete: { response: unknown };
   };
   "/api/nodes/{node_id}/rotate": {
@@ -4951,6 +4978,10 @@ export interface ApiPaths {
   "/api/workspaces/{name}/agents/{agent_id}/capacity": {
     put: { body: Record<string, unknown>; response: unknown };
     delete: { response: unknown };
+  };
+  "/api/workspaces/{name}/data-class": {
+    get: { response: unknown };
+    put: { body: DataClassPut; response: unknown };
   };
   "/api/workspaces/{name}/default-model": {
     put: { body: Record<string, unknown>; response: unknown };
