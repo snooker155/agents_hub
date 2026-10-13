@@ -14,6 +14,7 @@ import threading
 
 import pytest
 
+from common.config import settings
 from hublink import jobs, mirror, nodes, receive, store
 from hublink import remote as hub_remote
 
@@ -193,7 +194,7 @@ def _serve_exec(client, headers):
 
 
 def test_exec_runs_the_snippet_in_the_nodes_own_sandbox(client, monkeypatch):
-    monkeypatch.setenv("CODE_RUNNER_PROVIDER", "local")
+    monkeypatch.setattr(settings, "code_runner_provider", "local")
     node_id, headers = _node(client)
     served = {}
     worker = threading.Thread(target=lambda: served.update(zip(("job", "answer"), _serve_exec(client, headers))))
@@ -223,7 +224,7 @@ def test_exec_is_refused_for_a_workspace_the_node_does_not_allow(client):
 
 
 def test_self_exec_needs_the_loops_secret_and_a_local_sandbox_refuses_a_fence(client, monkeypatch):
-    monkeypatch.setenv("CODE_RUNNER_PROVIDER", "local")
+    monkeypatch.setattr(settings, "code_runner_provider", "local")
     from hublink import node_client
     assert client.post("/api/node-link/self/exec", json={"language": "python", "code": "1"}).status_code == 403
     resp = client.post("/api/node-link/self/exec", json={

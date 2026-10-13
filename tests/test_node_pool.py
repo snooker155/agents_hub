@@ -15,6 +15,7 @@ import time
 import pytest
 
 from common import data_class
+from common.config import settings
 from hublink import jobs, nodes, scheduler
 
 
@@ -294,7 +295,7 @@ def test_the_pool_sandbox_is_a_provider_and_an_environment_may_name_it(client):
 
 
 def test_pool_exec_runs_on_an_allowed_node(client, monkeypatch):
-    monkeypatch.setenv("CODE_RUNNER_PROVIDER", "local")
+    monkeypatch.setattr(settings, "code_runner_provider", "local")
     from hublink import node_client
     _, headers = _node(client, "Box", sandbox=True)
 
