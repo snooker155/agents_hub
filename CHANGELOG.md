@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-14
+
 ### Added
 
 - **Hub link** (docs/hub-link.md): a hub attaches to another one, usually a
