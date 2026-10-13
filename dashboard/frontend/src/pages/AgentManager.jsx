@@ -27,6 +27,7 @@ import {
   Share2,
   Search,
   Rocket,
+  LayoutTemplate,
 } from 'lucide-react';
 import {
   getAgent,
@@ -35,6 +36,7 @@ import {
   getTasks,
   assignAgent,
   createCustomAgent,
+  createAgentFromTemplate,
   disconnectAgent,
   getAgentModel,
   removeAgentFromWorkspace,
@@ -45,6 +47,8 @@ import {
 import ImportAgentModal from '../components/ImportAgentModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
 import AgentParentPicker from '../components/agent/inheritance/AgentParentPicker';
+import AgentTemplatePicker, { ConnectorChip } from '../components/agent/AgentTemplatePicker';
+import { templateText } from '../components/agent/agentTemplates';
 import { instancePath } from '../components/instanceUtils';
 import { useToast, errorDetail } from '../components/toast';
 
@@ -73,7 +77,9 @@ const AgentManager = () => {
   const [importPreset, setImportPreset] = useState('');
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
-  const [wizardType, setWizardType] = useState('custom'); // 'custom' | 'remote' | 'clone'
+  const [wizardType, setWizardType] = useState('template'); // 'template' | 'creator' | 'custom' | 'remote' | 'clone'
+  // The template picked on the template path, loaded in full (prompt included).
+  const [wizardTemplate, setWizardTemplate] = useState(null);
   const [wizardData, setWizardData] = useState({
     id: '', name: '', description: '', domain: 'general',
     system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1,
@@ -206,7 +212,8 @@ const AgentManager = () => {
 
   const openWizard = () => {
     setWizardStep(1);
-    setWizardType('creator');
+    setWizardType('template');
+    setWizardTemplate(null);
     setWizardData({ id: '', name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1, agent_url: '', original_id: '', extends: '', extends_version: null });
     setCreatorInput('');
     setCreatorStreaming(false);
@@ -306,8 +313,42 @@ const AgentManager = () => {
     }
   };
 
+  // Picking a template fills the wizard from it; the identity step then lets
+  // the person rename it and adjust its prompt and tools before creating.
+  const handleTemplatePick = (template) => {
+    const { name, description } = templateText(t, template);
+    setWizardTemplate(template);
+    setWizardData((d) => ({
+      ...d,
+      id: template.suggested_id || template.id,
+      name,
+      description,
+      domain: template.domain || 'general',
+      system_prompt: template.system_prompt || '',
+      tools: template.tools || [],
+      extends: '',
+      extends_version: null,
+    }));
+  };
+
   const handleWizardSubmit = async () => {
     try {
+      if (wizardType === 'template') {
+        const { data } = await createAgentFromTemplate(wizardTemplate.id, {
+          id: wizardData.id,
+          name: wizardData.name,
+          description: wizardData.description,
+          system_prompt: wizardData.system_prompt,
+          tools: wizardData.tools,
+          capacity: wizardData.capacity,
+          workspace: selectedWorkspace || null,
+        });
+        closeWizard();
+        fetchData();
+        toast.success(t('agentTemplates.created', { name: wizardData.name }), data?.next_steps || undefined);
+        if (data?.agent?.id) navigate(`/agents/${encodeURIComponent(data.agent.id)}`);
+        return;
+      }
       if (wizardType === 'creator') {
         if (creatorDone) { closeWizard(); return; }
         await handleCreatorSubmit();
@@ -735,6 +776,7 @@ const AgentManager = () => {
       {showWizard && (() => {
         const STEPS =
           wizardType === 'creator' ? [t('agentManager.steps.type'), t('agentManager.steps.launch')] :
+          wizardType === 'template' ? [t('agentManager.steps.type'), t('agentTemplates.stepTemplate'), t('agentManager.steps.identity'), t('agentManager.steps.review')] :
           wizardType === 'clone'   ? [t('agentManager.steps.type'), t('agentManager.steps.source'), t('agentManager.steps.identity'), t('agentManager.steps.review')] :
                                      [t('agentManager.steps.type'), t('agentManager.steps.identity'), t('agentManager.steps.capabilities'), t('agentManager.steps.review')];
         const totalSteps = STEPS.length;
@@ -744,7 +786,9 @@ const AgentManager = () => {
 
         return (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]">
+            {/* The template step lays its cards out four across, so the
+                dialog widens for it and narrows again for the form steps. */}
+            <div className={`bg-white rounded-2xl w-full ${wizardStep === 2 && wizardType === 'template' ? 'max-w-6xl' : 'max-w-lg'} shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]`}>
               {/* Header */}
               <div className="p-6 pb-4 border-b border-gray-100">
                 <div className="flex items-center justify-between mb-4">
@@ -787,6 +831,7 @@ const AgentManager = () => {
                   <div className="space-y-3">
                     <p className="text-sm text-gray-500">{t('agentManager.chooseHowYouWantTo')}</p>
                     {[
+                      { value: 'template', icon: LayoutTemplate, label: t('agentTemplates.optionLabel'), desc: t('agentTemplates.optionDesc') },
                       { value: 'creator', icon: Sparkles, label: t('agentManager.useAgentCreator'), desc: t('agentManager.useAgentCreatorDesc') },
                       { value: 'custom', icon: Box, label: t('agentManager.customAgent'), desc: t('agentManager.customAgentDesc') },
                     ].map(({ value, icon: Icon, label, desc }) => (
@@ -807,6 +852,15 @@ const AgentManager = () => {
                       </button>
                     ))}
                   </div>
+                )}
+
+                {/* Step 2 (template) — pick a ready agent */}
+                {wizardStep === 2 && wizardType === 'template' && (
+                  <AgentTemplatePicker
+                    workspace={selectedWorkspace}
+                    selectedId={wizardTemplate?.id}
+                    onPick={handleTemplatePick}
+                  />
                 )}
 
                 {/* Step 2 (creator) — inline chat */}
@@ -907,7 +961,7 @@ const AgentManager = () => {
                 )}
 
                 {/* Step 2 (non-clone, non-creator) / Step 3 (clone) — Identity */}
-                {((wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator') || (wizardStep === 3 && wizardType === 'clone')) && (
+                {((wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && wizardType !== 'template') || (wizardStep === 3 && (wizardType === 'clone' || wizardType === 'template'))) && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -959,11 +1013,50 @@ const AgentManager = () => {
                         />
                       </div>
                     )}
+                    {wizardType === 'template' && (
+                      <details className="pt-2 border-t border-gray-100 group">
+                        <summary className="cursor-pointer text-xs font-bold text-gray-500 uppercase select-none">
+                          {t('agentTemplates.adjust')}
+                        </summary>
+                        <div className="space-y-4 mt-3">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentTemplates.prompt')}</label>
+                            <textarea
+                              rows="10"
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono"
+                              value={wizardData.system_prompt}
+                              onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentTemplates.tools')}</label>
+                            <select
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+                              value=""
+                              onChange={e => { if (e.target.value) toggleWizardTool(e.target.value); }}
+                            >
+                              <option value="">{t('agentManager.addATool')}</option>
+                              {toolList.filter(tool => !wizardData.tools.includes(tool.name)).map(tool => (
+                                <option key={tool.name} value={tool.name}>{tool.name}{tool.description ? ` — ${tool.description}` : ''}</option>
+                              ))}
+                            </select>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {wizardData.tools.map(name => (
+                                <span key={name} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs px-2 py-1 rounded-full">
+                                  {name}
+                                  <button type="button" onClick={() => toggleWizardTool(name)} className="text-indigo-400 hover:text-indigo-700 leading-none">×</button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )}
 
                 {/* Step 3 (non-clone) — Capabilities */}
-                {wizardStep === 3 && wizardType !== 'clone' && (
+                {wizardStep === 3 && wizardType !== 'clone' && wizardType !== 'template' && (
                   <div className="space-y-4">
                     {wizardType === 'custom' && (
                       <>
@@ -1026,7 +1119,7 @@ const AgentManager = () => {
                   <div className="space-y-3">
                     <p className="text-sm text-gray-500">{t('agentManager.reviewYourAgentBeforeCreating')}</p>
                     <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.type')}</span><span className="font-semibold capitalize text-gray-800">{wizardType}</span></div>
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.type')}</span><span className="font-semibold capitalize text-gray-800">{wizardType === 'template' ? t('agentTemplates.template') : wizardType}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">ID</span><span className=" text-gray-800">{wizardData.id || wizardData.original_id}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.name')}</span><span className="text-gray-800">{wizardData.name}</span></div>
                       {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.description')}</span><span className="text-gray-700">{wizardData.description}</span></div>}
@@ -1040,7 +1133,24 @@ const AgentManager = () => {
                           </span>
                         </div>
                       )}
-                      {wizardType === 'custom' && wizardData.tools.length > 0 && (
+                      {wizardType === 'template' && wizardTemplate && (
+                        <>
+                          <div className="flex gap-2">
+                            <span className="text-gray-400 w-24 flex-shrink-0">{t('agentTemplates.template')}</span>
+                            <span className="text-gray-800">{templateText(t, wizardTemplate).name}</span>
+                          </div>
+                          {[...(wizardTemplate.connectors?.required || []), ...(wizardTemplate.connectors?.optional || [])].length > 0 && (
+                            <div className="flex gap-2">
+                              <span className="text-gray-400 w-24 flex-shrink-0">{t('agentTemplates.worksWith')}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {[...(wizardTemplate.connectors?.required || []), ...(wizardTemplate.connectors?.optional || [])]
+                                  .map((c) => <ConnectorChip key={c.name} c={c} />)}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {(wizardType === 'custom' || wizardType === 'template') && wizardData.tools.length > 0 && (
                         <div className="flex gap-2">
                           <span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.tools')}</span>
                           <div className="flex flex-wrap gap-1">
@@ -1050,6 +1160,20 @@ const AgentManager = () => {
                       )}
                       {wizardType === 'remote' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">URL</span><span className=" text-gray-700 break-all">{wizardData.agent_url}</span></div>}
                       {wizardType === 'clone' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.source')}</span><span className=" text-gray-800">{wizardData.original_id}</span></div>}
+                      {wizardType === 'template' && wizardTemplate?.outcome?.rubric && (
+                        <div className="flex gap-2 flex-col">
+                          <span className="text-gray-400">{t('agentTemplates.rubric')}</span>
+                          <p className="text-gray-700 text-xs bg-white border border-gray-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{wizardTemplate.outcome.rubric}</p>
+                        </div>
+                      )}
+                      {wizardType === 'template' && wizardTemplate?.starters?.length > 0 && (
+                        <div className="flex gap-2 flex-col">
+                          <span className="text-gray-400">{t('agentTemplates.tryAsking')}</span>
+                          <ul className="list-disc list-inside text-xs text-gray-600 space-y-0.5">
+                            {wizardTemplate.starters.map((s) => <li key={s}>{s}</li>)}
+                          </ul>
+                        </div>
+                      )}
                       {wizardType === 'custom' && wizardData.system_prompt && (
                         <div className="flex gap-2 flex-col">
                           <span className="text-gray-400">{wizardData.extends ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}</span>
@@ -1077,7 +1201,9 @@ const AgentManager = () => {
                     creatorStreaming ||
                     (wizardStep === 2 && wizardType === 'creator' && !creatorDone && !creatorInput.trim()) ||
                     (wizardStep === 2 && wizardType === 'clone' && !wizardData.original_id) ||
-                    (wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && (!wizardData.id || !wizardData.name)) ||
+                    (wizardStep === 2 && wizardType === 'template' && !wizardTemplate) ||
+                    (wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && wizardType !== 'template' && (!wizardData.id || !wizardData.name)) ||
+                    (wizardStep === 3 && wizardType === 'template' && (!wizardData.id || !wizardData.name || !wizardData.system_prompt.trim())) ||
                     (wizardStep === 3 && wizardType === 'clone' && (!wizardData.id || !wizardData.name)) ||
                     (wizardStep === 3 && wizardType === 'custom' && !wizardData.system_prompt && !wizardData.extends) ||
                     (wizardStep === 3 && wizardType === 'remote' && !wizardData.agent_url)

@@ -3,9 +3,10 @@
 Modelled on Anthropic's Claude for Financial Services agent templates: a kit
 names a few agents with careful prompts, the connectors they need and an
 outcome rubric for each, so a workspace gets a working team in one step
-instead of writing every agent by hand. Three ship with the hub:
-``kits/support`` (customer support), ``kits/finance`` (finance operations and
-analyst work) and ``kits/recruiting``.
+instead of writing every agent by hand. Ten ship with the hub, from
+``kits/support`` (customer support) and ``kits/finance`` (finance operations)
+to ``kits/legal`` (contract review) and ``kits/helpdesk``; docs/kits.md lists
+them all.
 
 A kit IS an ``ah apply`` bundle (``declarative/``, docs/apply.md) plus a
 manifest, ``kit.yaml``: ``id`` (must match the folder name), ``name``,
@@ -191,7 +192,11 @@ def namespaced_bundle(bundle: Bundle, workspace: Optional[str]) -> Bundle:
     agent_keys = {r.key for r in bundle.by_kind("agent")}
 
     def rename(value: Any) -> Any:
-        return f"{value}@{ws}" if value in agent_keys else value
+        # A list field may carry ``+item`` / ``-item`` deltas against an
+        # extended parent's list (docs/agent-inheritance.md); keep the sign.
+        sign = value[0] if isinstance(value, str) and value[:1] in ("+", "-") else ""
+        bare = value[len(sign):] if sign else value
+        return f"{sign}{bare}@{ws}" if bare in agent_keys else value
 
     out = Bundle(root=bundle.root, files=list(bundle.files))
     for res in bundle.resources:

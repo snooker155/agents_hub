@@ -32,10 +32,13 @@ text is. Both are far above any hand-written conversation.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 
 def _current_user_id() -> str:
@@ -191,7 +194,18 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
             (chat_id, *[doc.get(c) for c in _COLUMNS], len(_messages(doc)),
              doc.get("created_at"), doc.get("updated_at"), db.dumps(doc)),
         )
+    _mirror(chat_id, doc.get("origin"))
     return doc
+
+
+def _mirror(chat_id: str, origin: Any) -> None:
+    """A saved conversation is due for the hub link's mirror
+    (hublink/mirror.py), when one is on. Never blocks the save."""
+    try:
+        from hublink.mirror import on_chat_saved
+        on_chat_saved(str(chat_id), str(origin or ""))
+    except Exception:  # noqa: BLE001 - the mirror must never break a chat write
+        log.debug("chat store: mirror hook failed", exc_info=True)
 
 
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
@@ -255,6 +269,7 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
                 (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
             )
+            _mirror(chat_id, chat.get("origin"))
             return True
         turn = []
         if (user_message or "").strip():
@@ -274,6 +289,7 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
             (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
         )
+    _mirror(chat_id, chat.get("origin"))
     return True
 
 

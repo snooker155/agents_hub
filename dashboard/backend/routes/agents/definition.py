@@ -82,6 +82,31 @@ async def get_agent_definition(agent_id: str):
     }
 
 
+@router.get("/{agent_id}/examples")
+async def get_agent_examples(agent_id: str, lang: str = "en"):
+    """Example requests for the empty chat with this agent, in UI language
+    *lang*: the agent's ``examples.yaml``, else the nearest parent's along
+    ``extends``, else the "Good fits" bullets of the usage text it runs with
+    (as written, untranslated). An agent with none gets an empty list."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    defs_dir = get_factory().definitions_dir
+    node, seen = spec, set()
+    while node is not None and node.id not in seen:
+        seen.add(node.id)
+        examples = prompt_assembly.read_examples(node.def_id(), lang, defs_dir)
+        if examples:
+            return {"agent_id": spec.id, "examples": examples[:6]}
+        node = registry.get_agent(registry.resolve_agent_id(node.extends)) if node.extends else None
+    if spec.extends:
+        from agents import inheritance
+        usage = inheritance.effective_parts(spec, definitions_dir=defs_dir)["usage"]
+    else:
+        usage = prompt_assembly.read_usage(spec.def_id(), definitions_dir=defs_dir)
+    return {"agent_id": spec.id, "examples": prompt_assembly.example_prompts(usage)}
+
+
 class AgentInstructionsUpdate(BaseModel):
     instructions: Optional[str] = None
     capabilities: Optional[str] = None

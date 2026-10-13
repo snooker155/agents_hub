@@ -142,7 +142,9 @@ export default function ChatComposer() {
   });
   const boxEmpty = !input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0;
   const micShown = boxEmpty && voice.available && !steering.busy && !currentTelegramBinding;
-  const micUsable = micShown && hasTarget && !loading;
+  // A mirrored conversation (docs/hub-link.md) is written on another hub; nothing is sent from here.
+  const mirrored = currentConv?.origin === 'mirror';
+  const micUsable = micShown && hasTarget && !loading && !mirrored;
   useEffect(() => {
     if (!micUsable) return undefined;
     const down = (e) => {
@@ -425,7 +427,7 @@ export default function ChatComposer() {
               ) : (
                 <button
                   onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget}
+                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget || mirrored}
                   title={t('chat.sendEnter')}
                   className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
                     bg-indigo-600 text-white hover:bg-indigo-700

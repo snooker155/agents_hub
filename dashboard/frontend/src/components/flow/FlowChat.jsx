@@ -6,6 +6,9 @@ import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
 import { autoGrowTextarea } from '../../lib/autoGrow';
 import { historyWindowStart } from '../chat/send/buildRequest';
+import ExampleRequests from '../chat/ExampleRequests';
+import fillComposer from '../chat/fillComposer';
+import { getFlowExamples } from '../../api/flows';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
@@ -113,7 +116,7 @@ export default function FlowChat({
   // persisted record. Not used for live progress anymore (see onStreamEvent).
   onActivity = null,
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   // The flow's own chat, in the editor's right-hand panel: while it is mounted
   // the floating launcher would sit on its composer, so it stands down.
   useInlineChatOpen();
@@ -363,14 +366,21 @@ export default function FlowChat({
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 && !loading ? (
-          <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center">
+          <div className="flex min-h-full flex-col items-center justify-center py-4 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 shadow-sm">
               <Workflow className="h-7 w-7 text-emerald-600" />
             </div>
-            <p className="max-w-[240px] text-sm leading-relaxed text-slate-500">
-              Send a message to run it through every node of this flow, in DAG order. Each node
-              produces its own reply and feeds the next.
+            <p className="max-w-sm text-sm leading-relaxed text-slate-500">
+              {t('chat.emptyFlow')}
             </p>
+            {/* The flow's own example requests, else its first agent's
+                (GET /api/flows/{id}/examples); a click fills the box. */}
+            <ExampleRequests
+              compact
+              load={() => getFlowExamples(flowId, language)}
+              loadKey={flowId ? `${flowId}:${language}` : null}
+              onPick={(text) => fillComposer(text, setInput, textareaRef)}
+            />
           </div>
         ) : (
           <>

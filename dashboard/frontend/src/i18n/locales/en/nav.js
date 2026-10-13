@@ -64,4 +64,5 @@ export default {
   watchers: 'Watchers',
   connectors: 'Connectors',
   mcp: 'MCP servers',
+  nodes: 'Nodes',
 };

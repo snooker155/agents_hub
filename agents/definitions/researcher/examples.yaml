@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Is the library we use here still maintained, and does the version we pin have the fix?
+- 'We decided something about this last month: check what, then see whether it still holds'
+- Compare how we do X against how it is usually done, and recommend
+- Are our dependencies affected by any recent security advisories?
+- What do our docs say about rate limits, and does the provider still match that?
+- Gather what we know about competitor Y and what is new about them online
+ru:
+- Поддерживается ли ещё библиотека, которую мы тут используем, и есть ли исправление в закреплённой у нас версии?
+- 'В прошлом месяце мы что-то решили по этому поводу: проверь что, а потом актуально ли это сейчас'
+- Сравни, как мы делаем X, с тем, как это обычно делают, и дай рекомендацию
+- Затрагивают ли наши зависимости недавние сообщения об уязвимостях?
+- Что в нашей документации сказано про лимиты запросов и совпадает ли это с тем, что сейчас у провайдера?
+- Собери, что мы знаем о конкуренте Y и что нового о нём в сети
+de:
+- Wird die Bibliothek, die wir hier nutzen, noch gepflegt, und hat unsere festgelegte Version den Fix?
+- 'Wir haben dazu letzten Monat etwas entschieden: prüf, was, und ob es noch gilt'
+- Vergleiche, wie wir X machen, mit dem üblichen Vorgehen, und gib eine Empfehlung
+- Sind unsere Abhängigkeiten von aktuellen Sicherheitshinweisen betroffen?
+- Was sagen unsere Docs zu Rate Limits, und stimmt das noch mit dem Anbieter überein?
+- Trag zusammen, was wir über Wettbewerber Y wissen und was es online Neues über ihn gibt

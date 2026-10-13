@@ -75,7 +75,7 @@ describe('LoopSettingsCard', () => {
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', {
       fallback_models: ['openai/gpt-4o-mini', 'anthropic/claude-haiku'],
       advisor_model: null, output_schema: null, max_concurrent_delegates: 6,
-      tool_search: null, compaction: null,
+      tool_search: null, compaction: null, data_class: '',
     }));
     expect(await screen.findByText('agentLoop.saved')).toBeInTheDocument();
     expect(onSaved).toHaveBeenCalled();
@@ -184,6 +184,19 @@ describe('LoopSettingsCard', () => {
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', expect.objectContaining({
       max_concurrent_delegates: 10,
     })));
+  });
+
+  it('loads and saves the agent data class', async () => {
+    api.getAgentLoopSettings.mockResolvedValue({ data: settingsBody({ data_class: 'internal' }) });
+    api.updateAgentLoopSettings.mockResolvedValue({ data: settingsBody({ data_class: 'confidential' }) });
+    render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
+    const select = await screen.findByTestId('agent-data-class');
+    expect(select).toHaveValue('internal');
+    fireEvent.change(select, { target: { value: 'confidential' } });
+    fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
+    await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith(
+      'a1', expect.objectContaining({ data_class: 'confidential' }),
+    ));
   });
 
   it('shows the refusal the backend sends back', async () => {

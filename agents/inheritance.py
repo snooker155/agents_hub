@@ -56,7 +56,7 @@ SCALAR_FIELDS: Tuple[str, ...] = (
     "reasoning", "response_format", "clarify_gate", "allow_self_delegation",
     "skills_enabled", "episodic_write_enabled", "max_concurrent_delegates", "advisor_model",
     "output_schema", "tool_search", "compaction", "handoff_history", "default_outcome",
-    "streaming", "verbose", "commands",
+    "streaming", "verbose", "commands", "data_class",
 )
 MERGED_DICT_FIELDS: Tuple[str, ...] = ("tool_policy", "default_params")
 INHERITABLE_FIELDS: Tuple[str, ...] = SCALAR_FIELDS + LIST_FIELDS + MERGED_DICT_FIELDS

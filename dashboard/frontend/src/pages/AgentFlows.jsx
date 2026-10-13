@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import N8nImportModal from '../components/flow/N8nImportModal';
+import CreateFlowDialog from '../components/flow/CreateFlowDialog';
 const PROVIDERS = [
   { value: '', labelKey: 'agentFlows.providers.inherit' },
   { value: 'openai', label: 'OpenAI' },
@@ -54,9 +55,7 @@ const AgentFlows = () => {
   const [loadedFor, setLoadedFor] = useState(null);
   const [reloading, setReloading] = useState(false);
   const loading = reloading || loadedFor !== workspaceFilter;
-  const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [newFlow, setNewFlow] = useState({ name: '', description: '' });
 
   // AI wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -106,24 +105,6 @@ const AgentFlows = () => {
   }, [loadFlows, selectedWorkspace]);
 
   const visibleFlows = useMemo(() => flows, [flows]);
-
-  const handleCreate = async (event) => {
-    event.preventDefault();
-    if (!newFlow.name.trim()) return;
-
-    setCreating(true);
-    try {
-      const response = await createFlow({
-        name: newFlow.name.trim(),
-        description: newFlow.description.trim(),
-      });
-      navigate(`/flows/${response.data.id}/edit`);
-    } catch (error) {
-      alert(`Failed to create flow: ${error.response?.data?.detail || error.message}`);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const handleDelete = async (flowId) => {
     if (!confirm(t('agentFlows.confirmDelete'))) return;
@@ -482,67 +463,8 @@ const AgentFlows = () => {
         </div>
       </section>
 
-      {/* Create Flow Modal */}
-      {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="relative flex w-full max-w-lg flex-col rounded-[28px] border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
-              <div className="flex items-center gap-2">
-                <Plus className="h-5 w-5 text-cyan-600" />
-                <h2 className="text-lg font-bold text-slate-900">{t('agentFlows.createFlow')}</h2>
-              </div>
-              <button
-                onClick={() => setCreateOpen(false)}
-                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreate} className="space-y-5 p-6">
-              <p className="text-sm text-slate-500">{t('agentFlows.startWithABlankCanvas')}</p>
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{t('agentFlows.name')}</label>
-                <input
-                  autoFocus
-                  value={newFlow.name}
-                  onChange={(event) => setNewFlow((current) => ({ ...current, name: event.target.value }))}
-                  placeholder={t('agentFlows.customerOnboardingPipeline')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{t('agentFlows.description')}</label>
-                <textarea
-                  value={newFlow.description}
-                  onChange={(event) => setNewFlow((current) => ({ ...current, description: event.target.value }))}
-                  rows={4}
-                  placeholder={t('agentFlows.whatThisFlowIsResponsible')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition"
-                />
-              </div>
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setCreateOpen(false)}
-                  disabled={creating}
-                  className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {t('agentFlows.cancel')}
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating || !newFlow.name.trim()}
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-300"
-                >
-                  <Plus className="h-4 w-4" />
-                  {creating ? 'Creating...' : 'Create flow'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Create flow: template, then name and description */}
+      {createOpen && <CreateFlowDialog onClose={() => setCreateOpen(false)} />}
 
       {/* Import Modal — review parsed YAML before validating + storing it */}
       {importOpen && (

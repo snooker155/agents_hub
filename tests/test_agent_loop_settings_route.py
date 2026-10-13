@@ -52,6 +52,7 @@ def test_get_defaults(client, agent):
     assert resp.json() == {
         "fallback_models": [], "advisor_model": None, "output_schema": None,
         "max_concurrent_delegates": 6, "tool_search": None, "compaction": None,
+        "data_class": "",
     }
 
 

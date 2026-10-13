@@ -1,0 +1,26 @@
+id: legal
+name: Contract review
+description: >
+  Reviews incoming contracts against the team's own playbook of standard
+  positions, drafts redlines and fallback wording for what falls outside it,
+  and keeps track of renewal and notice dates so none slips by. Every
+  output is a first pass for a lawyer to sign off, not legal advice.
+industry: Legal
+icon: scale
+version: 1.0.0
+connectors:
+  required: []
+  optional: [google, microsoft, notion]
+rubrics: >
+  Reviewer is graded on checking every clause the playbook covers, quoting
+  the contract's actual wording, and rating each deviation by the playbook's
+  own risk levels. Drafter is graded on redlines that use the playbook's
+  fallback wording and explain each change. Obligations is graded on
+  extracting every date and duty with the clause it comes from, and on
+  reminding the team early enough to act.
+next_steps: >
+  Put the playbook into the Contract playbook memory pool: for each clause
+  type (liability, indemnity, termination, payment terms, data protection,
+  governing law) the standard position, acceptable fallbacks and red lines.
+  Upload contracts as workspace files. The weekly renewal watch on
+  Obligations' Pulse tab starts paused.

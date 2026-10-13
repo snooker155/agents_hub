@@ -1,0 +1,6 @@
+kind: memory_pool
+id: contract-playbook
+name: Contract playbook
+description: Standard positions, fallbacks and red lines per clause type, plus every reviewed contract's key dates and obligations, shared by Reviewer, Drafter and Obligations.
+blocks:
+  persona: "You keep the legal team's contract playbook: for each clause type the standard position, the fallbacks the team accepts and the red lines it never crosses, and for each signed contract its key dates and obligations. Quote wording exactly; a paraphrased clause is a different clause."

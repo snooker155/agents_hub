@@ -9,8 +9,10 @@ asks, tools/advisor.py),
 ``output_schema`` (a JSON object jsonschema itself accepts as a schema),
 ``max_concurrent_delegates`` (1..32, default 6: how many of this agent's
 delegated subtasks ``delegate_task_tool`` may run at once, fifth-cycle stage 3),
-and the two tri-state loop toggles ``tool_search``/``compaction`` (None/True/
-False). Saved the same way the other per-field routes in routes/agents.py
+the two tri-state loop toggles ``tool_search``/``compaction`` (None/True/
+False), and ``data_class`` (``public``/``internal``/``confidential`` or ""
+for the workspace's: which linked nodes may see the agent's work,
+common/data_class.py). Saved the same way the other per-field routes in routes/agents.py
 save a spec (``dataclasses.replace`` + ``registry.add_agent``, which
 snapshots version history), but kept in its own module per the fourth-cycle
 stage 2 file split.
@@ -49,6 +51,7 @@ class LoopSettingsUpdate(BaseModel):
     max_concurrent_delegates: Optional[int] = None
     tool_search: Optional[bool] = None
     compaction: Optional[bool] = None
+    data_class: Optional[str] = None
 
 
 def _settings_dict(spec: Any) -> Dict[str, Any]:
@@ -59,6 +62,7 @@ def _settings_dict(spec: Any) -> Dict[str, Any]:
         "max_concurrent_delegates": getattr(spec, "max_concurrent_delegates", 6),
         "tool_search": spec.tool_search,
         "compaction": spec.compaction,
+        "data_class": getattr(spec, "data_class", "") or "",
     }
 
 
@@ -137,6 +141,13 @@ async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate, request:
         changes["tool_search"] = data.tool_search
     if "compaction" in data.model_fields_set:
         changes["compaction"] = data.compaction
+    if "data_class" in data.model_fields_set:
+        from common.data_class import CLASSES, normalize_class
+        raw = str(data.data_class or "").strip()
+        cls = normalize_class(raw)
+        if raw and cls is None:
+            raise HTTPException(status_code=400, detail=f"data_class must be one of {', '.join(CLASSES)} or empty")
+        changes["data_class"] = cls or ""
 
     new_spec = dataclasses.replace(spec, **changes) if changes else spec
     try:

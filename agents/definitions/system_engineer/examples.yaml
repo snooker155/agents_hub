@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- 'Take the oldest open system task marked code: yes and fix it'
+- Fix the issue in this system task and add a test for it
+- Prepare a patch on a branch for the failing health check
+- Which system tasks can you fix with code, and which need a person?
+- Review the suggested fix in this system task before applying it
+- Show me the branch and diff for the last system task
+ru:
+- 'Возьми самую старую открытую системную задачу с пометкой code: yes и исправь её'
+- Исправь проблему из этой системной задачи и добавь на неё тест
+- Подготовь патч в отдельной ветке для падающей проверки здоровья
+- Какие системные задачи можно исправить кодом, а каким нужен человек?
+- Проверь предложенное в этой системной задаче исправление, прежде чем его применять
+- Покажи ветку и дифф по последней системной задаче
+de:
+- 'Nimm die älteste offene Systemaufgabe mit code: yes und behebe sie'
+- Behebe das Problem aus dieser Systemaufgabe und schreib einen Test dafür
+- Bereite auf einem Branch einen Patch für den fehlschlagenden Health-Check vor
+- Welche Systemaufgaben kannst du mit Code beheben, und welche brauchen einen Menschen?
+- Prüfe den vorgeschlagenen Fix in dieser Systemaufgabe, bevor du ihn anwendest
+- Zeig mir den Branch und den Diff zur letzten Systemaufgabe

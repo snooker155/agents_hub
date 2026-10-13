@@ -68,6 +68,20 @@ A remote container through [modal.com](https://modal.com)'s Python SDK.
 Optional dependency, not installed by default: `pip install modal`. Same
 `mount_workspace`/`stdin` limitations as e2b, for the same reasons.
 
+### node:\<id\>
+
+A linked node's sandbox ([hub link](hub-link.md)): the snippet runs on
+another hub, usually someone's own machine, in whatever provider that hub
+uses for its own `run_code` (docker where it has one). Picked per
+environment; the Environments page lists every node that announced a
+sandbox and is online. The node's owner may limit it to some workspaces,
+and a request from any other is refused. `mount_workspace` is refused (the
+files are here, the snippet runs there), and a node whose own provider is
+`local` refuses a fenced request rather than running it open.
+
+**Network**: the request's policy travels to the node and its provider is
+held to it, with the refusal above for a provider that cannot fence.
+
 ## Network policy per provider
 
 Every provider takes the same three network types (`none`, `limited` with a

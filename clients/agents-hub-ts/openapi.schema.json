@@ -2514,6 +2514,19 @@
         "title": "CheckpointRequest",
         "type": "object"
       },
+      "ChunkBody": {
+        "properties": {
+          "data": {
+            "title": "Data",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ChunkBody",
+        "type": "object"
+      },
       "ClaimSteeringBody": {
         "properties": {
           "step": {
@@ -3170,6 +3183,33 @@
         "title": "CreateEndpoint",
         "type": "object"
       },
+      "CreateNode": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "workspaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspaces"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateNode",
+        "type": "object"
+      },
       "CreateRule": {
         "properties": {
           "agent_id": {
@@ -3459,6 +3499,19 @@
           "id"
         ],
         "title": "CustomBackendInput",
+        "type": "object"
+      },
+      "DataClassPut": {
+        "properties": {
+          "data_class": {
+            "title": "Data Class",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data_class"
+        ],
+        "title": "DataClassPut",
         "type": "object"
       },
       "DecideBody": {
@@ -3857,6 +3910,23 @@
           "repo"
         ],
         "title": "DownloadBody",
+        "type": "object"
+      },
+      "EndBody": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "title": "EndBody",
         "type": "object"
       },
       "EnvironmentCreate": {
@@ -5033,6 +5103,29 @@
             ],
             "title": "Entry Point"
           },
+          "examples": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examples"
+          },
           "max_parallel": {
             "anyOf": [
               {
@@ -5703,6 +5796,66 @@
           "agent_id"
         ],
         "title": "HandoffBody",
+        "type": "object"
+      },
+      "HeadBody": {
+        "properties": {
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "status": {
+            "default": 200,
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "title": "HeadBody",
+        "type": "object"
+      },
+      "HelloBody": {
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "capacity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity"
+          },
+          "host": {
+            "default": "",
+            "title": "Host",
+            "type": "string"
+          },
+          "models": {
+            "items": {},
+            "title": "Models",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "default": "",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "title": "HelloBody",
         "type": "object"
       },
       "ImportIn": {
@@ -7033,6 +7186,74 @@
         "title": "LimitsIn",
         "type": "object"
       },
+      "LinkBody": {
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "mirror": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mirror"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_workspace": {
+            "default": "",
+            "title": "Target Workspace",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "use_agents": {
+            "default": true,
+            "title": "Use Agents",
+            "type": "boolean"
+          },
+          "use_models": {
+            "default": true,
+            "title": "Use Models",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "LinkBody",
+        "type": "object"
+      },
       "LoadBody": {
         "properties": {
           "context_length": {
@@ -7252,6 +7473,17 @@
               }
             ],
             "title": "Compaction"
+          },
+          "data_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Class"
           },
           "fallback_models": {
             "anyOf": [
@@ -7562,6 +7794,66 @@
         "title": "MemoryStructuredSlotUpsert",
         "type": "object"
       },
+      "MirrorChats": {
+        "properties": {
+          "chats": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Chats",
+            "type": "array"
+          },
+          "node": {
+            "default": "node",
+            "title": "Node",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "MirrorChats",
+        "type": "object"
+      },
+      "MirrorMemory": {
+        "properties": {
+          "node": {
+            "default": "node",
+            "title": "Node",
+            "type": "string"
+          },
+          "pools": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Pools",
+            "type": "array"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "MirrorMemory",
+        "type": "object"
+      },
       "N8nImport": {
         "properties": {
           "mode": {
@@ -7661,6 +7953,81 @@
           }
         },
         "title": "NetworkIn",
+        "type": "object"
+      },
+      "NodeSettings": {
+        "properties": {
+          "capacity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "sandbox": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sandbox"
+          },
+          "share_models": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Models"
+          },
+          "shared_providers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Providers"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          }
+        },
+        "title": "NodeSettings",
         "type": "object"
       },
       "NotifyChange": {
@@ -13294,6 +13661,59 @@
         "title": "UpdateEndpoint",
         "type": "object"
       },
+      "UpdateNode": {
+        "properties": {
+          "disabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled"
+          },
+          "max_parallel": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Parallel"
+          },
+          "trust": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trust"
+          },
+          "workspaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspaces"
+          }
+        },
+        "title": "UpdateNode",
+        "type": "object"
+      },
       "UpdateRule": {
         "properties": {
           "agent_id": {
@@ -14451,6 +14871,86 @@
         "title": "WorldGenerateIn",
         "type": "object"
       },
+      "routes__agent_templates__CreateFromTemplate": {
+        "properties": {
+          "capacity": {
+            "default": 1,
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "CreateFromTemplate",
+        "type": "object"
+      },
       "routes__channels__BindingCreate": {
         "properties": {
           "agent_id": {
@@ -14544,6 +15044,50 @@
           }
         },
         "title": "ApplyBody",
+        "type": "object"
+      },
+      "routes__flow_templates__CreateFromTemplate": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "lang": {
+            "default": "en",
+            "title": "Lang",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "title": "CreateFromTemplate",
         "type": "object"
       },
       "routes__loops__RunIn": {
@@ -15536,6 +16080,156 @@
         "summary": "Refresh Topology",
         "tags": [
           "agent-import"
+        ]
+      }
+    },
+    "/api/agent-templates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Templates",
+        "tags": [
+          "agent_templates"
+        ]
+      }
+    },
+    "/api/agent-templates/{template_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Template",
+        "tags": [
+          "agent_templates"
+        ]
+      }
+    },
+    "/api/agent-templates/{template_id}/create": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/routes__agent_templates__CreateFromTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create From Template",
+        "tags": [
+          "agent_templates"
         ]
       }
     },
@@ -16621,6 +17315,56 @@
           }
         },
         "summary": "Update Agent Episodic Config",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/examples": {
+      "get": {
+        "description": "Example requests for the empty chat with this agent, in UI language\n*lang*: the agent's ``examples.yaml``, else the nearest parent's along\n``extends``, else the \"Good fits\" bullets of the usage text it runs with\n(as written, untranslated). An agent with none gets an empty list.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Examples",
         "tags": [
           "agents"
         ]
@@ -28645,6 +29389,144 @@
         ]
       }
     },
+    "/api/flow-templates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Flow Templates",
+        "tags": [
+          "flow_templates"
+        ]
+      }
+    },
+    "/api/flow-templates/{template_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Flow Template",
+        "tags": [
+          "flow_templates"
+        ]
+      }
+    },
+    "/api/flow-templates/{template_id}/create": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/routes__flow_templates__CreateFromTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create From Template",
+        "tags": [
+          "flow_templates"
+        ]
+      }
+    },
     "/api/flows": {
       "get": {
         "description": "The flow list. With no ``limit``/``offset`` this is the full list, exactly\nas before; with either, it is one page: ``{items, total, limit, offset}``.\n\nFlows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not\na queryable store. Visibility filtering happens on the cheapest field that\ncan answer it before anything is parsed off disk, and ``_public_flow`` (the\nonly per-item work here) runs on the resulting page, not the whole catalog:\n\n- An explicit ``allowed_flows`` allowlist *is* the filter, metadata already\n  in hand, so only the ids that land on the requested page get read.\n- Otherwise, ownership (\"global flows + flows owned by this workspace\") is\n  a property of each flow's own record, so every flow still has to be\n  parsed once to know it: flow_store keeps no index for that.\n- With no workspace at all, ``flow_store`` pages the file list itself and\n  parses only those files.",
@@ -29154,6 +30036,56 @@
           }
         },
         "summary": "Estimate Flow",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/{flow_id}/examples": {
+      "get": {
+        "description": "Example requests for the flow's empty chat, in UI language *lang*:\nthe flow's own ``examples`` (a template's, or set in the editor), else\nthose of the agent its first step runs, since that step is the one the\nmessage goes to. ``source`` says which; empty when neither has any.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Flow Examples",
         "tags": [
           "flows"
         ]
@@ -30710,6 +31642,170 @@
         "summary": " Stop Chat",
         "tags": [
           "help-chat"
+        ]
+      }
+    },
+    "/api/hublink": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete Link",
+        "tags": [
+          "hub-link"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Link",
+        "tags": [
+          "hub-link"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Link",
+        "tags": [
+          "hub-link"
+        ]
+      }
+    },
+    "/api/hublink/mirror/chats": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MirrorChats"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mirror Chats",
+        "tags": [
+          "hub-link"
+        ]
+      }
+    },
+    "/api/hublink/mirror/memory": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MirrorMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mirror Memory",
+        "tags": [
+          "hub-link"
+        ]
+      }
+    },
+    "/api/hublink/sync": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sync Link",
+        "tags": [
+          "hub-link"
         ]
       }
     },
@@ -36911,6 +38007,731 @@
         "summary": "Get Usage",
         "tags": [
           "models"
+        ]
+      }
+    },
+    "/api/node-link/hello": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HelloBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Hello",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/jobs/{job_id}/chunk": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChunkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job Chunk",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/jobs/{job_id}/end": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job End",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/jobs/{job_id}/head": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job Head",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/poll": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "wait",
+            "required": false,
+            "schema": {
+              "default": 20.0,
+              "title": "Wait",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Poll",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/pool/exec": {
+      "post": {
+        "description": "Run a snippet on the least busy node with a sandbox that may take the\nrun's work, for ``sandbox/node.py``'s provider ``nodes``.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pool Exec",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/pool/v1/models": {
+      "get": {
+        "description": "Every model the pool serves, answered here from the node records: no\nnode is asked, so the list is there while every node sleeps.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pool Models",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/pool/v1/{path}": {
+      "post": {
+        "description": "A model call to the pool (the custom backend ``nodes``): sent to the\nleast busy node that shares the model and may see the caller's work.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pool Proxy",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/self/exec": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Self Exec",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/{node_id}/exec": {
+      "post": {
+        "description": "Run a snippet on the node, for ``sandbox/node.py``.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Exec",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/node-link/{node_id}/v1/{path}": {
+      "get": {
+        "description": "The node's ``/v1`` as this hub's model drivers see it: the custom\nbackend ``node-<slug>`` points here with the node's proxy key. A model\ncall is refused when the caller's work is above the node's trust.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Proxy",
+        "tags": [
+          "node-link"
+        ]
+      },
+      "post": {
+        "description": "The node's ``/v1`` as this hub's model drivers see it: the custom\nbackend ``node-<slug>`` points here with the node's proxy key. A model\ncall is refused when the caller's work is above the node's trust.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Proxy",
+        "tags": [
+          "node-link"
+        ]
+      }
+    },
+    "/api/nodes": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Nodes",
+        "tags": [
+          "nodes"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNode"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Node",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/nodes/pool": {
+      "get": {
+        "description": "The pool: its models, capacity and load, and for ``workspace`` (and\nan agent in it) which nodes may take that work and why the rest may not.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Workspace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Agent",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Pool",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/nodes/{node_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Node",
+        "tags": [
+          "nodes"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Node",
+        "tags": [
+          "nodes"
+        ]
+      },
+      "patch": {
+        "description": "The hub's side of a node: its trust (administrators only, and never\n``attested`` by hand), a cap on its capacity, its workspaces, and the\nswitch that takes it out of service.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNode"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Node",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/nodes/{node_id}/rotate": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Node",
+        "tags": [
+          "nodes"
         ]
       }
     },
@@ -56178,6 +57999,92 @@
         ]
       }
     },
+    "/api/workspaces/{name}/data-class": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Data Class",
+        "tags": [
+          "isolation"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataClassPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Data Class",
+        "tags": [
+          "isolation"
+        ]
+      }
+    },
     "/api/workspaces/{name}/default-model": {
       "put": {
         "description": "Set the workspace's default model (the per-workspace default tier).\n\nStored top-level as ``model_default`` so it survives Settings-page saves that\nreplace ``settings``. Setting a default also clears any transient header\n``model_override`` so the new default takes effect immediately. An empty\nprovider clears the workspace default (falls back to the global .env default).",
@@ -58353,7 +60260,7 @@
     },
     "/api/workspaces/{name}/summary": {
       "get": {
-        "description": "What every page shows about the selected workspace, in one answer.\n\nThe header (model picker, \"Isolated\" badge), the palette and the chat\npage each used to ask on their own: ``/{name}`` (which also builds the\ntask list), ``/{name}/model``, ``/{name}/isolation`` and\n``/{name}/settings-overrides``. Readable by any member: it carries only\nthe isolation switch and the palette, not the owner scoped settings\naround them.",
+        "description": "What every page shows about the selected workspace, in one answer.\n\nThe header (model picker, \"Isolated\" badge), the palette and the chat\npage each used to ask on their own: ``/{name}`` (which also builds the\ntask list), ``/{name}/model``, ``/{name}/isolation`` and\n``/{name}/settings-overrides``. Readable by any member: it carries only\nthe isolation switch, the data class and the palette, not the owner\nscoped settings around them.",
         "parameters": [
           {
             "in": "path",

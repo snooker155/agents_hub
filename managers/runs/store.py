@@ -476,6 +476,16 @@ def _export_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
         log.debug("_export_run_finished failed for run %s", new.get("run_id"), exc_info=True)
 
 
+def _mirror_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
+    """Mark a finished run for the hub link's mirror (hublink/mirror.py),
+    guarded like the OTel export: a hub that is not linked pays one check."""
+    try:
+        from hublink.mirror import on_run_finished
+        on_run_finished(old, new)
+    except Exception:  # noqa: BLE001 - the mirror must never break run recording
+        log.debug("_mirror_run_finished failed for run %s", new.get("run_id"), exc_info=True)
+
+
 def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     old, new = _apply(str(run_id), updates, insert_if_missing=False)
     if new is None:
@@ -483,6 +493,7 @@ def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]
     _sync_instance(old, new)
     _notify_task_run_finished(old or {}, new)
     _export_run_finished(old or {}, new)
+    _mirror_run_finished(old or {}, new)
     return new
 
 

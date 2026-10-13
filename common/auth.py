@@ -85,7 +85,10 @@ def auth_headers() -> Dict[str, str]:
 # (routes/slack.py), Teams' activities by the Bot Framework JWT
 # (routes/teams_channel.py). The hub's own credential is never what Slack or
 # Teams send, so without this they could not reach a token or multi mode hub.
-SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/scim/v2",
+# ``/api/node-link`` is the route family a linked node (hublink/) talks to:
+# its own node token on the poll and the answers, a per-node proxy key on
+# the model path, and a hub credential it checks itself on the sandbox exec.
+SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/api/node-link", "/scim/v2",
                                 "/api/channels/slack/events", "/api/channels/slack/interactions",
                                 "/api/channels/teams/messages",
                                 # Slack's installer has no hub credential: the
@@ -194,7 +197,7 @@ WIDGET_PUBLIC_PREFIXES = ("/api/widgets/public",)
 #: access is restricted too: an env block is a list of secret *names*, and a
 #: policy is the shape of the guardrails somebody would have to get around.
 OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members",
-                                   "secrets", "isolation"})
+                                   "secrets", "isolation", "data-class"})
 
 #: Path segments directly under ``/api/workspaces/`` that are routes, not
 #: workspace names. Without this, ``POST /api/workspaces/attach`` would be read

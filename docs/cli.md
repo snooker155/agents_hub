@@ -129,6 +129,9 @@ ah mcp remove <server-id>
 ah mcp test <server-id>                             # connect now, report what is there
 ah mcp tools <server-id> [--refresh]
 ah mcp connect <client> [--key k] [-w ws] [--write] [--project]   # connect claude-code, cursor, vscode, windsurf, claude-desktop, codex, gemini or other to the hub (hub-as-mcp-server.md)
+ah hub link <url> --key <personal key> [--name n] [--no-models] [--no-agents] [--mirror runs,chats,memory] [--node-token t]   # attach this hub to another (hub-link.md)
+ah hub status | sync | unlink
+ah hub nodes list | add <name> [-w ws] | set <id> [--trust ...] | pool [-w ws] | remove <id> | rotate <id>   # the nodes attached to this hub and their pool
 
 ah user list                                        # AUTH_MODE=multi only; 404 otherwise
 ah user create <username> [--role member|admin] [--no-password]

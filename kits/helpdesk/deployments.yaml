@@ -1,0 +1,15 @@
+# A weekly sync of policies into the knowledge pool. Starts paused: turn it
+# on once Confluence, Notion or Google is connected.
+kind: deployment
+id: weekly-knowledge-sync
+title: Weekly helpdesk knowledge sync
+agent: helpdesk_librarian
+message: >
+  Check the policy and how-to pages listed in the Helpdesk knowledge pool
+  for changes since the last sync, bring changed ones into the pool with
+  their source and date, and list what changed. Also list the questions
+  Desk could not answer this week that no page covers yet.
+recurrence: weekly
+run_at: 2026-10-12T06:00:00+00:00
+timezone: UTC
+paused: true

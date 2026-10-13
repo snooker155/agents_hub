@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- I have task ID X; pick the right agent and run it
+- 'Keep monitoring task X: wait for it to finish and resolve it'
+- Chain a code reviewer after the developer finishes this task
+- Run every open task in this project, one after another
+- Which tasks are stuck, and who should pick them up?
+- Retry the failed task with a different agent
+ru:
+- 'Вот задача X: выбери подходящего агента и запусти её'
+- 'Следи за задачей X: дождись завершения и закрой её'
+- Когда разработчик закончит эту задачу, передай её на код-ревью
+- Выполни по очереди все открытые задачи этого проекта
+- Какие задачи застряли и кому их передать?
+- Перезапусти упавшую задачу с другим агентом
+de:
+- 'Hier ist Aufgabe X: wähle den passenden Agenten und führe sie aus'
+- 'Beobachte Aufgabe X weiter: warte, bis sie fertig ist, und schließ sie ab'
+- Häng nach dem Entwickler einen Code-Reviewer an diese Aufgabe
+- Arbeite alle offenen Aufgaben dieses Projekts nacheinander ab
+- Welche Aufgaben hängen fest, und wer sollte sie übernehmen?
+- Starte die fehlgeschlagene Aufgabe mit einem anderen Agenten neu

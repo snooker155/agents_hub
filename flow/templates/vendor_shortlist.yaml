@@ -1,0 +1,57 @@
+id: vendor_shortlist
+name: Vendor shortlist
+description: >
+  Finds vendors or tools that could meet a need, researches each one in
+  depth, scores them against your requirements and writes a recommendation
+  memo.
+category: Operations
+icon: store
+examples:
+  en:
+    - "Find and compare payroll providers for a 40 person company in Germany"
+    - "We need a log management tool under 1000 EUR a month. Shortlist three"
+    - "Find agencies that could redesign our website, with portfolio links"
+    - "Compare e-signature tools for contracts that must be eIDAS compliant"
+    - "Shortlist translation vendors for German, French and Spanish product docs"
+    - "Which help desk tools integrate with Slack and Jira, and what do they cost?"
+  ru:
+    - "Найди и сравни сервисы расчёта зарплаты для компании на 40 человек в Германии"
+    - "Нам нужен сервис для логов дешевле 1000 евро в месяц. Отбери три варианта"
+    - "Найди агентства, которые могли бы переделать наш сайт, со ссылками на портфолио"
+    - "Сравни сервисы электронной подписи договоров, совместимые с eIDAS"
+    - "Отбери переводческие агентства для документации на немецкий, французский и испанский"
+    - "Какие системы поддержки интегрируются со Slack и Jira и сколько они стоят?"
+  de:
+    - "Finde und vergleiche Lohnabrechnungsanbieter für ein Unternehmen mit 40 Leuten in Deutschland"
+    - "Wir brauchen ein Log Management Tool unter 1000 EUR im Monat. Wähle drei aus"
+    - "Finde Agenturen, die unsere Website neu gestalten könnten, mit Links zum Portfolio"
+    - "Vergleiche Tools für elektronische Signaturen, die eIDAS konform sind"
+    - "Wähle Übersetzungsdienstleister für Produktdokumentation auf Deutsch, Französisch und Spanisch aus"
+    - "Welche Helpdesk Tools integrieren sich mit Slack und Jira, und was kosten sie?"
+nodes:
+  - key: find
+    agent: sourcer
+    label: {en: Find vendors, ru: Поиск, de: Anbieter finden}
+    task: |
+      Find five to eight vendors or tools that could meet the need the person describes, each with a link to its own site and one line on why it might fit.
+      Start your output with a "Request" section restating the need, the budget and any hard requirements.
+  - key: research
+    agent: researcher
+    label: {en: Deep dive, ru: Подробности, de: Details}
+    task: |
+      For each vendor found above, research what matters for the request: features against the stated requirements, pricing, contract terms, integrations, data location and compliance, and what customers say.
+      Keep the "Request" section at the top of your output. Give one section per vendor with sources; mark anything you could not confirm.
+  - key: score
+    agent: screener
+    label: {en: Score, ru: Оценка, de: Bewerten}
+    task: |
+      Score every vendor against the requirements in the request: hard requirements as pass or fail, everything else on a 1 to 5 scale, each score with its evidence from the research. A vendor failing a hard requirement drops out.
+  - key: memo
+    agent: writer
+    label: {en: Recommendation, ru: Рекомендация, de: Empfehlung}
+    task: |
+      Write a recommendation memo from the scoring: the recommended vendor and the runner up in the first paragraph, a comparison table, the main risks and what to ask each vendor before signing.
+edges:
+  - {from: find, to: research}
+  - {from: research, to: score}
+  - {from: score, to: memo}

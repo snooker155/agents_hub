@@ -1,0 +1,15 @@
+# A weekly content brief. Starts paused: turn it on once the audience and
+# voice guide are in the Brand voice pool.
+kind: deployment
+id: weekly-content-brief
+title: Weekly content brief
+agent: marketing_strategist
+message: >
+  Propose this week's piece: check the content calendar in the Brand voice
+  pool, research what the audience is asking about the topics we own, and
+  write one brief (angle, audience question it answers, outline, sources).
+  Hand it to Writer.
+recurrence: weekly
+run_at: 2026-10-12T07:00:00+00:00
+timezone: UTC
+paused: true

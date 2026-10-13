@@ -1,0 +1,14 @@
+# A weekly digest of open action items. Starts paused: turn it on once a
+# few meetings have been processed.
+kind: deployment
+id: weekly-action-items
+title: Weekly open action items
+agent: meetings_followup
+message: >
+  List every open action item in the Meeting record pool, grouped by owner,
+  with its meeting and due date. Mark anything overdue, remind each owner of
+  what is due this week, and post the digest to the team.
+recurrence: weekly
+run_at: 2026-10-12T08:30:00+00:00
+timezone: UTC
+paused: true

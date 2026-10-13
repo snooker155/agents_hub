@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Build a scenario where three traders compete in a market and one of them knows the earnings report early
+- Add a sceptical journalist to the tavern scenario
+- Switch this scenario to triggered activation and make Mara open the scene
+- Raise the tick cap to 40 and put a $2 ceiling on it
+- Why won't this scenario validate?
+- Run it and tell me what it cost
+ru:
+- Создай сценарий, где три трейдера конкурируют на рынке и один из них заранее знает отчёт о прибыли
+- Добавь в сценарий с таверной скептически настроенного журналиста
+- Переведи этот сценарий на активацию по триггеру, и пусть сцену открывает Mara
+- Подними лимит тиков до 40 и ограничь расходы суммой $2
+- Почему этот сценарий не проходит проверку?
+- Запусти его и скажи, сколько это стоило
+de:
+- Bau ein Szenario, in dem drei Händler auf einem Markt konkurrieren und einer den Quartalsbericht vorab kennt
+- Füg dem Tavernen-Szenario eine skeptische Journalistin hinzu
+- Stell dieses Szenario auf ausgelöste Aktivierung um und lass Mara die Szene eröffnen
+- Heb das Tick-Limit auf 40 an und deckel die Kosten bei $2
+- Warum lässt sich dieses Szenario nicht validieren?
+- Starte es und sag mir, was es gekostet hat

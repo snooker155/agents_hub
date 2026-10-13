@@ -12,6 +12,11 @@ Routes: a workspace's isolation (common/isolation.py, docs/isolation.md).
 
 Both need the workspace's owner or an administrator: ``isolation`` is an
 owner scoped segment (common/auth.py), and the routes check again.
+
+- ``GET/PUT /api/workspaces/{name}/data-class`` with ``{"data_class":
+  "public" | "internal" | "confidential"}``: how sensitive the workspace's
+  work is, which decides the linked nodes that may see it
+  (common/data_class.py, docs/hub-link.md). Same owner rule.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import audit, identity, isolation
+from common import audit, data_class, identity, isolation
 from common.auth import WS_OWNER
 
 router = APIRouter(prefix="/api/workspaces", tags=["isolation"])
@@ -59,4 +64,35 @@ def put_isolation(name: str, body: IsolationPut, request: Request):
                  workspace=name, ip=identity.client_ip(request),
                  details={"isolated": out["isolated"], "was": before,
                           "allow_domains": out["allow_domains"]})
+    return out
+
+
+class DataClassPut(BaseModel):
+    data_class: str
+
+
+def _data_class_state(name: str) -> dict:
+    return {"data_class": data_class.workspace_class(name), "classes": list(data_class.CLASSES),
+            "default": data_class.DEFAULT_CLASS, "required_trust": dict(data_class.REQUIRED_TRUST)}
+
+
+@router.get("/{name}/data-class")
+def get_data_class(name: str, request: Request):
+    _require(request, name)
+    return _data_class_state(name)
+
+
+@router.put("/{name}/data-class")
+def put_data_class(name: str, body: DataClassPut, request: Request):
+    principal = _require(request, name)
+    before = data_class.workspace_class(name)
+    try:
+        data_class.set_workspace_class(name, body.data_class,
+                                       actor=getattr(principal, "username", None) or getattr(principal, "id", None))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    out = _data_class_state(name)
+    audit.record("workspace.data_class", principal=principal, object_type="workspace", object_id=name,
+                 workspace=name, ip=identity.client_ip(request),
+                 details={"data_class": out["data_class"], "was": before})
     return out

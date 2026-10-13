@@ -1,0 +1,15 @@
+# A weekly batch of new prospects. Starts paused: turn it on once the ideal
+# customer profile is in the Sales playbook pool.
+kind: deployment
+id: weekly-prospect-batch
+title: Weekly prospect batch
+agent: sales_prospector
+message: >
+  Find up to ten new accounts that match the ideal customer profile in the
+  Sales playbook and are not in the pipeline yet. For each, record why it
+  fits, the source for that, and the person most likely to own the problem
+  the offer solves. Hand the shortlist to Outreach.
+recurrence: weekly
+run_at: 2026-10-12T08:00:00+00:00
+timezone: UTC
+paused: true

@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Build the technical architecture graph for this project
+- Map the end-to-end business process for this project
+- Enrich the detected components with real dependencies from the code
+- Build the architecture for this project based on its existing process view
+- Which components depend on the database, and through what?
+- Group the services on the canvas by layer
+ru:
+- Построй граф технической архитектуры этого проекта
+- Опиши сквозной бизнес-процесс этого проекта
+- Дополни найденные компоненты реальными зависимостями из кода
+- Построй архитектуру проекта на основе его существующей схемы процесса
+- Какие компоненты зависят от базы данных и через что?
+- Сгруппируй сервисы на холсте по слоям
+de:
+- Erstelle den technischen Architekturgraphen für dieses Projekt
+- Bilde den durchgängigen Geschäftsprozess dieses Projekts ab
+- Ergänze die erkannten Komponenten um echte Abhängigkeiten aus dem Code
+- Leite die Architektur dieses Projekts aus seiner vorhandenen Prozessansicht ab
+- Welche Komponenten hängen von der Datenbank ab, und worüber?
+- Gruppiere die Services auf der Arbeitsfläche nach Schichten

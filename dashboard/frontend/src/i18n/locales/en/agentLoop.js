@@ -17,6 +17,11 @@ export default {
     notInCatalog: '{{model}} (not enabled on the Models page)',
     hint: 'Models come from the Models page. The workspace\'s agent loop settings limit the calls per run and the answer length.',
   },
+  dataClass: {
+    title: 'Data class',
+    workspace: 'Workspace\'s class',
+    hint: 'Which linked nodes may see this agent\'s work. Can only make the workspace\'s class stricter.',
+  },
   concurrency: {
     title: 'Delegate concurrency',
     intro: 'How many of this agent\'s delegated subtasks (delegate_task_tool) may run at once. A launch past the limit is refused with a clear message.',

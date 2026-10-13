@@ -353,7 +353,7 @@ def _q(value: str) -> str:
 MODEL_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens")
 REASONING_KEYS = ("think_enabled", "think_mode", "thinking_level", "plan_enabled", "plan_format")
 LOOP_KEYS = ("fallback_models", "advisor_model", "output_schema", "max_concurrent_delegates",
-             "tool_search", "compaction")
+             "tool_search", "compaction", "data_class")
 WEB_KEYS = ("allowed_domains", "blocked_domains")
 SKILL_KEYS = ("name", "description", "steps", "body", "tags")
 #: List fields a child agent (``extends:`` set) may give as ``+item`` / ``-item`` deltas instead
@@ -557,7 +557,8 @@ class AgentKind(Kind):
         "episodic_write": None, "response_format": "none", "clarify_gate": False,
         "allow_self_delegation": False, "web_domains": {"allowed_domains": [], "blocked_domains": []},
         "loop": {"fallback_models": [], "advisor_model": None, "output_schema": None,
-                 "max_concurrent_delegates": 6, "tool_search": None, "compaction": None},
+                 "max_concurrent_delegates": 6, "tool_search": None, "compaction": None,
+                 "data_class": ""},
         "tool_policy": {}, "guardrails": [], "secrets": [], "shared": False, "outcome": None,
     }
 
@@ -700,6 +701,7 @@ class AgentKind(Kind):
                 "max_concurrent_delegates": int(detail.get("max_concurrent_delegates") or 6),
                 "tool_search": detail.get("tool_search"),
                 "compaction": detail.get("compaction"),
+                "data_class": detail.get("data_class") or "",
             },
             "tool_policy": dict(detail.get("tool_policy") or {}),
             "guardrails": _sorted_list(detail.get("guardrails")),

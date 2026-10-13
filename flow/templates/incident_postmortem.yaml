@@ -1,0 +1,60 @@
+id: incident_postmortem
+name: Incident postmortem
+description: >
+  Reconstructs the timeline of an incident from logs and notes, measures its
+  impact, and writes a blameless postmortem with action items, checked
+  against the evidence.
+category: Operations
+icon: siren
+examples:
+  en:
+    - "Postmortem for yesterday's checkout outage, logs are in incidents/2026-10-11/"
+    - "Write up the database failover on Monday from the Slack export in the workspace"
+    - "We had elevated error rates on the API from 14:00 to 15:30. Build the postmortem"
+    - "Postmortem for the expired TLS certificate incident, notes in cert-incident.md"
+    - "Summarise the data sync failure last week: timeline, impact, root cause, fixes"
+    - "Draft the customer facing incident report for the login outage"
+  ru:
+    - "Разбор вчерашнего сбоя оформления заказов, логи в incidents/2026-10-11/"
+    - "Опиши переключение базы на резерв в понедельник по выгрузке из Slack в рабочем пространстве"
+    - "С 14:00 до 15:30 у API был повышенный процент ошибок. Составь разбор инцидента"
+    - "Разбор инцидента с просроченным TLS-сертификатом, заметки в cert-incident.md"
+    - "Подведи итоги сбоя синхронизации данных на прошлой неделе: хронология, ущерб, причина, исправления"
+    - "Подготовь отчёт об инциденте со входом в систему для клиентов"
+  de:
+    - "Postmortem zum gestrigen Checkout Ausfall, Logs liegen in incidents/2026-10-11/"
+    - "Schreib den Datenbank Failover vom Montag aus dem Slack Export im Workspace auf"
+    - "Die API hatte von 14:00 bis 15:30 erhöhte Fehlerraten. Erstell das Postmortem"
+    - "Postmortem zum abgelaufenen TLS Zertifikat, Notizen in cert-incident.md"
+    - "Fass den Fehler bei der Datensynchronisation letzte Woche zusammen: Ablauf, Auswirkung, Ursache, Fixes"
+    - "Entwirf den Vorfallbericht für Kunden zum Login Ausfall"
+nodes:
+  - key: timeline
+    agent: researcher
+    label: {en: Timeline, ru: Хронология, de: Zeitachse}
+    task: |
+      Reconstruct what happened in the incident the person describes, from the logs, notes, exports and files they point to and from memory.
+      Start your output with a "Request" section restating the incident and the period.
+      Then a timeline with timestamps and time zone (detection, escalation, mitigation, resolution), each entry with the evidence it comes from, and the most likely root cause with the evidence for it.
+  - key: impact
+    agent: analyst
+    label: {en: Impact, ru: Ущерб, de: Auswirkung}
+    task: |
+      Measure the impact of the incident in the request from whatever data is connected or attached: duration, affected users or requests, failed transactions, error rates, revenue at risk.
+      Start your output with a "Request" section restating the incident and the period. Show each figure with its query or calculation. When data is missing, say which figure cannot be measured.
+  - key: write
+    agent: writer
+    label: {en: Postmortem, ru: Разбор, de: Postmortem}
+    task: |
+      Write a blameless postmortem from the two inputs above: summary, impact, timeline, root cause, what went well, what went badly, and action items (each with an owner role and priority).
+      Describe systems and decisions, not people's faults.
+  - key: verify
+    agent: verifier
+    label: {en: Check, ru: Проверка, de: Prüfen}
+    task: |
+      Check the postmortem against the timeline and impact inputs: times and figures match, the root cause is supported by evidence, every action item addresses something in the document.
+      Return the corrected postmortem and a short "Checks" note.
+edges:
+  - {from: timeline, to: write}
+  - {from: impact, to: write}
+  - {from: write, to: verify}

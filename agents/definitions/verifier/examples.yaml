@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Verify the numbers in this report against the database before we send it
+- Check this plan against the outcome rubric and say whether it's ready
+- 'This draft claims X: confirm it''s actually true'
+- Check every link and quote in this article
+- Does this summary say anything the source documents do not?
+- Recalculate the totals in this spreadsheet and flag any mismatch
+ru:
+- Сверь цифры в этом отчёте с базой данных, прежде чем мы его отправим
+- Проверь этот план по рубрике результата и скажи, готов ли он
+- 'В этом черновике утверждается X: подтверди, что это правда'
+- Проверь все ссылки и цитаты в этой статье
+- Есть ли в этой сводке что-то, чего нет в исходных документах?
+- Пересчитай итоги в этой таблице и отметь расхождения
+de:
+- Prüfe die Zahlen in diesem Bericht gegen die Datenbank, bevor wir ihn verschicken
+- Prüfe diesen Plan anhand der Ergebnisrubrik und sag, ob er fertig ist
+- 'In diesem Entwurf wird X behauptet: bestätige, dass es wirklich stimmt'
+- Prüfe alle Links und Zitate in diesem Artikel
+- Steht in dieser Zusammenfassung etwas, das nicht in den Quelldokumenten steht?
+- Rechne die Summen in dieser Tabelle nach und markiere Abweichungen

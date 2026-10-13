@@ -13,6 +13,70 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- **Hub link** (docs/hub-link.md): a hub attaches to another one, usually a
+  shared hub in multi-user mode, with a personal key (Settings → System →
+  Remote hub, `ah hub link`). The remote's models become the custom backend
+  `hub-remote` and its agents MCP tools (`hub-remote` in the default
+  workspace); finished runs, conversations and personal notes are mirrored
+  there one way through an outbox, and never read back. Mirrored chats are
+  read-only copies badged with the node's name.
+- **Nodes** (docs/hub-link.md, "Nodes"): a linked hub can serve the remote
+  one as a node, lending its local models (the custom backend `node-<slug>`
+  there) and its sandbox (the provider `node:<id>`, pickable per
+  environment). The node dials out and long-polls for work; nothing listens
+  on it. Nodes page under Integrations, `ah hub nodes`.
+- **Node pool** (docs/hub-link.md, "The pool"): every node's models are also
+  one backend, `nodes`, and their sandboxes one provider, `nodes`; each
+  request goes to the least busy node that may take it, a node runs no more
+  at once than its capacity, and a node that does not pick a request up
+  loses it to the next. Parallel flow branches, delegated subtasks and eval
+  cases spread over the nodes on their own; the tool `map_on_nodes` runs one
+  instruction over up to 200 items in parallel. `ah hub nodes pool`.
+- **Node trust and data classes** (docs/hub-link.md, "Trust and data
+  classes"): an administrator marks a node `untrusted` or `trusted`
+  (`attested` is reserved for remote attestation); a workspace is `public`,
+  `internal` (default) or `confidential`, and an agent may be stricter.
+  Internal work goes only to trusted nodes, confidential work to no node.
+  `ah hub nodes set`.
+- **Seven more industry kits**, ten in all (docs/kits.md): `sales`
+  (Prospector, Outreach), `marketing` (Strategist, Writer, Editor),
+  `engineering` (Triager, Issue keeper, Release notes), `legal` (contract
+  review: Reviewer, Drafter, Obligations), `helpdesk` (internal IT and HR:
+  Librarian, Desk), `meetings` (Notetaker, Follow-up) and `intel`
+  (competitive intelligence: Scout, Analyst). Each has outcome rubrics, a
+  shared memory pool and one paused scheduled job. Jobs that read untrusted
+  text and jobs that send are split across two agents, so no kit agent forms
+  the lethal trifecta.
+- **Agent templates** (docs/agent-templates.md): the create wizard starts
+  from one of twelve ready agents (SRE agent, AI teammate, GitHub issue
+  agent, data agent, invoice agent, contract review and more), each with a
+  prompt, a safe tool set and a default outcome rubric, adjustable before
+  creating. `GET /api/agent-templates`, `POST /api/agent-templates/{id}/create`.
+- **Flow templates** (docs/flow-templates.md): Create flow offers a blank
+  canvas or one of twelve ready flows of system agents, each step with its
+  task written. `GET /api/flow-templates`, `POST /api/flow-templates/{id}/create`.
+- **Example requests in empty chats**: an agent's `examples.yaml` (en, ru,
+  de), else its parent's along `extends`, else the "Good fits" bullets of
+  its usage text, shown under the agent as buttons that fill the message
+  box. A flow shows its own examples (a template's, or set in Flow
+  settings), else its first agent's. `GET /api/agents/{id}/examples`,
+  `GET /api/flows/{id}/examples`.
+
+### Fixed
+
+- Installing a kit into a workspace other than the default one now renames
+  a `+item` / `-item` list delta that names one of the kit's own agents
+  (`handoffs: [-@verifier, +marketing_editor]`), keeping its sign; before,
+  the added sibling kept its bare id and pointed at an agent that did not
+  exist in that workspace.
+
+### Upgrade notes
+
+- Migration 0042 adds the tables `node_jobs` and `node_job_chunks` (the
+  mailbox between a hub and its nodes). Applied on start, as usual.
+
 ## [0.11.0] - 2026-10-10
 
 ### Added

@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Keep re-running the article flow until every claim has a source, at most 5 passes
+- Add a dedicated reviewer to this loop instead of letting the writer judge itself
+- 'This loop always runs to its cap: what is wrong with its criterion?'
+- Cap the research loop at $2 and stop it once it scores 85
+- What did the last run score on each pass?
+- Stop it, it is not converging
+ru:
+- Перезапускай поток статьи, пока у каждого утверждения не будет источника, не больше 5 проходов
+- Добавь в этот цикл отдельного ревьюера, чтобы writer не оценивал сам себя
+- 'Этот цикл всегда доходит до лимита: что не так с его критерием?'
+- Ограничь исследовательский цикл суммой $2 и останавливай его, как только оценка дойдёт до 85
+- Сколько баллов получил каждый проход последнего запуска?
+- Останови его, он не сходится
+de:
+- Lass den Artikel-Flow erneut laufen, bis jede Aussage eine Quelle hat, höchstens 5 Durchläufe
+- Gib diesem Loop einen eigenen Reviewer, statt den writer sich selbst bewerten zu lassen
+- 'Dieser Loop läuft immer bis zum Limit: was stimmt mit seinem Kriterium nicht?'
+- Begrenze den Recherche-Loop auf $2 und stoppe ihn, sobald er 85 Punkte erreicht
+- Welche Punktzahl hatte der letzte Lauf in jedem Durchgang?
+- Stopp ihn, er konvergiert nicht

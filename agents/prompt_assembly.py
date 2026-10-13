@@ -23,6 +23,7 @@ with section headers prepended to capabilities/usage when those files exist.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,6 +44,8 @@ USER_DEFINITIONS_DIR = AGENT_DEFINITIONS_DIR
 INSTRUCTIONS_FILE = "instructions.md"
 CAPABILITIES_FILE = "capabilities.md"
 USAGE_FILE = "usage.md"
+#: Example requests for the empty chat, by UI language (not part of the prompt).
+EXAMPLES_FILE = "examples.yaml"
 PART_FILES = (INSTRUCTIONS_FILE, CAPABILITIES_FILE, USAGE_FILE)
 
 
@@ -136,6 +139,45 @@ def read_usage(agent_id: str, definitions_dir: Optional[Path] = None) -> str:
     return _read(part_path(agent_id, USAGE_FILE, definitions_dir))
 
 
+_GOOD_FITS = re.compile(r"^\s*good fits\b", re.IGNORECASE)
+_BULLET = re.compile(r"^\s*[-*]\s+")
+_QUOTED = re.compile(r'"([^"]{8,200})"|\u201c([^\u201d]{8,200})\u201d')
+
+
+def example_prompts(usage: str, limit: int = 6) -> List[str]:
+    """Example requests to the agent, quoted in the bullets of its ``usage.md``.
+
+    The "Good fits:" list is read when there is one (its bullets quote what
+    a person would say, ``- "Compare X with Y"``), every bullet otherwise.
+    A bullet that opens with a quote gives one example per quoted phrase on
+    its first line; any other bullet describes a kind of request rather than
+    one (``- Any "find me some options" request``), and is skipped.
+    """
+    lines = usage.splitlines()
+    start = next((i + 1 for i, line in enumerate(lines) if _GOOD_FITS.match(line)), None)
+    if start is not None:
+        section: List[str] = []
+        for line in lines[start:]:
+            # The list ends at the next label ("Poor fits:", "How to invoke:").
+            if line.strip().endswith(":") and not _BULLET.match(line):
+                break
+            section.append(line)
+        lines = section
+    found: List[str] = []
+    for line in lines:
+        bullet = _BULLET.match(line)
+        if not bullet or not line[bullet.end():].startswith(('"', "\u201c")):
+            continue
+        for match in _QUOTED.finditer(line):
+            text = (match.group(1) or match.group(2)).replace("`", "").strip()
+            text = text[:1].upper() + text[1:]
+            if text and text not in found:
+                found.append(text)
+            if len(found) >= limit:
+                return found
+    return found
+
+
 def write_instructions(agent_id: str, content: str, definitions_dir: Optional[Path] = None) -> None:
     folder = agent_dir(agent_id, definitions_dir)
     folder.mkdir(parents=True, exist_ok=True)
@@ -198,7 +240,9 @@ def move_untracked_definitions(owned_by_hub: Callable[[str], bool]) -> List[str]
     moved: List[str] = []
     for rel in filter(None, out.split("\0")):
         parts = Path(rel).parts
-        if len(parts) < 2 or not owned_by_hub(parts[0]):
+        # The hub writes only the prompt parts; anything else (examples.yaml)
+        # is a file someone is adding to the repository by hand.
+        if len(parts) != 2 or parts[1] not in PART_FILES or not owned_by_hub(parts[0]):
             continue
         src, dst = SYSTEM_DEFINITIONS_DIR / rel, USER_DEFINITIONS_DIR / rel
         if dst.exists():
@@ -218,6 +262,26 @@ def move_untracked_definitions(owned_by_hub: Callable[[str], bool]) -> List[str]
     return moved
 
 
+def read_examples(agent_id: str, lang: str = "en",
+                  definitions_dir: Optional[Path] = None) -> List[str]:
+    """The example requests in ``examples.yaml`` for UI language *lang*
+    (``{en: [...], ru: [...], de: [...]}``), English when that language has
+    none, empty when the file is missing or unreadable."""
+    path = part_path(agent_id, EXAMPLES_FILE, definitions_dir)
+    if path is None:
+        return []
+    import yaml
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        log.warning("Unreadable %s: %s", path, exc)
+        return []
+    if not isinstance(data, dict):
+        return []
+    items = data.get(lang) or data.get("en") or []
+    return [str(item).strip() for item in items if str(item).strip()] if isinstance(items, list) else []
+
+
 __all__ = [
     "DEFINITIONS_DIR",
     "SYSTEM_DEFINITIONS_DIR",
@@ -226,6 +290,7 @@ __all__ = [
     "INSTRUCTIONS_FILE",
     "CAPABILITIES_FILE",
     "USAGE_FILE",
+    "EXAMPLES_FILE",
     "agent_dir",
     "part_path",
     "part_paths",
@@ -236,6 +301,8 @@ __all__ = [
     "read_instructions",
     "read_capabilities",
     "read_usage",
+    "example_prompts",
+    "read_examples",
     "write_instructions",
     "write_capabilities",
     "write_usage",

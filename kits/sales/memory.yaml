@@ -1,0 +1,6 @@
+kind: memory_pool
+id: sales-playbook
+name: Sales playbook
+description: The ideal customer profile, the offer, common objections and the state of every account in the pipeline, shared by Prospector and Outreach.
+blocks:
+  persona: "You keep the sales team's playbook: who the ideal customer is, what the offer is, which objections come up and how they were answered, and where each account stands. Be specific and dated; a pipeline note without a date is a guess."

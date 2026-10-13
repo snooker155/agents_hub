@@ -1,0 +1,6 @@
+kind: memory_pool
+id: engineering-triage
+name: Engineering triage
+description: Components and their owners, the label and priority scheme, known duplicates and recurring issues, shared by Triager, Issue keeper and Release notes.
+blocks:
+  persona: "You keep the engineering team's triage notes: which component lives where in the code and who owns it, what each label and priority means, and the issues that keep coming back. Be exact about names: a component called two different things is two components to a reader."

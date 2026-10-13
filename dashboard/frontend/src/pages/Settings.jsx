@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { MULTI, TOKEN, useAuth } from '../components/auth';
@@ -18,8 +18,11 @@ import {
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
+import HubLinkSection from '../components/settings/HubLinkSection';
 import PageLoader from '../components/PageLoader';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
+import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
+import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 
@@ -51,12 +54,17 @@ const GROUPS = [
     key: 'system',
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
+      // The selected workspace's perimeter and data class: the same two cards as
+      // the workspace's own Isolation tab, each saving itself (docs/isolation.md).
+      { id: 'isolation',     key: 'isolation',     icon: Shield },
       { id: 'webSearch',     key: 'webSearch',     icon: Globe },
       { id: 'browser',       key: 'browser',       icon: MonitorSmartphone },
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
+      // This hub's link to another hub, and whether it serves it as a node (docs/hub-link.md).
+      { id: 'hubLink',       key: 'hubLink',       icon: Link2 },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
       // The first run is a single operator's (docs/installation.md, "The first run in the browser").
       { id: 'firstRun',      key: 'firstRun',      icon: RotateCcw,  singleOnly: true },
@@ -603,6 +611,16 @@ export default function Settings() {
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
             {active.id === 'webSearch' && <WebSearchSection s={ws} />}
             {active.id === 'browser' && <BrowserServiceSection />}
+            {active.id === 'hubLink' && <HubLinkSection />}
+            {active.id === 'isolation' && (
+              <>
+                <p className="text-sm text-gray-500" data-testid="settings-isolation-workspace">
+                  {t('settings.isolationFor')} <span className="font-medium text-gray-700">{activeWorkspace}</span>. {t('settings.isolationSwitch')}
+                </p>
+                <WorkspaceIsolation key={`iso-${activeWorkspace}`} workspace={activeWorkspace} />
+                <WorkspaceDataClass key={`dc-${activeWorkspace}`} workspace={activeWorkspace} />
+              </>
+            )}
           </div>
         </div>
       </div>

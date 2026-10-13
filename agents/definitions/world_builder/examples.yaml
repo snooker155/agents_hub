@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- 'Build a world: a harbour customs house at night, guards who may search the crew, and a crate that has to reach the yard before the alarm hits five'
+- Start from the inn template but make it a monastery, and give the abbot the only key
+- Add a cellar under the tavern that only connects to the kitchen
+- Give every character a purse, and an action that pays somebody from it
+- Only the harbourmaster should be able to open the gate
+- Why does this world say my action changes a value it does not have?
+ru:
+- 'Построй мир: ночная таможня в порту, стражники, которые могут обыскать команду, и ящик, который нужно доставить на склад, пока тревога не дошла до пяти'
+- Возьми шаблон трактира, но сделай из него монастырь, и пусть единственный ключ будет у настоятеля
+- Добавь под таверной погреб, связанный только с кухней
+- Дай каждому персонажу кошелёк и действие, чтобы платить из него другим
+- Открывать ворота должен только начальник порта
+- Почему мир пишет, что моё действие меняет значение, которого у него нет?
+de:
+- 'Bau eine Welt: ein Zollhaus im Hafen bei Nacht, Wachen, die die Crew durchsuchen dürfen, und eine Kiste, die den Hof erreichen muss, bevor der Alarm auf fünf steht'
+- Nimm die Gasthaus-Vorlage, aber mach ein Kloster daraus, und gib dem Abt den einzigen Schlüssel
+- Füg unter der Taverne einen Keller hinzu, der nur mit der Küche verbunden ist
+- Gib jeder Figur einen Geldbeutel und eine Aktion, mit der sie jemanden daraus bezahlt
+- Nur der Hafenmeister soll das Tor öffnen können
+- Warum sagt diese Welt, dass meine Aktion einen Wert ändert, den sie nicht hat?

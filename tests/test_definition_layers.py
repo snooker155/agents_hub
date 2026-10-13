@@ -126,6 +126,7 @@ def test_untracked_prompts_the_hub_owns_move_to_the_state_folder(layers):
     (shipped / "custom").mkdir()
     (shipped / "custom" / "instructions.md").write_text("Custom.", encoding="utf-8")
     (shipped / "sys" / "usage.md").write_text("Edited usage.", encoding="utf-8")
+    (shipped / "sys" / "examples.yaml").write_text("en: [Hi]", encoding="utf-8")
     (shipped / "draft_system").mkdir()
     (shipped / "draft_system" / "instructions.md").write_text("Being written.", encoding="utf-8")
 
@@ -136,6 +137,8 @@ def test_untracked_prompts_the_hub_owns_move_to_the_state_folder(layers):
     assert not (shipped / "custom").exists()
     assert pa.read_usage("sys") == "Edited usage."
     assert (shipped / "sys" / "instructions.md").is_file()
+    # Not a prompt part, so never one the hub wrote: it stays.
+    assert (shipped / "sys" / "examples.yaml").is_file()
     # Not owned by the hub (an uncommitted system agent): it stays.
     assert (shipped / "draft_system" / "instructions.md").is_file()
 

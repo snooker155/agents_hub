@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- 'I rewrote this agent''s prompt: did it get better or just different?'
+- Build me a set that catches the formatting failure we keep hitting
+- Compare this agent on the small local model against the big one
+- 'We have a bug report: turn it into a case so it cannot come back quietly'
+- Run the support eval set and tell me what regressed
+- Which cases fail most often, and why?
+ru:
+- 'Промпт этого агента переписан: он стал лучше или просто другим?'
+- Собери набор, который ловит ошибку форматирования, на которую мы постоянно натыкаемся
+- Сравни этого агента на маленькой локальной модели и на большой
+- 'Есть баг-репорт: сделай из него кейс, чтобы ошибка не вернулась незаметно'
+- Прогони набор оценок для support и скажи, что ухудшилось
+- Какие кейсы падают чаще всего и почему?
+de:
+- 'Ich habe den Prompt dieses Agenten umgeschrieben: ist er besser oder nur anders?'
+- Bau mir ein Set, das den Formatierungsfehler abfängt, über den wir immer wieder stolpern
+- Vergleiche diesen Agenten auf dem kleinen lokalen Modell mit dem großen
+- 'Wir haben einen Bugreport: mach daraus einen Fall, damit er nicht unbemerkt zurückkommt'
+- Lass das Eval-Set für support laufen und sag mir, was schlechter geworden ist
+- Welche Fälle scheitern am häufigsten, und warum?

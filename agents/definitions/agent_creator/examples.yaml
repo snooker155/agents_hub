@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Create a new agent called data-cleaner with read_file and write_file
+- Update researcher to use deeper reasoning and a more concise prompt
+- Add search_text to content-writer and increase its capacity to 2
+- Show me all registered agents and their tools
+- Delete the unused legacy-x agent
+- Make a copy of the writer that answers only in German
+ru:
+- Создай агента data-cleaner с инструментами read_file и write_file
+- Переключи researcher на более глубокие рассуждения и сделай его промпт короче
+- Добавь search_text агенту content-writer и увеличь его ёмкость до 2
+- Покажи всех зарегистрированных агентов и их инструменты
+- Удали неиспользуемого агента legacy-x
+- Сделай копию writer, которая отвечает только по-немецки
+de:
+- Erstelle einen neuen Agenten data-cleaner mit read_file und write_file
+- Stell researcher auf gründlicheres Reasoning und einen knapperen Prompt um
+- Gib content-writer das Werkzeug search_text und erhöhe seine Kapazität auf 2
+- Zeig mir alle registrierten Agenten und ihre Werkzeuge
+- Lösche den ungenutzten Agenten legacy-x
+- Leg eine Kopie von writer an, die nur auf Deutsch antwortet

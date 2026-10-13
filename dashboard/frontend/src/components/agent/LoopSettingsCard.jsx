@@ -32,6 +32,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const [schemaText, setSchemaText] = useState('');
   const [toolSearch, setToolSearch] = useState('');
   const [compaction, setCompaction] = useState('');
+  const [dataClass, setDataClass] = useState('');
   const [dirty, setDirty] = useState(false);
   const [loadedFor, setLoadedFor] = useState(null);
   const loading = loadedFor !== agentId;
@@ -52,6 +53,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
     setSchemaText(schema ? JSON.stringify(schema, null, 2) : '');
     setToolSearch(triState(body?.tool_search));
     setCompaction(triState(body?.compaction));
+    setDataClass(body?.data_class || '');
     setDirty(false);
   }, []);
 
@@ -136,6 +138,7 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
         output_schema: schema,
         tool_search: fromTriState(toolSearch),
         compaction: fromTriState(compaction),
+        data_class: dataClass,
       });
       applyLoaded(body);
       setMessage(t('agentLoop.saved'));
@@ -323,6 +326,19 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
               <span className="text-xs text-gray-500">{t('agentLoop.compaction.hint')}</span>
             </label>
           </div>
+
+          {/* Data class (common/data_class.py): which linked nodes may see this agent's work. */}
+          <label className="flex flex-col gap-1 text-sm text-gray-700 max-w-md">
+            <span className="font-medium">{t('agentLoop.dataClass.title')}</span>
+            <select value={dataClass} onChange={(e) => { setDataClass(e.target.value); markDirty(); }}
+                    aria-label={t('agentLoop.dataClass.title')} className={selectCls} data-testid="agent-data-class">
+              <option value="">{t('agentLoop.dataClass.workspace')}</option>
+              {['public', 'internal', 'confidential'].map((c) => (
+                <option key={c} value={c}>{t(`dataClass.${c}`)}</option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500">{t('agentLoop.dataClass.hint')}</span>
+          </label>
 
           {error && (
             <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>

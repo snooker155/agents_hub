@@ -91,6 +91,8 @@ export function useFlowDocument(deps) {
         // never touched them keeps the engine's own defaults.
         ...(flow.on_error !== undefined ? { on_error: flow.on_error } : {}),
         ...(flow.max_parallel !== undefined ? { max_parallel: flow.max_parallel } : {}),
+        // Example requests for the flow's empty chat, by language.
+        ...(flow.examples !== undefined ? { examples: flow.examples } : {}),
         ...override,
       };
       const response = await updateFlow(flowId, payload);

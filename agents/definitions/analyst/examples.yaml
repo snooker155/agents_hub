@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- How many orders came in last month, broken down by region?
+- What's the average of this column across these three files?
+- Is there anything odd about this dataset before we build on it?
+- Pull this out and chart it
+- Which customers churned this quarter, and what do they have in common?
+- Compare this week's numbers with last week's and explain the biggest change
+ru:
+- Сколько заказов пришло в прошлом месяце, с разбивкой по регионам?
+- Какое среднее значение этого столбца по этим трём файлам?
+- Есть ли в этом наборе данных что-то странное, прежде чем мы на нём строим?
+- Вытащи эти данные и построй график
+- Какие клиенты ушли в этом квартале и что у них общего?
+- Сравни цифры этой недели с прошлой и объясни самое большое изменение
+de:
+- Wie viele Bestellungen kamen letzten Monat herein, aufgeschlüsselt nach Region?
+- Was ist der Durchschnitt dieser Spalte über diese drei Dateien?
+- Fällt an diesem Datensatz etwas auf, bevor wir darauf aufbauen?
+- Zieh die Daten heraus und mach ein Diagramm daraus
+- Welche Kunden sind dieses Quartal abgesprungen, und was haben sie gemeinsam?
+- Vergleiche die Zahlen dieser Woche mit der letzten und erkläre die größte Änderung

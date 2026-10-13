@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Score this CV against this job description and tell me the gaps
+- Is this posting worth applying to, given my CV and what I said I want?
+- Evaluate this proposal against the brief, criterion by criterion
+- Which of these red flags should actually block us here?
+- Rank these five candidates for the backend role
+- Compare these two vendor offers against our requirements
+ru:
+- Оцени это резюме по описанию вакансии и назови пробелы
+- Стоит ли откликаться на эту вакансию с учётом моего резюме и того, что я хочу?
+- Оцени это предложение по брифу, критерий за критерием
+- Какие из этих тревожных сигналов действительно должны нас остановить?
+- Расставь этих пятерых кандидатов на позицию бэкенд-разработчика по местам
+- Сравни эти два предложения поставщиков с нашими требованиями
+de:
+- Bewerte diesen Lebenslauf anhand dieser Stellenbeschreibung und nenn mir die Lücken
+- Lohnt sich eine Bewerbung auf diese Stelle, gemessen an meinem Lebenslauf und meinen Wünschen?
+- Bewerte dieses Angebot anhand des Briefings, Kriterium für Kriterium
+- Welche dieser Warnsignale sollten uns hier wirklich stoppen?
+- Bring diese fünf Kandidaten für die Backend-Stelle in eine Rangfolge
+- Vergleiche diese beiden Anbieterangebote mit unseren Anforderungen

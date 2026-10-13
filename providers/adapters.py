@@ -133,6 +133,12 @@ def _build_openai_compatible(
         # The runtime counts its calls by caller; the model is built where
         # the caller is known (an agent's run, the hub's /v1 route).
         headers.update(source_headers())
+    bid = str(backend.get("id") or "")
+    if bid == "nodes" or bid.startswith("node-"):
+        # A node or the node pool (hublink/): whose work this is decides
+        # which node may see it (common/data_class.py).
+        from common.data_class import caller_headers
+        headers.update(caller_headers())
 
     kwargs: Dict[str, Any] = dict(
         model=model,

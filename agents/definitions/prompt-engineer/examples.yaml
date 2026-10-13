@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Write a system prompt that turns support emails into structured JSON
+- 'This prompt keeps drifting off-format: fix it and tell me what was wrong'
+- I need the same prompt for a small local model, it is too vague for it
+- Shorten this prompt without losing any of its rules
+- Add three good examples to this classification prompt
+- Why does the agent ignore the second instruction in this prompt?
+ru:
+- Напиши системный промпт, который превращает письма в поддержку в структурированный JSON
+- 'Этот промпт постоянно сбивается с формата: исправь его и объясни, что было не так'
+- Нужен такой же промпт для маленькой локальной модели, для неё он слишком расплывчатый
+- Сократи этот промпт, не потеряв ни одного правила
+- Добавь в этот промпт для классификации три хороших примера
+- Почему агент игнорирует второе указание в этом промпте?
+de:
+- Schreib einen System-Prompt, der Support-E-Mails in strukturiertes JSON umwandelt
+- 'Dieser Prompt weicht ständig vom Format ab: korrigiere ihn und sag mir, woran es lag'
+- Ich brauche denselben Prompt für ein kleines lokales Modell, dafür ist er zu vage
+- Kürze diesen Prompt, ohne eine seiner Regeln zu verlieren
+- Ergänze diesen Klassifizierungs-Prompt um drei gute Beispiele
+- Warum ignoriert der Agent die zweite Anweisung in diesem Prompt?

@@ -1,0 +1,50 @@
+id: product_spec
+name: Product spec
+description: >
+  Researches the context for a feature, breaks it into requirements and work
+  items, and writes a product spec the team can build from.
+category: Product
+icon: clipboard
+examples:
+  en:
+    - "Spec for letting customers export their invoices as CSV and PDF"
+    - "Write a PRD for team workspaces with roles: owner, editor, viewer"
+    - "Spec a usage based billing option alongside our current plans"
+    - "We want a mobile friendly checkout. Write the spec with work items"
+    - "Spec the onboarding checklist for new admins, based on support tickets in tickets.csv"
+    - "Write a spec for SSO with Google and Microsoft for business customers"
+  ru:
+    - "Спецификация: выгрузка счетов клиентами в CSV и PDF"
+    - "Напиши PRD для командных пространств с ролями владелец, редактор, наблюдатель"
+    - "Опиши оплату по факту использования рядом с текущими тарифами"
+    - "Нам нужно оформление заказа, удобное на телефоне. Напиши спецификацию с задачами"
+    - "Опиши чек-лист знакомства для новых администраторов по обращениям из tickets.csv"
+    - "Напиши спецификацию входа через Google и Microsoft для корпоративных клиентов"
+  de:
+    - "Spezifikation für den Export von Rechnungen als CSV und PDF durch Kunden"
+    - "Schreib ein PRD für Team Workspaces mit den Rollen Owner, Editor, Viewer"
+    - "Spezifiziere eine nutzungsbasierte Abrechnung neben unseren aktuellen Tarifen"
+    - "Wir wollen einen mobilfreundlichen Checkout. Schreib die Spezifikation mit Arbeitspaketen"
+    - "Spezifiziere die Onboarding Checkliste für neue Admins anhand der Tickets in tickets.csv"
+    - "Schreib eine Spezifikation für SSO mit Google und Microsoft für Geschäftskunden"
+nodes:
+  - key: context
+    agent: researcher
+    label: {en: Context, ru: Контекст, de: Kontext}
+    task: |
+      Gather the context for the feature the person describes: what the workspace files and memory say about the product, users and earlier decisions, related support requests or feedback, and how comparable products solve it.
+      Start your output with a "Request" section restating the feature and its goal. Then the findings with sources, and the open questions a spec must answer.
+  - key: breakdown
+    agent: decomposer
+    label: {en: Requirements, ru: Требования, de: Anforderungen}
+    task: |
+      From the context above, write the feature's requirements and break it into work items: user stories with acceptance criteria, non functional requirements (performance, security, permissions), and work items in a sensible order with dependencies. Mark what is out of scope.
+  - key: spec
+    agent: writer
+    label: {en: Spec, ru: Спецификация, de: Spezifikation}
+    task: |
+      Write the product spec from the two inputs above: problem and goal, users and use cases, requirements with acceptance criteria, out of scope, success metrics, open questions, and the work items as a table. Keep it concrete enough that an engineer can start from it.
+edges:
+  - {from: context, to: breakdown}
+  - {from: context, to: spec}
+  - {from: breakdown, to: spec}

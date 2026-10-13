@@ -58,6 +58,18 @@ export default {
   emptyTeam: 'Send a request to hand it to the whole team. Its members know each other and what each one is for, so they divide the work between themselves and answer as a conversation.',
   emptyFlow: 'Send a message to run it through every node in this flow, in DAG order. Each node produces its own reply and feeds the next.',
   emptyAgent: 'Send a message to start a conversation.',
+  // Example requests under the agent in an empty chat (AgentExamples.jsx);
+  // the fallback ones are for an agent with no examples of its own.
+  examples: {
+    title: 'For example',
+    hint: 'Put the example into the message box',
+    fallback1: 'What can you do?',
+    fallback2: 'Where should I start?',
+    fallback3: 'Which tools do you have?',
+    fallback4: 'Show me an example of a task you handle well',
+    fallback5: 'What do you need from me to get started?',
+    fallback6: 'What should I not ask you to do?',
+  },
   agentWorksIn: 'The agent will work in the',
   workspace: 'workspace.',
   chatWithASingleAgent: 'Chat with a single agent',
@@ -85,6 +97,7 @@ export default {
   boundTo: 'bound to',
   debugMirror: 'debug mirror',
   readOnly: 'read-only',
+  mirror: { badge: 'mirror', banner: 'A copy of a conversation on {{node}}. It is written there; this copy is read-only.' },
   voice: {
     hold: 'Hold to speak, or hold Space',
     recording: 'Listening… let go to send',

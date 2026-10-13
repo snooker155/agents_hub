@@ -12,6 +12,7 @@ import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
+import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
@@ -1344,7 +1345,12 @@ function WorkspaceSettingsTab({ workspace, agents }) {
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
-          {active.id === 'isolation' && <WorkspaceIsolation key={workspace} workspace={workspace} />}
+          {active.id === 'isolation' && (
+            <div className="space-y-6">
+              <WorkspaceIsolation key={workspace} workspace={workspace} />
+              <WorkspaceDataClass key={`dc-${workspace}`} workspace={workspace} />
+            </div>
+          )}
           {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}

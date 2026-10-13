@@ -1,0 +1,51 @@
+id: candidate_screening
+name: Candidate screening
+description: >
+  Scores CVs against a job description with evidence for every criterion,
+  has the scores double checked, and writes a shortlist with interview
+  questions for each candidate.
+category: HR
+icon: users
+examples:
+  en:
+    - "Screen the CVs in candidates/ against job-description.md for the backend role"
+    - "Rank these five product designer CVs against our must haves and nice to haves"
+    - "Which applicants for the data analyst role meet the SQL and Python requirements?"
+    - "Screen the attached CV for the senior frontend role and list the gaps"
+    - "Shortlist three candidates for the support lead role and suggest interview questions"
+    - "Compare the two finalists for the DevOps role criterion by criterion"
+  ru:
+    - "Оцени резюме из candidates/ по описанию вакансии job-description.md на роль бэкенд-разработчика"
+    - "Расставь по местам пять резюме продуктовых дизайнеров по нашим обязательным и желательным требованиям"
+    - "Кто из кандидатов на роль аналитика данных соответствует требованиям по SQL и Python?"
+    - "Оцени приложенное резюме на роль старшего фронтенд-разработчика и перечисли пробелы"
+    - "Отбери трёх кандидатов на роль руководителя поддержки и предложи вопросы для интервью"
+    - "Сравни двух финалистов на роль DevOps по каждому критерию"
+  de:
+    - "Bewerte die Lebensläufe in candidates/ anhand von job-description.md für die Backend Stelle"
+    - "Ordne diese fünf Lebensläufe von Product Designern nach unseren Muss und Kann Kriterien"
+    - "Welche Bewerber für die Data Analyst Stelle erfüllen die SQL und Python Anforderungen?"
+    - "Bewerte den angehängten Lebenslauf für die Senior Frontend Stelle und nenne die Lücken"
+    - "Wähle drei Kandidaten für die Leitung Support aus und schlag Interviewfragen vor"
+    - "Vergleiche die beiden Finalisten für die DevOps Stelle Kriterium für Kriterium"
+nodes:
+  - key: score
+    agent: screener
+    label: {en: Score CVs, ru: Оценка резюме, de: Lebensläufe bewerten}
+    task: |
+      Score each CV the person points to against the job description: split the description into must haves and nice to haves, then for each candidate and criterion give met, partly met or not met with the evidence quoted from the CV.
+      Start your output with a "Request" section naming the role and the CVs. Judge only on job related evidence, never on age, gender, origin, photos or other protected characteristics.
+  - key: check
+    agent: verifier
+    label: {en: Check scores, ru: Проверка оценок, de: Bewertung prüfen}
+    task: |
+      Check the scoring above: every rating must rest on quoted evidence, the same criterion must be applied the same way to every candidate, and nothing irrelevant to the job may affect a score.
+      Return the corrected scoring and a short note of what you changed.
+  - key: shortlist
+    agent: writer
+    label: {en: Shortlist, ru: Шорт-лист, de: Shortlist}
+    task: |
+      Write the shortlist from the checked scoring: a ranked table (candidate, must haves met, nice to haves met, main gap), a two sentence summary per candidate, and three to five interview questions per shortlisted candidate that probe their gaps.
+edges:
+  - {from: score, to: check}
+  - {from: check, to: shortlist}

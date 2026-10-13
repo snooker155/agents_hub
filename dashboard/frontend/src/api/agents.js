@@ -60,6 +60,13 @@ export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, da
 export const testLocalModel = (provider, base_url) => api.post('/settings/test-local-model', { provider, base_url });
 export const getAgentHealth = (id) => api.get(`/agents/${id}/health`);
 export const createCustomAgent = (data) => api.post('/agents/create', data);
+// Ready agents to start from (agents/templates/, docs/agent-templates.md).
+export const getAgentTemplates = (workspace) =>
+  api.get('/agent-templates', workspace ? { params: { workspace } } : {});
+export const getAgentTemplate = (id, workspace) =>
+  api.get(`/agent-templates/${encodeURIComponent(id)}`, workspace ? { params: { workspace } } : {});
+export const createAgentFromTemplate = (id, data) =>
+  api.post(`/agent-templates/${encodeURIComponent(id)}/create`, data);
 export const cloneAgentToWorkspace = (id, data) =>
   api.post(`/agents/${encodeURIComponent(id)}/clone-to-workspace`, data);
 export const getAgentTools = () => api.get('/agents/tools');
@@ -78,3 +85,5 @@ export const getAgentExperiment = (id) => api.get(`/agents/${id}/experiment`);
 export const putAgentExperiment = (id, data) => api.put(`/agents/${id}/experiment`, data);
 export const endAgentExperiment = (id) => api.delete(`/agents/${id}/experiment`);
 export const getAgentExperimentReport = (id) => api.get(`/agents/${id}/experiment/report`);
+// Example requests for the empty chat, in the UI language.
+export const getAgentExamples = (id, lang) => api.get(`/agents/${encodeURIComponent(id)}/examples`, { params: lang ? { lang } : {} });

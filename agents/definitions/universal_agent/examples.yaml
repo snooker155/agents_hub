@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Look at this repo and tell me what it does, then fix the failing test
+- Draft a summary from these files and save it, and remind me to review it tomorrow
+- 'Handle this: read what''s needed, and if it''s really a research or code task, hand it to the right agent'
+- Clean up the downloads folder and sort the files by type
+- Compare these two CSV files and tell me which rows differ
+- Find out why the build is slow and suggest what to change
+ru:
+- Посмотри этот репозиторий, расскажи, что он делает, а потом почини падающий тест
+- Сделай сводку по этим файлам, сохрани её и напомни мне завтра её просмотреть
+- 'Займись этим: прочитай нужное, а если это на самом деле задача на исследование или код, передай её подходящему агенту'
+- Наведи порядок в папке загрузок и разложи файлы по типам
+- Сравни эти два CSV-файла и скажи, какие строки отличаются
+- Выясни, почему сборка идёт медленно, и предложи, что поменять
+de:
+- Sieh dir dieses Repo an, sag mir, was es macht, und repariere dann den fehlschlagenden Test
+- Fass diese Dateien zusammen, speichere die Zusammenfassung und erinnere mich morgen daran, sie durchzusehen
+- 'Kümmere dich darum: lies, was nötig ist, und wenn es eigentlich eine Recherche- oder Code-Aufgabe ist, gib sie an den passenden Agenten'
+- Räum den Download-Ordner auf und sortiere die Dateien nach Typ
+- Vergleiche diese beiden CSV-Dateien und sag mir, welche Zeilen sich unterscheiden
+- Finde heraus, warum der Build langsam ist, und schlag vor, was sich ändern sollte

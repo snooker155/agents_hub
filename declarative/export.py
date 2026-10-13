@@ -91,7 +91,7 @@ _INHERITANCE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
     "model": ("provider", "model", "base_url", "temperature", "max_tokens"),
     "reasoning": ("reasoning",),
     "loop": ("fallback_models", "advisor_model", "output_schema",
-             "max_concurrent_delegates", "tool_search", "compaction"),
+             "max_concurrent_delegates", "tool_search", "compaction", "data_class"),
     "web_domains": ("allowed_domains", "blocked_domains"),
     "response_format": ("response_format",),
     "clarify_gate": ("clarify_gate",),

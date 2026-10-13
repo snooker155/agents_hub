@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Build a page with six CSS loader animations and a slider for their speed
+- Make a landing page for this project from README.md
+- Add a dark mode and make the cards wrap on a phone
+- Give me a Python script that parses these logs into a CSV
+- Build a small to-do app that keeps its items in the browser
+- Make an interactive calculator for loan payments
+ru:
+- Сделай страницу с шестью CSS-анимациями загрузки и ползунком скорости
+- Сделай лендинг этого проекта по README.md
+- Добавь тёмную тему и сделай так, чтобы карточки переносились на телефоне
+- Напиши скрипт на Python, который разбирает эти логи в CSV
+- Сделай небольшое приложение со списком дел, которое хранит пункты в браузере
+- Сделай интерактивный калькулятор платежей по кредиту
+de:
+- Bau eine Seite mit sechs CSS-Ladeanimationen und einem Regler für ihre Geschwindigkeit
+- Mach aus README.md eine Landingpage für dieses Projekt
+- Füg einen Dark Mode hinzu und lass die Karten auf dem Handy umbrechen
+- Gib mir ein Python-Skript, das diese Logs in eine CSV umwandelt
+- Bau eine kleine To-do-App, die ihre Einträge im Browser speichert
+- Mach einen interaktiven Rechner für Kreditraten

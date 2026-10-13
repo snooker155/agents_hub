@@ -58,6 +58,18 @@ export default {
   emptyTeam: 'Senden Sie eine Anfrage an das gesamte Team. Die Mitglieder kennen einander und ihre jeweiligen Aufgaben, teilen die Arbeit selbst auf und antworten als Gespräch.',
   emptyFlow: 'Senden Sie eine Nachricht, um sie in DAG-Reihenfolge durch alle Knoten dieses Flows laufen zu lassen. Jeder Knoten erzeugt seine eigene Antwort und reicht sie weiter.',
   emptyAgent: 'Senden Sie eine Nachricht, um die Unterhaltung zu beginnen.',
+  // Example requests under the agent in an empty chat (AgentExamples.jsx);
+  // the fallback ones are for an agent with no examples of its own.
+  examples: {
+    title: 'Zum Beispiel',
+    hint: 'Beispiel in das Eingabefeld übernehmen',
+    fallback1: 'Was kannst du?',
+    fallback2: 'Womit fange ich am besten an?',
+    fallback3: 'Welche Werkzeuge hast du?',
+    fallback4: 'Zeig mir ein Beispiel für eine Aufgabe, die du gut erledigst',
+    fallback5: 'Was brauchst du von mir, um loszulegen?',
+    fallback6: 'Womit sollte ich mich besser nicht an dich wenden?',
+  },
   agentWorksIn: 'Der Agent arbeitet im',
   workspace: 'Workspace.',
   chatWithASingleAgent: 'Chat mit einem einzelnen Agenten',
@@ -85,6 +97,7 @@ export default {
   boundTo: 'gebunden an',
   debugMirror: 'Debug-Spiegel',
   readOnly: 'schreibgeschützt',
+  mirror: { badge: 'Spiegel', banner: 'Kopie einer Unterhaltung von {{node}}. Sie wird dort geführt; diese Kopie ist schreibgeschützt.' },
   voice: {
     hold: 'Gedrückt halten zum Sprechen, oder die Leertaste halten',
     recording: 'Ich höre zu… loslassen zum Senden',

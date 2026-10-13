@@ -1,7 +1,8 @@
+import AgentExamples, { FlowExamples } from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { AudioLines, Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
+import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -134,6 +135,15 @@ export default function ChatMessageList() {
           </div>
         )}
 
+        {/* A copy of a conversation held on a linked hub (docs/hub-link.md): read here, written there. */}
+        {currentConv?.origin === 'mirror' && (
+          <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 bg-slate-50 text-xs text-slate-700 flex items-center gap-2"
+            data-testid="mirror-banner">
+            <Copy className="w-3.5 h-3.5 shrink-0" />
+            <span>{t('chat.mirror.banner', { node: currentConv.mirror?.node || '?' })}</span>
+          </div>
+        )}
+
         {/* A conversation with the Assistant, by voice or text, as its text; continued here too. */}
         {currentConv?.origin === 'assistant' && (
           <div className="flex-shrink-0 px-4 py-2 border-b border-indigo-200 bg-indigo-50 text-xs text-indigo-800 flex items-center gap-2"
@@ -185,6 +195,7 @@ export default function ChatMessageList() {
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
                       {t('chat.emptyFlow')}
                     </p>
+                    <FlowExamples />
                   </>
                 ) : (
                   <>
@@ -198,6 +209,7 @@ export default function ChatMessageList() {
                       {t('chat.emptyAgent')}
                       {selectedWorkspace && <> {t('chat.agentWorksIn')} <strong className="text-gray-700">{selectedWorkspace}</strong> {t('chat.workspace')}</>}
                     </p>
+                    <AgentExamples />
                   </>
                 )}
               </div>

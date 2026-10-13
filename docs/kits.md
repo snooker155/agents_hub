@@ -2,10 +2,22 @@
 
 A kit is a ready set of agents for one line of work, with the connectors it
 needs and an outcome rubric for each agent, installed into a workspace in
-one step. The hub ships three: `support` (customer support), `finance`
-(finance operations and analyst work) and `recruiting`. The model is
-Anthropic's Claude for Financial Services agent templates: a working team
-to start from, not a blank agent page.
+one step. The model is Anthropic's Claude for Financial Services agent
+templates: a working team to start from, not a blank agent page. The hub
+ships ten:
+
+| Kit | Agents | Connectors (optional in brackets) |
+|---|---|---|
+| `support`: customer support | Triage, Resolver | mail (slack, jira, linear) |
+| `finance`: finance operations | Analyst, Reviewer | databases (google) |
+| `recruiting` | Sourcer, Screener | mail (google, slack) |
+| `sales`: sales development | Prospector, Outreach | mail (google, slack) |
+| `marketing`: content marketing | Strategist, Writer, Editor | (notion, google, confluence, slack) |
+| `engineering`: issue triage and release notes | Triager, Issue keeper, Release notes | (jira, linear, slack) |
+| `legal`: contract review | Reviewer, Drafter, Obligations | (google, microsoft, notion) |
+| `helpdesk`: internal IT and HR helpdesk | Librarian, Desk | (slack, teams, confluence, notion, google, jira) |
+| `meetings`: meeting follow-up | Notetaker, Follow-up | (google, microsoft, slack, teams, mail) |
+| `intel`: competitive intelligence | Scout, Analyst | (slack, notion) |
 
 A kit **is** an [`ah apply`](apply.md) bundle (agents, a memory pool, a
 deployment) plus a manifest. Installing a kit plans and applies that bundle
@@ -111,8 +123,9 @@ the kit's files has changed, and `update` when they have.
 A kit's agent can `extend` a system agent instead of being entirely its own:
 `finance_analyst` extends `analyst`, `finance_reviewer` extends `verifier`,
 `recruiting_sourcer` extends `sourcer`, `recruiting_screener` extends
-`screener` — each keeps the parent's generic working method and adds only
-the domain part ([agent-inheritance](agent-inheritance.md)). Installing such
+`screener`, and `marketing_writer`, `eng_release_notes`, `legal_drafter` and
+`intel_analyst` extend `writer` — each keeps the parent's generic working
+method and adds only the domain part ([agent-inheritance](agent-inheritance.md)). Installing such
 a kit seeds its agents' parents into the hub first if a fresh install has
 not needed them yet, the same on-demand way any other surface short of one
 system agent does, so the kit installs whether or not the parent has been
@@ -128,6 +141,25 @@ team's own connected data instead. `support_triage` and `support_resolver`
 stay standalone: no system agent's tool set or working method actually fits
 triaging and resolving customer tickets (the system agent also named
 `support` is the dashboard's own Help panel, a different product entirely).
+
+A delta removes an inherited entry exactly as the parent stores it.
+`writer` hands a draft to the Verifier through the role reference
+`@verifier`, so the kits' writers that have their own reviewer (or a
+person) write `handoffs: [-@verifier, +marketing_editor]`, not
+`-verifier`. A list either uses deltas throughout or is a plain list;
+installing into a workspace renames a `+item` or `-item` that names one of
+the kit's own agents and keeps its sign.
+
+### Splitting reading from sending
+
+Several kits split one job across two agents so neither forms the lethal
+trifecta. `helpdesk_librarian` reads Confluence, Notion and Drive (pages
+anyone with edit rights can change) into the knowledge pool and can send
+nothing; `helpdesk_desk` talks to employees and files tickets but reads
+only that pool. `eng_triager` reads tracker issues and the code and only
+proposes; `eng_issue_keeper` applies the proposals to the tracker. The
+same shape runs through `sales` (Prospector reads the web, Outreach sends)
+and `intel` (Scout reads the web, Analyst writes the brief).
 
 ## Writing a kit
 

@@ -1,0 +1,22 @@
+# Example requests shown in the empty chat with this agent, by UI language.
+en:
+- Is anything broken right now?
+- Why did last night's runs fail?
+- What's been costing the most this week?
+- 'This chat hung: what happened?'
+- Something is eating disk, what is it?
+- Are all providers and local models reachable?
+ru:
+- Что-нибудь сейчас сломано?
+- Почему упали ночные запуски?
+- Что обошлось дороже всего на этой неделе?
+- 'Этот чат завис: что случилось?'
+- Что-то съедает место на диске, что это?
+- Все ли провайдеры и локальные модели доступны?
+de:
+- Ist gerade etwas kaputt?
+- Warum sind die Läufe letzte Nacht fehlgeschlagen?
+- Was hat diese Woche am meisten gekostet?
+- 'Dieser Chat hängt: was ist passiert?'
+- Irgendetwas frisst Speicherplatz, was ist es?
+- Sind alle Anbieter und lokalen Modelle erreichbar?

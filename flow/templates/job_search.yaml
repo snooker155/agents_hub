@@ -1,0 +1,49 @@
+id: job_search
+name: Job search
+description: >
+  Finds current openings that match what you are looking for, scores each
+  against your CV, and drafts a tailored cover letter for the best match.
+category: Career
+icon: briefcase
+examples:
+  en:
+    - "Find senior Python backend roles in Berlin or remote EU, my CV is cv.pdf"
+    - "Look for product manager openings in fintech posted in the last two weeks"
+    - "Find data engineering jobs that sponsor visas in the Netherlands"
+    - "Which UX research roles at climate tech companies fit my CV?"
+    - "Find part time technical writing roles, remote, and draft a letter for the best one"
+    - "Search for engineering manager roles at companies with 50 to 300 people"
+  ru:
+    - "Найди вакансии senior Python backend в Берлине или удалённо по ЕС, моё резюме в cv.pdf"
+    - "Поищи вакансии продакт-менеджера в финтехе за последние две недели"
+    - "Найди вакансии дата-инженера в Нидерландах со спонсорством визы"
+    - "Какие вакансии UX-исследователя в климатических стартапах подходят под моё резюме?"
+    - "Найди удалённую работу техническим писателем на неполный день и напиши письмо к лучшей вакансии"
+    - "Поищи вакансии руководителя разработки в компаниях от 50 до 300 человек"
+  de:
+    - "Finde Senior Python Backend Stellen in Berlin oder remote in der EU, mein Lebenslauf ist cv.pdf"
+    - "Such Stellen als Product Manager im Fintech, in den letzten zwei Wochen ausgeschrieben"
+    - "Finde Data Engineering Stellen mit Visasponsoring in den Niederlanden"
+    - "Welche UX Research Stellen bei Climate Tech Firmen passen zu meinem Lebenslauf?"
+    - "Finde Teilzeitstellen als Technical Writer, remote, und schreib ein Anschreiben für die beste"
+    - "Such Stellen als Engineering Manager in Firmen mit 50 bis 300 Leuten"
+nodes:
+  - key: find
+    agent: sourcer
+    label: {en: Find openings, ru: Поиск вакансий, de: Stellen finden}
+    task: |
+      Find current job openings that match what the person is looking for (role, location, seniority, anything else they said), each with a link to the posting, the company, location and posting date. Skip postings older than a month or without a working link.
+      Start your output with a "Request" section restating what they are looking for and where their CV is.
+  - key: fit
+    agent: screener
+    label: {en: Score fit, ru: Соответствие, de: Passung}
+    task: |
+      Score each opening above against the person's CV from the workspace: must haves met, gaps, and an overall fit score with one sentence of reasoning. Rank them and mark the best match.
+  - key: letter
+    agent: writer
+    label: {en: Cover letter, ru: Сопроводительное письмо, de: Anschreiben}
+    task: |
+      Write a cover letter for the best matching opening, using only experience that is in the CV: three short paragraphs that connect two or three of the CV's strongest points to the posting's main needs. Put the ranked list of openings with links above the letter.
+edges:
+  - {from: find, to: fit}
+  - {from: fit, to: letter}

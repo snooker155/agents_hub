@@ -1,0 +1,15 @@
+# A daily pass over new issues. Starts paused: turn it on once Jira or
+# Linear is connected and the component owners are in the triage pool.
+kind: deployment
+id: daily-issue-triage
+title: Daily new-issue triage
+agent: eng_triager
+message: >
+  Go through the issues opened since the last run that have no priority
+  yet. For each, check for a duplicate, find the code it most likely
+  touches, and propose labels, a priority and an owner with a reason. Hand
+  the list to Issue keeper to apply.
+recurrence: daily
+run_at: 2026-10-12T07:30:00+00:00
+timezone: UTC
+paused: true

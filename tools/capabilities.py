@@ -156,6 +156,11 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # Search returns third-party text — ingest, nothing more: the query goes to
     # one fixed API endpoint, which is not a channel an attacker can aim.
     "web_search": frozenset({INGESTS_UNTRUSTED}),
+    # map_on_nodes (tools/node_map.py) sends agent-supplied text to models on
+    # the linked nodes, only those trusted for the run's data class; what
+    # comes back was written on someone's machine, and an untrusted node
+    # (public work only) could answer anything: ingest, nothing more.
+    "map_on_nodes": frozenset({INGESTS_UNTRUSTED}),
     # Fetch also *sends*: the agent chooses the host, path and query string, so
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
     # tool, which is why it is the second, more restricted grant.

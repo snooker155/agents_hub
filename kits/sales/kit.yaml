@@ -1,0 +1,24 @@
+id: sales
+name: Sales development
+description: >
+  Finds accounts that fit the team's ideal customer profile, researches each
+  one, and writes outreach specific to the person it goes to. A second agent
+  sends it, follows up on replies and books the first call.
+industry: Sales
+icon: target
+version: 1.0.0
+connectors:
+  required: [mail]
+  optional: [google, slack]
+rubrics: >
+  Prospector is graded on adding only accounts that match the written ideal
+  customer profile, with a sourced reason for each, and on never inventing a
+  fact about a company or a person. Outreach is graded on messages that
+  reference something real about the recipient, honest follow-up that stops
+  when someone says no, and booking a call only once a time is agreed.
+next_steps: >
+  Write the ideal customer profile, the offer and the common objections into
+  the Sales playbook memory pool before running Prospector; both agents work
+  from it. Connect mail on the Connectors page (Google for calendar invites,
+  Slack to post booked calls to the team). The weekly prospect batch on
+  Prospector's Pulse tab starts paused.
