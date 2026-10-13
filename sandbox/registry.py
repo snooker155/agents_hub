@@ -27,6 +27,12 @@ def get_provider(name: str) -> SandboxProvider:
     anything outside :data:`PROVIDER_NAMES` — callers resolve a name through
     :func:`resolve` first, which never returns anything else."""
     name = (name or "").strip().lower()
+    if name == "nodes":
+        # The pool of node sandboxes (sandbox/node.py): the hub picks a node.
+        if name not in _INSTANCES:
+            from sandbox.node import PoolProvider
+            _INSTANCES[name] = PoolProvider()
+        return _INSTANCES[name]
     if name.startswith("node:"):
         # A linked node's sandbox (sandbox/node.py): one instance per node id.
         if name not in _INSTANCES:

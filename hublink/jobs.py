@@ -96,6 +96,16 @@ def discard(job_id: str) -> None:
         conn.execute("DELETE FROM node_jobs WHERE job_id = ?", (str(job_id),))
 
 
+def fail_if_pending(job_id: str, error: str) -> bool:
+    """Fail a job nobody took yet. False when the node took it meanwhile, so
+    a job is never handed to a second node while the first is running it."""
+    with db.transaction() as conn:
+        cur = conn.execute(
+            "UPDATE node_jobs SET status = ?, error = ?, finished_at = ? WHERE job_id = ? AND status = ?",
+            (STATUS_FAILED, error[:2000], _iso(_now()), str(job_id), STATUS_PENDING))
+        return int(getattr(cur, "rowcount", 0) or 0) > 0
+
+
 def fail(job_id: str, error: str) -> None:
     with db.transaction() as conn:
         conn.execute(
@@ -104,11 +114,13 @@ def fail(job_id: str, error: str) -> None:
             (STATUS_FAILED, error[:2000], _iso(_now()), str(job_id), STATUS_DONE, STATUS_FAILED))
 
 
-async def wait_head(job_id: str, *, timeout: float) -> Dict[str, Any]:
+async def wait_head(job_id: str, *, timeout: float, take_timeout: Optional[float] = None) -> Dict[str, Any]:
     """The response head once the node posted it. Raises :class:`JobFailed`
-    when the job failed, was never taken, or ``timeout`` ran out."""
+    when the job failed or ``timeout`` ran out, and :class:`JobNotTaken`
+    when the node did not pick it up within ``take_timeout`` (default
+    :data:`TAKE_TIMEOUT_SECONDS`), which a caller may send elsewhere."""
     deadline = time.monotonic() + max(1.0, timeout)
-    take_deadline = time.monotonic() + TAKE_TIMEOUT_SECONDS
+    take_deadline = time.monotonic() + (TAKE_TIMEOUT_SECONDS if take_timeout is None else take_timeout)
     while True:
         rec = await asyncio.to_thread(get, job_id)
         if rec is None:
@@ -123,8 +135,9 @@ async def wait_head(job_id: str, *, timeout: float) -> Dict[str, Any]:
             raise JobFailed(str(rec.get("error") or "the node closed the job without answering"))
         now = time.monotonic()
         if status == STATUS_PENDING and now > take_deadline:
-            await asyncio.to_thread(fail, job_id, "the node did not pick the request up")
-            raise JobFailed("the node did not pick the request up (it may be offline)")
+            if await asyncio.to_thread(fail_if_pending, job_id, "the node did not pick the request up"):
+                raise JobNotTaken("the node did not pick the request up (it may be offline)")
+            continue
         if now > deadline:
             await asyncio.to_thread(fail, job_id, "timed out waiting for the node")
             raise JobFailed("timed out waiting for the node")
@@ -182,6 +195,10 @@ class JobFailed(RuntimeError):
     pass
 
 
+class JobNotTaken(JobFailed):
+    """The node never took the job; nothing ran, so it may go to another."""
+
+
 # ── the node's side (served by routes/hublink.py) ───────────────────────────
 
 def take(node_id: str, *, limit: int = 8) -> List[Dict[str, Any]]:
@@ -201,6 +218,23 @@ def take(node_id: str, *, limit: int = 8) -> List[Dict[str, Any]]:
             rec["status"] = STATUS_TAKEN
             out.append({"job_id": rec["job_id"], **rec["request"]})
         return out
+
+
+def running_count(node_id: str) -> int:
+    """Jobs the node took and has not finished: what its capacity counts."""
+    row = db.get_conn().execute(
+        "SELECT COUNT(*) AS n FROM node_jobs WHERE node_id = ? AND status IN (?, ?)",
+        (str(node_id), STATUS_TAKEN, STATUS_HEADED)).fetchone()
+    return int(row["n"] if row is not None else 0)
+
+
+def in_flight() -> Dict[str, int]:
+    """Every node's open jobs (waiting, taken or streaming), by node id: the
+    load the scheduler balances on."""
+    rows = db.get_conn().execute(
+        "SELECT node_id, COUNT(*) AS n FROM node_jobs WHERE status IN (?, ?, ?) GROUP BY node_id",
+        (STATUS_PENDING, STATUS_TAKEN, STATUS_HEADED)).fetchall()
+    return {str(r["node_id"]): int(r["n"]) for r in rows}
 
 
 def pending_count(node_id: str) -> int:
@@ -273,8 +307,9 @@ def sweep() -> Dict[str, int]:
 
 
 __all__ = [
-    "JobFailed", "KEEP_FINISHED_SECONDS", "STATUS_DONE", "STATUS_FAILED", "STATUS_HEADED",
+    "JobFailed", "JobNotTaken", "KEEP_FINISHED_SECONDS", "STATUS_DONE", "STATUS_FAILED", "STATUS_HEADED",
     "STATUS_PENDING", "STATUS_TAKEN", "TAKE_TIMEOUT_SECONDS", "append_chunk", "collect",
-    "discard", "fail", "finish", "get", "iter_chunks", "owner_of", "pending_count", "set_head",
+    "discard", "fail", "fail_if_pending", "finish", "get", "in_flight", "iter_chunks", "owner_of",
+    "pending_count", "running_count", "set_head",
     "submit", "sweep", "take", "wait_head",
 ]

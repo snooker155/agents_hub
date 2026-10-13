@@ -9,6 +9,11 @@ to the node through the mailbox; the node runs it in its own provider
 because the snippet runs inside an agent's own process, on any host, while
 the mailbox is the API's.
 
+``nodes`` is the pool of them (:class:`PoolProvider`): the hub's
+``/api/node-link/pool/exec`` picks the least busy node with a sandbox that
+may take the run's work (hublink/scheduler.py), so snippets of parallel
+runs spread over the nodes.
+
 The network policy travels with the request and the node's provider is held
 to it: a node whose own provider cannot fence (``local``) refuses ``none``
 and ``limited`` rather than running the snippet open. A host directory
@@ -25,6 +30,7 @@ from sandbox.base import SandboxProvider, SandboxRequest, SandboxResult
 log = logging.getLogger(__name__)
 
 PREFIX = "node:"
+POOL = "nodes"
 REQUEST_TIMEOUT_MARGIN = 45.0
 
 
@@ -51,40 +57,67 @@ class NodeProvider(SandboxProvider):
         return True, ""
 
     def run(self, request: SandboxRequest) -> SandboxResult:
-        if request.workspace:
-            return SandboxResult(exit_code=-1, provider=self.name, error=(
-                "mount_workspace is not available on a node: the workspace's files are on "
-                "this hub, the snippet would run on another machine"))
-        import os
-        import requests
-        from common.auth import auth_headers
-        from common.hostnet import hub_base_url
+        return _post(self.name, f"/api/node-link/{self.node_id}/exec", request)
 
-        payload = asdict(request)
-        payload["workspace_name"] = os.environ.get("AGENT_WORKSPACE") or ""
-        url = f"{hub_base_url()}/api/node-link/{self.node_id}/exec"
+
+class PoolProvider(SandboxProvider):
+    """The pool of node sandboxes: the hub picks a node per snippet."""
+
+    name = POOL
+
+    def is_available(self) -> Tuple[bool, str]:
+        from hublink import nodes
+        found = nodes.sandbox_availability().get(POOL)
+        if not found:
+            return False, "no node offers a sandbox"
+        return bool(found["available"]), str(found.get("reason") or "")
+
+    def run(self, request: SandboxRequest) -> SandboxResult:
+        return _post(self.name, "/api/node-link/pool/exec", request)
+
+
+def _post(name: str, path: str, request: SandboxRequest) -> SandboxResult:
+    """Send a snippet to one of the hub's exec routes."""
+    if request.workspace:
+        return SandboxResult(exit_code=-1, provider=name, error=(
+            "mount_workspace is not available on a node: the workspace's files are on "
+            "this hub, the snippet would run on another machine"))
+    import os
+    import requests
+    from common.auth import auth_headers
+    from common.hostnet import hub_base_url
+
+    payload = asdict(request)
+    payload["workspace_name"] = os.environ.get("AGENT_WORKSPACE") or ""
+    try:
+        from common.workspace_scope import current_agent
+        payload["agent_id"] = current_agent() or ""
+    except Exception:  # noqa: BLE001 - outside a run: the workspace's class alone applies
+        payload["agent_id"] = ""
+    url = f"{hub_base_url()}{path}"
+    try:
+        resp = requests.post(url, json=payload, headers=auth_headers(),
+                             timeout=float(request.timeout or 60) + REQUEST_TIMEOUT_MARGIN)
+    except requests.exceptions.RequestException as exc:
+        return SandboxResult(exit_code=-1, provider=name,
+                             error=f"could not reach the hub's node route: {exc}")
+    if resp.status_code != 200:
         try:
-            resp = requests.post(url, json=payload, headers=auth_headers(),
-                                 timeout=float(request.timeout or 60) + REQUEST_TIMEOUT_MARGIN)
-        except requests.exceptions.RequestException as exc:
-            return SandboxResult(exit_code=-1, provider=self.name,
-                                 error=f"could not reach the hub's node route: {exc}")
-        if resp.status_code != 200:
-            try:
-                detail = resp.json().get("detail")
-            except ValueError:
-                detail = resp.text[:300]
-            return SandboxResult(exit_code=-1, provider=self.name,
-                                 error=f"the node refused the snippet: {detail or resp.status_code}")
-        try:
-            data = resp.json()
+            detail = resp.json().get("detail")
         except ValueError:
-            return SandboxResult(exit_code=-1, provider=self.name, error="the node answered with no result")
-        fields = {k: data.get(k) for k in ("exit_code", "stdout", "stderr", "truncated_stdout",
-                                             "truncated_stderr", "duration_ms", "timed_out", "error")
-                  if k in data}
-        fields.setdefault("exit_code", -1)
-        return SandboxResult(provider=self.name, **fields)
+            detail = resp.text[:300]
+        return SandboxResult(exit_code=-1, provider=name,
+                             error=f"the node refused the snippet: {detail or resp.status_code}")
+    try:
+        data = resp.json()
+    except ValueError:
+        return SandboxResult(exit_code=-1, provider=name, error="the node answered with no result")
+    fields = {k: data.get(k) for k in ("exit_code", "stdout", "stderr", "truncated_stdout",
+                                         "truncated_stderr", "duration_ms", "timed_out", "error")
+              if k in data}
+    fields.setdefault("exit_code", -1)
+    node = data.get("node")
+    return SandboxResult(provider=f"{name}/{node}" if node and name == POOL else name, **fields)
 
 
-__all__ = ["NodeProvider", "PREFIX", "node_id_of"]
+__all__ = ["NodeProvider", "POOL", "PREFIX", "PoolProvider", "node_id_of"]

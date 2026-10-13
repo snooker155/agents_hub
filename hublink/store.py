@@ -65,7 +65,7 @@ def blank() -> Dict[str, Any]:
         "mirror": {"runs": True, "chats": True, "memory": False},
         "target_workspace": "",
         "node": {"enabled": False, "token": "", "share_models": True, "sandbox": True,
-                 "shared_providers": list(DEFAULT_SHARED_PROVIDERS)},
+                 "shared_providers": list(DEFAULT_SHARED_PROVIDERS), "capacity": 4},
         "remote": {},           # whoami of the remote, as last seen
         "connection": {},       # {id, token} of the mirror connection on the remote
         "linked_at": None,
@@ -126,6 +126,16 @@ def shared_providers(doc: Optional[Dict[str, Any]] = None) -> List[str]:
     return [str(p).strip().lower() for p in raw if str(p).strip()]
 
 
+def node_capacity(doc: Optional[Dict[str, Any]] = None) -> int:
+    """How many of the remote hub's requests this machine runs at once."""
+    doc = doc if doc is not None else get()
+    try:
+        value = int(((doc or {}).get("node") or {}).get("capacity") or 4)
+    except (TypeError, ValueError):
+        value = 4
+    return max(1, min(64, value))
+
+
 def _mask(value: str) -> str:
     value = str(value or "")
     if not value:
@@ -154,5 +164,5 @@ def public(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 __all__ = [
     "BACKEND_ID", "DEFAULT_SHARED_PROVIDERS", "KEY", "MCP_SERVER_ID", "MIRROR_KINDS",
     "blank", "clear", "default_node_name", "get", "is_linked", "mirror_enabled",
-    "node_enabled", "normalize_url", "public", "put", "shared_providers", "slugify", "update",
+    "node_capacity", "node_enabled", "normalize_url", "public", "put", "shared_providers", "slugify", "update",
 ]

@@ -197,7 +197,7 @@ WIDGET_PUBLIC_PREFIXES = ("/api/widgets/public",)
 #: access is restricted too: an env block is a list of secret *names*, and a
 #: policy is the shape of the guardrails somebody would have to get around.
 OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members",
-                                   "secrets", "isolation"})
+                                   "secrets", "isolation", "data-class"})
 
 #: Path segments directly under ``/api/workspaces/`` that are routes, not
 #: workspace names. Without this, ``POST /api/workspaces/attach`` would be read

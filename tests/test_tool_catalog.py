@@ -94,6 +94,7 @@ def _tool_objects_by_id() -> dict:
     from tools.web import WEB_TOOLS
     from tools.browser import BROWSER_TOOLS
     from tools.run_code import run_code
+    from tools.node_map import map_on_nodes
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,
@@ -130,7 +131,7 @@ def _tool_objects_by_id() -> dict:
         *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
         cancel_scheduled, update_scheduled, wake_agent,
-        *WEB_TOOLS, *BROWSER_TOOLS, run_code,
+        *WEB_TOOLS, *BROWSER_TOOLS, run_code, map_on_nodes,
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,
         append_journal_tool,

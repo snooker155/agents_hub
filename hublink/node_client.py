@@ -134,6 +134,7 @@ def announcement(doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "version": version,
         "models": shared_models(doc),
         "capabilities": capabilities(doc),
+        "capacity": store.node_capacity(doc),
     }
 
 

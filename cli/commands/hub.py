@@ -71,6 +71,7 @@ def hub_link(
     no_node: bool = typer.Option(False, "--no-node", help="Stop serving as a node."),
     share_models: bool = typer.Option(True, "--share-models/--no-share-models", help="As a node, offer this hub's local models."),
     sandbox: bool = typer.Option(True, "--sandbox/--no-sandbox", help="As a node, offer this hub's sandbox."),
+    capacity: Optional[int] = typer.Option(None, "--capacity", min=1, max=64, help="As a node, how many of the remote's requests to run at once (default 4)."),
 ):
     """Attach this hub to another one."""
     body = {"url": url, "api_key": key, "name": name, "use_models": models, "use_agents": agents,
@@ -78,7 +79,9 @@ def hub_link(
     if mirror is not None:
         wanted = {p.strip() for p in mirror.split(",") if p.strip() and p.strip() != "none"}
         body["mirror"] = {k: (k in wanted) for k in ("runs", "chats", "memory")}
-    node = {"share_models": share_models, "sandbox": sandbox}
+    node: dict = {"share_models": share_models, "sandbox": sandbox}
+    if capacity is not None:
+        node["capacity"] = capacity
     if node_token:
         node.update({"enabled": True, "token": node_token})
     if no_node:
@@ -127,12 +130,14 @@ def nodes_list(json_out: bool = typer.Option(False, "--json", help="Print JSON."
     table.add_column("ID", style="bold cyan")
     table.add_column("Name")
     table.add_column("Online")
+    table.add_column("Trust")
+    table.add_column("Load", justify="right")
     table.add_column("Models", justify="right")
     table.add_column("Sandbox")
     table.add_column("Workspaces")
     for n in rows:
-        table.add_row(n.get("id", ""), n.get("name", ""), _fmt(n.get("online")),
-                      str(len(n.get("models") or [])), _fmt((n.get("capabilities") or {}).get("sandbox")),
+        table.add_row(n.get("id", ""), n.get("name", ""), _fmt(n.get("online")), n.get("trust", ""),
+                      f"{n.get('in_flight', 0)}/{n.get('capacity', '?')}", str(len(n.get("models") or [])), _fmt((n.get("capabilities") or {}).get("sandbox")),
                       ", ".join(n.get("workspaces") or []) or "any")
     console.print(table)
 
@@ -149,6 +154,57 @@ def nodes_add(
     console.print(f"Token (shown once): [bold]{data.get('token')}[/bold]")
     console.print("On the other machine: [dim]ah hub link <this hub's URL> --key <personal key> "
                   f"--node-token {data.get('token')}[/dim]")
+
+
+@nodes_app.command("set")
+def nodes_set(
+    node_id: str = typer.Argument(..., help="The node id."),
+    trust: Optional[str] = typer.Option(None, "--trust", help="untrusted or trusted (administrators only)."),
+    max_parallel: Optional[int] = typer.Option(None, "--max-parallel", min=0, max=64, help="Cap on requests at once; 0 removes the cap."),
+    workspace: List[str] = typer.Option([], "--workspace", "-w", help="Limit the node to these workspaces (repeatable)."),
+    any_workspace: bool = typer.Option(False, "--any-workspace", help="Remove the workspace limit."),
+    disable: Optional[bool] = typer.Option(None, "--disable/--enable", help="Take the node out of service, or back."),
+):
+    """Change a node's trust, capacity cap, workspaces or state."""
+    body: dict = {}
+    if trust is not None:
+        body["trust"] = trust
+    if max_parallel is not None:
+        body["max_parallel"] = max_parallel or None
+    if workspace:
+        body["workspaces"] = list(workspace)
+    elif any_workspace:
+        body["workspaces"] = None
+    if disable is not None:
+        body["disabled"] = disable
+    if not body:
+        console.print("Nothing to change.")
+        raise typer.Exit(0)
+    n = call(hub().request, "PATCH", f"/api/nodes/{node_id}", json=body) or {}
+    console.print(f"[green]Updated[/green] {n.get('name')}: trust {n.get('trust')}, "
+                  f"capacity {n.get('capacity')}, workspaces {', '.join(n.get('workspaces') or []) or 'any'}"
+                  f"{', disabled' if n.get('disabled') else ''}.")
+
+
+@nodes_app.command("pool")
+def nodes_pool(workspace: str = typer.Option("", "--workspace", "-w", help="Show which nodes may take this workspace's work."),
+               json_out: bool = typer.Option(False, "--json", help="Print JSON.")):
+    """The node pool: its models, capacity and load."""
+    data = call(hub().request, "GET", "/api/nodes/pool",
+                params={"workspace": workspace} if workspace else None) or {}
+    if json_out:
+        console.print_json(json.dumps(data))
+        return
+    console.print(f"Pool: {data.get('online', 0)} online, capacity {data.get('capacity', 0)}, "
+                  f"in flight {data.get('in_flight', 0)}; backend {data.get('backend_id') or 'none'}, "
+                  f"sandbox {data.get('sandbox_provider') or 'none'}")
+    for m in data.get("models") or []:
+        console.print(f"  {m['id']}  [dim]{len(m.get('nodes') or [])} node(s)[/dim]")
+    if workspace:
+        console.print(f"Workspace {data.get('workspace')} is [bold]{data.get('data_class')}[/bold]. May take its work: "
+                      f"{', '.join(e.get('name') or e['id'] for e in data.get('eligible') or []) or 'no node'}")
+        for e in data.get("excluded") or []:
+            console.print(f"  [yellow]{e.get('name') or e['id']}[/yellow]: {e.get('reason')}")
 
 
 @nodes_app.command("remove")

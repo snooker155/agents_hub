@@ -133,6 +133,87 @@ Nodes page shows each node's models, sandbox, host and version; `ah hub
 nodes list` the same; a token is rotated with `ah hub nodes rotate <id>`
 and the old one stops at once.
 
+## The pool
+
+Every node with models also feeds one shared backend, `nodes` (Settings →
+Models), whose models are every node's together. A model picked there is
+answered by whichever node shares it, may see the work, and is least busy
+at that moment; the node is named in the answer's `X-Hub-Node` header. The
+sandbox provider `nodes` does the same for snippets: an environment that
+names it runs each snippet on the freest node with a sandbox.
+
+So independent work spreads over the nodes without anything else changing:
+a flow's parallel branches, an agent's delegated subtasks, the cases of an
+eval, each on its own node. For explicit batch work, the tool
+`map_on_nodes` sends one instruction over up to 200 items, all at once, and
+returns each item's output with the node that made it.
+
+How a node is chosen (`hublink/scheduler.py`):
+
+- **Load** is a node's open jobs (waiting, taken, streaming) over its
+  **capacity**, read from the mailbox, so every API replica sees the same.
+  The node announces its capacity (Settings → System → Remote hub, "Requests
+  at once", `--capacity`, default 4); the hub may cap it lower on the Nodes
+  page. A node is handed no more jobs than it runs at once.
+- When every eligible node is full, the request waits up to two minutes for
+  a slot, then fails with 503.
+- A node that does not take a job within eight seconds (asleep, offline,
+  its loop stuck) loses it to the next node. Only a job nobody took moves,
+  so a request never runs twice.
+
+`GET /api/nodes/pool?workspace=<name>` lists the pool's models, capacity
+and load, and for that workspace which nodes may take its work and why the
+others may not. The Nodes page shows the same.
+
+```bash
+ah hub nodes pool --workspace research           # models, capacity, load; who may take research's work
+ah hub nodes set <id> --trust untrusted          # administrators only
+ah hub nodes set <id> --max-parallel 2           # cap what the node runs at once; 0 removes the cap
+ah hub nodes set <id> -w team-a -w team-b        # limit the node to workspaces; --any-workspace lifts it
+ah hub nodes set <id> --disable                  # out of service; --enable brings it back
+ah hub link https://hub.example.com --key ahk_... --node-token ahnode_... --capacity 2   # on the node
+```
+
+## Trust and data classes
+
+Whoever owns a node can read what it computes: the prompts sent to its
+model, the snippets run in its sandbox, the answers. Software cannot change
+that; only hardware that keeps memory encrypted from its own owner can
+(confidential computing, proven by remote attestation). So the hub does not
+try to hide work from a node. It decides which work a node may see at all.
+
+Every node has a **trust level**, which only the hub's administrator sets,
+never the node's owner:
+
+| Trust | Meaning |
+|---|---|
+| `untrusted` | A volunteer's or a partner's machine. Public work only. The default for a node anyone but an administrator creates. |
+| `trusted` | A machine the administrator answers for. Internal work too. The default for a node an administrator creates. |
+| `attested` | Reserved for a node whose hardware proves, by remote attestation, that it runs the hub's image in an enclave its owner cannot read. Not settable by hand; the hub does not run attestation yet. |
+
+Every workspace has a **data class** (workspace → Isolation tab, `PUT
+/api/workspaces/<name>/data-class`), and an agent may set a stricter one
+for itself (Model tab → loop settings, `loop.data_class` in `ah apply`):
+
+| Class | Who may see it |
+|---|---|
+| `public` | any node |
+| `internal` (default) | trusted or attested nodes |
+| `confidential` | attested nodes only, so today no node: the work stays on this hub |
+
+An agent's class only ever makes the workspace's stricter. The check runs
+wherever work is handed to a node: a node's own backend (`node-<slug>`),
+the pool, and both exec routes. A model call carries its workspace and
+agent as headers (`X-Hub-Workspace`, `X-Hub-Agent`), set where the model is
+built, so the class in force now applies, not the one at build time; a call
+that names none is the default workspace's. A refusal names the node, its
+trust and the class.
+
+A node record from before trust levels counts as `trusted` in single mode
+and `untrusted` in multi mode. `map_on_nodes` counts as reading untrusted
+text for the capability guard: an untrusted node, given public work only,
+could still answer anything.
+
 ## Routes
 
 | Route | Credential | Purpose |
@@ -140,6 +221,10 @@ and the old one stops at once.
 | `GET/PUT/DELETE /api/hublink`, `POST /api/hublink/sync` | administrator | the link |
 | `PUT /api/hublink/mirror/chats`, `PUT /api/hublink/mirror/memory` | personal key | the mirror's receiving end |
 | `GET/POST /api/nodes`, `GET/DELETE /api/nodes/{id}`, `POST /api/nodes/{id}/rotate` | any account (own nodes; administrators see all) | the nodes |
+| `PATCH /api/nodes/{id}` | owner or administrator; `trust` administrators only | trust, capacity cap, workspaces, disabled |
+| `GET /api/nodes/pool` | any account | the pool, and who may take a workspace's work |
+| `GET /api/node-link/pool/v1/models`, `POST /api/node-link/pool/v1/{path}` | the pool's key | the backend `nodes` |
+| `POST /api/node-link/pool/exec` | a hub credential | the sandbox provider `nodes` |
 | `POST /api/node-link/hello`, `GET /api/node-link/poll`, `POST /api/node-link/jobs/{job}/head\|chunk\|end` | node token | the node's loop |
 | `GET/POST /api/node-link/{id}/v1/{path}` | the node's proxy key | the shared hub's model drivers |
 | `POST /api/node-link/{id}/exec` | a hub credential (a run token, the service token, a key) | `sandbox/node.py` |

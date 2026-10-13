@@ -30,17 +30,19 @@ SandboxSize = Literal["small", "medium", "large"]
 #: sandbox.registry.resolve). Only the tool run_code and the code view read
 #: this; a task or node's own execution (``mode``, above) is unaffected.
 SANDBOX_PROVIDER_NAMES = ("inherit", "docker", "local", "e2b", "modal")
-#: One of SANDBOX_PROVIDER_NAMES, or ``node:<id>`` for a linked node's sandbox
-#: (sandbox/node.py, docs/hub-link.md); checked by the validator below.
+#: One of SANDBOX_PROVIDER_NAMES, ``node:<id>`` for a linked node's sandbox,
+#: or ``nodes`` for the pool of them (sandbox/node.py, docs/hub-link.md);
+#: checked by the validator below.
 SandboxProviderType = str
 
 
 def validate_sandbox_provider(value: Any) -> str:
     text = str(value or "inherit").strip().lower() or "inherit"
-    if text in SANDBOX_PROVIDER_NAMES or (text.startswith("node:") and len(text) > len("node:")):
+    if text in SANDBOX_PROVIDER_NAMES or text == "nodes" or (
+            text.startswith("node:") and len(text) > len("node:")):
         return text
     raise ValueError(f"unknown sandbox provider {text!r} (expected one of "
-                     f"{', '.join(SANDBOX_PROVIDER_NAMES)} or node:<id>)")
+                     f"{', '.join(SANDBOX_PROVIDER_NAMES)}, nodes or node:<id>)")
 
 #: Package registries a ``limited`` network may reach when
 #: ``allow_package_managers`` is on: pip's index and file host, npm's registry

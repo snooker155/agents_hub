@@ -20,6 +20,15 @@ A node is online while its last poll is younger than
 the sandbox route refuses a run from any other, since a snippet on someone's
 laptop should never be another team's. The models are offered to the whole
 catalog: a catalog is hub-wide, and the owner chose to share them.
+
+Two more things decide what reaches a node (common/data_class.py): its
+**trust** level, which only the hub's administrator sets, against the data
+class of the work; and its **capacity**, how many requests it runs at once
+(the node announces its own, the hub may cap it lower). Every node with
+models also feeds the **pool**: the backend ``nodes``, whose base URL is
+``/api/node-link/pool/v1`` and whose models are every node's, so one model
+id is answered by whichever eligible node is least busy
+(hublink/scheduler.py).
 """
 from __future__ import annotations
 
@@ -42,6 +51,12 @@ TOKEN_PREFIX = "ahnode_"
 PROXY_PREFIX = "ahnp_"
 ONLINE_SECONDS = 90.0
 BACKEND_PREFIX = "node-"
+#: The pool's backend id. Never a node's own: those all start with "node-".
+POOL_BACKEND = "nodes"
+POOL_PREFIX = "ahpool_"
+#: Requests a node runs at once when it announces nothing.
+DEFAULT_CAPACITY = 4
+MAX_CAPACITY = 64
 
 
 def _now() -> datetime:
@@ -99,9 +114,34 @@ def get_node(node_id: str) -> Optional[Dict[str, Any]]:
     return dict(doc) if isinstance(doc, dict) else None
 
 
-def public(record: Dict[str, Any]) -> Dict[str, Any]:
+def trust(record: Dict[str, Any]) -> str:
+    from common.data_class import trust_of
+    return trust_of(record)
+
+
+def capacity(record: Dict[str, Any]) -> int:
+    """How many requests the node runs at once: what it announced, held to
+    the hub's own cap when the hub set one."""
+    try:
+        announced = int(record.get("announced_capacity") or DEFAULT_CAPACITY)
+    except (TypeError, ValueError):
+        announced = DEFAULT_CAPACITY
+    cap = record.get("max_parallel")
+    try:
+        if cap:
+            announced = min(announced, int(cap))
+    except (TypeError, ValueError):
+        pass
+    return max(1, min(MAX_CAPACITY, announced))
+
+
+def public(record: Dict[str, Any], *, in_flight: Optional[int] = None) -> Dict[str, Any]:
     out = {k: v for k, v in record.items() if k not in ("token_hash", "proxy_key_hash")}
     out["online"] = is_online(record)
+    out["trust"] = trust(record)
+    out["capacity"] = capacity(record)
+    if in_flight is not None:
+        out["in_flight"] = int(in_flight)
     out["backend_id"] = backend_id(record) if record.get("models") else None
     out["sandbox_provider"] = f"node:{record['id']}" if (record.get("capabilities") or {}).get("sandbox") else None
     return out
@@ -117,8 +157,11 @@ def _unique_slug(name: str, *, skip_id: Optional[str] = None) -> str:
     return slug
 
 
-def create_node(*, owner: str, name: str, workspaces: Optional[List[str]] = None) -> Tuple[str, Dict[str, Any]]:
-    """A new node record and its token, which is returned once."""
+def create_node(*, owner: str, name: str, workspaces: Optional[List[str]] = None,
+                trust_level: str = "untrusted") -> Tuple[str, Dict[str, Any]]:
+    """A new node record and its token, which is returned once. The route
+    passes ``trusted`` when an administrator makes it, ``untrusted`` for
+    anyone else."""
     name = (name or "").strip()[:80]
     if not name:
         raise ValueError("a node needs a name")
@@ -140,6 +183,9 @@ def create_node(*, owner: str, name: str, workspaces: Optional[List[str]] = None
             "host": "",
             "version": "",
             "disabled": False,
+            "trust": trust_level if trust_level in ("untrusted", "trusted") else "untrusted",
+            "max_parallel": None,
+            "announced_capacity": DEFAULT_CAPACITY,
             "created_at": _iso(_now()),
             "connected_at": None,
             "last_seen": None,
@@ -180,7 +226,9 @@ def delete_node(node_id: str) -> bool:
         return False
     _remove_backend(rec)
     _pending_proxy_keys.pop(node_id, None)
-    return _store.delete(str(node_id))
+    removed = _store.delete(str(node_id))
+    sync_pool()
+    return removed
 
 
 # ── credentials ──────────────────────────────────────────────────────────────
@@ -319,6 +367,10 @@ def hello(record: Dict[str, Any], announcement: Dict[str, Any]) -> Dict[str, Any
         elif isinstance(m, str) and m.strip():
             models.append({"id": m.strip()[:200], "context_window": 0, "label": ""})
     caps = announcement.get("capabilities") or {}
+    try:
+        announced_capacity = int(announcement.get("capacity") or DEFAULT_CAPACITY)
+    except (TypeError, ValueError):
+        announced_capacity = DEFAULT_CAPACITY
     changes = {
         "models": models[:200],
         "capabilities": {
@@ -328,6 +380,7 @@ def hello(record: Dict[str, Any], announcement: Dict[str, Any]) -> Dict[str, Any
         },
         "host": str(announcement.get("host") or "")[:120],
         "version": str(announcement.get("version") or "")[:40],
+        "announced_capacity": max(1, min(MAX_CAPACITY, announced_capacity)),
         "connected_at": record.get("connected_at") or _iso(_now()),
         "last_seen": _iso(_now()),
     }
@@ -336,7 +389,91 @@ def hello(record: Dict[str, Any], announcement: Dict[str, Any]) -> Dict[str, Any
         _sync_backend(rec)
     except Exception:  # noqa: BLE001 - a catalog that cannot be written keeps the node usable for exec
         log.warning("node %s: could not register its models", rec.get("id"), exc_info=True)
+    sync_pool()
     return rec
+
+
+# ── the pool ─────────────────────────────────────────────────────────────────
+
+def pool_models() -> List[Dict[str, Any]]:
+    """Every model any enabled node shares, once, with the nodes that have
+    it (online or not: the scheduler skips the offline ones per request)."""
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for rec in list_nodes():
+        if rec.get("disabled"):
+            continue
+        for m in rec.get("models") or []:
+            if not isinstance(m, dict) or not m.get("id"):
+                continue
+            row = by_id.setdefault(str(m["id"]), {"id": str(m["id"]), "context_window": 0, "nodes": []})
+            # The smallest window any node has: the pool may answer from any.
+            cw = int(m.get("context_window") or 0)
+            if cw and (not row["context_window"] or cw < row["context_window"]):
+                row["context_window"] = cw
+            row["nodes"].append(rec["id"])
+    return sorted(by_id.values(), key=lambda r: r["id"])
+
+
+def resolve_pool_key(key: Optional[str]) -> bool:
+    from providers import registry
+    backend = registry.get_backend(POOL_BACKEND)
+    have = str((backend or {}).get("api_key") or "")
+    return bool(key) and bool(have) and secrets.compare_digest(have, str(key))
+
+
+def sync_pool() -> None:
+    """The backend ``nodes`` and its catalog rows: every model of every
+    enabled node; removed when no node shares any."""
+    from providers import registry
+    from providers.catalog import load_catalog_raw, save_catalog_raw
+    try:
+        models = pool_models()
+        if not models:
+            if registry.get_backend(POOL_BACKEND):
+                registry.delete_backend(POOL_BACKEND)
+            raw = load_catalog_raw()
+            if isinstance(raw, dict) and POOL_BACKEND in raw:
+                catalog = dict(raw)
+                catalog.pop(POOL_BACKEND, None)
+                save_catalog_raw(catalog)
+            return
+        current = registry.get_backend(POOL_BACKEND)
+        key = str((current or {}).get("api_key") or "")
+        if not key.startswith(POOL_PREFIX):
+            key = POOL_PREFIX + secrets.token_urlsafe(32)
+        wanted = {
+            "id": POOL_BACKEND,
+            "label": "Nodes (pool)",
+            "adapter": "openai",
+            "base_url": f"{_self_base()}/api/node-link/pool/v1",
+            "api_key": key,
+            "default_model": models[0]["id"],
+        }
+        if not current or any(current.get(k) != v for k, v in wanted.items()):
+            registry.upsert_backend({**(current or {}), **wanted})
+
+        raw = load_catalog_raw()
+        catalog = dict(raw) if isinstance(raw, dict) else {}
+        entry = catalog.get(POOL_BACKEND)
+        old_rows = {m.get("id"): m for m in ((entry or {}).get("models") or []) if isinstance(m, dict)}
+        rows = []
+        for m in models:
+            row = dict(old_rows.get(m["id"]) or {
+                "id": m["id"], "enabled": True, "input_price": 0.0, "output_price": 0.0,
+                "cached_input_price": 0.0, "price_source": "auto", "released_at": 0,
+            })
+            if m.get("context_window"):
+                row["context_window"] = int(m["context_window"])
+            rows.append(row)
+        default = str((entry or {}).get("default") or "")
+        if default not in {r["id"] for r in rows}:
+            default = next((r["id"] for r in rows if r.get("enabled")), rows[0]["id"])
+        new_entry = {"default": default, "models": rows}
+        if entry != new_entry:
+            catalog[POOL_BACKEND] = new_entry
+            save_catalog_raw(catalog)
+    except Exception:  # noqa: BLE001 - a read-only catalog keeps the nodes usable one by one
+        log.warning("could not register the node pool", exc_info=True)
 
 
 def allows_workspace(record: Dict[str, Any], workspace: Optional[str]) -> bool:
@@ -350,24 +487,35 @@ def allows_workspace(record: Dict[str, Any], workspace: Optional[str]) -> bool:
 
 def sandbox_availability() -> Dict[str, Dict[str, object]]:
     """For sandbox/registry.py ``available()``: every node that runs a
-    sandbox, keyed by its provider name."""
+    sandbox, keyed by its provider name, and the pool of them (``nodes``)
+    when there is at least one."""
     out: Dict[str, Dict[str, object]] = {}
+    any_online = False
     for rec in list_nodes():
         if rec.get("disabled") or not (rec.get("capabilities") or {}).get("sandbox"):
             continue
         online = is_online(rec)
+        any_online = any_online or online
         out[f"node:{rec['id']}"] = {
             "available": online,
             "reason": "" if online else "the node is offline",
             "label": f"Node: {rec.get('name') or rec['id']}",
             "node_id": rec["id"],
         }
+    if out:
+        out[POOL_BACKEND] = {
+            "available": any_online,
+            "reason": "" if any_online else "no node with a sandbox is online",
+            "label": "Nodes (pool): the least busy node allowed for the run",
+        }
     return out
 
 
 __all__ = [
-    "BACKEND_PREFIX", "ONLINE_SECONDS", "PROXY_PREFIX", "TOKEN_PREFIX", "allows_workspace",
-    "backend_id", "create_node", "delete_node", "get_node", "hello", "is_online", "list_nodes",
-    "looks_like_token", "public", "resolve_proxy_key", "resolve_token", "rotate_token",
-    "sandbox_availability", "slugify", "touch", "update_node",
+    "BACKEND_PREFIX", "DEFAULT_CAPACITY", "MAX_CAPACITY", "ONLINE_SECONDS", "POOL_BACKEND",
+    "PROXY_PREFIX", "TOKEN_PREFIX", "allows_workspace", "backend_id", "capacity", "create_node",
+    "delete_node", "get_node", "hello", "is_online", "list_nodes", "looks_like_token",
+    "pool_models", "public", "resolve_pool_key", "resolve_proxy_key", "resolve_token",
+    "rotate_token", "sandbox_availability", "slugify", "sync_pool", "touch", "trust",
+    "update_node",
 ]

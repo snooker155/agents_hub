@@ -27,6 +27,19 @@ turns that section into the next release.
   there) and its sandbox (the provider `node:<id>`, pickable per
   environment). The node dials out and long-polls for work; nothing listens
   on it. Nodes page under Integrations, `ah hub nodes`.
+- **Node pool** (docs/hub-link.md, "The pool"): every node's models are also
+  one backend, `nodes`, and their sandboxes one provider, `nodes`; each
+  request goes to the least busy node that may take it, a node runs no more
+  at once than its capacity, and a node that does not pick a request up
+  loses it to the next. Parallel flow branches, delegated subtasks and eval
+  cases spread over the nodes on their own; the tool `map_on_nodes` runs one
+  instruction over up to 200 items in parallel. `ah hub nodes pool`.
+- **Node trust and data classes** (docs/hub-link.md, "Trust and data
+  classes"): an administrator marks a node `untrusted` or `trusted`
+  (`attested` is reserved for remote attestation); a workspace is `public`,
+  `internal` (default) or `confidential`, and an agent may be stricter.
+  Internal work goes only to trusted nodes, confidential work to no node.
+  `ah hub nodes set`.
 - **Seven more industry kits**, ten in all (docs/kits.md): `sales`
   (Prospector, Outreach), `marketing` (Strategist, Writer, Editor),
   `engineering` (Triager, Issue keeper, Release notes), `legal` (contract

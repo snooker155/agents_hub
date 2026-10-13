@@ -204,6 +204,11 @@ def link(*, url: str, api_key: str, name: Optional[str] = None,
                 node_doc[key] = bool(node[key])
         if node.get("token"):
             node_doc["token"] = str(node["token"]).strip()
+        if node.get("capacity") is not None:
+            try:
+                node_doc["capacity"] = max(1, min(64, int(node["capacity"])))
+            except (TypeError, ValueError):
+                raise LinkError("the node's capacity must be a whole number from 1 to 64") from None
         if isinstance(node.get("shared_providers"), list):
             node_doc["shared_providers"] = [str(p).strip().lower() for p in node["shared_providers"] if str(p).strip()]
     if node_doc.get("enabled") and not node_doc.get("token"):

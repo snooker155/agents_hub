@@ -576,8 +576,8 @@ async def get_workspace_summary(name: str):
     page each used to ask on their own: ``/{name}`` (which also builds the
     task list), ``/{name}/model``, ``/{name}/isolation`` and
     ``/{name}/settings-overrides``. Readable by any member: it carries only
-    the isolation switch and the palette, not the owner scoped settings
-    around them.
+    the isolation switch, the data class and the palette, not the owner
+    scoped settings around them.
     """
     from memory import personal
     root = _require_workspace_folder(name)
@@ -589,9 +589,15 @@ async def get_workspace_summary(name: str):
         "allowed_agents": metadata.get("allowed_agents") or [],
         "personal_memory_enabled": personal.workspace_enabled(root.name),
         "isolated": bool(settings.get("isolated")),
+        "data_class": _data_class(settings),
         "palette": palette if isinstance(palette, dict) else None,
         "model": _model_state(root.name, metadata),
     }
+
+
+def _data_class(settings: dict) -> str:
+    from common.data_class import DEFAULT_CLASS, normalize_class
+    return normalize_class(settings.get("data_class")) or DEFAULT_CLASS
 
 
 def _model_state(name: str, metadata: dict) -> dict:
