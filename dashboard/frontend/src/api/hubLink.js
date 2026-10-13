@@ -21,3 +21,9 @@ export const listNodes = () => api.get('/nodes');
 export const createNode = (data) => api.post('/nodes', data);
 export const deleteNode = (id) => api.delete(`/nodes/${encodeURIComponent(id)}`);
 export const rotateNodeToken = (id) => api.post(`/nodes/${encodeURIComponent(id)}/rotate`);
+// Any of { trust: 'untrusted'|'trusted' (admin only), max_parallel: 1..64|null,
+// workspaces: [..]|null, disabled: bool }.
+export const updateNode = (id, data) => api.patch(`/nodes/${encodeURIComponent(id)}`, data);
+// The pool of nodes: { backend_id, sandbox_provider, models, online, capacity,
+// in_flight, and with `workspace`: workspace, data_class, eligible, excluded }.
+export const getNodePool = (params) => api.get('/nodes/pool', { params });

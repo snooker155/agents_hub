@@ -40,7 +40,7 @@ export default function HubLinkSection() {
   const [form, setForm] = useState({
     url: '', api_key: '', name: '', use_models: true, use_agents: true,
     mirror: { runs: true, chats: true, memory: false }, target_workspace: '',
-    node: { enabled: false, token: '', share_models: true, sandbox: true },
+    node: { enabled: false, token: '', share_models: true, sandbox: true, capacity: 4 },
   });
 
   const load = useCallback(async () => {
@@ -181,6 +181,12 @@ export default function HubLinkSection() {
               </div>
               <Toggle checked={form.node.share_models} onChange={(v) => setNode('share_models', v)} label={t('settings.hubLink.nodeShareModels')} hint={t('settings.hubLink.nodeShareModelsHint')} />
               <Toggle checked={form.node.sandbox} onChange={(v) => setNode('sandbox', v)} label={t('settings.hubLink.nodeSandbox')} hint={t('settings.hubLink.nodeSandboxHint')} />
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('settings.hubLink.nodeCapacity')}</label>
+                <input className={inputCls} type="number" min={1} max={64} value={form.node.capacity ?? 4}
+                  onChange={(e) => setNode('capacity', Math.min(64, Math.max(1, parseInt(e.target.value, 10) || 1)))} data-testid="hublink-node-capacity" />
+                <p className="text-[11px] text-gray-400 mt-1">{t('settings.hubLink.nodeCapacityHint')}</p>
+              </div>
             </div>
           )}
         </div>

@@ -17,3 +17,9 @@ export const getWorkspaceIsolation = (name) => api.get(path(name));
 // Only the keys present in `payload` change ({isolated?, allow_domains?}).
 // Answers like the GET, or 409/400 with {detail} when the switch cannot move.
 export const updateWorkspaceIsolation = (name, payload) => api.put(path(name), payload);
+
+const classPath = (name) => `/workspaces/${encodeURIComponent(name)}/data-class`;
+
+// { data_class, classes, default, required_trust: {public, internal, confidential} }
+export const getWorkspaceDataClass = (name) => api.get(classPath(name));
+export const setWorkspaceDataClass = (name, data_class) => api.put(classPath(name), { data_class });

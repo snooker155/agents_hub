@@ -399,6 +399,8 @@ export default {
     nodeShareModelsHint: 'Only local providers (the hub runtime, Ollama, LM Studio); cloud keys never leave this hub.',
     nodeSandbox: 'Offer the sandbox',
     nodeSandboxHint: 'Snippets run in this hub\'s own provider (CODE_RUNNER_PROVIDER).',
+    nodeCapacity: 'Requests at once',
+    nodeCapacityHint: 'From 1 to 64. How many of the remote hub\'s requests this machine runs at the same time.',
     link: 'Link',
     update: 'Save',
     sync: 'Sync now',

@@ -18,6 +18,11 @@ export default {
     notInCatalog: '{{model}} (auf der Seite Modelle nicht aktiviert)',
     hint: 'Die Modelle kommen von der Seite Modelle. Die Agentenschleifen-Einstellungen des Arbeitsbereichs begrenzen die Aufrufe pro Lauf und die Antwortlänge.',
   },
+  dataClass: {
+    title: 'Datenklasse',
+    workspace: 'Klasse des Arbeitsbereichs',
+    hint: 'Welche verbundenen Knoten die Arbeit dieses Agenten sehen dürfen. Kann die Klasse des Arbeitsbereichs nur verschärfen.',
+  },
   concurrency: {
     title: 'Delegationsparallelität',
     intro: 'Wie viele der von diesem Agenten delegierten Teilaufgaben (delegate_task_tool) gleichzeitig laufen dürfen. Ein Start über dem Limit wird mit einer klaren Meldung abgelehnt.',

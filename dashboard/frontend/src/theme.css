@@ -598,6 +598,7 @@ html.dark {
 :where(html.dark) .bg-cyan-50,
 :where(html.dark) .hover\:bg-cyan-50:hover { background-color: rgba(var(--hue-cyan-rgb), 0.14); }
 :where(html.dark) .bg-cyan-50\/50 { background-color: rgba(6, 182, 212, 0.070); }
+:where(html.dark) .bg-cyan-50\/60 { background-color: rgba(6, 182, 212, 0.084); }
 :where(html.dark) .bg-cyan-50\/70 { background-color: rgba(6, 182, 212, 0.098); }
 :where(html.dark) .bg-emerald-100,
 :where(html.dark) .hover\:bg-emerald-100:hover { background-color: rgba(var(--hue-emerald-rgb), 0.22); }
@@ -800,7 +801,8 @@ html.dark {
 :where(html.dark) .border-amber-200,
 :where(html.dark) .divide-amber-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-amber-rgb), 0.36); }
 :where(html.dark) .border-amber-300,
-:where(html.dark) .divide-amber-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-amber-rgb), 0.46); }
+:where(html.dark) .divide-amber-300 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .hover\:border-amber-300:hover { border-color: rgba(var(--hue-amber-rgb), 0.46); }
 :where(html.dark) .border-amber-50,
 :where(html.dark) .divide-amber-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-amber-rgb), 0.18); }
 :where(html.dark) .border-blue-100,
@@ -826,7 +828,8 @@ html.dark {
 :where(html.dark) .border-emerald-200,
 :where(html.dark) .divide-emerald-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-emerald-rgb), 0.36); }
 :where(html.dark) .border-emerald-300,
-:where(html.dark) .divide-emerald-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-emerald-rgb), 0.46); }
+:where(html.dark) .divide-emerald-300 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .hover\:border-emerald-300:hover { border-color: rgba(var(--hue-emerald-rgb), 0.46); }
 :where(html.dark) .border-emerald-50,
 :where(html.dark) .divide-emerald-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-emerald-rgb), 0.18); }
 :where(html.dark) .border-fuchsia-100,
@@ -948,7 +951,8 @@ html.dark {
 :where(html.dark) .divide-slate-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-stone-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-zinc-300 > :not([hidden]) ~ :not([hidden]),
-:where(html.dark) .hover\:border-gray-300:hover { border-color: var(--neutral-border-300); }
+:where(html.dark) .hover\:border-gray-300:hover,
+:where(html.dark) .hover\:border-slate-300:hover { border-color: var(--neutral-border-300); }
 :where(html.dark) .border-gray-400,
 :where(html.dark) .border-neutral-400,
 :where(html.dark) .border-slate-400,
@@ -1054,7 +1058,8 @@ html.dark {
 :where(html.dark) .border-orange-200,
 :where(html.dark) .divide-orange-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-orange-rgb), 0.36); }
 :where(html.dark) .border-orange-300,
-:where(html.dark) .divide-orange-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-orange-rgb), 0.46); }
+:where(html.dark) .divide-orange-300 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .hover\:border-orange-300:hover { border-color: rgba(var(--hue-orange-rgb), 0.46); }
 :where(html.dark) .border-orange-50,
 :where(html.dark) .divide-orange-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-orange-rgb), 0.18); }
 :where(html.dark) .border-pink-100,
@@ -1089,7 +1094,8 @@ html.dark {
 :where(html.dark) .border-sky-200,
 :where(html.dark) .divide-sky-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-sky-rgb), 0.36); }
 :where(html.dark) .border-sky-300,
-:where(html.dark) .divide-sky-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-sky-rgb), 0.46); }
+:where(html.dark) .divide-sky-300 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .hover\:border-sky-300:hover { border-color: rgba(var(--hue-sky-rgb), 0.46); }
 :where(html.dark) .border-sky-50,
 :where(html.dark) .divide-sky-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-sky-rgb), 0.18); }
 :where(html.dark) .border-teal-100,
@@ -1291,6 +1297,11 @@ html.dark {
 :where(html.dark) .hover\:text-rose-600:hover,
 :where(html.dark) .text-rose-500,
 :where(html.dark) .text-rose-600 { color: var(--hue-rose-400); }
+:where(html.dark) .hover\:text-rose-700:hover,
+:where(html.dark) .text-rose-700,
+:where(html.dark) .text-rose-800,
+:where(html.dark) .text-rose-900,
+:where(html.dark) .text-rose-950 { color: var(--hue-rose-300); }
 :where(html.dark) .hover\:text-sky-900:hover,
 :where(html.dark) .text-sky-700,
 :where(html.dark) .text-sky-800,
@@ -1469,10 +1480,6 @@ html.dark {
 :where(html.dark) .text-pink-800,
 :where(html.dark) .text-pink-900,
 :where(html.dark) .text-pink-950 { color: var(--hue-pink-300); }
-:where(html.dark) .text-rose-700,
-:where(html.dark) .text-rose-800,
-:where(html.dark) .text-rose-900,
-:where(html.dark) .text-rose-950 { color: var(--hue-rose-300); }
 :where(html.dark) .text-sky-500,
 :where(html.dark) .text-sky-600 { color: var(--hue-sky-400); }
 :where(html.dark) .text-teal-500,

@@ -39,7 +39,7 @@ import PageLoader from '../components/PageLoader';
 
 const NETWORK_TYPES = ['unrestricted', 'none', 'limited'];
 const MODES = ['inherit', 'local', 'docker'];
-const SANDBOX_PROVIDERS = ['inherit', 'docker', 'local', 'e2b', 'modal'];
+const SANDBOX_PROVIDERS = ['inherit', 'docker', 'local', 'e2b', 'modal', 'nodes'];
 // Keep in sync with environments/models.py SIZE_PRESETS (the size.hint
 // string below spells out what each one sets).
 const SANDBOX_SIZES = ['', 'small', 'medium', 'large'];
