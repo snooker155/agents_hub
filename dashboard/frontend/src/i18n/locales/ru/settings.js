@@ -23,6 +23,7 @@ export default {
     demo: 'Демо-пространство',
     firstRun: 'Первая настройка',
     hubLink: 'Удалённый хаб',
+    isolation: 'Изоляция',
   },
   blender: {
     title: 'Геометрический движок Blender',
@@ -291,6 +292,8 @@ export default {
     load: 'Не удалось загрузить настройки',
   },
   workspaceLabel: 'Пространство:',
+  isolationFor: 'Относится к выбранному пространству',
+  isolationSwitch: 'Чтобы настроить другое, выберите его в шапке.',
   insideThisWorkspaces: 'внутри записи этого пространства в',
   current: 'сейчас',
   connectedNoModels: 'Подключено, но моделей не найдено.',

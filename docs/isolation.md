@@ -94,7 +94,8 @@ Closed for an isolated workspace:
 
 ## Turning it on
 
-On the workspace's settings, Isolation section, or
+On the workspace's settings, Isolation section; in Settings → System →
+Isolation, which shows the same for the workspace selected in the header; or
 `PUT /api/workspaces/{name}/isolation` with `{"isolated": true,
 "allow_domains": ["docs.python.org"]}`. Owner or administrator only; every
 change is in the audit log as `workspace.isolation`. Turning it on is refused

@@ -23,6 +23,7 @@ export default {
     demo: 'Demo-Workspace',
     firstRun: 'Ersteinrichtung',
     hubLink: 'Entfernter Hub',
+    isolation: 'Isolation',
   },
   blender: {
     title: 'Blender-Geometrie-Engine',
@@ -291,6 +292,8 @@ export default {
     load: 'Einstellungen konnten nicht geladen werden',
   },
   workspaceLabel: 'Workspace:',
+  isolationFor: 'Gilt für den ausgewählten Workspace',
+  isolationSwitch: 'Um einen anderen einzustellen, wählen Sie ihn oben in der Kopfzeile.',
   insideThisWorkspaces: 'im Eintrag dieses Workspace in der',
   current: 'aktuell',
   connectedNoModels: 'Verbunden, aber keine Modelle gefunden.',

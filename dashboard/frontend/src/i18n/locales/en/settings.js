@@ -23,6 +23,7 @@ export default {
     demo: 'Demo workspace',
     firstRun: 'First setup',
     hubLink: 'Remote hub',
+    isolation: 'Isolation',
   },
   blender: {
     title: 'Blender geometry engine',
@@ -291,6 +292,8 @@ export default {
     load: 'Failed to load settings',
   },
   workspaceLabel: 'Workspace:',
+  isolationFor: 'Applies to the selected workspace',
+  isolationSwitch: 'Pick another workspace in the header to change its settings.',
   insideThisWorkspaces: 'inside this workspace\'s record in',
   current: 'current',
   connectedNoModels: 'Connected but no models found.',
