@@ -422,8 +422,10 @@ const EXTRAS = `
 /* A control drawn inside a styled wrapper (an icon plus an input in one
  * bordered box, a composer's textarea) declares bg-transparent so the wrapper
  * is the surface. Painting it above would show a second box inside the first,
- * so it keeps its transparency and only takes the text colour. */
-:where(html.dark) input.bg-transparent,
+ * so it keeps its transparency and only takes the text colour. The input
+ * selector repeats the type exclusions above: without them that rule wins on
+ * specificity and the field shows as a lighter patch inside its wrapper. */
+:where(html.dark) input.bg-transparent:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
 :where(html.dark) select.bg-transparent,
 :where(html.dark) textarea.bg-transparent {
   background-color: transparent;
