@@ -476,7 +476,7 @@ const SystemHealth = ({ health }) => {
               <StorageRow label={t('dashboard.health.storageWal')} value={formatBytes(storage.db_wal_bytes)} />
             )}
             <StorageRow label={t('dashboard.health.storageRunLogs')} value={t('dashboard.health.logFiles', { size: formatBytes(storage.run_logs_bytes), count: storage.run_logs_files ?? 0 })} />
-            <StorageRow label={t('dashboard.health.storageTotalState')} value={formatBytes(storage.agents_hub_bytes)} />
+            <StorageRow label={t('dashboard.health.storageTotalState')} value={storage.agents_hub_bytes == null ? '—' : formatBytes(storage.agents_hub_bytes)} />
           </div>
         </div>
       </div>

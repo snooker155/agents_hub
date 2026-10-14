@@ -85,5 +85,7 @@ ENV API_ASSET_CACHE_SECONDS=30
 
 EXPOSE 80
 
+# 127.0.0.1, not localhost: the image resolves localhost to ::1 first, nginx
+# listens on IPv4 only (nginx.conf), and busybox wget does not fall back.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
-    CMD wget -q --spider http://localhost/nginx-health || exit 1
+    CMD wget -q --spider http://127.0.0.1/nginx-health || exit 1
