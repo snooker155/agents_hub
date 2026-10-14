@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-14
+
 ### Added
 
 - **Hub link** (docs/hub-link.md): a hub attaches to another one, usually a
@@ -63,9 +65,56 @@ turns that section into the next release.
   box. A flow shows its own examples (a template's, or set in Flow
   settings), else its first agent's. `GET /api/agents/{id}/examples`,
   `GET /api/flows/{id}/examples`.
+- **n8n** (docs/connectors.md, docs/flows.md, "n8n workflows"): a connector
+  with the base URL of your n8n, an API key to list workflows and webhook
+  Header Auth. The flow node `run_n8n` starts a workflow through its Webhook
+  or Chat trigger, by workflow id or trigger path (never a URL), waits and
+  writes the answer into its output key. **Import from n8n** on the Flows
+  page takes a workflow from your n8n or pasted JSON and either runs it as
+  one `run_n8n` node or converts every step into an Agent node with its task
+  written, a two way IF becoming a `state_branch` condition; a report lists
+  what did not carry over, and credentials never travel.
+  `GET /api/flows/n8n/workflows`, `POST /api/flows/import/n8n`.
+- **Chat continues Assistant conversations**: one opens with the Assistant
+  picked, and a message sent there goes through `/api/assistant`, a past
+  conversation becoming the live one; replies carry their run and context
+  fill. **Voice messages**: while the box is empty a microphone holds the
+  Send button's place. `GET /api/assistant/voice` names the voice models
+  without moving the live conversation.
+- **Costs, Runs tab** (docs/costs.md, "Runs"): every run the totals count,
+  with its agent, model, tokens and estimated cost, under the same scope and
+  dates, sortable, loaded in batches; the run page shows the same estimate.
+  `GET /api/costs/runs`.
+- Settings → System → **Isolation** shows the workspace selected in the
+  header with the perimeter switch and the data class, as on its own
+  Isolation tab.
+- The Runs page has a sortable model column; Web logs sort by any column and
+  load more, up to 2000 at a time; the Marketplace searches kits.
+
+### Changed
+
+- **Flows: the run page apart from the editor.** `/flows/:id` runs a flow
+  and shows its runs, `/flows/:id/edit` is the editor. The palette has one
+  abstract Agent node, the agent picked in the inspector; a node with no
+  agent chosen saves and loads but fails the preflight.
+- The ready local set uses a chat model already on the runtime before
+  downloading one, and downloads a voice for the interface language (Kokoro
+  for English, Piper for Russian or German); its card names what each step
+  found and what it lacks.
+- One project card on the Projects page and the workspace page; toasts sit
+  top right above every layer; deleting a loop asks first.
 
 ### Fixed
 
+- OpenAI's chat completions get `max_completion_tokens`, which its reasoning
+  models require instead of `max_tokens`; local servers and gateways keep
+  `max_tokens`.
+- Speech recognition no longer writes what Whisper makes up for silence: the
+  worker runs Whisper with its voice activity filter, subtitle credits and
+  sign-offs are dropped from transcripts, and a recording whose level never
+  rose to a voice is not sent.
+- A Costs "to" date includes that whole day, and a run whose model has no
+  catalog price shows "no price" instead of $0.
 - Installing a kit into a workspace other than the default one now renames
   a `+item` / `-item` list delta that names one of the kit's own agents
   (`handoffs: [-@verifier, +marketing_editor]`), keeping its sign; before,

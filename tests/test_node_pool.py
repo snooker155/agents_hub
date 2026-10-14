@@ -250,6 +250,34 @@ def test_a_node_that_does_not_pick_up_loses_the_request(client, monkeypatch):
     assert jobs.pending_count(a) == 0
 
 
+def test_a_full_node_handed_one_too_many_keeps_the_request(client, monkeypatch):
+    monkeypatch.setattr(scheduler, "PICK_SECONDS", 0.3)
+    node_id, headers = _node(client, "Full", capacity=1)
+    running = jobs.submit(node_id, method="POST", path="/v1/chat/completions", headers={}, body=b"{}", timeout=60)
+    assert [j["job_id"] for j in jobs.take(node_id)] == [running]
+    # Another replica gave the node its last slot at the same moment: the
+    # first pick here does not see that job, so the node gets one too many.
+    real, picks = jobs.in_flight, []
+
+    def stale():
+        picks.append(1)
+        return {} if len(picks) == 1 else real()
+
+    monkeypatch.setattr(jobs, "in_flight", stale)
+
+    def finish():
+        time.sleep(1.0)
+        jobs.fail(running, "finished")
+
+    threading.Thread(target=finish, daemon=True).start()
+    with Answerer(client, "Full", headers):
+        resp = client.post("/api/node-link/pool/v1/chat/completions",
+                           json={"model": "hub-local/qwen", "messages": [{"role": "user", "content": "x"}]},
+                           headers={"Authorization": f"Bearer {_pool_key()}"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["choices"][0]["message"]["content"] == "Full: x"
+
+
 def test_the_pool_keeps_internal_work_off_untrusted_nodes(client):
     ws = _workspace("team")
     node_id, _ = _node(client, "Volunteer")
@@ -345,7 +373,7 @@ def test_map_on_nodes_spreads_the_items_and_reports_each_node(client, monkeypatc
     from tools.node_map import map_on_nodes
     with Answerer(client, "A", ha), Answerer(client, "B", hb):
         out = json.loads(map_on_nodes.invoke({"instruction": "Echo", "items": [f"item {i}" for i in range(8)]}))
-    assert out["done"] == 8 and out["failed"] == 0
+    assert out["done"] == 8 and out["failed"] == 0, [r for r in out["results"] if "error" in r]
     assert out["model"] == "hub-local/qwen"
     assert out["parallel"] == 4
     assert set(out["by_node"]) == {"A", "B"} and sum(out["by_node"].values()) == 8

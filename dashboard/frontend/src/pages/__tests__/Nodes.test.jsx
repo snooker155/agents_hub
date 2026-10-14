@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -71,7 +71,7 @@ describe('Nodes', () => {
     expect(screen.getByText('Online')).toBeInTheDocument();
     expect(screen.getByText('node-laptop')).toBeInTheDocument();
     expect(screen.getByText('node:node-abc')).toBeInTheDocument();
-    expect(screen.getByText('team-a')).toBeInTheDocument();
+    expect(within(screen.getByTestId('node-row')).getByText('team-a')).toBeInTheDocument();
   });
 
   const node = (extra = {}) => ({
