@@ -92,7 +92,7 @@ def http(monkeypatch):
         return httpx.Response(404, json={"error": {"message": "unexpected"}})
 
     monkeypatch.setattr(media, "_client",
-                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+                        lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
     return calls
 
 
@@ -281,6 +281,32 @@ def test_the_browser_timezone_reaches_the_turn_and_junk_does_not(multi, client, 
 
 
 # ── speak ────────────────────────────────────────────────────────────────────
+
+def test_a_slow_cloud_voice_gives_up_so_the_page_reads_with_the_browser(multi, client, speech_models, http,
+                                                                         fake_agent, monkeypatch):
+    """A cloud speech model that hangs (gpt-4o-mini-tts took 80 to 100 s on
+    2026-10-14) fails within the speak timeout as a provider error, which the
+    page answers with the browser's voice."""
+    import httpx
+    from providers import media
+    from routes import assistant as route
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    run_id, _ = _turn(client, bob, _wav_post(client, bob).json()["text"], voice=True)
+    asked = []
+
+    def hang(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    def slow_client(timeout=None):
+        asked.append(timeout)
+        return httpx.Client(transport=httpx.MockTransport(hang))
+    monkeypatch.setattr(media, "_client", slow_client)
+    response = client.post("/api/assistant/speak", json={"run_id": run_id, "text": "Done, the task is created."},
+                           headers=bob)
+    assert response.status_code == 502 and response.json()["detail"]["code"] == "provider_error"
+    assert asked == [route.CLOUD_SPEAK_TIMEOUT]
+
 
 def test_a_spoken_turn_is_read_back_and_charged_on_its_run(multi, client, speech_models, http, fake_agent):
     from managers import run_manager

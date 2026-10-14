@@ -97,7 +97,7 @@ def test_an_install_already_in_use_is_not_stopped_by_the_upgrade(single, no_keys
 
 
 def test_a_started_guided_setup_counts_as_in_use(single, no_keys, ws):
-    setup_guide.act(None, "dismiss")
+    setup_guide.act(None, "start")
     assert not first_run.status()["required"]
 
 
@@ -142,6 +142,21 @@ def test_a_finished_first_run_stays_finished_until_started_again(single, no_keys
     assert not first_run.act("progress", step="voice")["required"]
     again = first_run.act("restart")
     assert again["required"] and again["step"] == "hello"
+
+
+def test_a_not_now_in_the_first_run_is_skipped_in_the_guide(single, no_keys, ws, probe, monkeypatch):
+    """The assistant's guided setup does not offer again what was declined."""
+    from common import demo_workspace
+    monkeypatch.setattr(demo_workspace, "demo_status", lambda: {"present": False})
+    setup_ops.first_model("openai", "sk-1")
+    first_run.act("finish")
+    setup_guide.act(None, "start", mode="voice")
+    rows = {r["id"]: r["status"] for r in setup_guide.guide(None)["steps"]}
+    assert rows["demo"] == "skipped" and rows["voice"] == "skipped"
+    assert rows["model"] == "done" and rows["health"] == "todo"
+    # Starting the guide over brings them back.
+    rows = {r["id"]: r["status"] for r in setup_guide.act(None, "restart")["steps"]}
+    assert rows["demo"] == "todo"
 
 
 def test_the_ready_local_set_meets_the_model_step(single, no_keys, ws, monkeypatch):

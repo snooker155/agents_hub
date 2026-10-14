@@ -71,7 +71,7 @@ const Layout = ({ children }) => {
   // The guided setup's own pill, while it runs (docs/assistant.md "Guided
   // setup"); cheap, since useSetupGuide only polls while the guide is
   // active or a step's own work is going on.
-  const { guide } = useSetupGuide();
+  const { guide, act: guideAct } = useSetupGuide();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: the `model` part of GET /api/workspaces/{name}/summary
   // - global_default: DEFAULT_PROVIDER + its model from .env (lowest-priority fallback)
@@ -596,19 +596,33 @@ const Layout = ({ children }) => {
             {/* The guided setup's own progress, while it runs: hidden on the
                 Assistant page itself, since it is already there. */}
             {guide?.active && !guide.complete && location.pathname !== '/assistant' && (
-              <button
-                type="button"
-                onClick={() => navigate('/assistant?setup=1')}
-                title={t('setupGuide.pill', { done: guide.done, total: guide.total })}
-                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
-              >
-                <ListChecks className="w-3.5 h-3.5" />
-                <span>{t('setupGuide.pill', { done: guide.done, total: guide.total })}</span>
-                <span className="hidden sm:inline-block w-10 h-1 rounded-full bg-indigo-200 overflow-hidden">
-                  <span className="block h-full bg-indigo-600"
-                    style={{ width: `${guide.total ? (guide.done / guide.total) * 100 : 0}%` }} />
-                </span>
-              </button>
+              <span className="flex items-center rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => navigate('/assistant?setup=1')}
+                  title={t('setupGuide.pill', { done: guide.done, total: guide.total })}
+                  className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors ${guide.can_close ? 'pr-1 sm:pr-1.5' : ''}`}
+                >
+                  <ListChecks className="w-3.5 h-3.5" />
+                  <span>{t('setupGuide.pill', { done: guide.done, total: guide.total })}</span>
+                  <span className="hidden sm:inline-block w-10 h-1 rounded-full bg-indigo-200 overflow-hidden">
+                    <span className="block h-full bg-indigo-600"
+                      style={{ width: `${guide.total ? (guide.done / guide.total) * 100 : 0}%` }} />
+                  </span>
+                </button>
+                {/* Closable once the required steps are done (common/setup_guide.py). */}
+                {guide.can_close && (
+                  <button
+                    type="button"
+                    onClick={() => guideAct('dismiss')}
+                    title={t('setupGuide.closeHint')}
+                    aria-label={t('setupGuide.close')}
+                    className="p-1 mr-1 rounded-full hover:bg-indigo-100 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
             )}
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />

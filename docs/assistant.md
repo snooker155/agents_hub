@@ -326,10 +326,12 @@ the audit log as `assistant.<kind>.<action>`.
 
 After the install the hub has an account and one model; the assistant takes
 the person the rest of the way ([installation](installation.md#after-the-install-the-assistant-takes-over)).
-The welcome window starts it with **Talk to the assistant** (the answers are
-read aloud and the page listens after each one, the Conversation mode) or
-**Type to the assistant**; the header's **Setup** pill and `/assistant?setup=1`
-come back to it, and the page's **Setup** tab shows every step.
+The welcome window, or the first run's last screen, starts it with **Talk to
+the assistant** (the answers are read aloud and the page listens while the talk
+button or Space is held, the Hold mode) or **Type to the assistant**; the
+header's **Setup** pill and `/assistant?setup=1` come back to it, and the
+page's **Setup** tab shows every step. A screen of the first run answered "not
+now" (the voice, web search, the demo) starts skipped here.
 
 The guide (`common/setup_guide.py`, `GET /api/setup-guide`) is a list of steps,
 each with why it matters, how it is detected as done, what the assistant does
@@ -356,7 +358,16 @@ The first seven are the install's own setup and are an administrator's
 (everyone, outside `multi` mode); the rest are everyone's. Done is read from
 the hub on every call, so a step done on its page ticks in the guide too, and
 the demo's agents, chats and tasks tick nothing. Only skips, steps marked done
-and whether the guide runs are remembered, per person.
+and whether the guide runs are remembered, per person. **Bring back skipped
+steps** on the Setup tab (shown once something is skipped or marked) clears
+both and runs the guide again from the first open step; it does not repeat
+the first run (Settings, First setup) or the tour.
+
+**Close setup** at the bottom of the Setup tab, and the cross on the header's
+pill, stop the guide with steps still open; **Finish** shows instead once every
+step is done or skipped. Neither appears, and `setup_guide` refuses `finish`
+and `dismiss`, until the required steps (a model, the default model) are done.
+The assistant starts the guide again whenever the person asks.
 
 While the guide runs, every turn carries it ("Guided setup" in the prompt):
 the steps with their status, the next one, why and how. The assistant takes

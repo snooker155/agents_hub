@@ -71,6 +71,12 @@ export default {
     localDetail: 'Free and private, downloads {{size}} in the background.',
     browser: 'The browser’s own voice',
     browserDetail: 'Nothing to set up. Works in Chrome, Edge and Safari, not in Firefox.',
+    model: 'Speech model',
+    models: {
+      'gpt-4o-mini-tts': 'Newest and most natural',
+      'tts-1': 'Fastest to answer',
+      'tts-1-hd': 'Clearer sound, slower',
+    },
     perLanguage: 'A voice for each language: the assistant switches to it when it speaks that language.',
     voiceFor: 'Voice for {{language}}',
     perLanguageLocal: 'Each language gets a voice that speaks it:',

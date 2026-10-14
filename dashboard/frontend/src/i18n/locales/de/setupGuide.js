@@ -10,8 +10,11 @@ export default {
   skip: 'Überspringen',
   unskip: 'Übersprungenen Schritt zurückholen',
   takeTour: 'Tour starten',
-  restart: 'Anleitung neu starten',
+  restart: 'Übersprungene Schritte zurückholen',
+  restartHint: 'Hebt Ihr Überspringen und die vom Assistenten abgehakten Schritte (die Zustandsprüfung) auf, und die Anleitung läuft wieder ab dem ersten offenen Schritt. Was der Hub schon als erledigt sieht, bleibt erledigt.',
   finish: 'Abschließen',
+  close: 'Einrichtung schließen',
+  closeHint: 'Die Pflichtschritte sind erledigt, also kann die Anleitung hier enden. Der Rest bleibt, wie er ist, und der Assistent startet die Anleitung wieder, sobald Sie darum bitten.',
   steps: {
     model: {
       title: 'Ein Modell verbinden',

@@ -43,6 +43,7 @@ cannot signal this one.
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import signal
@@ -797,6 +798,7 @@ class InstanceLoop:
         _set_status(self.instance_id, "running")
         heartbeat = threading.Thread(target=self._heartbeat, name="instance-heartbeat", daemon=True)
         heartbeat.start()
+        threading.Thread(target=_warm_up, name="instance-warm-up", daemon=True).start()
         while not _stopping.is_set():
             try:
                 instance = store.get(self.instance_id) or {}
@@ -859,6 +861,31 @@ def _on_sigterm(instance_id: str):
             _logger.debug("could not clear the stop request of %s", instance_id, exc_info=True)
         os._exit(0)
     return handler
+
+
+#: What a turn imports on first use, heaviest first: the agent stack (with
+#: langchain-core 0.3 that pulls in transformers and torch) and litellm's model
+#: map behind the context-window lookup. Imported once the replica is ready,
+#: these cost the first turn nothing; a replica recycled by a settings change
+#: during the first run otherwise kept the person waiting 15 to 35 seconds.
+_WARM_MODULES = ("chat.pipelines", "agents.agent_factory", "providers.anthropic_driver")
+
+
+def _warm_up() -> None:
+    started = time.monotonic()
+    for name in _WARM_MODULES:
+        if _stopping.is_set():
+            return
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - the turn imports it again and reports a real failure
+            _logger.debug("warm-up: %s not imported", name, exc_info=True)
+    try:
+        from providers.context_windows import fallback_context_window
+        fallback_context_window("openai", "gpt-4o")
+    except Exception:  # noqa: BLE001 - optional, as on the turn path
+        _logger.debug("warm-up: context windows not loaded", exc_info=True)
+    log(f"Warm in {time.monotonic() - started:.1f}s")
 
 
 def main() -> None:

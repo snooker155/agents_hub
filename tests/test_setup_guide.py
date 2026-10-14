@@ -158,6 +158,20 @@ def test_done_is_read_from_the_hub_and_skips_are_remembered(single, no_keys, ws)
         setup_guide.act(LOCAL_PRINCIPAL, "skip", "nope")
 
 
+def test_the_guide_closes_only_once_the_required_steps_are_done(single, no_keys, ws):
+    g = setup_guide.act(LOCAL_PRINCIPAL, "start")
+    assert g["active"] and not g["can_close"]
+    for action in ("dismiss", "finish"):
+        with pytest.raises(ValueError, match="required steps.*model"):
+            setup_guide.act(LOCAL_PRINCIPAL, action)
+    assert setup_guide.guide(LOCAL_PRINCIPAL)["active"]
+    provider_env.save({"OPENAI_API_KEY": "sk-x", "DEFAULT_PROVIDER": "openai", "OPENAI_MODEL": "gpt-5.4"})
+    g = setup_guide.guide(LOCAL_PRINCIPAL)
+    assert g["can_close"] and not g["complete"]
+    g = setup_guide.act(LOCAL_PRINCIPAL, "dismiss")
+    assert not g["active"] and g["dismissed_at"]
+
+
 def test_the_browser_says_whether_the_tour_was_taken(single, no_keys, ws):
     assert _status(setup_guide.guide(LOCAL_PRINCIPAL, tour_done=True), "tour") == "done"
     assert _status(setup_guide.guide(LOCAL_PRINCIPAL, tour_done=False), "tour") == "todo"
@@ -242,6 +256,24 @@ def test_a_cloud_voice_goes_into_the_default_workspace(single, no_keys, ws):
     assert own["speech"]["options"]["voice"] == "nova" and own["transcription"]["model"] == "gpt-4o-mini-transcribe"
     assert own["image"]["model"] == "gpt-image-1"
     assert _status(setup_guide.guide(LOCAL_PRINCIPAL), "voice") == "done"
+
+
+def test_a_cloud_voice_can_take_another_speech_model(single, no_keys, ws):
+    from providers import special
+    provider_env.save({"OPENAI_API_KEY": "sk-x"})
+    offered = setup_ops.options()["voice"]["cloud"]["openai"]["speech_models"]
+    assert [m["id"] for m in offered] == ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"]
+    assert "verse" in offered[0]["voices"] and "verse" not in offered[1]["voices"]
+    with pytest.raises(setup_ops.SetupOpError) as bad:
+        setup_ops.perform("voice_cloud", {"provider": "openai", "model": "tts-2"})
+    assert bad.value.code == "unknown_model"
+    with pytest.raises(setup_ops.SetupOpError) as bad:
+        setup_ops.perform("voice_cloud", {"provider": "openai", "model": "tts-1", "voice": "verse"})
+    assert bad.value.code == "unknown_voice"
+    assert "tts-1-hd" in setup_ops.describe("voice_cloud", {"provider": "openai", "model": "tts-1-hd"})
+    setup_ops.perform("voice_cloud", {"provider": "openai", "model": "tts-1-hd", "voice": "coral"})
+    speech = special.stored("default")["speech"]
+    assert (speech["model"], speech["options"]["voice"], speech["price_usd"]) == ("tts-1-hd", "coral", 0.03)
 
 
 class _Runtime:

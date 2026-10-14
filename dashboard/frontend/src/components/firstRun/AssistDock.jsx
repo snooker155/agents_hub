@@ -38,6 +38,9 @@ export default function AssistDock({ assistant, screen, speak }) {
     await assistant.startListening();
   };
 
+  // As in the chat composer: the microphone while the field is empty, Send
+  // once something is typed.
+  const micShown = assistant.canListen && (assistant.listening || !text.trim());
   const markState = assistant.listening ? 'listen' : assistant.speaking ? 'speak' : assistant.busy ? 'think' : 'idle';
   const shown = open && (assistant.reply || assistant.heard || assistant.busy || assistant.listening);
 
@@ -70,19 +73,20 @@ export default function AssistDock({ assistant, screen, speak }) {
           className="first-run-assist-input flex-1 min-w-0 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none"
           data-testid="first-run-assist-input"
         />
-        {assistant.canListen && (
+        {micShown ? (
           <button type="button" onClick={mic} disabled={assistant.busy}
             aria-label={assistant.listening ? t('firstRun.voice.stop') : t('firstRun.voice.talk')}
-            className={`w-9 h-9 rounded-full flex items-center justify-center ${assistant.listening ? 'bg-red-500 text-white' : 'text-indigo-600 hover:bg-indigo-50'} disabled:opacity-40`}
+            className={`w-9 h-9 rounded-full flex items-center justify-center text-white ${assistant.listening ? 'bg-red-500' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:opacity-40`}
             data-testid="first-run-assist-mic">
             {assistant.listening ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
+        ) : (
+          <button type="submit" disabled={!text.trim() || assistant.busy} aria-label={t('firstRun.assist.send')}
+            className="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-700 disabled:opacity-30"
+            data-testid="first-run-assist-send">
+            <SendHorizontal className="w-4 h-4" />
+          </button>
         )}
-        <button type="submit" disabled={!text.trim() || assistant.busy} aria-label={t('firstRun.assist.send')}
-          className="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center disabled:opacity-30"
-          data-testid="first-run-assist-send">
-          <SendHorizontal className="w-4 h-4" />
-        </button>
       </form>
     </div>
   );

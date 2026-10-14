@@ -13,6 +13,34 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- The first run's voice screen lets an OpenAI voice pick its speech model:
+  `gpt-4o-mini-tts` (default), `tts-1` (fastest) or `tts-1-hd`; the voices
+  offered follow the model (`setup_step voice_cloud` takes `model` too).
+- The assistant opened from the first run, or from the welcome window by
+  voice, starts in the Hold mode, not Conversation.
+- A first-run screen answered "not now" (the voice, web search, the demo) is
+  skipped in the guided setup that follows, so the assistant does not offer
+  it again. The Setup tab's restart button is now **Bring back skipped
+  steps**, shown only when something is skipped or marked, with a hint.
+- The guided setup can be closed with steps still open: **Close setup** on
+  the Setup tab and a cross on the header's pill. Closing (and finishing)
+  waits for the required steps, a model and the default model;
+  `setup_guide` refuses `finish` and `dismiss` before that, and the guide
+  reports it as `can_close`.
+- The first run's assistant field swaps its buttons as the chat does: the
+  microphone while the field is empty, Send once something is typed.
+
+### Fixed
+
+- The first assistant turn on a fresh runner replica no longer pays 15 to 35
+  seconds of imports (the agent stack, litellm's model map): the replica
+  imports them once it is ready.
+- A cloud speech model that hangs gives up after 15 seconds
+  (`AGENTS_HUB_SPEAK_TIMEOUT`) and the page reads with the browser's voice,
+  instead of every later sentence waiting behind it.
+
 ## [0.12.0] - 2026-10-14
 
 ### Added

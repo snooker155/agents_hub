@@ -16,8 +16,11 @@ export default {
   skip: 'Skip',
   unskip: 'Undo skip',
   takeTour: 'Take the tour',
-  restart: 'Restart guide',
+  restart: 'Bring back skipped steps',
+  restartHint: 'Undoes your skips and the steps the assistant marked done (the health check), and the guide runs again from the first open step. Steps the hub already sees as done stay done.',
   finish: 'Finish',
+  close: 'Close setup',
+  closeHint: 'The required steps are done, so the guide can stop here. The rest stays where it is, and the assistant can start the guide again whenever you ask.',
   steps: {
     model: {
       title: 'Connect a model',

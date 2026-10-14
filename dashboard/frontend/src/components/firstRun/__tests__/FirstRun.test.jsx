@@ -236,6 +236,28 @@ describe('FirstRun', () => {
     expect(screen.getByTestId('first-run-voice-of-en')).toHaveTextContent('nova');
   });
 
+  it('an OpenAI voice picks its speech model, and a voice the model lacks falls back', async () => {
+    firstRunApi.getFirstRunContext.mockResolvedValue({ data: CONNECTED });
+    firstRunApi.getFirstRunOptions.mockResolvedValue({ data: { ...OPTIONS, voice: { ...OPTIONS.voice, cloud: {
+      openai: { connected: true, voices: ['alloy', 'nova', 'verse'], speech_models: [
+        { id: 'gpt-4o-mini-tts', price: 0.015, voices: ['alloy', 'nova', 'verse'] },
+        { id: 'tts-1', price: 0.015, voices: ['alloy', 'nova'] },
+      ] },
+    } } } });
+    renderRun({ initial: { step: 'voice' } });
+    fireEvent.click(await screen.findByTestId('first-run-voice-cloud-openai'));
+    expect(screen.getByTestId('first-run-voice-model-gpt-4o-mini-tts')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Fastest to answer')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('first-run-voice-openai-de'), { target: { value: 'verse' } });
+    fireEvent.click(screen.getByTestId('first-run-voice-model-tts-1'));
+    // tts-1 has no "verse": German goes back to a voice it has.
+    expect(screen.getByTestId('first-run-voice-openai-de')).toHaveValue('alloy');
+    cont();
+    await waitFor(() => expect(firstRunApi.firstRunOp).toHaveBeenCalledWith('voice_cloud', {
+      provider: 'openai', voice: 'nova', voices: { en: 'nova', ru: 'alloy', de: 'alloy' }, model: 'tts-1',
+    }));
+  });
+
   it('the check: hello out loud, a yes, an answer by voice, then the assistant leads on', async () => {
     const onFinish = vi.fn();
     firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...CONNECTED, voice: true, demo: true } });
@@ -271,7 +293,11 @@ describe('FirstRun', () => {
     // From here on the assistant is on every screen, asked about that screen.
     cont();
     await screen.findByTestId('first-run-search');
+    // As in the chat: the microphone while the field is empty, Send once typed.
+    expect(screen.getByTestId('first-run-assist-mic')).toBeTruthy();
+    expect(screen.queryByTestId('first-run-assist-send')).toBeNull();
     fireEvent.change(screen.getByTestId('first-run-assist-input'), { target: { value: 'Do I need this?' } });
+    expect(screen.queryByTestId('first-run-assist-mic')).toBeNull();
     fireEvent.click(screen.getByTestId('first-run-assist-send'));
     await waitFor(() => expect(assistantApi.streamAssistantTurn.mock.calls[2][0].body)
       .toMatchObject({ message: 'Do I need this?', first_run_screen: 'search' }));

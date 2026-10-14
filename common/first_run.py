@@ -26,6 +26,9 @@ Settings route, personal memory through the workspace's own route. The record
 keeps only what no page holds: the step the person is on, so a reload goes on
 from there, and the language and the look they chose, so a second browser
 starts with them.
+
+A screen answered "not now" (the voice, web search, the demo) ends up skipped
+in the guided setup that follows, so the assistant does not offer it again.
 """
 from __future__ import annotations
 
@@ -47,6 +50,9 @@ STEPS = ("hello", "language", "appearance", "model", "choose_model", "voice", "s
 LANGUAGES = ("en", "ru", "de")
 THEMES = ("light", "dark", "system")
 ACTIONS = ("progress", "finish", "restart")
+#: The guided setup's steps these screens already asked about: one still open
+#: when the first run ends was declined there, and the guide starts it skipped.
+GUIDE_STEPS = ("voice", "web_search", "demo")
 
 
 def _now() -> str:
@@ -155,6 +161,10 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
         if not setup_guide.usable_providers() and not _local_set_started():
             raise ValueError("connect a model first: nothing runs without one")
         doc.update(completed_at=_now(), step="done", via="first_run")
+        try:
+            setup_guide.skip_open(None, list(GUIDE_STEPS))
+        except Exception:  # noqa: BLE001 - the guide asks again, nothing lost
+            log.warning("first run: declined steps not passed to the guide", exc_info=True)
     elif action == "restart":
         doc.update(completed_at=None, step="hello", restarted_at=_now())
         doc.pop("via", None)

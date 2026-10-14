@@ -64,7 +64,9 @@ command that reaches the service then uses them as if `AGENTS_HUB_URL` and
 
 `./install.sh` installs it. See [installation](installation.md). Without an
 install, `python -m cli` from the checkout is the same program, and `ah` below
-stands for either. `ah setup` is the guided install and configuration
+stands for either. A Docker install has `ah` inside the backend container
+(`docker compose exec backend ah ...`) and none on the host until a client is
+added: [installation](installation.md), "The `ah` command on each path". `ah setup` is the guided install and configuration
 ([installation](installation.md), "Guided setup").
 
 ## The commands

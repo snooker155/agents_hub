@@ -60,15 +60,13 @@ one, `0.8.0-rag` for the flavour with the RAG stack, see
 
 ```bash
 docker compose pull && docker compose up -d                     # upgrade
-docker compose exec backend python -m cli db backup --to /data/backups
+docker compose exec backend ah db backup --to /data/backups
 docker compose logs -f backend
 ```
 
-The terminal client talks to this install over REST: from a checkout,
-`pip install -e .` gives `ah` with only its three dependencies, then
-`export AGENTS_HUB_URL=http://localhost:8080` ([cli](cli.md), "Two ways it
-reaches the service"). Or use the API from `docker compose exec backend
-python -m cli ...` inside the container.
+Nothing on the host gets an `ah` command on this path: it is inside the
+backend container, and a client on the host is a separate step, see
+[the `ah` command on each path](#the-ah-command-on-each-path).
 
 What this shape leaves out: the Docker socket is not mounted, so agents
 cannot get containers of their own ([containers](containers.md)), the
@@ -93,6 +91,11 @@ like on a local install, and `git pull` followed by `docker compose up -d
 containers of their own (`AGENT_EXECUTION_MODE=docker`,
 [containers](containers.md)); `WITH_RAG=true` in `.env` builds the image
 with the RAG stack.
+
+Compose does not put `ah` on the host either: `docker compose exec backend
+ah ...` runs it in the container, and a client on the host is the same
+separate step as on Path A, see
+[the `ah` command on each path](#the-ah-command-on-each-path).
 
 The dashboard is the built bundle behind nginx, which also proxies `/api` and
 balances it across the backends behind it, so more backends is one flag:
@@ -175,6 +178,71 @@ python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+## The `ah` command on each path
+
+`ah` reaches the service in one of two ways ([cli](cli.md), "Two ways it
+reaches the service"): **direct**, in a process that has the checkout, its
+Python dependencies and the state directory, or **over REST**, to a running
+backend named by `AGENTS_HUB_URL`. Which of the two you get depends on the
+path:
+
+| Path | `ah` on the host | `ah` in the backend container |
+| --- | --- | --- |
+| A. Published images | Not installed. Add a client (below), REST to `http://localhost:8080` | `docker compose exec backend ah ...`, direct |
+| B. Compose from a checkout | Not installed. Add a client (below), REST to `http://localhost:8080` or `:8000` | `docker compose exec backend ah ...`, direct |
+| C. The installer | On PATH in a new terminal, direct | |
+| D. By hand | In the activated venv after `pip install -e ...`, direct; `python -m cli` from the checkout without any install | |
+
+Direct mode on the host does not reach a Docker install. On Path A the
+state sits on a named volume the host cannot open. On Path B the database
+under the bind mounted checkout belongs to the backend in the container: a
+second process on the host would need the same dependencies and settings,
+and on macOS and Windows SQLite's locking does not hold across Docker
+Desktop's file share. So on A and B the host talks REST, and the commands
+that only work direct run in the container: `ah db ...`, `ah worker` and
+`ah deployment`. `ah up`
+and `ah server start` start a service on this machine and are not for a
+Docker install at all.
+
+### Adding `ah` to a Docker install
+
+**In the container** there is nothing to add: the backend image carries
+`ah` (images after 0.12.0; in 0.12.0 and older `python -m cli` is the same
+program). It runs direct, on the same database and volume as the backend:
+
+```bash
+docker compose exec backend ah doctor
+docker compose exec backend ah db backup --to /data/backups
+alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
+```
+
+The alias makes `ah` in any folder of the host mean the one in the
+container; paths it is given are then the container's paths.
+
+**On the host**, a client over REST needs a checkout (Path B already has
+one) and Python 3.11+, but none of the service's dependencies:
+
+```bash
+git clone https://github.com/snooker155/agents_hub.git && cd agents_hub
+./install.sh --cli-only        # .venv with ah and its three dependencies, the shell hook
+export AGENTS_HUB_URL=http://localhost:8080
+ah config                      # names the service it talks to
+ah agent list
+```
+
+Instead of the export, `ah setup` with **Connect to a hub that already
+runs** saves the address and a key in `~/.config/agents-hub/cli.json`, and
+the Docker shapes of `ah setup` offer the same at the end. A fresh install
+is in `single` mode and asks for no credential; with `AUTH_MODE=token` set
+`AGENTS_HUB_API_TOKEN`, with `multi` a personal key in `AGENTS_HUB_API_KEY`
+([cli](cli.md), "Authenticating over `AGENTS_HUB_URL`"). Paths given over
+REST are resolved by the backend, so a host folder has to be mounted into
+the container first ([cli](cli.md), "Against a containerized backend").
+
+Without Python on the host, `scripts/build_cli_binary.sh` builds a single
+file REST-only `ah` on a machine that has it, to copy anywhere ([cli](cli.md),
+"A binary, for REST mode without a venv").
+
 ## Guided setup (`ah setup`)
 
 `ah setup` asks its way through the whole install, the way OpenClaw's first
@@ -239,7 +307,9 @@ voice, web search, personal memory and the demo workspace, then a summary
 with the way in (**Start using Agents Hub**, **Continue with the
 assistant** or **Take the tour**).
 
-On the voice screen you meet the assistant: it says hello out loud, each
+On the voice screen an OpenAI voice also picks its speech model:
+`gpt-4o-mini-tts` (the default, newest and most natural), `tts-1` (fastest
+to answer) or `tts-1-hd` (clearer, slower). Then you meet the assistant: it says hello out loud, each
 language in a voice of its own ([a voice per language](assistant.md#a-voice-per-language)),
 you say whether you heard it, answer by voice and hear the reply, which checks
 the model, the speech model and the transcription model in one go. From then
@@ -403,7 +473,8 @@ notes** in the [changelog](changelog.md) first, and [deployment](deployment.md)
   `AGENT_EXECUTION_MODE=docker` with no reachable Docker daemon.
 - **`ah` is not found.** The venv is not on PATH and the shell hook is not
   installed. Run `ah shell-init --install` from the venv, or call the script by
-  its absolute path. See [cli](cli.md).
+  its absolute path. See [cli](cli.md). On Paths A and B the host has no `ah`
+  until you add one, see [the `ah` command on each path](#the-ah-command-on-each-path).
 - **Path A: `unable to open database file`.** The `init` step that hands the
   volume to the backend's user did not run; `docker compose up -d` again
   runs it (it is idempotent), and `docker compose logs init` says why it
