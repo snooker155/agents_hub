@@ -442,6 +442,8 @@ def guide(principal: Any, *, tour_done: Optional[bool] = None) -> Dict[str, Any]
     active = bool(state.get("started_at")) and not state.get("finished_at") and not state.get("dismissed_at")
     return {
         "active": active,
+        # Closing (finish or dismiss) waits for the steps nothing runs without.
+        "can_close": all(r["status"] == DONE for r in rows if r["required"]),
         "started_at": state.get("started_at"),
         "finished_at": state.get("finished_at"),
         "dismissed_at": state.get("dismissed_at"),
@@ -470,6 +472,11 @@ def act(principal: Any, action: str, step: Optional[str] = None, *, mode: Option
             raise ValueError(f"step must be one of {', '.join(s.id for s in steps_for(principal))}")
         if action == "skip" and _BY_ID[step].required:
             raise ValueError(f"'{step}' cannot be skipped: nothing runs without it")
+    if action in ("finish", "dismiss"):
+        g = guide(principal, tour_done=tour_done)
+        if not g["can_close"]:
+            left = [r["id"] for r in g["steps"] if r["required"] and r["status"] != DONE]
+            raise ValueError(f"the guide cannot be closed before its required steps are done: {', '.join(left)}")
     state = load_state(principal)
     skipped = [s for s in state.get("skipped") or [] if s != step]
     marked = [s for s in state.get("marked") or [] if s != step]
@@ -492,6 +499,17 @@ def act(principal: Any, action: str, step: Optional[str] = None, *, mode: Option
     state["skipped"], state["marked"] = skipped, marked
     save_state(principal, state)
     return guide(principal, tour_done=tour_done)
+
+
+def skip_open(principal: Any, ids: List[str]) -> None:
+    """Skip those of ``ids`` still to do: the "not now" the person already
+    gave elsewhere (the first run's screens), so the guide does not ask again."""
+    open_ids = {r["id"] for r in guide(principal)["steps"] if r["status"] == TODO}
+    state = load_state(principal)
+    skipped = list(state.get("skipped") or [])
+    skipped += [i for i in ids if i in open_ids and i not in skipped and not _BY_ID[i].required]
+    state["skipped"] = skipped
+    save_state(principal, state)
 
 
 def set_work(principal: Any, work: Optional[Dict[str, Any]]) -> None:
@@ -526,4 +544,5 @@ def prompt_lines(principal: Any) -> List[str]:
 
 
 __all__ = ["ACTIONS", "STEPS", "Step", "act", "default_model", "guide", "is_admin", "load_state",
-           "person_key", "prompt_lines", "save_state", "set_work", "steps_for", "usable_providers"]
+           "person_key", "prompt_lines", "save_state", "set_work", "skip_open", "steps_for",
+           "usable_providers"]

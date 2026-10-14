@@ -49,8 +49,9 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
     for the next step (each connected provider's strongest, balanced and fastest
     model, the cloud and local voices, the web search providers). Mark a step
     skipped when the person does not want it, done when it is done in a way the hub
-    cannot see, and finish when every step is done or skipped. Changes nothing in
-    the hub itself.
+    cannot see, and finish when every step is done or skipped; dismiss when the
+    person wants to stop. Neither works before the required steps (a model, the
+    default model) are done. Changes nothing in the hub itself.
     """
     from common import setup_guide as guide
     from common import setup_ops

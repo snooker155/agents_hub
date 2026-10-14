@@ -59,7 +59,7 @@ def http(monkeypatch):
         return state["handler"](request)
 
     monkeypatch.setattr(media, "_client",
-                        lambda: httpx.Client(transport=httpx.MockTransport(transport)))
+                        lambda timeout=None: httpx.Client(transport=httpx.MockTransport(transport)))
 
     def set_handler(fn):
         state["handler"] = fn

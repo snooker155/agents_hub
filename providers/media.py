@@ -59,9 +59,9 @@ class Media:
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 
-def _client():
+def _client(timeout: Optional[float] = None):
     import httpx
-    return httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True)
+    return httpx.Client(timeout=timeout or REQUEST_TIMEOUT, follow_redirects=True)
 
 
 def _headers(ep: Endpoint, *, json_body: bool = True) -> Dict[str, str]:
@@ -334,7 +334,8 @@ def _pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
 
 
 def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[str],
-                      instructions: Optional[str], options: Dict[str, str]) -> Media:
+                      instructions: Optional[str], options: Dict[str, str],
+                      timeout: Optional[float] = None) -> Media:
     if ep.kind == GOOGLE:
         _need_key(ep, "Google")
         prompt = f"{instructions.strip()}: {text}" if instructions and instructions.strip() else text
@@ -346,7 +347,7 @@ def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[st
                     "voiceName": voice or options.get("voice") or "Kore"}}},
             },
         }
-        with _client() as client:
+        with _client(timeout) as client:
             resp = client.post(f"{ep.base_url}/models/{model}:generateContent", headers=_headers(ep), json=body)
             for part in _google_parts(_check(resp, "Speech synthesis").json()):
                 got = _inline(part)
@@ -368,7 +369,7 @@ def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[st
             payload["temperature"] = float(str(options["temperature"]).replace(",", "."))
         except ValueError:
             pass
-    with _client() as client:
+    with _client(timeout) as client:
         resp = _check(client.post(f"{ep.base_url}/audio/speech", headers=_headers(ep), json=payload),
                       "Speech synthesis")
     mime = {"mp3": "audio/mpeg", "wav": "audio/wav", "opus": "audio/opus", "aac": "audio/aac",

@@ -419,7 +419,7 @@ describe('the Assistant page', () => {
     expect(JSON.parse(localStorage.getItem(PREFS_KEY) || '{}').listen).not.toBe('conversation');
   });
 
-  it('a voice kickoff starts a conversation and speaks the reply, without marking the kickoff itself as spoken', async () => {
+  it('a voice kickoff speaks the reply in hold mode, without marking the kickoff itself as spoken', async () => {
     assistantApi.getAssistant.mockResolvedValue({
       data: {
         ...META,
@@ -447,7 +447,8 @@ describe('the Assistant page', () => {
     await waitFor(() => expect(assistantApi.speakAssistant).toHaveBeenCalledWith(
       expect.objectContaining({ run_id: 'r1', text: "Let's connect a model first." }), expect.anything(),
     ));
-    expect(JSON.parse(localStorage.getItem(PREFS_KEY)).listen).toBe('conversation');
-    await waitFor(() => expect(ear.start).toHaveBeenCalled());
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)).listen).toBe('hold');
+    expect(screen.getByRole('radio', { name: 'Hold to talk' })).toHaveAttribute('aria-checked', 'true');
+    expect(ear.start).not.toHaveBeenCalled();
   });
 });

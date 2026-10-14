@@ -1,7 +1,8 @@
 /**
  * The voice screen, in two parts.
  *
- * Choose: a cloud voice (OpenAI or Google, with a voice for each page
+ * Choose: a cloud voice (OpenAI or Google; OpenAI's speech model picked
+ * among the newest, the fastest and the HD one; a voice for each page
  * language), the hub's own runtime (a Piper voice per language, downloaded in
  * the background) or the browser's own voice.
  *
@@ -61,10 +62,23 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
   // With nothing else on offer the browser's own voice is the choice.
   const choice = picked || (options && !cloud.length && !local?.available ? 'browser' : '');
   const [voices, setVoices] = useState({});
+  // The speech model per provider; the first offered is the default.
+  const [models, setModels] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const voicesOf = (provider, spec) => ({ ...defaultVoices(provider, spec), ...(voices[provider] || {}) });
+  const offeredOf = (spec) => spec?.speech_models || [];
+  const modelOf = (provider, spec) => {
+    const offered = offeredOf(spec);
+    return offered.find((m) => m.id === models[provider]) || offered[0] || null;
+  };
+  // The voices the chosen model has (the older tts-1 pair lacks some).
+  const namesOf = (provider, spec) => modelOf(provider, spec)?.voices || spec?.voices || [];
+  const voicesOf = (provider, spec) => {
+    const names = namesOf(provider, spec);
+    const own = Object.fromEntries(Object.entries(voices[provider] || {}).filter(([, v]) => names.includes(v)));
+    return { ...defaultVoices(provider, { voices: names }), ...own };
+  };
 
   const save = async () => {
     setBusy(true);
@@ -74,7 +88,10 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
         const provider = choice.slice(6);
         const spec = options.voice.cloud[provider];
         const map = voicesOf(provider, spec);
-        await firstRunOp('voice_cloud', { provider, voice: map[language] || spec.voices[0], voices: map });
+        const model = modelOf(provider, spec)?.id;
+        await firstRunOp('voice_cloud', {
+          provider, voice: map[language] || namesOf(provider, spec)[0], voices: map, ...(model ? { model } : {}),
+        });
       } else if (choice === 'local') {
         await firstRunOp('voice_local', {});
       }
@@ -117,7 +134,26 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
                 onClick={() => setChoice(`cloud:${provider}`)}
                 testId={`first-run-voice-cloud-${provider}`}
               />
-              {choice === `cloud:${provider}` && (spec.voices || []).length > 0 && (
+              {choice === `cloud:${provider}` && offeredOf(spec).length > 1 && (
+                <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 space-y-2" role="radiogroup"
+                  aria-label={t('firstRun.voice.model')} data-testid={`first-run-voice-models-${provider}`}>
+                  <p className="text-xs text-gray-500">{t('firstRun.voice.model')}</p>
+                  {offeredOf(spec).map((m) => {
+                    const on = modelOf(provider, spec)?.id === m.id;
+                    return (
+                      <button key={m.id} type="button" role="radio" aria-checked={on}
+                        onClick={() => setModels((x) => ({ ...x, [provider]: m.id }))}
+                        className={`w-full flex items-baseline justify-between gap-3 rounded-lg border px-3 py-2 text-left ${on
+                          ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'}`}
+                        data-testid={`first-run-voice-model-${m.id}`}>
+                        <span className="text-sm font-medium text-gray-800">{m.id}</span>
+                        <span className="text-xs text-gray-500 text-right">{t(`firstRun.voice.models.${m.id}`, { defaultValue: '' })}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {choice === `cloud:${provider}` && namesOf(provider, spec).length > 0 && (
                 <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 space-y-3" data-testid="first-run-voice-names">
                   <p className="text-xs text-gray-500">{t('firstRun.voice.perLanguage')}</p>
                   {order.map((l) => (
@@ -130,7 +166,7 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
                         className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none"
                         data-testid={`first-run-voice-${provider}-${l.code}`}
                       >
-                        {spec.voices.map((v) => <option key={v} value={v}>{v}</option>)}
+                        {namesOf(provider, spec).map((v) => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </div>
                   ))}

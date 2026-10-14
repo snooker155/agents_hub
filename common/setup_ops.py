@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from cli.onboard import probe as P
-from cli.onboard.presets import HUB_LOCAL, VOICE_CLOUD, VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION
+from cli.onboard.presets import HUB_LOCAL, VOICE_CLOUD, VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION, speech_models
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +73,8 @@ OPERATIONS: Dict[str, Operation] = {op.name: op for op in (
     Operation("voice_cloud", "voice",
               "give the assistant a cloud voice: speech and transcription models of a connected provider",
               {"provider": "openai or google (its key must be connected)",
+               "model": "optional: the speech model, one of the provider's speech_models in setup_guide options "
+                        "(default the first)",
                "voice": "optional: one of the voices setup_guide options lists"}),
     Operation("voice_local", "voice",
               "give the assistant a voice from the hub's own model runtime (free; downloads 0.5 to 2 GB)",
@@ -169,7 +171,8 @@ def options() -> Dict[str, Any]:
         "models": models,
         "voice": {
             "cloud": {p: {"speech": s["speech"], "transcription": s["transcription"], "voices": s["voices"],
-                          "connected": bool(_key_of(p))} for p, s in VOICE_CLOUD.items()},
+                          "speech_models": speech_models(p), "connected": bool(_key_of(p))}
+                      for p, s in VOICE_CLOUD.items()},
             "local": {"available": runtime,
                       "speech": [{"id": i, "label": label, "size": size} for i, label, size, *_ in VOICE_LOCAL_SPEECH],
                       "transcription": [{"id": i, "label": label, "size": size}
@@ -221,7 +224,7 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
     if operation == "voice_cloud":
         spec = VOICE_CLOUD.get(a.get("provider", ""), {})
         voice = a.get("voice") or (spec.get("voices") or ["?"])[0]
-        return (f"Give the assistant {a.get('provider', '?')}'s voice: speech {spec.get('speech', '?')} "
+        return (f"Give the assistant {a.get('provider', '?')}'s voice: speech {a.get('model') or spec.get('speech', '?')} "
                 f"(voice {voice}) and transcription {spec.get('transcription', '?')}, paid per use, "
                 f"for every workspace that has none of its own.")
     if operation == "voice_local":
@@ -327,9 +330,10 @@ def _language_voices(row: Optional[tuple]) -> Dict[str, str]:
     return {lang: _PIPER_FOR[lang] for lang in VOICE_LANGUAGES if lang != own}
 
 
-def voice_cloud(provider: str, voice: str = "", *, principal: Any = None,
+def voice_cloud(provider: str, voice: str = "", *, model: str = "", principal: Any = None,
                 voices: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """A cloud voice; ``voices`` names another voice of the same model for a
+    """A cloud voice; ``model`` is one of the provider's speech models (the
+    first when empty); ``voices`` names another voice of the same model for a
     language (``{"ru": "alloy"}``), read when a line is in that language."""
     provider = (provider or "").strip().lower()
     spec = VOICE_CLOUD.get(provider)
@@ -338,10 +342,17 @@ def voice_cloud(provider: str, voice: str = "", *, principal: Any = None,
     if not _key_of(provider):
         raise SetupOpError(f"No {P.LABELS[provider]} key is connected: offer propose_connection with kind "
                            f"provider first, or the hub's own runtime (voice_local).", code="no_key")
-    voice = (voice or "").strip() or spec["voices"][0]
-    known = {v.lower(): v for v in spec["voices"]}
+    offered = speech_models(provider)
+    model = (model or "").strip() or offered[0]["id"]
+    chosen = next((m for m in offered if m["id"] == model), None)
+    if chosen is None:
+        raise SetupOpError(f"'{model}' is not one of {provider}'s speech models: "
+                           f"{', '.join(m['id'] for m in offered)}.", code="unknown_model")
+    names = chosen["voices"]
+    voice = (voice or "").strip() or names[0]
+    known = {v.lower(): v for v in names}
     if voice.lower() not in known:
-        raise SetupOpError(f"'{voice}' is not one of {provider}'s voices: {', '.join(spec['voices'])}.",
+        raise SetupOpError(f"'{voice}' is not one of {model}'s voices: {', '.join(names)}.",
                            code="unknown_voice")
     by_language: Dict[str, Dict[str, str]] = {}
     for lang, name in (voices or {}).items():
@@ -349,21 +360,21 @@ def voice_cloud(provider: str, voice: str = "", *, principal: Any = None,
         if not name:
             continue
         if name.lower() not in known:
-            raise SetupOpError(f"'{name}' is not one of {provider}'s voices: {', '.join(spec['voices'])}.",
+            raise SetupOpError(f"'{name}' is not one of {model}'s voices: {', '.join(names)}.",
                                code="unknown_voice")
         by_language[lang] = {"voice": known[name.lower()]}
     entries = {
-        "speech": {"provider": provider, "model": spec["speech"], "options": {"voice": known[voice.lower()]},
+        "speech": {"provider": provider, "model": model, "options": {"voice": known[voice.lower()]},
                    **({"languages": by_language} if by_language else {}),
-                   **({"price_usd": spec["speech_price"]} if spec.get("speech_price") is not None else {})},
+                   **({"price_usd": chosen["price"]} if chosen.get("price") is not None else {})},
         "transcription": {"provider": provider, "model": spec["transcription"], "options": {},
                           **({"price_usd": spec["transcription_price"]}
                              if spec.get("transcription_price") is not None else {})},
     }
     _save_voice(entries)
-    _audit(principal, "voice_cloud", {"provider": provider, "voice": known[voice.lower()]})
+    _audit(principal, "voice_cloud", {"provider": provider, "model": model, "voice": known[voice.lower()]})
     return {"ok": True, "summary": f"The assistant now hears with {spec['transcription']} and speaks with "
-                                   f"{spec['speech']} (voice {known[voice.lower()]}). The page uses them "
+                                   f"{model} (voice {known[voice.lower()]}). The page uses them "
                                    f"from the next answer."}
 
 
@@ -440,7 +451,8 @@ def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
 
 _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "choose_model": lambda a, p: choose_model(a.get("provider", ""), a.get("model", ""), principal=p),
-    "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), principal=p,
+    "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), model=a.get("model", ""),
+                                            principal=p,
                                             voices=a.get("voices") if isinstance(a.get("voices"), dict) else None),
     "voice_local": lambda a, p: voice_local(a.get("speech", ""), a.get("transcription", ""), principal=p),
     "local_set": lambda a, p: local_set(a.get("workspace", ""), principal=p),

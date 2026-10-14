@@ -81,6 +81,12 @@ MAX_AUDIO_BYTES = int(os.environ.get("AGENTS_HUB_VOICE_MAX_BYTES", str(8 * 1024 
 MAX_AUDIO_SECONDS = float(os.environ.get("AGENTS_HUB_VOICE_MAX_SECONDS", "120") or 120)
 #: Longest text one ``speak`` call reads.
 MAX_SPEAK_CHARS = 1000
+#: How long a cloud speech model gets for one stretch before the page falls
+#: back to the browser's voice. A sentence normally takes one to four seconds;
+#: OpenAI's gpt-4o-mini-tts has been seen taking 80 to 100 (2026-10-14), and
+#: every later sentence waited behind it. The hub's own runtime keeps the media
+#: timeout: a cloning model on a CPU is slow but still answers.
+CLOUD_SPEAK_TIMEOUT = float(os.environ.get("AGENTS_HUB_SPEAK_TIMEOUT", "15") or 15)
 _VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
 
@@ -903,7 +909,8 @@ async def speak(body: SpeakIn, request: Request):
             ep = special.entry_endpoint(entry, where)
         audio = await asyncio.to_thread(media.synthesize_speech, ep, entry["model"], spoken,
                                         voice=chosen_voice, instructions=None,
-                                        options=dict(entry.get("options") or {}))
+                                        options=dict(entry.get("options") or {}),
+                                        timeout=None if ep.local else CLOUD_SPEAK_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - the page falls back to the browser's voice
         raise _provider_failed("Speech synthesis", exc)
     item = voice.call_entry("speech", entry, cost, round(len(spoken) / 1000.0, 3))

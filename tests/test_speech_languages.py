@@ -82,7 +82,7 @@ def http(monkeypatch):
         calls.append(request)
         return httpx.Response(200, content=b"ID3-fake-mp3", headers={"content-type": "audio/mpeg"})
 
-    monkeypatch.setattr(media, "_client", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(media, "_client", lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
     return calls
 
 

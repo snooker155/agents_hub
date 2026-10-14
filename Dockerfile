@@ -93,6 +93,13 @@ FROM deps-${WITH_RAG} AS backend
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
+# `ah` on PATH, so `docker compose exec backend ah ...` works the way it does on
+# a local install. A wrapper rather than `pip install -e .`: the source under
+# /app is on PYTHONPATH already, and a compose deployment bind mounts its own
+# checkout over /app, which an editable install's metadata would not follow.
+RUN printf '#!/bin/sh\nexec python -m cli "$@"\n' > /usr/local/bin/ah \
+    && chmod 755 /usr/local/bin/ah
+
 # ---------- security: non-root user ----------
 # Root is only needed for apt-get and pip install above. The docker CLI is
 # still usable from here: docker-compose.yml adds this user to the socket's

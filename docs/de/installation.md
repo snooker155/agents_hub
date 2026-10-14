@@ -39,11 +39,11 @@ Was läuft: das Backend, in dem jeder Agent als Subprozess läuft (`AGENT_EXECUT
 
 ```bash
 docker compose pull && docker compose up -d                     # aktualisieren
-docker compose exec backend python -m cli db backup --to /data/backups
+docker compose exec backend ah db backup --to /data/backups
 docker compose logs -f backend
 ```
 
-Der Terminal-Client spricht mit dieser Installation über REST: Aus einem Checkout installiert `pip install -e .` den Befehl `ah` mit nur seinen drei Abhängigkeiten, danach setzen Sie `export AGENTS_HUB_URL=http://localhost:8080` ([cli](cli.md), "Two ways it reaches the service"). Alternativ nutzen Sie die API mit `docker compose exec backend python -m cli ...` im Container.
+Auf dem Host gibt es bei diesem Weg keinen Befehl `ah`: Er liegt im Backend-Container, und ein Client auf dem Host ist ein eigener Schritt, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
 Was diese Form weglässt: Der Docker-Socket ist nicht eingebunden, daher können Agenten keine eigenen Container bekommen ([containers](containers.md)). Der Sandbox-Anbieter `docker` und der Browser-Dienst brauchen Weg B. Das Image ohne das Suffix `-rag` enthält keinen Embedding-Stack, deshalb bleibt `RAG_VECTOR_DB` auf `none`, solange Sie nicht das Tag mit `-rag` festlegen.
 
@@ -56,6 +56,8 @@ docker compose up --build              # Backend :8000, Dashboard :8080
 ```
 
 Die `.env` ist hier optional: Der Stack startet ohne Anbieterschlüssel, und Sie fügen sie in den Einstellungen hinzu. `BACKEND_PORT` und `WEB_PORT` verschieben die veröffentlichten Ports, und das Dashboard folgt ihnen, weil es mit seinem eigenen Origin spricht. Der Checkout ist in das Backend eingebunden, daher landet der Zustand wie bei einer lokalen Installation in `.agents_hub/` darunter. Aktualisieren heißt `git pull`, gefolgt von `docker compose up -d --build`. Der Docker-Socket ist eingebunden, daher können Agenten in eigenen Containern laufen (`AGENT_EXECUTION_MODE=docker`, [containers](containers.md)). `WITH_RAG=true` in der `.env` baut das Image mit dem RAG-Stack.
+
+Auch Compose legt `ah` nicht auf den Host: `docker compose exec backend ah ...` führt ihn im Container aus, und ein Client auf dem Host ist derselbe eigene Schritt wie bei Weg A, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
 Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet und auf die dahinterliegenden Backends verteilt. Mehr Backends sind also nur ein Flag:
 
@@ -109,6 +111,45 @@ python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+## Der Befehl `ah` auf jedem Weg
+
+`ah` erreicht den Dienst auf eine von zwei Arten ([cli](cli.md), "Two ways it reaches the service"): **direkt**, in einem Prozess, der den Checkout, dessen Python-Abhängigkeiten und das Zustandsverzeichnis hat, oder **über REST**, zu einem laufenden Backend, das `AGENTS_HUB_URL` nennt. Welche davon verfügbar ist, hängt vom Weg ab:
+
+| Weg | `ah` auf dem Host | `ah` im Backend-Container |
+| --- | --- | --- |
+| A. Veröffentlichte Images | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` | `docker compose exec backend ah ...`, direkt |
+| B. Compose aus einem Checkout | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` oder `:8000` | `docker compose exec backend ah ...`, direkt |
+| C. Installationsprogramm | Im PATH in einem neuen Terminal, direkt | |
+| D. Von Hand | In der aktivierten venv nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
+
+Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A liegt der Zustand auf einem benannten Volume, das der Host nicht öffnen kann. Bei Weg B gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Auf A und B spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`, `ah worker` und `ah deployment`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
+
+### `ah` zu einer Docker-Installation hinzufügen
+
+**Im Container** ist nichts hinzuzufügen: Das Backend-Image bringt `ah` mit (Images nach 0.12.0; in 0.12.0 und älter ist `python -m cli` dasselbe Programm). Er läuft direkt, auf derselben Datenbank und demselben Volume wie das Backend:
+
+```bash
+docker compose exec backend ah doctor
+docker compose exec backend ah db backup --to /data/backups
+alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
+```
+
+Mit diesem Alias bedeutet `ah` in jedem Ordner des Hosts den Befehl im Container; Pfade, die er bekommt, sind dann Pfade im Container.
+
+**Auf dem Host** braucht ein Client über REST einen Checkout (Weg B hat schon einen) und Python 3.11+, aber keine der Abhängigkeiten des Dienstes:
+
+```bash
+git clone https://github.com/snooker155/agents_hub.git && cd agents_hub
+./install.sh --cli-only        # .venv mit ah und seinen drei Abhängigkeiten, der Shell-Hook
+export AGENTS_HUB_URL=http://localhost:8080
+ah config                      # nennt den Dienst, mit dem er spricht
+ah agent list
+```
+
+Statt des `export` speichert `ah setup` mit **Connect to a hub that already runs** die Adresse und einen Schlüssel in `~/.config/agents-hub/cli.json`, und die Docker-Formen von `ah setup` bieten dasselbe am Ende an. Eine frische Installation läuft im Modus `single` und fragt nach keinen Zugangsdaten; mit `AUTH_MODE=token` setzen Sie `AGENTS_HUB_API_TOKEN`, mit `multi` einen persönlichen Schlüssel in `AGENTS_HUB_API_KEY` ([cli](cli.md), "Authenticating over `AGENTS_HUB_URL`"). Pfade über REST löst das Backend auf, daher muss ein Ordner des Hosts zuerst in den Container eingebunden werden ([cli](cli.md), "Against a containerized backend").
+
+Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, der es hat, einen `ah` als einzelne Datei, nur für REST, die sich überallhin kopieren lässt ([cli](cli.md), "A binary, for REST mode without a venv").
+
 ## Geführte Einrichtung (`ah setup`)
 
 `ah setup` fragt sich durch die ganze Installation, so wie der erste Start von OpenClaw, und schreibt nichts, bis Sie eine Übersicht über jeden Wert bestätigt haben:
@@ -135,7 +176,7 @@ persönlicher Speicher und der Demo-Arbeitsbereich, dann eine Übersicht mit
 dem Weg hinein (**Agents Hub verwenden**, **Mit dem Assistenten
 weitermachen** oder **Rundgang starten**).
 
-Auf dem Bildschirm der Stimme lernen Sie den Assistenten kennen: er sagt laut
+Auf dem Bildschirm der Stimme wählt eine OpenAI-Stimme auch ihr Sprachmodell: `gpt-4o-mini-tts` (Standard, am neuesten und natürlichsten), `tts-1` (antwortet am schnellsten) oder `tts-1-hd` (klarer, langsamer). Dann lernen Sie den Assistenten kennen: er sagt laut
 Hallo, jede Sprache mit eigener Stimme ([eine Stimme pro Sprache](assistant.md)),
 Sie sagen, ob Sie ihn gehört haben, antworten per Stimme und hören die Antwort;
 so werden Modell, Sprachausgabe und Spracherkennung in einem Zug geprüft.
@@ -237,6 +278,6 @@ Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallatio
 - **Das Backend beendet sich sofort.** Die virtuelle Umgebung ist nicht aktiv, oder die Extras sind nicht installiert. Führen Sie `pip install -e ".[backend,agents]"` noch einmal aus und lesen Sie die Ausgabe.
 - **Das Dashboard erreicht die API nicht.** Es zielt auf `http://localhost:8000/api`. Prüfen Sie, ob das Backend auf diesem Port läuft und keine lokale CORS-Überschreibung es blockiert.
 - **Runs schlagen sofort nach dem Start fehl.** Ein fehlender oder falscher Anbieterschlüssel, ein Modell, das auf der Seite [Modelle](models.md) nicht aktiviert ist, oder `AGENT_EXECUTION_MODE=docker` ohne erreichbaren Docker-Daemon.
-- **`ah` wird nicht gefunden.** Die venv liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der venv aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md).
+- **`ah` wird nicht gefunden.** Die venv liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der venv aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md). Auf den Wegen A und B hat der Host keinen `ah`, bis Sie einen hinzufügen, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 - **Weg A: `unable to open database file`.** Der Schritt `init`, der das Volume an den Benutzer des Backends übergibt, ist nicht gelaufen. `docker compose up -d` führt ihn erneut aus (er ist idempotent), und `docker compose logs init` zeigt, warum er fehlgeschlagen ist.
 - **Weg A: `.env` ist ein Verzeichnis.** Docker hat es angelegt, weil die Datei beim ersten Start des Stacks fehlte. Führen Sie `docker compose down` aus, dann `rmdir .env`, speichern Sie die Vorlage als `.env` und starten Sie noch einmal.

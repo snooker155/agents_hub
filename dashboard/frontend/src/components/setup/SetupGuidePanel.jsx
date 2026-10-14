@@ -78,6 +78,9 @@ export default function SetupGuidePanel({ guide, act, onAsk }) {
     { id: 'start', items: steps.filter((s) => s.group === 'start') },
   ].filter((g) => g.items.length);
   const pct = guide.total ? Math.round((guide.done / guide.total) * 100) : 0;
+  // Starting over only undoes skips and the assistant's own marks: with
+  // neither, there is nothing for it to bring back.
+  const canRestart = steps.some((s) => s.status === 'skipped' || s.marked);
 
   return (
     <div className="flex flex-col h-full" data-testid="setup-guide-panel">
@@ -111,13 +114,22 @@ export default function SetupGuidePanel({ guide, act, onAsk }) {
         ))}
       </div>
       <div className="px-3 py-2 border-t border-gray-100 shrink-0 flex items-center gap-2">
-        <button type="button" onClick={() => act('restart')} className="text-xs font-medium text-gray-500 hover:text-gray-800">
-          {t('setupGuide.restart')}
-        </button>
-        {guide.complete && (
+        {canRestart && (
+          <button type="button" onClick={() => act('restart')} title={t('setupGuide.restartHint')}
+            className="text-xs font-medium text-gray-500 hover:text-gray-800">
+            {t('setupGuide.restart')}
+          </button>
+        )}
+        {guide.complete ? (
           <button type="button" onClick={() => act('finish')}
             className="ml-auto text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
             {t('setupGuide.finish')}
+          </button>
+        ) : guide.can_close && (
+          // Steps left, but none the hub needs: the person may stop here.
+          <button type="button" onClick={() => act('dismiss')} title={t('setupGuide.closeHint')}
+            className="ml-auto text-xs font-medium text-gray-500 hover:text-gray-800">
+            {t('setupGuide.close')}
           </button>
         )}
       </div>

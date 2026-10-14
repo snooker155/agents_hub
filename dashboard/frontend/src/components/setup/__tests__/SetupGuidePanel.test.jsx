@@ -24,7 +24,7 @@ const GUIDE = {
     { id: 'tour', group: 'start', title: 'Take the welcome tour', why: 'Two minutes over the pages.',
       status: 'todo', detail: '', page: '', required: false, marked: false },
   ],
-  done: 1, total: 5, next: 'web_search', complete: false, work: null,
+  done: 1, total: 5, next: 'web_search', complete: false, can_close: true, work: null,
 };
 
 const renderPanel = (props = {}) => render(
@@ -92,11 +92,29 @@ describe('SetupGuidePanel', () => {
     expect(tour.start).toHaveBeenCalled();
   });
 
-  it('shows Restart always, and Finish only when complete', () => {
-    renderPanel();
-    expect(screen.getByText('Restart guide')).toBeTruthy();
+  it('offers to bring back skipped steps only when some are skipped, and Finish only when complete', async () => {
+    const act = vi.fn(() => Promise.resolve(GUIDE));
+    const { unmount } = renderPanel({ act });
+    fireEvent.click(screen.getByText('Bring back skipped steps'));
+    await waitFor(() => expect(act).toHaveBeenCalledWith('restart'));
+    unmount();
+    const none = GUIDE.steps.map((s) => (s.status === 'skipped' ? { ...s, status: 'todo' } : s));
+    const again = renderPanel({ guide: { ...GUIDE, steps: none } });
+    expect(screen.queryByText('Bring back skipped steps')).toBeNull();
+    again.unmount();
     expect(screen.queryByText('Finish')).toBeNull();
     renderPanel({ guide: { ...GUIDE, complete: true } });
     expect(screen.getAllByText('Finish').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Close setup')).toBeNull();
+  });
+
+  it('closes the guide only once the required steps are done', async () => {
+    const act = vi.fn(() => Promise.resolve(GUIDE));
+    const { unmount } = renderPanel({ act, guide: { ...GUIDE, can_close: false } });
+    expect(screen.queryByText('Close setup')).toBeNull();
+    unmount();
+    renderPanel({ act });
+    fireEvent.click(screen.getByText('Close setup'));
+    await waitFor(() => expect(act).toHaveBeenCalledWith('dismiss'));
   });
 });

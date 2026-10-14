@@ -18,7 +18,7 @@
 # the named volumes `agents_hub_data` and `models_data`.
 #
 #   docker compose pull && docker compose up -d      upgrade to the newest release
-#   docker compose exec backend python -m cli db backup --to /data/backups
+#   docker compose exec backend ah db backup --to /data/backups
 #   docker compose down                              stop (the volume stays)
 #   docker compose down -v                           stop and delete everything
 #

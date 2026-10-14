@@ -720,10 +720,13 @@ export default function Assistant() {
     if (handoff.fromQuery && !guide) return; // its mode is the guide's own
     setupHandoff.current = null;
     const voiceMode = (handoff.fromQuery ? guide?.mode : handoff.mode) === 'voice';
+    // A voice hand over reads the replies aloud and listens while the button
+    // or the space bar is held: hold is where the assistant starts, a
+    // conversation or the wake phrase only when the person picks one.
     if (voiceMode) {
       speaker.unlock();
-      setPrefs({ listen: 'conversation' });
-      setConversing(true);
+      setPrefs({ listen: 'hold' });
+      setConversing(false);
     }
     runTurn(t(handoff.fromQuery ? 'assistant.setup.resume' : 'assistant.setup.kickoff'), { speakReply: voiceMode });
     if (wide) { setPrefs({ transcriptOpen: true }); setRightTab('setup'); }
