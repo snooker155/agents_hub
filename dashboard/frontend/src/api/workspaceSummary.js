@@ -14,12 +14,47 @@
  * so the next read does not serve the old value.
  */
 import api from './index';
+import { getWorkspaces } from './workspaces';
 
 const FRESH_MS = 3000;
 
 const cache = new Map(); // workspace -> { data, at }
 const pending = new Map(); // workspace -> Promise<data>
 const listeners = new Map(); // workspace -> Set<(data) => void>
+
+const SELECTED_KEY = 'selectedWorkspace';
+
+function readSelected() {
+  try { return localStorage.getItem(SELECTED_KEY) || ''; } catch { return ''; }
+}
+
+let storedChecked = null;
+
+/**
+ * Check, once per page load, that the workspace this browser remembers
+ * (WorkspaceContext.jsx keeps it in localStorage) still exists on this
+ * backend, and forget it when it does not: a hub reinstalled on the same
+ * address, or another hub served there before, leaves a name behind that
+ * would 404 on every summary read. Resolves to the stored name that is
+ * left, '' when none. An unreachable list (signed out, offline) keeps it.
+ */
+export function checkStoredWorkspace() {
+  if (!storedChecked) {
+    storedChecked = Promise.resolve()
+      .then(() => getWorkspaces())
+      .then(({ data }) => {
+        const stored = readSelected();
+        const names = Array.isArray(data) ? data.map((w) => w?.name) : null;
+        if (stored && names && !names.includes(stored)) {
+          try { localStorage.removeItem(SELECTED_KEY); } catch { /* storage unavailable */ }
+          return '';
+        }
+        return stored;
+      })
+      .catch(() => readSelected());
+  }
+  return storedChecked;
+}
 
 export const getWorkspaceSummary = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/summary`);
 
