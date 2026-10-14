@@ -9,6 +9,15 @@
 }
 .first-run-enter { animation: first-run-enter 320ms ease-out both; }
 .first-run-fade { animation: first-run-fade 600ms ease-out both; }
+/* The search screen has a key field of type password, so a browser takes the
+   assistant's field for a login name and paints its autofill colour over the
+   field alone, a patch inside the white pill. The pill's colour stays. */
+.first-run-assist-input:-webkit-autofill,
+.first-run-assist-input:-webkit-autofill:hover,
+.first-run-assist-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: currentColor;
+  transition: background-color 9999s ease-out 0s;
+}
 .first-run { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 
 @media (prefers-reduced-motion: reduce) {

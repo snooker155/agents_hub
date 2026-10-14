@@ -8,8 +8,10 @@ import { Check, Loader2 } from 'lucide-react';
 
 export function StepFrame({ icon: Icon, visual, title, subtitle, children, footer, testId }) {
   return (
-    <section className="w-full max-w-xl mx-auto flex flex-col min-h-0 flex-1" data-testid={testId}>
-      <div className="flex-1 min-h-0 overflow-y-auto px-1 pb-4">
+    // The screen and its buttons sit together in the middle of the page; a
+    // screen taller than the page scrolls between the title and the buttons.
+    <section className="w-full max-w-xl mx-auto flex flex-col justify-center min-h-0 flex-1" data-testid={testId}>
+      <div className="min-h-0 overflow-y-auto px-1 pb-4">
         <div className="flex flex-col items-center text-center pt-2 sm:pt-6">
           {visual || (Icon && (
             <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-5">

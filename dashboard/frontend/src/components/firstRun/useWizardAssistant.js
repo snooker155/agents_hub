@@ -141,8 +141,8 @@ export default function useWizardAssistant({ language = 'en' } = {}) {
     let text = '';
     try {
       if (via.current === 'hub') {
-        const blob = await recorder.stop();
-        if (blob) text = (await transcribeRecording(blob, { language })).text || '';
+        const take = await recorder.stop();
+        if (take) text = (await transcribeRecording(take.blob, { language })).text || '';
       } else if (via.current === 'browser') {
         text = await recognition.stop();
       }

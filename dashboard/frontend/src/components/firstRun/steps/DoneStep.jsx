@@ -44,8 +44,8 @@ export default function DoneStep({ ctx, onFinish, assistantReady = false }) {
   const voice = ctx?.voice || localSetStarted(ctx) ? t('firstRun.done.voiceOwn') : t('firstRun.done.voiceBrowser');
 
   return (
-    <section className="w-full max-w-xl mx-auto flex flex-col flex-1 min-h-0" data-testid="first-run-done">
-      <div className="flex-1 min-h-0 overflow-y-auto px-1">
+    <section className="w-full max-w-xl mx-auto flex flex-col justify-center flex-1 min-h-0" data-testid="first-run-done">
+      <div className="min-h-0 overflow-y-auto px-1">
         <div className="flex flex-col items-center text-center pt-2 sm:pt-6">
           <LiveMark state="idle" size={80} frame="logo" label="Agents Hub" />
           <h1 className="mt-6 text-3xl font-semibold tracking-tight text-gray-900">{t('firstRun.done.title')}</h1>

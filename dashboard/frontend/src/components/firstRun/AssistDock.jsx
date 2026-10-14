@@ -64,7 +64,10 @@ export default function AssistDock({ assistant, screen, speak }) {
           onChange={(e) => setText(e.target.value)}
           placeholder={t('firstRun.assist.placeholder')}
           aria-label={t('firstRun.assist.placeholder')}
-          className="flex-1 min-w-0 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          className="first-run-assist-input flex-1 min-w-0 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none"
           data-testid="first-run-assist-input"
         />
         {assistant.canListen && (
