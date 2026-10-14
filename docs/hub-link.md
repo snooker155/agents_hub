@@ -159,7 +159,9 @@ How a node is chosen (`hublink/scheduler.py`):
   a slot, then fails with 503.
 - A node that does not take a job within eight seconds (asleep, offline,
   its loop stuck) loses it to the next node. Only a job nobody took moves,
-  so a request never runs twice.
+  so a request never runs twice. A node that left it waiting only because
+  it was already running a full load (two replicas gave it the same last
+  slot) is not ruled out: the request goes back to the queue.
 
 `GET /api/nodes/pool?workspace=<name>` lists the pool's models, capacity
 and load, and for that workspace which nodes may take its work and why the

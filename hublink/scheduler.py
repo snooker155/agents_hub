@@ -16,7 +16,9 @@ then hands the request to the least busy of them:
 * a node that does not take the job within :data:`PICK_SECONDS` (asleep,
   network gone, its loop stuck) loses it to the next node. Only a job
   nobody took moves: once a node has it, it runs there, so a request never
-  runs twice.
+  runs twice. A node that left it waiting only because it was running a
+  full load (two replicas both gave it the last slot) keeps its place: the
+  request goes back to the queue instead of ruling the node out.
 
 Independent requests therefore spread over the nodes on their own: a
 flow's parallel branches, an agent's delegated subtasks, the cases of an
@@ -28,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -42,6 +45,10 @@ PICK_SECONDS = 8.0
 #: How long a request waits for a free slot when every eligible node is full.
 QUEUE_SECONDS = 120.0
 QUEUE_POLL_SECONDS = 0.25
+
+# Reading the load and filing the job is one step per replica, so requests
+# sent at once (map_on_nodes, a flow's branches) never share the last slot.
+_PICK_LOCK = threading.Lock()
 
 
 @dataclass
@@ -153,6 +160,23 @@ def _pick(need: Need, tried: Set[str]) -> Tuple[Optional[Dict[str, Any]], Candid
     return (free[0] if free else None), cands
 
 
+def _pick_and_submit(need: Need, tried: Set[str], *, method: str, path: str, headers: Dict[str, str],
+                     body: bytes, timeout: float) -> Tuple[Optional[Dict[str, Any]], Candidates, Optional[str]]:
+    with _PICK_LOCK:
+        pick, cands = _pick(need, tried)
+        if pick is None:
+            return None, cands, None
+        job_id = jobs.submit(pick["id"], method=method, path=path, headers=headers, body=body, timeout=timeout)
+        return pick, cands, job_id
+
+
+def _was_busy(node_id: str) -> bool:
+    """Whether a node that left a job waiting is online and running a full
+    load: it could not take the job, which says nothing about it being away."""
+    rec = nodes.get_node(node_id)
+    return bool(rec and nodes.is_online(rec) and jobs.running_count(node_id) >= nodes.capacity(rec))
+
+
 async def dispatch(need: Need, *, method: str, path: str, headers: Dict[str, str], body: bytes,
                    timeout: float) -> Tuple[Dict[str, Any], str, Dict[str, Any]]:
     """Hand the request to the least busy eligible node. Returns the node's
@@ -161,8 +185,9 @@ async def dispatch(need: Need, *, method: str, path: str, headers: Dict[str, str
     tried: Set[str] = set()
     queue_deadline = time.monotonic() + QUEUE_SECONDS
     while True:
-        pick, cands = await asyncio.to_thread(_pick, need, tried)
-        if pick is None:
+        pick, cands, job_id = await asyncio.to_thread(_pick_and_submit, need, tried, method=method, path=path,
+                                                      headers=headers, body=body, timeout=timeout)
+        if pick is None or job_id is None:
             if not cands.nodes:
                 # Nobody left: every node is ruled out, or the ones that were
                 # not have just failed to take the request.
@@ -173,12 +198,15 @@ async def dispatch(need: Need, *, method: str, path: str, headers: Dict[str, str
                 raise NoNode(f"every eligible node stayed busy for {QUEUE_SECONDS:.0f}s", 503)
             await asyncio.sleep(QUEUE_POLL_SECONDS)
             continue
-        job_id = await asyncio.to_thread(jobs.submit, pick["id"], method=method, path=path,
-                                         headers=headers, body=body, timeout=timeout)
         try:
             head = await jobs.wait_head(job_id, timeout=timeout, take_timeout=PICK_SECONDS)
         except jobs.JobNotTaken:
             await asyncio.to_thread(jobs.discard, job_id)
+            if await asyncio.to_thread(_was_busy, pick["id"]):
+                if time.monotonic() > queue_deadline:
+                    raise NoNode(f"every eligible node stayed busy for {QUEUE_SECONDS:.0f}s", 503)
+                log.info("node pool: %s was full and left %s waiting, queueing it again", pick["id"], path)
+                continue
             log.info("node pool: %s did not take %s, trying another", pick["id"], path)
             tried.add(pick["id"])
             continue
