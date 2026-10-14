@@ -17,6 +17,9 @@ that errors out tells an operator less than one that says which part is down.
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -41,15 +44,58 @@ RUNNING_RUNS_SQL = ("status = 'running' OR (status = 'stop' AND "
 
 
 def _dir_size(path: Path) -> int:
+    """Bytes under ``path``. One ``lstat`` per file: ``os.walk`` already knows
+    which entries are files, and every extra stat counts on a slow mount."""
     total = 0
-    if path.is_dir():
-        for f in path.rglob("*"):
-            if f.is_file():
-                try:
-                    total += f.stat().st_size
-                except Exception:  # noqa: BLE001 - a health probe must never raise
-                    log.debug("stat failed for %s", f, exc_info=True)
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except Exception:  # noqa: BLE001 - a health probe must never raise
+                log.debug("stat failed for %s/%s", root, name, exc_info=True)
     return total
+
+
+#: Seconds a measured size of the whole state directory is reused. Walking it
+#: stats every file, and the tree holds downloaded models and workspace
+#: checkouts: through a Docker Desktop bind mount 75,000 files took over two
+#: minutes, during which the dashboard got no answer at all. So the walk runs
+#: in a thread of its own and the snapshot reports the last result.
+STATE_SIZE_TTL = 300.0
+
+_state_lock = threading.Lock()
+_state_bytes: Optional[int] = None
+_state_measured_at: Optional[float] = None
+_state_measuring = False
+
+
+def _measure_state_dir() -> None:
+    global _state_bytes, _state_measured_at, _state_measuring
+    size: Optional[int] = None
+    try:
+        size = _dir_size(AGENTS_HUB_ROOT)
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("state directory size failed", exc_info=True)
+    with _state_lock:
+        if size is not None:
+            _state_bytes = size
+        _state_measured_at = time.monotonic()
+        _state_measuring = False
+
+
+def _state_dir_bytes() -> Optional[int]:
+    """Size of the state directory from the last background measurement,
+    starting a new one when that is older than ``STATE_SIZE_TTL``. None until
+    the first measurement finishes."""
+    global _state_measuring
+    with _state_lock:
+        stale = (_state_measured_at is None
+                 or time.monotonic() - _state_measured_at > STATE_SIZE_TTL)
+        if stale and not _state_measuring:
+            _state_measuring = True
+            threading.Thread(target=_measure_state_dir, name="state-size",
+                             daemon=True).start()
+        return _state_bytes
 
 
 def _file_size(path: Path) -> int:
@@ -135,7 +181,7 @@ def _database_bytes() -> tuple[int, int]:
     return _file_size(DB_FILE), _file_size(Path(str(DB_FILE) + "-wal"))
 
 
-def _storage() -> Dict[str, int]:
+def _storage() -> Dict[str, Optional[int]]:
     logs_dir = AGENTS_HUB_ROOT / "run_logs"
     db_bytes, wal_bytes = _database_bytes()
     return {
@@ -143,7 +189,7 @@ def _storage() -> Dict[str, int]:
         "db_wal_bytes": wal_bytes,
         "run_logs_bytes": _dir_size(logs_dir),
         "run_logs_files": sum(1 for _ in logs_dir.glob("*.log")) if logs_dir.is_dir() else 0,
-        "agents_hub_bytes": _dir_size(AGENTS_HUB_ROOT),
+        "agents_hub_bytes": _state_dir_bytes(),
     }
 
 

@@ -34,10 +34,13 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 @router.get("/health")
 async def health(request: Request):
-    """Liveness + state snapshot. Never raises: a failed probe is reported as such."""
+    """Liveness + state snapshot. Never raises: a failed probe is reported as such.
+    Run in a worker thread: the probes query the database and stat files, and
+    the page calls this on every load, so the event loop must keep serving."""
+    from starlette.concurrency import run_in_threadpool
     from common.config import hub_role, playground_enabled
 
-    result = snapshot(request.app.state)
+    result = await run_in_threadpool(snapshot, request.app.state)
     # Optional-feature facts, kept separate from the liveness/state data above:
     # the frontend reads this to hide a feature's pages rather than probing
     # its routes. See docs/playground.md, "Turning the playground off".
