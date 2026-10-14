@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { WORKSPACE_EVENT } from './theme';
 import { WorkspaceContext } from './workspace';
 import { setActiveWorkspace as apiSetActiveWorkspace } from '../api';
+import { checkStoredWorkspace } from '../api/workspaceSummary';
 
 function pushWorkspaceToBackend(workspace) {
   // best-effort — don't block or throw
@@ -12,11 +13,27 @@ export const WorkspaceProvider = ({ children }) => {
   const [selectedWorkspace, setSelectedWorkspace] = useState(
     localStorage.getItem('selectedWorkspace') || ''
   );
+  // What this browser remembered when the page loaded.
+  const [initialStored] = useState(selectedWorkspace);
   const [liveUpdates, setLiveUpdates] = useState(
     () => localStorage.getItem('dashboard_live') !== 'false'
   );
+  // The remembered name is checked against this backend's workspaces before
+  // it is pushed anywhere: one it does not have (another hub served on this
+  // address before) is dropped, and Layout then picks the first workspace.
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    let live = true;
+    checkStoredWorkspace().then((kept) => {
+      if (!live) return;
+      if (!kept) setSelectedWorkspace((prev) => (prev && prev === initialStored ? '' : prev));
+      setChecked(true);
+    });
+    return () => { live = false; };
+  }, [initialStored]);
 
   useEffect(() => {
+    if (!checked) return;
     if (selectedWorkspace) {
       localStorage.setItem('selectedWorkspace', selectedWorkspace);
     } else {
@@ -31,7 +48,7 @@ export const WorkspaceProvider = ({ children }) => {
     } catch {
       // A test DOM without CustomEvent: nothing listens there anyway.
     }
-  }, [selectedWorkspace]);
+  }, [selectedWorkspace, checked]);
 
   const toggleLiveUpdates = () => {
     setLiveUpdates(prev => {

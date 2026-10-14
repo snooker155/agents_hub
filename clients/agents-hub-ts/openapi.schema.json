@@ -31473,7 +31473,7 @@
     },
     "/api/health": {
       "get": {
-        "description": "Liveness + state snapshot. Never raises: a failed probe is reported as such.",
+        "description": "Liveness + state snapshot. Never raises: a failed probe is reported as such.\nRun in a worker thread: the probes query the database and stat files, and\nthe page calls this on every load, so the event loop must keep serving.",
         "responses": {
           "200": {
             "content": {

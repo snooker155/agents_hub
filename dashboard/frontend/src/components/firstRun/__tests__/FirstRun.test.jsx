@@ -259,10 +259,12 @@ describe('FirstRun', () => {
     expect(screen.getByTestId('first-run-check-speech-ok')).toBeTruthy();
     fireEvent.click(screen.getByTestId('first-run-talk'));
     await waitFor(() => expect(recorder.start).toHaveBeenCalled());
-    recorder.stop.mockResolvedValue(new Blob(['x'], { type: 'audio/wav' }));
+    const blob = new Blob(['x'], { type: 'audio/wav' });
+    recorder.stop.mockResolvedValue({ blob, type: 'audio/wav', seconds: 1.2 });
     assistantApi.transcribeRecording.mockResolvedValue({ text: 'What can you do?' });
     fireEvent.click(screen.getByTestId('first-run-talk'));
     expect(await screen.findByTestId('first-run-voice-ready')).toBeTruthy();
+    expect(assistantApi.transcribeRecording.mock.calls[0][0]).toBe(blob);
     expect(screen.getByTestId('first-run-check-hearing-ok')).toBeTruthy();
     expect(assistantApi.streamAssistantTurn.mock.calls[1][0].body).toMatchObject({ message: 'What can you do?', voice: true });
 
