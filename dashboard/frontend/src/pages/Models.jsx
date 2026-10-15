@@ -738,24 +738,10 @@ function UsageTab() {
  * so the two never drift.
  */
 function SpecialModelsTab() {
-  const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
   return (
     <div className="max-w-3xl space-y-4 pt-2">
-      <p className="text-sm text-gray-600">
-        {t('models.specialFor')} <span className="font-semibold text-indigo-600">{workspace}</span>.{' '}
-        <Link
-          to={`/workspaces/${encodeURIComponent(workspace)}?tab=settings&section=specialModels`}
-          className="text-indigo-600 hover:text-indigo-800"
-        >
-          {t('models.specialInWorkspaceSettings')}
-        </Link>
-      </p>
-      <p className="text-xs text-gray-500">
-        {t('models.specialLocalHint')}{' '}
-        <Link to="/models?tab=local" className="text-indigo-600 hover:text-indigo-800">{t('models.specialLocalLink')}</Link>
-      </p>
       <WorkspaceSpecialModels key={workspace} workspace={workspace} />
     </div>
   );
@@ -770,8 +756,8 @@ export default function Models() {
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
     { id: 'local', label: t('localModels.tab'), icon: HardDrive },
-    { id: 'cache', label: t('models.tabs.cache'), icon: Database },
     { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
+    { id: 'cache', label: t('models.tabs.cache'), icon: Database },
     { id: 'endpoint', label: t('models.tabs.endpoint'), icon: Plug },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
@@ -803,8 +789,8 @@ export default function Models() {
       </div>
       {tab === 'catalog' && <CatalogTab />}
       {tab === 'local' && <LocalTab />}
-      {tab === 'cache' && <CacheTab />}
       {tab === 'special' && <SpecialModelsTab />}
+      {tab === 'cache' && <CacheTab />}
       {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>

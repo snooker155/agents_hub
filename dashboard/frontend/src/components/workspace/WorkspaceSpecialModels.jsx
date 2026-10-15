@@ -337,20 +337,20 @@ export default function WorkspaceSpecialModels({ workspace }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-gray-500 max-w-xl">
-          {t('workspaceDetails.specialModels.intro')}
-        </p>
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          {saving ? t('common.saving') : t('workspaceDetails.specialModels.save')}
-        </button>
-      </div>
+      {/* Floats right and stays at the top while the form scrolls; the intro wraps around it. */}
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving}
+        className="sticky top-2 z-20 float-right ml-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+      >
+        {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        {saving ? t('common.saving') : t('workspaceDetails.specialModels.save')}
+      </button>
+      <p className="!mt-0 text-sm text-gray-500 max-w-xl">
+        {t('workspaceDetails.specialModels.intro')}
+      </p>
+      <div className="clear-both !mt-0" />
 
       {payload.options.purposes.map((p) => {
         const Icon = ICONS[p.id] || Sparkles;

@@ -5,7 +5,7 @@ import { I18nProvider } from '../../i18n';
 
 // The Models page shows the special models (providers/special.py) of the
 // workspace picked in the header, with the same form the workspace settings
-// use and a link there.
+// use and no hints above it.
 
 const ok = (data) => Promise.resolve({ data });
 
@@ -38,12 +38,12 @@ vi.mock('../../api/localModels', () => ({ getLocalServers: () => ok({ servers: {
 import Models from '../Models';
 
 describe('Models page, special models tab', () => {
-  it('shows the form for the header workspace with a link to its settings', async () => {
+  it('shows the form for the header workspace without hints above it', async () => {
     render(<MemoryRouter><I18nProvider><Models /></I18nProvider></MemoryRouter>);
     screen.getByRole('button', { name: /Special models/ }).click();
     expect(await screen.findByText('generate_image')).toBeTruthy();
     expect(getWorkspaceSpecialModels).toHaveBeenCalledWith('studio');
-    expect(screen.getByRole('link', { name: /Also in the workspace settings/ }))
-      .toHaveAttribute('href', '/workspaces/studio?tab=settings&section=specialModels');
+    expect(screen.queryByRole('link', { name: /workspace settings/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Local tab/ })).toBeNull();
   });
 });
