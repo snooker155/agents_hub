@@ -158,7 +158,12 @@ export function useFlowRuns(deps) {
     } else if (evType === 'node_skip') {
       setStreamLogs((prev) => [...prev, {
         type: 'node_skip', node_id: event.node_id,
-        agent_name: nodeLabelsRef.current[event.node_id] || 'Node', content: 'Skipped', timestamp: ts,
+        agent_name: nodeLabelsRef.current[event.node_id] || 'Node',
+        // Why, when the stream says: a branch not chosen reads differently from a failure.
+        content: event.reason
+          ? t(`flowEditor.skipReasons.${event.reason}`, { defaultValue: t('flowEditor.skipped') })
+          : t('flowEditor.skipped'),
+        timestamp: ts,
       }]);
     } else if (evType === 'done') {
       chatStreamingRef.current = false;

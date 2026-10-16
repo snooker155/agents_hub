@@ -66,7 +66,7 @@ function targetOf(conv) {
  */
 export function useChatSend(deps) {
   const {
-    beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
     pendingReferences, processOpen, reloadChat, selectCommand, selectedAgent, selectedFlow, selectedProject,
     selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
@@ -207,6 +207,8 @@ export function useChatSend(deps) {
         newConv.messages = forkMessages(forkFrom.messages);
         newConv.title = forkFrom.title || newConv.title;
       }
+      // Auto mode switched on before the first message rides on the new chat.
+      if (autoMode?.takeDraft?.()) newConv.auto_approve = true;
       createdConv = newConv;
       setConversations((prev) => [newConv, ...prev]);
       setCurrentConvId(convId);
@@ -296,6 +298,8 @@ export function useChatSend(deps) {
           pendingAttachments: attachments, pendingReferences: references, selectedWorkspace,
         }),
         client_turn_id: turnKey,
+        // The server checks it too (an interactive chat, a workspace that allows it).
+        ...(convRecord?.auto_approve && autoMode?.allowed !== false ? { auto_approve: true } : {}),
       };
       const follow = overChannel
         ? (args) => streamChatOverChannel({
@@ -360,7 +364,7 @@ export function useChatSend(deps) {
         ),
       );
     }
-  }, [sendToAssistant, input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
+  }, [autoMode, sendToAssistant, input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.

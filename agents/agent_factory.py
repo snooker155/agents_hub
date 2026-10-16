@@ -53,6 +53,7 @@ from tools.langchain_tools import (
 )
 from tools.delegation import delegate_task_tool, list_models_tool
 from tools.flow_management import (
+    run_new_flow_tool,
     create_flow_tool,
     get_flow_tool,
     modify_flow_tool,
@@ -454,6 +455,7 @@ class AgentFactory:
             run_agent_tool,
             list_flows_tool,
             run_flow_tool,
+            run_new_flow_tool,
             reject_assignment_tool,
             stop_agent_tool,
             get_agent_status_tool,

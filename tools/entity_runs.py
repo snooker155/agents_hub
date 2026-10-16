@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from common.auto_mode import approved as _approved
 from common.entity_sink import record_entity
 from common.workspace_scope import check_record
 from common.untrusted import agent_output_fence
@@ -215,7 +216,7 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
         except Exception:  # noqa: BLE001 — an estimate is help, not a precondition
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_scenario_tool", user_approved, {"scenario_id": scenario_id}):
             return _approval_required("scenario", scenario_id,
                                       "list_scenarios_tool", "run_scenario_tool", estimate)
 
@@ -377,7 +378,7 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
         except Exception:  # noqa: BLE001
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_team_tool", user_approved, {"team_id": team_id, "goal": goal}):
             return _approval_required("team", team_id, "list_teams_tool",
                                       "run_team_tool", estimate)
 
@@ -548,7 +549,7 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         except Exception:  # noqa: BLE001
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_loop_tool", user_approved, {"loop_id": loop_id, "goal": goal}):
             return _approval_required("loop", loop_id, "list_loops_tool",
                                       "run_loop_tool", estimate)
 

@@ -257,6 +257,39 @@ API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
 `{"decision": "approve" | "deny", "note": "..."}` (409 once the call no longer
 waits).
 
+## Auto mode
+
+A person can accept every confirmation of a conversation in advance: the
+**Auto** toggle under the chat's input box (or Shift+Tab in the box), and the
+same button in the [assistant](assistant.md)'s header. While it is on, an amber
+banner above the conversation says so, with **Turn off**, and every turn of the
+conversation carries `auto_approve`:
+
+- A call the gate would hold for a card is approved at once. The card is still
+  recorded and shown, already resolved, marked "approved automatically"; its
+  row is decided by `auto mode`, and the policy trail and the `tool.policy`
+  audit row carry `auto_mode_approved`.
+- A tool gated by its own `user_approved` argument (`run_flow_tool`,
+  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`, `run_scenario_tool`,
+  `run_eval_tool`, `stop_run`, `stop_instance`, `restart_instance`,
+  `stop_container`, `prune_run_logs`, `system_prune_branches`) runs as approved,
+  and leaves the same resolved card.
+- The agent is told auto mode is on, so it does not stop to ask whether to go
+  ahead.
+
+What it does not change: a call a rule refuses (a hook that denies, a
+guardrail, the capability guard, a budget) is still refused, since a refusal is
+not a confirmation; and a connection card still waits, because its secret is
+yours to type.
+
+It is honoured only from the Chat page and the assistant's thread. Telegram,
+the widget, channels and `/v1` ignore it. An admin can turn it off for a
+workspace (Settings, Tool policy, **Allow auto mode in chat**, or
+`PUT /api/workspaces/{name}/policy` with `{"allow_auto_approve": false}`); the
+toggle is then disabled and the server drops the flag. The flag is checked per
+turn on the server, and written on the run record (`auto_approve`) so a run on
+a service replica or a run container reads the same answer.
+
 ## What stays advisory
 
 `tools/service_ops.py` and the entity run tools have always refused destructive

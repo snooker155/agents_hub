@@ -374,6 +374,7 @@ async def run_flow_engine(
     # Local imports: keep engine import-light and avoid load-time circulars.
     from flow.validate import validate_flow, resolve_entities, execution_order
     from flow.state import FlowState, StateMutationError
+    from flow import branching
     from flow import dispatch as flow_dispatch
     from flow.dispatch import DispatchResult
 
@@ -527,6 +528,12 @@ async def run_flow_engine(
                 shared_context, node, node_id, predecessors, node_outputs,
                 flow_state, node_task,
             )
+        # An agent that picks the next step itself (flow/branching.py): its
+        # successors go into the prompt, its ROUTE line becomes its goto.
+        route = (branching.route_targets(node, node_id, successors, nodes_by_id)
+                 if is_agent else [])
+        if route and prompt is not None:
+            prompt = prompt + "\n" + branching.route_instructions(node, route)
 
         start_ev = {
             "type": "node_start",
@@ -543,6 +550,11 @@ async def run_flow_engine(
         dr: Any = None
         node_stopped = False
         for attempt in range(max_retries + 1):
+            if branching.is_map_node(spec):
+                # One agent run per item; retries and the timeout apply to
+                # each item, not to the node as a whole.
+                dr, node_stopped = await _run_map(node, node_id, label)
+                break
             if is_agent:
                 outcome = AgentNodeOutcome()
                 try:
@@ -570,6 +582,23 @@ async def run_flow_engine(
                 except Exception as e:  # noqa: BLE001 - a node body error fails the node
                     outcome.ok = False
                     outcome.error = f"{type(e).__name__}: {e}"
+
+                if route and outcome.ok and not outcome.stopped:
+                    goto, cleaned, route_error = branching.parse_route(outcome.output, node, route)
+                    if goto is None:
+                        outcome.ok = False
+                        outcome.error = route_error
+                    else:
+                        outcome.goto = goto
+                        if cleaned != outcome.output:
+                            outcome.output = cleaned
+                            # A driver that already wrote the output keys wrote
+                            # them with the ROUTE line; the node rewrites its own.
+                            fixed = {k: cleaned for k, v in (outcome.written or {}).items()
+                                     if isinstance(v, str)}
+                            if fixed:
+                                flow_state.merge(fixed)
+                                outcome.written = {**outcome.written, **fixed}
 
                 written: Dict[str, Any] = dict(outcome.written or {})
                 if outcome.ok:
@@ -634,6 +663,128 @@ async def run_flow_engine(
             "state": flow_state.snapshot(),
         }
         await queue.put(("finished", node_id, dr, node_stopped, done_ev))
+
+    async def _run_map(node: Dict[str, Any], node_id: str, label: str) -> tuple:
+        """Run a map node: one agent node run per item (flow/branching.py).
+
+        Each item is announced and finished like a node of its own
+        (``<node>#<n>``, with ``item_of`` naming the map node), through the
+        same driver hooks, so both surfaces record and show every item. The
+        node's ``retry`` and ``timeout_seconds`` apply per item. Returns
+        ``(DispatchResult, stopped)``.
+        """
+        started = asyncio.get_running_loop().time()
+        cfg = branching.map_config(node)
+        out_keys = list(_node_value(node, "output") or _node_value(node, "outputs") or ["results"])
+        agent_id = cfg["agent_id"]
+        if not agent_id:
+            return DispatchResult(ok=False, error="map node has no agent (config.agent_id)"), False
+        if cfg["over"]:
+            if cfg["over"] not in flow_state:
+                return DispatchResult(
+                    ok=False, error=f"map node reads state key '{cfg['over']}', which is not set"), False
+            source: Any = flow_state.get(cfg["over"])
+        else:
+            source = "\n\n".join(
+                node_outputs[p] for p in predecessors.get(node_id, []) if node_outputs.get(p))
+        items = branching.items_from(source)
+        if len(items) > cfg["max_items"]:
+            return DispatchResult(ok=False, error=(
+                f"map node got {len(items)} items, more than its max_items ({cfg['max_items']})")), False
+        count = len(items)
+        sem = asyncio.Semaphore(max(1, cfg["max_parallel"] or max_parallel))
+        retries, backoff = node_retry(node)
+        timeout = node_timeout(node)
+        task_template = cfg["task"] or (_node_value(node, "nodeTask") or "")
+        stopped_flag = {"value": False}
+
+        async def _one(index: int, item: str) -> Dict[str, Any]:
+            iid = branching.item_node_id(node_id, index)
+            ilabel = f"{label} #{index}"
+            task = branching.item_task(task_template, index, count)
+            synth = {"id": iid, "data": {"agent_id": agent_id, "label": ilabel, "nodeTask": task}}
+            async with sem:
+                if stopped_flag["value"] or driver.should_stop():
+                    stopped_flag["value"] = True
+                    return {"index": index, "ok": False, "error": "stopped", "output": ""}
+                preds = {iid: list(predecessors.get(node_id, []))} if cfg["include_context"] else {}
+                prompt = driver.build_agent_prompt(
+                    shared_context, synth, iid, preds, node_outputs, flow_state, task)
+                prompt += f"\n\n## Item {index} of {count}\n" + branching.fence_item(
+                    item, source=f"map item {index} of flow node {node_id}")
+                start_ev = {
+                    "type": "node_start", "node_id": iid, "entity_id": agent_id,
+                    "label": ilabel, "category": "agent", "is_agent": True,
+                    "prompt": prompt, "item_of": node_id, "item_index": index, "node": synth,
+                }
+                driver.on_node_start(start_ev)
+                await queue.put(("event", start_ev))
+                outcome = AgentNodeOutcome()
+                attempts = 0
+                for attempt in range(retries + 1):
+                    attempts = attempt + 1
+                    outcome = AgentNodeOutcome()
+                    try:
+                        coro = _run_agent_attempt(synth, iid, ilabel, prompt, outcome)
+                        await (asyncio.wait_for(coro, timeout) if timeout else coro)
+                    except asyncio.TimeoutError:
+                        try:
+                            driver.stop_agent_node(synth, iid, outcome)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[flow_engine] stop_agent_node failed for {iid}: {e}")
+                        outcome.ok = False
+                        outcome.error = f"item timed out after {timeout:g}s"
+                    except Exception as e:  # noqa: BLE001 - an item error fails the item
+                        outcome.ok = False
+                        outcome.error = f"{type(e).__name__}: {e}"
+                    if outcome.ok or outcome.stopped or attempt >= retries:
+                        break
+                    if backoff:
+                        await asyncio.sleep(backoff)
+                    await queue.put(("event", {
+                        "type": "node_retry", "node_id": iid, "label": ilabel,
+                        "attempt": attempt + 2, "of": retries + 1, "error": outcome.error,
+                    }))
+                if outcome.stopped:
+                    stopped_flag["value"] = True
+                done_ev = {
+                    "type": "node_done", "node_id": iid, "entity_id": agent_id,
+                    "label": ilabel, "category": "agent", "is_agent": True,
+                    "ok": outcome.ok, "output": outcome.output, "text": outcome.text,
+                    "written": [], "goto": None, "error": outcome.error,
+                    "run_id": outcome.run_id, "duration_ms": outcome.duration_ms,
+                    "stopped": outcome.stopped, "attempts": attempts,
+                    "item_of": node_id, "item_index": index,
+                    "state": flow_state.snapshot(),
+                }
+                driver.on_node_done(done_ev)
+                await queue.put(("event", done_ev))
+                return {"index": index, "ok": outcome.ok, "output": outcome.output or "",
+                        "error": outcome.error}
+
+        results = list(await asyncio.gather(*(_one(i + 1, it) for i, it in enumerate(items))))
+        duration_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+        failed = [r for r in results if not r["ok"]]
+        if stopped_flag["value"]:
+            return DispatchResult(ok=False, error="stopped", duration_ms=duration_ms), True
+        ok = not failed or (cfg["allow_failures"] and len(failed) < count)
+        values = [r["output"] if r["ok"] else None for r in results]
+        written: Dict[str, Any] = {}
+        if ok:
+            try:
+                written = flow_state.apply(out_keys, {out_keys[0]: values} if out_keys else values)
+            except StateMutationError as sme:
+                return DispatchResult(ok=False, error=str(sme), duration_ms=duration_ms), False
+        error = ""
+        if failed and not ok:
+            error = (f"{len(failed)} of {count} items failed; first: item {failed[0]['index']}: "
+                     f"{failed[0]['error'] or 'unknown error'}")
+        text = (f"{count - len(failed)} of {count} items done"
+                + (f", {len(failed)} failed" if failed else "") if count else "no items")
+        return DispatchResult(
+            ok=ok, text=text, output=branching.combined_output(results), written=written,
+            error=error, duration_ms=duration_ms,
+        ), False
 
     async def _guarded_worker(node_id: str, node: Dict[str, Any]) -> None:
         """Run a node's worker, and make sure it always reports back.

@@ -4,6 +4,7 @@
 - write_file: Write UTF-8 text to a file.
 - delete_file: Delete a regular file under the workspace.
 - run_flow_tool: Execute a predefined agent flow.
+- run_new_flow_tool: Build a flow for this request (steps in parallel, one step per item of a list, a branch an agent or a condition picks) and run it, after the user approves the plan.
 - run_agent_tool: Invoke another agent directly.
 - list_models_tool: List the catalog models a delegate can run on.
 - delegate_task_tool: Hand a piece of a tracked task to another agent as a subtask, optionally on another model.

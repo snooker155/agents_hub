@@ -1005,8 +1005,18 @@ async def execute_locally(request: ChatRequest, kind: Optional[str] = None):
     """The turn in this process, whatever chat execution says, published to
     the conversation's channel like any other."""
     kind = kind or kind_of(request)
-    async for event in broadcast_turn(request, _local_pipeline(request, kind)):
-        yield event
+    from common import auto_mode
+    # Auto mode holds for this turn only where it may: an interactive surface
+    # and a workspace that allows it. A request that asks for it elsewhere
+    # runs as a normal turn.
+    if request.auto_approve and not auto_mode.allowed_for(request.workspace, request.source):
+        request.auto_approve = False
+    token = auto_mode.set_turn(request.auto_approve)
+    try:
+        async for event in broadcast_turn(request, _local_pipeline(request, kind)):
+            yield event
+    finally:
+        auto_mode.reset_turn(token)
 
 
 async def _run(request: ChatRequest, kind: str):

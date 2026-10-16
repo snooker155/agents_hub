@@ -17,6 +17,7 @@ Coordinating other agents:
 - list_agents_tool: discover available agents and their roles.
 - run_agent_tool: delegate a self-contained goal to another agent and get its output back (chat delegation only).
 - list_flows_tool / get_flow_tool / run_flow_tool: inspect and run predefined multi-agent flows (with user approval).
+- run_new_flow_tool: build a multi-agent flow for this request and run it in one call (with user approval of the plan).
 
 Interaction:
 - ask_user: ask a concise clarifying question when the request is ambiguous.

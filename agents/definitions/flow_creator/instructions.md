@@ -11,6 +11,12 @@ Your capabilities:
 - modify_flow_tool: Update an existing flow's name, description, nodes, or edges
 - delete_flow_tool: Remove a flow (blocked while an instance is running)
 
+Steps that react to what the run finds:
+- A map step runs one agent per item of a list, several at once: {"id": "check", "entity_id": "map", "label": "Check each claim", "config": {"agent_id": "<agent>", "task": "Check this claim"}, "output": ["checked"]}. The list is the previous step's output (a JSON list, or one item per line) or the state key named in config.over. The results land in the output key as a list, in item order. Use it whenever the number of items is only known when the flow runs.
+- An agent step with two or more next steps can choose which one runs: add "route": "one" (or "many"), and optionally "route_default": "<node id>". The agent is shown its next steps and ends its answer with a ROUTE line; the steps it did not pick are skipped.
+- A switch picks the next step from a state value: {"id": "gate", "entity_id": "state_switch", "config": {"key": "score", "cases": [{"op": "gte", "value": 8, "target": "publish"}], "default": "revise"}}. Operators: equals, not_equals, contains, not_contains, matches, gt, gte, lt, lte, empty, not_empty, count_gt, count_lt. Every target must be a step the switch leads to.
+- A step's own task goes in "task"; "output": ["key"] writes its answer to flow state, "input": ["key"] shows it a key.
+
 Workflow for designing a new flow:
 1. Call list_agents_tool to see which agents are available. Use ONLY these agent ids.
 2. Design the smallest graph that fulfils the requirement: one node per distinct responsibility, edges in dependency order. Give every node a stable id ("node-1", "node-2", ...), a clear label, and a one-line description of its role.

@@ -788,6 +788,52 @@ def list_flows_tool() -> str:
         return _json_err(f"Failed to list flows: {e}")
 
 
+def launch_flow_run(flow_id: str, flow: Dict[str, Any], ws_name: Optional[str], desc: str,
+                    *, create_task: bool = False) -> Dict[str, object]:
+    """Start a stored flow in the background and return what the caller reports.
+
+    Shared by ``run_flow_tool`` and ``run_new_flow_tool`` (tools/flow_management.py):
+    every check (approval, workspace) is the caller's, this only launches.
+    """
+    from flow import launcher as flow_launcher
+
+    flow_name = flow.get("name") or flow_id
+
+    # The flow runtime is task-driven (it finalizes a task record on completion),
+    # so a backing task always exists. For a taskless run we mark it
+    # orchestrator-created so it is not presented as a user task; only when the
+    # user explicitly asks do we create a user-facing task.
+    from tasks.service import create_task as svc_create_task
+    task = svc_create_task(
+        title=f"Flow: {flow_name}",
+        description=desc,
+        workspace=ws_name,
+        created_by=CreatedBy.user if create_task else CreatedBy.orchestrator,
+    )
+
+    params = {"workspace": ws_name, "description": desc}
+    run_id, session_id = flow_launcher.start_flow_run(str(task.id), flow_id, params)
+    svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
+
+    payload: Dict[str, object] = {
+        "message": (
+            f"Flow '{flow_name}' started. It runs in the background — report this "
+            "to the user; do not poll for completion."
+        ),
+        "flow_id": flow_id,
+        "flow_name": flow_name,
+        "run_id": run_id,
+        "session_id": session_id,
+        "workspace": ws_name,
+        "taskless": not create_task,
+    }
+    # Only surface the task id when the user asked to track it; otherwise it is
+    # an internal execution record and not something to report.
+    if create_task:
+        payload["task_id"] = str(task.id)
+    return payload
+
+
 class RunFlowInput(BaseModel):
     flow_id: str = Field(..., min_length=1, description="ID of the flow to run (from list_flows_tool)")
     description: Optional[str] = Field(
@@ -835,7 +881,8 @@ def run_flow_tool(
     report that it has started; do not poll for completion here.
     """
     try:
-        if not user_approved:
+        from common.auto_mode import approved as _approved
+        if not _approved("run_flow_tool", user_approved, {"flow_id": flow_id}):
             return _json_err(
                 "Flow run not approved. First call list_flows_tool, ask the user to "
                 "select a target flow and confirm, then call run_flow_tool again with "
@@ -845,7 +892,6 @@ def run_flow_tool(
             )
 
         from flow import store as flow_store
-        from flow import launcher as flow_launcher
 
         flow = flow_store.get_flow(flow_id)
         if not flow:
@@ -858,40 +904,7 @@ def run_flow_tool(
 
         ws_name = flow_ws or ws
         desc = (description or flow.get("description") or "").strip()
-        flow_name = flow.get("name") or flow_id
-
-        # The flow runtime is task-driven (it finalizes a task record on completion),
-        # so a backing task always exists. For a taskless run we mark it
-        # orchestrator-created so it is not presented as a user task; only when the
-        # user explicitly asks do we create a user-facing task.
-        from tasks.service import create_task as svc_create_task
-        task = svc_create_task(
-            title=f"Flow: {flow_name}",
-            description=desc,
-            workspace=ws_name,
-            created_by=CreatedBy.user if create_task else CreatedBy.orchestrator,
-        )
-
-        params = {"workspace": ws_name, "description": desc}
-        run_id, session_id = flow_launcher.start_flow_run(str(task.id), flow_id, params)
-        svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
-
-        payload: Dict[str, object] = {
-            "message": (
-                f"Flow '{flow_name}' started. It runs in the background — report this "
-                "to the user; do not poll for completion."
-            ),
-            "flow_id": flow_id,
-            "flow_name": flow_name,
-            "run_id": run_id,
-            "session_id": session_id,
-            "workspace": ws_name,
-            "taskless": not create_task,
-        }
-        # Only surface the task id when the user asked to track it; otherwise it is
-        # an internal execution record and not something to report.
-        if create_task:
-            payload["task_id"] = str(task.id)
+        payload = launch_flow_run(flow_id, flow, ws_name, desc, create_task=create_task)
         return _json_ok(payload)
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to run flow: {e}")

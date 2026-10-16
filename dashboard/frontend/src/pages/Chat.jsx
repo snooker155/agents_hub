@@ -72,6 +72,7 @@ import { useConversationCode } from '../components/chat/useConversationCode';
 import { conversationViews } from '../components/chat/turnViews';
 import { replyCodeBlocks } from '../components/chat/replyCode';
 import useChatComposerInput from '../components/chat/useChatComposerInput';
+import useAutoMode from '../components/chat/useAutoMode';
 import useChatSend from '../components/chat/useChatSend';
 import useChatTurns from '../components/chat/useChatTurns';
 import useChatSteering from '../components/chat/useChatSteering';
@@ -764,8 +765,12 @@ export default function Chat() {
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [agents, allCommands, currentConvId, selectedAgent, setConversations, t]);
 
+  // Auto mode: every confirmation of this conversation accepted without a card.
+  const autoMode = useAutoMode({
+    currentConv, setConversations, workspace: currentConv?.workspace || selectedWorkspace,
+  });
   const { sendMessage } = useChatSend({
-    beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
     pendingReferences, processOpen: runDataWanted, reloadChat, selectCommand, selectedAgent, selectedFlow,
     selectedProject, selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError,
@@ -914,7 +919,7 @@ export default function Chat() {
   // ---------------------------------------------------------------------------
   // Published once for the five panes below; see `chat/context.js`.
   const page = {
-    activeRunId, addReferences, addWorkspaceFiles, agentModel, agentName, agentProvider, agentTopology, agents,
+    activeRunId, addReferences, addWorkspaceFiles, agentModel, autoMode, agentName, agentProvider, agentTopology, agents,
     artifactCount, artifactViews, artifacts, artifactsOpen, setArtifactsOpen, attachMenuOpen, attachmentError,
     codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
     markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,

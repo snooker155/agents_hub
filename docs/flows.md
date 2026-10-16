@@ -76,10 +76,67 @@ the flow run as its session. An n8n AI Agent's `output` is unwrapped.
 - **Processor** — non-agent work in the middle of a pipeline.
 - **Container**: runs a whole team, loop or flow as a nested run (see below),
   or an n8n workflow (see above).
+- **Map**: runs one agent per item of a list, several at once (see Branching).
+
+## Branching
+
+A flow is a graph fixed before the run, but three kinds of node decide while it
+runs which way it goes.
+
+**A switch** (`state_switch`) checks a state value against its cases in order
+and follows the first that holds: `equals`, `not_equals`, `contains`,
+`not_contains`, `matches` (a regular expression), `gt`, `gte`, `lt`, `lte`,
+`empty`, `not_empty`, `count_gt`, `count_lt`. `default` is taken when no case
+holds, and with `all_matches` every matching case runs. `state_branch` is the
+two-way version for a truthy key.
+
+**An agent that picks the next step.** Set **Next step** on an agent node with
+two or more next steps (`route: one` or `route: many`). The agent is shown its
+next steps and ends its answer with `ROUTE: <step id>`; the steps it did not
+pick are skipped and the line is removed from what the next step reads.
+`route_default` is taken when the agent names nothing valid; without it the
+step fails, and its retry asks again. `route_hint` says how to choose.
+
+**One step per item** (`map`). The node reads a list, from the previous step's
+output (a JSON list, a JSON list in a code block, or one item per line) or from
+the state key in `config.over`, and runs `config.agent_id` once per item with
+`config.task`, up to `config.max_parallel` at once (the flow's limit when 0).
+Each item is its own node run, `<node>#<n>`: its own run record, its own bubble
+in flow chat, its own line in the run log. The results land in the node's output
+key as a list, in item order. A failed item fails the node unless
+`allow_failures` is on (then only all items failing does), and `retry` and
+`timeout_seconds` apply per item. More items than `max_items` (50, at most 500)
+is an error, not a silent cut. This is the step whose width is only known at
+run time: "check each claim the researcher found".
+
+The editor's inspector edits all three, and validation refuses a target that is
+not a step the node leads to (the engine would otherwise skip every branch).
+
+## A flow an agent builds for one request
+
+`run_new_flow_tool` lets an agent plan a flow for the request in front of it and
+run it in one call: steps in parallel, map steps, switches and routing agents.
+The graph is checked before anything happens: unknown agents, cycles, branch
+targets, and every agent against the caller's delegation allowlist and
+workspace (an agent with an allowlist may not put a team, loop or flow node in
+it, since their members are out of its sight). The first call returns the plan
+and the cost estimate without saving or starting anything; the agent shows them
+and calls again with `user_approved=true` once you agree (in
+[auto mode](hooks.md#auto-mode) it runs at once).
+
+The flow is stored as a **temporary** flow (`ephemeral: true`): the run loads it
+by id and its run page shows it, but no list does (the Flows page, pickers,
+`list_flows_tool`, MCP, references). The run page has **Keep flow**, and
+`save=true` or `modify_flow_tool(keep=true)` does the same; a kept flow is an
+ordinary flow. A temporary flow is deleted a week after its last change
+(`AGENTS_HUB_EPHEMERAL_FLOW_DAYS`) unless it is running. `orchestrator`,
+`main-agent` and `universal_agent` have the tool; `flow_creator` knows the node
+shapes for flows it saves.
 
 ## Running
 
-`run_flow_tool` starts it, and refuses until you have approved: a flow is as
+`run_flow_tool` starts it, and refuses until you have approved (or
+[auto mode](hooks.md#auto-mode) is on in the chat): a flow is as
 many model calls as it has agent nodes. It returns a run id immediately and
 streams per-node progress; it does not block the conversation. In the default
 (all-in-one) role the flow starts at once in-process; in the `api` role the

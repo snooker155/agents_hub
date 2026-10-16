@@ -81,6 +81,12 @@ export function serializeNode(node) {
   }
   const timeout = Number(d.timeout_seconds);
   if (Number.isFinite(timeout) && timeout > 0) out.data.timeout_seconds = timeout;
+  // An agent node that picks its next step (flow/branching.py), only when set.
+  if (d.route) {
+    out.data.route = d.route === true ? 'one' : d.route;
+    if (d.route_default) out.data.route_default = d.route_default;
+    if (d.route_hint) out.data.route_hint = d.route_hint;
+  }
   return out;
 }
 

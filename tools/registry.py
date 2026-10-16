@@ -365,9 +365,10 @@ def _agent_coordination_specs() -> List[ToolSpec]:
         get_agent_status_tool, wait_for_agent_tool,
     )
     from tools.delegation import delegate_task_tool, list_models_tool
+    from tools.flow_management import run_new_flow_tool
     tools = [
         assign_agent_tool, start_agent_tool, run_agent_tool, list_flows_tool,
-        run_flow_tool, reject_assignment_tool, stop_agent_tool,
+        run_flow_tool, run_new_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool,
         delegate_task_tool, list_models_tool,
     ]

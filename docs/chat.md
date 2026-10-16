@@ -173,6 +173,13 @@ flow, loop, scenario or team will show the estimate and wait for a clear yes.
 "Sounds good" is not approval, and agents are instructed to treat it as
 ambiguous.
 
+**Auto mode** takes the asking away for one conversation: the **Auto** toggle
+under the input box, or Shift+Tab in the box. While it is on, a banner above
+the conversation says so and every confirmation is accepted without a card;
+the cards still appear, marked "approved automatically". Rules that refuse a
+call still refuse it. An admin can turn auto mode off for a workspace. See
+[auto mode](hooks.md#auto-mode).
+
 ## Conversations with the Assistant
 
 The [Assistant](assistant.md)'s conversations, by voice or text, are listed

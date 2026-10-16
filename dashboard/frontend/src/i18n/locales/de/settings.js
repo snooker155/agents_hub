@@ -265,6 +265,8 @@ export default {
   toolApprovalHint: 'Ein Werkzeugaufruf wartet auf die Freigabe durch eine Person: ein verfolgter Lauf wartet auf Freigabe, ein Zug im Dashboard-Chat wartet auf Freigeben oder Ablehnen, in anderen Chats sagt der Agent, was er ausführen wollte.',
   toolApprovalTimeout: 'Wartezeit im Chat, Sekunden',
   toolApprovalTimeoutHint: 'Wie lange ein im Chat-Zug angehaltener Aufruf auf Freigeben oder Ablehnen wartet, bevor er abgelehnt wird. Leer bedeutet 600.',
+  allowAutoApprove: 'Automodus im Chat erlauben',
+  allowAutoApproveHint: 'Eine Person kann den Automodus in einem Gespräch einschalten: dann wird jede Bestätigung ohne Karte angenommen. Aus, ist der Auto-Schalter im Chat deaktiviert.',
   hooks: 'Hooks',
   hooksHint: 'Ein Befehl oder HTTP-Aufruf rund um jeden passenden Werkzeugaufruf oder Lauf, als JSON mit Ereignisschlüsseln: PreToolUse und PostToolUse (auch before_tool_call und after_tool_call), before_run und after_run. Die vollständige Referenz steht in',
   hooksDocsLink: 'Werkzeuge in der Doku',

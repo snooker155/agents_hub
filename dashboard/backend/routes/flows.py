@@ -42,12 +42,14 @@ router = APIRouter(prefix="/api/flows", tags=["flows"])
 # These thin wrappers keep the existing list-oriented CRUD logic unchanged.
 
 def _load() -> List[Dict]:
-    return flow_store.list_flows()
+    # Temporary flows too (flow_store.is_ephemeral): a run page edits, keeps
+    # and runs one by id, and _save below must not read them as vanished.
+    return flow_store.list_flows(include_ephemeral=True)
 
 
 def _save(flows: List[Dict]) -> None:
     """Persist a full flow list: upsert each flow, delete any that vanished."""
-    existing_ids = {f["id"] for f in flow_store.list_flows() if f.get("id")}
+    existing_ids = {f["id"] for f in flow_store.list_flows(include_ephemeral=True) if f.get("id")}
     new_ids = {f["id"] for f in flows if f.get("id")}
     for flow in flows:
         if flow.get("id"):
@@ -101,6 +103,9 @@ class FlowUpdate(BaseModel):
     # Example requests shown in the flow's empty chat: {lang: [text, ...]},
     # or a plain list for every language (flow.templates.normalize_examples).
     examples: Optional[Union[List[str], Dict[str, List[str]]]] = None
+    # False keeps a temporary flow an agent built for one run (run_new_flow_tool):
+    # it joins the flow list and is no longer swept after a week.
+    ephemeral: Optional[bool] = None
 
 
 class FlowImport(BaseModel):
@@ -193,10 +198,11 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
         flow_ids = sorted(str(fid) for fid in allowed)
         total = len(flow_ids)
         page_ids = _paginate(flow_ids, limit, offset)
-        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids) if f]
+        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids)
+                 if f and not flow_store.is_ephemeral(f)]
     elif workspace:
         # Keeps the flow picker in sync with the run_flow authorization check.
-        visible = [f for f in _load()
+        visible = [f for f in flow_store.list_flows()
                   if not f.get("workspace") or f.get("workspace") == workspace]
         total = len(visible)
         flows = _paginate(visible, limit, offset)

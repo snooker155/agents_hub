@@ -142,7 +142,11 @@ function GenericToolApprovalCard({ approval, live = true }) {
           </div>
         </>
       ) : null}
-      {status !== 'pending' && (settled.decided_by_name || settled.note) ? (
+      {status === 'approved' && (approval.auto || approval.by === 'auto_mode') ? (
+        <p className="mt-1 text-[11px] text-amber-700" data-testid="tool-approval-auto">
+          {t('toolApproval.approvedAutomatically')}
+        </p>
+      ) : status !== 'pending' && (settled.decided_by_name || settled.note) ? (
         <p className="mt-1 text-[11px] text-gray-500" data-testid="tool-approval-outcome">
           {settled.decided_by_name ? t('toolApproval.decidedBy', { name: settled.decided_by_name }) : null}
           {settled.decided_by_name && settled.note ? ' · ' : null}

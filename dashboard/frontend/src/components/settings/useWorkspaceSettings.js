@@ -9,6 +9,7 @@ import {
   getWorkspacePolicy, updateWorkspacePolicy, importWorkspaceHooksFile,
 } from '../../api';
 import { useI18n } from '../../i18n';
+import { patchWorkspaceSummary } from '../../api/workspaceSummary';
 
 // The override fields the workspace Save writes. Anything else in the bag
 // (palette, web domains) has its own editor and is left as it is.
@@ -244,6 +245,13 @@ export function useWorkspaceSettings(workspace) {
   };
 
   const toggleApproval = (next) => savePolicy({ require_tool_approval: next });
+  // Whether a person may switch on auto mode in this workspace's chats; the
+  // chat reads it from the workspace summary, so that copy follows at once.
+  const toggleAutoApprove = async (next) => {
+    if (await savePolicy({ allow_auto_approve: next })) {
+      patchWorkspaceSummary(workspace, { auto_approve_allowed: next });
+    }
+  };
 
   const saveHooks = async () => {
     let parsed;
@@ -342,7 +350,8 @@ export function useWorkspaceSettings(workspace) {
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
-    policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks, importHooksFile,
+    policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval,
+    toggleAutoApprove, saveHooks, importHooksFile,
     savePolicy,
     streamingSaving, toggleStreaming,
     temperatureSaving, saveGlobalTemperature,

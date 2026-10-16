@@ -571,6 +571,16 @@ export function ToolPolicySection({ s }) {
         />
         <p className="w-full text-xs text-gray-500">{t('settings.toolApprovalTimeoutHint')}</p>
       </div>
+      {/* Auto mode in chat (common/auto_mode.py): a person may accept every
+          confirmation of a conversation in advance, unless this is off. */}
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div>
+          <label className="text-sm font-medium text-gray-700">{t('settings.allowAutoApprove')}</label>
+          <p className="text-xs text-gray-500 mt-1">{t('settings.allowAutoApproveHint')}</p>
+        </div>
+        <Toggle checked={s.policy.allow_auto_approve !== false} disabled={s.policySaving}
+          onChange={s.toggleAutoApprove} />
+      </div>
 
       {/* The workspace's per-tool permission policy and the model
           that decides "auto" calls (tools/permission_policy.py). */}

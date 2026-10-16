@@ -34,6 +34,7 @@ const CATEGORY_LABELS = {
   agent: 'Agents',
   processor: 'Processors',
   condition: 'Conditions',
+  map: 'Per item',
   transform: 'Transforms',
   interrupt: 'Interrupts',
   container: 'Nested runs',
@@ -45,6 +46,7 @@ const CATEGORY_LABELS = {
 const CATEGORY_STYLES = {
   processor: { item: 'border-emerald-200 bg-emerald-50 hover:border-emerald-300', dot: 'bg-emerald-400' },
   condition: { item: 'border-amber-200 bg-amber-50 hover:border-amber-300', dot: 'bg-amber-400' },
+  map: { item: 'border-teal-200 bg-teal-50 hover:border-teal-300', dot: 'bg-teal-400' },
   transform: { item: 'border-sky-200 bg-sky-50 hover:border-sky-300', dot: 'bg-sky-400' },
   interrupt: { item: 'border-rose-200 bg-rose-50 hover:border-rose-300', dot: 'bg-rose-400' },
   container: { item: 'border-orange-200 bg-orange-50 hover:border-orange-300', dot: 'bg-orange-400' },
@@ -64,7 +66,7 @@ export function EntityPalette({ entitiesByCategory = {} }) {
   };
 
   const cats = Object.keys(entitiesByCategory).filter((c) => c !== 'agent').sort((a, b) => {
-    const order = ['agent', 'processor', 'condition', 'transform', 'interrupt', 'container'];
+    const order = ['agent', 'processor', 'condition', 'map', 'transform', 'interrupt', 'container'];
     const ia = order.indexOf(a); const ib = order.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ClipboardList, DollarSign, Factory, FileText, History, ListChecks, Loader2,
-  MessageSquare, Pencil, Play, Plus, Square, Workflow,
+  MessageSquare, Pencil, Pin, Play, Plus, Square, Workflow,
 } from 'lucide-react';
-import { getAgents, getFlow, getTasks } from '../api';
+import { getAgents, getFlow, getTasks, updateFlow } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import { useWorkspace } from '../components/workspace';
 import CreateTaskModal from '../components/CreateTaskModal';
@@ -12,7 +12,7 @@ import FlowCanvas from '../components/flow/FlowCanvas';
 import FlowChat from '../components/flow/FlowChat';
 import { AppBar, InfoHint } from '../components/PageLayout';
 import { useI18n } from '../i18n';
-import { useToast } from '../components/toast';
+import { errorDetail, useToast } from '../components/toast';
 import { FlowHistory, FlowRunMessages } from '../components/flowEditor/FlowHistory';
 import { reconstructRunMessages } from '../components/flowEditor/runFormat';
 import { FlowLog } from '../components/flowEditor/FlowLog';
@@ -100,6 +100,7 @@ function FlowRun() {
   const [stopping, setStopping] = useState(false);
   const [runNodeId, setRunNodeId] = useState(null);
   const [flow, setFlow] = useState(null);
+  const [keeping, setKeeping] = useState(false);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
@@ -210,6 +211,19 @@ function FlowRun() {
   const chatWorkspace = flow.workspace || selectedWorkspace;
   const isRunning = running || !!flow.running;
   const editPath = `/flows/${flowId}/edit`;
+  // Keeping a temporary flow puts it in the flow list for good.
+  const keepFlow = async () => {
+    setKeeping(true);
+    try {
+      await updateFlow(flowId, { ephemeral: false });
+      setFlow((prev) => (prev ? { ...prev, ephemeral: false } : prev));
+      toast.success(t('flowEditor.temporary.kept'));
+    } catch (error) {
+      toast.error(t('flowEditor.temporary.keepFailed'), errorDetail(error));
+    } finally {
+      setKeeping(false);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -242,6 +256,28 @@ function FlowRun() {
           </Link>
         </>}
       />
+
+      {/* A flow an agent built for one request (run_new_flow_tool): in no list,
+          deleted a week after its last change unless someone keeps it. */}
+      {flow.ephemeral ? (
+        <div className="flex items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800"
+          data-testid="flow-temporary-banner">
+          <Workflow className="h-4 w-4 shrink-0 text-sky-500" />
+          <span className="min-w-0 flex-1">
+            {t('flowEditor.temporary.banner', { agent: flow.created_by_agent || t('flowEditor.temporary.anAgent') })}
+          </span>
+          <button
+            type="button"
+            onClick={keepFlow}
+            disabled={keeping}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+            data-testid="flow-keep"
+          >
+            {keeping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pin className="h-3.5 w-3.5" />}
+            {t('flowEditor.temporary.keep')}
+          </button>
+        </div>
+      ) : null}
 
       {unchosenCount > 0 ? (
         <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">

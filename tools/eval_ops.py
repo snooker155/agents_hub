@@ -487,7 +487,8 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
         if refused:
             return _json_err(refused, code="not_found")
 
-        if not user_approved:
+        from common.auto_mode import approved as _approved
+        if not _approved("run_eval_tool", user_approved, {"eval_set_id": eval_set_id}):
             return _json_err(
                 "Running this eval needs the user's approval: it spends real "
                 "money. Show them the estimate below, and only call again with "

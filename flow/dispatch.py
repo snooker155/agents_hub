@@ -205,6 +205,17 @@ class AgentEntity(FlowEntity):
         )
 
 
+@register_category("map")
+class MapEntity(FlowEntity):
+    """A fan-out node: one agent run per item of a list (flow/branching.py).
+
+    The engine runs it (``flow.engine``), because every item is an agent node
+    run of its own through the surface's driver; it is not inline work."""
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        return DispatchResult(ok=False, error=f"map node '{self.id}' must be run by the flow engine")
+
+
 class EntityNode(FlowEntity):
     """Default handler for inline (callable) entities: processor / condition /
     transform / any future category whose entrypoint is a ``run(state, config,

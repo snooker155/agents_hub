@@ -2324,6 +2324,11 @@
             "title": "Attachments",
             "type": "array"
           },
+          "auto_approve": {
+            "default": false,
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
           "client_id": {
             "anyOf": [
               {
@@ -5102,6 +5107,17 @@
               }
             ],
             "title": "Entry Point"
+          },
+          "ephemeral": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ephemeral"
           },
           "examples": {
             "anyOf": [

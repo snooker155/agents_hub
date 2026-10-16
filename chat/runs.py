@@ -379,6 +379,10 @@ def create_chat_run(request: ChatRequest, **run_extra):
     if request.overrides:
         from agents import run_overrides as _run_overrides
         run_extra.setdefault("overrides", _run_overrides.record_view(request.overrides))
+    # Auto mode, on the record so a process that only has the run id reads it
+    # (common/auto_mode.is_on) and the run page can say the turn ran in it.
+    if getattr(request, "auto_approve", False):
+        run_extra.setdefault("auto_approve", True)
 
     register_run(
         run_id,

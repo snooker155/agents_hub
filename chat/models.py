@@ -103,6 +103,11 @@ class ChatRequest(BaseModel):
     # output_schema. An unknown key is a 400; a tool set the capability
     # guard refuses is a 409. Kept on the run record as ``overrides``.
     overrides: Optional[Dict[str, Any]] = None
+    # Auto mode (common/auto_mode.py): the person switched it on in this
+    # conversation, so every confirmation of the turn is accepted without a
+    # card. Honoured only from the Chat page or the assistant's thread, and
+    # only where the workspace allows it (pipelines.execute_locally checks).
+    auto_approve: bool = False
 
     @field_validator("agent_id")
     @classmethod

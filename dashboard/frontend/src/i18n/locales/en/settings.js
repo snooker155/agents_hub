@@ -265,6 +265,8 @@ export default {
   toolApprovalHint: 'Hold a tool call until a person approves it: a tracked run parks in awaiting approval, a dashboard chat turn waits with Approve and Deny, and other chats tell the agent to say what it wanted to run.',
   toolApprovalTimeout: 'Wait in chat, seconds',
   toolApprovalTimeoutHint: 'How long a call held in a chat turn waits for Approve or Deny before it is refused. Empty means 600.',
+  allowAutoApprove: 'Allow auto mode in chat',
+  allowAutoApproveHint: 'A person may switch on auto mode in a conversation: every confirmation of its turns is then accepted without a card. Off, the chat\'s Auto toggle is disabled.',
   hooks: 'Hooks',
   hooksHint: 'A command or HTTP call around every matching tool call or run, as JSON keyed by event: PreToolUse and PostToolUse (also before_tool_call and after_tool_call), before_run and after_run. The full reference is in',
   hooksDocsLink: 'Tools in the docs',

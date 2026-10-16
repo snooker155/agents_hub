@@ -61,6 +61,9 @@ class FlowParseError(ValueError):
 _NON_YAML_FLOW_FIELDS = {
     "id", "task_id", "owner_user", "review_status", "review_note",
     "reviewed_by", "reviewed_at",
+    # A temporary flow an agent built for one run (is_ephemeral): store-scoped,
+    # an exported or imported copy is an ordinary flow.
+    "ephemeral", "created_by_agent",
 }
 # Per-node logic fields carried in the YAML skeleton (besides ``type`` and the
 # entity reference, which get their own dedicated keys). ``id`` and ``nodeTask``
@@ -70,6 +73,8 @@ _LOGIC_NODE_FIELDS = {
     # Execution policy the engine reads per node (see flow.engine): how many
     # times a failed attempt is repeated and how long one attempt may take.
     "retry", "timeout_seconds",
+    # An agent node that picks its next step (flow/branching.py).
+    "route", "route_default", "route_hint",
 }
 # Per-node ``data`` keys that are purely visual.
 _VISUAL_DATA_FIELDS = {"label", "description", "domain"}
@@ -465,9 +470,55 @@ def _ensure_review_fields(flow: Dict[str, Any]) -> Dict[str, Any]:
 _skip_logged: set = set()
 
 
-def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> List[Dict[str, Any]]:
+def is_ephemeral(flow: Optional[Dict[str, Any]]) -> bool:
+    """A flow an agent built for one run (``run_new_flow_tool``): it is kept so
+    the run can load it and its run page can show it, but no list shows it
+    until someone keeps it (``ephemeral`` set back to false)."""
+    return bool((flow or {}).get("ephemeral"))
+
+
+#: Days a temporary flow stays after its last change; ``AGENTS_HUB_EPHEMERAL_FLOW_DAYS``.
+EPHEMERAL_FLOW_DAYS_ENV = "AGENTS_HUB_EPHEMERAL_FLOW_DAYS"
+DEFAULT_EPHEMERAL_FLOW_DAYS = 7.0
+
+
+def sweep_ephemeral(now: Optional[Any] = None) -> List[str]:
+    """Delete temporary flows untouched for longer than the retention, unless
+    one is running. Returns the deleted ids. Called whenever a new temporary
+    flow is saved, which is the only time more of them appear."""
+    import os
+    from datetime import datetime, timedelta, timezone
+    try:
+        days = float(os.environ.get(EPHEMERAL_FLOW_DAYS_ENV) or DEFAULT_EPHEMERAL_FLOW_DAYS)
+    except ValueError:
+        days = DEFAULT_EPHEMERAL_FLOW_DAYS
+    if days <= 0:
+        return []
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    removed: List[str] = []
+    for flow in list(_FLOWS.values()):
+        if not is_ephemeral(flow) or flow.get("running"):
+            continue
+        stamp = str(flow.get("updated_at") or flow.get("created_at") or "")
+        try:
+            when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when < cutoff and _FLOWS.delete(str(flow.get("id"))):
+            removed.append(str(flow.get("id")))
+    return removed
+
+
+def list_flows(limit: Optional[int] = None, offset: Optional[int] = None, *,
+               include_ephemeral: bool = False) -> List[Dict[str, Any]]:
     """Return every flow as a combined dict, ordered by id (deterministic,
     matching the old file-name ordering when ids were also the filenames).
+
+    Temporary flows (:func:`is_ephemeral`) are left out unless
+    ``include_ephemeral``: a caller that rewrites the whole set from this list
+    must pass it, or it would drop them.
 
     ``limit``/``offset`` slice that ordered list; ``count_flows`` gives the
     matching total. One broken flow (an unknown entity reference) does not
@@ -476,6 +527,8 @@ def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> Lis
     """
     _ensure_legacy_imported()
     flows = sorted(_FLOWS.values(), key=lambda f: str((f or {}).get("id") or ""))
+    if not include_ephemeral:
+        flows = [f for f in flows if not is_ephemeral(f)]
     if limit is not None or offset is not None:
         start = offset or 0
         flows = flows[start: start + limit] if limit is not None else flows[start:]
@@ -494,11 +547,14 @@ def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> Lis
     return out
 
 
-def count_flows() -> int:
+def count_flows(*, include_ephemeral: bool = False) -> int:
     """Total number of flows in the store, for a caller paging with
-    :func:`list_flows` that needs ``total`` without loading every document."""
+    :func:`list_flows` that needs ``total``. Temporary flows count only with
+    ``include_ephemeral``, matching what :func:`list_flows` returns."""
     _ensure_legacy_imported()
-    return _FLOWS.count()
+    if include_ephemeral:
+        return _FLOWS.count()
+    return sum(1 for f in _FLOWS.values() if not is_ephemeral(f))
 
 
 def get_flow(flow_id: str) -> Optional[Dict[str, Any]]:
@@ -574,6 +630,14 @@ def save_flow(flow: Dict[str, Any]) -> None:
         flow.setdefault("owner_user", None)
 
     _FLOWS.put(flow["id"], flow)
+    if is_ephemeral(flow):
+        if prev is None:
+            try:
+                sweep_ephemeral()
+            except Exception:  # noqa: BLE001 - a missed sweep only leaves old temporary flows a while longer
+                log.debug("temporary flow sweep failed", exc_info=True)
+        # Nobody lists a temporary flow, so there is no list to refresh.
+        return
     _notify_flows_changed(flow.get("id"))
 
 

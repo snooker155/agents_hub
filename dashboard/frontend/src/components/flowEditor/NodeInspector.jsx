@@ -6,6 +6,7 @@ import { getLoops, getTeams, listFlows, listN8nWorkflows } from '../../api';
 import { useWorkspace } from '../workspace';
 import { InfoHint } from '../PageLayout';
 import { INPUT_CLS, fmtKeys, isUnchosenAgent, parseKeys } from './graphHelpers';
+import { MapConfig, RouteConfig, SwitchConfig } from './BranchConfig';
 
 // Per-node execution policy: how many times a failed attempt is repeated and
 // how long one attempt may take. Both are optional; left at zero the node
@@ -380,7 +381,7 @@ export function AgentPicker({ node, agents, onPatch }) {
 // Node inspector: edits label/description/task for any node, plus the state
 // contract (input/output keys) and config JSON for non-agent entity nodes.
 // Running a node is the run page's business (pages/FlowRun.jsx), not this one.
-export function NodeInspector({ node, isAgent, onPatch, agents = [] }) {
+export function NodeInspector({ node, isAgent, onPatch, agents = [], successors = [] }) {
   const { t } = useI18n();
   const d = node.data || {};
   const ident = isAgent ? d.agent_id : d.entity_id;
@@ -471,8 +472,16 @@ export function NodeInspector({ node, isAgent, onPatch, agents = [] }) {
             placeholder={t('flowEditor.optionalNodeSpecificTask')}
             className={INPUT_CLS}
           />
+          <RouteConfig node={node} successors={successors} onPatch={onPatch} />
           <NodePolicy node={node} onPatch={onPatch} />
         </>
+      ) : d.entity_id === 'map' ? (
+        <>
+          <MapConfig node={node} agents={agents} onPatch={onPatch} />
+          <NodePolicy node={node} onPatch={onPatch} />
+        </>
+      ) : d.entity_id === 'state_switch' ? (
+        <SwitchConfig node={node} successors={successors} onPatch={onPatch} />
       ) : d.entity_id === 'human_interrupt' ? (
         <InterruptConfig node={node} onPatch={onPatch} />
       ) : d.entity_id === 'run_n8n' ? (

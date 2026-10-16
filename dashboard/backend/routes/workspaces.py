@@ -588,6 +588,8 @@ async def get_workspace_summary(name: str):
         "name": root.name,
         "allowed_agents": metadata.get("allowed_agents") or [],
         "personal_memory_enabled": personal.workspace_enabled(root.name),
+        # Whether the chat's Auto toggle may be switched on here (common/auto_mode.py).
+        "auto_approve_allowed": settings.get("allow_auto_approve") is not False,
         "isolated": bool(settings.get("isolated")),
         "data_class": _data_class(settings),
         "palette": palette if isinstance(palette, dict) else None,
@@ -690,7 +692,7 @@ async def set_workspace_default_model(name: str, payload: dict):
 # with a null value.
 _SETTINGS_OWNED_ELSEWHERE = (
     "require_tool_approval", "tool_policy", "tool_policy_model", "agent_mode", "loop",
-    "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
+    "allow_auto_approve", "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
 )
 
 
@@ -835,6 +837,9 @@ def _policy_payload(name: str) -> dict:
         "ignored_hooks_file": ignored_hooks_file(name) is not None,
         "tool_policy": clean_policy(settings.get("tool_policy")),
         "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
+        # Whether a person may switch on auto mode in this workspace's chats
+        # (common/auto_mode.py). On unless an admin turned it off.
+        "allow_auto_approve": settings.get("allow_auto_approve") is not False,
         # Only when set: absent means the default (common/tool_approvals.py).
         **({"tool_approval_timeout": settings["tool_approval_timeout"]}
            if settings.get("tool_approval_timeout") is not None else {}),
@@ -944,12 +949,19 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         raise HTTPException(status_code=400, detail="policy must be a key-value object")
 
     updates: dict = {}
-    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout")
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout",
+                     "allow_auto_approve")
     if any(key in payload for key in settings_keys):
         from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
         if "require_tool_approval" in payload:
             settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "allow_auto_approve" in payload:
+            # Stored only as an explicit off: absent means allowed.
+            if bool(payload.get("allow_auto_approve")):
+                settings.pop("allow_auto_approve", None)
+            else:
+                settings["allow_auto_approve"] = False
         if "tool_approval_timeout" in payload:
             # How long a call held in a dashboard chat turn waits for a person
             # (common/tool_approvals.py); empty means the default.

@@ -6,6 +6,7 @@
 - Hand a piece of a tracked task to another agent as a subtask and wait for its result (`delegate_task_tool`)
 - Watch progress via `get_agent_status_tool` and `wait_for_agent_tool`
 - List the agent flows in the workspace (`list_flows_tool`) and run one (`run_flow_tool`) after the user picks and approves it
+- Build a flow for a request no saved flow covers and run it (`run_new_flow_tool`) after the user approves the plan
 - Resolve, chain, or stop tasks once an agent finishes
 - Read and update task records in the task store
 - Schedule future work and reminders, and list, change or cancel what is scheduled (`schedule_task`, `schedule_notification`, `list_scheduled`, `update_scheduled`, `cancel_scheduled`), and send an immediate notification (`notify_user`)

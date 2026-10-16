@@ -169,7 +169,14 @@ export default function ChatComposer() {
     };
   }, [micUsable, textareaRef, voice]);
 
+  const { autoMode } = page;
   const onKeyDown = (e) => {
+    // Shift+Tab switches auto mode, as in Claude Code.
+    if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed && !currentTelegramBinding) {
+      e.preventDefault();
+      autoMode.toggle();
+      return;
+    }
     if (steering.busy && e.key === 'Enter' && !e.shiftKey && !(commandMenuOpen && commandSuggestions.length > 0)) {
       e.preventDefault();
       steering.steer();
@@ -469,9 +476,30 @@ export default function ChatComposer() {
                 onClose={() => setPickerKind(null)}
               />
             )}
-            <p className="text-center text-xs text-gray-400 mt-2">
-              {t('chat.composerHint')} <span className="">/</span> {t('chat.forCommands')}
-            </p>
+            <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+              {autoMode && !currentTelegramBinding && !mirrored ? (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoMode.on}
+                  onClick={autoMode.toggle}
+                  disabled={!autoMode.allowed}
+                  data-testid="auto-mode-toggle"
+                  title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium transition-colors
+                    disabled:opacity-40 disabled:cursor-not-allowed ${autoMode.on
+                      ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                      : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  {autoMode.on ? t('chat.autoMode.on') : t('chat.autoMode.off')}
+                  <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
+                </button>
+              ) : <span />}
+              <p className="text-gray-400 text-right">
+                {t('chat.composerHint')} <span className="">/</span> {t('chat.forCommands')}
+              </p>
+            </div>
           </div>
         </div>
     </>

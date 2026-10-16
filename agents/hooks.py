@@ -958,6 +958,20 @@ class ToolGuard:
             ctx = tool_approvals.chat_context(call.run_id)
             if ctx is None:
                 return None
+            from common import auto_mode
+            if call.tool not in auto_mode.NEVER_AUTO and auto_mode.is_on(call.run_id):
+                # The person said yes in advance (common/auto_mode.py): the
+                # card is recorded and shown already approved, nobody waits.
+                auto_mode.settle(
+                    run_id=call.run_id, tool=call.tool, tool_input=call.input, reason=reason,
+                    fingerprint=call.fingerprint, agent_id=self.agent_id,
+                    workspace=self.workspace, conversation_id=ctx.get("conversation_id"),
+                    owner=ctx.get("owner"), emitter=ctx["emitter"])
+                self._record(call, policy.RUN, "Auto mode is on in the chat, so the call "
+                             "was approved without a card.", by=auto_mode.BY, approved=True,
+                             code="auto_mode_approved", trail=False)
+                _revise_trail(call, policy.PERMISSION_ALLOW, "auto_mode_approved")
+                return _Verdict()
             timeout = tool_approvals.timeout_seconds(self.settings())
             answer = tool_approvals.hold(
                 ctx, tool=call.tool, tool_input=call.input, reason=reason,

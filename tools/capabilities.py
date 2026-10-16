@@ -44,7 +44,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "deploy_project", "stop_project_deployment",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
-    "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
+    "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
@@ -764,7 +764,7 @@ def run_code_grants() -> FrozenSet[str]:
 # in what is actually reachable.
 DELEGATING_TOOLS: FrozenSet[str] = frozenset({
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
-    "run_team_tool", "run_loop_tool", "run_scenario_tool",
+    "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
 })
 
 # create_agent_tool / modify_agent_tool are NOT in DELEGATING_TOOLS. They can
@@ -1084,7 +1084,7 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     "confluence_create_page",
     # Delegation reaches other agents' tools, which this rule cannot see.
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
-    "run_team_tool", "run_loop_tool", "run_scenario_tool",
+    "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
 })
 
 SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"

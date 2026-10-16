@@ -151,6 +151,7 @@ def build_chat_driver(
             workspace=request.workspace,
             title=run_title, log_file=str(log_file), flow_id=request.flow_id,
             flow_node_id=node_id, flow_node_label=label,
+            **({"auto_approve": True} if getattr(request, "auto_approve", False) else {}),
         )
         try:
             _update_run(run_id, {"input": prompt})
@@ -347,7 +348,10 @@ def build_chat_driver(
         # Open the run record for agent nodes here (sync, before the engine yields
         # node_start) so the run_id is in node_meta when we translate node_start.
         if ev.get("is_agent"):
-            node = next((n for n in flow.get("nodes", []) if n.get("id") == ev["node_id"]), {})
+            # A map node's item (flow/branching.py) is not in the flow's node
+            # list; the engine hands its synthesized node along.
+            node = ev.get("node") or next(
+                (n for n in flow.get("nodes", []) if n.get("id") == ev["node_id"]), {})
             _open_node_run(node, ev["node_id"], ev.get("label"), ev.get("prompt") or "")
 
     def _on_flow_start(ev: dict) -> None:

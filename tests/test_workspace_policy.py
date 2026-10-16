@@ -54,7 +54,9 @@ def _policy(client, ws):
 def test_policy_defaults_to_off_and_no_hooks(client, ws):
     assert _policy(client, ws) == {"require_tool_approval": False, "hooks": {},
                                    "ignored_hooks_file": False,
-                                   "tool_policy": {}, "tool_policy_model": None}
+                                   "tool_policy": {}, "tool_policy_model": None,
+                                   # Auto mode in chat is allowed until an admin turns it off.
+                                   "allow_auto_approve": True}
 
 
 def test_a_hooks_file_is_reported_and_imported_only_by_the_owner(client, ws):

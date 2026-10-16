@@ -734,6 +734,7 @@ REASON_CODES = (
     "hook_ask",             # a PreToolUse hook asked for a person
     "human_approved",       # a person approved this exact call earlier
     "human_denied",         # a person denied the call in the chat, or nobody answered
+    "auto_mode_approved",   # auto mode was on in the chat, so the call ran without a card
     "think_required",       # the think gate refused an action before a think
     "guardrail_deny",       # a sequence guardrail refused the call
     "guardrail_ask",        # a sequence guardrail asked for a person

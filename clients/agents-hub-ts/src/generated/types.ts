@@ -423,6 +423,7 @@ export type ChatRequest = {
   "instance_id"?: string | null;
   "agent_version"?: number | null;
   "overrides"?: Record<string, unknown> | null;
+  "auto_approve"?: boolean;
 };
 
 export type CheckpointBody = {
@@ -890,6 +891,7 @@ export type FlowUpdate = {
   "on_error"?: string | null;
   "webhook_secret"?: string | null;
   "examples"?: string[] | Record<string, string[]> | null;
+  "ephemeral"?: boolean | null;
 };
 
 export type FromTemplateIn = {

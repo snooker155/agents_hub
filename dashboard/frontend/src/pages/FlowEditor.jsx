@@ -152,6 +152,10 @@ function FlowEditor() {
                 isAgent={(selected.data.category || 'agent') === 'agent'}
                 agents={docApi.agentOptions}
                 onPatch={docApi.updateSelectedNode}
+                successors={edges.filter((e) => e.source === selected.id).map((e) => ({
+                  id: e.target,
+                  label: nodes.find((n) => n.id === e.target)?.data?.label || e.target,
+                }))}
               />
             ) : (
               <div className="space-y-3">

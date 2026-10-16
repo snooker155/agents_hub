@@ -74,7 +74,12 @@ export async function sendAssistantTurn({ conv, text, voice, signal, onEvent }) 
       conv.assistant_thread?.session_id);
   }
   await streamAssistantTurn({
-    body: { message: text, workspace: conv.workspace || undefined, mode, ...(voice ? { voice: true } : {}) },
+    body: {
+      message: text, workspace: conv.workspace || undefined, mode,
+      ...(voice ? { voice: true } : {}),
+      // Auto mode switched on in this conversation (the server checks it too).
+      ...(conv.auto_approve ? { auto_approve: true } : {}),
+    },
     signal,
     onEvent,
   });
