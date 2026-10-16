@@ -131,9 +131,6 @@ and `DELEGATING_TOOLS` (the seven edges above). Every catalog tool id ends up in
 exactly one of them; a test enforces that, and `python -m agents.capability_guard`
 reports zero unclassified tools alongside the current roster's violations.
 
-## Web search provider
-
-`web_search` calls an external search API; the hub ships no search engine of
 ## What comes back from a delegate
 
 The guard decides what an agent may reach; it does not see what a delegate
@@ -189,6 +186,9 @@ fenced the same way as `get_task_result` (`chat/references.py`).
 `python -m evals.injection --static` checks the fences and the automatic quote
 against every corpus payload (the `hand-back fenced` count).
 
+## Web search provider
+
+`web_search` calls an external search API; the hub ships no search engine of
 its own. Settings, "Web search" picks the provider, the number of results a
 call returns and, for a search service, its API key, and writes them to
 `.env` as `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_API_KEY` and
