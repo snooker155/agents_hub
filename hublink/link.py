@@ -13,7 +13,8 @@ then does three reversible things:
 * makes sure a connection exists on the remote for the run mirror
   (``POST /api/connections``, kind ``hub``) and keeps its token, when runs
   are mirrored. The connection's own token can only report, which is all the
-  mirror needs for runs.
+  mirror needs for runs. Not while two-way sync is on (hubsync/client.py):
+  the mirror is off then, whatever the form asked for.
 
 :func:`unlink` undoes all three here. Nothing is deleted on the remote: the
 copies it holds are the point of the mirror, and the connection stays for
@@ -215,7 +216,11 @@ def link(*, url: str, api_key: str, name: Optional[str] = None,
         raise LinkError("acting as a node needs a node token (Nodes page on the remote hub)")
     doc["node"] = node_doc
 
-    if doc["mirror"].get("runs"):
+    # While sync is on the mirror stays off (store.put turns the switches
+    # off again), so its connection on the remote would never be used; it
+    # would only leave a credential there that reports into the remote's
+    # runs and survives unlinking.
+    if doc["mirror"].get("runs") and not store.sync_on(doc):
         try:
             doc["connection"] = _ensure_connection(rm, node_name, doc["target_workspace"],
                                                    dict(existing.get("connection") or {}))

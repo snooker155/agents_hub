@@ -64,6 +64,9 @@ def blank() -> Dict[str, Any]:
         "use_agents": True,
         "mirror": {"runs": True, "chats": True, "memory": False},
         "target_workspace": "",
+        # Catalog only (hublink/catalog.py): browse the remote's agents, skills,
+        # flows, teams and loops and install copies. Nothing flows back.
+        "catalog": False,
         "node": {"enabled": False, "token": "", "share_models": True, "sandbox": True,
                  "shared_providers": list(DEFAULT_SHARED_PROVIDERS), "capacity": 4},
         "remote": {},           # whoami of the remote, as last seen
@@ -83,7 +86,23 @@ def is_linked() -> bool:
     return get() is not None
 
 
+def sync_on(doc: Optional[Dict[str, Any]]) -> bool:
+    return bool(((doc or {}).get("sync") or {}).get("enabled"))
+
+
+def _mirror_off_while_syncing(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """While two-way sync is on (hubsync/client.py) the one-way mirror stays
+    off as a whole, whatever a save asks for: the Remote hub form posts the
+    mirror switches it loaded, so saving it for anything else would bring
+    the mirror back and send runs and chats a second time, in clear even for
+    an encrypted space."""
+    if sync_on(doc) and any((doc.get("mirror") or {}).values()):
+        doc = {**doc, "mirror": {k: False for k in {*MIRROR_KINDS, *(doc.get("mirror") or {})}}}
+    return doc
+
+
 def put(doc: Dict[str, Any]) -> Dict[str, Any]:
+    doc = _mirror_off_while_syncing(doc)
     _store.put(KEY, doc)
     return doc
 
@@ -93,7 +112,7 @@ def update(**changes: Any) -> Optional[Dict[str, Any]]:
         doc = _store.get(KEY)
         if not isinstance(doc, dict):
             return None
-        doc = {**doc, **changes}
+        doc = _mirror_off_while_syncing({**doc, **changes})
         _store.put(KEY, doc)
     return doc
 
@@ -112,7 +131,7 @@ def node_enabled(doc: Optional[Dict[str, Any]] = None) -> bool:
 
 def mirror_enabled(kind: str, doc: Optional[Dict[str, Any]] = None) -> bool:
     doc = doc if doc is not None else get()
-    if not doc:
+    if not doc or sync_on(doc):
         return False
     return bool((doc.get("mirror") or {}).get(kind))
 
@@ -148,6 +167,7 @@ def public(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not doc:
         return None
     out = dict(doc)
+    out["catalog"] = bool(doc.get("catalog"))
     out["api_key_set"] = bool(doc.get("api_key"))
     out["api_key"] = _mask(doc.get("api_key") or "")
     node = dict(doc.get("node") or {})
@@ -164,5 +184,6 @@ def public(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 __all__ = [
     "BACKEND_ID", "DEFAULT_SHARED_PROVIDERS", "KEY", "MCP_SERVER_ID", "MIRROR_KINDS",
     "blank", "clear", "default_node_name", "get", "is_linked", "mirror_enabled",
-    "node_capacity", "node_enabled", "normalize_url", "public", "put", "shared_providers", "slugify", "update",
+    "node_capacity", "node_enabled", "normalize_url", "public", "put", "shared_providers", "slugify", "sync_on",
+    "update",
 ]

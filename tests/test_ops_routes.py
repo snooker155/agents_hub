@@ -162,12 +162,12 @@ def test_metrics_contains_the_documented_metric_names(client):
 
 # ── /api/health features ─────────────────────────────────────────────────────
 
-def test_health_reports_cluster_only_outside_role_all(monkeypatch, client):
-    # The sidebar offers the Cluster page only when there are separate api and
-    # worker processes to show (dashboard/frontend/src/components/navMenu.js).
+def test_health_reports_cluster_in_every_role(monkeypatch, client):
+    # The Cluster page maps the shared services too, so one process has
+    # something to show: the key stays and is always true.
     from common.config import settings
     monkeypatch.delenv("AGENTS_HUB_ROLE", raising=False)
     monkeypatch.setattr(settings, "role", "all", raising=False)
-    assert client.get("/api/health").json()["features"]["cluster"] is False
+    assert client.get("/api/health").json()["features"]["cluster"] is True
     monkeypatch.setenv("AGENTS_HUB_ROLE", "api")
     assert client.get("/api/health").json()["features"]["cluster"] is True

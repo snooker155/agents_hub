@@ -508,6 +508,26 @@ export function ExecutionModeSection({ s }) {
         </div>
       </div>
 
+      {/* The egress proxy (environments/egress.py): the network fence for
+          environments and the swap of secrets bound to hosts. Global, saved on change. */}
+      <div className="mt-4 pt-4 border-t border-gray-100 flex items-start justify-between gap-3">
+        <div>
+          <label className="text-sm font-medium text-gray-700">{t('settings.egressProxy')}</label>
+          <p className="text-xs text-gray-500 mt-1">{t('settings.egressProxyHint')}</p>
+          {s.globalSettings.egress_proxy && !s.globalSettings.egress_proxy_running && (
+            <p className="text-xs text-amber-600 mt-1">{t('settings.egressProxyNotRunning')}</p>
+          )}
+          {g.agent_mode !== 'docker' && (
+            <p className="text-xs text-gray-400 mt-1">{t('settings.egressProxyLocalNote')}</p>
+          )}
+          <p className="text-xs text-gray-400 mt-1">
+            {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
+            <code className="bg-gray-100 rounded px-1 ml-1">AGENTS_HUB_EGRESS_PROXY</code>
+          </p>
+        </div>
+        <Toggle checked={!!s.globalSettings.egress_proxy} disabled={s.egressSaving} onChange={s.setEgressProxy} />
+      </div>
+
       {g.agent_mode === 'docker' && (
         <div className="space-y-4 mt-2 pt-4 border-t border-gray-100">
           <div>

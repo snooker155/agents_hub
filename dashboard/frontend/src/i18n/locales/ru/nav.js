@@ -60,6 +60,8 @@ export default {
   comingSoonItem: '{{name}} — скоро',
   health: 'Статус',
   cluster: 'Кластер',
+  vault: 'Синхронизированные данные',
+  catalog: 'Каталог',
   connections: 'Подключения',
   watchers: 'Вотчеры',
   connectors: 'Коннекторы',

@@ -204,6 +204,18 @@ services:
     profiles:
       - scale
       - ha
+    # A password only when REDIS_PASSWORD is set in .env (the setup wizard
+    # does for a production install); empty keeps the open, network-private
+    # Redis of a plain run. The shell test runs inside the container, hence
+    # the doubled dollar signs: compose must not interpolate them itself. The
+    # image's own entrypoint is called so redis-server still drops to its
+    # unprivileged user.
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec docker-entrypoint.sh redis-server --requirepass "$$REDIS_PASSWORD"; fi; exec docker-entrypoint.sh redis-server'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     # Uncomment to persist queued pub/sub state across a restart. Pub/sub
     # itself is fire-and-forget and needs no persistence, so this is optional.
     # volumes:
@@ -226,6 +238,8 @@ services:
     profiles:
       - postgres
       - ha
+      # Keycloak keeps its realm in a database of this server.
+      - keycloak
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-agents_hub}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
@@ -238,6 +252,100 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+
+  # Keycloak, the bundled identity provider for AUTH_MODE=multi with OIDC
+  # (docs/identity.md), under the `keycloak` profile so a plain `up` never
+  # starts it. `ah setup` writes the realm file mounted below and the
+  # variables here; the hub reaches Keycloak server side at
+  # http://keycloak:8080, the browser at KEYCLOAK_PUBLIC_URL. Two steps
+  # first, both one-shot: Postgres comes up (it carries the `keycloak`
+  # profile too), then `keycloak-db-init` creates the `keycloak` database
+  # next to the hub's own, since the postgres image only creates one.
+  #   docker compose --profile keycloak up -d
+  keycloak-db-init:
+    image: postgres:17-alpine
+    profiles:
+      - keycloak
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
+    # `\gexec` runs the query result as SQL, which is how CREATE DATABASE is
+    # made conditional: it has no IF NOT EXISTS. Safe on every `up`.
+    entrypoint: >
+      /bin/sh -c "
+      echo \"SELECT 'CREATE DATABASE keycloak' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'keycloak')\\gexec\"
+      | psql -h postgres -U ${POSTGRES_USER:-agents_hub} -d ${POSTGRES_DB:-agents_hub}
+      "
+    restart: "no"
+
+  # No healthcheck: the Keycloak image ships neither curl nor wget, so there
+  # is nothing to probe /health/ready with from inside it. Health is enabled
+  # (KC_HEALTH_ENABLED) for an external probe on port 9000 of the container.
+  # The admin password has no default: with it empty the bootstrap admin is
+  # not created and the console stays locked until the wizard's value is set.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    profiles:
+      - keycloak
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-agents_hub}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
+      # The address the browser sees. The hub's server side calls arrive on
+      # another name (keycloak:8080), which the dynamic backchannel allows.
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
+    volumes:
+      # Written by `ah setup`; imported on the first start only.
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak-db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # The guided installer, run from this checkout's image:
+  #   docker compose run --rm setup
+  # Under its own profile so `up` never starts it. The folder is mounted at
+  # the same path inside and out: the wizard starts a compose project through
+  # the socket, and the daemon resolves that project's bind mounts on the
+  # host, where only the real path exists. Root so it can write into the
+  # folder; it hands what it wrote back to the folder's owner. host.docker.internal
+  # is how it reaches the dashboard port the stack publishes on the host.
+  setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+      args:
+        WITH_RAG: ${WITH_RAG:-false}
+    profiles:
+      - setup
+    command: ["setup"]
+    user: "0:0"
+    stdin_open: true
+    tty: true
+    restart: "no"
+    working_dir: ${PWD}
+    volumes:
+      - ${PWD}:${PWD}
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AGENTS_HUB_SETUP_HOST_DIR: ${PWD}
 
   # ── The `ha` profile: postgres + redis + minio + two backend-api replicas
   # ── + two worker replicas, everything docs/scaling.md and docs/workers.md

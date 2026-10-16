@@ -136,6 +136,23 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
+  // The egress proxy (environments/egress.py): a machine-wide .env setting
+  // saved on change; the backend starts or stops its listener at once.
+  const [egressSaving, setEgressSaving] = useState(false);
+  const setEgressProxy = async (next) => {
+    setEgressSaving(true);
+    setError('');
+    try {
+      const { data } = await updateSettings({ egress_proxy: next });
+      setGlobalSettings(s => ({ ...s, egress_proxy: next, egress_proxy_running: !!data?.egress_proxy_running }));
+      if (data?.egress_proxy_error) setError(`${t('settings.egressProxyError')}: ${data.egress_proxy_error}`);
+    } catch (e) {
+      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
+    } finally {
+      setEgressSaving(false);
+    }
+  };
+
   // Tool capability guard (agents/capability_guard.py): block | warn | off,
   // and whether a per-agent override needs a no-network container to count.
   // Machine-wide .env settings, applied live on the next save or build.
@@ -350,6 +367,7 @@ export function useWorkspaceSettings(workspace) {
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
+    egressSaving, setEgressProxy,
     policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval,
     toggleAutoApprove, saveHooks, importHooksFile,
     savePolicy,

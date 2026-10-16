@@ -40,6 +40,45 @@ workflow publishes them for amd64 and arm64 in two flavours
 ("Releases" below), and the Helm chart and the quickstart compose file
 pull them by tag. Only the checkout-based shapes build.
 
+## Guided setup and Keycloak in the compose files
+
+Both compose files carry a `setup` service for the guided installer
+(`ah setup`), under its own profile so `docker compose up` never starts it:
+
+```bash
+docker compose run --rm setup
+```
+
+The image has the Docker CLI and the Compose plugin (2.24 or newer, pinned
+by `DOCKER_COMPOSE_VERSION` in the Dockerfile) and a `setup` command on
+PATH, so the installer can also run from an empty folder with only Docker
+installed:
+
+```bash
+docker run -it --rm --user 0:0 -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:$PWD" -w "$PWD" --add-host host.docker.internal:host-gateway ghcr.io/snooker155/agents-hub-backend:latest setup
+```
+
+For a team the wizard's Scale step sets up the `ha` profile below: API and
+worker replica counts in `docker-compose.setup.yml` (an overlay `.env` names
+in `COMPOSE_FILE`, so the base files stay as released), generated passwords
+for Postgres, Redis and MinIO, and on request worker hosts on other machines,
+each a folder with its own compose file and `.env` ([installation](installation.md),
+"Guided setup"). The Kubernetes shape writes `values.yaml` and a private
+`secrets.yaml` for the chart below.
+
+The folder is mounted at the same path inside and out, because the stack the
+wizard starts through the socket resolves its bind mounts on the host. The
+container runs as root to write into the folder and hands the files back to
+the folder's owner.
+
+The `keycloak` profile adds the bundled identity provider: `keycloak-db-init`
+(a one-shot that creates the `keycloak` database on the stack's Postgres) and
+`keycloak`, published on `KEYCLOAK_PORT` (default 8081), told its public
+address by `KEYCLOAK_PUBLIC_URL` and its bootstrap admin password by
+`KEYCLOAK_ADMIN_PASSWORD`. It imports `keycloak/realm.json`, which the wizard
+writes, and has no healthcheck because its image ships no curl. `REDIS_PASSWORD`,
+when set, makes Redis require it (the broker URL then carries it).
+
 ## The compose `ha` profile
 
 ```bash
@@ -170,6 +209,47 @@ Stale rows older than a day are pruned by the maintenance sweep; a stale
 or stopped row can also be dropped from the page. `AGENTS_HUB_INSTANCE_ID`
 gives a member a stable name across restarts; without it the name is
 `host:pid`.
+
+### The service map
+
+At the top of the Cluster page a diagram draws the whole running service.
+Left to right: people (browsers and clients), the dashboard (the compose
+`frontend` container, when the stack runs in compose), one box per live API
+process, the launch queue, and one box per worker, with the workers of one
+host grouped in a dashed frame. Machines lending models and sandboxes over
+the [hub link](hub-link.md) sit beside the workers. Under them is one row of
+the shared services the processes use: the database, Redis, the object
+store, the identity provider, the browser service, the model runtime, the
+egress proxy, and the remote hub when this one is linked. Lines show who talks
+to whom and move while traffic flows (launches waiting or running, streams
+open, runs tracked).
+
+Each box has a status dot (green ok, amber degraded, red down, hollow
+unknown) and one line of load. Where a capacity is known there is a thin bar:
+
+| Box | Load | Capacity |
+| --- | --- | --- |
+| API process | open streams and runs on its host | none |
+| Worker | runs it tracks now | its `concurrency` |
+| Launch queue | launches waiting, runs in progress, oldest wait | none |
+| Database | connections open to this database (PostgreSQL) | `max_connections` |
+| Redis | connected clients | none |
+| Browser service | open sessions | `max_sessions` |
+| Model runtime | models loaded | `max_loaded` |
+| Hub node | requests in flight | the node's announced capacity |
+
+Click a box for its details (versions, sizes, latency, the reason a probe
+failed). A service that is switched off is not drawn; it waits under the
+map as "Not in use", so a one-process install shows a handful of boxes.
+
+The service boxes come from `common/stack.py`, which probes each service
+with a short timeout, all at once, on every refresh (15 seconds). The same
+probes feed the Health page's Stack services card and the doctor checks
+`broker`, `blob_store` and `oidc`. The `compose` probe lists the stack's own
+containers through the Docker socket when the process runs inside a compose
+project, and compares the running `backend-api` and `worker` replicas with the
+counts the setup wizard chose. Without a Docker socket it reports unknown
+and the map simply omits the dashboard box.
 
 ## The shared-files caveat
 

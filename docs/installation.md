@@ -250,52 +250,140 @@ run does, and writes nothing until you confirm a review of every value:
 
 1. **Install**: this checkout (Path C), Docker from the published images
    (Path A, into a folder of your choice), Compose from this checkout
-   (Path B), or a hub that already runs somewhere else. Then QuickStart
-   (only what cannot be guessed: the assistant sets up the rest with you, see
+   (Path B), Kubernetes with the Helm chart, or a hub that already runs
+   somewhere else. Then QuickStart (only what cannot be guessed: the
+   assistant sets up the rest with you, see
    [after the install](#after-the-install-the-assistant-takes-over)) or
-   Advanced.
-2. **Database**: SQLite; Postgres in a Docker container setup starts for you
+   Advanced. Kubernetes always asks everything.
+2. **Scale** (the Docker paths and Kubernetes): one backend, or a team
+   under load: the `ha` topology of [deployment](deployment.md), with
+   Postgres, Redis and object storage (bundled in the stack, or yours by URL),
+   a number of API replicas behind the dashboard's nginx and a number of
+   workers draining the launch queue. Replica counts go into
+   `docker-compose.setup.yml`, an overlay `.env` names in `COMPOSE_FILE`, so a
+   bare `docker compose up` reads them and the base files stay as released.
+   In Advanced, further **worker hosts**: machines that only run workers
+   against this host's Postgres, Redis and MinIO (their ports are then
+   published, behind generated passwords). Workspaces and run files are
+   still files, so every machine mounts one shared directory (NFS or similar)
+   at the same path and the hub keeps its state there; each host gets a folder
+   under `workers/` with a compose file and an `.env` to copy over (where
+   agents run in containers, set `DOCKER_GID` there to the group of that
+   machine's Docker socket; a later run keeps it, and any other key set in
+   that `.env` which setup does not write). Setup does not copy the state
+   itself: when an install already in use moves to a shared directory, or
+   leaves it again (no worker hosts any more, or back to one backend), it
+   leaves the stack stopped and prints the commands that copy the state over
+   first. A later run, QuickStart included, keeps the Redis, object storage
+   and worker hosts in force; going back to one backend unsets what only the
+   team topology set. For Kubernetes: the release, namespace, ingress host and TLS
+   (cert-manager or an existing secret), replicas, your Postgres, Redis and
+   S3 bucket (or a ReadWriteMany volume alone), and the image tag; a later
+   run reads `values.yaml` and `secrets.yaml` back, so every question
+   defaults to what they hold.
+3. **Database**: SQLite; Postgres in a Docker container setup starts for you
    (on this machine) or in the same stack (the Docker paths, the `postgres`
    profile); or a Postgres you already have, tested before it is accepted.
-   An existing SQLite state can be copied across (`ah db migrate`).
-3. **Access**: no sign-in, one shared token (generated), or accounts: the
-   first administrator and any further people, with single sign-on in
-   Advanced. `AGENTS_HUB_SECRET_KEY` is generated once and never rotated by
-   a later run.
-4. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
+   An existing SQLite state can be copied across (`ah db migrate`). The team
+   topology needs Postgres, Kubernetes your own.
+4. **Access**: no sign-in, one shared token (generated), or accounts: the
+   first administrator and any further people. Single sign-on in Advanced or
+   for a team: Keycloak in the stack (the `keycloak` profile; setup writes
+   `keycloak/realm.json` from the realm CI signs in against, without its
+   demo users and with a generated client secret, and maps the realm's
+   `hub-admins` group to the administrator role once the stack answers), or
+   a provider you already have. Over HTTPS, Caddy serves Keycloak on the
+   hub's domain at port 8443. Keycloak imports the realm on its first start
+   only, so once the stack answers setup also updates the client there
+   (redirect URI, web origins, secret) through Keycloak's admin API; without
+   starting the stack, a run that changed them prints the steps to do it in
+   the admin console. `AGENTS_HUB_SECRET_KEY` is generated once and never
+   rotated by a later run, Start over and Kubernetes included, and the same
+   holds for the bundled Postgres and the Keycloak administrator passwords,
+   which their volumes keep from the first start.
+5. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
    Each key or address is checked by asking the provider for its model list,
    and the default model is picked from presets matched against that list
    (balanced, strongest, fastest), from the whole list, or typed. On this
    machine the presets are also enabled in the [Models](models.md) catalog
    with the default starred.
-5. **Assistant voice**: what the [assistant](assistant.md#voice) hears you
+6. **Assistant voice**: what the [assistant](assistant.md#voice) hears you
    with and reads its answers aloud with, saved as the `default` workspace's
    transcription and speech models (every personal workspace falls back to
-   them). A cloud provider chosen in step 4 (OpenAI: `gpt-4o-mini-tts` and
+   them). A cloud provider chosen in step 5 (OpenAI: `gpt-4o-mini-tts` and
    `gpt-4o-mini-transcribe` with their prices; Google: Gemini TTS and Gemini
    Flash) with one of its voices; the hub's own model runtime (Whisper small
    or large-v3 turbo to hear, Piper in Russian, English or German, Kokoro,
    Supertonic in 31 languages or Kitten in English to speak; free, 0.5 to 2 GB to download); the browser only (its own
    recognition and voice, nothing on the server); or not now. QuickStart
    leaves this to the assistant.
-6. **Features**: in Advanced the demo workspace, the dashboard port, where
-   agents run, web search, RAG, and for Compose the browser and Redis.
-   QuickStart leaves the demo and web search to the assistant.
-7. **Review** of every setting it will write (secrets masked) and every
+7. **Features**: in Advanced the demo workspace, the dashboard port, where
+   agents run, the egress proxy (`egress_proxy`, offered on when agents run
+   in Docker), web search, RAG, the browser service (both Docker paths) and
+   Redis (Compose, one backend). HTTPS on a domain of yours for the published
+   images (Caddy and Let's Encrypt), and for a team a per-person request
+   limit. QuickStart leaves the demo and web search to the assistant, and
+   keeps the browser, Redis, HTTPS and Keycloak where a run before turned
+   them on.
+8. **Linked hub** (this checkout and both Docker paths): another Agents Hub
+   to attach this one to ([hub link](hub-link.md), [sync](hub-sync.md)), by
+   its URL and a personal API key of your account there (made on that hub
+   under Settings, API access, Personal API keys), both checked against it
+   before they are accepted. Then what the link does: **catalog only** (browse and
+   install its agents, skills, flows, teams and loops; nothing of yours is
+   sent), **two-way sync** of the workspaces you choose, each mapped to a
+   space there (the linked hub can read and show this data), **two-way sync,
+   end-to-end encrypted** (the linked hub stores only data it cannot read),
+   or **only its models and agents**, the link as it was before the other
+   modes. Encrypted sync generates a passphrase, shown once at the end, or
+   takes the one you already use on another device; losing it and every
+   device that holds the key means the synced data cannot be recovered. In
+   both sync modes the one-way mirror is off, since sync carries the same
+   data. In Advanced: the hub's name there, its models and agents here
+   independently of the mode, and the catalog beside sync. For Kubernetes
+   the link lives in the database, so it is set in Settings, Remote hub, once
+   the cluster runs.
+9. **Review** of every setting it will write (secrets masked) and every
    action it will take.
-8. **Apply**: installs missing Python extras, starts Postgres, writes
-   `.env` (the previous one is kept as `.env.bak-<time>`), creates the
-   accounts, fills the catalog, sets the assistant's voice, and offers to
-   start the hub (`ah up`, or `docker compose up -d` followed by creating the
-   accounts and setting the voice through the API). For a voice on the hub's
-   runtime it starts the runtime, installs the engines it lacks and
-   downloads the models it does not have, following each job to the end; in
-   Docker that waits for the stack, so without starting it the voice is left
-   for a later run or the Models page. After a Docker setup it can point
-   `ah` at the stack with a personal API key of the new administrator.
+10. **Apply**: installs missing Python extras, starts Postgres, writes
+    `.env` (the previous one is kept as `.env.bak-<time>`), creates the
+    accounts, fills the catalog, sets the assistant's voice and the linked
+    hub, and offers to start the hub (`ah up`, or `docker compose up -d`
+    followed by creating the accounts and setting the voice and the link
+    through the API). For a voice on the hub's runtime it starts the runtime,
+    installs the engines it lacks and downloads the models it does not have,
+    following each job to the end; in Docker that waits for the stack, so
+    without starting it the voice and the link are left for a later run or
+    the Models and Settings pages. On this checkout the link is written
+    straight into the database; in Docker it goes through the stack's API
+    once it answers. After a Docker setup it can point `ah` at the stack
+    with a personal API key of the new administrator.
 
 An answers file that names `voice.mode` or `demo` still applies them in
 QuickStart.
+
+### Setup from Docker
+
+Without Python on the host, the setup runs from the backend image. In an
+empty folder:
+
+```bash
+docker run -it --rm --user 0:0 \
+  -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:$PWD" -w "$PWD" \
+  --add-host host.docker.internal:host-gateway \
+  ghcr.io/snooker155/agents-hub-backend:latest setup
+```
+
+In a folder that already holds a `docker-compose.yml` (a checkout, or the
+quickstart files), `docker compose run --rm setup` does the same: the
+`setup` service is under its own profile, so `docker compose up` never
+starts it. The folder is mounted at the same path inside, so the stack the
+setup starts through the socket mounts the same host paths; it offers the
+published images (and Compose when the folder is a checkout) or Kubernetes
+values, never the local shape (the chart is copied next to them as
+`agents-hub-chart/`, and a folder of that name setup did not write is never
+replaced); and what it writes, backups included, is handed back to the
+folder's owner, although the container ran as root to use the socket.
 
 ### The first run in the browser
 
@@ -380,6 +468,8 @@ default, and a missing required answer stops with its name:
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
   "voice": {"mode": "local", "speech": "piper-en", "transcription": "whisper-small"},
   "demo": false,
+  "link": {"enabled": true, "url": "https://hub.example.com", "api_key": "ahk_...",
+           "mode": "sync-e2e", "sync": {"workspaces": ["default"], "generate": true}},
   "start": true
 }
 ```
@@ -391,6 +481,19 @@ default, and a missing required answer stops with its name:
 shape saves the hub's address and a credential in the CLI's own state file
 (`~/.config/agents-hub/cli.json`); `AGENTS_HUB_URL` in the environment still
 wins over it.
+
+`link.enabled` turns the linked hub on (off by default), with `link.url`,
+`link.api_key` and optionally `link.name`. `link.mode` is `catalog`, `sync`,
+`sync-e2e` or `connect` (its models and agents only). `link.use_models` and
+`link.use_agents` override what the mode implies (on for `connect`, off
+otherwise), and `link.catalog` adds the catalog to a sync mode. For the sync
+modes, `link.sync.workspaces` lists the workspaces here (`["default"]` by
+default; a missing one is created) and `link.sync.spaces.<workspace>` the
+space each maps to there (by default your personal workspace there for the
+first, the same name for the rest). For `sync-e2e`, `link.sync.generate`
+(true by default) or `link.sync.passphrase`, the passphrase of a second
+device. A key the other hub does not take is a warning in an answers file,
+not a stop: the link is saved and tried again when it is applied.
 
 ## Configuration
 

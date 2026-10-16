@@ -8,6 +8,7 @@ import { useChannel } from '../components/stream';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import ServiceMap from '../components/cluster/ServiceMap';
 
 /**
  * Cluster — the map of every process and everything they carry.
@@ -217,6 +218,7 @@ export default function Cluster() {
         <PageLoader label={t('cluster.loading')} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
+          <ServiceMap map={map} />
           <Card icon={Server} title={t('cluster.members')} hint={t('cluster.membersHint')}>
             <Table
               empty={t('cluster.noMembers')}
@@ -234,6 +236,12 @@ export default function Cluster() {
                 { key: 'uptime', label: t('cluster.uptime'), render: (m) => uptimeLabel(m.uptime_seconds) },
                 { key: 'leases', label: t('cluster.leases'), render: (m) => (m.leases || []).join(', ') || '—' },
                 { key: 'load', label: t('cluster.load'), render: (m) => <span className="text-xs text-gray-600">{loadText(m) || '—'}</span> },
+                { key: 'capacity', label: t('cluster.capacity'), render: (m) => (
+                  <span className="text-xs text-gray-600">
+                    {m.capabilities?.concurrency !== undefined && m.capabilities?.concurrency !== null
+                      ? `${m.load?.tracked ?? 0}/${m.capabilities.concurrency}` : '—'}
+                  </span>
+                ) },
                 { key: 'version', label: t('cluster.version'), render: (m) => <span className="font-mono text-xs">{m.version || '—'}</span> },
                 { key: 'actions', label: '', render: (m) => (
                   <span className="inline-flex gap-1">
@@ -392,7 +400,7 @@ export default function Cluster() {
                   { key: 'workspace', label: t('cluster.workspace') },
                   { key: 'state', label: t('cluster.status'), render: (n) => n.state || n.status },
                   { key: 'carrier_mode', label: t('cluster.carrierMode'), render: (n) => n.carrier_mode || '—' },
-                  { key: 'host', label: t('cluster.host'), render: (n) => <span className="font-mono text-xs">{n.host || t('cluster.unknownHost')}</span> },
+                  { key: 'host', label: t('cluster.host'), render: (n) => <span className="font-mono text-xs">{n.carrier_host || n.host || t('cluster.unknownHost')}</span> },
                 ]}
               />
             </Card>

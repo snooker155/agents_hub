@@ -27,6 +27,12 @@ keeps only what no page holds: the step the person is on, so a reload goes on
 from there, and the language and the look they chose, so a second browser
 starts with them.
 
+**A screen whose setting is already in force shows it instead of asking.**
+``ah setup`` can set the model, the voice, web search and the demo before the
+hub first starts; ``context()["configured"]`` reads where each of them is
+stored (no marker of its own) so the browser can say "already set up" with
+the value, and offer Continue or Change.
+
 A screen answered "not now" (the voice, web search, the demo) ends up skipped
 in the guided setup that follows, so the assistant does not offer it again.
 """
@@ -232,6 +238,70 @@ def _local_set_started() -> bool:
         return False
 
 
+def _configured_model() -> Optional[Dict[str, Any]]:
+    """A default model that can run: a usable provider and a model on it."""
+    from common import setup_guide
+    cur = setup_guide.default_model()
+    if cur.get("usable") and cur.get("model"):
+        return {"provider": str(cur["provider"]), "model": str(cur["model"])}
+    return None
+
+
+def _configured_voice() -> Optional[Dict[str, Any]]:
+    """Both voice models of the default workspace: the assistant needs the
+    speech to talk and the transcription to listen, one alone is half a voice."""
+    from providers import special
+    own = special.stored("default")
+    speech, heard = own.get("speech"), own.get("transcription")
+    if isinstance(speech, dict) and isinstance(heard, dict):
+        return {"speech": str(speech.get("model") or ""), "speech_provider": str(speech.get("provider") or ""),
+                "transcription": str(heard.get("model") or ""),
+                "transcription_provider": str(heard.get("provider") or "")}
+    return None
+
+
+def _configured_search() -> Optional[Dict[str, Any]]:
+    """A named search service, or a model key that searches on its own."""
+    from common.config import live_setting
+    from tools.web import effective_search_provider
+    eff = effective_search_provider()
+    provider = str(eff["provider"])
+    if not provider:
+        return None
+    explicit = bool(live_setting("WEB_SEARCH_PROVIDER").strip())
+    if not explicit and not eff["key_set"]:
+        return None
+    return {"provider": provider, "source": str(eff["source"]), "key_set": bool(eff["key_set"])}
+
+
+def _configured_demo() -> Optional[Dict[str, Any]]:
+    """DEMO_WORKSPACE written in .env or the environment, either value: the
+    setting's default (off) is not a decision, an explicit off is."""
+    import os
+    from common.config import read_dot_env
+    raw = read_dot_env().get("DEMO_WORKSPACE")
+    if raw is None:
+        raw = os.environ.get("DEMO_WORKSPACE")
+    if raw is None or not str(raw).strip():
+        return None
+    return {"enabled": str(raw).strip().lower() in ("1", "true", "yes", "on")}
+
+
+def configured() -> Dict[str, Optional[Dict[str, Any]]]:
+    """Per screen, what is already in force (``None``: nothing, ask). Keys:
+    ``model`` (the choice of model), ``voice``, ``search``, ``demo``. A
+    failure to read one means not configured, never an error."""
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for key, read in (("model", _configured_model), ("voice", _configured_voice),
+                      ("search", _configured_search), ("demo", _configured_demo)):
+        try:
+            out[key] = read()
+        except Exception:  # noqa: BLE001 - unreadable means ask
+            log.debug("first run: %s configuration unreadable", key, exc_info=True)
+            out[key] = None
+    return out
+
+
 def context() -> Dict[str, Any]:
     """What the model, voice and search steps start from, read now. Cheap: no
     provider is asked (``setup_ops.options`` does that, for the model step's
@@ -269,8 +339,9 @@ def context() -> Dict[str, Any]:
         out["voice"] = all(isinstance(own.get(k), dict) for k in ("speech", "transcription"))
     except Exception:  # noqa: BLE001
         log.debug("first run: voice unreadable", exc_info=True)
+    out["configured"] = configured()
     return out
 
 
-__all__ = ["ACTIONS", "LANGUAGES", "SCREEN_ABOUT", "STEPS", "THEMES", "act", "applies", "context", "language",
-           "load", "prompt_lines", "status"]
+__all__ = ["ACTIONS", "LANGUAGES", "SCREEN_ABOUT", "STEPS", "THEMES", "act", "applies", "configured", "context",
+           "language", "load", "prompt_lines", "status"]

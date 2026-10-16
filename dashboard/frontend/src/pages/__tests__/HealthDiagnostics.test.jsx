@@ -72,6 +72,8 @@ vi.mock('../../api/support', () => ({
   getSupportBundle: () => Promise.resolve({ data: new Blob([]) }),
 }));
 
+// The Stack services card loads on its own; these tests are about other cards.
+vi.mock('../../api/services', () => ({ getClusterStack: () => Promise.resolve({ data: { components: [] } }) }));
 vi.mock('../../api', () => ({
   getHealth: () => ok({ status: 'ok', database: {}, services: {}, storage: {}, providers: {} }),
   getServiceChat: () => ok({ messages: [] }),

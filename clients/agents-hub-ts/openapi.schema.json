@@ -2543,6 +2543,61 @@
         "title": "ClaimSteeringBody",
         "type": "object"
       },
+      "ClientBody": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "encrypted": {
+            "default": false,
+            "title": "Encrypted",
+            "type": "boolean"
+          },
+          "mappings": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Mappings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ClientBody",
+        "type": "object"
+      },
+      "ClientKeyBody": {
+        "properties": {
+          "generate": {
+            "default": false,
+            "title": "Generate",
+            "type": "boolean"
+          },
+          "passphrase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passphrase"
+          },
+          "replace_unused": {
+            "default": false,
+            "title": "Replace Unused",
+            "type": "boolean"
+          }
+        },
+        "title": "ClientKeyBody",
+        "type": "object"
+      },
       "CloseBody": {
         "properties": {
           "note": {
@@ -7054,6 +7109,39 @@
         "title": "JobUpdate",
         "type": "object"
       },
+      "KeyBody": {
+        "properties": {
+          "iterations": {
+            "title": "Iterations",
+            "type": "integer"
+          },
+          "kdf": {
+            "default": "PBKDF2-SHA256",
+            "title": "Kdf",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "salt": {
+            "title": "Salt",
+            "type": "string"
+          },
+          "verifier": {
+            "title": "Verifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id",
+          "salt",
+          "iterations",
+          "verifier"
+        ],
+        "title": "KeyBody",
+        "type": "object"
+      },
       "KeyCreate": {
         "properties": {
           "budget_usd_per_month": {
@@ -8599,6 +8687,28 @@
         "title": "PersonalNoteAdd",
         "type": "object"
       },
+      "PlanBody": {
+        "properties": {
+          "new_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Id"
+          },
+          "workspace": {
+            "default": "default",
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "title": "PlanBody",
+        "type": "object"
+      },
       "PreviewRenewRequest": {
         "properties": {
           "deployment_id": {
@@ -9239,6 +9349,20 @@
           "name"
         ],
         "title": "PullBody",
+        "type": "object"
+      },
+      "PushBody": {
+        "properties": {
+          "records": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "title": "PushBody",
         "type": "object"
       },
       "QueryRequest": {
@@ -10770,6 +10894,19 @@
         "title": "SetInboundSecret",
         "type": "object"
       },
+      "SettingsBody": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SettingsBody",
+        "type": "object"
+      },
       "SettingsResponse": {
         "properties": {
           "agent_docker_extra_args": {
@@ -10831,6 +10968,16 @@
           "default_provider": {
             "title": "Default Provider",
             "type": "string"
+          },
+          "egress_proxy": {
+            "default": false,
+            "title": "Egress Proxy",
+            "type": "boolean"
+          },
+          "egress_proxy_running": {
+            "default": false,
+            "title": "Egress Proxy Running",
+            "type": "boolean"
           },
           "env_defined_fields": {
             "default": [],
@@ -11191,6 +11338,17 @@
               }
             ],
             "title": "Default Provider"
+          },
+          "egress_proxy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Proxy"
           },
           "google_api_key": {
             "anyOf": [
@@ -11902,6 +12060,33 @@
           "body"
         ],
         "title": "SnippetVersionCreate",
+        "type": "object"
+      },
+      "SpaceBody": {
+        "properties": {
+          "encrypted": {
+            "default": false,
+            "title": "Encrypted",
+            "type": "boolean"
+          },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "origin": {
+            "default": "",
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "title": "SpaceBody",
         "type": "object"
       },
       "SpeakIn": {
@@ -22719,6 +22904,415 @@
         ]
       }
     },
+    "/api/catalog/settings": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/updates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Updates",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Browse",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}/{item_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Item",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}/{item_id}/install": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}/{item_id}/plan": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}/{local_id}/diff": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "local_id",
+            "required": true,
+            "schema": {
+              "title": "Local Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Diff",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/catalog/{kind}/{local_id}/update": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "local_id",
+            "required": true,
+            "schema": {
+              "title": "Local Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
     "/api/channels": {
       "get": {
         "responses": {
@@ -24076,6 +24670,25 @@
           }
         },
         "summary": "Member Logs",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/cluster/stack": {
+      "get": {
+        "description": "Only the shared-service probes, for the Health page's card: the full\nmap reads far more than that card needs.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stack Components",
         "tags": [
           "cluster"
         ]
@@ -26484,6 +27097,25 @@
           }
         },
         "summary": "Member Logs",
+        "tags": [
+          "deployment"
+        ]
+      }
+    },
+    "/api/deployment/stack": {
+      "get": {
+        "description": "Only the shared-service probes, for the Health page's card: the full\nmap reads far more than that card needs.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stack Components",
         "tags": [
           "deployment"
         ]
@@ -31808,6 +32440,22 @@
       }
     },
     "/api/hublink/sync": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Client Status",
+        "tags": [
+          "sync"
+        ]
+      },
       "post": {
         "responses": {
           "200": {
@@ -31822,6 +32470,210 @@
         "summary": "Sync Link",
         "tags": [
           "hub-link"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Configure",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/conflicts": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Client Conflicts",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/conflicts/{conflict_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conflict_id",
+            "required": true,
+            "schema": {
+              "title": "Conflict Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Conflict",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/conflicts/{conflict_id}/resolve": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conflict_id",
+            "required": true,
+            "schema": {
+              "title": "Conflict Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Resolve",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/key": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Client Forget Key",
+        "tags": [
+          "sync"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientKeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Key",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/run": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Client Run",
+        "tags": [
+          "sync"
         ]
       }
     },
@@ -34688,6 +35540,104 @@
         ]
       }
     },
+    "/api/marketplace/flows/{flow_id}": {
+      "get": {
+        "description": "One flow with its portable YAML (the logic skeleton) and the agents it\nuses: a published one, or, for an administrator's key, any flow it can\nsee (a loop installed from here needs its flow). ``published`` tells the\nlinked hub which is which, so it can keep unpublished flows from people\nwho are not its administrators.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Marketplace Flow",
+        "tags": [
+          "marketplace"
+        ]
+      }
+    },
+    "/api/marketplace/loops": {
+      "get": {
+        "description": "Loops in the workspaces the caller can see, for an administrator's key\nonly (loops have no publishing flag; see the note above).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Marketplace Loops",
+        "tags": [
+          "marketplace"
+        ]
+      }
+    },
+    "/api/marketplace/loops/{loop_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "loop_id",
+            "required": true,
+            "schema": {
+              "title": "Loop Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Marketplace Loop",
+        "tags": [
+          "marketplace"
+        ]
+      }
+    },
     "/api/marketplace/skills": {
       "get": {
         "description": "List every skill published to the global catalog.\n\nA skill is a named procedure (\"when to use this\" plus ordered steps) that\nany workspace can install a copy of and attach to its own agents \u2014 see\n``routes/skills.py``. Pass ``workspace`` to annotate each card with\n``in_workspace``: whether that workspace already owns a copy.",
@@ -34730,6 +35680,64 @@
           }
         },
         "summary": "List Marketplace Skills",
+        "tags": [
+          "marketplace"
+        ]
+      }
+    },
+    "/api/marketplace/teams": {
+      "get": {
+        "description": "Teams in the workspaces the caller can see, for an administrator's key\nonly (teams have no publishing flag; see the note above).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Marketplace Teams",
+        "tags": [
+          "marketplace"
+        ]
+      }
+    },
+    "/api/marketplace/teams/{team_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Marketplace Team",
         "tags": [
           "marketplace"
         ]
@@ -51351,6 +52359,464 @@
         "summary": "Slo",
         "tags": [
           "support"
+        ]
+      }
+    },
+    "/api/sync/here": {
+      "get": {
+        "description": "What the caller synced into this workspace: the banner's source, and\nfor an encrypted space the public half of the key, so the browser can\ncheck a passphrase before opening anything.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Here",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/keys": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Keys",
+        "tags": [
+          "sync"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Key",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/keys/{key_id}": {
+      "delete": {
+        "description": "The caller's own key, and only while nothing is sealed with it (409\notherwise): keys are kept per owner, so nobody reaches another's.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Key",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Spaces",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces/{space}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Space",
+        "tags": [
+          "sync"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Space",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces/{space}/changes": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Since",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Changes",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces/{space}/push": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces/{space}/records": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Records",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/sync/spaces/{space}/records/{kind}/{record_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space",
+            "required": true,
+            "schema": {
+              "title": "Space",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "title": "Record Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Record",
+        "tags": [
+          "sync"
         ]
       }
     },

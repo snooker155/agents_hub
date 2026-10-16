@@ -49,6 +49,9 @@ vi.mock('../../components/stream', () => ({
   useChannel: () => {},
 }));
 
+// The diagram has its own test; here reactflow would need a layout engine.
+vi.mock('../../components/cluster/ServiceMap', () => ({ default: () => <div data-testid="service-map" /> }));
+
 import Cluster from '../Cluster';
 
 const show = () => render(<I18nProvider><Cluster /></I18nProvider>);

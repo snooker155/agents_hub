@@ -36,6 +36,10 @@ export default function FirstRun({ initial, onFinish }) {
   const [checked, setChecked] = useState(null);
   const [saved, setSaved] = useState(STEPS.includes(initial?.step) ? initial.step : 'hello');
   const [ctx, setCtx] = useState(null);
+  // The screens whose setting was already in force when the run opened. Only
+  // those show a summary: a key connected a minute ago on this very run is
+  // not "already set up", and its next screen still asks.
+  const [began, setBegan] = useState(() => new Set());
   // Options belong to the set of providers they were asked with.
   const [asked, setAsked] = useState({ key: null, data: null, error: '' });
 
@@ -57,7 +61,12 @@ export default function FirstRun({ initial, onFinish }) {
   useEffect(() => {
     let live = true;
     getFirstRunContext()
-      .then(({ data }) => { if (live) { latest.current = data || {}; setCtx(data || {}); } })
+      .then(({ data }) => {
+        if (!live) return;
+        latest.current = data || {};
+        setCtx(data || {});
+        setBegan(new Set(Object.entries(data?.configured || {}).filter(([, v]) => v).map(([k]) => k)));
+      })
       .catch(() => { if (live) setCtx({}); });
     return () => { live = false; };
   }, []);
@@ -96,7 +105,9 @@ export default function FirstRun({ initial, onFinish }) {
     onFinish(target, { voice: checked?.speech === 'ok' });
   };
 
-  const props = { ctx, refreshCtx, options, optionsError, next };
+  // What each screen may show as already set up: the live value, for screens that began that way.
+  const configured = Object.fromEntries([...began].map((k) => [k, ctx?.configured?.[k] || null]));
+  const props = { ctx, refreshCtx, options, optionsError, next, configured };
   // The dots count the decisions, not hello and the last screen.
   const dots = visible.filter((s) => s !== 'hello' && s !== 'done');
   const dotAt = dots.indexOf(step);

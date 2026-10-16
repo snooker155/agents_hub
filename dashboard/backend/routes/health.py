@@ -38,18 +38,18 @@ async def health(request: Request):
     Run in a worker thread: the probes query the database and stat files, and
     the page calls this on every load, so the event loop must keep serving."""
     from starlette.concurrency import run_in_threadpool
-    from common.config import hub_role, playground_enabled
+    from common.config import playground_enabled
 
     result = await run_in_threadpool(snapshot, request.app.state)
     # Optional-feature facts, kept separate from the liveness/state data above:
     # the frontend reads this to hide a feature's pages rather than probing
     # its routes. See docs/playground.md, "Turning the playground off".
-    # ``cluster``: the hub runs as separate api and worker processes
-    # (docs/workers.md), the only case where the Cluster page has members,
-    # leases and a launch queue to show, so the menu offers it only then.
+    # ``cluster`` is always true now: the Cluster page maps the shared services
+    # (database, model runtime, ...) even for one process. The key stays for
+    # older frontends that gate on it.
     result["features"] = {
         "playground": playground_enabled(),
-        "cluster": hub_role() != "all",
+        "cluster": True,
     }
     return result
 

@@ -24,7 +24,7 @@ import LiveMark from '../../liveMark/LiveMark';
 import useSetupGuide from '../../setup/useSetupGuide';
 import { browserSpeechAvailable } from '../../assistant/useSpeaker';
 import {
-  ChoiceCard, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
+  ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';
 import { PROVIDER_LABELS, errorText, localSetStarted, voiceLabel } from '../firstRunModel';
 
@@ -424,10 +424,14 @@ function VoiceCheck({ assistant, onResult, downloading }) {
   );
 }
 
-export default function VoiceStep({ ctx, options, optionsError, refreshCtx, next, assistant, onChecked }) {
+export default function VoiceStep({
+  ctx, options, optionsError, refreshCtx, next, assistant, onChecked, configured,
+}) {
   const { t, language } = useI18n();
   const settled = Boolean(ctx?.voice) || localSetStarted(ctx);
-  const [phase, setPhase] = useState(settled ? 'check' : 'choose');
+  const was = configured?.voice;
+  // Set before this run opened: say so first; Change goes to the normal choice.
+  const [phase, setPhase] = useState(was ? 'configured' : settled ? 'check' : 'choose');
   const [result, setResult] = useState(null);
   const { guide } = useSetupGuide();
   const work = guide?.work;
@@ -442,6 +446,17 @@ export default function VoiceStep({ ctx, options, optionsError, refreshCtx, next
   // The voice models the assistant uses, read when the screen opens.
   const { refreshVoice } = assistant;
   useEffect(() => { refreshVoice(); }, [refreshVoice]);
+
+  if (phase === 'configured') {
+    const names = was?.speech && was?.transcription
+      ? t('firstRun.voice.configuredNames', { speech: was.speech, heard: was.transcription }) : '';
+    return (
+      <ConfiguredFrame icon={Volume2} title={t('firstRun.voice.title')} subtitle={t('firstRun.voice.subtitle')}
+        summary={names || t('firstRun.voice.ready')} onContinue={() => next()}
+        onChange={() => setPhase('choose')} changeLabel={t('firstRun.voice.change')}
+        testId="first-run-voice" t={t} />
+    );
+  }
 
   if (phase === 'choose') {
     return (

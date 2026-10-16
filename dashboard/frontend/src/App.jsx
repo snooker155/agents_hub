@@ -55,6 +55,8 @@ const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
+const Vault = lazy(() => import('./pages/Vault'));
+const Catalog = lazy(() => import('./pages/Catalog'));
 const Environments = lazy(() => import('./pages/Environments'));
 const Watchers = lazy(() => import('./pages/Watchers'));
 const Nodes = lazy(() => import('./pages/Nodes'));
@@ -211,6 +213,8 @@ function AppRoutes() {
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
         <Route path="/cluster" element={guard(<Cluster />)} />
+        <Route path="/vault" element={guard(<Vault />)} />
+        <Route path="/catalog" element={guard(<Catalog />)} />
         <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />

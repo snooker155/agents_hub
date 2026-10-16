@@ -23,7 +23,7 @@ ah hub unlink
 ```
 
 The key is a personal API key of the shared hub (Settings → API access →
-Personal keys there), so everything the laptop does there is done as that
+Personal API keys there), so everything the laptop does there is done as that
 person: mirrored records belong to them and land in their personal
 workspace unless another one is named. The link is checked against
 `/api/auth/me` before anything is registered. The key and the mirror
@@ -216,11 +216,76 @@ and `untrusted` in multi mode. `map_on_nodes` counts as reading untrusted
 text for the capability guard: an untrusted node, given public work only,
 could still answer anything.
 
+## Catalog mode
+
+"Catalog only" uses the linked hub as a library and nothing else: you run
+this hub with your own model keys, browse the other hub's agents, skills,
+flows, teams and loops, and install copies into a local workspace. No models,
+no data and no mirror flow; the switch is `catalog` on the link record
+(`PUT /api/catalog/settings`, administrator), set from the Remote hub tab of
+Settings, and the catalog lives at `/catalog`.
+
+What the remote serves is the marketplace of the same codebase
+(`routes/marketplace.py`): shared agents, flows and skills (with the review
+gate when it is on), and, new for this mode, teams and loops
+(`GET /api/marketplace/teams`, `/loops`, each with `/{id}`), plus
+`GET /api/marketplace/flows/{id}` with the flow's YAML and a `published`
+flag. Teams and loops have no publishing flag, so nothing marks one as meant
+for others: the remote serves them only to an administrator's key (still cut
+to the key's scope), and a member's key gets an empty list. The same holds
+for a flow that is not published (a loop's flow usually is not); a published
+flow is served to any key. A definition carries secret names at most, never
+values; model picks (provider, model, grader) are left out of teams and
+loops, so a copy runs on this hub's models.
+
+**Who sees what here.** The link's key is hub-wide, so what this hub reads
+through it is the linking administrator's view of the remote. Agents, skills
+and published flows are browsed by any signed-in account; teams, loops and
+unpublished flows are browsed, planned, installed, diffed and updated by this
+hub's administrators only (outside multi mode the one operator is one).
+`GET /api/catalog/updates` lists only copies in workspaces the caller can
+see, and the diff of a copy in a workspace the caller cannot see answers 404.
+
+**Install** (`hublink/catalog.py`). `POST /api/catalog/{kind}/{id}/plan`
+resolves what an install needs, dependencies first: the agents of a flow,
+team or loop, the flow of a loop, the shared skills of an agent. Each step is
+`install`, `update`, `rename`, `exists`, `system`, `conflict` or `missing`. A
+dependency whose id is taken here by something else is installed under a free
+id (`<id>-hub`) and references in the dependents are remapped; the item's
+own id being taken is a `conflict` the person settles with `new_id`. A
+missing dependency (the hub does not share the agent) blocks the install.
+The install itself goes through the UI's own save paths, so the capability
+guard, the skill safety review and the flow review gate all run. Planning and
+installing need editor rights in the target workspace; an empty workspace
+means default and is checked as default.
+
+A copy belongs to the workspace that owns it. An install into workspace B
+updates only a copy B owns: an agent already installed into workspace A is
+A's, so installing it into B is a `conflict` on its id (B gets its own copy
+under a new id) and A's copy is never written. As a dependency, A's copy is
+reused (`exists`) only when A shared it or it is global; otherwise B gets its
+own copy. A dependency the hub does not share is taken from an agent of the
+same id here only under the rule for adding an agent to a workspace (it is
+B's, global, or shared); otherwise it is `missing`. Updating a copy needs
+editor rights in the workspace that owns it now, and the provenance record
+keeps that workspace.
+
+**Provenance and updates.** Every installed item is recorded in the
+`hub_catalog_installs` DocStore (key `<kind>:<local id>`: remote url and id,
+the hash of the remote's portable definition, the hash of what was written
+here, the id mappings used). `GET /api/catalog/updates` compares the stored
+hash with the remote's current one and says whether the copy was edited here;
+`GET /api/catalog/{kind}/{local_id}/diff` is the unified diff of the portable
+texts, and `POST .../update` replaces the copy (a skill keeps its version
+history, an agent its version log). Installing an item again updates its copy
+instead of making another.
+
 ## Routes
 
 | Route | Credential | Purpose |
 |---|---|---|
 | `GET/PUT/DELETE /api/hublink`, `POST /api/hublink/sync` | administrator | the link |
+| `GET/PUT /api/catalog/settings` (PUT: administrator), `GET /api/catalog/{kind}`, `GET /api/catalog/{kind}/{id}`, `POST /api/catalog/{kind}/{id}/plan\|install` (workspace editor), `GET /api/catalog/updates`, `GET /api/catalog/{kind}/{local_id}/diff` (copies in visible workspaces), `POST /api/catalog/{kind}/{local_id}/update` (editor of the owning workspace); teams, loops and unpublished flows: administrator | any account | catalog mode |
 | `PUT /api/hublink/mirror/chats`, `PUT /api/hublink/mirror/memory` | personal key | the mirror's receiving end |
 | `GET/POST /api/nodes`, `GET/DELETE /api/nodes/{id}`, `POST /api/nodes/{id}/rotate` | any account (own nodes; administrators see all) | the nodes |
 | `PATCH /api/nodes/{id}` | owner or administrator; `trust` administrators only | trust, capacity cap, workspaces, disabled |

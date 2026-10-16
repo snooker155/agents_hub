@@ -369,6 +369,9 @@ class TaskStore:
         JSON, before ``_sync_executor`` would backfill one from the other.
         """
         tid_str = str(task_id)
+        from hubsync import copies
+        if copies.is_copy(tid_str):
+            return None  # synced in from another hub: it runs there (hubsync/copies.py)
         with db.transaction() as conn:
             row = conn.execute("SELECT doc FROM tasks WHERE id = ?", (tid_str,)).fetchone()
             if row is None:

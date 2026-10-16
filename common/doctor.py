@@ -216,8 +216,9 @@ def check_cors(snap: Dict[str, Any]) -> Result:
 
 def check_security(snap: Dict[str, Any]) -> Result:
     """The settings SECURITY.md's hardening list names, read together: the
-    capability guard, the secret key against the secrets already stored, and
-    whether people share a hub whose runs have the host's permissions.
+    capability guard, the secret key against the secrets already stored, secrets
+    bound to hosts against the egress proxy that swaps them in, and whether
+    people share a hub whose runs have the host's permissions.
     ``single`` mode on a local subprocess is the laptop case and reads ok."""
     from agents.capability_guard import guard_mode
     from common import db, identity, secrets
@@ -226,12 +227,19 @@ def check_security(snap: Dict[str, Any]) -> Result:
     execution = agent_execution_mode()
     guard = guard_mode()
     backend = str(getattr(settings, "secret_backend", "local") or "local").strip().lower()
+    from environments import egress
+    conn = db.get_conn()
     stored = 0
     if backend != "vault":
-        stored = int(db.get_conn().execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
+        stored = int(conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
+    # The vault backend keeps the metadata row here too, hosts included.
+    bound = int(conn.execute("SELECT COUNT(*) FROM secrets WHERE allowed_hosts != ''").fetchone()[0])
+    proxy_on = egress.enabled()
+    fallback = secrets._plaintext_fallback()
     detail = {"auth_mode": mode, "execution_mode": execution, "capability_guard": guard,
               "secret_backend": backend, "secret_key": secrets.key_configured(),
-              "secrets_stored": stored}
+              "secrets_stored": stored, "host_bound_secrets": bound, "egress_proxy": proxy_on,
+              "plaintext_fallback": fallback}
     problems = []
     if guard != "block":
         problems.append(Msg("security.guard", f"CAPABILITY_GUARD is {guard}: an agent may hold "
@@ -241,6 +249,19 @@ def check_security(snap: Dict[str, Any]) -> Result:
         problems.append(Msg("security.secretKey", f"{stored} secret(s) stored but "
                                                   "AGENTS_HUB_SECRET_KEY is empty, so runs receive "
                                                   "none of them", count=stored))
+    if bound and not proxy_on:
+        if fallback:
+            problems.append(Msg("security.hostBoundPlain", f"{bound} secret(s) bound to hosts but "
+                                                          "AGENTS_HUB_EGRESS_PROXY is off and the "
+                                                          "plaintext fallback is on, so runs receive "
+                                                          "the real values; set AGENTS_HUB_EGRESS_PROXY=1",
+                                count=bound))
+        else:
+            problems.append(Msg("security.hostBoundNoProxy", f"{bound} secret(s) bound to hosts but "
+                                                            "AGENTS_HUB_EGRESS_PROXY is off, so runs "
+                                                            "that declare them refuse to start; set "
+                                                            "AGENTS_HUB_EGRESS_PROXY=1",
+                                count=bound))
     if mode != "single" and execution == "local":
         problems.append(Msg("security.localRuns", f"{mode} mode with AGENT_EXECUTION_MODE=local: "
                                                   "every run has this host's permissions; use docker",
@@ -362,6 +383,49 @@ def check_outbox(snap: Dict[str, Any]) -> Result:
                                               "delivered.", count=pending), detail)
     return ("ok", Msg("outbox.ok", f"{pending} notification(s) pending, none given up on.",
                       count=pending), detail)
+
+
+# ── broker, object store, identity provider ──────────────────────────────────
+# One probe each in common/stack.py, shared with the Cluster page's service map.
+
+def _stack_check(component_id: str, key: str, off: str, ok: str, fail_text: str,
+                 warn: Optional[str] = None) -> Result:
+    from common import stack
+    comp = stack.component(component_id) or {}
+    detail = dict(comp.get("detail") or {})
+    detail["latency_ms"] = comp.get("latency_ms")
+    status = comp.get("status")
+    if status == "off":
+        return ("skip", Msg(f"{key}.off", off), {})
+    if status == "ok":
+        return ("ok", Msg(f"{key}.ok", ok), detail)
+    if status == "warn":
+        # The service answered but something around it is off (the broker
+        # answers while this replica has no bridge to it): saying "not
+        # reachable" and failing the doctor would be untrue.
+        return ("warn", Msg(f"{key}.warn", warn or str(comp.get("summary") or ok)), detail)
+    reason = str(detail.get("error") or comp.get("summary") or "no answer")
+    return ("fail", Msg(f"{key}.unreachable", f"{fail_text}: {reason}.", error=reason), detail)
+
+
+def check_broker(snap: Dict[str, Any]) -> Result:
+    return _stack_check("broker", "broker", "No Redis broker is configured (AGENTS_HUB_BROKER_URL).",
+                        "Redis answers.", "Redis is not reachable",
+                        warn="Redis answers, but this replica's bridge to it is not connected, "
+                             "so its live events do not reach other replicas.")
+
+
+def check_blob_store(snap: Dict[str, Any]) -> Result:
+    return _stack_check("blob_store", "blobStore",
+                        "No object store is configured (AGENTS_HUB_BLOB_URL); files stay on local disk.",
+                        "The object store accepts a write, a read and a delete.",
+                        "The object store is not reachable")
+
+
+def check_oidc(snap: Dict[str, Any]) -> Result:
+    return _stack_check("oidc", "oidc", "Single sign-on is not configured.",
+                        "The identity provider's discovery document answers.",
+                        "The identity provider is not reachable")
 
 
 # ── disk ─────────────────────────────────────────────────────────────────────
@@ -666,6 +730,9 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("stale_runs", "Stale runs and leases", check_stale_runs),
     ("run_queue", "Launch queue", check_run_queue),
     ("outbox", "Outbound notifications", check_outbox),
+    ("broker", "Redis broker", check_broker),
+    ("blob_store", "Object store", check_blob_store),
+    ("oidc", "Identity provider", check_oidc),
     ("disk", "Free disk", check_disk),
     ("browser", "Browser service", check_browser),
     ("models_runtime", "Model runtime", check_models_runtime),

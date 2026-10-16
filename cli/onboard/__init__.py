@@ -9,7 +9,7 @@ import typer
 
 def setup_command(
     shape: Optional[str] = typer.Option(
-        None, "--shape", help="local, docker, compose or remote. Asked when omitted."),
+        None, "--shape", help="local, docker, compose, kubernetes or remote. Asked when omitted."),
     answers: Optional[str] = typer.Option(
         None, "--answers", help="A JSON file with the answers, for an unattended install. Nothing is asked."),
     directory: Optional[str] = typer.Option(
@@ -18,11 +18,17 @@ def setup_command(
     dry_run: bool = typer.Option(False, "--dry-run", help="Stop after the review; write nothing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply without the final confirmation."),
     no_start: bool = typer.Option(False, "--no-start", help="Configure only; do not offer to start the hub."),
+    in_docker: bool = typer.Option(
+        False, "--in-docker", hidden=True,
+        help="Run from the image's setup command: write into --workdir and start the stack through the socket."),
+    workdir: Optional[str] = typer.Option(
+        None, "--workdir", hidden=True, help="With --in-docker: the folder the container was started in."),
     disconnect: bool = typer.Option(
         False, "--disconnect", help="Forget the hub a remote setup saved, so `ah` runs this checkout again."),
 ):
-    """Install and configure the hub step by step: how it runs, the database,
-    who signs in, providers and default models, features. Run it again to
+    """Install and configure the hub step by step: how it runs, how much load
+    it carries, the database, who signs in, providers and default models,
+    features. Run it again to
     change any of it; every question then defaults to the value in force."""
     # Imported here, not at the top: cli.main imports this module while it is
     # itself still loading, and the steps import cli.main for the CLI state.
@@ -38,6 +44,14 @@ def setup_command(
             console.print("No hub is saved.")
         return
 
+    if in_docker and workdir:
+        # The image's launcher changes into /app before starting Python, so a
+        # relative path the person typed means their folder, not that one.
+        from pathlib import Path
+        if answers and not Path(answers).is_absolute():
+            answers = str(Path(workdir) / answers)
+        if directory and not Path(directory).is_absolute():
+            directory = str(Path(workdir) / directory)
     try:
         if answers:
             asker = AnswersAsker.from_file(console, answers)
@@ -48,7 +62,7 @@ def setup_command(
         else:
             asker = TerminalAsker(console)
         code = wizard.run(asker, shape=shape, directory=directory, advanced=advanced,
-                          dry_run=dry_run, yes=yes, no_start=no_start)
+                          dry_run=dry_run, yes=yes, no_start=no_start, in_docker=in_docker, workdir=workdir)
     except SetupError as exc:
         console.print(f"[red]Setup stopped:[/red] {exc}")
         raise typer.Exit(1)

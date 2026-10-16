@@ -5,6 +5,8 @@ import { getHubLink, saveHubLink, syncHubLink, unlinkHub } from '../../api/hubLi
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import PageLoader from '../PageLoader';
+import HubLinkSyncCard from './HubLinkSyncCard';
+import HubLinkCatalogCard from './HubLinkCatalogCard';
 
 const MIRROR_KINDS = ['runs', 'chats', 'memory'];
 
@@ -248,6 +250,9 @@ export default function HubLinkSection() {
           </p>
         </SectionCard>
       )}
+
+      {linked && <HubLinkCatalogCard />}
+      {linked && <HubLinkSyncCard />}
     </>
   );
 }

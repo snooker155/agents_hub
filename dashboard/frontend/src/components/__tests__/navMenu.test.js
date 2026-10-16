@@ -72,8 +72,8 @@ describe('navMenu', () => {
     expect(visibleGroups(groups, FULL)).toBe(groups);
   });
 
-  it('cluster row only for an operator when the hub is a cluster', () => {
-    expect(paths(buildMenu({ t, auth: single }))).not.toContain('/cluster');
+  it('cluster row for every operator, one process or many', () => {
+    expect(paths(buildMenu({ t, auth: single }))).toContain('/cluster');
     expect(paths(buildMenu({ t, auth: single, features: { cluster: true } }))).toContain('/cluster');
     expect(paths(buildMenu({ t, auth: multiUser, features: { cluster: true } }))).not.toContain('/cluster');
     expect(paths(buildMenu({ t, auth: multiUser }))).not.toContain('/health');

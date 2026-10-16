@@ -297,6 +297,10 @@ class Settings(BaseSettings):
     # it on; the client secret may be empty for a public client.
     auth_oidc_issuer: str = Field(
         default="", validation_alias=AliasChoices("AUTH_OIDC_ISSUER", "auth_oidc_issuer"))
+    # Server-to-server address of the provider when browsers use a public one
+    # (the bundled Keycloak: http://keycloak:8080). Empty = use the issuer.
+    auth_oidc_internal_url: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_INTERNAL_URL", "auth_oidc_internal_url"))
     auth_oidc_client_id: str = Field(
         default="", validation_alias=AliasChoices("AUTH_OIDC_CLIENT_ID", "auth_oidc_client_id"))
     auth_oidc_client_secret: str = Field(

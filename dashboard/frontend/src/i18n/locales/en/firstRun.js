@@ -1,4 +1,6 @@
 export default {
+  change: 'Change',
+  configured: 'Already set up',
   continue: 'Continue',
   back: 'Back',
   notNow: 'Not now',
@@ -63,6 +65,7 @@ export default {
     later: 'Each workspace and agent can have its own model on the Models page.',
   },
   voice: {
+    configuredNames: 'Speech {{speech}}, recognition {{heard}}',
     title: 'Give the assistant a voice',
     subtitle: 'So you can talk to it and hear its answers.',
     cloud: '{{provider}} voice',
@@ -128,6 +131,8 @@ export default {
     later: 'You can change this per workspace and per agent at any time.',
   },
   demo: {
+    on: 'Demo workspace added',
+    off: 'Starting without the demo',
     title: 'Add a demo workspace?',
     subtitle: 'A workspace with ready agents, chats and views shows what the hub can do before you build anything.',
     add: 'Add the demo',

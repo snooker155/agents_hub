@@ -442,6 +442,18 @@ export type ClaimSteeringBody = {
   "step"?: number;
 };
 
+export type ClientBody = {
+  "enabled": boolean;
+  "encrypted"?: boolean;
+  "mappings"?: Record<string, string>[];
+};
+
+export type ClientKeyBody = {
+  "passphrase"?: string | null;
+  "generate"?: boolean;
+  "replace_unused"?: boolean;
+};
+
 export type CloseBody = {
   "status": string;
   "note"?: string;
@@ -1175,6 +1187,14 @@ export type JobUpdate = {
   "consolidate_session_limit"?: number | null;
 };
 
+export type KeyBody = {
+  "key_id": string;
+  "kdf"?: string;
+  "salt": string;
+  "iterations": number;
+  "verifier": string;
+};
+
 export type KeyCreate = {
   "name"?: string;
   "workspaces"?: string[] | null;
@@ -1438,6 +1458,11 @@ export type PersonalNoteAdd = {
   "workspace"?: string | null;
 };
 
+export type PlanBody = {
+  "workspace"?: string;
+  "new_id"?: string | null;
+};
+
 export type PreviewRenewRequest = {
   "ticket"?: string | null;
   "kind"?: "container" | "project" | "deployment" | null;
@@ -1538,6 +1563,10 @@ export type PublishEvent = {
 
 export type PullBody = {
   "name": string;
+};
+
+export type PushBody = {
+  "records"?: Record<string, unknown>[];
 };
 
 export type QueryRequest = {
@@ -1787,6 +1816,10 @@ export type SetInboundSecret = {
   "secret"?: string | null;
 };
 
+export type SettingsBody = {
+  "enabled": boolean;
+};
+
 export type SettingsResponse = {
   "openai_api_key_masked": string;
   "anthropic_api_key_masked": string;
@@ -1823,6 +1856,8 @@ export type SettingsResponse = {
   "agent_streaming": boolean;
   "capability_guard": string;
   "capability_override_requires_container": boolean;
+  "egress_proxy"?: boolean;
+  "egress_proxy_running"?: boolean;
   "web_search_provider": string;
   "web_search_api_key_masked": string;
   "web_search_max_results": number;
@@ -1878,6 +1913,7 @@ export type SettingsUpdate = {
   "agent_streaming"?: boolean | null;
   "capability_guard"?: string | null;
   "capability_override_requires_container"?: boolean | null;
+  "egress_proxy"?: boolean | null;
   "web_search_provider"?: string | null;
   "web_search_api_key"?: string | null;
   "web_search_max_results"?: number | null;
@@ -1957,6 +1993,12 @@ export type SnippetVersionCreate = {
   "note"?: string;
   "workspace"?: string | null;
   "base"?: string | null;
+};
+
+export type SpaceBody = {
+  "encrypted"?: boolean;
+  "key_id"?: string | null;
+  "origin"?: string;
 };
 
 export type SpeakIn = {
@@ -2947,6 +2989,31 @@ export interface ApiPaths {
   "/api/browser/status": {
     get: { response: Record<string, unknown> };
   };
+  "/api/catalog/settings": {
+    get: { response: unknown };
+    put: { body: SettingsBody; response: unknown };
+  };
+  "/api/catalog/updates": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}/install": {
+    post: { body: PlanBody; response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}/plan": {
+    post: { body: PlanBody; response: unknown };
+  };
+  "/api/catalog/{kind}/{local_id}/diff": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{local_id}/update": {
+    post: { response: unknown };
+  };
   "/api/channels": {
     get: { response: unknown };
   };
@@ -3022,6 +3089,9 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/cluster/members/{member_id}/logs": {
+    get: { response: unknown };
+  };
+  "/api/cluster/stack": {
     get: { response: unknown };
   };
   "/api/connection-proposals": {
@@ -3152,6 +3222,9 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/deployment/members/{member_id}/logs": {
+    get: { response: unknown };
+  };
+  "/api/deployment/stack": {
     get: { response: unknown };
   };
   "/api/deployments/apps": {
@@ -3479,6 +3552,24 @@ export interface ApiPaths {
     put: { body: MirrorMemory; response: unknown };
   };
   "/api/hublink/sync": {
+    get: { response: unknown };
+    post: { response: unknown };
+    put: { body: ClientBody; response: unknown };
+  };
+  "/api/hublink/sync/conflicts": {
+    get: { response: unknown };
+  };
+  "/api/hublink/sync/conflicts/{conflict_id}": {
+    get: { response: unknown };
+  };
+  "/api/hublink/sync/conflicts/{conflict_id}/resolve": {
+    post: { response: unknown };
+  };
+  "/api/hublink/sync/key": {
+    post: { body: ClientKeyBody; response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/hublink/sync/run": {
     post: { response: unknown };
   };
   "/api/ingest/runs": {
@@ -3629,7 +3720,22 @@ export interface ApiPaths {
   "/api/marketplace/flows": {
     get: { response: unknown };
   };
+  "/api/marketplace/flows/{flow_id}": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/loops": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/loops/{loop_id}": {
+    get: { response: unknown };
+  };
   "/api/marketplace/skills": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/teams": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/teams/{team_id}": {
     get: { response: unknown };
   };
   "/api/mcp/servers": {
@@ -4599,6 +4705,35 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/support/slo": {
+    get: { response: unknown };
+  };
+  "/api/sync/here": {
+    get: { response: unknown };
+  };
+  "/api/sync/keys": {
+    get: { response: unknown };
+    put: { body: KeyBody; response: unknown };
+  };
+  "/api/sync/keys/{key_id}": {
+    delete: { response: unknown };
+  };
+  "/api/sync/spaces": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}": {
+    put: { body: SpaceBody; response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/changes": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/push": {
+    post: { body: PushBody; response: unknown };
+  };
+  "/api/sync/spaces/{space}/records": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/records/{kind}/{record_id}": {
     get: { response: unknown };
   };
   "/api/system": {

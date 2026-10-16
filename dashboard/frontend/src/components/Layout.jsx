@@ -11,6 +11,8 @@ import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSum
 import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
+import SyncIndicator from './SyncIndicator';
+import SyncedDataBanner from './vault/SyncedDataBanner';
 import LanguageSwitcher from './LanguageSwitcher';
 import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
@@ -626,6 +628,8 @@ const Layout = ({ children }) => {
             )}
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
+            {/* Two-way sync with the linked hub: only while it is on */}
+            <SyncIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}
@@ -655,6 +659,9 @@ const Layout = ({ children }) => {
             <HelpPanel />
           </div>
         </header>
+        {/* Data the person synced into this workspace end-to-end encrypted: said
+            plainly, so nobody wonders why their records look locked here. */}
+        <SyncedDataBanner />
         <main className="flex-1 min-h-0 overflow-y-auto pb-safe">{children}</main>
         {/* The chat that follows the page: a button in the corner everywhere
             but on the Chat page, which is one already. */}

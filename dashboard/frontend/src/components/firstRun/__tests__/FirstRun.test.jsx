@@ -313,4 +313,78 @@ describe('FirstRun', () => {
     fireEvent.click(screen.getByTestId('first-run-finish-assistant'));
     await waitFor(() => expect(onFinish).toHaveBeenCalledWith('assistant', { voice: true }));
   });
+
+  describe('screens already set up', () => {
+    const SET = {
+      ...CONNECTED,
+      configured: {
+        model: { provider: 'anthropic', model: 'claude-sonnet-5' },
+        voice: { speech: 'gpt-4o-mini-tts', transcription: 'gpt-4o-transcribe' },
+        search: { provider: 'openai', source: 'model_key', key_set: true },
+        demo: { enabled: false },
+      },
+    };
+    const open = async (step, ctx = SET) => {
+      firstRunApi.getFirstRunContext.mockResolvedValue({ data: ctx });
+      renderRun({ initial: { step } });
+    };
+
+    it('shows the chosen model with Continue and Change, and Continue moves on', async () => {
+      await open('choose_model');
+      expect(await screen.findByTestId('first-run-choose-configured')).toHaveTextContent('Already set up: Anthropic · claude-sonnet-5');
+      expect(screen.getByTestId('first-run-change')).toBeTruthy();
+      expect(screen.queryByTestId('first-run-tier-balanced')).toBeNull();
+      cont();
+      await screen.findByTestId('first-run-voice');
+      expect(firstRunApi.firstRunOp).not.toHaveBeenCalled();
+    });
+
+    it('Change opens the normal form of the model choice', async () => {
+      await open('choose_model');
+      await screen.findByTestId('first-run-choose-configured');
+      fireEvent.click(screen.getByTestId('first-run-change'));
+      expect(await screen.findByTestId('first-run-tier-balanced')).toBeTruthy();
+      expect(screen.queryByTestId('first-run-choose-configured')).toBeNull();
+    });
+
+    it('shows the voice models, and Change opens the voice choice', async () => {
+      await open('voice');
+      expect(await screen.findByTestId('first-run-voice-configured')).toHaveTextContent('gpt-4o-mini-tts');
+      fireEvent.click(screen.getByTestId('first-run-change'));
+      expect(await screen.findByTestId('first-run-voice-cloud-openai')).toBeTruthy();
+    });
+
+    it('shows the search backend and goes on without saving', async () => {
+      await open('search');
+      expect(await screen.findByTestId('first-run-search-configured')).toHaveTextContent('Already set up: OpenAI');
+      cont();
+      await screen.findByTestId('first-run-memory');
+      expect(settingsApi.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('shows a demo decided off, and Change offers the choice', async () => {
+      await open('demo');
+      expect(await screen.findByTestId('first-run-demo-configured')).toHaveTextContent('Starting without the demo');
+      fireEvent.click(screen.getByTestId('first-run-change'));
+      expect(await screen.findByTestId('first-run-demo-add')).toBeTruthy();
+    });
+
+    it('asks as usual where nothing is set', async () => {
+      await open('search', { ...CONNECTED, search: { provider: '', source: 'none', key_set: false }, configured: {} });
+      expect(await screen.findByTestId('first-run-search-key')).toBeTruthy();
+      expect(screen.queryByTestId('first-run-change')).toBeNull();
+    });
+
+    it('does not call a key connected during this very run "already set up"', async () => {
+      firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...EMPTY, configured: {} } });
+      renderRun({ initial: { step: 'model' } });
+      fireEvent.click(await screen.findByTestId('first-run-way-cloud'));
+      fireEvent.change(screen.getByTestId('first-run-key'), { target: { value: 'sk-test' } });
+      setupApi.connectFirstModel.mockResolvedValue({ data: { ok: true } });
+      firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...SET } });
+      fireEvent.click(screen.getByTestId('first-run-connect'));
+      expect(await screen.findByTestId('first-run-tier-balanced')).toBeTruthy();
+      expect(screen.queryByTestId('first-run-choose-configured')).toBeNull();
+    });
+  });
 });

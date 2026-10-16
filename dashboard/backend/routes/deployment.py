@@ -27,10 +27,21 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 log = logging.getLogger(__name__)
+
+
+def _require_operator(request: Request) -> None:
+    """The map is for whoever runs the service: it lists every account's
+    nodes, internal service URLs and the bucket, and its probes write to the
+    bucket and refetch the identity provider's discovery on every call. The
+    menu already shows Cluster and Health only to an operator; this makes the
+    API agree. Outside multi mode the one operator passes (require_role)."""
+    from common import identity
+    identity.require_role(identity.request_principal(request), admin=True)
+
 
 # Every route below is registered on both of these: /api/cluster is the
 # page's real name, /api/deployment stays live as an alias for anything, in or
@@ -39,8 +50,10 @@ log = logging.getLogger(__name__)
 # to expose one endpoint under two routers — a route decorator just registers
 # the function and hands it back unchanged, so a second decorator on top adds
 # a second registration rather than replacing the first.)
-router = APIRouter(prefix="/api/cluster", tags=["cluster"])
-deployment_alias_router = APIRouter(prefix="/api/deployment", tags=["deployment"])
+router = APIRouter(prefix="/api/cluster", tags=["cluster"],
+                   dependencies=[Depends(_require_operator)])
+deployment_alias_router = APIRouter(prefix="/api/deployment", tags=["deployment"],
+                                    dependencies=[Depends(_require_operator)])
 
 ACTIVE_RUN_STATUSES = ("running", "stop", "pending", "queued")
 
@@ -204,6 +217,49 @@ def _by_host(items: List[Dict[str, Any]], key: str = "host") -> Dict[str, int]:
     return dict(counts)
 
 
+def _stack() -> List[Dict[str, Any]]:
+    """The shared services around the processes (common/stack.py): Postgres,
+    Redis, the object store, the identity provider, ... each probed with a
+    short timeout, so this adds at most that timeout to the map."""
+    try:
+        from common import stack
+        return stack.components()
+    except Exception:  # noqa: BLE001 - the map still loads without the probes
+        log.debug("_stack: falling back after a failure", exc_info=True)
+        return []
+
+
+def _hub_nodes() -> List[Dict[str, Any]]:
+    """Machines lending this hub their models and sandbox (hublink/nodes.py),
+    with the work each has open now. Secrets never leave the store."""
+    try:
+        from hublink import jobs, nodes
+        busy = jobs.in_flight()
+        return [{k: v for k, v in nodes.public(n, in_flight=busy.get(str(n.get("id")), 0)).items()
+                 if "token" not in k and "key" not in k}
+                for n in nodes.list_nodes()]
+    except Exception:  # noqa: BLE001 - best effort, the map still loads
+        log.debug("_hub_nodes: falling back after a failure", exc_info=True)
+        return []
+
+
+def _hub_link() -> Dict[str, Any]:
+    """Whether this hub is linked to a remote one, and in which directions."""
+    try:
+        from hublink import store
+        doc = store.get()
+        if not doc:
+            return {"linked": False}
+        return {"linked": True, "url": doc.get("url"), "name": doc.get("name"),
+                "last_sync_at": doc.get("last_sync_at"), "last_error": doc.get("last_error") or "",
+                "modes": {"models": bool(doc.get("use_models")), "agents": bool(doc.get("use_agents")),
+                          "mirror": sorted(k for k, v in (doc.get("mirror") or {}).items() if v),
+                          "node": store.node_enabled(doc)}}
+    except Exception:  # noqa: BLE001 - best effort, the map still loads
+        log.debug("_hub_link: falling back after a failure", exc_info=True)
+        return {"linked": False}
+
+
 def build_map() -> Dict[str, Any]:
     """The whole picture, as one JSON document. Every part is best-effort:
     a store that cannot be read is reported empty, never as a failure of
@@ -236,6 +292,7 @@ def build_map() -> Dict[str, Any]:
     instances = _instances()
     containers = _containers()
     services = _services()
+    stack_rows = _stack()
 
     try:
         queue = run_queue.stats()
@@ -276,6 +333,9 @@ def build_map() -> Dict[str, Any]:
         "instances": instances,
         "services": services,
         "containers": containers,
+        "stack": stack_rows,
+        "hub_nodes": _hub_nodes(),
+        "hub_link": _hub_link(),
         "hosts": [{
             "host": h,
             "members": [m["member_id"] for m in member_rows if str(m.get("host") or "") == h
@@ -294,6 +354,15 @@ async def deployment_map():
     """The map: members, leases, queue, and the working entities by host."""
     import asyncio
     return await asyncio.to_thread(build_map)
+
+
+@router.get("/stack")
+@deployment_alias_router.get("/stack")
+async def stack_components():
+    """Only the shared-service probes, for the Health page's card: the full
+    map reads far more than that card needs."""
+    import asyncio
+    return {"components": await asyncio.to_thread(_stack)}
 
 
 @router.get("/members")

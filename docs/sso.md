@@ -48,6 +48,7 @@ explanation, and is recorded in the [audit](audit.md) trail as a denied
 | `AUTH_OIDC_SESSION_HOURS` | How long a single sign-on session lasts, eight hours by default. |
 | `AUTH_OIDC_LINK_BY_EMAIL` | Link a first sign-in to an existing account with the same email or username, on by default. |
 | `AUTH_LOCAL_PASSWORDS` | Password sign-in for everyone (`true`, the default) or administrators only (`false`). |
+| `AUTH_OIDC_INTERNAL_URL` | Optional. Where the hub reaches the provider itself when browsers use a different, public address, for example `http://keycloak:8080` for the Keycloak in the compose stack. Empty = the issuer is used for everything. |
 | `AUTH_PUBLIC_URL` | The URL people reach the hub at, for example `https://hub.example.com`. |
 | `AUTH_COOKIE_SECURE` | `auto` (the default: Secure when the public URL is https), `true` or `false`. |
 
@@ -76,6 +77,19 @@ To map realm roles instead of groups, set `AUTH_OIDC_GROUPS_CLAIM=realm_access.r
 `deploy/keycloak/realm-export.json` is a complete working realm (the one CI
 signs in against): import it with `start-dev --import-realm` to try the whole
 flow locally.
+
+The compose stack can also run a Keycloak of its own (profile `keycloak`;
+`ah setup` switches it on and fills the realm and client). People's browsers
+reach it at a public URL such as `https://hub.example.com:8081`, which is the
+issuer in `AUTH_OIDC_ISSUER`. The hub's containers cannot always resolve or
+route that address (inside a container `localhost` is the container itself),
+so they call Keycloak on the compose network instead:
+`AUTH_OIDC_INTERNAL_URL=http://keycloak:8080`. Discovery, the token exchange
+and the key set then go to the internal address, while the sign-in redirect
+stays on the public one and tokens are still checked against the public
+issuer. Run Keycloak with `KC_HOSTNAME` set to the public URL and
+`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` so it reports the public issuer to
+both kinds of caller.
 
 ## Microsoft Entra ID
 

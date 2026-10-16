@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from common.paths import AGENTS_HUB_ROOT
@@ -174,6 +175,7 @@ class S3BlobStore(BlobStore):
         self._client_override = client
         self._client: Any = None
         self._client_lock = threading.Lock()
+        self._probe_clients: Dict[float, Any] = {}
 
     def _get_client(self) -> Any:
         if self._client_override is not None:
@@ -188,6 +190,27 @@ class S3BlobStore(BlobStore):
                         kwargs["endpoint_url"] = self._endpoint
                     self._client = boto3.client("s3", **kwargs)
         return self._client
+
+    def _probe_client(self, timeout: float) -> Any:
+        """A client of its own for :meth:`probe`, with short timeouts and no
+        retries. The shared client keeps boto3's defaults (60 s to connect
+        and to read, several attempts), right for a large upload but wrong
+        for a health check: against an endpoint that drops packets, three
+        calls on it take minutes."""
+        if self._client_override is not None:
+            return self._client_override
+        with self._client_lock:
+            client = self._probe_clients.get(timeout)
+            if client is None:
+                import boto3  # pyright: ignore[reportMissingImports] - optional (requirements-blobs.txt)
+                from botocore.config import Config  # pyright: ignore[reportMissingImports]
+
+                kwargs: dict = {"config": Config(connect_timeout=timeout, read_timeout=timeout,
+                                                 retries={"mode": "standard", "total_max_attempts": 1})}
+                if self._endpoint:
+                    kwargs["endpoint_url"] = self._endpoint
+                client = self._probe_clients[timeout] = boto3.client("s3", **kwargs)
+        return client
 
     def _key(self, rel_path: str) -> str:
         tail = str(rel_path).strip("/")
@@ -263,6 +286,23 @@ class S3BlobStore(BlobStore):
             self._get_client().delete_object(Bucket=self._bucket, Key=self._key(rel_path))
         except Exception:  # noqa: BLE001 - best-effort cleanup, module contract: never raise
             log.debug("blob delete failed for %s", rel_path, exc_info=True)
+
+    def probe(self, timeout: float = 3.0) -> Dict[str, Any]:
+        """A real round trip for the stack map: put a tiny object under
+        ``.health/``, read it back, delete it. Unlike the other methods this
+        one raises, because the caller wants the reason it failed. Goes to the
+        bucket directly, never through the local mirror, which would hide an
+        outage. ``timeout`` bounds each connect and each read, with no
+        retries, so an unreachable bucket fails in seconds."""
+        client = self._probe_client(timeout)
+        key = self._key(f".health/probe-{uuid.uuid4().hex[:8]}")
+        client.put_object(Bucket=self._bucket, Key=key, Body=b"ok")
+        try:
+            body = client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        finally:
+            client.delete_object(Bucket=self._bucket, Key=key)
+        return {"bucket": self._bucket, "prefix": self._prefix, "endpoint": self._endpoint or "",
+                "roundtrip_ok": body == b"ok"}
 
     def list(self, prefix: str) -> List[str]:
         out: List[str] = []

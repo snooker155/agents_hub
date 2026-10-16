@@ -2305,6 +2305,25 @@
       ]
     },
     {
+      "id": "hub-sync",
+      "title": "Sync between hubs, with end-to-end encryption",
+      "surface": "Settings",
+      "summary": "Two-way sync of everything created in chosen workspaces with a linked hub (chats, memory, agents, files, runs, flows, teams, loops, tasks and more), optionally end-to-end encrypted with a passphrase so the linked hub stores only what it cannot read; viewing encrypted data on the linked hub's site decrypts it in the browser after explicit consent; tasks run where they were created; conflicts keep the losing version.",
+      "related": [
+        "hub-link",
+        "secrets",
+        "identity",
+        "workers"
+      ],
+      "headings": [
+        "What travels",
+        "How it decides",
+        "End-to-end encryption",
+        "Viewing encrypted data on the linked hub",
+        "Settings"
+      ]
+    },
+    {
       "id": "distribution",
       "title": "Distribution",
       "surface": "Distribution",

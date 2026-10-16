@@ -241,6 +241,16 @@ async def lifespan(app: FastAPI):
             _hublink_runtime.start()
         except Exception as e:  # noqa: BLE001 - the hub starts without its link; logged
             log.warning(f"⚠ Could not start the hub link: {e}")
+        # Sync (hubsync/): the client pass when this hub syncs to another, and
+        # the materializer that turns plain records people sync here into
+        # pages. Both idle until there is something to do; leases keep each
+        # to one replica.
+        try:
+            from hubsync import client as _sync_client, materialize as _sync_materialize
+            _sync_client.start()
+            _sync_materialize.start()
+        except Exception as e:  # noqa: BLE001 - the hub starts without sync; logged
+            log.warning(f"⚠ Could not start sync: {e}")
 
     # The service supervisor (services/supervisor.py): keeps every service's
     # replicas at its desired state, and the default runner warm, so a chat
@@ -282,6 +292,12 @@ async def lifespan(app: FastAPI):
         _hublink_runtime.stop()
     except Exception:  # noqa: BLE001 - shutting down anyway
         log.debug("could not stop the hub link", exc_info=True)
+    try:
+        from hubsync import client as _sync_client, materialize as _sync_materialize
+        _sync_client.stop()
+        _sync_materialize.stop()
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop sync", exc_info=True)
     try:
         from deployments.supervisor import supervisor as _deployment_supervisor
         await _deployment_supervisor.stop()
@@ -596,6 +612,14 @@ from routes import hublink as hublink_router  # noqa: E402
 app.include_router(hublink_router.router)
 app.include_router(hublink_router.nodes_router)
 app.include_router(hublink_router.node_link_router)
+# Sync between hubs (hubsync/, docs/hub-sync.md): the vault people sync to,
+# and this hub's own client settings.
+from routes import sync as sync_router  # noqa: E402
+app.include_router(sync_router.router)
+app.include_router(sync_router.client_router)
+# Catalog only: browse and install from the linked hub (hublink/catalog.py).
+from routes import catalog as catalog_router  # noqa: E402
+app.include_router(catalog_router.router)
 
 # MCP domain: external MCP servers attached per workspace as a group of tools.
 # Beside the connectors in the sidebar, and the same direction: this hub reaches

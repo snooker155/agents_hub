@@ -30,7 +30,7 @@ import {
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
   GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck,
-  MessageSquareCode, Eye, AudioLines, Send, Laptop,
+  MessageSquareCode, Eye, AudioLines, Send, Laptop, LockKeyhole, Library,
 } from 'lucide-react';
 import { MULTI, isAdmin } from './auth';
 
@@ -98,6 +98,9 @@ export function buildMenu({ t, auth, features = {} }) {
         // files the workspace keeps by id, two tabs of one page. The Studio and
         // a view's page are reached from here, so they light this item up.
         { name: t('nav.artifacts'), path: '/artifacts', icon: Images, also: ['/studio', '/views'], simple: true },
+        // What people synced into this hub from their own (hubsync/): plain or
+        // end-to-end encrypted, opened in the browser with their passphrase.
+        { name: t('nav.vault'), path: '/vault', icon: LockKeyhole, home: '/artifacts' },
         // The forms of joined work, side by side: a flow is a graph, a loop a
         // repeated agent, a team agents talking, the orchestrator one agent
         // handing out work.
@@ -121,6 +124,8 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.skills'), path: '/skills', icon: GraduationCap, simple: true },
         { name: t('nav.memory'), path: '/memory', icon: Database, simple: true },
         { name: t('nav.marketplace'), path: '/marketplace', icon: Store, simple: true },
+        // The linked hub's agents, skills, flows, teams and loops, to install here.
+        { name: t('nav.catalog'), path: '/catalog', icon: Library, home: '/marketplace' },
         { name: t('nav.toolbox'), path: '/tools', icon: Wrench, home: '/agents' },
         // Live copies of agents, across every carrier, and the agents kept
         // running as replicas (docs/instances.md, docs/services.md).
@@ -171,10 +176,10 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.containers'), path: '/containers', icon: Box, home: '/settings' },
         // The service looking at itself, for whoever runs it.
         isOperator(auth) && { name: t('nav.health'), path: '/health', icon: Activity, home: '/settings' },
-        // Members, leases and the launch queue: there is something to show only
-        // once the hub runs as more than one process (AGENTS_HUB_ROLE api and
-        // worker, docs/workers.md).
-        isOperator(auth) && features.cluster && { name: t('nav.cluster'), path: '/cluster', icon: Waypoints, home: '/settings' },
+        // The service map: every process and every shared service it uses. A
+        // single process has a map too (database, model runtime, ...), so the
+        // item no longer waits for AGENTS_HUB_ROLE api and worker.
+        isOperator(auth) && { name: t('nav.cluster'), path: '/cluster', icon: Waypoints, simple: true },
         // Accounts exist only under AUTH_MODE=multi, and only an administrator
         // manages them.
         isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog, home: '/settings' },
