@@ -13,6 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 from langchain_core.tools import tool
 from common.entity_sink import record_entity
+from common.untrusted import agent_output_fence
 from common.workspace_scope import check_record
 from common.workspace_context import (
     resolve_active_workspace,
@@ -38,6 +39,7 @@ from tasks.service import (
     find_task_by_key as svc_find_task_by_key,
     create_sequence as svc_create_sequence,
     get_task_result as svc_get_task_result,
+    get_task_results as svc_get_task_results,
 )
 from tasks.keys import looks_like_key
 from tools._json import json_err, json_ok
@@ -717,7 +719,15 @@ def get_task_result(task_id: str) -> str:
         if result is None:
             return _json_err("No result found for this task", code="not_found")
         _record_task(svc_get_task(tid), "viewed")
-        return _json_ok({"task_id": task_id, "result": result})
+        # The result is the agent's words, fenced so the caller does not take
+        # them as orders (common/untrusted.py).
+        entries = svc_get_task_results(tid)
+        last = entries[-1] if entries else {}
+        source = f"agent {last.get('agent_id') or 'unknown'}, task {task_id}"
+        if last.get("run_id"):
+            source += f", run {last['run_id']}"
+        return _json_ok({"task_id": task_id,
+                         "result": agent_output_fence(result, source=source)})
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to get task result: {e}")
 

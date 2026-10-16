@@ -14,6 +14,8 @@ export default {
   saveFailed: 'Failed to save',
   briefingFailed: 'Could not build the briefing',
   round: 'round {{n}}',
+  quote: 'Quote',
+  quoteFrom: 'Quoted from {{source}}',
   everyone: '→ everyone',
   role: 'Role',
   reviewer: 'reviewer',

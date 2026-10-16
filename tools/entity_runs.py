@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from common.entity_sink import record_entity
 from common.workspace_scope import check_record
+from common.untrusted import agent_output_fence
 from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
@@ -440,7 +441,8 @@ def get_team_run_tool(team_run_id: Optional[str] = None,
             "status": d["status"], "live": d["status"] in LIVE_STATUSES,
             "mode": d["mode"], "goal": d["goal"],
             "rounds_done": d["rounds_done"], "total_cost": d["total_cost"],
-            "result": d["result"], "stop_reason": d["stop_reason"],
+            "result": agent_output_fence(d["result"] or "", source=f"team {d['team_id']}, run {d['team_run_id']}"),
+            "stop_reason": d["stop_reason"],
             "error": d["error"],
             "started_at": d["started_at"], "finished_at": d["finished_at"],
         })
@@ -617,7 +619,8 @@ def get_loop_run_tool(loop_run_id: Optional[str] = None,
             "goal": d["goal"], "iterations_done": d["iterations_done"],
             "best_score": d["best_score"], "final_score": d["final_score"],
             "stop_reason": d["stop_reason"], "total_cost": d["total_cost"],
-            "result": d["result"], "error": d["error"],
+            "result": agent_output_fence(d["result"] or "", source=f"loop {d['loop_id']}, run {d['loop_run_id']}"),
+            "error": d["error"],
             "trajectory": trajectory,
             "started_at": d["started_at"], "finished_at": d["finished_at"],
         })

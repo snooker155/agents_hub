@@ -15,6 +15,8 @@ export default {
   saveFailed: 'Не удалось сохранить',
   briefingFailed: 'Не удалось собрать бриф',
   round: 'раунд {{n}}',
+  quote: 'Цитата',
+  quoteFrom: 'Цитата: {{source}}',
   everyone: '→ всем',
   role: 'Роль',
   reviewer: 'ревьюер',

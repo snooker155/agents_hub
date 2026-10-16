@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
+from common.untrusted import FLOW_STEP_NOTE, agent_output_fence
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -116,16 +118,29 @@ def build_agent_input(
     node_task: str = "",
 ) -> str:
     """Build a node's prompt: declared input-state slice + predecessor outputs +
-    node task. Moved from ``runtime/flow_run.py`` so both adapters share one builder."""
+    node task. Moved from ``runtime/flow_run.py`` so both adapters share one builder.
+
+    What an earlier step produced, its output and any state key a step writes,
+    is fenced as data (common/untrusted.py): an agent in the middle of a flow
+    may repeat a hostile page it read. The flow's defaults, the run's seed and
+    a person's answer to an interrupt node are passed as they are.
+    """
     pred_ids = predecessors.get(node_id, [])
     pred_outputs = [(pid, node_outputs[pid]) for pid in pred_ids if pid in node_outputs]
+    node_keys = getattr(flow_state, "node_keys", frozenset())
+    human_nodes = getattr(flow_state, "human_nodes", frozenset())
 
     parts: List[str] = []
 
     in_keys = _node_value(node, "input") or _node_value(node, "inputs") or []
     state_slice = flow_state.slice(in_keys) if in_keys else None
     if state_slice:
-        block = "\n".join(f"[{k}]:\n{v}" for k, v in state_slice.items())
+        block = "\n".join(
+            f"[{k}]:\n"
+            + (agent_output_fence(str(v), source=f"flow state [{k}]", note=FLOW_STEP_NOTE)
+               if k in node_keys else f"{v}")
+            for k, v in state_slice.items()
+        )
         parts += ["=" * 60, "FLOW STATE", "=" * 60, block, "=" * 60, ""]
 
     if pred_outputs:
@@ -135,6 +150,9 @@ def build_agent_input(
             "=" * 60,
         ]
         for pred_id, pred_out in pred_outputs:
+            if pred_id not in human_nodes:
+                pred_out = agent_output_fence(
+                    pred_out, source=f"flow node {pred_id}", note=FLOW_STEP_NOTE)
             parts.append(f"\n[{pred_id}]:\n{pred_out}\n")
         parts += ["=" * 60, "\nContinue the work based on the above output."]
     else:

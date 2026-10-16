@@ -32,6 +32,7 @@ from agents.agent_launcher import (
     preregister_run as rm_preregister_run,
 )
 from common.entity_sink import record_entity
+from common.untrusted import agent_output_fence
 from common.workspace_context import filter_agents_for_workspace
 from common.workspace_scope import check_record, current_agent, is_service_wide
 from common.session_service import get_or_create_task_session, add_run_to_session
@@ -721,7 +722,9 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                     "is fully handled, summarise it for the user; if follow-up work "
                     "is needed, chain another agent with run_agent_tool."
                 ),
-                "output": output,
+                # Fenced: the worker's answer is data for the caller, not orders
+                # (common/untrusted.py). The chat stream above keeps it raw.
+                "output": agent_output_fence(output, source=f"agent {agent_id}, run {run_id}"),
                 "session_id": session_id,
                 "provider": worker.provider or "",
                 "model": worker.model or "",

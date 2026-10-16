@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from common.untrusted import auto_quote
 from teams import control, store
 from teams.models import (
     BROADCAST, HANDOFF_MODES, MAX_MEMBERS, MAX_ROUNDS_CAP, MAX_WALL_SECONDS_CAP,
@@ -107,10 +108,16 @@ def _run_member(
     session_id: Optional[str], team_run_id: str, is_leader: bool = False,
     provider: Optional[str] = None, model: Optional[str] = None,
     run_id: Optional[str] = None, in_process: bool = True,
+    quote_tool_copies: bool = False,
 ) -> Turn:
     """Build the agent with its team seat and run one turn. Never raises: a
     member that fails posts an error to the board and the team continues, the
-    way a colleague who is out sick does not end the project."""
+    way a colleague who is out sick does not end the project.
+
+    ``quote_tool_copies`` is for a member's board reply: outside text it copied
+    word for word from its own tool results is put in quote markers, so the
+    next member reads it as data (common.untrusted.auto_quote). Not for the
+    lead, whose reply is a JSON plan, nor for the closing answer."""
     from agents.agent_factory import create_agent, get_factory
     from agents.agent_invoke import invoke_agent
     from agents.callbacks import RunStopCallback
@@ -201,11 +208,12 @@ def _run_member(
     # Two guards, because a turn can be stopped from either side: the team page
     # (the event) or this member's own run record (the runs page, the API).
     control.track(team_run_id, run_id)
+    collector = control.ToolOutputCollector()
     try:
         inv = invoke_agent(
             agent, prompt, run_id=run_id,
             extra_callbacks=[control.TeamStopCallback(team_run_id),
-                             RunStopCallback(run_id)],
+                             RunStopCallback(run_id), collector],
         )
     finally:
         control.untrack(team_run_id, run_id)
@@ -213,6 +221,11 @@ def _run_member(
     result = inv.result
     turn.run_id = run_id
     turn.text = str(getattr(result, "agent_output", "") or "").strip()
+    if quote_tool_copies and turn.text and collector.sources:
+        try:
+            turn.text = auto_quote(turn.text, collector.sources)
+        except Exception:  # noqa: BLE001 - an unquoted reply still beats a lost turn
+            log.debug("auto-quoting a team turn failed", exc_info=True)
     if not getattr(result, "ok", False):
         turn.error = str(getattr(result, "error", "") or "agent run failed")
     turn.stopped = control.is_stopped(team_run_id)
@@ -336,7 +349,7 @@ def _run_turns(
             provider=member.provider or team.default_provider,
             model=member.model or team.default_model,
             run_id=_turn_run_id(team_run_id, round_no, member.display_name()),
-            in_process=member_in_process,
+            in_process=member_in_process, quote_tool_copies=True,
         ): member
         for member, prompt in jobs
     }

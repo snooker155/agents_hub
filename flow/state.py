@@ -31,7 +31,25 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional
+
+#: The entity id of the node that asks a person (flow/launcher.INTERRUPT_AGENT_ID,
+#: repeated here because the launcher imports this module).
+_HUMAN_NODE_ID = "human_interrupt"
+
+
+def _node_field(node: Dict[str, Any], key: str) -> Any:
+    if key in node:
+        return node[key]
+    data = node.get("data")
+    return data.get(key) if isinstance(data, dict) else None
+
+
+def _output_keys(node: Dict[str, Any]) -> List[str]:
+    raw = _node_field(node, "output") or _node_field(node, "outputs") or []
+    if isinstance(raw, str):
+        return [raw]
+    return [str(k) for k in raw] if isinstance(raw, (list, tuple)) else []
 
 
 class StateMutationError(Exception):
@@ -50,6 +68,12 @@ class FlowState:
     _lock: threading.RLock = field(
         default_factory=threading.RLock, repr=False, compare=False,
     )
+    #: Keys a non-human node writes, and the ids of the nodes that ask a person.
+    #: A value under such a key is another step's output, which the next agent
+    #: reads fenced as data (flow.engine.build_agent_input); the flow's defaults,
+    #: the run's seed and a person's answer are not.
+    node_keys: FrozenSet[str] = field(default_factory=frozenset, repr=False, compare=False)
+    human_nodes: FrozenSet[str] = field(default_factory=frozenset, repr=False, compare=False)
 
     @classmethod
     def from_flow(cls, flow: Dict[str, Any], *, seed: Optional[Dict[str, Any]] = None) -> "FlowState":
@@ -64,7 +88,18 @@ class FlowState:
         data: Dict[str, Any] = dict(declared)
         if seed:
             data.update(seed)
-        return cls(data=data, mutable=mutable)
+        node_keys: set = set()
+        human_nodes: set = set()
+        for node in flow.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            ref = str(_node_field(node, "entity_id") or _node_field(node, "agent_id") or "")
+            if ref == _HUMAN_NODE_ID:
+                human_nodes.add(str(node.get("id") or ""))
+            else:
+                node_keys.update(_output_keys(node))
+        return cls(data=data, mutable=mutable, node_keys=frozenset(node_keys),
+                   human_nodes=frozenset(human_nodes))
 
     # -- reads --
 

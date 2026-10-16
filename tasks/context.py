@@ -17,6 +17,7 @@ import logging
 from typing import Optional
 
 from common.paths import PROJECTS_FILE
+from common.untrusted import agent_output_fence
 
 _log = logging.getLogger(__name__)
 
@@ -267,9 +268,13 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
                     continue
                 dep_result = tasks_service.get_task_result(dep.id)
                 if dep_result and dep_result.strip():
+                    # Another agent's words: fenced, so they inform this run
+                    # without giving it orders (common/untrusted.py).
+                    dep_label = f"{dep.key or str(dep.id)[:8]}: {dep.title}"
                     dep_results.append(
-                        f"[{dep.key or str(dep.id)[:8]}: {dep.title}]\n"
-                        f"{_dep_result_excerpt(dep_result.strip())}"
+                        f"[{dep_label}]\n"
+                        + agent_output_fence(_dep_result_excerpt(dep_result.strip()),
+                                             source=f"prerequisite task {dep_label}")
                     )
             if dep_results:
                 instruction = (
@@ -296,13 +301,16 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
             )
             prev_result = (prev_entry or {}).get("result", "") or ""
             if prev_result.strip():
+                prev_agent = (prev_entry or {}).get("agent_id") or "unknown"
                 instruction = (
                     f"\n"
                     f"{instruction}\n\n"
                     f"{'=' * 60}\n"
                     f"OUTPUT FROM PREVIOUS AGENT RUN ON THIS TASK\n"
                     f"{'=' * 60}\n"
-                    f"{prev_result.strip()}\n"
+                    + agent_output_fence(
+                        prev_result, source=f"agent {prev_agent}, previous run on this task")
+                    + "\n"
                     f"{'=' * 60}\n"
                     f"\nContinue the work based on the above output."
                 )

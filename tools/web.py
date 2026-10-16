@@ -31,6 +31,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from common.ssrf import resolve_and_check
+from common.untrusted import strip_quote_markers
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ def wrap_untrusted(source: str, body: str) -> str:
     # Strip any markers the page itself contains, so a hostile page cannot close
     # the envelope early and have its tail read as trusted text.
     body = body.replace(_BEGIN, "").replace(_END, "")
+    # Nor close a team member's quote of it (common/untrusted.py).
+    body = strip_quote_markers(body)
     return (
         f"{_BEGIN}\nsource: {source}\n{_ENVELOPE_NOTE}\n---\n"
         f"{body}\n{_END}"

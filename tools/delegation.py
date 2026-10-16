@@ -57,6 +57,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from common.untrusted import agent_output_fence
 from tools._json import json_err as _json_err, json_ok as _json_ok
 
 log = logging.getLogger(__name__)
@@ -321,7 +322,9 @@ def _answer(task: Dict[str, Any], run: Dict[str, Any], agent: Dict[str, Any], *,
         "task_status": str(task.get("status") or ""),
         "finished": finished,
         "waited_seconds": round(waited, 1),
-        "output": text,
+        # Fenced: the caller reads it as the delegate's words, not as orders.
+        "output": agent_output_fence(
+            text, source=f"agent {agent_id}, delegated run {run.get('run_id') or ''}".strip()),
         "error": error,
         "task": task,
     }

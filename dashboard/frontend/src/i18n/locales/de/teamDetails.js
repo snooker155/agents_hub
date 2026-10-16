@@ -14,6 +14,8 @@ export default {
   saveFailed: 'Speichern fehlgeschlagen',
   briefingFailed: 'Das Briefing konnte nicht erstellt werden',
   round: 'Runde {{n}}',
+  quote: 'Zitat',
+  quoteFrom: 'Zitat aus {{source}}',
   everyone: '→ an alle',
   role: 'Rolle',
   reviewer: 'Reviewer',

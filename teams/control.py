@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Dict, Set
+from typing import Any, Dict, List, Set, Tuple
 
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -138,7 +138,45 @@ class TeamStopCallback(BaseCallbackHandler):
         self._check()
 
 
+class ToolOutputCollector(BaseCallbackHandler):
+    """What a member's tools returned during its turn.
+
+    Not part of stopping: it rides the same callback list so the runner can
+    quote, after the turn, any outside text the member copied into its reply
+    word for word without the quote markers (common.untrusted.auto_quote).
+    Bounded, because a turn that reads many pages would otherwise hold them all.
+    """
+
+    raise_error = False
+    MAX_CHARS = 400_000
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sources: List[Tuple[str, str]] = []
+        self._names: Dict[Any, str] = {}
+        self._chars = 0
+        self._lock = threading.Lock()
+
+    def on_tool_start(self, serialized, input_str, *, run_id=None, **kwargs) -> None:  # noqa: ARG002
+        name = serialized.get("name") if isinstance(serialized, dict) else None
+        with self._lock:
+            self._names[run_id] = str(name or kwargs.get("name") or "tool")
+
+    def on_tool_end(self, output, *, run_id=None, **kwargs) -> None:  # noqa: ARG002
+        from common.untrusted import tool_output_texts
+
+        with self._lock:
+            name = self._names.pop(run_id, None) or "tool"
+            for text in tool_output_texts(output):
+                room = self.MAX_CHARS - self._chars
+                if room <= 0:
+                    return
+                text = text[:room]
+                self.sources.append((f"tool {name}", text))
+                self._chars += len(text)
+
+
 __all__ = [
     "register", "release", "is_stopped", "request_stop", "track", "untrack",
-    "TeamStopCallback", "TeamRunStopped",
+    "TeamStopCallback", "TeamRunStopped", "ToolOutputCollector",
 ]

@@ -12,6 +12,7 @@ import {
   getTeamChat, clearTeamChat, stopTeamChat, teamChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
+import QuotedText from '../components/teamQuotes';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
@@ -208,7 +209,7 @@ function BoardMessage({ msg }) {
           {msg.cost ? `$${msg.cost.toFixed(4)}` : ''}
         </span>
       </div>
-      <p className="text-sm text-gray-800 whitespace-pre-wrap">{msg.content}</p>
+      <QuotedText text={msg.content} />
       {msg.run_id && (
         <Link
           to={`/messages/${msg.run_id}`}
@@ -674,9 +675,7 @@ export default function TeamDetails() {
                     <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2">
                       The team's answer
                     </h3>
-                    <pre className="text-sm text-gray-800 whitespace-pre-wrap">
-                      {run.result}
-                    </pre>
+                    <QuotedText text={run.result} />
                   </div>
                 )}
               </>
