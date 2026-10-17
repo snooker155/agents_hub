@@ -978,20 +978,6 @@ export default function Assistant() {
             </button>
           )}
         </header>
-        {autoOn && (
-          <div className="shrink-0 px-4 sm:px-6 py-2 border-b border-amber-300 bg-amber-50 text-xs text-amber-900 flex items-center gap-2"
-            role="status" data-testid="assistant-auto-mode-banner">
-            <Zap className="w-3.5 h-3.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <strong>{t('chat.autoMode.bannerTitle')}</strong> · {t('chat.autoMode.bannerText')}
-            </div>
-            <button type="button" onClick={() => setPrefs({ autoApprove: false })}
-              className="px-2 py-0.5 rounded bg-amber-600 text-white font-medium hover:bg-amber-700">
-              {t('chat.autoMode.turnOff')}
-            </button>
-          </div>
-        )}
-
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-6 px-4 sm:px-8 py-8">
           {loadError && <div className="text-sm text-red-600">{loadError}</div>}
           <div className="flex flex-col items-center gap-2">
@@ -1138,7 +1124,7 @@ export default function Assistant() {
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
                 placeholder={t('assistant.placeholder')}
                 disabled={busy}
-                className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50"
+                className={`flex-1 resize-none text-sm leading-5 border rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50 ${autoOn ? 'border-amber-400' : 'border-gray-300'}`}
               />
               <button type="button" onClick={onSend} disabled={busy || !input.trim()}
                 title={t('assistant.send')} aria-label={t('assistant.send')}

@@ -2,7 +2,7 @@ import AgentExamples, { FlowExamples } from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow, Zap } from 'lucide-react';
+import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -36,7 +36,7 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, autoMode, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
+    agentName, agents, artifacts, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
     liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
     targetMode, teams, telegramReplyAllowed, viewMode,
@@ -132,21 +132,6 @@ export default function ChatMessageList() {
               </span>
             )}
             <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">{t('chat.debugMirror')}</span>
-          </div>
-        )}
-
-        {/* Auto mode is on: nothing in this chat waits for the person's yes (common/auto_mode.py). */}
-        {autoMode?.on && (
-          <div className="flex-shrink-0 px-4 py-2 border-b border-amber-300 bg-amber-50 text-xs text-amber-900 flex items-center gap-2"
-            role="status" data-testid="auto-mode-banner">
-            <Zap className="w-3.5 h-3.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <strong>{t('chat.autoMode.bannerTitle')}</strong> · {t('chat.autoMode.bannerText')}
-            </div>
-            <button type="button" onClick={() => autoMode.setOn(false)}
-              className="px-2 py-0.5 rounded bg-amber-600 text-white font-medium hover:bg-amber-700">
-              {t('chat.autoMode.turnOff')}
-            </button>
           </div>
         )}
 

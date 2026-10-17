@@ -313,9 +313,9 @@ export default function ChatComposer() {
             <SteerBar steering={steering} t={t} />
 
             <div
-              className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3 bg-white
-               
-                shadow-lg transition-all"
+              data-testid="composer-box"
+              className={`flex items-center gap-3 border rounded-2xl px-4 py-3 bg-white shadow-lg transition-all
+                ${autoMode?.on && !currentTelegramBinding && !mirrored ? 'border-amber-400' : 'border-gray-300'}`}
             >
               {/* Attach: a file from the computer, or a record the hub already
                   holds (task / view / project / scenario / loop / …). An entity

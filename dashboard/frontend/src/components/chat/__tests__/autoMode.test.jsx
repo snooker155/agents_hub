@@ -107,17 +107,15 @@ describe('auto mode in the chat page', () => {
     fireEvent.click(toggle);
     fireEvent.keyDown(screen.getByPlaceholderText('Message'), { key: 'Tab', shiftKey: true });
     expect(autoMode.toggle).toHaveBeenCalledTimes(2);
-    expect(screen.queryByTestId('auto-mode-banner')).toBeNull();
+    expect(screen.getByTestId('composer-box').className).not.toContain('border-amber-400');
   });
 
-  it('says so above the conversation while it is on, and turns it off from there', () => {
+  it('shows no banner while it is on, only the toggle and an amber border on the box', () => {
     const autoMode = { on: true, allowed: true, toggle: vi.fn(), setOn: vi.fn() };
     show(autoMode);
-    const banner = screen.getByTestId('auto-mode-banner');
-    expect(banner.textContent).toContain('Auto mode is on');
+    expect(screen.queryByText('Auto mode is on')).toBeNull();
     expect(screen.getByTestId('auto-mode-toggle').textContent).toContain('Auto: on');
-    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
-    expect(autoMode.setOn).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId('composer-box').className).toContain('border-amber-400');
   });
 
   it('disables the toggle where an administrator turned auto mode off', () => {
