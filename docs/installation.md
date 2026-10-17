@@ -332,14 +332,18 @@ run does, and writes nothing until you confirm a review of every value:
    before they are accepted. Then what the link does: **catalog only** (browse and
    install its agents, skills, flows, teams and loops; nothing of yours is
    sent), **two-way sync** of the workspaces you choose, each mapped to a
-   space there (the linked hub can read and show this data), **two-way sync,
-   end-to-end encrypted** (the linked hub stores only data it cannot read),
-   or **only its models and agents**, the link as it was before the other
-   modes. Encrypted sync generates a passphrase, shown once at the end, or
-   takes the one you already use on another device; losing it and every
-   device that holds the key means the synced data cannot be recovered. In
-   both sync modes the one-way mirror is off, since sync carries the same
-   data. In Advanced: the hub's name there, its models and agents here
+   space there, or **only its models and agents**, the link as it was before
+   the other modes. Two-way sync then asks about **encryption at the
+   start**: **encrypt every workspace**, which means default and all the
+   other workspaces, including ones added later, so the linked hub stores
+   only data it cannot read; or **no encryption for now**, where the linked
+   hub can read and show the data and each workspace can be encrypted on its
+   own later (its row in Settings, Remote hub, or the workspace's Settings,
+   Remote hub sync). The step says which of the two applies. Encryption
+   generates a passphrase, shown once at the end, or takes the one you
+   already use on another device; losing it and every device that holds the
+   key means the synced data cannot be recovered. With sync the one-way
+   mirror is off, since sync carries the same data. In Advanced: the hub's name there, its models and agents here
    independently of the mode, and the catalog beside sync. For Kubernetes
    the link lives in the database, so it is set in Settings, Remote hub, once
    the cluster runs.
@@ -469,7 +473,7 @@ default, and a missing required answer stops with its name:
   "voice": {"mode": "local", "speech": "piper-en", "transcription": "whisper-small"},
   "demo": false,
   "link": {"enabled": true, "url": "https://hub.example.com", "api_key": "ahk_...",
-           "mode": "sync-e2e", "sync": {"workspaces": ["default"], "generate": true}},
+           "mode": "sync", "sync": {"encryption": "all", "workspaces": ["default"], "generate": true}},
   "start": true
 }
 ```
@@ -483,14 +487,17 @@ shape saves the hub's address and a credential in the CLI's own state file
 wins over it.
 
 `link.enabled` turns the linked hub on (off by default), with `link.url`,
-`link.api_key` and optionally `link.name`. `link.mode` is `catalog`, `sync`,
-`sync-e2e` or `connect` (its models and agents only). `link.use_models` and
+`link.api_key` and optionally `link.name`. `link.mode` is `catalog`, `sync`
+or `connect` (its models and agents only); `sync-e2e`, from older answers
+files, is `sync` with every workspace encrypted. `link.sync.encryption` is
+`all` (default and every other workspace, also ones added later) or `off`
+(`off` by default; encrypt single workspaces later in Settings). `link.use_models` and
 `link.use_agents` override what the mode implies (on for `connect`, off
 otherwise), and `link.catalog` adds the catalog to a sync mode. For the sync
 modes, `link.sync.workspaces` lists the workspaces here (`["default"]` by
 default; a missing one is created) and `link.sync.spaces.<workspace>` the
 space each maps to there (by default your personal workspace there for the
-first, the same name for the rest). For `sync-e2e`, `link.sync.generate`
+first, the same name for the rest). With encryption, `link.sync.generate`
 (true by default) or `link.sync.passphrase`, the passphrase of a second
 device. A key the other hub does not take is a warning in an answers file,
 not a stop: the link is saved and tried again when it is applied.

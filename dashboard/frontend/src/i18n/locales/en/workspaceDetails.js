@@ -26,6 +26,7 @@ export default {
       isolation: 'Isolation',
       tasks: 'Task assignment',
       secrets: 'Secrets',
+      remoteSync: 'Remote hub sync',
       palette: 'Palette',
     },
   },

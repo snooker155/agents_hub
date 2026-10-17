@@ -4,12 +4,14 @@
  */
 import api from './index';
 
-// { linked, remote, remote_name, enabled, encrypted, key_set, key_id,
-//   key_unlocked, mappings: [{workspace, space}], last_pass_at,
+// { linked, remote, remote_name, enabled, encrypted (any mapping), key_set, key_id,
+//   key_unlocked, mappings: [{workspace, space, encrypted}], last_pass_at,
 //   last_result: {pulled, applied, pushed, conflicts, errors}, last_error,
 //   conflicts (open count), catalog }
 export const getHubSync = () => api.get('/hublink/sync');
 export const saveHubSync = (data) => api.put('/hublink/sync', data);
+// One workspace's mapping from its own Settings tab: { synced, space, encrypted }.
+export const setHubSyncWorkspace = (workspace, data) => api.put(`/hublink/sync/workspaces/${encodeURIComponent(workspace)}`, data);
 // { passphrase } or { generate: true }; generate returns generated_passphrase once.
 // When the account already has a key on the linked hub, generate answers 409
 // with the detail object { message, code: 'key_exists', replace_unused };

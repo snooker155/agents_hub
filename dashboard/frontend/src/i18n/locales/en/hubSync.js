@@ -18,6 +18,8 @@ export default {
     saveFailed: 'Could not save the sync settings.',
     loadFailed: 'Could not load the sync status.',
     readOnly: 'Only an admin can change the sync settings.',
+    notLinked: 'Link this hub to another one in the form above first. Then choose here which workspaces sync and which of them are encrypted.',
+    encrypt: 'Encrypt',
   },
   encryption: {
     title: 'End-to-end encryption',
@@ -31,6 +33,19 @@ export default {
     forgetFailed: 'Could not forget the key.',
     needKey: 'Set a key to turn encryption on.',
     setKey: 'Set the key',
+    perWorkspace: 'Chosen per workspace: tick Encrypt in its row here or in that workspace\'s own settings.',
+    all: 'Encrypt every workspace',
+    allHint: 'Default and all the other workspaces are encrypted, including ones added later. Turn this off to choose per workspace.',
+  },
+  workspace: {
+    title: 'Sync with the remote hub',
+    intro: 'Whether this workspace syncs both ways with the linked hub, into which space there, and whether its records are encrypted before they leave this hub.',
+    synced: 'Sync this workspace with {{remote}}',
+    notLinked: 'This hub is not linked to another one yet.',
+    openSettings: 'Settings → Remote hub',
+    syncOff: 'Sync is off for the whole hub: this choice is kept and applies once it is on in',
+    keyLocked: 'The encryption key is locked on this hub, so this workspace waits. Unlock it in',
+    allOn: 'Every workspace is encrypted on this hub (default and all the others). To choose per workspace, turn that off in',
   },
   keyDialog: {
     title: 'Encryption key',

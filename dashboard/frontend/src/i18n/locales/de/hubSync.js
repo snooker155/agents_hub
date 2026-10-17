@@ -18,6 +18,8 @@ export default {
     saveFailed: 'Die Abgleich-Einstellungen konnten nicht gespeichert werden.',
     loadFailed: 'Der Abgleichstatus konnte nicht geladen werden.',
     readOnly: 'Nur ein Admin kann die Abgleich-Einstellungen ändern.',
+    notLinked: 'Verknüpfen Sie diesen Hub zuerst im Formular oben mit einem anderen. Danach wählen Sie hier, welche Workspaces synchronisiert und welche davon verschlüsselt werden.',
+    encrypt: 'Verschlüsseln',
   },
   encryption: {
     title: 'Ende-zu-Ende-Verschlüsselung',
@@ -31,6 +33,19 @@ export default {
     forgetFailed: 'Der Schlüssel konnte nicht vergessen werden.',
     needKey: 'Legen Sie einen Schlüssel fest, um die Verschlüsselung einzuschalten.',
     setKey: 'Schlüssel festlegen',
+    perWorkspace: 'Pro Workspace gewählt: Verschlüsseln in seiner Zeile hier oder in den Einstellungen des Workspace ankreuzen.',
+    all: 'Jeden Workspace verschlüsseln',
+    allHint: 'Default und alle anderen Workspaces werden verschlüsselt, auch später hinzugefügte. Ausschalten, um pro Workspace zu wählen.',
+  },
+  workspace: {
+    title: 'Synchronisierung mit dem entfernten Hub',
+    intro: 'Ob dieser Workspace in beide Richtungen mit dem verknüpften Hub synchronisiert wird, in welchen Space dort und ob seine Einträge verschlüsselt werden, bevor sie diesen Hub verlassen.',
+    synced: 'Diesen Workspace mit {{remote}} synchronisieren',
+    notLinked: 'Dieser Hub ist noch mit keinem anderen verknüpft.',
+    openSettings: 'Einstellungen → Entfernter Hub',
+    syncOff: 'Die Synchronisierung ist für den ganzen Hub aus: die Wahl bleibt gespeichert und gilt, sobald sie eingeschaltet ist in',
+    keyLocked: 'Der Schlüssel ist auf diesem Hub gesperrt, deshalb wartet dieser Workspace. Entsperren in',
+    allOn: 'Auf diesem Hub wird jeder Workspace verschlüsselt (default und alle anderen). Um pro Workspace zu wählen, schalten Sie das aus in',
   },
   keyDialog: {
     title: 'Verschlüsselungsschlüssel',

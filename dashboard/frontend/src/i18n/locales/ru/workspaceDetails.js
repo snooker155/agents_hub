@@ -26,6 +26,7 @@ export default {
       isolation: 'Изоляция',
       tasks: 'Назначение задач',
       secrets: 'Секреты',
+      remoteSync: 'Синхронизация с хабом',
       palette: 'Палитра',
     },
   },

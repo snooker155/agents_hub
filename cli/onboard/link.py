@@ -9,11 +9,14 @@ the same records:
 * **catalog**: browse and install the other hub's agents, skills, flows,
   teams and loops. Nothing of this hub is sent, so the mirror stays off and
   neither its models nor its agents are wired in.
-* **sync**: two-way sync of chosen workspaces with spaces there. The other hub
-  can read and show the data.
-* **sync-e2e**: the same, sealed with a passphrase before it leaves; the
-  other hub stores envelopes it cannot open. The passphrase is generated
-  (shown once in the farewell) or typed, for a second device.
+* **sync**: two-way sync of chosen workspaces with spaces there, then one
+  choice for the start: encrypt every workspace (default and all the others,
+  including ones added later), sealed with a passphrase before anything
+  leaves, so the other hub stores envelopes it cannot open; or no encryption
+  for now, and each workspace can be encrypted on its own later. The
+  passphrase is generated (shown once in the farewell) or typed, for a
+  second device. ``sync-e2e``, the mode an older answers file names, is sync
+  with every workspace encrypted.
 * **connect**: use its models and agents only, the behaviour a link had
   before the other modes existed; runs and chats are mirrored there as the
   link's defaults say.
@@ -48,14 +51,24 @@ MODES = [
     ("catalog", "Catalog only",
      "browse and install agents, skills, flows, teams and loops; nothing of yours is sent"),
     ("sync", "Two-way sync",
-     "of the workspaces you choose; the linked hub can read and show this data"),
-    ("sync-e2e", "Two-way sync, end-to-end encrypted",
-     "the linked hub stores only data it cannot read"),
+     "of the workspaces you choose; encryption is the next question"),
     ("connect", "Only its models and agents",
      "as a provider and as tools here; finished runs and chats are mirrored there"),
 ]
 MODE_LABELS = {value: label for value, label, _ in MODES}
+MODE_LABELS["sync-e2e"] = "Two-way sync, every workspace encrypted"
 SYNC_MODES = ("sync", "sync-e2e")
+
+ENCRYPTION = [
+    ("all", "Encrypt every workspace",
+     "default and all the others, including ones you add later; the linked hub stores only data it cannot read"),
+    ("off", "No encryption for now",
+     "you can encrypt each workspace on its own later: Settings, Remote hub, or the workspace's own Settings"),
+]
+ENCRYPT_ALL_NOTE = ("Every workspace is encrypted: default and all the others, including ones you add later. "
+                    "To encrypt only some, turn this off in Settings, Remote hub.")
+ENCRYPT_OFF_NOTE = ("Nothing is encrypted for now. Encrypt a single workspace yourself: its row in Settings, "
+                    "Remote hub, or the workspace's Settings, Remote hub sync.")
 
 _WORKSPACE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -117,7 +130,7 @@ def existing_link(plan: "Plan") -> Dict[str, Any]:
 def _mode_of(doc: Dict[str, Any]) -> str:
     sync = doc.get("sync") or {}
     if sync.get("enabled"):
-        return "sync-e2e" if sync.get("encrypted") else "sync"
+        return "sync"
     if doc.get("catalog") and not doc.get("use_models") and not doc.get("use_agents"):
         return "catalog"
     return "connect"
@@ -235,8 +248,15 @@ def step_link(a: Asker, plan: "Plan", number: int, total: int) -> None:
         from hublink.store import default_node_name
         link["name"] = a.text("link.name", "This hub's name there", default=link["name"] or default_node_name())
 
-    mode = a.choose("link.mode", "What should the link do?", MODES,
-                    default=_mode_of(current) if current else "catalog")
+    if _answered_value(a, "link.mode") == "sync-e2e":
+        # An older answers file: sync with every workspace encrypted.
+        mode = "sync"
+        a.note("[dim]What should the link do?[/dim] sync, every workspace encrypted")
+        encrypt_all: Optional[bool] = True
+    else:
+        mode = a.choose("link.mode", "What should the link do?", MODES,
+                        default=_mode_of(current) if current else "catalog")
+        encrypt_all = None
     link["mode"] = mode
     keep_wiring = current and _mode_of(current) == mode
     use_models = bool(current.get("use_models")) if keep_wiring else mode == "connect"
@@ -253,7 +273,17 @@ def step_link(a: Asker, plan: "Plan", number: int, total: int) -> None:
         catalog = bool(current.get("catalog")) if keep_wiring else False
         if advanced or a.answered("link.catalog"):
             catalog = a.confirm("link.catalog", "Browse and install from its catalog as well?", catalog)
-        link["sync"] = _ask_sync(a, plan, link, current, mode == "sync-e2e")
+        if encrypt_all is None:
+            had = current.get("sync") or {}
+            # A rerun keeps the start chosen before; a config from before the
+            # choice was per workspace counts as "all" when it was encrypted.
+            legacy_all = bool(had.get("encrypted")) and all(
+                m.get("encrypted") is None for m in had.get("mappings") or [])
+            choice = a.choose("link.sync.encryption", "Encryption at the start", ENCRYPTION,
+                              default="all" if had.get("encrypt_all") or legacy_all else "off")
+            encrypt_all = choice == "all"
+        a.note(ENCRYPT_ALL_NOTE if encrypt_all else ENCRYPT_OFF_NOTE)
+        link["sync"] = _ask_sync(a, plan, link, current, encrypt_all)
     link["catalog"] = catalog
     plan.link = link
 
@@ -288,6 +318,11 @@ def _ask_sync(a: Asker, plan: "Plan", link: Dict[str, Any], current: Dict[str, A
               encrypted: bool) -> Dict[str, Any]:
     had = current.get("sync") or {}
     mapped = {m.get("workspace"): m.get("space") for m in had.get("mappings") or [] if m.get("workspace")}
+    # A workspace already encrypted stays so when the start is "no encryption":
+    # its space there holds sealed records and would refuse plain ones.
+    legacy = bool(had.get("encrypted"))
+    was = {m.get("workspace"): bool(legacy if m.get("encrypted") is None else m.get("encrypted"))
+           for m in had.get("mappings") or [] if m.get("workspace")}
     workspaces = _ask_workspaces(a, list(mapped) or ["default"])
     personal = str((link.get("remote") or {}).get("personal_workspace") or "")
     spaces: Dict[str, str] = {}
@@ -309,8 +344,11 @@ def _ask_sync(a: Asker, plan: "Plan", link: Dict[str, Any], current: Dict[str, A
             a.warn(problem)
             ask = True
         spaces[ws] = space
-    out: Dict[str, Any] = {"workspaces": workspaces, "spaces": spaces, "encrypted": encrypted}
-    if not encrypted:
+    kept = {ws: True for ws in workspaces if was.get(ws)} if not encrypted else {}
+    out: Dict[str, Any] = {"workspaces": workspaces, "spaces": spaces, "encrypted": encrypted, "kept": kept}
+    if kept:
+        a.note("Still encrypted from before: " + ", ".join(kept) + ".")
+    if not encrypted and not kept:
         return out
 
     held = bool((had.get("key") or {}).get("sealed"))
@@ -360,7 +398,13 @@ def actions(plan: "Plan") -> List[str]:
     sync = link.get("sync")
     if sync:
         pairs = ", ".join(f"{ws} → {sync['spaces'][ws]}" for ws in sync["workspaces"])
-        how = "end-to-end encrypted" if sync["encrypted"] else "readable there"
+        if sync["encrypted"]:
+            how = ("every workspace end-to-end encrypted, default and all the others, "
+                   "including ones added later")
+        elif sync.get("kept"):
+            how = "readable there, except " + ", ".join(sync["kept"]) + " (still encrypted)"
+        else:
+            how = "readable there; encrypt single workspaces later in Settings"
         out.append(f"sync {pairs} both ways, {how}; the one-way mirror is turned off")
         if sync.get("generate"):
             out.append("generate the sync passphrase and show it once at the end")
@@ -376,9 +420,22 @@ def actions(plan: "Plan") -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _mappings(link: Dict[str, Any]) -> List[Dict[str, str]]:
+def _mappings(link: Dict[str, Any]) -> List[Dict[str, Any]]:
     sync = link.get("sync") or {}
-    return [{"workspace": ws, "space": sync["spaces"][ws]} for ws in sync.get("workspaces") or []]
+    kept = sync.get("kept") or {}
+    return [{"workspace": ws, "space": sync["spaces"][ws], "encrypted": bool(sync.get("encrypted") or kept.get(ws))}
+            for ws in sync.get("workspaces") or []]
+
+
+def _needs_key(sync: Dict[str, Any]) -> bool:
+    return bool(sync.get("encrypted") or sync.get("kept"))
+
+
+def _sync_done(sync: Dict[str, Any], link: Dict[str, Any]) -> str:
+    pairs = ", ".join(f"{m['workspace']} → {m['space']}" for m in _mappings(link))
+    if sync.get("encrypted"):
+        return f"Sync on: {pairs}; every workspace end-to-end encrypted, default and all the others."
+    return f"Sync on: {pairs}; no encryption for now, set it per workspace in Settings."
 
 
 def _remember_passphrase(plan: "Plan", passphrase: str) -> None:
@@ -477,8 +534,7 @@ def apply_local(a: Asker, plan: "Plan") -> None:
             _sync_local(a, plan, link, client)
         elif client.config().get("enabled"):
             had = client.config()
-            client.configure(enabled=False, mappings=list(had.get("mappings") or []),
-                             encrypted=bool(had.get("encrypted")))
+            client.configure(enabled=False, mappings=client.mappings(had))
             a.ok("Sync turned off.")
     except (client.SyncConfigError, RemoteError, CryptoError) as exc:
         a.warn(f"Sync was not set up ({exc}). Finish it in Settings, Remote hub, Sync.")
@@ -491,14 +547,13 @@ def _sync_local(a: Asker, plan: "Plan", link: Dict[str, Any], client: Any) -> No
         if not get_workspace_folder(ws):
             create_workspace_folder(ws)
             a.ok(f"Created the workspace {ws}.")
-    if sync["encrypted"] and not sync.get("keep_key"):
+    if _needs_key(sync) and not sync.get("keep_key"):
         _fill_secret_key(plan)
         made = client.setup_key(passphrase=sync.get("passphrase") or None, generate=bool(sync.get("generate")))
         _remember_passphrase(plan, made.get("generated_passphrase") or "")
         a.ok("Sync key " + ("created" if made.get("generated_passphrase") else "unlocked") + ".")
-    client.configure(enabled=True, mappings=_mappings(link), encrypted=bool(sync["encrypted"]))
-    a.ok("Sync on: " + ", ".join(f"{m['workspace']} → {m['space']}" for m in _mappings(link))
-         + (", end-to-end encrypted." if sync["encrypted"] else "."))
+    client.configure(enabled=True, mappings=_mappings(link), encrypt_all=bool(sync["encrypted"]))
+    a.ok(_sync_done(sync, link))
 
 
 # ---------------------------------------------------------------------------
@@ -553,24 +608,22 @@ def apply_http(a: Asker, plan: "Plan", session: Optional[str]) -> None:
                 if call("GET", f"/api/workspaces/{quote(ws, safe='')}", ok_missing=True).get("missing"):
                     call("POST", "/api/workspaces", {"name": ws})
                     a.ok(f"Created the workspace {ws}.")
-            if sync["encrypted"] and not (sync.get("keep_key") or (
+            if _needs_key(sync) and not (sync.get("keep_key") or (
                     status.get("key_unlocked") and not sync.get("passphrase"))):
                 key_body = ({"passphrase": sync["passphrase"]} if sync.get("passphrase")
                             else {"generate": True})
                 made = call("POST", "/api/hublink/sync/key", key_body)
                 _remember_passphrase(plan, made.get("generated_passphrase") or "")
                 a.ok("Sync key " + ("created" if made.get("generated_passphrase") else "unlocked") + ".")
-            call("PUT", "/api/hublink/sync", {"enabled": True, "encrypted": bool(sync["encrypted"]),
+            call("PUT", "/api/hublink/sync", {"enabled": True, "encrypt_all": bool(sync["encrypted"]),
                                               "mappings": _mappings(link)})
-            a.ok("Sync on: " + ", ".join(f"{m['workspace']} → {m['space']}" for m in _mappings(link))
-                 + (", end-to-end encrypted." if sync["encrypted"] else "."))
+            a.ok(_sync_done(sync, link))
         elif status.get("enabled"):
-            call("PUT", "/api/hublink/sync", {"enabled": False, "encrypted": bool(status.get("encrypted")),
-                                              "mappings": list(status.get("mappings") or [])})
+            call("PUT", "/api/hublink/sync", {"enabled": False, "mappings": list(status.get("mappings") or [])})
             a.ok("Sync turned off.")
     except (SetupError, requests.RequestException) as exc:
         a.warn(f"The linked hub was not fully set ({exc}). Finish it in Settings, Remote hub.")
 
 
-__all__ = ["MODES", "PASSPHRASE_WARNING", "actions", "apply_http", "apply_local", "existing_link", "probe",
+__all__ = ["ENCRYPTION", "MODES", "PASSPHRASE_WARNING", "actions", "apply_http", "apply_local", "existing_link", "probe",
            "step_link"]

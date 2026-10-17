@@ -81,6 +81,37 @@ describe('buildGraph', () => {
   });
 });
 
+describe('buildGraph on a big cluster', () => {
+  const many = (n, role, extra = {}) => Array.from({ length: n }, (_, i) => ({
+    member_id: `${role}-${i}`, role, host: `h${i % 2}`, status: 'live', load: {}, ...extra }));
+  const g = buildGraph({
+    members: [...many(9, 'api'), ...many(10, 'worker'), ...many(5, 'all', { status: 'stale' }).map((m, i) => ({ ...m, member_id: `old-${i}` }))],
+    queue: {}, stack: [],
+  }, t);
+  const ys = g.nodes.filter((n) => n.type === 'svc').map((n) => n.position.y);
+  const xs = g.nodes.filter((n) => n.type === 'svc').map((n) => n.position.x);
+
+  it('wraps long columns so the map grows across, not down', () => {
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(4 * 100);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(Math.max(...ys) - Math.min(...ys));
+  });
+
+  it('folds stale members into one card', () => {
+    const ids = g.nodes.map((n) => n.id);
+    expect(ids).toContain('stale:api');
+    expect(ids.filter((id) => id.startsWith('m:old-'))).toEqual([]);
+    expect(g.nodes.find((n) => n.id === 'stale:api').data.detail).toHaveProperty('old-0');
+  });
+
+  it('keeps the queue right of every api and left of every worker', () => {
+    const x = (id) => g.nodes.find((n) => n.id === id).position.x;
+    const apiXs = g.nodes.filter((n) => n.id.startsWith('m:api-')).map((n) => n.position.x);
+    const workerXs = g.nodes.filter((n) => n.id.startsWith('m:worker-')).map((n) => n.position.x);
+    expect(Math.max(...apiXs)).toBeLessThan(x('queue'));
+    expect(Math.min(...workerXs)).toBeGreaterThan(x('queue'));
+  });
+});
+
 describe('ServiceMap', () => {
   const show = () => render(<I18nProvider><ServiceMap map={MAP} /></I18nProvider>);
 

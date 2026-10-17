@@ -4,10 +4,18 @@ This hub as a sync client of the hub it is linked to (hublink/).
 The settings live in the link record under ``sync`` (hublink/store.py), so
 unlinking forgets them with everything else:
 
-    {"enabled": bool, "encrypted": bool, "actor": "<user id>",
-     "mappings": [{"workspace": "<here>", "space": "<there>"}],
+    {"enabled": bool, "encrypted": bool, "encrypt_all": bool, "actor": "<user id>",
+     "mappings": [{"workspace": "<here>", "space": "<there>", "encrypted": bool}],
      "key": {"key_id", "salt", "iterations", "sealed"},   # sealed: Fernet, this hub's secret key
      "cursors": {"<space>": seq}, "last_pass_at", "last_result", "last_error"}
+
+Encryption is chosen per mapping: one workspace can travel sealed while
+another goes in clear. ``encrypt_all`` (chosen in ``ah setup`` or on the
+Settings page) seals every mapping, default and all the others, including
+ones added later, and the per mapping choice waits until it is off. The
+top-level ``encrypted`` only says whether any mapping is, for the header
+indicator; a mapping saved before the choice was per mapping takes the old
+top-level value (:func:`mappings`).
 
 The sync key is derived from the person's passphrase once, then kept sealed
 under ``AGENTS_HUB_SECRET_KEY`` (the same key that seals workspace secrets):
@@ -108,6 +116,22 @@ def config(doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return dict(doc.get("sync") or {})
 
 
+def mappings(sync: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The mappings, each with its own ``encrypted``. One saved before the
+    flag moved onto the mapping takes the old setting for the whole sync."""
+    sync = sync if sync is not None else config()
+    legacy = bool(sync.get("encrypted"))
+    every = bool(sync.get("encrypt_all"))
+    out: List[Dict[str, Any]] = []
+    for m in sync.get("mappings") or []:
+        if not isinstance(m, dict) or not m.get("workspace"):
+            continue
+        enc = m.get("encrypted")
+        out.append({"workspace": m["workspace"], "space": m.get("space") or m["workspace"],
+                    "encrypted": every or (legacy if enc is None else bool(enc))})
+    return out
+
+
 def _save(**changes: Any) -> Dict[str, Any]:
     from hublink import store
     doc = _link()
@@ -146,6 +170,7 @@ def status() -> Dict[str, Any]:
         return {"linked": False, "enabled": False}
     sync = dict(doc.get("sync") or {})
     key = sync.get("key") or {}
+    maps = mappings(sync)
     open_conflicts = 0
     try:
         from hubsync import state
@@ -155,19 +180,27 @@ def status() -> Dict[str, Any]:
     return {
         "linked": True, "remote": doc.get("url"), "remote_name": doc.get("name") or "",
         "actor": sync.get("actor") or "",
-        "enabled": bool(sync.get("enabled")), "encrypted": bool(sync.get("encrypted")),
+        "enabled": bool(sync.get("enabled")), "encrypted": any(m["encrypted"] for m in maps),
+        "encrypt_all": bool(sync.get("encrypt_all")),
         "key_set": bool(key.get("sealed")), "key_id": key.get("key_id") or "",
         "key_unlocked": unlocked_key(sync) is not None if key.get("sealed") else False,
-        "mappings": list(sync.get("mappings") or []), "last_pass_at": sync.get("last_pass_at"),
+        "mappings": maps, "last_pass_at": sync.get("last_pass_at"),
         "last_result": sync.get("last_result") or {}, "last_error": sync.get("last_error") or "",
         "has_error": bool(sync.get("last_error")),
         "conflicts": open_conflicts, "catalog": bool(doc.get("catalog")),
     }
 
 
-def configure(*, enabled: bool, mappings: List[Dict[str, str]], encrypted: bool) -> Dict[str, Any]:
-    clean: List[Dict[str, str]] = []
+def configure(*, enabled: bool, mappings: List[Dict[str, Any]],
+              encrypted: Optional[bool] = None, encrypt_all: Optional[bool] = None) -> Dict[str, Any]:
+    """Save the sync settings. Each mapping carries its own ``encrypted``;
+    ``encrypted`` here is only the value for a mapping that does not (a
+    caller from before the choice was per mapping). ``encrypt_all`` seals
+    every mapping whatever it says; None keeps the stored choice."""
+    every = bool(config().get("encrypt_all")) if encrypt_all is None else bool(encrypt_all)
+    clean: List[Dict[str, Any]] = []
     seen_spaces = set()
+    seen_workspaces = set()
     for m in mappings or []:
         workspace = str(m.get("workspace") or "").strip()
         space = str(m.get("space") or "").strip() or workspace
@@ -175,17 +208,23 @@ def configure(*, enabled: bool, mappings: List[Dict[str, str]], encrypted: bool)
             continue
         if space in seen_spaces:
             raise SyncConfigError(f"two workspaces map to the space '{space}' there; give each its own")
+        if workspace in seen_workspaces:
+            raise SyncConfigError(f"the workspace '{workspace}' is mapped twice; keep one")
         seen_spaces.add(space)
-        clean.append({"workspace": workspace, "space": space})
+        seen_workspaces.add(workspace)
+        enc = m.get("encrypted")
+        clean.append({"workspace": workspace, "space": space,
+                      "encrypted": every or (bool(encrypted) if enc is None else bool(enc))})
+    sealed_any = any(m["encrypted"] for m in clean)
     sync = config()
     key = sync.get("key") or {}
-    if enabled and encrypted and not key.get("sealed"):
+    if enabled and (sealed_any or (every and clean)) and not key.get("sealed"):
         raise SyncConfigError("set up the encryption key first", status=409)
     if enabled and clean:
         remote = _remote()
         for m in clean:
             remote.put_json(f"/api/sync/spaces/{_q(m['space'])}",
-                            {"encrypted": encrypted, "key_id": key.get("key_id") if encrypted else None,
+                            {"encrypted": m["encrypted"], "key_id": key.get("key_id") if m["encrypted"] else None,
                              "origin": "client"}, timeout=30)
     if enabled:
         _disable_old_mirror()
@@ -193,9 +232,31 @@ def configure(*, enabled: bool, mappings: List[Dict[str, str]], encrypted: bool)
     # pass to their records, which would push everything synced so far as
     # deleted. Unlinking forgets it with the rest of the sync settings.
     actor = sync.get("actor") or _actor()
-    saved = _save(enabled=bool(enabled), encrypted=bool(encrypted), mappings=clean, actor=actor)
+    saved = _save(enabled=bool(enabled), encrypted=sealed_any, encrypt_all=every, mappings=clean, actor=actor)
     _wake()
     return saved
+
+
+def set_workspace(workspace: str, *, synced: bool, space: Optional[str] = None,
+                  encrypted: bool = False) -> Dict[str, Any]:
+    """One workspace's part of the settings, from its own Settings tab: whether
+    it syncs, into which space there, and whether sealed. The other mappings
+    and the on/off switch stay as they are."""
+    workspace = str(workspace or "").strip()
+    if not workspace:
+        raise SyncConfigError("which workspace?")
+    _link()  # refuses on a hub that is not linked
+    sync = config()
+    if synced and sync.get("encrypt_all") and not encrypted:
+        raise SyncConfigError("every workspace is encrypted on this hub; turn that off in Settings, "
+                              "Remote hub to choose per workspace")
+    current = mappings(sync)
+    rows = [m for m in current if m["workspace"] != workspace]
+    if synced:
+        before = next((m for m in current if m["workspace"] == workspace), None)
+        target = str(space or "").strip() or (before or {}).get("space") or workspace
+        rows.append({"workspace": workspace, "space": target, "encrypted": bool(encrypted)})
+    return configure(enabled=bool(sync.get("enabled")), mappings=rows)
 
 
 def _q(text: str) -> str:
@@ -250,8 +311,10 @@ def setup_key(*, passphrase: Optional[str] = None, generate: bool = False,
         existing = []
         # Encrypted sync ran on the old key; it waits until it is set up
         # again with the new one. Plain sync goes on as it was.
-        sync = config()
-        _save(key={}, **({"encrypted": False, "enabled": False} if sync.get("encrypted") else {}))
+        if any(m["encrypted"] for m in mappings()):
+            _save(key={}, enabled=False)
+        else:
+            _save(key={})
     if existing:
         if not passphrase:
             unused = _unused(existing)
@@ -281,7 +344,11 @@ def setup_key(*, passphrase: Optional[str] = None, generate: bool = False,
 
 
 def forget_key() -> None:
-    _save(key={}, encrypted=False, enabled=False)
+    """Sealed mappings keep their choice and wait for a key: sync stops while
+    any mapping is encrypted, so none of them goes out in clear."""
+    maps = mappings()
+    sealed_any = any(m["encrypted"] for m in maps)
+    _save(key={}, mappings=maps, **({"enabled": False} if sealed_any else {}))
 
 
 _pass_lock = threading.Lock()
@@ -305,9 +372,11 @@ def _run_pass() -> Dict[str, Any]:
     sync = config()
     if not sync.get("enabled"):
         return {"skipped": "sync is off"}
-    key = unlocked_key(sync) if sync.get("encrypted") else None
-    if sync.get("encrypted") and key is None:
-        _save(last_error="the sync key is locked on this hub: unlock it in Settings", last_pass_at=_now())
+    maps = mappings(sync)
+    key = unlocked_key(sync) if any(m["encrypted"] for m in maps) else None
+    locked = "the sync key is locked on this hub: unlock it in Settings"
+    if maps and key is None and all(m["encrypted"] for m in maps):
+        _save(last_error=locked, last_pass_at=_now())
         return {"error": "locked"}
     from common import identity
     remote = _remote()
@@ -316,10 +385,15 @@ def _run_pass() -> Dict[str, Any]:
     actor = sync.get("actor") or identity.LOCAL_OPERATOR_ID
     if not sync.get("actor"):
         _save(actor=actor)  # a config from before the actor was kept: the background pass's view
-    for m in sync.get("mappings") or []:
+    for m in maps:
+        if m["encrypted"] and key is None:
+            # A sealed workspace never goes in clear; the plain ones go on.
+            totals["errors"].append(f"{m['workspace']}: {locked}")
+            continue
         spec = engine.Spec(workspace=m["workspace"], space=m["space"],
                            transport=engine.HttpTransport(remote, m["space"]), state_owner="",
-                           actor=actor, key=key, cursor=int(cursors.get(m["space"]) or 0))
+                           actor=actor, key=key if m["encrypted"] else None,
+                           cursor=int(cursors.get(m["space"]) or 0))
         # Stores that stamp the current user (chats, tasks) stamp the actor,
         # whoever asked for this pass.
         token = identity.set_current_user(actor)
@@ -386,5 +460,5 @@ def stop() -> None:
     _wake_event.set()
 
 
-__all__ = ["KeyExistsError", "SyncConfigError", "config", "configure", "forget_key", "run_pass", "setup_key", "start", "status",
-           "stop", "unlocked_key"]
+__all__ = ["KeyExistsError", "SyncConfigError", "config", "configure", "forget_key", "mappings", "run_pass",
+           "set_workspace", "setup_key", "start", "status", "stop", "unlocked_key"]

@@ -66,8 +66,9 @@ describe('Cluster map', () => {
   it('lists members with status, leases and load', async () => {
     show();
     await waitFor(() => expect(screen.getByText('worker-b')).toBeInTheDocument());
-    expect(screen.getByText('Live')).toBeInTheDocument();
-    expect(screen.getByText('Stale')).toBeInTheDocument();
+    // Each status shows once as a pill and once in the status filter.
+    expect(screen.getAllByText('Live')).toHaveLength(2);
+    expect(screen.getAllByText('Stale')).toHaveLength(2);
     expect(screen.getByText('scheduler, watchdog')).toBeInTheDocument();
     expect(screen.getByText('sse_clients=2')).toBeInTheDocument();
     expect(screen.getByText('(you)')).toBeInTheDocument();
@@ -95,5 +96,30 @@ describe('Cluster map', () => {
     expect(forgets[1]).not.toBeDisabled();
     fireEvent.click(forgets[1]);
     await waitFor(() => expect(forgetMember).toHaveBeenCalledWith('worker-b'));
+  });
+
+  it('filters members and shows them in batches', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      member_id: `worker-${String(i).padStart(2, '0')}`, role: 'worker', host: `host-${i % 3}`,
+      status: i < 2 ? 'live' : 'stopped', heartbeat_age_seconds: 5 + i, uptime_seconds: 60, leases: [], load: {},
+    }));
+    getCluster.mockImplementation(() => ok({ ...MAP, members: [MAP.members[0], ...many] }));
+    window.localStorage.removeItem('listPaging:cluster-members');
+    show();
+    await waitFor(() => expect(screen.getByText('worker-00')).toBeInTheDocument());
+    // Live first, then the first batch of 20 out of 26.
+    expect(screen.getAllByTitle('View log')).toHaveLength(20);
+    expect(screen.getByText('20 of 26 shown')).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/Load 6 more/));
+    expect(screen.getAllByTitle('View log')).toHaveLength(26);
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'live' } });
+    expect(screen.getAllByTitle('View log')).toHaveLength(3);
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText(/Member, host/), { target: { value: 'worker-1' } });
+    expect(screen.getAllByTitle('View log')).toHaveLength(10);
+    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'api' } });
+    expect(screen.getByText('No member matches the filters.')).toBeInTheDocument();
+    getCluster.mockImplementation(() => ok(MAP));
   });
 });

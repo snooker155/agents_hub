@@ -238,8 +238,17 @@ def _client_call(fn, *args, **kwargs):
 
 class ClientBody(BaseModel):
     enabled: bool
+    # The value for a mapping that carries no ``encrypted`` of its own.
     encrypted: bool = False
-    mappings: List[Dict[str, str]] = Field(default_factory=list)
+    # Every workspace sealed, default and the others, also later ones; None keeps it.
+    encrypt_all: Optional[bool] = None
+    mappings: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkspaceSyncBody(BaseModel):
+    synced: bool
+    space: Optional[str] = None
+    encrypted: bool = False
 
 
 class ClientKeyBody(BaseModel):
@@ -264,7 +273,17 @@ async def client_configure(body: ClientBody, request: Request):
     from hubsync import client
     _admin(request)
     await asyncio.to_thread(_client_call, client.configure, enabled=body.enabled, mappings=body.mappings,
-                            encrypted=body.encrypted)
+                            encrypted=body.encrypted, encrypt_all=body.encrypt_all)
+    return client.status()
+
+
+@client_router.put("/workspaces/{workspace}")
+async def client_configure_workspace(workspace: str, body: WorkspaceSyncBody, request: Request):
+    """One workspace's mapping, from that workspace's Settings tab."""
+    from hubsync import client
+    _admin(request)
+    await asyncio.to_thread(_client_call, client.set_workspace, workspace, synced=body.synced,
+                            space=body.space, encrypted=body.encrypted)
     return client.status()
 
 

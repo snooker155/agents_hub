@@ -9,6 +9,12 @@ models and agents. Three modes, chosen on Settings, Remote hub:
 | **Sync** | Everything you create in the chosen workspaces | All of it, and shows it as pages | Here and there |
 | **Sync, end-to-end encrypted** | The same, sealed with your passphrase | Nothing: only sizes and dates | Here; there it is stored, not run |
 
+Encryption is chosen per workspace: one workspace can travel sealed while
+another syncs in clear, in the same pass. Or every workspace at once:
+**Encrypt every workspace** seals default and all the others, including
+ones added later, and the per workspace choice waits until it is off. `ah
+setup` asks which of the two to start with.
+
 The catalog lets you browse the linked hub's agents, skills, flows, teams
 and loops and install copies here ([hub link](hub-link.md), "Catalog mode").
 The rest of this page is about sync.
@@ -101,6 +107,10 @@ page applies.
 
 ## End-to-end encryption
 
+Each mapped workspace has its own Encrypt box: in its row under Settings,
+Remote hub, and on the workspace's own Settings tab, section Remote hub
+sync. Both edit the same row. One key serves every encrypted workspace.
+
 With encryption on, each record is sealed on your hub before it leaves:
 AES-256-GCM under a key derived from your passphrase (PBKDF2-HMAC-SHA256,
 600 000 iterations), bound to its space, kind and id so the server cannot
@@ -125,8 +135,12 @@ hub cannot slip in a plain record of its own.
   replaced: generate again, and when the linked hub reports that no record
   is sealed with the key, Settings offers to replace it. The linked hub
   refuses that once a single record is sealed with the key.
+- **A locked key** holds back the encrypted workspaces only; the plain ones
+  go on syncing, and the pass reports which workspaces waited. Forgetting
+  the key on this hub turns sync off while any workspace is encrypted, and
+  each workspace keeps its choice for when a key is set again.
 - **The header shows it.** While sync is on, a pill in the header says
-  whether it is encrypted, when the last pass ran, and whether something
+  whether any workspace is encrypted, when the last pass ran, and whether something
   needs attention; a red pill means the key is locked on this hub.
 
 ### Viewing encrypted data on the linked hub
@@ -146,10 +160,12 @@ records the other way is refused, so a space is never half readable.
 
 | Where | What |
 | --- | --- |
-| Settings, Remote hub, Sync | Mappings, encryption, the key, Sync now, conflicts |
+| Settings, Remote hub, Sync | Mappings with an Encrypt box each, the key, Sync now, conflicts. The card is there before the hub is linked, and says to link it first |
+| A workspace, Settings, Remote hub sync | Whether this workspace syncs, into which space, and whether it is encrypted |
 | `GET /api/hublink/sync` | Status, readable by anyone signed in (the header); others than administrators see only the workspaces they can see, and whether the last pass failed instead of its error text |
 | `GET /api/hublink/sync/conflicts` | Conflicts, cut the same way for others than administrators |
-| `PUT /api/hublink/sync` | `{enabled, encrypted, mappings: [{workspace, space}]}`, administrators |
+| `PUT /api/hublink/sync` | `{enabled, encrypt_all, mappings: [{workspace, space, encrypted}]}`, administrators. `encrypt_all` true seals every mapping; left out, it stays as it was. A mapping without `encrypted` takes the top-level `encrypted` (the older form) |
+| `PUT /api/hublink/sync/workspaces/{workspace}` | `{synced, space, encrypted}`: one workspace's mapping, the others and the on/off switch untouched; administrators. Refused in clear while every workspace is encrypted |
 | `POST /api/hublink/sync/key` | `{generate: true}`, `{generate: true, replace_unused: true}` or `{passphrase}`. When the account already has a key, `{generate: true}` answers 409 with `detail: {message, code: "key_exists", replace_unused}`, where `replace_unused` is true only when no record is sealed with it; other errors carry a sentence |
 | `/api/sync/...` on the linked hub | The vault: spaces, keys (each with `records`, how many live records it sealed), push, changes, records; every route acts for the caller alone |
 | `DELETE /api/sync/keys/{key_id}` on the linked hub | Your own key, refused while any record is sealed with it |

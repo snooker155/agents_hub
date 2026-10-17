@@ -115,6 +115,12 @@ def register(role: str, *, capabilities: Optional[Dict[str, Any]] = None,
         conn.execute(
             db.upsert_sql("members", tuple(row), ("member_id",)), tuple(row.values()))
     log.info("member %s registered as %s on %s", member_id, role, row["host"])
+    # Every start clears what earlier processes left behind, so the map does
+    # not grow by one stopped row per restart.
+    try:
+        prune()
+    except Exception:  # noqa: BLE001 - housekeeping must not fail a start
+        log.debug("member prune failed", exc_info=True)
     return get(member_id) or row
 
 
@@ -180,8 +186,11 @@ def get(member_id: str) -> Optional[Dict[str, Any]]:
 def list_members(*, include_stopped: bool = True) -> List[Dict[str, Any]]:
     """Every member, live first, then stale, then stopped, each with its
     status, heartbeat age and uptime worked out."""
+    # A row without an id or a beat was never written by register(); it
+    # cannot be told apart, logged or forgotten, so it is not a member.
     rows = db.get_conn().execute(
-        "SELECT * FROM members ORDER BY started_at DESC").fetchall()
+        "SELECT * FROM members WHERE member_id IS NOT NULL AND heartbeat_at IS NOT NULL "
+        "ORDER BY started_at DESC").fetchall()
     now = _now()
     out = [_decorate(dict(r), now) for r in rows]
     if not include_stopped:
@@ -192,10 +201,13 @@ def list_members(*, include_stopped: bool = True) -> List[Dict[str, Any]]:
 
 
 def prune(older_than_seconds: float = FORGET_AFTER_SECONDS) -> int:
-    """Drop stopped or stale rows whose last beat is older than the window."""
+    """Drop stopped or stale rows whose last beat is older than the window,
+    and rows that never beat at all."""
     cutoff = (_now() - timedelta(seconds=older_than_seconds)).isoformat()
     with db.transaction() as conn:
-        cur = conn.execute("DELETE FROM members WHERE heartbeat_at < ?", (cutoff,))
+        cur = conn.execute(
+            "DELETE FROM members WHERE heartbeat_at < ? OR heartbeat_at IS NULL OR member_id IS NULL",
+            (cutoff,))
         return int(getattr(cur, "rowcount", 0) or 0)
 
 

@@ -671,7 +671,7 @@ def _client_status(ctx: SimpleNamespace) -> Optional[Dict[str, Any]]:
     status = sync_client.status()
     if not status.get("linked"):
         return None
-    mappings = [{"workspace": m.get("workspace"), "space": m.get("space")}
+    mappings = [{"workspace": m.get("workspace"), "space": m.get("space"), "encrypted": bool(m.get("encrypted"))}
                 for m in status.get("mappings") or []
                 if isinstance(m, dict) and lookup.visible(ctx, m.get("workspace"))]
     result = status.get("last_result") or {}

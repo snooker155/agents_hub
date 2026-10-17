@@ -120,3 +120,54 @@ def test_a_space_cannot_switch_sealing_with_records_in_it(hub, client):
 
 def test_an_unknown_workspace_is_refused(hub, client):
     assert client.put("/api/sync/spaces/nowhere", json={"encrypted": False}).status_code == 404
+
+
+def test_encryption_is_chosen_per_workspace(hub, client):
+    """One workspace sealed, another in clear, in the same pass; a locked key
+    holds back only the sealed one; the workspace route changes one mapping."""
+    from workspace.storage import create_workspace_folder
+    create_workspace_folder("notes")
+    sync_client.setup_key(generate=True)
+    sync_client.configure(enabled=True, mappings=[
+        {"workspace": "laptop", "space": "remote-enc", "encrypted": True},
+        {"workspace": "notes", "space": "remote-ws", "encrypted": False},
+    ])
+    hub.data[("laptop", "d1")] = {"title": "Diary", "body": "private"}
+    hub.data[("notes", "n1")] = {"title": "Plan", "body": "open"}
+    sync_client.run_pass()
+    assert vault.get_record("local", "remote-enc", "memtest", "d1")["encrypted"]
+    plain = vault.get_record("local", "remote-ws", "memtest", "n1")
+    assert not plain["encrypted"]
+    opened = crypto.decode_record(plain["payload"], kind="memtest", record_id="n1", encrypted=False, key=None,
+                                  space="remote-ws")
+    assert opened["data"]["body"] == "open"
+    status = client.get("/api/hublink/sync").json()
+    assert status["encrypted"] is True
+    assert {m["workspace"]: m["encrypted"] for m in status["mappings"]} == {"laptop": True, "notes": False}
+
+    # The key forgotten: sync stops, the choice per workspace stays.
+    sync_client.forget_key()
+    after = sync_client.status()
+    assert not after["enabled"] and {m["workspace"]: m["encrypted"] for m in after["mappings"]} == {
+        "laptop": True, "notes": False}
+
+    # One workspace from its own Settings tab: the other mapping is untouched.
+    out = client.put("/api/hublink/sync/workspaces/laptop", json={"synced": False})
+    assert out.status_code == 200, out.text
+    assert [m["workspace"] for m in out.json()["mappings"]] == ["notes"]
+    out = client.put("/api/hublink/sync/workspaces/laptop",
+                     json={"synced": True, "space": "remote-enc", "encrypted": True})
+    assert {m["workspace"]: (m["space"], m["encrypted"]) for m in out.json()["mappings"]} == {
+        "notes": ("remote-ws", False), "laptop": ("remote-enc", True)}
+
+
+def test_a_mapping_saved_before_the_per_workspace_choice_keeps_the_old_flag(hub):
+    link_store.update(sync={"enabled": False, "encrypted": True,
+                            "mappings": [{"workspace": "laptop", "space": "remote-enc"}]})
+    assert sync_client.mappings() == [{"workspace": "laptop", "space": "remote-enc", "encrypted": True}]
+
+
+def test_the_workspace_route_needs_a_link(client):
+    link_store.clear()
+    out = client.put("/api/hublink/sync/workspaces/laptop", json={"synced": True})
+    assert out.status_code == 409

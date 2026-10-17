@@ -33,8 +33,10 @@ def _drop_new_workspaces():
     from workspace import storage
     before = {p.name for p in storage.list_workspace_folders()}
     yield
+    # The default workspace stays: the rest of the suite expects it, and a
+    # later test file (test_hublink.py) failed when this one removed it.
     for path in storage.list_workspace_folders():
-        if path.name not in before:
+        if path.name not in before and path.name != "default":
             storage.delete_workspace_folder(path.name)
 
 
@@ -126,7 +128,7 @@ def test_two_way_sync_maps_workspaces_and_creates_the_missing_one(other_hub, sta
     assert get_workspace_folder("laptop")
     cfg = sync_client.config()
     assert cfg["enabled"] is True and cfg["encrypted"] is False
-    assert cfg["mappings"] == [{"workspace": "laptop", "space": "remote-ws"}]
+    assert cfg["mappings"] == [{"workspace": "laptop", "space": "remote-ws", "encrypted": False}]
     assert vault.get_space("local", "remote-ws")["encrypted"] in (False, 0)
     doc = store.get()
     assert doc["catalog"] is False and doc["mirror"]["chats"] is False
@@ -150,6 +152,50 @@ def test_encrypted_sync_generates_the_passphrase_and_shows_it_once(other_hub, st
     out = _text(a)
     assert out.count(passphrase) == 1 and "losing it and every" in out
     assert "ahk_secret_key_1" not in out
+    _no_threads(started)
+
+
+def test_encrypt_every_workspace_at_the_start_says_so_and_covers_later_ones(other_hub, started):
+    """The start choice "all": default and every other workspace sealed, the
+    wizard says it in so many words, and a workspace mapped later from its
+    own Settings tab cannot be added in clear."""
+    from hubsync import client as sync_client
+    from workspace.storage import create_workspace_folder
+    create_workspace_folder("remote-l")  # the space there, on the same test app
+    a, plan = _local({**BASE, "mode": "sync", "sync": {"encryption": "all", "workspaces": ["default", "laptop"],
+                                                       "spaces": {"default": "remote-ws", "laptop": "remote-l"}}})
+    out = _text(a)
+    assert L.ENCRYPT_ALL_NOTE in out and "default and all the others" in out
+    cfg = sync_client.config()
+    assert cfg["encrypt_all"] is True and cfg["key"]["sealed"]
+    assert all(m["encrypted"] for m in cfg["mappings"])
+    assert any("default and all the others" in line for line in L.actions(plan))
+    create_workspace_folder("later")
+    with pytest.raises(sync_client.SyncConfigError):
+        sync_client.set_workspace("later", synced=True, encrypted=False)
+    sync_client.set_workspace("later", synced=True, encrypted=True)
+    assert {m["workspace"]: m["encrypted"] for m in sync_client.status()["mappings"]}["later"] is True
+    _no_threads(started)
+
+
+def test_no_encryption_at_the_start_leaves_it_to_each_workspace(other_hub, started):
+    from hubsync import client as sync_client
+    a, plan = _local({**BASE, "mode": "sync", "sync": {"encryption": "off", "workspaces": ["laptop"],
+                                                       "spaces": {"laptop": "remote-ws"}}})
+    assert L.ENCRYPT_OFF_NOTE in _text(a)
+    cfg = sync_client.config()
+    assert cfg["encrypt_all"] is False and not cfg.get("key")
+    assert plan.generated == []
+    assert any("encrypt single workspaces later" in line for line in L.actions(plan))
+    _no_threads(started)
+
+
+def test_an_older_answers_file_with_sync_e2e_means_every_workspace(other_hub, started):
+    from hubsync import client as sync_client
+    a, plan = _local({**BASE, "mode": "sync-e2e", "sync": {"workspaces": ["laptop"],
+                                                           "spaces": {"laptop": "remote-ws"}}})
+    assert plan.link["mode"] == "sync" and L.ENCRYPT_ALL_NOTE in _text(a)
+    assert sync_client.config()["encrypt_all"] is True
     _no_threads(started)
 
 
@@ -258,7 +304,7 @@ def test_a_started_stack_gets_the_link_and_encrypted_sync_over_its_api(tmp_path,
             ("PUT", "/api/hublink/sync"), ("POST", "/api/workspaces")} <= sent
     assert get_workspace_folder(SYNC_WS)
     cfg = sync_client.config()
-    assert cfg["enabled"] and cfg["encrypted"] and cfg["mappings"] == [{"workspace": SYNC_WS, "space": "remote-ws"}]
+    assert cfg["enabled"] and cfg["encrypted"] and cfg["mappings"] == [{"workspace": SYNC_WS, "space": "remote-ws", "encrypted": True}]
     assert store.get()["mirror"] == {"runs": False, "chats": False, "memory": False}
     out = _text(a)
     assert out.count("Sync passphrase:") == 1 and "losing it and every" in out
@@ -275,7 +321,7 @@ def test_a_stack_that_already_has_the_workspace_is_not_asked_to_make_it_again(tm
         **BASE, "mode": "sync", "sync": {"workspaces": [SYNC_WS], "spaces": {SYNC_WS: "remote-ws"}}}})
     assert W.run(a, yes=True) == 0
     assert ("GET", f"/api/workspaces/{SYNC_WS}") in stack and ("POST", "/api/workspaces") not in stack
-    assert sync_client.config()["mappings"] == [{"workspace": SYNC_WS, "space": "remote-ws"}]
+    assert sync_client.config()["mappings"] == [{"workspace": SYNC_WS, "space": "remote-ws", "encrypted": False}]
 
 
 def test_a_stack_not_started_is_linked_on_a_later_run(tmp_path, stack):

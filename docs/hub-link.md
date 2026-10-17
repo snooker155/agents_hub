@@ -8,7 +8,7 @@ Nothing is ever read back from the shared hub: it is a supplier and a
 mirror, never a source of truth for the laptop. Two hubs linked to each
 other do not echo.
 
-Settings → System → Remote hub is the one form for all of it; `ah hub` is
+Settings → Remote hub is the one form for all of it; `ah hub` is
 the same from the terminal. The code is `hublink/`, the routes are
 `dashboard/backend/routes/hublink.py`.
 
@@ -152,7 +152,7 @@ How a node is chosen (`hublink/scheduler.py`):
 
 - **Load** is a node's open jobs (waiting, taken, streaming) over its
   **capacity**, read from the mailbox, so every API replica sees the same.
-  The node announces its capacity (Settings → System → Remote hub, "Requests
+  The node announces its capacity (Settings → Remote hub, "Requests
   at once", `--capacity`, default 4); the hub may cap it lower on the Nodes
   page. A node is handed no more jobs than it runs at once.
 - When every eligible node is full, the request waits up to two minutes for

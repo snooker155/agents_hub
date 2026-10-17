@@ -18,16 +18,22 @@ import { useI18n } from '../../i18n';
  * under the diagram, so a one-process install shows a small, clean map.
  */
 
-const COL = { people: 0, dashboard: 250, api: 500, queue: 750, worker: 1000 };
+// Columns left to right. A column of many members wraps into a grid of at
+// most MAX_ROWS rows, and the columns after it move right, so a busy cluster
+// grows across the page rather than down it.
+const COL_GAP = 250;
+const SUB_GAP = 230;
 const ROW_H = 100;
 const NODE_W = 200;
+const MAX_ROWS = 4;
 const SERVICE_GAP = 230;
+const SERVICES_PER_ROW = 6;
 
 // Which paint each kind of node takes from the graph tokens in index.css.
 const PAINT = {
   people: 'frontend', dashboard: 'frontend', api: 'backend', queue: 'backend', worker: 'backend',
   database: 'datastore', broker: 'datastore', blob_store: 'datastore',
-  hub: 'project', hub_node: 'project',
+  hub: 'project', hub_node: 'project', stale: 'external',
 };
 
 const DOT = {
@@ -108,9 +114,15 @@ const USERS = {
 // eslint-disable-next-line react-refresh/only-export-components -- the layout is a pure function the tests call without a canvas
 export function buildGraph(map, t) {
   const members = (map?.members || []).filter((m) => m.status !== 'stopped');
-  const apis = members.filter((m) => m.role !== 'worker');
-  const workers = members.filter((m) => m.role === 'worker')
+  // Live members are drawn one by one; stale ones (the beat stopped without a
+  // clean shutdown) fold into one card per column, opened for the list.
+  const live = members.filter((m) => m.status !== 'stale');
+  const staleOf = (worker) => members.filter((m) => m.status === 'stale' && (m.role === 'worker') === worker);
+  const apis = live.filter((m) => m.role !== 'worker');
+  const workers = live.filter((m) => m.role === 'worker')
     .sort((a, b) => String(a.host || '').localeCompare(String(b.host || '')));
+  const staleApis = staleOf(false);
+  const staleWorkers = staleOf(true);
   const stack = map?.stack || [];
   const hubNodes = map?.hub_nodes || [];
   const hubLink = map?.hub_link || {};
@@ -121,9 +133,36 @@ export function buildGraph(map, t) {
   const inUse = stack.filter((c) => c.id !== 'compose' && c.status !== 'off');
   const idle = stack.filter((c) => c.status === 'off' || (c.id === 'compose' && compose.status === 'unknown'));
 
-  const rows = Math.max(apis.length, workers.length + hubNodes.length, 1);
+  // The worker side: one group per host (its backdrop), then the lent hub
+  // nodes, then the stale card. Each group wraps on its own.
+  const workerGroups = [];
+  workers.forEach((m) => {
+    const host = m.host || '';
+    const last = workerGroups[workerGroups.length - 1];
+    if (last && last.host === host) last.items.push({ member: m });
+    else workerGroups.push({ host, items: [{ member: m }] });
+  });
+  if (hubNodes.length) workerGroups.push({ host: null, items: hubNodes.map((h) => ({ hub: h })) });
+  if (staleWorkers.length) workerGroups.push({ host: null, items: [{ stale: staleWorkers }] });
+  const apiItems = [...apis.map((m) => ({ member: m })), ...(staleApis.length ? [{ stale: staleApis }] : [])];
+
+  const tall = (n) => Math.min(Math.max(n, 1), MAX_ROWS);
+  const wide = (n) => Math.max(1, Math.ceil(n / MAX_ROWS));
+  const rows = Math.max(tall(apiItems.length), ...workerGroups.map((g) => tall(g.items.length)), 1);
   const midY = ((rows - 1) * ROW_H) / 2;
   const colY = (count, i) => midY - ((count - 1) * ROW_H) / 2 + i * ROW_H;
+  // Where the i-th of n items of a wrapped column sits.
+  const cell = (x0, n, i) => {
+    const col = Math.floor(i / MAX_ROWS);
+    const inCol = Math.min(MAX_ROWS, n - col * MAX_ROWS);
+    return { x: x0 + col * SUB_GAP, y: colY(inCol, i % MAX_ROWS) };
+  };
+
+  const COL = { people: 0, dashboard: COL_GAP };
+  COL.api = frontend ? COL.dashboard + COL_GAP : COL.dashboard;
+  COL.queue = COL.api + (wide(apiItems.length) - 1) * SUB_GAP + COL_GAP;
+  COL.worker = COL.queue + COL_GAP;
+
   const nodes = [];
   const edges = [];
   const edge = (source, target, extra = {}) => edges.push({
@@ -131,6 +170,12 @@ export function buildGraph(map, t) {
     markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--graph-external-border)' },
     style: { stroke: 'var(--graph-external-border)', strokeWidth: 1.5, ...(extra.faint ? { opacity: 0.35 } : {}) },
     animated: Boolean(extra.animated), sourceHandle: extra.sourceHandle || 'r', targetHandle: extra.targetHandle || 'l',
+  });
+  const staleNode = (id, list, x, y) => ({
+    id, type: 'svc', position: { x, y },
+    data: { kind: 'stale', title: t('cluster.map.staleMembers', { count: list.length }), sub: t('cluster.map.staleSub'),
+            status: 'warn', line: '',
+            detail: Object.fromEntries(list.map((m) => [m.member_id, [m.role, m.host].filter(Boolean).join(' · ')])) },
   });
 
   nodes.push({ id: 'people', type: 'svc', position: { x: COL.people, y: colY(1, 0) },
@@ -145,8 +190,14 @@ export function buildGraph(map, t) {
     entry = 'dashboard';
   }
 
-  apis.forEach((m, i) => {
-    const n = memberNode(t, m, 'api', COL.api, colY(apis.length, i));
+  apiItems.forEach((item, i) => {
+    const { x, y } = cell(COL.api, apiItems.length, i);
+    if (item.stale) {
+      nodes.push(staleNode('stale:api', item.stale, x, y));
+      return;
+    }
+    const m = item.member;
+    const n = memberNode(t, m, 'api', x, y);
     nodes.push(n);
     const busy = num(m.load?.sse_clients) > 0 || num(m.load?.running_runs_on_host) > 0;
     edge(entry, n.id, { animated: busy });
@@ -162,57 +213,71 @@ export function buildGraph(map, t) {
             load: null, capacity: null, detail: { ...queue, items: undefined } } });
   apis.forEach((m) => edge(`m:${m.member_id}`, 'queue', { animated: depth > 0 || runningNow > 0 }));
 
-  const hostsSeen = [];
-  workers.forEach((m, i) => {
-    const n = memberNode(t, m, 'worker', COL.worker, colY(workers.length + hubNodes.length, i));
-    nodes.push(n);
-    edge('queue', n.id, { animated: (num(m.load?.tracked) || 0) > 0 });
-    if (!hostsSeen.includes(m.host || '')) hostsSeen.push(m.host || '');
+  let groupX = COL.worker;
+  workerGroups.forEach((group) => {
+    const n = group.items.length;
+    group.items.forEach((item, i) => {
+      const { x, y } = cell(groupX, n, i);
+      if (item.stale) {
+        nodes.push(staleNode('stale:worker', item.stale, x, y));
+      } else if (item.hub) {
+        // Machines lending this hub their models and sandbox take work like workers.
+        const h = item.hub;
+        const cap = num(h.capacity);
+        const busy = num(h.in_flight) || 0;
+        nodes.push({ id: `n:${h.id}`, type: 'svc', position: { x, y },
+          data: { kind: 'hub_node', title: h.name || h.id, sub: t('cluster.map.hubNode'),
+                  status: h.online ? 'ok' : 'off', line: `${t('cluster.map.runs')} ${busy}${cap !== null ? `/${cap}` : ''}`,
+                  load: busy, capacity: cap, detail: { ...h } } });
+        edge('queue', `n:${h.id}`, { animated: busy > 0 });
+      } else {
+        const m = item.member;
+        const node = memberNode(t, m, 'worker', x, y);
+        nodes.push(node);
+        edge('queue', node.id, { animated: (num(m.load?.tracked) || 0) > 0 });
+      }
+    });
+    // One backdrop per host, so workers on the same machine read as a group.
+    if (group.host) {
+      const cols = wide(n);
+      const top = colY(tall(n), 0) - 26;
+      nodes.unshift({ id: `host:${group.host}`, type: 'host', position: { x: groupX - 12, y: top },
+        data: { label: group.host },
+        style: { width: (cols - 1) * SUB_GAP + NODE_W + 24, height: (tall(n) - 1) * ROW_H + 110 },
+        selectable: false, draggable: false, zIndex: -1 });
+    }
+    groupX += wide(n) * SUB_GAP + (group.host ? 20 : 0);
   });
-  // Machines lending this hub their models and sandbox take work like workers.
-  hubNodes.forEach((h, i) => {
-    const cap = num(h.capacity);
-    const busy = num(h.in_flight) || 0;
-    nodes.push({ id: `n:${h.id}`, type: 'svc', position: { x: COL.worker, y: colY(workers.length + hubNodes.length, workers.length + i) },
-      data: { kind: 'hub_node', title: h.name || h.id, sub: t('cluster.map.hubNode'),
-              status: h.online ? 'ok' : 'off', line: `${t('cluster.map.runs')} ${busy}${cap !== null ? `/${cap}` : ''}`,
-              load: busy, capacity: cap, detail: { ...h } } });
-    edge('queue', `n:${h.id}`, { animated: busy > 0 });
-  });
+  const rightEdge = (workerGroups.length ? groupX - SUB_GAP : COL.worker) + NODE_W;
 
-  // One backdrop per host, so workers on the same machine read as a group.
-  const groupHosts = hostsSeen.filter(Boolean);
-  groupHosts.forEach((host) => {
-    const idx = workers.map((w, i) => ({ w, i })).filter((x) => (x.w.host || '') === host).map((x) => x.i);
-    if (!idx.length) return;
-    const top = colY(workers.length + hubNodes.length, idx[0]) - 26;
-    const height = (idx.length - 1) * ROW_H + 110;
-    nodes.unshift({ id: `host:${host}`, type: 'host', position: { x: COL.worker - 12, y: top },
-      data: { label: host }, style: { width: NODE_W + 24, height }, selectable: false, draggable: false, zIndex: -1 });
-  });
-
-  // The shared services, one row under the columns.
+  // The shared services, in rows under the columns, centred on them.
   const bottomY = (rows - 1) * ROW_H + 190;
-  const shared = [...inUse];
   const remote = hubLink.linked;
-  const total = shared.length + (remote ? 1 : 0);
-  const startX = Math.max(0, (COL.worker + NODE_W - ((total - 1) * SERVICE_GAP + NODE_W)) / 2);
-  shared.forEach((c, i) => {
-    nodes.push(stackNode(t, c, startX + i * SERVICE_GAP, bottomY));
+  const shared = [...inUse.map((c) => ({ comp: c })), ...(remote ? [{ remote: true }] : [])];
+  const perRow = Math.max(SERVICES_PER_ROW, Math.floor((rightEdge - NODE_W) / SERVICE_GAP) + 1);
+  shared.forEach((item, i) => {
+    const row = Math.floor(i / perRow);
+    const inRow = Math.min(perRow, shared.length - row * perRow);
+    const startX = Math.max(0, (rightEdge - ((inRow - 1) * SERVICE_GAP + NODE_W)) / 2);
+    const x = startX + (i % perRow) * SERVICE_GAP;
+    const y = bottomY + row * ROW_H;
+    if (item.remote) {
+      nodes.push({ id: 'remote', type: 'svc', position: { x, y },
+        data: { kind: 'hub', title: t('cluster.map.remoteHub'), sub: hubLink.name || '',
+                status: hubLink.last_error ? 'warn' : 'ok', line: hubLink.url || '', shared: true,
+                detail: { url: hubLink.url, last_sync_at: hubLink.last_sync_at, last_error: hubLink.last_error, modes: hubLink.modes } } });
+      apis.forEach((m) => edge(`m:${m.member_id}`, 'remote', { sourceHandle: 'b', targetHandle: 't', faint: true }));
+      return;
+    }
+    const c = item.comp;
+    nodes.push(stackNode(t, c, x, y));
     const users = USERS[c.id] || [];
-    const live = c.status !== 'fail';
+    const ok = c.status !== 'fail';
     if (users.includes('api')) apis.forEach((m) => edge(`m:${m.member_id}`, `s:${c.id}`, {
-      sourceHandle: 'b', targetHandle: 't', faint: true, animated: live && c.id === 'database' && num(m.load?.running_runs_on_host) > 0 }));
+      sourceHandle: 'b', targetHandle: 't', faint: true, animated: ok && c.id === 'database' && num(m.load?.running_runs_on_host) > 0 }));
     if (users.includes('worker')) workers.forEach((m) => edge(`m:${m.member_id}`, `s:${c.id}`, {
-      sourceHandle: 'b', targetHandle: 't', faint: true, animated: live && c.id === 'database' && (num(m.load?.tracked) || 0) > 0 }));
+      sourceHandle: 'b', targetHandle: 't', faint: true, animated: ok && c.id === 'database' && (num(m.load?.tracked) || 0) > 0 }));
   });
-  if (remote) {
-    nodes.push({ id: 'remote', type: 'svc', position: { x: startX + shared.length * SERVICE_GAP, y: bottomY },
-      data: { kind: 'hub', title: t('cluster.map.remoteHub'), sub: hubLink.name || '',
-              status: hubLink.last_error ? 'warn' : 'ok', line: hubLink.url || '', shared: true,
-              detail: { url: hubLink.url, last_sync_at: hubLink.last_sync_at, last_error: hubLink.last_error, modes: hubLink.modes } } });
-    apis.forEach((m) => edge(`m:${m.member_id}`, 'remote', { sourceHandle: 'b', targetHandle: 't', faint: true }));
-  }
 
   return { nodes, edges, idle };
 }

@@ -27,7 +27,7 @@ const keyExistsDetail = (e) => {
 };
 
 /** The dialog that sets the end-to-end key: a fresh passphrase or the one from another device. */
-function KeyDialog({ onClose, onDone }) {
+export function KeyDialog({ onClose, onDone }) {
   const { t } = useI18n();
   const [mode, setMode] = useState(null); // null | 'generate' | 'have'
   const [passphrase, setPassphrase] = useState('');
@@ -256,7 +256,12 @@ export default function HubLinkSyncCard() {
   const [workspaces, setWorkspaces] = useState([]);
   const [mappings, setMappings] = useState([]);
   const [enabled, setEnabled] = useState(false);
-  const [encrypted, setEncrypted] = useState(false);
+  // The mapping row whose Encrypt box asked for a key first; it is ticked
+  // once the key is set.
+  const [pendingRow, setPendingRow] = useState(null);
+  // Every workspace sealed, default and the others, also later ones (the
+  // start `ah setup` offers); the per row boxes wait while it is on.
+  const [encryptAll, setEncryptAll] = useState(false);
   const [conflicts, setConflicts] = useState([]);
   const [keyDialog, setKeyDialog] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -269,8 +274,8 @@ export default function HubLinkSyncCard() {
       const { data } = await getHubSync();
       setStatus(data);
       setEnabled(!!data.enabled);
-      setEncrypted(!!data.encrypted);
-      setMappings((data.mappings || []).map((m) => ({ workspace: m.workspace, space: m.space })));
+      setMappings((data.mappings || []).map((m) => ({ workspace: m.workspace, space: m.space, encrypted: !!m.encrypted })));
+      setEncryptAll(!!data.encrypt_all);
       if (data.conflicts > 0) {
         const res = await listHubSyncConflicts();
         setConflicts(res.data?.conflicts || []);
@@ -282,8 +287,10 @@ export default function HubLinkSyncCard() {
       setError(detailOf(e, t('hubSync.card.loadFailed')));
     }
   }, [t]);
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- the loader is shared with the actions; it sets state after its await
-  useEffect(() => { load(); }, [load]);
+  // Read once on mount (the actions reload after themselves); `load` changes
+  // with the language only, which must not refetch and drop unsaved rows.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- the loader is shared with the actions; it sets state after its await
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     getWorkspaces().then((r) => setWorkspaces((r.data || []).map((w) => w.name))).catch(() => setWorkspaces([]));
   }, []);
@@ -292,20 +299,28 @@ export default function HubLinkSyncCard() {
   const addRow = () => {
     const used = new Set(mappings.map((m) => m.workspace));
     const next = workspaces.find((w) => !used.has(w)) || '';
-    setMappings((rows) => [...rows, { workspace: next, space: next }]);
+    setMappings((rows) => [...rows, { workspace: next, space: next, encrypted: false }]);
   };
   const valid = mappings.filter((m) => m.workspace && m.space.trim());
 
-  const toggleEncrypted = (on) => {
-    if (on && !status?.key_set) { setKeyDialog(true); return; }
-    setEncrypted(on);
+  const encrypted = encryptAll || mappings.some((m) => m.encrypted);
+
+  const toggleEncryptAll = (on) => {
+    if (on && !status?.key_set) { setPendingRow('all'); setKeyDialog(true); return; }
+    setEncryptAll(on);
+  };
+
+  const toggleEncrypted = (i, on) => {
+    if (on && !status?.key_set) { setPendingRow(i); setKeyDialog(true); return; }
+    setRow(i, { encrypted: on });
   };
 
   const save = async () => {
     setBusy(true); setError(''); setNotice('');
     try {
       const { data } = await saveHubSync({
-        enabled, encrypted, mappings: valid.map((m) => ({ workspace: m.workspace, space: m.space.trim() })),
+        enabled, encrypt_all: encryptAll,
+        mappings: valid.map((m) => ({ workspace: m.workspace, space: m.space.trim(), encrypted: encryptAll || !!m.encrypted })),
       });
       setStatus(data);
       setNotice(t('hubSync.card.saved'));
@@ -344,14 +359,33 @@ export default function HubLinkSyncCard() {
 
   const keyDone = async () => {
     setKeyDialog(false);
-    setEncrypted(true);
+    const row = pendingRow;
+    setPendingRow(null);
     notifySyncChanged();
+    // The reload brings back the saved mappings; the row that asked for the
+    // key is ticked on top of them, to be saved with the rest.
+    const ticked = typeof row === 'number' ? mappings.map((m, j) => (j === row ? { ...m, encrypted: true } : m)) : mappings;
+    setMappings(ticked);
+    if (row === 'all') setEncryptAll(true);
     await load();
-    setEncrypted(true);
+    setMappings(ticked);
+    if (row === 'all') setEncryptAll(true);
   };
 
   if (!status) {
     return error ? <p className="text-sm text-red-600">{error}</p> : null;
+  }
+  if (!status.linked) {
+    return (
+      <SectionCard title={t('hubSync.card.title')}>
+        <div data-testid="sync-card-unlinked" className="space-y-3">
+          <p className="text-sm text-gray-600">{t('hubSync.card.intro')}</p>
+          <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 flex items-start gap-2">
+            <Lock className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />{t('hubSync.card.notLinked')}
+          </p>
+        </div>
+      </SectionCard>
+    );
   }
   const lr = status.last_result || {};
   const errors = lr.errors || [];
@@ -377,7 +411,7 @@ export default function HubLinkSyncCard() {
           <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('hubSync.card.mappings')}</div>
           <p className="text-[11px] text-gray-400">{t('hubSync.card.mappingsHint')}</p>
           {mappings.map((m, i) => (
-            <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end" data-testid="sync-mapping">
+            <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-end" data-testid="sync-mapping">
               <div>
                 {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">{t('hubSync.card.workspace')}</label>}
                 <select className={inputCls} value={m.workspace} disabled={ro} data-testid="sync-mapping-workspace"
@@ -390,6 +424,12 @@ export default function HubLinkSyncCard() {
                 {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">{t('hubSync.card.space')}</label>}
                 <input className={inputCls} value={m.space} disabled={ro} data-testid="sync-mapping-space" onChange={(e) => setRow(i, { space: e.target.value })} />
               </div>
+              <label className="flex items-center gap-1.5 text-sm text-gray-700 sm:h-[38px] whitespace-nowrap" title={t('hubSync.encryption.hint')}>
+                <input type="checkbox" checked={encryptAll || !!m.encrypted} disabled={ro || encryptAll} data-testid="sync-mapping-encrypted"
+                  onChange={(e) => toggleEncrypted(i, e.target.checked)} />
+                {encryptAll || m.encrypted ? <Lock className="w-3.5 h-3.5 text-emerald-600" /> : null}
+                {t('hubSync.card.encrypt')}
+              </label>
               {!ro && (
                 <button type="button" onClick={() => setMappings((rows) => rows.filter((_, j) => j !== i))} aria-label={t('hubSync.card.remove')}
                   className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 justify-self-start"><Trash2 className="w-4 h-4" /></button>
@@ -404,14 +444,25 @@ export default function HubLinkSyncCard() {
         </div>
 
         <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('hubSync.encryption.title')}</div>
+          <p className="text-[11px] text-gray-400">{t('hubSync.encryption.hint')}</p>
           <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" className="mt-0.5" checked={encrypted} disabled={ro} onChange={(e) => toggleEncrypted(e.target.checked)} data-testid="sync-encrypted" />
+            <input type="checkbox" className="mt-0.5" checked={encryptAll} disabled={ro} data-testid="sync-encrypt-all"
+              onChange={(e) => toggleEncryptAll(e.target.checked)} />
             <span>
-              <span className="text-gray-800 font-medium">{t('hubSync.encryption.title')}</span>
-              <span className="block text-[11px] text-gray-400">{t('hubSync.encryption.hint')}</span>
+              <span className="text-gray-800 font-medium">{t('hubSync.encryption.all')}</span>
+              <span className="block text-[11px] text-gray-400">
+                {encryptAll ? t('hubSync.encryption.allHint') : t('hubSync.encryption.perWorkspace')}
+              </span>
             </span>
           </label>
           {encrypted && <p className="text-[11px] text-amber-700">{t('hubSync.encryption.warning')}</p>}
+          {!status.key_set && !ro && (
+            <button type="button" onClick={() => setKeyDialog(true)} data-testid="sync-set-key"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-gray-50">
+              <KeyRound className="w-4 h-4" />{t('hubSync.encryption.setKey')}
+            </button>
+          )}
           {status.key_set && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600" data-testid="sync-key-state">
               <span>{t('hubSync.encryption.keyId')}: <span className="font-mono">{status.key_id}</span></span>
@@ -472,7 +523,7 @@ export default function HubLinkSyncCard() {
             : <ul className="space-y-2">{conflicts.map((c) => <ConflictRow key={c.conflict_id} conflict={c} canEdit={!ro} onResolved={load} />)}</ul>}
         </div>
       </div>
-      {keyDialog && <KeyDialog onClose={() => setKeyDialog(false)} onDone={keyDone} />}
+      {keyDialog && <KeyDialog onClose={() => { setKeyDialog(false); setPendingRow(null); }} onDone={keyDone} />}
     </SectionCard>
   );
 }

@@ -13,6 +13,7 @@ import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
+import WorkspaceHubSync from '../components/workspace/WorkspaceHubSync';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
@@ -1231,6 +1232,9 @@ const SETTINGS_GROUPS = [
     key: 'workspace',
     items: [
       { id: 'secrets', icon: Lock },
+      // Sync with the linked hub and its encryption, this workspace's row of
+      // the list under Settings → Remote hub (docs/hub-sync.md).
+      { id: 'remoteSync', icon: RefreshCw },
       { id: 'palette', icon: PaletteIcon, adminOnly: true },
     ],
   },
@@ -1352,6 +1356,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
             </div>
           )}
           {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
+          {active.id === 'remoteSync' && <WorkspaceHubSync key={workspace} workspace={workspace} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}
         </div>

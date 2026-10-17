@@ -39,16 +39,16 @@ describe('HubLinkSyncCard', () => {
     fireEvent.click(screen.getByTestId('sync-enabled'));
     fireEvent.click(screen.getByTestId('sync-save'));
     await waitFor(() => expect(sync.saveHubSync).toHaveBeenCalledWith({
-      enabled: true, encrypted: false,
-      mappings: [{ workspace: 'default', space: 'default' }, { workspace: 'work', space: 'work' }],
+      enabled: true, encrypt_all: false,
+      mappings: [{ workspace: 'default', space: 'default', encrypted: false }, { workspace: 'work', space: 'work', encrypted: false }],
     }));
   });
 
   it('shows a generated passphrase and requires the checkbox', async () => {
     sync.setHubSyncKey.mockResolvedValue({ data: { generated_passphrase: 'alpha-beta-gamma' } });
     render(<HubLinkSyncCard />);
-    await waitFor(() => expect(screen.getByTestId('sync-encrypted')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('sync-encrypted'));
+    await waitFor(() => expect(screen.getByTestId('sync-mapping-encrypted')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('sync-mapping-encrypted'));
     fireEvent.click(screen.getByTestId('sync-key-generate'));
     await waitFor(() => expect(screen.getByTestId('sync-passphrase')).toHaveTextContent('alpha-beta-gamma'));
     expect(sync.setHubSyncKey).toHaveBeenCalledWith({ generate: true });
@@ -58,18 +58,66 @@ describe('HubLinkSyncCard', () => {
     expect(done).not.toBeDisabled();
     fireEvent.click(done);
     await waitFor(() => expect(screen.queryByTestId('sync-passphrase')).toBeNull());
-    expect(screen.getByTestId('sync-encrypted')).toBeChecked();
+    expect(screen.getByTestId('sync-mapping-encrypted')).toBeChecked();
   });
 
   it('reports a wrong passphrase on a second device', async () => {
     sync.setHubSyncKey.mockRejectedValue({ response: { status: 403, data: { detail: 'no' } } });
     render(<HubLinkSyncCard />);
-    await waitFor(() => expect(screen.getByTestId('sync-encrypted')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('sync-encrypted'));
+    await waitFor(() => expect(screen.getByTestId('sync-mapping-encrypted')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('sync-mapping-encrypted'));
     fireEvent.click(screen.getByTestId('sync-key-have'));
     fireEvent.change(screen.getByTestId('sync-key-input'), { target: { value: 'bad' } });
     fireEvent.click(screen.getByTestId('sync-key-use'));
     await waitFor(() => expect(screen.getByText('hubSync.keyDialog.wrong')).toBeInTheDocument());
+  });
+
+  it('saves encryption per workspace row', async () => {
+    sync.getHubSync.mockResolvedValue({ data: { ...base, key_set: true, key_unlocked: true, mappings: [
+      { workspace: 'default', space: 'default', encrypted: true }, { workspace: 'work', space: 'w', encrypted: false }] } });
+    render(<HubLinkSyncCard />);
+    await waitFor(() => expect(screen.getAllByTestId('sync-mapping-encrypted')).toHaveLength(2));
+    const boxes = screen.getAllByTestId('sync-mapping-encrypted');
+    expect(boxes[0]).toBeChecked();
+    expect(boxes[1]).not.toBeChecked();
+    fireEvent.click(boxes[1]);
+    fireEvent.click(boxes[0]);
+    fireEvent.click(screen.getByTestId('sync-save'));
+    await waitFor(() => expect(sync.saveHubSync).toHaveBeenCalledWith({
+      enabled: false, encrypt_all: false,
+      mappings: [{ workspace: 'default', space: 'default', encrypted: false }, { workspace: 'work', space: 'w', encrypted: true }],
+    }));
+  });
+
+  it('with every workspace encrypted, ticks and locks each row and saves it so', async () => {
+    sync.getHubSync.mockResolvedValue({ data: { ...base, key_set: true, key_unlocked: true, encrypt_all: true, mappings: [
+      { workspace: 'default', space: 'default', encrypted: true }] } });
+    render(<HubLinkSyncCard />);
+    await waitFor(() => expect(screen.getByTestId('sync-encrypt-all')).toBeChecked());
+    expect(screen.getByText('hubSync.encryption.allHint')).toBeInTheDocument();
+    const row = screen.getByTestId('sync-mapping-encrypted');
+    expect(row).toBeChecked();
+    expect(row).toBeDisabled();
+    fireEvent.click(screen.getByTestId('sync-add-mapping'));
+    fireEvent.click(screen.getByTestId('sync-save'));
+    await waitFor(() => expect(sync.saveHubSync).toHaveBeenCalledWith({
+      enabled: false, encrypt_all: true,
+      mappings: [{ workspace: 'default', space: 'default', encrypted: true }, { workspace: 'work', space: 'work', encrypted: true }],
+    }));
+    await waitFor(() => expect(screen.getByText('hubSync.card.saved')).toBeInTheDocument());
+    // The reload after a save settles before the next change.
+    await waitFor(() => expect(sync.getHubSync).toHaveBeenCalledTimes(2));
+    // Off again: the rows are free to choose.
+    fireEvent.click(screen.getByTestId('sync-encrypt-all'));
+    await waitFor(() => expect(screen.getByTestId('sync-encrypt-all')).not.toBeChecked());
+    expect(screen.getAllByTestId('sync-mapping-encrypted')[0]).not.toBeDisabled();
+  });
+
+  it('is there before the hub is linked, pointing at the link form', async () => {
+    sync.getHubSync.mockResolvedValue({ data: { linked: false, enabled: false } });
+    render(<HubLinkSyncCard />);
+    await waitFor(() => expect(screen.getByTestId('sync-card-unlinked')).toBeInTheDocument());
+    expect(screen.getByText('hubSync.card.notLinked')).toBeInTheDocument();
   });
 
   it('lists a conflict and shows the other version on demand', async () => {
@@ -84,8 +132,8 @@ describe('HubLinkSyncCard', () => {
 
   const openGenerate = async () => {
     render(<HubLinkSyncCard />);
-    await waitFor(() => expect(screen.getByTestId('sync-encrypted')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('sync-encrypted'));
+    await waitFor(() => expect(screen.getByTestId('sync-mapping-encrypted')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('sync-mapping-encrypted'));
     fireEvent.click(screen.getByTestId('sync-key-generate'));
   };
 
@@ -104,7 +152,7 @@ describe('HubLinkSyncCard', () => {
     expect(x).not.toBeDisabled();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByTestId('sync-key-dialog')).toBeNull();
-    expect(screen.getByTestId('sync-encrypted')).toBeChecked();
+    expect(screen.getByTestId('sync-mapping-encrypted')).toBeChecked();
   });
 
   it('cannot be closed while the generate request is still out', async () => {
@@ -120,8 +168,8 @@ describe('HubLinkSyncCard', () => {
 
   it('closes freely before anything is generated', async () => {
     render(<HubLinkSyncCard />);
-    await waitFor(() => expect(screen.getByTestId('sync-encrypted')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('sync-encrypted'));
+    await waitFor(() => expect(screen.getByTestId('sync-mapping-encrypted')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('sync-mapping-encrypted'));
     fireEvent.click(screen.getByTestId('sync-key-close'));
     expect(screen.queryByTestId('sync-key-dialog')).toBeNull();
   });
@@ -184,8 +232,8 @@ describe('HubLinkSyncCard', () => {
     // A hash link: jsdom follows it without a navigation warning, and nothing
     // but the guard can mark its click prevented.
     render(<><a href="#agents" data-testid="shell-link">agents</a><HubLinkSyncCard /></>);
-    await waitFor(() => expect(screen.getByTestId('sync-encrypted')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('sync-encrypted'));
+    await waitFor(() => expect(screen.getByTestId('sync-mapping-encrypted')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('sync-mapping-encrypted'));
     fireEvent.click(screen.getByTestId('sync-key-generate'));
     await screen.findByTestId('sync-passphrase');
 
