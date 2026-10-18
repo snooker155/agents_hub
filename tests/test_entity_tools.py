@@ -1,11 +1,11 @@
 """
-The builder tools for scenarios, teams, loops and projects.
+The builder tools for teams, loops and projects.
 
 These are the tools that let an agent create and maintain the service entities
 the dashboard pages own, so what is verified here is the same thing those pages
 enforce: a write that would produce an unrunnable entity is refused, and refused
 *before* anything is stored. A tool that saved first and complained afterwards
-would leave the user with a broken scenario and a polite error.
+would leave the user with a broken team and a polite error.
 
 Every tool answers in JSON, so the assertions read the parsed answer rather than
 the prose — that contract is what the agent is steering by.
@@ -22,11 +22,6 @@ from tools.loop_management import (
 from tools.project_management import (
     create_project_tool, delete_project_tool, get_project_tool,
     list_projects_tool, modify_project_tool,
-)
-from tools.scenario_management import (
-    create_scenario_tool, delete_scenario_tool, get_scenario_tool,
-    list_environments_tool, list_scenarios_tool, modify_scenario_tool,
-    validate_scenario_tool,
 )
 from tools.team_management import (
     create_team_tool, delete_team_tool, get_team_tool, modify_team_tool,
@@ -67,178 +62,10 @@ def no_workspace(monkeypatch):
     """Run outside any workspace, so nothing is filtered by membership."""
     import common.workspace_context as wc
     monkeypatch.setattr(wc, "resolve_active_workspace", lambda preferred=None: None)
-    for module in ("tools.scenario_management", "tools.team_management",
+    for module in ("tools.team_management",
                    "tools.loop_management", "tools.project_management"):
         mod = __import__(module, fromlist=["resolve_active_workspace"])
         monkeypatch.setattr(mod, "resolve_active_workspace", lambda preferred=None: None)
-
-
-# ── Scenarios ─────────────────────────────────────────────────────────────────
-
-def _roles():
-    return [
-        {"agent_id": "alpha", "name": "Mara", "role": "innkeeper",
-         "goal": "keep the tavern full", "private_knowledge": "the cellar is empty"},
-        {"agent_id": "beta", "name": "Tobin", "role": "traveller",
-         "goal": "find a room for the night"},
-    ]
-
-
-def test_the_environment_catalog_is_what_a_designer_decides_with(no_workspace):
-    out = call(list_environments_tool)
-    assert out["ok"]
-    envs = {e["env_id"]: e for e in out["environments"]}
-    assert "market" in envs
-    # The three things that decide a design: what can be configured, what the
-    # agents may do, and what can be scored.
-    assert envs["market"]["params"] and envs["market"]["actions"]
-    assert envs["market"]["objectives"]
-
-
-def test_a_scenario_is_created_with_its_cast_and_limits(cast, no_workspace):
-    out = call(create_scenario_tool, name="Tavern", environment="social",
-               roles=_roles(), description="a night at the inn",
-               limits={"max_ticks": 12, "cost_ceiling": 0.5})
-    assert out["ok"], out
-    assert out["scenario"]["limits"]["max_ticks"] == 12
-    assert [r["name"] for r in out["scenario"]["roles"]] == ["Mara", "Tobin"]
-
-    stored = call(get_scenario_tool, scenario_id=out["scenario_id"])
-    assert stored["scenario"]["environment"] == "social"
-
-
-def test_an_unregistered_agent_is_refused_and_nothing_is_stored(cast, no_workspace):
-    before = call(list_scenarios_tool)["count"]
-    out = call(create_scenario_tool, name="Ghosts", environment="social",
-               roles=[{"agent_id": "nobody", "name": "Nobody"}])
-    assert out["ok"] is False
-    assert out["code"] == "invalid_scenario"
-    assert any("not registered" in e for e in out["errors"])
-    assert call(list_scenarios_tool)["count"] == before
-
-
-def test_duplicate_role_names_are_refused(cast, no_workspace):
-    out = call(create_scenario_tool, name="Twins", environment="social",
-               roles=[{"agent_id": "alpha", "name": "Sam"},
-                      {"agent_id": "beta", "name": "Sam"}])
-    assert out["ok"] is False
-    assert any("already" in e for e in out["errors"])
-
-
-def test_an_unknown_environment_names_the_ones_that_exist(cast, no_workspace):
-    out = call(validate_scenario_tool, environment="atlantis", roles=_roles())
-    assert out["valid"] is False
-    assert any("market" in e for e in out["errors"])
-
-
-def test_an_objective_the_environment_cannot_score_is_a_warning_not_an_error(
-        cast, no_workspace):
-    """A misnamed objective leaves the scenario runnable — it just will not be
-    scored — so it must not block the write the way an unknown agent does."""
-    out = call(validate_scenario_tool, environment="market",
-               roles=[{"agent_id": "alpha", "name": "Ann", "objective": "max_vibes"}])
-    assert out["valid"] is True
-    assert any("max_vibes" in w for w in out["warnings"])
-
-
-@pytest.fixture
-def world_with_roles(monkeypatch):
-    """An environment that declares roles, the way an authored world does.
-
-    The shipped environments declare none, so without one of these there is
-    nothing for a scenario's ``role`` to bind to and the whole check is moot.
-    """
-    import playground.environments as envs
-    listing = envs.list_environments
-
-    def with_keep(*args, **kwargs):
-        return list(listing(*args, **kwargs)) + [{
-            "env_id": "custom:wld_keep", "env_name": "The keep",
-            "description": "", "params": [], "actions": [], "objectives": [],
-            "custom": True, "roles": ["Warden", "Smuggler"],
-        }]
-
-    monkeypatch.setattr(envs, "list_environments", with_keep)
-
-
-def test_a_role_the_world_does_not_declare_binds_to_nothing_and_says_so(
-        cast, no_workspace, world_with_roles):
-    """A misspelled role is not a *smaller* role — it is no role at all, and the
-    character plays the world's generic role instead: every action the world
-    leaves unreserved, none of the ones a role reserves, and the default start.
-    Not the role that was meant, in either direction, and nothing downstream
-    complains — so it has to be caught here. Still a warning: a half-written
-    world has to stay runnable."""
-    out = call(validate_scenario_tool, environment="custom:wld_keep",
-               roles=[{"agent_id": "alpha", "name": "Ann", "role": "wardn"}])
-    assert out["valid"] is True
-    assert any("wardn" in w and "Warden" in w for w in out["warnings"])
-
-
-def test_a_character_cast_in_no_role_at_all_is_told_what_that_costs(
-        cast, no_workspace, world_with_roles):
-    out = call(validate_scenario_tool, environment="custom:wld_keep",
-               roles=[{"agent_id": "alpha", "name": "Ann"}])
-    assert out["valid"] is True
-    assert any("generic role" in w and "Warden" in w for w in out["warnings"])
-
-
-def test_casting_matches_a_declared_role_case_insensitively(
-        cast, no_workspace, world_with_roles):
-    """The form and the runner both match case-insensitively; a check that did
-    not would warn about a binding the run then honours."""
-    out = call(validate_scenario_tool, environment="custom:wld_keep",
-               roles=[{"agent_id": "alpha", "name": "Ann", "role": "warden"}])
-    assert out["valid"] is True
-    assert out["warnings"] == []
-
-
-def test_a_shipped_environment_leaves_the_role_field_alone(cast, no_workspace):
-    """``market`` declares no roles, so the field is prose the prompt carries
-    and binds to nothing. Warning about it would be noise on every scenario."""
-    out = call(validate_scenario_tool, environment="market",
-               roles=[{"agent_id": "alpha", "name": "Ann", "role": "anything"}])
-    assert out["valid"] is True
-    assert out["warnings"] == []
-
-
-def test_roles_can_be_edited_seat_by_seat_without_restating_the_cast(cast, no_workspace):
-    created = call(create_scenario_tool, name="Tavern", environment="social",
-                   roles=_roles())
-    sid = created["scenario_id"]
-
-    added = call(modify_scenario_tool, scenario_id=sid,
-                 add_roles=[{"agent_id": "beta", "name": "Wren", "role": "bard"}])
-    assert [r["name"] for r in added["scenario"]["roles"]] == ["Mara", "Tobin", "Wren"]
-
-    dropped = call(modify_scenario_tool, scenario_id=sid, remove_roles=["Tobin"])
-    assert [r["name"] for r in dropped["scenario"]["roles"]] == ["Mara", "Wren"]
-
-
-def test_limits_merge_so_one_knob_can_be_retuned(cast, no_workspace):
-    created = call(create_scenario_tool, name="Tavern", environment="social",
-                   roles=_roles(), limits={"max_ticks": 12, "seed": 7})
-    out = call(modify_scenario_tool, scenario_id=created["scenario_id"],
-               limits={"max_ticks": 30})
-    assert out["scenario"]["limits"]["max_ticks"] == 30
-    assert out["scenario"]["limits"]["seed"] == 7
-
-
-def test_an_invalid_edit_leaves_the_stored_scenario_alone(cast, no_workspace):
-    created = call(create_scenario_tool, name="Tavern", environment="social",
-                   roles=_roles())
-    sid = created["scenario_id"]
-    out = call(modify_scenario_tool, scenario_id=sid, environment="atlantis")
-    assert out["ok"] is False
-    assert call(get_scenario_tool, scenario_id=sid)["scenario"]["environment"] == "social"
-
-
-def test_deleting_a_scenario_is_reported_by_id(cast, no_workspace):
-    created = call(create_scenario_tool, name="Tavern", environment="social",
-                   roles=_roles())
-    out = call(delete_scenario_tool, scenario_id=created["scenario_id"])
-    assert out["ok"]
-    assert call(get_scenario_tool, scenario_id=created["scenario_id"])["code"] == "not_found"
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────────

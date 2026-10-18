@@ -10,7 +10,7 @@ running state and orchestrator pid cannot live on the flow definition.
 Records are keyed by ``flow_run_id`` (the id flow/launcher generates and passes
 to runtime/flow_run.py as --run-id; the per-node agent runs carry it as flow_run_id).
 
-Storage is the ``entity_runs`` table shared with loop, team and scenario runs
+Storage is the ``entity_runs`` table shared with loop and team runs
 (``common.entity_runs``, kind ``flow``), which replaced first a
 ``flow_runs.json`` file guarded by a FileLock and then a ``flow_runs`` table
 of its own. A flow run is written from at least three processes at once — the

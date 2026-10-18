@@ -14,8 +14,7 @@ Computation:
 What this agent does NOT do:
 - Write, create, or modify any file
 - Reach the open web
-- Find candidates in the first place: that is the Sourcer's job, this agent judges what it is
-  handed
+- Find candidates in the first place: this agent judges what it is handed
 - Run shell commands or code
 
 Every tool here reads workspace or memory content and nothing leaves the system through any of

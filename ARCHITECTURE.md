@@ -28,7 +28,7 @@ Agents Hub is split into two main runtime layers:
    The backend is a FastAPI application in `dashboard/backend`. It exposes the main REST API, loads environment settings, initializes session infrastructure, and coordinates the core domain modules.
 
 2. Frontend Dashboard
-   The frontend is a React + Vite application in `dashboard/frontend`. It provides the operational UI for workspaces, tasks, projects, agent flows, sessions, chat, and container tooling. Pages are lazy-loaded on demand with error boundaries per route, so bundle size stays manageable across forty-odd pages. Route titles come from `dashboard/frontend/src/components/routeTitles.js`. The Chat and AgentDetails pages are split across `dashboard/frontend/src/components/chat/` and `dashboard/frontend/src/components/agent/`, keeping chat-specific logic separate. The `PLAYGROUND_ENABLED` flag from the features endpoint gates whether the playground routes are even registered.
+   The frontend is a React + Vite application in `dashboard/frontend`. It provides the operational UI for workspaces, tasks, projects, agent flows, sessions, chat, and container tooling. Pages are lazy-loaded on demand with error boundaries per route, so bundle size stays manageable across forty-odd pages. Route titles come from `dashboard/frontend/src/components/routeTitles.js`. The Chat and AgentDetails pages are split across `dashboard/frontend/src/components/chat/` and `dashboard/frontend/src/components/agent/`, keeping chat-specific logic separate.
 
 Under those runtime layers, the backend works with several domain modules:
 
@@ -50,8 +50,8 @@ Under those runtime layers, the backend works with several domain modules:
   Scheduled jobs (notification / agent task / flow trigger), the background scheduler, and the notification inbox.
 - `views/`
   The view store, the op protocol that makes a view editable step by step, Studio's scene context, server-side compute runtimes, and the scoped proxy for served views.
-- `evals/`, `playground/`
-  The eval harness (cases, graders, sweeps) and the multi-agent simulation harness (environments, roles, tick log).
+- `evals/`
+  The developer prompt-injection harness (`python -m evals.injection`): a corpus of hostile pages, a static defence audit and a sweep against a real agent.
 - `tasks/`, `projects/`
   Task models, execution and activity logs, and result storage; project metadata plus the project graph. The routes delegate to project services: `planner_service` (the Planner agent and its prompt), `git_service` (git and provider operations), and `proxy_service` (validated backend base URL and forwarded requests).
 - `memory/`
@@ -61,13 +61,13 @@ Under those runtime layers, the backend works with several domain modules:
 - `providers/`
   Provider registry, adapters for OpenAI-compatible backends, and context-window metadata.
 - `tools/`
-  Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call. The `_crud.py` factory builds the six entity management tool modules (flow, loop, team, scenario, world, project) from handlers and schemas; `_json.py` provides the shared JSON envelope for all tool results.
+  Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call. The `_crud.py` factory builds the four entity management tool modules (flow, loop, team, project) from handlers and schemas; `_json.py` provides the shared JSON envelope for all tool results.
 - `connectors/`
   Outside-world integrations: Jira and git (GitLab provider, repo operations, issue sync).
 - `mcp_client/`
   Connects to MCP servers configured per workspace and turns their tools into hub tools, named `mcp__<server id>__<tool name>` so the capability model can classify them.
 - `notify/`
-  Outbound webhooks, plus the alert rules that decide when an event fires one. Delivery runs off a queue on its own worker thread so a broken endpoint never blocks the run or notification that triggered it.
+  Alert rules (a failed run, spend over a threshold) that raise an in-app notification on their own.
 At a high level, the flow looks like this:
 
 `Dashboard / CLI -> FastAPI backend -> task/project/workspace services -> agent factory (assembles layered instructions + memory tools) -> local or Docker execution -> runs, logs, results, views, sessions, files`
@@ -104,7 +104,7 @@ agents_hub/
 ├── managers/                # Run records (a facade over managers/runs/), agent containers, run watchdog
 ├── runtime/                 # Subprocess entrypoints: agent_run, instance_run, flow_run, docker_runner
 ├── mcp_client/              # MCP server connections, turned into hub tools
-├── notify/                  # Outbound webhooks and alert rules
+├── notify/                  # Alert rules that raise in-app notifications
 ├── common/
 │   ├── db.py                # database core (SQLite WAL) — runs, tasks, sessions, instances, views, evals …
 │   ├── migrations/          # numbered schema migrations
@@ -123,8 +123,7 @@ agents_hub/
 ├── teams/                   # Bounded roster of agents over a shared message board
 ├── plans/                   # Scheduled jobs, background scheduler, notification inbox
 ├── views/                   # View store, op protocol, Studio context, compute runtimes, proxy
-├── evals/                   # Eval sets, graders, sweeps, prompt-injection audit
-├── playground/              # Multi-agent simulations (environments, authored worlds, roles, tick log)
+├── evals/                   # Developer prompt-injection harness (python -m evals.injection)
 ├── reasoning/               # think / plan scratchpads and their step gates
 ├── providers/               # Provider registry, OpenAI-compatible adapters, context windows
 ├── connectors/              # Jira and git (GitLab) integrations
@@ -222,7 +221,7 @@ agents_hub/
 - `common/entity_links.py`
   One table mapping each entity kind (task, view, flow, agent, job, project, file) to its dashboard URL and label, plus the payload / markdown-line renderers every surface uses.
 - `tools/_crud.py`
-  CRUD tool factory shared by six entity management modules (flow, loop, team, scenario, world, project). Wraps entity-specific handlers with try/except, `json_ok`/`json_err` envelopes, and the `@tool` decorator.
+  CRUD tool factory shared by four entity management modules (flow, loop, team, project). Wraps entity-specific handlers with try/except, `json_ok`/`json_err` envelopes, and the `@tool` decorator.
 - `tools/_json.py`
   Shared JSON envelope for all tool results: `json_ok({...})` on success, `json_err(message, code=...)` on failure. One module where twenty-six identical copies used to live.
 - `.agents_hub/agents_hub.db`
@@ -363,8 +362,6 @@ State is split between a database (SQLite) and files on disk, along one line: an
 | Conversation | `chats` |
 | Tasks | `tasks`, `task_activity`, `task_results` |
 | Views | `views`, `view_ops` |
-| Evals | `eval_sets`, `eval_runs`, `eval_results` |
-| Simulation | `scenarios`, `sim_runs`, `sim_ticks` |
 | Loops | `loops`, `loop_runs`, `loop_iterations` |
 | Teams | `teams`, `team_runs`, `team_messages` |
 | Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `agents`, `custom_providers`, `models`, `flows`, `flow_entities`, `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `git_connectors`, `web_log` |
@@ -390,7 +387,7 @@ The backend is organized by route domains, registered in `dashboard/backend/main
 | --- | --- |
 | Agents | `agents`, `agent-import`, `marketplace`, `skills` |
 | Work | `tasks`, `plan`, `flows`, `flow-entities`, `loops`, `teams`, `runs/groups` |
-| Measurement | `stats`, `models`, `costs`, `evals`, `playground`, `runs/{id}/replay` |
+| Measurement | `stats`, `models`, `runs/{id}/replay` |
 | Knowledge | `shared-memory`, `web-logs`, `views` |
 | Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `containers` |
 | Integration | `git`, `settings`, `stream`, `health`, `mcp`, `notify` |

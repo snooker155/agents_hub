@@ -111,12 +111,8 @@ def test_done_is_read_from_the_hub_and_skips_are_remembered(single, no_keys, ws)
     with pytest.raises(ValueError, match="cannot be skipped"):
         setup_guide.act(LOCAL_PRINCIPAL, "skip", "model")
     g = setup_guide.act(LOCAL_PRINCIPAL, "skip", "voice")
-    # The OpenAI key saved above is a web search too (tools/web.py
-    # effective_search_provider), so that step is done and the guide moves
-    # past it (which step comes next depends on whether the demo workspace
-    # exists on this hub).
-    assert _status(g, "voice") == "skipped" and _status(g, "web_search") == "done"
-    assert g["next"] not in ("voice", "web_search")
+    assert _status(g, "voice") == "skipped"
+    assert g["next"] != "voice"
     g = setup_guide.act(LOCAL_PRINCIPAL, "unskip", "voice")
     assert _status(g, "voice") == "todo"
     # The health check is not visible to the hub: the assistant marks it.
@@ -162,7 +158,7 @@ def test_the_turn_sees_the_guide_only_while_it_runs(single, no_keys, ws):
     assert setup_guide.prompt_lines(LOCAL_PRINCIPAL) == []
     setup_guide.act(LOCAL_PRINCIPAL, "start")
     lines = setup_guide.prompt_lines(LOCAL_PRINCIPAL)
-    assert lines[0].startswith("Running: ") and "of 12 steps done" in lines[0]
+    assert lines[0].startswith("Running: ") and "of 11 steps done" in lines[0]
     assert any(line.startswith("Next: model.") for line in lines)
     assert any("propose_connection" in line for line in lines)
 
@@ -199,23 +195,21 @@ def test_options_offer_each_connected_providers_tiers(single, no_keys, ws, probe
 
 
 def test_a_cloud_voice_goes_into_the_default_workspace(single, no_keys, ws):
-    from providers import special
+    from providers import voice_models
     with pytest.raises(setup_ops.SetupOpError, match="key"):
         setup_ops.perform("voice_cloud", {"provider": "openai"})
     provider_env.save({"OPENAI_API_KEY": "sk-x"})
-    special.save("default", {"image": {"provider": "openai", "model": "gpt-image-1"}})
     with pytest.raises(setup_ops.SetupOpError) as bad:
         setup_ops.perform("voice_cloud", {"provider": "openai", "voice": "Darth"})
     assert bad.value.code == "unknown_voice"
     setup_ops.perform("voice_cloud", {"provider": "openai", "voice": "Nova"})
-    own = special.stored("default")
+    own = voice_models.stored()
     assert own["speech"]["options"]["voice"] == "nova" and own["transcription"]["model"] == "gpt-4o-mini-transcribe"
-    assert own["image"]["model"] == "gpt-image-1"
     assert _status(setup_guide.guide(LOCAL_PRINCIPAL), "voice") == "done"
 
 
 def test_a_cloud_voice_can_take_another_speech_model(single, no_keys, ws):
-    from providers import special
+    from providers import voice_models
     provider_env.save({"OPENAI_API_KEY": "sk-x"})
     offered = setup_ops.options()["voice"]["cloud"]["openai"]["speech_models"]
     assert [m["id"] for m in offered] == ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"]
@@ -228,7 +222,7 @@ def test_a_cloud_voice_can_take_another_speech_model(single, no_keys, ws):
     assert bad.value.code == "unknown_voice"
     assert "tts-1-hd" in setup_ops.describe("voice_cloud", {"provider": "openai", "model": "tts-1-hd"})
     setup_ops.perform("voice_cloud", {"provider": "openai", "model": "tts-1-hd", "voice": "coral"})
-    speech = special.stored("default")["speech"]
+    speech = voice_models.stored()["speech"]
     assert (speech["model"], speech["options"]["voice"], speech["price_usd"]) == ("tts-1-hd", "coral", 0.03)
 
 
@@ -263,7 +257,7 @@ def test_setup_step_always_asks_and_the_card_says_what_changes():
 def test_show_on_screen_takes_only_a_page_of_the_hub():
     import json
     from tools.setup_guide import show_on_screen
-    assert json.loads(show_on_screen.invoke({"path": "/models?tab=special"}))["showing"] == "/models?tab=special"
+    assert json.loads(show_on_screen.invoke({"path": "/models?tab=voice"}))["showing"] == "/models?tab=voice"
     for bad in ("https://evil.example", "//evil.example", "models", "/x\ny"):
         assert not json.loads(show_on_screen.invoke({"path": bad}))["ok"]
 
@@ -298,9 +292,8 @@ def test_a_provider_key_is_typed_into_a_card_and_checked_first(single, no_keys, 
     out = asyncio.run(proposals.apply(card, secrets={"api_key": "sk-ant"}, principal=LOCAL_PRINCIPAL))
     assert out["ok"] and "claude-sonnet-5" in out["summary"]
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant"
-    search = proposals.build("provider", "tavily", {})
-    asyncio.run(proposals.apply(search, secrets={"api_key": "tv-1"}, principal=LOCAL_PRINCIPAL))
-    assert provider_env.live()["WEB_SEARCH_PROVIDER"] == "tavily"
+    with pytest.raises(proposals.ProposalError):
+        proposals.build("provider", "tavily", {})
 
 
 # ── the routes ────────────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ WORKSPACES_META_FILE = AGENTS_HUB_ROOT / "workspaces.json"
 TASKS_FILE = AGENTS_HUB_ROOT / "tasks.json"
 PROJECTS_FILE = AGENTS_HUB_ROOT / "projects.json"
 PROCEDURES_FILE = AGENTS_HUB_ROOT / "procedures.json"
-# Append-only log of every web_search / fetch_url call: the request, the text
+# Append-only log of every fetch_url call: the request, the text
 # handed back to the agent, and the security flags raised against it
 # (tools/web_log.py). Capped and trimmed in place, newest kept.
 WEB_LOG_FILE = AGENTS_HUB_ROOT / "web_requests.jsonl"
@@ -63,7 +63,7 @@ CUSTOM_PROVIDERS_FILE = AGENTS_HUB_ROOT / "custom_providers.json"
 PROJECT_GRAPHS_FILE = AGENTS_HUB_ROOT / "project_graphs.json"
 
 # Build-chat transcripts for service entities that have a chat of their own
-# (scenarios, loops), keyed by "<kind>:<entity_id>". The project graph keeps its
+# (loops), keyed by "<kind>:<entity_id>". The project graph keeps its
 # own file because the conversation lives next to the graph it builds.
 ENTITY_CHATS_FILE = AGENTS_HUB_ROOT / "entity_chats.json"
 

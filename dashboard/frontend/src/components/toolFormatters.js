@@ -120,17 +120,6 @@ function diffFileCount(diffText) {
 
 const arrow = (a, b) => (a && b ? `${a} → ${b}` : (a || b || ''));
 
-// Which parts of a record an edit touches, by argument name: a surgical world
-// edit is "add_locations, remove_actions", and naming them says more than the
-// id of the world the page is already showing.
-function sections(args, skip = []) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return '';
-  const names = Object.entries(args)
-    .filter(([k, v]) => !skip.includes(k) && v != null && v !== '')
-    .map(([k]) => k);
-  return names.join(', ');
-}
-
 // tool name -> (parsedArgs) => keyless inline string.
 const FORMATTERS = {
   // Filesystem — show the file name.
@@ -153,13 +142,6 @@ const FORMATTERS = {
   calculator: (a) => a.expression ?? '',
   think: (a) => a.thought ?? '',
   plan: (a) => a.plan ?? '',
-
-  // Browser (tools/browser.py): the page, or what was done on it.
-  browser_open: (a) => a.url ?? '',
-  browser_act: (a) => [a.action, a.selector].filter(Boolean).join(' '),
-  browser_read: (a) => (a.max_chars ? `${a.max_chars} chars` : ''),
-  browser_screenshot: (a) => (a.full_page ? 'full page' : ''),
-  browser_close: () => '',
 
   // Interaction / skills.
   ask_user: (a) => a.question ?? a.prompt ?? '',
@@ -216,23 +198,6 @@ const FORMATTERS = {
   remember: (a) => a.slot ?? a.note_title ?? '',
   record_episode: (a) => a.summary ?? a.kind ?? '',
   recall_episodes: (a) => a.query ?? a.kind ?? '',
-
-  // Playground worlds and scenarios — a build chat is mostly these, so what
-  // they show is the difference between a readable trace and eight identical
-  // lines. Show what the call is *about*: the thing being made, or the section
-  // of an edit rather than the id the user is already looking at.
-  create_world_tool: (a) => a.name ?? '',
-  get_world_tool: (a) => a.world_id ?? '',
-  modify_world_tool: (a) => sections(a, ['world_id']),
-  validate_world_tool: (a) => a.world_id ?? '',
-  delete_world_tool: (a) => a.world_id ?? '',
-  list_worlds_tool: (a) => a.workspace ?? '',
-  create_scenario_tool: (a) => a.name ?? '',
-  get_scenario_tool: (a) => a.scenario_id ?? '',
-  modify_scenario_tool: (a) => sections(a, ['scenario_id']),
-  delete_scenario_tool: (a) => a.scenario_id ?? '',
-  validate_scenario_tool: (a) => a.scenario_id ?? '',
-  list_scenarios_tool: (a) => a.workspace ?? '',
 
   // Views / diagrams.
   create_view: (a) => a.title ?? a.view_kind ?? '',

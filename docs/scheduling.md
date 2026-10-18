@@ -13,10 +13,6 @@ showing what fired.
   runaway instances.
 - **loop**: starts a run of a loop. A firing is skipped, and recorded as an
   error, while a run of the same loop is already active.
-- **heartbeat**: one tick of a [proactive agent](proactive.md). Owned by the
-  agent's profile, never created by hand: the firing checks the agent's quiet
-  hours, daily budget and tick limit first, and the task's structured answer
-  is written back onto the journal row as its outcome.
 
 `agent_task`, `flow` and `loop` jobs, shown as production deployments rather
 than reminders, get their own page with the resources a job hands its runs
@@ -116,11 +112,10 @@ without resuming first. Full detail: [deployments](deployments.md).
 - Notification delivery counts as an outbound channel for capability purposes.
 - A bad cron expression or an unknown timezone is rejected at create or update
   time with a clear error, not silently accepted.
-- While you type a schedule, the Deployments and Plan job forms and the
-  proactive heartbeat card show the next few fire times under the field.
+- While you type a schedule, the Deployments and Plan job forms show the next few fire times under the field.
   They come from `GET /api/plan/cron/preview` (`cron`, `timezone`, `count`,
   and for hourly, daily or weekly `recurrence` with `start`), which runs the
   scheduler's own next run logic, so the hint and the job never disagree. A
   saved recurring job carries the same list as `upcoming_runs_at`.
 
-Related: [tasks](tasks.md), [deployments](deployments.md), [proactive](proactive.md).
+Related: [tasks](tasks.md), [deployments](deployments.md).

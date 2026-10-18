@@ -1,5 +1,5 @@
 """The run page's cost estimate (routes/messages.py ``_run_cost``): the same
-figure common/pricing.py ``run_cost_usd`` gives the Costs page and budgets,
+figure common/pricing.py ``run_cost_usd`` gives budgets,
 with the log-parsed totals of a chat run standing in when the record has
 none, and ``priced`` False for a model the catalog has no price for."""
 from __future__ import annotations

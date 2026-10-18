@@ -64,7 +64,7 @@ class ChatRequest(BaseModel):
     conversation_title: Optional[str] = None
     attachments: List[ChatAttachment] = []
     # Hub entities attached alongside the files — a task, view, project,
-    # scenario, loop, flow, team, agent or scheduled job the user picked in the
+    # loop, flow, team, agent or scheduled job the user picked in the
     # composer. Rendered into the prompt for this turn only.
     references: List[ChatReference] = []
     # The message was spoken and transcribed (a Telegram voice note, see

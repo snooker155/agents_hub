@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 # effects are unknown here.
 
 NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
-    "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
+    "run_shell", "run_code", "git_publish", "git_commit", "git_push",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
@@ -48,9 +48,6 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "hub_action",
-    # schedule_pulse (proactive/from_phrase.py) switches a pulse on once: a
-    # job and an agent exist after it ran.
-    "schedule_pulse",
     # The guided setup's changes (common/setup_ops.py): a default model, a
     # voice or the demo workspace, each already made once it ran.
     "setup_step",
@@ -59,9 +56,6 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "system_commit", "system_attach_patch", "system_prune_branches",
     # A workspace created or deleted from the chat (tools/workspace_management.py).
     "create_workspace", "delete_workspace",
-    # A paid picture, clip, audio or model call (tools/special_models.py):
-    # repeating it pays twice.
-    "generate_image", "generate_video", "synthesize_speech", "ask_special_model",
 })
 
 
@@ -116,11 +110,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # as a file in the working directory.
     "list_workspace_files": frozenset({READS_PRIVATE}),
     "read_workspace_file": frozenset({READS_PRIVATE}),
-    # A transcript of a workspace recording, and a workspace model's answer
-    # about a workspace file (tools/special_models.py), bring that file's
-    # content into the context like read_workspace_file does.
-    "transcribe_audio": frozenset({READS_PRIVATE}),
-    "ask_special_model": frozenset({READS_PRIVATE}),
 
     # ── memory reads ─────────────────────────────────────────────────────────
     "read_memory": frozenset({READS_PRIVATE}),
@@ -139,7 +128,7 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "get_task_result": frozenset({READS_PRIVATE}),
     # A project record names the repo it is backed by and its path inside the
     # workspace — the same class of operator data a task carries, so it is read
-    # under the same grant. Scenario/team/loop definitions are configuration the
+    # under the same grant. Team/loop definitions are configuration the
     # operator wrote *for* the agents and grant nothing, like flows.
     "list_projects_tool": frozenset({READS_PRIVATE}),
     "get_project_tool": frozenset({READS_PRIVATE}),
@@ -147,38 +136,14 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # loop's result — which is operator data in the same sense a task result is.
     # Starting and stopping a run grant nothing: they spend money, which the
     # approval gate governs, not data, which is what this table is about.
-    "get_scenario_run_tool": frozenset({READS_PRIVATE}),
     "get_team_run_tool": frozenset({READS_PRIVATE}),
     "get_loop_run_tool": frozenset({READS_PRIVATE}),
 
     # ── web ──────────────────────────────────────────────────────────────────
-    # Search returns third-party text — ingest, nothing more: the query goes to
-    # one fixed API endpoint, which is not a channel an attacker can aim.
-    "web_search": frozenset({INGESTS_UNTRUSTED}),
-    # Fetch also *sends*: the agent chooses the host, path and query string, so
+    # Fetch ingests third-party text and also *sends*: the agent chooses the host, path and query string, so
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
-    # tool, which is why it is the second, more restricted grant.
+    # tool, which is why it is a restricted grant.
     "fetch_url": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
-    # The browser tools (tools/browser.py) are fetch_url with a real browser
-    # behind it, and carry the same claim. Opening a page sends the URL;
-    # reading returns page text; acting can type agent-chosen text into a
-    # form on a site the agent picked, and returns the page title; a
-    # screenshot is page content written into the workspace. browser_close
-    # moves no data and grants nothing (REVIEWED_NO_GRANT).
-    "browser_open": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
-    "browser_read": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
-    "browser_act": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
-    "browser_screenshot": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
-
-    # ── evals ────────────────────────────────────────────────────────────────
-    # A case carries operator-written input and the reference answer; a result
-    # carries what the agent produced. Both are operator data. A result also
-    # carries whatever the agent under test pulled in while producing it, which
-    # can include fetched pages — the same reason a run log ingests untrusted
-    # content. Building and running grant nothing: writing into the product's
-    # own store is not exfiltration, and the spend is the approval gate's job.
-    "get_eval_tool": frozenset({READS_PRIVATE}),
-    "get_eval_run_tool": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
 
     # ── service operations ───────────────────────────────────────────────────
     # Two claims are being made here, and the second one is the interesting one.
@@ -199,8 +164,7 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # stop_container, prune_run_logs) grant nothing: they stop and delete,
     # which the approval gate governs, rather than moving data, which is what
     # this table is about. Pure metadata tools (service_health,
-    # list_containers, costs_summary) grant nothing either — counts, statuses
-    # and totals.
+    # list_containers) grant nothing either — counts and statuses.
     "container_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "instance_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "run_log": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
@@ -242,9 +206,9 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "system_run_tests": frozenset({READS_PRIVATE}),
 
     # ── outbound channels ────────────────────────────────────────────────────
-    # These deliver free text to the notification endpoints (webhooks). The
-    # destination is the operator, but the *payload* is agent-controlled, which
-    # is exactly the exfiltration shape.
+    # These deliver free text to the person's notification inbox. The
+    # destination is the operator, but the *payload* is agent-controlled, so
+    # they stay classed as an outbound path.
     "notify_user": frozenset({CAN_EXFILTRATE}),
     "schedule_notification": frozenset({CAN_EXFILTRATE}),
     # Proxies a caller-supplied upstream URL through the view server.
@@ -341,11 +305,6 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # returns that model's answer. It reads nothing the agent does not
     # already hold and reaches no destination the run does not already use.
     "consult_advisor",
-    # wake_agent (tools/schedule_management.py): nudges another agent's pulse
-    # with a message and gets an acknowledgement back, never that agent's
-    # output. The woken agent runs on its own tool set under its own guard,
-    # and a profile that accepts wakes from agents decides whom it listens to.
-    "wake_agent",
     # The consent portal (connectors/consent/tools.py). request_account_access
     # hands the person in the conversation a link to a page they open
     # themselves; revoke_account_access drops that person's own grant. Neither
@@ -363,11 +322,6 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # save_workspace_file stores text the agent already holds as a workspace
     # file and returns only the new record (id, name, size), like write_file.
     "save_workspace_file",
-    # The workspace's special models (tools/special_models.py) make a picture,
-    # a clip or audio from text the agent already holds and return only the
-    # new file's record. The model is the operator's chosen provider, the
-    # same trust as the agent's own model, so the prompt is not data sent out.
-    "generate_image", "generate_video", "synthesize_speech",
 
     # ── memory writes / derivations ──────────────────────────────────────────
     # write_memory persists into a pool, like write_structured_memory above.
@@ -427,20 +381,13 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # the roster (list_scheduled) is classified above.
     "schedule_task", "cancel_scheduled", "update_scheduled",
 
-    # ── flow / world / scenario / team / loop management ─────────────────────
+    # ── flow / team / loop management ─────────────────────
     # All of these are configuration the operator authored *for* the agents —
-    # a graph of nodes and edges, a simulated place, an environment plus a
-    # cast, a roster, an exit criterion — never operator data in the sense a
+    # a graph of nodes and edges, a roster, an exit criterion — never operator data in the sense a
     # task, a project record or an agent's instructions are. Reading, writing,
     # deleting and validating any of them grants nothing.
     "create_flow_tool", "get_flow_tool", "modify_flow_tool", "delete_flow_tool",
     "validate_flow_tool",
-    "list_worlds_tool", "list_world_templates_tool", "get_world_tool",
-    "create_world_tool", "modify_world_tool", "validate_world_tool",
-    "delete_world_tool",
-    "list_environments_tool", "list_scenarios_tool", "create_scenario_tool",
-    "get_scenario_tool", "modify_scenario_tool", "delete_scenario_tool",
-    "validate_scenario_tool", "create_scenario_from_template_tool",
     "list_teams_tool", "create_team_tool", "get_team_tool", "modify_team_tool",
     "delete_team_tool",
     "list_loops_tool", "create_loop_tool", "get_loop_tool", "modify_loop_tool",
@@ -456,12 +403,12 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # ── entity runs: stopping ────────────────────────────────────────────────
     # stop_*_run_tool just interrupts a run in progress; the approval gate
     # governs the spend/interruption, not this table. Starting one
-    # (run_scenario_tool / run_team_tool / run_loop_tool) is a delegation edge
+    # (run_team_tool / run_loop_tool) is a delegation edge
     # instead — see DELEGATING_TOOLS below, which is where their real
     # capability lives (the run's content is read back later through
-    # get_scenario_run_tool / get_team_run_tool / get_loop_run_tool, already
+    # get_team_run_tool / get_loop_run_tool, already
     # classified READS_PRIVATE above).
-    "stop_scenario_run_tool", "stop_team_run_tool", "stop_loop_run_tool",
+    "stop_team_run_tool", "stop_loop_run_tool",
 
     # ── visualization / views / scene tools ────────────────────────────────
     # Every view_*, graph_*, scene_*, slides_*, document_*, sim_configure,
@@ -482,35 +429,18 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "sim_configure", "math_plot", "view_annotate", "slides_add", "slides_style",
     "document_set", "view_compute", "view_serve_stop",
 
-    # ── evals: building and running ──────────────────────────────────────────
-    # list_evals_tool and list_graders_tool are structural metadata (counts,
-    # names, which graders cost money). create_eval_tool, modify_eval_tool,
-    # add_eval_case_tool and remove_eval_case_tool build a dataset from fields
-    # the caller supplies. estimate_eval_tool and run_eval_tool project or
-    # spend against that dataset; writing into the product's own store is not
-    # exfiltration, and the spend is the approval gate's job. list_eval_runs_tool
-    # returns only status and aggregate score, never the cases or the matrix
-    # (that is get_eval_run_tool, classified READS_PRIVATE + INGESTS_UNTRUSTED
-    # above, since a result can carry whatever the agent under test pulled in).
-    "list_evals_tool", "list_graders_tool", "create_eval_tool", "modify_eval_tool",
-    "add_eval_case_tool", "remove_eval_case_tool", "estimate_eval_tool",
-    "run_eval_tool", "list_eval_runs_tool",
-
     # ── documentation ─────────────────────────────────────────────────────────
     # Read-only over files the product ships — public by construction, so
     # neither private data nor untrusted input.
     "search_docs", "read_doc",
 
-    # ── browser ───────────────────────────────────────────────────────────────
-    # Ends this run's browser session; nothing is read or sent.
-    "browser_close",
 
     # ── service ops: pure metadata and destructive actions ───────────────────
-    # service_health, list_containers and costs_summary are counts, statuses
-    # and totals, not content. stop_run, stop_instance, restart_instance,
+    # service_health and list_containers are counts and statuses, not
+    # content. stop_run, stop_instance, restart_instance,
     # stop_container and prune_run_logs stop and delete, which the approval
     # gate governs, not data.
-    "service_health", "list_containers", "costs_summary",
+    "service_health", "list_containers",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     # run_diagnostics (common/doctor.py) returns check statuses, counts and
     # one sentence summaries, the same class of metadata as service_health.
@@ -522,9 +452,6 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # voice or the demo after a person's yes; it returns a sentence, nothing
     # read. show_on_screen only names a dashboard page for the person's screen.
     "setup_step", "show_on_screen",
-    # schedule_pulse (proactive/from_phrase.py) saves a schedule and an
-    # instruction after a person's yes and returns the schedule in words.
-    "schedule_pulse",
 
     # ── system workspace: the repository copy ────────────────────────────────
     # system_repo_sync fetches the local repository into the local copy and
@@ -553,8 +480,6 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
     "agent_management": frozenset(),
     "agent_flows": frozenset(),
     "flow_management": frozenset(),
-    "scenario_management": frozenset(),
-    "world_management": frozenset(),
     "team_management": frozenset(),
     "loop_management": frozenset(),
     # The group's reads carry the grant its read tools do.
@@ -564,8 +489,6 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
     # content is private, and a log holds whatever the run handled, which can be
     # a page it fetched or a message a stranger sent it.
     "service_ops": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    # Reading a result pulls in what the agent under test produced.
-    "evals": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     # Product documentation the operator installed with the product. Public by
     # construction, so it is neither private data nor untrusted input.
     "docs": frozenset(),
@@ -684,7 +607,7 @@ def run_code_grants() -> FrozenSet[str]:
 # in what is actually reachable.
 DELEGATING_TOOLS: FrozenSet[str] = frozenset({
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
-    "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
+    "run_new_flow_tool", "run_team_tool", "run_loop_tool",
 })
 
 # create_agent_tool / modify_agent_tool are NOT in DELEGATING_TOOLS. They can
@@ -951,7 +874,7 @@ def check_effective_combination(
 #
 # The exposure is already live, before any web tool exists: the git issue sync
 # and the tracker sync pull attacker-controllable text into agent context, and
-# an inbound webhook carries whatever an outside system posted. A tool-grant
+# a flow's trigger route carries whatever a caller posted. A tool-grant
 # check cannot see this, so runs on these channels are evaluated with
 # ``ingests_untrusted`` added.
 
@@ -988,13 +911,13 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     # Arbitrary code with the host's network unless container isolated.
     "run_code",
     # Every tool in the grant table that can send data outside.
-    "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
+    "fetch_url",
     "notify_user", "schedule_notification", "view_serve", "schedule_management",
     # The connector tools that write outward (tools/connector_tools.py).
     "tracker_comment", "tracker_transition", "tracker_create_issue",
     # Delegation reaches other agents' tools, which this rule cannot see.
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
-    "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
+    "run_new_flow_tool", "run_team_tool", "run_loop_tool",
 })
 
 SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"

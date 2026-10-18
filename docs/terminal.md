@@ -49,4 +49,4 @@ Behind a proxy the socket needs the upgrade forwarded. The dashboard image's ngi
 - A restart of the hub closes every shell.
 - Needs a POSIX host (Linux or macOS) for the pseudo-terminal.
 
-Related: [containers](containers.md), [sessions-and-runs](sessions-and-runs.md), [browser](browser.md).
+Related: [containers](containers.md), [sessions-and-runs](sessions-and-runs.md).

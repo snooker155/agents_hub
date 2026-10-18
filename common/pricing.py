@@ -13,8 +13,8 @@ but the first from its prompt cache and charges a fraction of the input rate for
 them. Charging those tokens at the full rate overstated such a run by roughly an
 order of magnitude, which is what this split fixes.
 
-This lives in ``common`` (not the dashboard route layer) so both the HTTP costs
-route and the runtime budget gate can compute spend without importing the FastAPI
+This lives in ``common`` (not the dashboard route layer) so both the HTTP run
+views and the runtime gates can compute spend without importing the FastAPI
 backend. It only *reads* the catalog; curation/discovery stays in
 ``dashboard/backend/routes/models.py``.
 
@@ -112,9 +112,9 @@ def run_cached_tokens(run: Dict[str, Any]) -> int:
         return 0
 
 
-# Channels whose runs are evaluation, not production spend. Replays and eval
-# cells cost real tokens, but they measure an agent rather than do its work,
-# so cost aggregation (routes/costs.py) skips these; the runs themselves stay
+# Channels whose runs are evaluation, not production spend. Replays and injection
+# sweeps cost real tokens, but they measure an agent rather than do its work,
+# so cost aggregation skips these; the runs themselves stay
 # fully visible in the normal run views.
 EVALUATION_CHANNELS = frozenset({"replay", "eval"})
 
@@ -173,8 +173,8 @@ def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
             total += _tokens_cost(prices, str(call.get("provider") or ""), str(call.get("model") or ""),
                                   int(call.get("input_tokens") or 0), int(call.get("output_tokens") or 0),
                                   int(call.get("cached_tokens") or 0))
-            # A call priced in dollars rather than tokens (a picture, a video:
-            # common/aux_usage.record_flat).
+            # A call priced in dollars rather than tokens (a voice call:
+            # chat/voice.py call_entry).
             total += max(0.0, float(call.get("cost_usd") or 0.0))
         except (TypeError, ValueError):
             continue
@@ -266,8 +266,26 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
                               c_in, c_out, c_cached)
         inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
         cached = max(0, cached - c_cached)
-    own = (_tokens_cost(prices, provider, model, inbound, outbound, cached) + extra) * _price_factor(run)
+    own = (_tokens_cost(prices, provider, model, inbound, outbound, cached) + extra)
     return own + _aux_cost(run, prices) + container_cost_usd(run)
+
+
+def run_total_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
+    """A run's spend: its own reported cost when it has one, catalog pricing
+    otherwise.
+
+    A remote agent (``agents.remote_agent``) may credit ``reported_cost_usd``
+    onto the run record when the service it wraps prices its own call: a CLI
+    such as Claude Code prints ``total_cost_usd`` and that figure is exact,
+    where pricing token counts against this hub's catalog is an estimate and
+    reads as zero for a model the catalog does not list at all.
+    """
+    reported = run.get("reported_cost_usd")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        # The wrapped service prices its own model calls, not the container
+        # the hub ran it in, so the container hours are still added.
+        return float(reported) + container_cost_usd(run)
+    return run_cost_usd(run, prices)
 
 
 # Providers that run on this machine: their tokens cost nothing, so a $0
@@ -286,12 +304,3 @@ def cost_is_known(run: Dict[str, Any], prices: PriceMap, cost: float) -> bool:
     return provider in LOCAL_PROVIDERS or (provider, (run.get("model") or "").strip()) in prices
 
 
-def _price_factor(run: Dict[str, Any]) -> float:
-    """The share of the catalog price a run's own calls bill at: 0.5 for a
-    call that went through a provider batch API (an eval cell of a batch run,
-    evals/batch.py), 1 otherwise."""
-    try:
-        factor = float(run.get("price_factor") or 1.0)
-    except (TypeError, ValueError):
-        return 1.0
-    return factor if 0.0 < factor <= 1.0 else 1.0

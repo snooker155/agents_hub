@@ -292,9 +292,8 @@ def main():
                     help="How this run may use the pools of --memory-pool: read builds it without the write tools")
     ap.add_argument("--extra-secret", action="append", default=[], metavar="NAME",
                     help="A secret name a deployment attached to this task, on top of the agent's own")
-    # A JSON Schema the final answer of this run alone must match (a proactive
-    # tick's outcome, proactive/service.py), on top of or instead of the
-    # agent's own output_schema.
+    # A JSON Schema the final answer of this run alone must match, on top of
+    # or instead of the agent's own output_schema.
     ap.add_argument("--output-schema", metavar="JSON",
                     help="JSON Schema the final answer of this run must match")
     ap.add_argument("--tool-policy", metavar="JSON",
@@ -426,9 +425,7 @@ def main():
     agent_overrides.update(model_overrides(args.provider, args.model))
     # A version pin (--definition-version): agent_factory.create_agent builds
     # from that stored snapshot instead of the live definition, falling back
-    # to it (logged) when the version's row is gone. An experiment pin, if
-    # this agent has one, is skipped whenever this key is present (see
-    # AgentFactory.create_agent) — a task/launch pin always wins.
+    # to it (logged) when the version's row is gone.
     if args.definition_version is not None:
         agent_overrides["definition_version"] = int(args.definition_version)
     # A deployment's resources for this task's runs only (--memory-pool,

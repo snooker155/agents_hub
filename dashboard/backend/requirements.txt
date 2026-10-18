@@ -1,6 +1,6 @@
 fastapi>=0.135,<1.0.0
 uvicorn>=0.41
-# The hub relays the browser service's frame stream over WebSocket (routes/browser.py).
+# WebSocket support for uvicorn (the terminal route).
 websockets>=13
 pydantic>=2.11,<3.0.0
 python-dotenv>=1.2

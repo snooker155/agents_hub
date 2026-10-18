@@ -27,9 +27,9 @@
 import {
   LayoutDashboard, CheckSquare, Folder, Database, Factory, Wrench, Users,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, FolderGit2, Box, Store,
-  CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
+  CalendarClock, BookOpen, Brain, Images, Repeat, UsersRound,
   GraduationCap, Globe, Link2, Plug, Layers, Rocket, ShieldCheck,
-  Eye, AudioLines,
+  AudioLines,
 } from 'lucide-react';
 
 export const MENU_MODE_KEY = 'agents_hub_menu_mode';
@@ -59,10 +59,9 @@ export function writeMenuMode(mode) {
 
 /**
  * The groups, every item in them, with `simple` on the items the simple menu
- * keeps. Items a viewer may not see at all (the playground switched off) are
- * left out here rather than hidden later, so both modes agree on them.
+ * keeps.
  */
-export function buildMenu({ t, features = {} }) {
+export function buildMenu({ t }) {
   const groups = [
     {
       key: 'conversation',
@@ -90,7 +89,6 @@ export function buildMenu({ t, features = {} }) {
         { name: t('nav.loops'), path: '/loops', icon: Repeat, home: '/flows' },
         { name: t('nav.teams'), path: '/teams', icon: UsersRound, home: '/flows' },
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network, home: '/flows' },
-        features.playground !== false && { name: t('nav.playground'), path: '/playground', icon: Gamepad2, home: '/flows' },
         // Schedules of work, opened from the Plan page.
         { name: t('nav.deployments'), path: '/deployments', icon: Rocket, home: '/plan' },
         // Creating a workspace, its settings and its members: the top bar only
@@ -113,27 +111,22 @@ export function buildMenu({ t, features = {} }) {
     },
     {
       // Attaching something that is not defined in here: this service reaches
-      // out to a system you use (Connectors); watchers observe outside state,
-      // MCP servers hand over tools nobody here has seen.
+      // out to a system you use (Connectors); MCP servers hand over tools
+      // nobody here has seen.
       key: 'integrations',
       items: [
         { name: t('nav.connectors'), path: '/connectors', icon: Link2, home: '/settings' },
-        { name: t('nav.watchers'), path: '/watchers', icon: Eye, home: '/settings' },
         { name: t('nav.mcp'), path: '/mcp', icon: Plug, home: '/settings' },
-        // The agent's browser on screen, and free browsing on the same service.
-        { name: t('nav.browser'), path: '/browser', icon: Globe, home: '/agents' },
       ],
     },
     {
       key: 'records',
       items: [
-        // What happened and what it cost: the Dashboard is their summary, and
+        // What happened: the Dashboard is their summary, and
         // like it they sit under Settings in the simple menu.
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle, home: '/settings' },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText, home: '/settings' },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers, home: '/settings' },
-        { name: t('nav.costs'), path: '/costs', icon: DollarSign, home: '/settings' },
-        { name: t('nav.evals'), path: '/evals', icon: FlaskConical, home: '/agents' },
         { name: t('nav.webLogs'), path: '/web-logs', icon: Globe, home: '/settings' },
         // Administration lives under Settings.
         { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck, home: '/settings' },

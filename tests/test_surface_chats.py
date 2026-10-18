@@ -1,8 +1,8 @@
 """The chats added to the surfaces that had none.
 
-Six agents that shipped with the product had no way in, or no page of their own:
+Five agents that shipped with the product had no way in, or no page of their own:
 `team_creator` and `project_manager` had no caller at all, `agent_creator` could
-only be reached from the main chat, `service_agent` and `eval_agent` had nowhere
+only be reached from the main chat, `service_agent` had nowhere
 to live, and `memory_extractor` could only write. Each now has a chat on its own
 page, all built on the same entity-chat plumbing.
 
@@ -50,14 +50,13 @@ def test_each_chat_names_a_system_agent(seeded_registry):
     of them are system agents, so every install has them."""
     from agents.registry import get_agent
     from routes.agents import DEFINITION_AGENT_ID
-    from routes.evals import EVAL_AGENT_ID
     from routes.health import SERVICE_AGENT_ID
     from routes.memory import MEMORY_AGENT_ID
     from routes.projects import REGISTRY_AGENT_ID
     from routes.teams import TEAM_AGENT_ID
 
     for agent_id in (TEAM_AGENT_ID, DEFINITION_AGENT_ID, REGISTRY_AGENT_ID,
-                     SERVICE_AGENT_ID, MEMORY_AGENT_ID, EVAL_AGENT_ID):
+                     SERVICE_AGENT_ID, MEMORY_AGENT_ID):
         spec = get_agent(agent_id)
         assert spec is not None, f"{agent_id} is not registered"
         assert spec.system is True, f"{agent_id} must be a system agent"
@@ -67,17 +66,16 @@ def test_the_chat_kinds_are_distinct():
     """The store keys on (kind, id). Two surfaces sharing a kind would share a
     transcript."""
     from routes.agents import DEFINITION_CHAT_KIND
-    from routes.evals import EVAL_CHAT_KIND
     from routes.health import SERVICE_CHAT_KIND
     from routes.memory import MEMORY_CHAT_KIND
     from routes.projects import REGISTRY_CHAT_KIND
     from routes.teams import TEAM_CHAT_KIND
 
     kinds = [TEAM_CHAT_KIND, DEFINITION_CHAT_KIND, REGISTRY_CHAT_KIND,
-             SERVICE_CHAT_KIND, MEMORY_CHAT_KIND, EVAL_CHAT_KIND]
+             SERVICE_CHAT_KIND, MEMORY_CHAT_KIND]
     assert len(set(kinds)) == len(kinds)
     # And none may collide with the chats that already existed.
-    assert not set(kinds) & {"loop", "scenario", "world"}
+    assert not set(kinds) & {"loop"}
 
 
 # ── the team chat ────────────────────────────────────────────────────────────
@@ -468,44 +466,6 @@ def test_the_memory_agent_can_now_read(seeded_registry):
     assert {"extract_from_text", "save_extraction"} <= tools
 
 
-# ── the eval chat ────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def evals_client():
-    from routes import evals as eval_routes
-    return _client(eval_routes.router)
-
-
-def test_the_eval_chat_is_not_read_as_a_set_id(evals_client):
-    resp = evals_client.get("/api/evals/chat")
-    assert resp.status_code == 200
-    assert set(resp.json()) == {"messages", "trace", "chat_ref"}
-    # And the list route it sits next to still works.
-    assert evals_client.get("/api/evals").status_code == 200
-
-
-def test_an_empty_eval_message_is_refused(evals_client, seeded_registry):
-    assert evals_client.post("/api/evals/chat", json={"message": ""}).status_code == 400
-
-
-def test_the_eval_prompt_gates_spending_and_steers_grader_choice(seeded_registry):
-    from routes.evals import _eval_chat_prompt
-
-    prompt = _eval_chat_prompt("default", [{"role": "user", "content": "run it"}], "run it")
-    assert "Building a set costs nothing" in prompt
-    assert "user_approved=True" in prompt
-    assert "deterministic grader" in prompt
-    # The finding is in the failing cells, not the average.
-    assert "failing cells" in prompt
-
-
-def test_a_suite_that_cannot_fail_is_called_out(seeded_registry):
-    from routes.evals import _eval_chat_prompt
-
-    prompt = _eval_chat_prompt("default", [], "build me a set")
-    assert "measured nothing" in prompt
-
-
 # ── the session history shared by all of them ────────────────────────────────
 # Every chat above stores its conversation under one (kind, entity_id) key, and
 # one router (routes/entity_chats.py) serves the threads behind that key. What
@@ -524,22 +484,22 @@ def two_threads():
     from common.entity_chat_store import entity_chat_store
 
     store = entity_chat_store()
-    store.delete("scenario", "sess-test")
-    store.append_message("scenario", "sess-test", "user", "cast a bard")
-    store.append_message("scenario", "sess-test", "assistant", "done")
-    store.clear("scenario", "sess-test")
-    store.append_message("scenario", "sess-test", "user", "start over")
+    store.delete("team", "sess-test")
+    store.append_message("team", "sess-test", "user", "cast a bard")
+    store.append_message("team", "sess-test", "assistant", "done")
+    store.clear("team", "sess-test")
+    store.append_message("team", "sess-test", "user", "start over")
     yield store
-    store.delete("scenario", "sess-test")
+    store.delete("team", "sess-test")
 
 
 def _params(**extra):
-    return {"kind": "scenario", "entity_id": "sess-test", **extra}
+    return {"kind": "team", "entity_id": "sess-test", **extra}
 
 
 def test_a_chat_with_no_history_lists_nothing(sessions_client):
     resp = sessions_client.get("/api/entity-chats/sessions",
-                               params={"kind": "scenario", "entity_id": "never-used"})
+                               params={"kind": "team", "entity_id": "never-used"})
     assert resp.status_code == 200
     assert resp.json() == {"sessions": [], "has_history": False}
 
@@ -561,7 +521,7 @@ def test_reopening_a_thread_swaps_it_in(sessions_client, two_threads):
     # The epoch travels with the thread: the next turn continues that run-thread
     # in Messages instead of opening a new one.
     assert body["session_epoch"] == 0
-    assert two_threads.get_messages("scenario", "sess-test")[0]["content"] == "cast a bard"
+    assert two_threads.get_messages("team", "sess-test")[0]["content"] == "cast a bard"
     assert [s["active"] for s in body["sessions"]] == [True, False]
 
 
@@ -573,7 +533,7 @@ def test_the_history_stays_reachable_from_inside_an_old_thread(sessions_client,
     from common.entity_chat_store import entity_chat_store
 
     store = entity_chat_store()
-    store.clear("scenario", "sess-test")  # a new, empty thread
+    store.clear("team", "sess-test")  # a new, empty thread
     sessions_client.post("/api/entity-chats/sessions/activate",
                          json=_params(session_id="s0"))
 
@@ -586,14 +546,14 @@ def test_a_chat_that_was_never_a_second_one_has_no_history(sessions_client):
     from common.entity_chat_store import entity_chat_store
 
     store = entity_chat_store()
-    store.delete("scenario", "one-thread")
-    store.append_message("scenario", "one-thread", "user", "hello")
+    store.delete("team", "one-thread")
+    store.append_message("team", "one-thread", "user", "hello")
     body = sessions_client.get("/api/entity-chats/sessions",
-                               params={"kind": "scenario",
+                               params={"kind": "team",
                                        "entity_id": "one-thread"}).json()
     assert len(body["sessions"]) == 1
     assert body["has_history"] is False
-    store.delete("scenario", "one-thread")
+    store.delete("team", "one-thread")
 
 
 def test_reopening_a_thread_that_is_not_there(sessions_client, two_threads):
@@ -612,7 +572,7 @@ def test_reopening_is_refused_while_a_turn_is_running(sessions_client, two_threa
     resp = sessions_client.post("/api/entity-chats/sessions/activate",
                                 json=_params(session_id="s0"))
     assert resp.status_code == 409
-    assert two_threads.get_messages("scenario", "sess-test")[0]["content"] == "start over"
+    assert two_threads.get_messages("team", "sess-test")[0]["content"] == "start over"
 
 
 def test_an_archived_thread_can_be_dropped_but_the_live_one_cannot(sessions_client,

@@ -27,17 +27,13 @@ function mountEl(selector) {
 describe('welcome tour steps', () => {
   it('visits the pages in the documented order', () => {
     expect(TOUR_STOPS.map((s) => s.id)).toEqual([
-      'assistant', 'chat', 'agents', 'tasks', 'flows', 'teams', 'playground', 'artifacts', 'health', 'docs',
+      'assistant', 'chat', 'agents', 'tasks', 'flows', 'teams', 'artifacts', 'health', 'docs',
     ]);
-    const steps = buildSteps(t, { playground: true });
+    const steps = buildSteps(t, {});
     expect(steps.map((s) => s.path)).toEqual([
-      '/assistant', '/chat', '/agents', '/tasks', '/flows', '/teams', '/playground', '/artifacts', '/health', '/docs',
+      '/assistant', '/chat', '/agents', '/tasks', '/flows', '/teams', '/artifacts', '/health', '/docs',
     ]);
     expect(steps[0].title).toBe('tour.steps.assistant.title');
-  });
-
-  it('leaves the playground out when it is disabled', () => {
-    expect(buildSteps(t, { playground: false }).map((s) => s.id)).not.toContain('playground');
   });
 });
 

@@ -25,7 +25,7 @@ REPO_ROOT = Path(SPECPATH).resolve().parent
 SERVICE_EXCLUDES = [
     "agents", "a2a", "bootstrap", "chat", "clients", "connections", "connectors",
     "dashboard", "evals", "flow", "instances", "loops", "managers", "mcp_client",
-    "memory", "notify", "plans", "playground", "projects", "providers",
+    "memory", "notify", "plans", "projects", "providers",
     "reasoning", "runtime", "tasks", "teams", "tools", "views", "workspace",
     # Heavy third-party packages reachable only through the excludes above, or
     # through common's own lazier submodules (db drivers, model SDKs, RAG).

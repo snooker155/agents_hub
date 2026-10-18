@@ -26,7 +26,7 @@ if BACKEND not in sys.path:
 from agents.registry import AgentSpec, add_agent, get_agent, replace_all_raw
 
 PRIVATE_AND_OUT = ["read_file", "notify_user", "run_agent_tool"]
-UNTRUSTED = ["web_search", "fetch_url"]
+UNTRUSTED = ["fetch_url"]
 
 
 def _spec(agent_id: str, tools, **extra) -> AgentSpec:
@@ -155,31 +155,6 @@ def test_settings_put_validates_and_writes_the_mode(monkeypatch, tmp_path):
     text = env_file.read_text()
     assert 'CAPABILITY_GUARD="warn"' in text
     assert 'CAPABILITY_OVERRIDE_REQUIRES_CONTAINER="false"' in text
-
-
-def test_settings_put_validates_the_web_search_provider(monkeypatch, tmp_path):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from routes import settings as settings_routes
-
-    env_file = tmp_path / ".env"
-    monkeypatch.setattr(settings_routes, "_ENV_FILE", env_file)
-    app = FastAPI()
-    app.include_router(settings_routes.router)
-    c = TestClient(app)
-    assert c.put("/api/settings", json={"web_search_provider": "google"}).status_code == 400
-    assert c.put("/api/settings", json={"web_search_max_results": 50}).status_code == 400
-    r = c.put("/api/settings", json={"web_search_provider": "Tavily", "web_search_api_key": "k1", "web_search_max_results": 8})
-    assert r.status_code == 200, r.text
-    text = env_file.read_text()
-    assert 'WEB_SEARCH_PROVIDER="tavily"' in text and 'WEB_SEARCH_API_KEY="k1"' in text
-
-
-def test_web_search_config_follows_the_env_file_live(monkeypatch):
-    from tools.web import _search_config, _search_max_results
-    monkeypatch.setattr("common.config.read_dot_env", lambda: {"WEB_SEARCH_PROVIDER": "Exa", "WEB_SEARCH_API_KEY": " k ", "WEB_SEARCH_MAX_RESULTS": "7"})
-    assert _search_config() == ("exa", "k")
-    assert _search_max_results() == 7
 
 
 def test_settings_put_writes_fetch_limits_and_domain_lists(monkeypatch, tmp_path):

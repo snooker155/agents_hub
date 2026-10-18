@@ -40,7 +40,6 @@ export default function DoneStep({ ctx, onFinish, assistantReady = false }) {
   const model = dm.model
     ? `${PROVIDER_LABELS[dm.provider] || dm.provider} · ${dm.model}`
     : t('firstRun.done.none');
-  const search = ctx?.search?.key_set ? (PROVIDER_LABELS[ctx.search.provider] || ctx.search.provider) : t('firstRun.done.off');
   const voice = ctx?.voice ? t('firstRun.done.voiceOwn') : t('firstRun.done.voiceBrowser');
 
   return (
@@ -56,7 +55,6 @@ export default function DoneStep({ ctx, onFinish, assistantReady = false }) {
           <Row label={t('firstRun.done.look')} value={t(`firstRun.appearance.${theme}`)} />
           <Row label={t('firstRun.done.model')} value={model} />
           <Row label={t('firstRun.done.voice')} value={voice} />
-          <Row label={t('firstRun.done.search')} value={search} />
           <Row label={t('firstRun.done.demo')} value={ctx?.demo ? t('firstRun.done.added') : t('firstRun.done.notAdded')} />
         </div>
         <p className="mt-3 text-sm text-center text-gray-400">{t('firstRun.done.changeLater')}</p>

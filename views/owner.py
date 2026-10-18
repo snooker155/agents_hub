@@ -3,9 +3,9 @@ Owner resolution: whose run a freshly created view belongs to.
 
 A view is always made *by* some run, but which run should own it is not
 always the one whose Python frame called ``create_view``. Inside a flow node,
-a team member's turn or a scenario decision, that frame belongs to a leaf
+or a team member's turn, that frame belongs to a leaf
 agent run (a row in ``runs``) with a ``parent_run_id`` pointing at the flow/
-team/scenario run in ``entity_runs`` (common/entity_runs.py), and it is that
+team run in ``entity_runs`` (common/entity_runs.py), and it is that
 parent a person actually opens to see the work, not the leaf turn buried
 inside it. A process launched directly for an entity run (runtime/
 entity_launch.py) skips that lookup entirely: its environment already says
@@ -26,7 +26,7 @@ from views.models import ViewOwner
 #: "loop" is not among them today (loops/launcher.py runs its own way), but a
 #: loop run can still end up as a view's owner via the parent_run_id path
 #: below, so it stays a valid ViewOwner.kind.
-_ENV_ENTITY_KINDS = ("flow", "loop", "team", "scenario")
+_ENV_ENTITY_KINDS = ("flow", "loop", "team")
 
 
 def current_owner(
@@ -40,7 +40,7 @@ def current_owner(
        on behalf of another run); always wins.
     2. The entity run this *process* was launched for
        (``AGENTS_HUB_ENTITY_RUN_ID`` / ``AGENTS_HUB_ENTITY_RUN_KIND``, set by
-       runtime/entity_launch.py): the view belongs to the flow/team/scenario
+       runtime/entity_launch.py): the view belongs to the flow/team
        run itself, whichever leaf inside it is doing the creating.
     3. The current leaf run: ``leaf_run_id`` if the caller already knows it
        (e.g. views.publish, which is handed the run id of the reply being
@@ -48,7 +48,7 @@ def current_owner(
        common.stream_sink.current_run_id(), else this process's own
        ``AGENT_RUN_ID``. If that leaf run has a ``parent_run_id`` naming an
        entity run, ownership climbs to that entity run: a flow node, a team
-       member's turn and a scenario decision are all leaves of one run a
+       member's turn are both leaves of one run a
        person watches as a whole. Otherwise the leaf run itself owns the view,
        as kind ``"run"``.
     4. ``None`` when no run is known at all (e.g. a script run outside any

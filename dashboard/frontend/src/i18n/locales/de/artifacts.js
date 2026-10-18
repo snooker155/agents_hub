@@ -1,6 +1,6 @@
 export default {
   title: 'Artefakte',
-  pageDescription: 'Was die Agenten gemacht haben und womit sie arbeiten: die Ansichten, die sie als Antwort gebaut haben, und die Dateien dieses Arbeitsbereichs, nebeneinander. Laden Sie eine Datei einmal hoch und hängen Sie sie dann über ihre ID im Chat an, fügen Sie sie einem Speicherpool hinzu oder geben Sie sie einer Aufgabe oder einem Evaluationsfall; öffnen Sie eine Ansicht, um sie im Gespräch weiter zu bearbeiten.',
+  pageDescription: 'Was die Agenten gemacht haben und womit sie arbeiten: die Ansichten, die sie als Antwort gebaut haben, und die Dateien dieses Arbeitsbereichs, nebeneinander. Laden Sie eine Datei einmal hoch und hängen Sie sie dann über ihre ID im Chat an, fügen Sie sie einem Speicherpool hinzu oder geben Sie sie einer Aufgabe; öffnen Sie eine Ansicht, um sie im Gespräch weiter zu bearbeiten.',
   loading: 'Wird geladen…',
   viewsFolder: 'Ansichten',
   viewCount_one: '{{count}} Ansicht',

@@ -32,7 +32,7 @@ function stateForAction(input) {
   if (/^(enable|disable|pause)$/.test(action)) return 'mark-tetra';
   if (!/^(start|restart|resume)$/.test(action)) return 'working';
   if (kind === 'loop') return 'mark-cycle';
-  if (/^(scenario|flow)$/.test(kind)) return 'run-flow';
+  if (kind === 'flow') return 'run-flow';
   if (kind === 'team') return 'run-team';
   if (/^(pulse|agent)$/.test(kind)) return 'delegate';
   if (action === 'restart') return 'relay-deploy';
@@ -48,7 +48,6 @@ const RULES = [
   ['mark-arcs', /_status(_tool)?$|progress|monitor/],
   // Searches, by where they look.
   ['search-errors', /^service_health$/],
-  ['search-db', /^costs?_(summary|report)$/],
   ['search-errors', /search_errors|_logs$|^logs_|error/],
   ['search-history', /^list_runs$|^run_log$|^list_sessions$|routing_log|web_log|^(get|list)_\w*runs?(_tool)?$|^instance_timeline$|run_history/],
   ['search-tools', /search_tools|tool_search|list_tools|find_tool/],
@@ -60,9 +59,9 @@ const RULES = [
   ['search-code', /grep|glob|search_code|code_search|ripgrep/],
   ['search-kb', /search_docs|knowledge|rag_|_rag$|notion_search|confluence_search|vector/],
   ['search-files', /search_text|search_files|file_search|drive_search|^list_(workspace_)?files$/],
-  ['search-web', /web_search|^search$|search_web|browser_search/],
+  ['search-web', /^search$|search_web/],
   // Reading a page or a file: the lens reads it line by line.
-  ['search-doc', /^read_(file|doc|workspace_file)$|^fetch_url$|_read_page$|^browser_read$/],
+  ['search-doc', /^read_(file|doc|workspace_file)$|^fetch_url$|_read_page$/],
   // Bringing things in or out, checking them against each other.
   ['mark-capture', /_import$|^import_|collect|gather|scrape|crawl|harvest/],
   ['mark-net', /export/],
@@ -86,9 +85,7 @@ const RULES = [
   ['mark-recall', /^wake|(^|_)ping(_|$)|reconnect/],
   ['mark-replicate', /clone|fork|replica|(^|_)scale(_|$)/],
   ['delegate', /delegate|run_agent|start_agent|wait_for_agent|handoff/],
-  // Speech is the voice's own pose; a message goes out on the antenna.
-  ['speak', /synthesize_speech/],
-  ['listen', /transcribe/],
+  // A message goes out on the antenna.
   ['mark-antenna', /notify|channel_send|_comment$|broadcast|publish|post_message|send_(message|mail|email)/],
   // The mark rebuilt into what a step does.
   ['mark-invert', /revert|undo|rollback/],
@@ -104,7 +101,7 @@ const RULES = [
   ['mark-gplanet', /orchestrat|coordinat|supervis|dispatch/],
   ['mark-gchain', /chain|trigger|automat|_hook|hook_/],
   ['mark-strings', /audio|sound|music|tune/],
-  ['mark-spiro', /generate_(image|video)|draw|sketch|pattern/],
+  ['mark-spiro', /draw|sketch|pattern/],
   ['mark-shapes', /layout|diagram|mermaid|geometry|shape/],
   ['mark-flow', /^switch_|set_default|set_active/],
   ['mark-tetra', /toggle|flip|rotate/],
@@ -114,8 +111,8 @@ const RULES = [
   ['make-agent', /(create|modify)_agent/],
   ['run-team', /run_team/],
   ['make-team', /team|_workspace(_agent)?$/],
-  ['run-flow', /run_(flow|scenario|sequence)/],
-  ['make-flow', /flow|scenario|sequence|graph_(add|remove)|add_graph|delete_graph/],
+  ['run-flow', /run_(flow|sequence)/],
+  ['make-flow', /flow|sequence|graph_(add|remove)|add_graph|delete_graph/],
   ['make-3d', /^mesh_|^scene_|3d|blender/],
   ['make-html', /html|view_serve|web_view/],
   ['make-view', /view|slides_|math_plot|chart/],
@@ -124,7 +121,7 @@ const RULES = [
   ['write-file', /^(write|create|save|edit|append)_(file|workspace_file|doc)|document_set|_append$|google_docs_create|create_page|create_issue|^(create|update)_task$/],
   // Poses.
   ['code', /run_code|run_shell|run_tests|run_diagnostics|terminal|python|bash|exec/],
-  ['read', /^(read|fetch|get|list|load|open)_|(^|_)(list|get)_|_(read|import|get|status|stats|schema|list)$|^browser_/],
+  ['read', /^(read|fetch|get|list|load|open)_|(^|_)(list|get)_|_(read|import|get|status|stats|schema|list)$/],
 ];
 
 // What a tool no rule knows gets: rebuilds of the mark that stand for no

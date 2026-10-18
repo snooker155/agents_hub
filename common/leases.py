@@ -2,7 +2,7 @@
 Leases for the roles only one loop may play at a time, kept in this process.
 
 The backend starts several loops that must not run twice: the plan
-scheduler, the run watchdog, the outbox drainer, the watchers. This hub is
+scheduler, the run watchdog. This hub is
 one process, so a role is held by whoever asked for it first and the
 bookkeeping is a dictionary, not a table; the module keeps the API the loops
 were written against (``hold``, ``fencing_token``, ``fenced``) so each loop

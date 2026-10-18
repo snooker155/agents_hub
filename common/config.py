@@ -256,20 +256,13 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("SYSTEM_WORKSPACE", "system_workspace"),
     )
-    # The demo workspace (docs/demo.md): agents, a project, a flow, a team, a
-    # scenario, views and recorded runs seeded from bootstrap/workspaces/demo so
+    # The demo workspace (docs/demo.md): agents, a project, a flow, a team,
+    # views and recorded runs seeded from bootstrap/workspaces/demo so
     # a fresh install has something to look at. Off by default; install.sh
     # --with-demo turns it on, and Settings can add or remove it later.
     demo_workspace: bool = Field(
         default=False,
         validation_alias=AliasChoices("DEMO_WORKSPACE", "demo_workspace"),
-    )
-
-    # Playground (simulation worlds/scenarios) is ~17% of the backend by line
-    # count; this lets a deployment that does not use it skip loading it.
-    playground_enabled: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("PLAYGROUND_ENABLED", "playground_enabled"),
     )
 
     # When true, the ``view_serve`` tool may *launch* a generated backend as a
@@ -282,23 +275,6 @@ class Settings(BaseSettings):
     )
 
     # ── Web access (tools/web.py) ─────────────────────────────────────────────
-    # Search provider for the ``web_search`` tool. "brave", "tavily" and "exa"
-    # take WEB_SEARCH_API_KEY; "anthropic" and "openai" search through that
-    # provider's own server-side search tool on the model key. Empty
-    # (default) picks a model provider whose key is set, and with none the
-    # tool reports that it is not configured rather than failing mid-run.
-    web_search_provider: str = Field(
-        default="", validation_alias=AliasChoices("WEB_SEARCH_PROVIDER", "web_search_provider"))
-    web_search_api_key: str = Field(
-        default="", validation_alias=AliasChoices("WEB_SEARCH_API_KEY", "web_search_api_key"))
-    # The model that drives a model provider's search tool; empty picks a
-    # small one per provider (tools/web.py).
-    web_search_model: str = Field(
-        default="", validation_alias=AliasChoices("WEB_SEARCH_MODEL", "web_search_model"))
-    # Results per search. Kept small: every result is untrusted text entering
-    # the context window, and injection surface scales with it.
-    web_search_max_results: int = Field(
-        default=5, validation_alias=AliasChoices("WEB_SEARCH_MAX_RESULTS", "web_search_max_results"))
     # Hard cap on the text ``fetch_url`` returns, after HTML is stripped.
     web_fetch_max_chars: int = Field(
         default=20_000, validation_alias=AliasChoices("WEB_FETCH_MAX_CHARS", "web_fetch_max_chars"))
@@ -309,7 +285,7 @@ class Settings(BaseSettings):
     web_fetch_max_redirects: int = Field(
         default=5, validation_alias=AliasChoices("WEB_FETCH_MAX_REDIRECTS", "web_fetch_max_redirects"))
     # Opt-in domain policy, mirroring shell_allowlist_enabled. When on, only
-    # hosts matching ``web_allow_domains`` may be fetched or returned by search.
+    # hosts matching ``web_allow_domains`` may be fetched.
     # A workspace can turn it on via its settings (web_domain_policy_enabled)
     # and supply its own web_allow_domains / web_deny_domains.
     web_domain_policy_enabled: bool = Field(
@@ -324,7 +300,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("WEB_DENY_DOMAINS", "web_deny_domains"))
 
     # ── Web access log (tools/web_log.py) ─────────────────────────────────────
-    # Every search and fetch is recorded with the text the agent received, so a
+    # Every fetch is recorded with the text the agent received, so a
     # bad answer can be traced to what the tool actually read, and retrieved
     # content can be reviewed for injection attempts. On by default: the whole
     # point of wrapping untrusted content is being able to inspect it later.
@@ -337,20 +313,6 @@ class Settings(BaseSettings):
     # small enough that the log stays a log.
     web_log_body_chars: int = Field(
         default=20_000, validation_alias=AliasChoices("WEB_LOG_BODY_CHARS", "web_log_body_chars"))
-
-    # ── Browser service (tools/browser.py, deploy/browser/) ───────────────────
-    # Base URL of the browser service, e.g. http://browser:3000 under the
-    # compose `browser` profile. Empty (default) leaves the browser_* tools
-    # inert: they answer that the service is not configured.
-    browser_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_URL", "browser_url"))
-    # Shared token the service requires on every call (its BROWSER_TOKEN).
-    # The _TOKEN suffix keeps it out of run_shell's environment (scrubbed_env).
-    browser_token: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TOKEN", "browser_token"))
-    # Seconds the hub waits for one call to the service.
-    browser_timeout: float = Field(
-        default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
 
     # ── Sandboxed code execution (tools/run_code.py) ──────────────────────────
     # Image per language, as JSON ({"python": "python:3.12-slim"}) or as
@@ -515,18 +477,6 @@ def live_setting(env_key: str, default: str = "") -> str:
         raw = os.environ.get(env_key)
     value = (raw or "").strip()
     return value or default
-
-
-def playground_enabled() -> bool:
-    """Whether the playground (simulation worlds/scenarios) feature is on.
-
-    Resolved live like ``agent_execution_mode``, so flipping the .env value
-    takes effect without a restart. Default is on, so an existing install
-    that has never set the flag sees no change.
-    """
-    default = "true" if settings.playground_enabled else "false"
-    raw = live_setting("PLAYGROUND_ENABLED", default)
-    return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
 def agent_execution_mode() -> str:

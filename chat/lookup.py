@@ -3,16 +3,16 @@ What the assistant can read about the hub: one catalog of record kinds behind
 one tool (``hub_lookup``, tools/hub_lookup.py), as the person sees them.
 
 The assistant answers questions about any page without a tool per page. A
-question is a kind ("run", "cost", "approval", ...), an optional search text
+question is a kind ("run", "approval", ...), an optional search text
 and an optional id: without an id the kind lists matching records, with one
 it describes that record. Every row and every card carries ``url``, the
 dashboard page that shows it, which the assistant links as "show on screen".
 New pages are covered by adding a kind here, so the assistant's tool list does
 not grow with the dashboard.
 
-The kinds of chat/references.py (task, view, project, scenario, loop, flow,
+The kinds of chat/references.py (task, view, project, loop, flow,
 team, agent, scheduled job) are reused as they are; this module adds what
-the reference picker has no use for: runs, sessions, spend, models,
+the reference picker has no use for: runs, sessions, models,
 notifications and the approvals waiting for someone (wave 1 of the assistant
 plan).
 
@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -236,56 +236,6 @@ def _session_card(ctx: SimpleNamespace, session_id: str) -> Optional[Dict[str, A
         "url": f"/sessions/{quote(session_id)}"}
 
 
-# ── spend ────────────────────────────────────────────────────────────────────
-
-PERIODS = ("today", "week", "month")
-
-
-def _period_since(period: str, now: Optional[datetime] = None) -> str:
-    now = now or datetime.now(timezone.utc)
-    if period == "today":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start.isoformat()
-
-
-def _list_costs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    out = []
-    for period in PERIODS:
-        card = _cost_card(ctx, period)
-        total = (card or {}).get("fields", {}).get("total_usd")
-        out.append(_row(period, f"Spend {period}", _money(total), "/costs"))
-    return out
-
-
-def _cost_card(ctx: SimpleNamespace, period: str) -> Optional[Dict[str, Any]]:
-    from common.costs_report import costs_breakdown
-    period = (period or "month").strip().lower()
-    if period not in PERIODS:
-        raise LookupError_("A cost id is a period: today, week or month.")
-    since = _period_since(period)
-    report = costs_breakdown(since=since, workspaces=ctx.workspaces)
-    totals = report["totals"]
-    fields: Dict[str, Any] = {
-        "period": period, "since": since,
-        "workspaces": ctx.workspaces if ctx.workspace is None else ctx.workspace,
-        "total_usd": totals["cost"], "runs": totals["runs"], "tokens": totals["total_tokens"],
-        "top_agents": [{"agent": r["label"], "usd": r["cost"], "runs": r["runs"]} for r in report["by_agent"][:5]],
-        "top_models": [{"model": r["label"], "usd": r["cost"]} for r in report["by_model"][:3]],
-    }
-    if ctx.workspace is None:
-        fields["by_workspace"] = [{"workspace": r["label"], "usd": r["cost"]} for r in report["by_workspace"]]
-    if ctx.user_id and ctx.principal is not None:
-        mine = costs_breakdown(since=since, workspaces=ctx.reachable, launched_by=str(ctx.user_id))
-        fields["yours_usd"] = mine["totals"]["cost"]
-    return {"title": f"Spend this {period}" if period != "today" else "Spend today", "fields": fields,
-            "note": "Estimates from the Models page prices, the same numbers as the Costs page.",
-            "url": "/costs"}
-
-
 # ── models ───────────────────────────────────────────────────────────────────
 
 def _catalog() -> Dict[str, Any]:
@@ -310,16 +260,13 @@ def _list_models(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str,
                              ("default here · " if is_default else "")
                              + f"in ${m.get('input_price') or 0}/M, out ${m.get('output_price') or 0}/M",
                              _model_url(provider, str(m.get("id")))))
-    # the special models the workspace uses (image, speech, transcription, ...)
-    if ctx.workspace:
-        from providers import special
-        for purpose, e in special.effective(ctx.workspace).items():
-            name = f"{e.get('provider')}/{e.get('model')}" if e and purpose != "custom" else ""
-            if name and _matches(query, purpose, name):
-                rows.insert(0, _row(name, f"{purpose}: {name}",
-                                    "special model here" + (f", from {e[special.INHERITED_KEY]}"
-                                                            if e.get(special.INHERITED_KEY) else ""),
-                                    _model_url(str(e.get("provider")), str(e.get("model")))))
+    # the voice models the assistant uses (speech, transcription)
+    from providers import voice_models
+    for purpose, e in voice_models.stored().items():
+        name = f"{e.get('provider')}/{e.get('model')}"
+        if _matches(query, purpose, name):
+            rows.insert(0, _row(name, f"{purpose}: {name}", "voice model",
+                                _model_url(str(e.get("provider")), str(e.get("model")))))
     return rows[:limit]
 
 
@@ -347,63 +294,46 @@ def _model_card(ctx: SimpleNamespace, model_id: str) -> Optional[Dict[str, Any]]
         "context_window": found.get("context_window"),
         "default_in_this_workspace": default.get("provider") == provider and default.get("model") == model,
     }
-    if ctx.workspace:
-        from providers import special
-        fields["special_models_here"] = {
-            purpose: f"{e.get('provider')}/{e.get('model')}" + (f" (from {e['inherited_from']})"
-                                                                  if e.get("inherited_from") else "")
-            for purpose, e in special.effective(ctx.workspace).items() if purpose != "custom" and e
-        }
+    from providers import voice_models
+    fields["voice_models"] = {purpose: f"{e.get('provider')}/{e.get('model')}"
+                              for purpose, e in voice_models.stored().items()}
     return {"title": f"{provider}/{model}", "fields": fields, "url": _model_url(provider, model)}
 
 
 # ── voice ────────────────────────────────────────────────────────────────────
-# The models the assistant's voice uses, resolved as the Assistant page does
-# (providers.special.voice_entry): the workspace's own, else the person's
-# home. Without one the page falls back to the browser's own recognition or
-# speech, which has no model to name.
+# The models the assistant's voice uses, as the Assistant page reads them
+# (providers.voice_models.entry): one pair for the hub, chosen on the Models
+# page, Voice tab. Without one the page falls back to the browser's own
+# recognition or speech, which has no model to name.
 
 VOICE_PURPOSES = ("transcription", "speech")
 _BROWSER = {"transcription": "the browser's own speech recognition",
             "speech": "the browser's own speech synthesis"}
 
 
-def _voice_home(ctx: SimpleNamespace) -> str:
-    from common import personal_workspace
-    return next((w for w in ctx.reachable if personal_workspace.is_reserved_name(w)), "default")
-
-
-def _voice_fields(ctx: SimpleNamespace, purpose: str, workspace: str) -> Dict[str, Any]:
-    from providers import special
-    entry, where = special.voice_entry(purpose, workspace, _voice_home(ctx))
+def _voice_fields(purpose: str) -> Dict[str, Any]:
+    from providers import voice_models
+    entry = voice_models.entry(purpose)
     if not entry:
-        return {"purpose": purpose, "workspace": workspace, "model": None, "used_instead": _BROWSER[purpose],
-                "how_to_set": "add a model for this purpose under Special models in the workspace settings"}
-    fields = {"purpose": purpose, "workspace": workspace,
-              "model": f"{entry.get('provider')}/{entry.get('model')}",
-              "from_workspace": entry.get(special.INHERITED_KEY) or where}
+        return {"purpose": purpose, "model": None, "used_instead": _BROWSER[purpose],
+                "how_to_set": "choose a model for this purpose on the Models page, Voice tab"}
+    fields = {"purpose": purpose, "model": f"{entry.get('provider')}/{entry.get('model')}"}
     if purpose == "speech":
         fields["voice"] = (entry.get("options") or {}).get("voice") or "the model's default"
     return fields
 
 
-def _voice_targets(ctx: SimpleNamespace) -> List[str]:
-    return [ctx.workspace] if ctx.workspace else list(ctx.workspaces)
-
-
 def _list_voice(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
     rows = []
-    for ws in _voice_targets(ctx):
-        for purpose in VOICE_PURPOSES:
-            f = _voice_fields(ctx, purpose, ws)
-            if not _matches(query, purpose, f.get("model")):
-                continue
-            if not f["model"]:
-                sub = f"no model, uses {f['used_instead']}"
-            else:
-                sub = f"from {f['from_workspace']}" + (f", voice {f['voice']}" if purpose == "speech" else "")
-            rows.append(_row(purpose, f"{purpose}: {f['model'] or 'none'}", sub, "/models",
-                             workspace=ws if ctx.workspace is None else None))
+    for purpose in VOICE_PURPOSES:
+        f = _voice_fields(purpose)
+        if not _matches(query, purpose, f.get("model")):
+            continue
+        if not f["model"]:
+            sub = f"no model, uses {f['used_instead']}"
+        else:
+            sub = f"voice {f['voice']}" if purpose == "speech" else "voice model"
+        rows.append(_row(purpose, f"{purpose}: {f['model'] or 'none'}", sub, "/models?tab=voice"))
     return rows[:limit]
 
 
@@ -411,8 +341,7 @@ def _voice_card(ctx: SimpleNamespace, purpose: str) -> Optional[Dict[str, Any]]:
     purpose = str(purpose or "").strip().lower()
     if purpose not in VOICE_PURPOSES:
         return None
-    ws = ctx.workspace or (ctx.workspaces[0] if ctx.workspaces else "default")
-    return {"title": f"Voice {purpose}", "fields": _voice_fields(ctx, purpose, ws), "url": "/models"}
+    return {"title": f"Voice {purpose}", "fields": _voice_fields(purpose), "url": "/models?tab=voice"}
 
 
 # ── agents (a fuller card than the reference picker's) ───────────────────────
@@ -563,7 +492,6 @@ _REFERENCE_SUMMARIES = {
     "task": ("tasks, their status and result", ("/tasks", "/plan")),
     "view": ("views the agents built", ("/views", "/artifacts", "/studio")),
     "project": ("projects", ("/projects",)),
-    "scenario": ("playground scenarios", ("/playground",)),
     "loop": ("loops", ("/loops",)),
     "flow": ("flows", ("/flows",)),
     "team": ("teams", ("/teams",)),
@@ -598,11 +526,9 @@ _register(LookupKind("run", "runs (the Messages page): status, timing, cost, err
                      _list_runs, _run_card, ("/messages", "/run-groups"), aliases=("message",)))
 _register(LookupKind("session", "sessions: conversations and the runs in them",
                      _list_sessions, _session_card, ("/sessions", "/chat")))
-_register(LookupKind("cost", "spend for a period (id: today, week or month) and the person's limit",
-                     _list_costs, _cost_card, ("/costs",)))
-_register(LookupKind("model", "enabled models with prices, the default here and the special models",
+_register(LookupKind("model", "enabled models with prices, the default here and the voice models",
                      _list_models, _model_card, ("/models",)))
-_register(LookupKind("voice", "the models the assistant's voice uses here: transcription and speech, "
+_register(LookupKind("voice", "the models the assistant's voice uses: transcription and speech, "
                      "and the speech voice (id: transcription or speech)",
                      _list_voice, _voice_card, (), aliases=("speech", "transcription")))
 _register(LookupKind("notification", "unread notifications",

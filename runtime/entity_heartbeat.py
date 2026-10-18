@@ -3,11 +3,11 @@ The sign of life every entity run's process gives, and how a stop reaches it.
 
 An agent run has beaten its heartbeat since stage 2 of the scaling plan
 (runtime/agent_run.py); the watchdog judges a run by that beat and never by a
-pid it cannot see. The processes that run a flow, a team or a scenario need
+pid it cannot see. The processes that run a flow, a loop or a team need
 the same thread, and the same trick for a stop requested from another host:
 a stop marks the record ``stopping`` (common/entity_runs.py), the beat reads
 the status back and delivers the stop locally. For an agent run "locally"
-means a SIGTERM to itself; for a team or a scenario it means setting the
+means a SIGTERM to itself; for a team it means setting the
 in-memory event the runner already polls between turns and ticks, so the
 run ends at its next safe point with its record closed by its own hands.
 """
@@ -35,7 +35,7 @@ class EntityHeartbeat(threading.Thread):
     ``stopping``.
 
     ``on_stop`` runs on this thread; it should only set an event or a flag
-    (``teams.control.request_stop``, ``playground.control.request_stop``)
+    (``teams.control.request_stop``)
     and return. A run that ignores the request for ``force_after`` beats is
     sent a SIGTERM, so a hung runner still ends.
     """

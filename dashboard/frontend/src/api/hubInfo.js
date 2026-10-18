@@ -1,5 +1,5 @@
 /**
- * Hub-wide reads: health, docs, logs, marketplace, web logs, orchestrator, stats, costs.
+ * Hub-wide reads: health, docs, logs, marketplace, web logs, orchestrator, stats.
  */
 import api from './index';
 
@@ -35,7 +35,7 @@ export const getMarketplaceFlows = (workspace) =>
 export const getMarketplaceSkills = (workspace) =>
   api.get('/marketplace/skills', { params: workspace ? { workspace } : {} });
 
-// Web access log — recorded web_search / fetch_url calls, their responses and
+// Web access log — recorded fetch_url calls, their responses and
 // the security flags raised against them.
 export const getWebLogs = (params) => api.get('/web-logs', { params });
 export const getWebLogStats = () => api.get('/web-logs/stats');
@@ -54,7 +54,3 @@ export const getOrchestratorRoutingLog = (workspace) =>
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
 export const getStatsOverview = (workspace, days = 14) => api.get('/stats/overview', { params: { workspace, days } });
 
-// Costs API: spend breakdowns
-export const getCosts = (params) => api.get('/costs', { params });
-// One row per counted run with its tokens and cost, sorted and windowed.
-export const getCostRuns = (params) => api.get('/costs/runs', { params });

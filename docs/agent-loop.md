@@ -68,7 +68,7 @@ With an `output_schema` (a JSON Schema), the agent is told to answer with one JS
 
 ## Fallback models
 
-With `fallback_models` (catalog ids, `provider/model`, in order), a call that the agent's own model refuses, or that fails with a rate limit, a server error, an overload, a connection error or a timeout, is retried on the next model with the same tools. A bad request, a bad key or a missing permission is never retried on another model. Calls a fallback answered are priced at the fallback's own rate on the Costs page.
+With `fallback_models` (catalog ids, `provider/model`, in order), a call that the agent's own model refuses, or that fails with a rate limit, a server error, an overload, a connection error or a timeout, is retried on the next model with the same tools. A bad request, a bad key or a missing permission is never retried on another model. Calls a fallback answered are priced at the fallback's own rate.
 
 ## Guardrails and the tool policy
 
@@ -87,8 +87,8 @@ A run whose loop did more than call tools carries a `loop` block on its record, 
 - `guardrails`: every guardrail check and its result.
 - `structured`: repair attempts and whether the answer matched the schema.
 - `tool_decisions`: tool policy decisions.
-- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs, advisor calls), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)). The outcome grader is not among them: a grading is a run of its own (see [outcomes](outcomes.md)).
+- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs, advisor calls), each with its purpose, model and tokens, priced at its own model. The outcome grader is not among them: a grading is a run of its own (see [outcomes](outcomes.md)).
 
 The run page shows it in the loop panel, next to the agent version the run ran and a rollback to it (see [agents](agents.md)).
 
-Related: [tool-policy](tool-policy.md), [guardrails](guardrails.md), [steering](steering.md), [agents](agents.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md).
+Related: [tool-policy](tool-policy.md), [guardrails](guardrails.md), [steering](steering.md), [agents](agents.md), [sessions-and-runs](sessions-and-runs.md).

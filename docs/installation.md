@@ -9,7 +9,7 @@ start) applies to every one of them.
 | Path | You need | What you get |
 | --- | --- | --- |
 | [A. Docker, from the published images](#path-a-docker-from-the-published-images) | Docker | The dashboard on `:8080`, state on a volume, agents as subprocesses. Nothing to clone or build. |
-| [B. Docker Compose from a checkout](#path-b-docker-compose-from-a-checkout) | Docker, git | The same, built from source, plus per-agent containers and the browser service |
+| [B. Docker Compose from a checkout](#path-b-docker-compose-from-a-checkout) | Docker, git | The same, built from source, plus per-agent containers |
 | [C. The installer](#path-c-the-installer) | Python 3.11+, Node 22+ | A virtualenv, the `ah` command on your PATH, the dashboard with hot reload |
 | [D. By hand](#path-d-by-hand) | Python 3.11+, Node 22+ | Path C taken apart, for a different shape |
 
@@ -66,7 +66,7 @@ backend container, and a client on the host is a separate step, see
 
 What this shape leaves out: the Docker socket is not mounted, so agents
 cannot get containers of their own ([containers](containers.md)), the
-`docker` sandbox provider and the browser service need Path B, and the
+`docker` sandbox provider need Path B, and the
 image without the `-rag` suffix has no embedding stack, so
 `RAG_VECTOR_DB` stays `none` unless you pin the `-rag` tag.
 
@@ -93,9 +93,7 @@ ah ...` runs it in the container, and a client on the host is the same
 separate step as on Path A, see
 [the `ah` command on each path](#the-ah-command-on-each-path).
 
-The dashboard is the built bundle behind nginx, which also proxies `/api`. The
-same file carries the browser service as a profile: `browser` (headless
-Chromium for the browser tools).
+The dashboard is the built bundle behind nginx, which also proxies `/api`.
 
 Compose has no Vite service: for an HMR loop while editing frontend code, run
 `npm run dev` on the host as in Path C, and rebuild the image (`docker compose
@@ -247,10 +245,7 @@ run does, and writes nothing until you confirm a review of every value:
    voice, nothing on the server); or not now. QuickStart
    leaves this to the assistant.
 4. **Features**: in Advanced the demo workspace, the dashboard port, where
-   agents run, web search, RAG and the browser service (both Docker paths).
-   HTTPS on a domain of yours for the published images (Caddy and Let's
-   Encrypt). QuickStart leaves the demo and web search to the assistant, and
-   keeps the browser and HTTPS where a run before turned them on.
+   agents run and RAG. QuickStart leaves the demo to the assistant.
 5. **Review** of every setting it will write (secrets masked) and every
    action it will take.
 6. **Apply**: installs missing Python extras, writes `.env` (the previous one is
@@ -291,7 +286,7 @@ A new install opens on a
 setup screen of its own instead of the app: no sidebar, no header, one
 decision per screen, the way a new phone sets itself up. In order: hello,
 the language, light or dark, a model, the default model, the assistant's
-voice, web search, personal memory and the demo workspace, then a summary
+voice, personal memory and the demo workspace, then a summary
 with the way in (**Start using Agents Hub**, **Continue with the
 assistant** or **Take the tour**).
 
@@ -309,8 +304,7 @@ Only the model is required: a key of OpenAI, Anthropic or Google (checked
 with the provider before it is saved), a model server already running on
 this machine (Ollama, LM Studio; their models are listed to pick from).
 Every later screen has **Not now**, and a screen whose
-answer is already in place (a key set by `ah setup`, web search through the
-model's own key) only says so. There is no way past the whole of it.
+answer is already in place (a key set by `ah setup`) only says so. There is no way past the whole of it.
 
 The step is saved on the hub, so a reload or another browser goes on where
 it stopped; the language and look chosen there are what a new browser starts
@@ -324,7 +318,7 @@ The console (or the browser) does only what the assistant cannot do for
 itself: one model to think with. The first run above does it and its
 **Continue with the assistant** leads here. From there the
 [assistant](assistant.md#guided-setup) leads the rest of the setup one step at
-a time, by voice or by text: the default model, its own voice, web search,
+a time, by voice or by text: the default model, its own voice,
 the demo workspace, the hub's health, then a first chat, an agent of your own,
 a task and something that runs on its own. It makes each change after your yes
 on a card, keys are typed into a card, never said or typed into the

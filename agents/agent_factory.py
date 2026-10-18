@@ -60,8 +60,6 @@ from tools.flow_management import (
     delete_flow_tool,
     validate_flow_tool,
 )
-from tools.scenario_management import SCENARIO_MANAGEMENT_TOOLS
-from tools.world_management import WORLD_MANAGEMENT_TOOLS
 from tools.team_management import TEAM_MANAGEMENT_TOOLS
 from tools.loop_management import LOOP_MANAGEMENT_TOOLS
 from tools.project_management import PROJECT_MANAGEMENT_TOOLS
@@ -69,7 +67,6 @@ from tools.entity_runs import ENTITY_RUN_TOOLS
 from tools.git_publish import GIT_PUBLISH_TOOLS
 from tools.service_ops import SERVICE_OPS_TOOLS
 from tools.docs_tool import DOCS_TOOLS
-from tools.eval_ops import EVAL_TOOLS
 from tools.schedule_management import (
     schedule_notification,
     schedule_task,
@@ -77,7 +74,6 @@ from tools.schedule_management import (
     list_scheduled,
     cancel_scheduled,
     update_scheduled,
-    wake_agent,
 )
 
 
@@ -478,15 +474,10 @@ class AgentFactory:
         # where a design can be preflighted). The module-level lists are the
         # single source of membership, so a new tool lands in the group and the
         # alias without being named twice.
-        scenario_tools = list(SCENARIO_MANAGEMENT_TOOLS)
-        # A world is the place; a scenario is the cast. Separate groups
-        # because they are separate jobs: the world builder never casts
-        # an agent, and the scenario creator never invents a room.
-        world_tools = list(WORLD_MANAGEMENT_TOOLS)
         team_tools = list(TEAM_MANAGEMENT_TOOLS)
         loop_tools = list(LOOP_MANAGEMENT_TOOLS)
         project_tools = list(PROJECT_MANAGEMENT_TOOLS)
-        # Launching is its own grant: designing a simulation is free and
+        # Launching is its own grant: designing a team is free and
         # reversible, starting one is neither, so the run/follow/stop tools are
         # a group an agent can be given separately from the builder tools.
         entity_run_tools = list(ENTITY_RUN_TOOLS)
@@ -504,10 +495,6 @@ class AgentFactory:
         # widely: any agent a person talks to should be able to explain the
         # service rather than guess at it.
         docs_tools = list(DOCS_TOOLS)
-        # Measuring a prompt change instead of guessing at it. Building the
-        # dataset is free; run_eval_tool gates the sweep on approval, like the
-        # other tools that spend real money.
-        eval_tools = list(EVAL_TOOLS)
         schedule_tools = [
             schedule_notification,
             schedule_task,
@@ -515,7 +502,6 @@ class AgentFactory:
             list_scheduled,
             cancel_scheduled,
             update_scheduled,
-            wake_agent,
         ]
 
         alias_groups: Dict[str, List[str]] = {
@@ -526,8 +512,6 @@ class AgentFactory:
             # legacy alias for agent_management
             "agent_flows": [getattr(t, "name", getattr(t, "__name__", "")) for t in agent_management_tools],
             "flow_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in flow_management_tools],
-            "scenario_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in scenario_tools],
-            "world_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in world_tools],
             "team_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in team_tools],
             "loop_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in loop_tools],
             "project_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in project_tools],
@@ -535,7 +519,6 @@ class AgentFactory:
             "schedule_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in schedule_tools],
             "service_ops": [getattr(t, "name", getattr(t, "__name__", "")) for t in service_ops_tools],
             "docs": [getattr(t, "name", getattr(t, "__name__", "")) for t in docs_tools],
-            "evals": [getattr(t, "name", getattr(t, "__name__", "")) for t in eval_tools],
         }
 
         expanded: List[str] = []
@@ -600,28 +583,20 @@ class AgentFactory:
             memory_tools = [*_generic, *skills_tools]
 
         from tools.graph_builder import GRAPH_BUILDER_TOOLS
-        # Web tools are plain per-tool grants (no group alias): web_search and
-        # fetch_url are separately grantable on purpose — search is a far
-        # smaller injection surface than page content. See tools/web.py.
+        # fetch_url is a plain per-tool grant (no group alias). See tools/web.py.
         from tools.web import WEB_TOOLS
-        # Browser tools and sandboxed code execution: plain per-tool grants,
-        # like the web tools. See tools/browser.py and tools/run_code.py.
-        from tools.browser import BROWSER_TOOLS
+        # Sandboxed code execution: a plain per-tool grant, like the web
+        # tool. See tools/run_code.py.
         from tools.run_code import run_code
 
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, run_code]
         # The workspace file objects (tools/workspace_files.py): plain per-tool
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
         available.extend(WORKSPACE_FILE_TOOLS)
-        # The workspace's special models (tools/special_models.py): plain
-        # per-tool grants; one without a model in the run's workspace
-        # answers that the model is not added.
-        from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
-        available.extend(SPECIAL_MODEL_TOOL_OBJECTS)
         # Connector tools (tools/connector_tools.py): plain per-tool grants,
         # like the web tools; each works only when its connector is set up.
         from tools.connector_tools import connector_tools
@@ -633,10 +608,8 @@ class AgentFactory:
         from tools.hub_action import HUB_ACTION_TOOLS
         from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
         from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
-        from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
         from tools.setup_guide import SETUP_GUIDE_TOOLS
         available.extend(SETUP_GUIDE_TOOLS)
-        available.extend(PROACTIVE_SETUP_TOOLS)
         available.extend(HUB_LOOKUP_TOOLS)
         available.extend(ASSISTANT_CONVERSATION_TOOLS)
         available.extend(SERVICE_LOOKUP_TOOLS)
@@ -696,25 +669,13 @@ class AgentFactory:
         from agents import agent_cache
         from agents.registry import resolve_agent_id
 
-        # A renamed agent's old id (a stored team, scenario or chat that still
+        # A renamed agent's old id (a stored team or chat that still
         # names it) builds the agent under its current id, and a role reference
         # (``@coder``) the agent that holds the role here (agents/roles.py).
         if str(agent_id or "").startswith("@"):
             from agents.roles import resolve as _resolve_role
             agent_id = _resolve_role(agent_id, workspace)
         agent_id = resolve_agent_id(agent_id)
-
-        # A/B experiment arm (evals/experiments.py): open_run pinned a stored
-        # version for this agent's run. Building with ``definition_version``
-        # both selects the snapshot in _build_agent and puts the version into
-        # the cache key (it is one of the overrides), so two arms never share
-        # a cached build. An explicit ``definition_version`` from the caller
-        # wins over the pin.
-        if "definition_version" not in override_params:
-            pin = _experiment_pin(agent_id)
-            if pin is not None:
-                override_params = {**override_params, "definition_version": int(pin["version"])}
-                _record_experiment_assignment(pin)
 
         # Per-run overrides (agents/run_overrides.py): the old separate
         # ``tool_policy``/``output_schema`` keywords fold into the one object,
@@ -755,7 +716,7 @@ class AgentFactory:
 
     def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
         """``load_definition``'s shape, from a stored version instead of the
-        live registry record and markdown files (an experiment arm)."""
+        live registry record and markdown files (a pinned version)."""
         if isinstance(parts.get("effective"), dict):
             # A child's version: its own text is in the top level keys, what
             # it ran with (merged with its chain) under "effective".
@@ -820,9 +781,9 @@ class AgentFactory:
         from agents.registry import get_agent as _reg_get
         _spec = _reg_get(agent_id)
 
-        # A stored version to build from instead of the live definition (an
-        # experiment arm, see create_agent). Popped like memory_pool: it is
-        # not a definition field, and it already reached the cache key.
+        # A stored version to build from instead of the live definition (a
+        # pinned version). Popped like memory_pool: it is not a definition
+        # field, and it already reached the cache key.
         _definition_version = override_params.pop("definition_version", None)
         _snapshot = (self._load_snapshot(agent_id, _definition_version)
                      if _definition_version is not None else None)
@@ -831,8 +792,7 @@ class AgentFactory:
 
         # Per-run overrides (agents/run_overrides.py), one object: the model,
         # the instructions, the tool list, skills, MCP servers, a tool policy
-        # merged over the record's (a proactive tick woken by untrusted input
-        # puts its outbound tools on "ask") and an answer schema (read by the
+        # merged over the record's and an answer schema (read by the
         # loop's structured-output extension off the spec). The spec takes the
         # policy, schema and skills switch here; the definition takes the
         # instructions and tools below; the model joins the config. The old
@@ -1211,19 +1171,6 @@ class AgentFactory:
                                      int(workspace_loop_setting(workspace, "advisor_max_calls") or 0))
                 )
 
-        # Special models (providers/special.py): the agent is told which of
-        # its special model tools have a model in this workspace and which do
-        # not. A tool without one stays and answers that the model is not
-        # added, so the agent can say so instead of quietly doing without.
-        from providers.special import SPECIAL_MODEL_TOOLS, prompt_section as _special_prompt
-        _tool_names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
-        if any(n in SPECIAL_MODEL_TOOLS for n in _tool_names):
-            _special_text = _special_prompt(_tool_names, _ws_name_of(workspace) if workspace else None)
-            if _special_text:
-                config["system_prompt"] = (
-                    config.get("system_prompt", "") + "\n\n---\n\n" + _special_text
-                )
-
         # Workspace roles (agents/roles.py): an agent that hands work to
         # `@coder` and the like is told which agent holds each role here.
         if _spec is not None:
@@ -1332,23 +1279,6 @@ class AgentFactory:
                 "tools": list(spec.tools or []),
             })
         return agents
-
-
-def _experiment_pin(agent_id: str) -> Optional[Dict[str, Any]]:
-    try:
-        from evals.experiments import take_pin
-        return take_pin(agent_id)
-    except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
-        log.debug("experiment pin lookup failed for '%s'", agent_id, exc_info=True)
-        return None
-
-
-def _record_experiment_assignment(pin: Dict[str, Any]) -> None:
-    try:
-        from evals.experiments import record_assignment
-        record_assignment(pin)
-    except Exception:  # noqa: BLE001 - optional build step: the agent still builds without it
-        log.debug("experiment assignment not recorded", exc_info=True)
 
 
 # Global factory instance

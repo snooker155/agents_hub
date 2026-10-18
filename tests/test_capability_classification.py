@@ -106,10 +106,10 @@ def test_filesystem_writes_grant_nothing_they_never_echo_file_content():
         assert grants_of(tool_id) == frozenset(), tool_id
 
 
-def test_flow_and_scenario_definitions_grant_nothing_they_are_configuration():
-    """A flow/scenario/world/team/loop is configuration authored *for* the
+def test_flow_definitions_grant_nothing_they_are_configuration():
+    """A flow/team/loop is configuration authored *for* the
     agents, not operator data in the sense a task or an agent's prompt is."""
-    for tool_id in ("get_flow_tool", "get_scenario_tool", "get_world_tool", "get_loop_tool"):
+    for tool_id in ("get_flow_tool", "get_loop_tool"):
         assert grants_of(tool_id) == frozenset(), tool_id
 
 

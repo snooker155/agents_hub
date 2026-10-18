@@ -12,8 +12,8 @@ an unattended install (``ah setup --answers setup.json --yes``), and
 
 What it writes is what the rest of the service already reads: ``.env`` (the
 same keys the Settings page edits), the model catalog the Models page edits
-(``providers/catalog.py``), and the ``default`` workspace's speech and
-transcription models (the Special models tab, ``providers/special.py``). It
+(``providers/catalog.py``), and the assistant's speech and transcription
+models (the Models page's Voice tab, ``providers/voice_models.py``). It
 holds no state of its own, so running it again is how a setting is changed
 later: every question then defaults to the value in force.
 """
@@ -146,8 +146,8 @@ class Plan:
     generated_notes: list = field(default_factory=list)  # warnings printed with them
     providers: dict = field(default_factory=dict)  # provider -> {model, models, presets}
     pip_extras: list = field(default_factory=list)
-    # The assistant's voice: mode and the special model entries for the default
-    # workspace.
+    # The assistant's voice: mode and the voice model entries
+    # (providers/voice_models.py).
     voice: dict = field(default_factory=dict)
 
     def cur(self, key: str, default: str = "") -> str:
@@ -184,7 +184,7 @@ def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional
 
     plan.quick = not advanced and a.choose("flow", "How many questions?", [
         ("quick", "QuickStart", "only what cannot be guessed; the assistant sets up the rest with you"),
-        ("advanced", "Advanced", "every choice: execution, web search, RAG"),
+        ("advanced", "Advanced", "every choice: execution, RAG"),
     ], default="quick") == "quick"
 
     plan.target = PROJECT_ROOT
@@ -360,12 +360,11 @@ def step_providers(a: Asker, plan: Plan) -> None:
 
 
 def step_voice(a: Asker, plan: Plan) -> None:
-    """The assistant listens and speaks with the ``default`` workspace's
-    transcription and speech models; every personal workspace falls back to
-    them. Saved once the hub's database (or, in Docker, its API) is there."""
+    """The assistant listens and speaks with the hub's transcription and
+    speech models (providers/voice_models.py). Saved once the hub's database (or, in Docker, its API) is there."""
     a.section(3, STEPS, "Assistant voice",
               "What the assistant hears you with and reads its answers aloud with "
-              "(the Special models tab of the Models page, default workspace).")
+              "(the Voice tab of the Models page).")
     if plan.quick and not a.answered("voice.mode"):
         a.note("Left to the assistant: it offers a voice on its first run in the dashboard, and the "
                "browser's own voice works until then.")
@@ -423,13 +422,12 @@ def _apply_voice_local(a: Asker, plan: Plan) -> None:
     if not plan.voice.get("speech"):
         return
     try:
-        # The same write the assistant's setup_step makes: the default
-        # workspace's other special models stay.
+        # The same write the assistant's setup_step makes.
         from common.setup_ops import _save_voice
         _save_voice(_voice_entries(plan))
         _voice_done(a, plan)
     except Exception as exc:  # noqa: BLE001 - the rest of the setup stands; say what to do
-        a.warn(f"The assistant's voice was not set ({exc}). Add it on the Models page, Special models tab.")
+        a.warn(f"The assistant's voice was not set ({exc}). Add it on the Models page, Voice tab.")
 
 
 
@@ -440,7 +438,7 @@ def step_features(a: Asker, plan: Plan) -> None:
                          plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
         plan.env["DEMO_WORKSPACE"] = "1" if demo else "0"
     else:
-        a.note("Web search, the demo workspace and the rest: the assistant offers them in the "
+        a.note("The demo workspace and the rest: the assistant offers them in the "
                "dashboard, one at a time.")
 
     if plan.quick:
@@ -450,22 +448,6 @@ def step_features(a: Asker, plan: Plan) -> None:
         ("local", "As processes of the backend", "simplest"),
         ("docker", "Each in its own container", "needs a reachable Docker daemon"),
     ], default=plan.cur("AGENT_EXECUTION_MODE", "local"))
-
-    search = a.choose("web_search", "Web search for the web_search tool", [
-        ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
-        ("anthropic", "Anthropic", "its own search tool, on the model key"),
-        ("openai", "OpenAI", "its own search tool, on the model key"),
-        ("brave", "Brave Search", "API key"),
-        ("tavily", "Tavily", "API key"),
-        ("exa", "Exa", "API key"),
-    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "auto")
-    if search in ("anthropic", "openai"):
-        plan.env.update({"WEB_SEARCH_PROVIDER": search})
-    elif search != "auto":
-        key = a.secret("web_search_key", "Its API key", current=plan.cur("WEB_SEARCH_API_KEY"))
-        plan.env.update({"WEB_SEARCH_PROVIDER": search, "WEB_SEARCH_API_KEY": key})
-    elif plan.cur("WEB_SEARCH_PROVIDER"):
-        plan.env.update({"WEB_SEARCH_PROVIDER": "", "WEB_SEARCH_API_KEY": ""})
 
     rag = a.confirm("rag", "Retrieval over workspace files (RAG with a local vector store; the image "
                     "or install grows by about 2 GB)?", plan.cur("WITH_RAG", "false").lower() == "true")
@@ -606,7 +588,7 @@ def _farewell(a: Asker, plan: Plan, started: bool) -> None:
     # From here the assistant leads (common/setup_guide.py): the welcome window
     # hands over to it, or asks for a model key first when none was given.
     lines += ["", "In the dashboard, choose Talk or Type in the welcome window: the assistant takes you"]
-    lines += (["through the rest of the setup (the default model, its voice, web search, a first",
+    lines += (["through the rest of the setup (the default model, its voice, a first",
                "agent and task)."] if plan.providers else
               ["through the rest. It asks for a model key first, since none was given here."])
     a.panel("\n".join(lines), title="Next", style="green")

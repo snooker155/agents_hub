@@ -416,7 +416,7 @@ def _open_test_run(run_id: str, **extra: Any) -> None:
 
 def test_reported_cost_is_credited_to_the_run_record(cost_stub_service):
     """A remote's own reported cost_usd lands on the run as reported_cost_usd,
-    which is the field managers.runs.groups.runs_cost and the Costs route
+    which is the field managers.runs.groups.runs_cost and the run views
     prefer over catalog pricing."""
     from managers.runs.store import get_runs_by_ids
 

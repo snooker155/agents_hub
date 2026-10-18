@@ -126,7 +126,7 @@ def run_diagnostics() -> str:
     """Run the doctor: a list of checks, each ok, warn, fail or skip, with a
     one sentence summary, the numbers behind it and the docs section that says
     how to fix it (pending migrations, the default provider answering, stale
-    runs and expired leases, the launch queue, the outbox, free disk, the
+    runs and expired leases, the launch queue, free disk, the
     browser service, docker, the frontend build, the system workspace).
 
     Use it when the question is "what is wrong", not "what is the state":
@@ -461,56 +461,6 @@ def web_log_recent(limit: int = 20, min_severity: Optional[str] = None,
         return _json_err(f"Failed to read the web log: {e}", code="internal")
 
 
-class CostsInput(BaseModel):
-    since_hours: float = Field(24, gt=0, le=24 * 365, description="How far back to total")
-    workspace: Optional[str] = Field(None, description="Filter to one workspace")
-
-
-@tool("costs_summary", args_schema=CostsInput)
-def costs_summary(since_hours: float = 24, workspace: Optional[str] = None) -> str:
-    """Total tokens and estimated spend over a window, broken down by agent and
-    by model. Use it to answer "what has this cost" and to spot one agent
-    burning far more than the rest."""
-    try:
-        from managers import run_manager
-        from common.pricing import load_price_map, run_cost_usd, run_tokens
-
-        since = _since_iso(since_hours)
-        page = run_manager.query_runs(workspace=workspace, from_date=since, limit=1000)
-        prices = load_price_map()
-
-        by_agent: Dict[str, Dict[str, float]] = {}
-        by_model: Dict[str, Dict[str, float]] = {}
-        total_tokens = 0
-        total_cost = 0.0
-        for r in page.get("items", []):
-            inbound, outbound = run_tokens(r)
-            total = inbound + outbound
-            cost = run_cost_usd(r, prices) or 0.0
-            total_tokens += total
-            total_cost += cost
-            for bucket, key in ((by_agent, str(r.get("agent_id") or "(none)")),
-                                (by_model, str(r.get("model") or "(none)"))):
-                slot = bucket.setdefault(key, {"runs": 0, "tokens": 0, "cost_usd": 0.0})
-                slot["runs"] += 1
-                slot["tokens"] += total
-                slot["cost_usd"] = round(slot["cost_usd"] + cost, 4)
-
-        return _json_ok({
-            "window_hours": since_hours,
-            "since": since,
-            "runs": page.get("total"),
-            "total_tokens": total_tokens,
-            "total_cost_usd": round(total_cost, 4),
-            "by_agent": dict(sorted(by_agent.items(), key=lambda kv: -kv[1]["cost_usd"])),
-            "by_model": dict(sorted(by_model.items(), key=lambda kv: -kv[1]["cost_usd"])),
-            "note": "Costs are estimates from the Models page price map; a model with no "
-                    "price set contributes tokens but no cost.",
-        })
-    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
-        return _json_err(f"Failed to summarise costs: {e}", code="internal")
-
-
 # ── actions, all approval-gated ──────────────────────────────────────────────
 
 class StopRunInput(BaseModel):
@@ -665,7 +615,7 @@ SERVICE_READ_TOOLS = [
     list_instances, instance_logs, instance_timeline,
     list_sessions,
     list_runs, run_log, search_errors,
-    routing_log, web_log_recent, costs_summary,
+    routing_log, web_log_recent,
 ]
 
 #: Tools that stop or delete something. Each refuses without user_approved.
@@ -676,7 +626,7 @@ SERVICE_OPS_TOOLS = [*SERVICE_READ_TOOLS, *SERVICE_ACTION_TOOLS]
 __all__ = [
     "service_health", "run_diagnostics", "list_containers", "container_logs",
     "list_instances", "instance_logs", "instance_timeline", "list_sessions", "list_runs", "run_log",
-    "search_errors", "routing_log", "web_log_recent", "costs_summary",
+    "search_errors", "routing_log", "web_log_recent",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "SERVICE_READ_TOOLS", "SERVICE_ACTION_TOOLS", "SERVICE_OPS_TOOLS",
 ]

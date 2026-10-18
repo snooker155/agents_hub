@@ -151,7 +151,7 @@ Seed agents live in `bootstrap/agents.json` with their prompts in `agents/defini
 
 **Entity management tools**
 
-Six modules own entity-specific management tools (flow, loop, team, scenario, world, project). Rather than each hand-rolling try/except, json_ok/json_err wrapping, and the `@tool` decorator, they use the factory in `tools/_crud.py` to avoid duplication:
+Four modules own entity-specific management tools (flow, loop, team, project). Rather than each hand-rolling try/except, json_ok/json_err wrapping, and the `@tool` decorator, they use the factory in `tools/_crud.py` to avoid duplication:
 
 ```python
 # tools/flow_management.py (excerpt)

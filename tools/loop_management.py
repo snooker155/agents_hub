@@ -73,7 +73,7 @@ def _simplify(loop) -> Dict[str, Any]:
             "model": d["evaluator_model"],
         },
         # A rubric replaces the evaluator above: each pass is graded per
-        # criterion (evals.graders.grade_rubric, the grader task outcomes use).
+        # criterion (tasks.rubric_grader.grade_rubric, the grader task outcomes use).
         "rubric": d.get("rubric") or "",
         "grader": d.get("grader"),
     }

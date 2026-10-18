@@ -132,7 +132,7 @@ def parse_verdict(text: str) -> Verdict:
     """Pull ``{score, verdict, reason, feedback}`` out of a model reply.
 
     Forgiving about the wrapper (prose, code fences) and strict about the
-    content, the same way :func:`playground.runner.parse_decision` is. An
+    content, in the same spirit as the other model-reply parsers. An
     unparseable answer is *not* treated as "stop": a judge that could not make
     itself understood has not approved anything, so the loop continues and the
     raw text is carried into the next attempt's feedback.
@@ -389,7 +389,7 @@ def evaluate_with_rubric(
 ) -> Tuple[Verdict, float]:
     """Grade one pass against the loop's rubric and express it as a Verdict.
 
-    One grader for loops and task outcomes (evals.graders.grade_rubric): a
+    One grader for loops and task outcomes (tasks.rubric_grader.grade_rubric): a
     fresh model call per pass, blind to the flow's own conversation. Passed
     means ``stop``; the mean criterion score becomes the 0-100 score, so the
     trajectory chart and ``target_score`` read it like any other judge's; the
@@ -400,7 +400,7 @@ def evaluate_with_rubric(
     """
     from types import SimpleNamespace
 
-    from evals.graders import grade_rubric
+    from tasks.rubric_grader import grade_rubric
 
     grader = rubric_grader(loop, workspace)
     # The loop's target score is the rubric's pass threshold, so the verdict

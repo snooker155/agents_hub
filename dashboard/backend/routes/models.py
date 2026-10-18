@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from common.config import settings
@@ -710,3 +710,90 @@ async def get_usage(
     rows.sort(key=lambda x: x["total_tokens"], reverse=True)
     totals["cost"] = round(totals["cost"], 4)
     return {"rows": rows, "totals": totals}
+
+
+# ── voice models ─────────────────────────────────────────────────────────────
+# The speech and transcription models the assistant's voice uses
+# (providers/voice_models.py), chosen on the Models page, Voice tab.
+
+def _voice_payload() -> dict:
+    from providers import voice_models
+    return {"own": voice_models.stored(), "options": voice_models.options_payload()}
+
+
+@router.get("/voice")
+async def get_voice_models():
+    """The chosen speech and transcription models, with the providers, model
+    suggestions and voices the form offers."""
+    return _voice_payload()
+
+
+@router.put("/voice")
+async def update_voice_models(request: Request, payload: dict):
+    """Replace the voice models. A purpose left out has no model, and the
+    assistant uses the browser's own recognition or speech for it."""
+    from common import audit, identity
+    from common.session_broker import notify_change
+    from providers import voice_models
+    try:
+        config = voice_models.save(payload.get("voice_models", payload))
+    except voice_models.VoiceModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record("models.voice", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=voice_models.HOME, workspace=voice_models.HOME,
+                 ip=identity.client_ip(request),
+                 details={k: f"{v['provider']}/{v['model']}" for k, v in config.items()})
+    notify_change("workspaces")
+    return _voice_payload()
+
+
+@router.get("/voice/discover")
+async def discover_voice_models(purpose: str, provider: str):
+    """The models ``provider`` has that fit ``purpose``. Nothing is stored:
+    the form offers them."""
+    import asyncio
+    from providers import voice_models
+    try:
+        return await asyncio.to_thread(voice_models.discover, purpose, provider)
+    except voice_models.VoiceModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/voice/voices")
+async def voice_model_voices(provider: str, model: str = "", purpose: str = "speech"):
+    """The voices known for one model the form holds, so picking a model
+    offers them."""
+    import asyncio
+    from providers import voice_models
+    try:
+        return await asyncio.to_thread(voice_models.voices_for, purpose, provider, model)
+    except voice_models.VoiceModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/voice/sample")
+async def voice_model_sample(payload: dict):
+    """A short line read by a speech model the form holds (saved or not), as
+    audio, in ``language`` (the page's). A cloud model charges for it (a
+    fraction of a cent, not counted on a run). The line and its language
+    come in ``X-Sample-Text`` (URL-encoded) and ``X-Sample-Language``."""
+    import asyncio
+    from urllib.parse import quote
+    from providers import voice_models
+    try:
+        audio, lang, text = await asyncio.to_thread(
+            voice_models.voice_sample, payload, str(payload.get("language") or "") or None)
+    except voice_models.VoiceModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=audio.data, media_type=audio.mime_type,
+                    headers={"Cache-Control": "no-store", "X-Sample-Language": lang,
+                             "X-Sample-Text": quote(text)})
+
+
+@router.post("/voice/check")
+async def check_voice_model(payload: dict):
+    """Whether one model the form holds (saved or not) can be reached,
+    without running it."""
+    import asyncio
+    from providers import voice_models
+    return await asyncio.to_thread(voice_models.check, payload)

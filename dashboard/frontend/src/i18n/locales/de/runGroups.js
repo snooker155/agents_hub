@@ -8,7 +8,6 @@ export default {
     loop: 'Loop',
     team: 'Team',
     container: 'Container',
-    scenario: 'Szenario',
   },
   columns: {
     kind: 'Art',
@@ -34,7 +33,6 @@ export default {
     loop: 'Loops öffnen',
     team: 'Team öffnen',
     container: 'Aufgabe öffnen',
-    scenario: 'Szenario öffnen',
   },
   childRuns: 'Läufe in dieser Gruppe',
   noChildRuns: 'Für diese Gruppe sind noch keine Agentenläufe erfasst.',

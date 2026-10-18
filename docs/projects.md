@@ -24,12 +24,6 @@ folder, a structure graph and a task tree.
    ordering and dependencies.
 4. Work the tasks, through the orchestrator or by hand.
 
-## Preview
-
-The Preview tab shows the project's frontend (`project.frontend.url`, or
-`http://localhost:{port}` when only a port is configured) in an iframe next to
-the project.
-
 ## Gotchas
 
 - The architect reads what is there. A project pointed at an empty folder

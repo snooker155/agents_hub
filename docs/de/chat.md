@@ -39,7 +39,7 @@ Anbieter berechnen für ein Prompt-Präfix, das sie schon haben, nur einen Bruch
 
 Alle anderen Anbieter bleiben unberührt und senden genau das, was sie vorher gesendet haben.
 
-Die Cache-Treffer kommen in der Token-Nutzung des Runs zurück und werden getrennt von frischer Eingabe gemeldet. Die Seite [costs](costs.md) bewertet sie mit dem Cache-Preis des Modells. Ein langes Gespräch kostet also das, was der Anbieter tatsächlich berechnet hat, und nicht das, was es ganz ohne Cache gekostet hätte.
+Die Cache-Treffer kommen in der Token-Nutzung des Runs zurück und werden getrennt von frischer Eingabe gemeldet. Die Run-Kosten bewerten sie mit dem Cache-Preis des Modells. Ein langes Gespräch kostet also das, was der Anbieter tatsächlich berechnet hat, und nicht das, was es ganz ohne Cache gekostet hätte.
 
 ## Anhänge und Verweise
 
@@ -71,7 +71,7 @@ Ein Agent kann das Gespräch auch abgeben: Mit `handoff_to_agent` antwortet der 
 
 ## Kosten und Genehmigungen
 
-Alles, was echtes Geld kostet, hält an und fragt nach. Bietet ein Agent an, einen Flow, einen Loop, ein Szenario oder ein Team auszuführen, zeigt er die Schätzung und wartet auf ein klares Ja. "Klingt gut" ist keine Genehmigung, und die Agenten sind angewiesen, es als mehrdeutig zu behandeln.
+Alles, was echtes Geld kostet, hält an und fragt nach. Bietet ein Agent an, einen Flow, einen Loop oder ein Team auszuführen, zeigt er die Schätzung und wartet auf ein klares Ja. "Klingt gut" ist keine Genehmigung, und die Agenten sind angewiesen, es als mehrdeutig zu behandeln.
 
 Der **Automodus** nimmt das Nachfragen für ein Gespräch weg: der Schalter **Auto** unter dem Eingabefeld oder Shift+Tab im Feld. Solange er an ist, steht ein Hinweis über dem Gespräch, und jede Bestätigung wird ohne Karte angenommen; die Karten erscheinen trotzdem, markiert als "automatisch freigegeben". Regeln, die einen Aufruf ablehnen, lehnen ihn weiter ab. Siehe [auto mode](hooks.md#auto-mode).
 

@@ -34,13 +34,12 @@ vi.mock('../../assistant/useRecorder', () => ({ default: () => recorder }));
 
 const EMPTY = {
   providers: [], default_model: { provider: 'openai', model: '', usable: false },
-  search: { provider: '', source: 'none', key_set: false }, demo: false, voice: false,
+  demo: false, voice: false,
 };
 const CONNECTED = {
   ...EMPTY,
   providers: ['openai'],
   default_model: { provider: 'openai', model: 'gpt-5.5', usable: true },
-  search: { provider: 'openai', source: 'model_key', key_set: true },
 };
 const OPTIONS = {
   models: {
@@ -122,8 +121,6 @@ describe('FirstRun', () => {
     expect(screen.queryByTestId('first-run-voice-cloud-google')).toBeNull();
     fireEvent.click(screen.getByTestId('first-run-later'));
 
-    // Search already works through the model's own key.
-    await screen.findByTestId('first-run-search-on');
     cont();
 
     await screen.findByTestId('first-run-memory');
@@ -266,7 +263,7 @@ describe('FirstRun', () => {
 
     // From here on the assistant is on every screen, asked about that screen.
     cont();
-    await screen.findByTestId('first-run-search');
+    await screen.findByTestId('first-run-memory');
     // As in the chat: the microphone while the field is empty, Send once typed.
     expect(screen.getByTestId('first-run-assist-mic')).toBeTruthy();
     expect(screen.queryByTestId('first-run-assist-send')).toBeNull();
@@ -274,11 +271,9 @@ describe('FirstRun', () => {
     expect(screen.queryByTestId('first-run-assist-mic')).toBeNull();
     fireEvent.click(screen.getByTestId('first-run-assist-send'));
     await waitFor(() => expect(assistantApi.streamAssistantTurn.mock.calls[2][0].body)
-      .toMatchObject({ message: 'Do I need this?', first_run_screen: 'search' }));
+      .toMatchObject({ message: 'Do I need this?', first_run_screen: 'memory' }));
     expect(await screen.findByTestId('first-run-assist-answer')).toHaveTextContent('You said: Do I need this?');
 
-    cont();
-    await screen.findByTestId('first-run-memory');
     await waitFor(() => expect(screen.getByTestId('first-run-continue')).not.toBeDisabled());
     cont();
     await screen.findByTestId('first-run-demo');
@@ -294,7 +289,6 @@ describe('FirstRun', () => {
       configured: {
         model: { provider: 'anthropic', model: 'claude-sonnet-5' },
         voice: { speech: 'gpt-4o-mini-tts', transcription: 'gpt-4o-transcribe' },
-        search: { provider: 'openai', source: 'model_key', key_set: true },
         demo: { enabled: false },
       },
     };
@@ -328,14 +322,6 @@ describe('FirstRun', () => {
       expect(await screen.findByTestId('first-run-voice-cloud-openai')).toBeTruthy();
     });
 
-    it('shows the search backend and goes on without saving', async () => {
-      await open('search');
-      expect(await screen.findByTestId('first-run-search-configured')).toHaveTextContent('Already set up: OpenAI');
-      cont();
-      await screen.findByTestId('first-run-memory');
-      expect(settingsApi.updateSettings).not.toHaveBeenCalled();
-    });
-
     it('shows a demo decided off, and Change offers the choice', async () => {
       await open('demo');
       expect(await screen.findByTestId('first-run-demo-configured')).toHaveTextContent('Starting without the demo');
@@ -344,8 +330,8 @@ describe('FirstRun', () => {
     });
 
     it('asks as usual where nothing is set', async () => {
-      await open('search', { ...CONNECTED, search: { provider: '', source: 'none', key_set: false }, configured: {} });
-      expect(await screen.findByTestId('first-run-search-key')).toBeTruthy();
+      await open('demo', { ...CONNECTED, configured: {} });
+      expect(await screen.findByTestId('first-run-demo-add')).toBeTruthy();
       expect(screen.queryByTestId('first-run-change')).toBeNull();
     });
 

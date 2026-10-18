@@ -25,13 +25,6 @@ def test_default_services_are_the_backend_and_the_dashboard():
     assert {n for n, s in services.items() if not s.get("profiles")} == {"backend", "frontend"}
 
 
-def test_the_browser_service_is_behind_its_profile_and_publishes_nothing():
-    browser = _services()["browser"]
-    assert browser["profiles"] == ["browser"]
-    assert "ports" not in browser
-    assert browser["networks"] == ["browser_net"]
-
-
 def test_published_ports_listen_on_localhost_by_default():
     services = _services()
     for name in ("backend", "frontend"):

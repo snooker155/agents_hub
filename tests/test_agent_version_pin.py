@@ -3,7 +3,7 @@
 Covers: agents/agent_launcher.py (``--definition-version`` flag),
 runtime/agent_run.py (turning the flag into a ``create_agent`` override),
 managers/runs/lifecycle.py (the run record's own ``agent_version``, for a
-pinned, live, or A/B-experiment run), the task and scheduled-job fields
+pinned or live run), the task and scheduled-job fields
 (tasks/service.py, tasks/storage.py, plans/models.py, plans/service.py),
 the validation on the tasks and plan routes, and the run page's
 ``GET /api/runs/{run_id}/agent-version`` / ``POST /api/runs/{run_id}/rollback-agent``
@@ -22,7 +22,6 @@ import pytest
 from agents import prompt_assembly
 from agents import versions as av
 from agents.registry import AgentSpec, add_agent, replace_all_raw
-from evals import experiments
 from managers import run_manager as rm
 from tasks import service as tasks_service
 
@@ -45,14 +44,9 @@ def isolated_definitions(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fresh_registry():
-    """Start each test from an empty agents.json and no leftover experiment
-    pin (the agent_versions/agent_experiments *rows* are reset per test by
-    conftest's fresh_db already; the pin itself lives in a contextvar, which
-    is not)."""
+    """Start each test from an empty agents.json."""
     replace_all_raw([])
-    experiments.clear_pins()
     yield
-    experiments.clear_pins()
     replace_all_raw([])
 
 
@@ -202,27 +196,6 @@ def test_open_run_falls_back_when_the_pinned_version_is_gone(two_versions):
     rec = rm.get_run_by_id(rid)
     assert rec["agent_version"] != 999
     assert rec["agent_version"] == av.ensure_current_version("pin_agent")
-
-
-def test_open_run_records_the_experiment_arms_version(two_versions):
-    v1, v2 = two_versions
-    exp = experiments.put_experiment(
-        "pin_agent", enabled=True, arms=[{"version": v1, "share": 0.5}, {"version": v2, "share": 0.5}])
-    rid = rm.new_unique_run_id()
-    rm.open_run(rid, "pin_agent", status="running", link_to_session=False)
-    expected = experiments.choose_arm(exp, f"run:{rid}")["version"]
-    rec = rm.get_run_by_id(rid)
-    assert rec["agent_version"] == expected
-
-
-def test_explicit_pin_wins_over_an_open_experiment(two_versions):
-    v1, v2 = two_versions
-    experiments.put_experiment(
-        "pin_agent", enabled=True, arms=[{"version": v1, "share": 0.5}, {"version": v2, "share": 0.5}])
-    rid = rm.new_unique_run_id()
-    rm.open_run(rid, "pin_agent", status="running", link_to_session=False, agent_version_pin=v1)
-    rec = rm.get_run_by_id(rid)
-    assert rec["agent_version"] == v1
 
 
 def test_version_for_hash_finds_the_matching_row(two_versions):

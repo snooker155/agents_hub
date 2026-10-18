@@ -69,8 +69,7 @@ latest answer, large, and below that the talk button.
 - **Settings** (the gear): *Voice only* sends what you say at once and reads
   every answer aloud, with no text field; *No sound* never reads aloud; *Voice*
   picks one of the voices of the speech model chosen on the
-  [Models page](special-models.md) (the same list the Special models tab
-  suggests, with each voice's language), and *Listen* next to it plays a short
+  [Models page](models.md#voice) (the same list the Voice tab suggests), and *Listen* next to it plays a short
   line with it, in the voice's language or the page's (`POST
   /api/assistant/voice-sample`, charged as a `voice` run); *Stop by voice* (above); *Wake phrase*. The page remembers them
   in this browser.
@@ -158,7 +157,7 @@ the transcript, lists them; picking one makes it the live conversation, and
 the next message continues it under the conversation id it already had in
 Messages. **Clear** (the eraser over the transcript, `DELETE
 /api/assistant/conversation`) drops the conversation in progress instead of
-filing it; its runs stay on the Runs page and in the costs. Both are refused
+filing it; its runs stay on the Runs page. Both are refused
 with 409 `busy` while a turn runs.
 
 The assistant reaches them too, with `assistant_conversations`: "what did we
@@ -189,7 +188,7 @@ typed or spoken, and the hub's state in that workspace (the same snapshot the
 The assistant holds the service tools only when the
 turn runs in `default` (`common/workspace_scope.py` `ASSISTANT_SERVICE_TOOLS`:
 `service_health`, `run_diagnostics`, `service_lookup`, `list_sessions`,
-`routing_log`, `costs_summary`, `list_instances`, `list_containers`, and
+`routing_log`, `list_instances`, `list_containers`, and
 stopping or restarting a run, an instance or a container) and the workspace
 management tools. Run, error and
 container logs are not among them: they carry text anyone could have written,
@@ -208,18 +207,13 @@ assistant links as "show on screen".
 |---|---|---|---|
 | `run` (alias `message`) | runs, newest first, by title, agent or status | status, timing, model, tokens, cost, tool calls, the error's first line | `/messages/<id>` |
 | `session` | sessions | agent, dates, how many runs, the latest ones | `/sessions/<id>` |
-| `cost` | today, week, month | spend for the period (the Costs page's numbers), top agents and models | `/costs` |
-| `model` | enabled models with prices, and the special models the workspace uses | prices, context window, whether it is the default here, the special models | `/models/<provider>/<model>` |
-| `voice` (`speech`, `transcription`) | the transcription and speech models the Assistant page uses in this workspace, or the browser's own when there are none | the model, the workspace it comes from, the speech voice | `/models` |
+| `model` | enabled models with prices, and the voice models | prices, context window, whether it is the default here, the voice models | `/models/<provider>/<model>` |
+| `voice` (`speech`, `transcription`) | the transcription and speech models the Assistant page uses, or the browser's own when there are none | the model, the speech voice | `/models?tab=voice` |
 | `agent` | agents of the workspace | description, tools, whom it delegates to, what it extends | `/agents/<id>` |
 | `notification` | unread notifications | title, text, severity | |
 | `approval` | tool calls and tasks waiting for your approval | tool, reason, run, expiry | the run or the task |
-| `task`, `view`, `project`, `scenario`, `loop`, `flow`, `team`, `job` | as the chat's reference picker lists them | as the picker renders them | their page |
+| `task`, `view`, `project`, `loop`, `flow`, `team`, `job` | as the chat's reference picker lists them | as the picker renders them | their page |
 | `instance` | resident and task copies of agents | status, agent, runs, the error's first line | `/instances/<id>` |
-| `browser` | browser sessions | owner, site (host only), read only or not | `/browser` |
-| `watcher` | HTTP watchers | state, target host, last check, error | `/watchers` |
-| `pulse` | proactive agents | schedule, today's use, recent ticks' outcomes | the agent's page |
-| `eval` | eval sets with their last run | a set's cases count, graders and runs, or a run's status, cost and scores | `/evals` |
 | `guardrail` | guardrails | stage, kind, action, event counts by action, never the matched text | `/guardrails` |
 | `tool` | the tool catalog | capabilities, approval, the mode here, which agents hold it, recent decisions | `/tools` |
 | `skill` | skills | review state, version, steps count, never the steps | `/skills` |
@@ -238,7 +232,7 @@ added without one.
 
 Text a stranger could have written stays out: a web
 address is reduced to its host, a remote server's error to "has an error",
-a watcher's fetched page and a guardrail's matched text are never read.
+a guardrail's matched text is never read.
 
 ### Service-wide records
 
@@ -250,17 +244,17 @@ workspace. A workspace thread refuses these kinds (`service_only`).
 |---|---|---|---|
 | `health` | the snapshot and the doctor's checks | a check's status, summary and docs section (`snapshot` for the whole) | `/health` |
 | `container` | managed containers | image, status, agent, host | `/containers` |
-| `web_log` | what `web_search` and `fetch_url` read | host, tool, status, severity, flags count | `/web-logs` |
+| `web_log` | what `fetch_url` read | host, tool, status, severity, flags count | `/web-logs` |
 | `setting` | providers, rag, web, execution | plain settings; secrets as set or not, URLs without credentials | `/settings` |
 
-The doctor's two checks that call out over the network (provider, browser)
-are not run from a lookup; their cards point to the Health page.
+The doctor's check that calls out over the network (the provider)
+is not run from a lookup; its card points to the Health page.
 
 ## What it can change
 
-`schedule_pulse` is the one creating tool: it turns a phrase such as "every
-morning at 8 tell me the weather" into a [proactive agent](proactive.md#from-a-phrase),
-after a card that shows the schedule in plain words.
+A phrase such as "every morning at 8 tell me the weather" becomes a job on
+the Plan page: after the person's yes the assistant calls `schedule_task`
+(see [scheduling](scheduling.md)).
 
 `hub_action` does one small thing to one record the person reaches: a kind,
 a verb and an id. Building, editing and deleting stay with the pages and
@@ -269,16 +263,13 @@ the creator agents, and nothing here starts paid work.
 | Kind | Actions |
 |---|---|
 | `instance` | `stop` (a resident copy's process, or another copy's current run), `restart` (a resident copy) |
-| `browser` | `stop` (closes the session) |
-| `watcher`, `pulse` | `pause`, `resume` (a pulse's wake is paid work, so it is not here) |
-| `eval` | `cancel` (a running batch eval run) |
 | `guardrail` | `enable`, `disable` |
 | `mcp` | `enable`, `disable` |
 
 Every call waits for a yes: `hub_action` asks on every call, whatever the
 workspace's tool policy says, like `delete_workspace`. The card says in a
-sentence what will happen ("Pause watcher Inbox in team: it stops checking
-until resumed."); the person answers it on the screen or with a short
+sentence what will happen ("Stop the instance Inbox helper in team: its
+current run ends."); the person answers it on the screen or with a short
 spoken yes. Where nobody is in front of a card
 the call is refused.
 
@@ -292,7 +283,7 @@ the assistant** (the answers are read aloud and the page listens while the talk
 button or Space is held, the Hold mode) or **Type to the assistant**; the
 header's **Setup** pill and `/assistant?setup=1` come back to it, and the
 page's **Setup** tab shows every step. A screen of the first run answered "not
-now" (the voice, web search, the demo) starts skipped here.
+now" (the voice, the demo) starts skipped here.
 
 The guide (`common/setup_guide.py`, `GET /api/setup-guide`) is a list of steps,
 each with why it matters, how it is detected as done, what the assistant does
@@ -303,14 +294,13 @@ about it and the page that shows it:
 | `model` | a model provider has a key or a custom backend with a model | `propose_connection` kind `provider` |
 | `default_model` | the default provider can run and has a model | `setup_step` `choose_model` (balanced recommended) |
 | `voice` | `default` has speech and transcription models | `setup_step` `voice_cloud` |
-| `web_search` | a web search provider and key are set | `propose_connection` kind `provider` (brave, tavily, exa) |
 | `demo` | the demo workspace is there | `setup_step` `seed_demo` |
 | `health` | marked done by the assistant after `run_diagnostics` | `run_diagnostics` |
 | `first_chat` | a chat exists | the Chat page |
 | `accounts` | a Jira or GitLab connector is configured | `propose_connection` kind `connector` |
 | `first_agent` | an agent of the person's own exists | `agent_creator`, the Marketplace |
 | `first_task` | a task exists | `create_task` |
-| `automation` | a watcher or a pulse exists | `propose_connection` kind `watcher`, the Pulse tab |
+| `automation` | a scheduled job exists | points to `/plan`: a schedule there runs an agent, a flow or a loop at the times you choose |
 | `tour` | the browser says the welcome tour was taken | the Setup tab's tour button |
 
 The first six are the install's own setup. Done is read from
@@ -342,8 +332,7 @@ openai/gpt-5.4 the hub's default model..."). It is one of:
   catalog and writes `DEFAULT_PROVIDER` and the provider's model to `.env`,
   as `ah setup` does.
 - `voice_cloud`: OpenAI or Google speech and transcription models with a
-  voice, in `default`'s special models (every workspace without its own
-  uses them).
+  voice, as the hub's voice models (the Models page, Voice tab).
 - `seed_demo`: the [demo workspace](demo.md).
 
 A key is never a `setup_step`: `propose_connection` with kind `provider`
@@ -371,11 +360,11 @@ Chat page (`tool_approval` events).
 
 Voice is a way in and a way out of the same turn, not another loop: no
 speech-to-speech model, so policies and approvals
-stay on the path. Both directions use the special models of the workspace
-the turn runs in (`?workspace=` on `GET /api/assistant` and on
-`/transcribe`; for `/speak`, the turn's run), and where that workspace added
-none, those of the home workspace ([special models](special-models.md)). They are called by the hub directly, not as agent
-tools: whether to speak is the person's choice, not the model's.
+stay on the path. Both directions use the hub's voice models, one speech and
+one transcription model chosen on the [Models page](models.md#voice), Voice
+tab, whatever workspace the turn runs in. They are called by the hub
+directly, not as agent tools: whether to speak is the person's choice, not
+the model's.
 
 **Speech in.** `POST /api/assistant/transcribe` with the recording as the body
 and its `Content-Type` (`audio/webm`, `audio/ogg`, `audio/wav`, `audio/mp4` or
@@ -385,8 +374,8 @@ listening for the name or for a stop) only names the cost run: "Voice input
 page shows the text, the person may correct it, and it is sent as an ordinary
 turn with `voice: true`. Two requests instead of one so a misheard word is
 fixed before it becomes an instruction. The recording is not kept: only its
-price, as a run of its own (channel `voice`, title "Voice input") in the home
-workspace. At most 8 MB
+price, as a run of its own (channel `voice`, title "Voice input") in the
+workspace the turn will run in. At most 8 MB
 (`AGENTS_HUB_VOICE_MAX_BYTES`) and, for WAV, 120 seconds
 (`AGENTS_HUB_VOICE_MAX_SECONDS`).
 
@@ -429,8 +418,8 @@ note that the audio then goes to the browser's vendor), 413
 
 A cloud voice speaks every language, but one may suit a language better than
 another. So the speech model may name a voice, and where the provider has
-one, a model, per language code (`languages` on the workspace's speech entry,
-the **A voice per language** rows on the Models page, Special tab):
+one, a model, per language code (`languages` on the speech entry, the
+**A voice per language** rows on the Models page, Voice tab):
 
 ```json
 {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy",
@@ -443,12 +432,11 @@ common words, else the page's language) and that language's model and voice
 read it; a language with no row keeps the model and voice of the entry. One answer keeps one voice: the language is
 told once, from what the turn has said by its first spoken sentence, so a
 Russian answer that quotes an English sentence is read by the Russian voice
-throughout. This holds for `/speak`, for a voice sample in a language and for
-the `synthesize_speech` tool (the whole text decides), and the browser's own
-voice takes its locale the same way.
+throughout. This holds for `/speak` and for a voice sample in a language, and
+the browser's own voice takes its locale the same way.
 
 ## Limits
 
 One turn runs at a time in a thread: a send while one runs is 409 `busy`
 (except a spoken yes or no for a waiting card, above). Every turn is a run, so
-it appears in Messages and counts in the costs.
+it appears in Messages and counts in the run totals.

@@ -15,5 +15,4 @@ How to invoke:
 - State what changed vs. the standing criteria; leave it out to run the defaults
 - Results land in `positions/positions.json` plus one `positions/<position_id>.md` per posting,
   and in the "Job Pipeline" table view on the Views page
-- Requires `WEB_SEARCH_PROVIDER` + `WEB_SEARCH_API_KEY` for `web_search`; the JSON/HTML sources
-  in memory work with `fetch_url` alone
+- The JSON/HTML sources in memory work with `fetch_url` alone

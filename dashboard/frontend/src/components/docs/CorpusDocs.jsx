@@ -151,7 +151,7 @@ export function Faq() {
   // Each entry resolves to `docs.faq.<id>.q` / `.a`.
   const items = [
     'backendWontStart', 'frontendCantReach', 'runsFailImmediately', 'dockerCompose',
-    'budgetExceeded', 'zeroCost', 'modelMissing', 'textNotChart', 'nothingStreams',
+    'zeroCost', 'modelMissing', 'textNotChart', 'nothingStreams',
     'jobNeverFired', 'reopenOnboarding',
   ].map((id) => ({ q: t(`docs.faq.${id}.q`), a: t(`docs.faq.${id}.a`) }));
   return (

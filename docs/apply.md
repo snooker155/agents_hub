@@ -53,9 +53,9 @@ structured fields; the body is the agent's `instructions.md`.
 ---
 id: team_researcher
 name: Team researcher
-description: Finds sources on the web and writes short, cited summaries.
+description: Reads web pages and writes short, cited summaries.
 domain: research
-tools: [web_search, fetch_url]
+tools: [fetch_url]
 memory: [team-notes]
 handoffs: [team_writer]
 ---
@@ -91,7 +91,6 @@ the hub.
 | `loop` | mapping: `fallback_models`, `advisor_model`, `output_schema`, `max_concurrent_delegates`, `tool_search`, `compaction` | `PUT .../loop-settings` |
 | `tool_policy` | mapping of tool id to mode ([tool policy](tool-policy.md)) | `PUT .../tool-policy` |
 | `guardrails`, `secrets` | lists of ids or names; a child may also give `+id` / `-id` deltas | `PUT .../guardrails`, `PUT .../secrets` |
-| `proactive` | mapping, the agent's proactive profile ([proactive](proactive.md)) | `PUT .../proactive` |
 | `outcome` | mapping: `rubric`, `max_iterations`, `grader`, `threshold` ([outcomes](outcomes.md), "An agent's default outcome"); empty or absent clears it | `PUT .../default-outcome` |
 
 Each field goes through the route the agent page uses for the same edit, so
@@ -100,7 +99,7 @@ capability guard, handoff targets that must exist, catalog models, version
 history. An API key never belongs in a file: name a secret instead
 ([secrets](secrets.md)).
 
-A mapping field (`model`, `reasoning`, `web_domains`, `loop`, `proactive`)
+A mapping field (`model`, `reasoning`, `web_domains`, `loop`)
 manages only the keys the file names; the others keep whatever the hub has.
 `skills` manages only the skills it names: a skill the agent wrote for
 itself, or one removed from the file, stays in the hub. A field the file does
@@ -327,6 +326,6 @@ one file held in memory.
 ## Gotchas
 
 * Over REST, `ah apply` needs PyYAML installed next to the CLI.
-* Proactive profiles, skills and memory blocks are things agents and people
+* Skills and memory blocks are things agents and people
   also edit while the hub runs: declare them only when the files should own
   them, or expect drift.

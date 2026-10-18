@@ -1,16 +1,9 @@
 """
-Demo workspace: seeding, removal, the /api/demo routes, and the fixture
-export script. See common/demo_workspace.py and docs/demo.md.
-
-``export_demo_fixtures`` is loaded by file path rather than as
-``scripts.export_demo_fixtures``: some environments already have an unrelated
-``scripts`` distribution installed, and a real package anywhere on
-``sys.path`` wins over this repository's ``scripts/`` directory as a
-namespace package (PEP 420), so importing it by name is not reliable.
+Demo workspace: seeding, removal and the /api/demo routes. See
+common/demo_workspace.py and docs/demo.md.
 """
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -20,16 +13,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = str(REPO_ROOT / "dashboard" / "backend")
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
-
-
-def _load_export_script():
-    spec = importlib.util.spec_from_file_location(
-        "_demo_export_fixtures_script",
-        REPO_ROOT / "scripts" / "export_demo_fixtures.py",
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture(autouse=True)
@@ -78,13 +61,12 @@ def test_ensure_demo_workspace_seeds_everything():
     from common.demo_workspace import (
         DEMO_AGENT_IDS,
         DEMO_FLOW_ID,
-        DEMO_SCENARIO_ID,
+        DEMO_LOOP_ID,
         DEMO_TEAM_ID,
         ensure_demo_workspace,
     )
     from flow.store import get_flow
     from managers.run_manager import query_runs
-    from playground.store import get_scenario
     from tasks.service import list_tasks
     from teams.store import get_team
     from views.store import list_views
@@ -105,11 +87,24 @@ def test_ensure_demo_workspace_seeds_everything():
 
     assert get_flow(DEMO_FLOW_ID) is not None
     assert get_team(DEMO_TEAM_ID) is not None
-    assert get_scenario(DEMO_SCENARIO_ID) is not None
+
+    from loops.store import get_loop
+    loop = get_loop(DEMO_LOOP_ID)
+    assert loop is not None and loop.workspace == "demo" and loop.flow_id == DEMO_FLOW_ID
+    assert loop.evaluator_agent_id == "demo_reviewer"
+
+    # The weekly job is there to look at, paused, so the demo never spends
+    # anything until the operator resumes it.
+    from plans.service import list_jobs
+    jobs = list_jobs(workspace="demo")
+    assert [(j.title, j.status.value, j.cron) for j in jobs] == [
+        ("Weekly sales summary", "paused", "0 9 * * 1"),
+    ]
+    assert jobs[0].agent_id == "demo_analyst"
 
     views = list_views(workspace="demo")
-    assert len(views) == 4
-    assert {"chart", "table", "markdown", "document"} == {v["kind"] for v in views}
+    assert len(views) == 5
+    assert {"chart", "table", "markdown", "document", "slides"} == {v["kind"] for v in views}
 
     demo_tasks = [t for t in list_tasks() if t.workspace == "demo"]
     assert len(demo_tasks) == 6
@@ -221,8 +216,9 @@ def test_remove_demo_workspace_removes_everything_and_only_that():
     assert counts["project"] == 1
     assert counts["flow"] == 1
     assert counts["team"] == 1
-    assert counts["scenario"] == 1
-    assert counts["views"] == 4
+    assert counts["loop"] == 1
+    assert counts["jobs"] == 1
+    assert counts["views"] == 5
     assert counts["tasks"] == 6
     assert counts["chats"] == 6
     assert counts["runs"] == 11
@@ -282,7 +278,3 @@ def test_install_sh_has_the_with_demo_flag():
     text = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     assert "--with-demo" in text
     assert "DEMO_WORKSPACE=1" in text
-
-
-# ── fixture export ───────────────────────────────────────────────────────────
-

@@ -4,7 +4,7 @@ Entity build chats — one conversation that edits one service entity.
 The project graph has had this for a while: a chat pinned to the thing it
 builds, where the agent's tool calls land on the object in front of you rather
 than in a reply you then have to apply. This module is that mechanism, made
-reusable, so a scenario and a loop get the same surface without a third copy of
+reusable, so a loop and a team get the same surface without a third copy of
 the plumbing.
 
 What a caller supplies is an :class:`EntityChatSpec` (which agent, which kind,
@@ -245,7 +245,7 @@ def trace_item_for(ev: dict) -> Optional[Dict[str, Any]]:
         return {"k": "thinking", "text": txt} if txt and not txt.startswith("[") else None
     if t == "tool_start":
         # The input rides along so a reloaded step reads like the live one did
-        # ("modify_world_tool · wld_3f2a"), not as a bare tool name.
+        # ("modify_loop_tool · lp_3f2a"), not as a bare tool name.
         return {"k": "tool", "tool": str(ev.get("tool") or ""),
                 "input": ev.get("input"), "status": "done"}
     if t == "tool_error":

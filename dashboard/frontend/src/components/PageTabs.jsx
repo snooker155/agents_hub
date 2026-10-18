@@ -1,5 +1,4 @@
-// Tabs the playground's scenario page introduced and the flow run page
-// shares (pages/playground/scenario-sidebar.jsx re-exports them):
+// Tabs the flow run page uses:
 //
 // - PaneTab: one segment of a switch set in a gray pill
 //   (`inline-flex items-center gap-1 p-0.5 rounded-lg bg-gray-100`), for

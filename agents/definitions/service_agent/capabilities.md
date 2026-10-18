@@ -18,7 +18,6 @@ Work:
 
 Outside calls and spend:
 - `web_log_recent`: agent web calls with the security flags raised against each response.
-- `costs_summary`: tokens and estimated spend by agent and by model.
 
 Stopping things, each refusing without `user_approved`:
 - `stop_run`, `stop_instance`, `restart_instance`, `stop_container`, `prune_run_logs`.

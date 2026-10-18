@@ -208,21 +208,21 @@ def test_end_to_end_through_the_api(client, isolated):
     })
     assert r.status_code == 200, r.text
     assert r.json()["tools"] == ["read_file", "calculator"]
-    r = client.post("/api/agents/finance/tools", json={"tools": ["read_file", "calculator", "web_search"]})
+    r = client.post("/api/agents/finance/tools", json={"tools": ["read_file", "calculator", "tracker_get_issue"]})
     assert r.status_code == 200, r.text
     r = client.post("/api/agents/finance/model", json={"provider": "openai", "model": "gpt-child"})
     assert r.status_code == 200, r.text
 
     # The run build gets the merged prompt and tools.
     built = factory.load_definition("finance")
-    assert built["tools"] == ["read_file", "calculator", "web_search"]
+    assert built["tools"] == ["read_file", "calculator", "tracker_get_issue"]
     assert built["model"] == "gpt-child" and built["provider"] == "openai"
     assert "You analyse data. Focus on finance." in built["system_prompt"]
     assert "Be brief" not in built["system_prompt"] and "Use IFRS." in built["system_prompt"]
 
     # The per field routes left deltas, not a flattened copy.
     raw = get_agent_raw("finance")
-    assert raw.tools == [] and raw.list_deltas == {"tools": {"add": ["web_search"], "remove": []}}
+    assert raw.tools == [] and raw.list_deltas == {"tools": {"add": ["tracker_get_issue"], "remove": []}}
     assert set(raw.overrides) == {"provider", "model"}
 
     # The inheritance view.
@@ -232,7 +232,7 @@ def test_end_to_end_through_the_api(client, isolated):
     assert view["fields"]["model"] == {"value": "gpt-child", "source": "finance", "overridden": True}
     assert view["fields"]["temperature"]["source"] == "analyst"
     tools = {i["value"]: i for i in view["effective_lists"]["tools"]}
-    assert tools["web_search"]["added"] and tools["read_file"]["source"] == "analyst"
+    assert tools["tracker_get_issue"]["added"] and tools["read_file"]["source"] == "analyst"
     assert {s["heading"] for s in view["prompt"]["parent_sections"]} == {"Role", "Style", "Output"}
     assert "Be brief." in view["prompt"]["inherited_instructions"]
     assert "Focus on finance" in view["prompt"]["effective"]
@@ -259,7 +259,7 @@ def test_end_to_end_through_the_api(client, isolated):
     assert r.status_code == 200, r.text
     built = factory.load_definition("finance")
     assert "You analyse numbers. Focus on finance." in built["system_prompt"]
-    assert built["tools"] == ["read_file", "calculator", "list_files", "web_search"]
+    assert built["tools"] == ["read_file", "calculator", "list_files", "tracker_get_issue"]
     frozen = factory.load_definition("frozen")
     assert frozen["tools"] == ["read_file", "calculator"]
     assert "You analyse data." in frozen["system_prompt"]
@@ -407,7 +407,7 @@ def test_an_upgrade_never_hands_a_child_a_blocked_combination(isolated, tmp_path
     for aid, own in (("basex", ""), ("risky", "## Web\nSearch."), ("calm", "")):
         prompt_assembly.write_instructions(aid, own or "Base.")
     add_agent(_spec("basex", system=True, tools=["read_file"]), user_edit=False)
-    add_agent(_spec("risky", extends="basex", tools=["read_file", "web_search"]), user_edit=False)
+    add_agent(_spec("risky", extends="basex", tools=["read_file", "tracker_get_issue"]), user_edit=False)
     add_agent(_spec("calm", extends="basex", tools=["read_file"]), user_edit=False)
 
     assert "basex" in bootstrap._sync_system_agents()
@@ -415,7 +415,7 @@ def test_an_upgrade_never_hands_a_child_a_blocked_combination(isolated, tmp_path
     assert get_agent("basex").tools == ["read_file", "notify_user"]
     assert get_agent("calm").tools == ["read_file", "notify_user"]
     risky = get_agent("risky")
-    assert "notify_user" not in risky.tools and set(risky.tools) == {"read_file", "web_search"}
+    assert "notify_user" not in risky.tools and set(risky.tools) == {"read_file", "tracker_get_issue"}
     assert get_agent_raw("risky").list_deltas["tools"]["remove"] == ["notify_user"]
     assert any("declined notify_user" in (v.get("note") or "") for v in list_versions("risky"))
     titles = [n.title for n in list_notifications()]

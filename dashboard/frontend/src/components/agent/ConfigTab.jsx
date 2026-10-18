@@ -4,8 +4,8 @@ import SystemAgentWarning from './SystemAgentWarning';
 import { BookOpen, FileCode, GitBranch, Loader, RotateCcw, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
 
-/** The definition: the prompt files alone. Versions, guardrails, the pulse and
- * experiments each have a tab of their own. */
+/** The definition: the prompt files alone. Versions and guardrails each have a
+ * tab of their own. */
 export default function ConfigTab() {
   const {
     agent, agentDefinition, defChat, defDraft, defError, defSaving,

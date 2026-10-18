@@ -14,7 +14,7 @@ Der Assistent ist ein Agent, über den eine Person den ganzen Dienst nutzt: frag
 - **Zuhören.** Der erste Absatz der Antwort auf eine gesprochene Frage wird schon während des Streamens vorgelesen. War ein Turn eine Weile still, sagt der Hub, an welchem Schritt er ist. Eine wartende Karte wird in einem Satz angekündigt.
 - **Eine Karte per Stimme beantworten.** Solange eine Karte wartet, halten Sie die Taste gedrückt und sagen Sie Ja oder Nein. In einer Unterhaltung oder im Aktivierungsmodus sagen Sie es einfach. "Stop" stoppt den ganzen Turn, statt die Karte abzulehnen. Eine Verbindungskarte wird nur am Bildschirm ausgefüllt.
 - **Auf dem Bildschirm zeigen.** Ein Link in einer Antwort öffnet die Seite in einem Bereich neben dem Gespräch, mit dem Transkript als zweitem Reiter. **Diese Seite öffnen** verlässt dafür den Assistenten.
-- **Einstellungen** (das Zahnrad): *Nur Sprache* sendet, was Sie sagen, sofort und liest jede Antwort vor, ohne Textfeld. *Ohne Ton* liest nie vor. *Stimme* wählt eine der Stimmen des Sprachmodells, das auf der [Seite Modelle](special-models.md) gewählt ist (dieselbe Liste, die der Reiter Spezialmodelle vorschlägt, mit der Sprache jeder Stimme), und *Anhören* daneben spielt einen kurzen Satz mit ihr ab, in der Sprache der Stimme oder der der Seite (`POST /api/assistant/voice-sample`, abgerechnet als Run vom Typ `voice`). Dazu kommen *Per Stimme stoppen* (oben) und *Aktivierungswort*. Die Seite merkt sich die Einstellungen in diesem Browser.
+- **Einstellungen** (das Zahnrad): *Nur Sprache* sendet, was Sie sagen, sofort und liest jede Antwort vor, ohne Textfeld. *Ohne Ton* liest nie vor. *Stimme* wählt eine der Stimmen des Sprachmodells, das auf der [Seite Modelle](models.md#stimme) gewählt ist (dieselbe Liste, die der Reiter Stimme vorschlägt), und *Anhören* daneben spielt einen kurzen Satz mit ihr ab, in der Sprache der Stimme oder der der Seite (`POST /api/assistant/voice-sample`, abgerechnet als Run vom Typ `voice`). Dazu kommen *Per Stimme stoppen* (oben) und *Aktivierungswort*. Die Seite merkt sich die Einstellungen in diesem Browser.
 - **Thread und Workspace.** Der nächste Turn läuft in dem Workspace, der in der Kopfzeile gewählt ist. Die Seite hat keine eigene Auswahl und nennt ihn nicht. Es gibt einen Thread und keinen Schalter.
 
 Auf einem Telefon besteht die Seite aus der Marke, der Taste und der letzten Antwort. Links öffnen die Seite selbst.
@@ -49,7 +49,7 @@ Der Prompt des Turns sagt dem Agenten, wo der Turn läuft, was der Heimat-Worksp
 
 ## Der Dienst-Thread
 
-Nur wenn der Turn in `default` läuft, hält der Assistent die Dienstwerkzeuge (`common/workspace_scope.py` `ASSISTANT_SERVICE_TOOLS`: `service_health`, `run_diagnostics`, `service_lookup`, `list_sessions`, `routing_log`, `costs_summary`, `list_instances`, `list_containers` sowie das Stoppen oder Neustarten eines Runs, einer Instanz oder eines Containers) und die Werkzeuge zur Verwaltung von Workspaces. Logs von Runs, Fehlern und Containern gehören nicht dazu: Sie enthalten Text, den jeder hätte schreiben können, der Assistent kann auch Nachrichten senden, und diese Kombination lehnt der Capability Guard ab. Logs liest der Service Agent.
+Nur wenn der Turn in `default` läuft, hält der Assistent die Dienstwerkzeuge (`common/workspace_scope.py` `ASSISTANT_SERVICE_TOOLS`: `service_health`, `run_diagnostics`, `service_lookup`, `list_sessions`, `routing_log`, `list_instances`, `list_containers` sowie das Stoppen oder Neustarten eines Runs, einer Instanz oder eines Containers) und die Werkzeuge zur Verwaltung von Workspaces. Logs von Runs, Fehlern und Containern gehören nicht dazu: Sie enthalten Text, den jeder hätte schreiben können, der Assistent kann auch Nachrichten senden, und diese Kombination lehnt der Capability Guard ab. Logs liest der Service Agent.
 
 ## Was er nachschlagen kann
 
@@ -59,18 +59,13 @@ Fragen zu jeder Seite beantwortet der Assistent mit einem einzigen schreibgesch�
 |---|---|---|---|
 | `run` (Alias `message`) | Runs, neueste zuerst, nach Titel, Agent oder Status | Status, Zeitverlauf, Modell, Tokens, Kosten, Werkzeugaufrufe, die erste Zeile des Fehlers | `/messages/<id>` |
 | `session` | Sessions | Agent, Daten, Anzahl der Runs, die letzten | `/sessions/<id>` |
-| `cost` | heute, Woche, Monat | Ausgaben im Zeitraum (die Zahlen der Seite Kosten), die wichtigsten Agenten und Modelle | `/costs` |
-| `model` | aktivierte Modelle mit Preisen und die Spezialmodelle, die der Workspace nutzt | Preise, Kontextfenster, ob es hier das Standardmodell ist, die Spezialmodelle | `/models/<provider>/<model>` |
-| `voice` (`speech`, `transcription`) | die Transkriptions- und Sprachmodelle, die die Assistenten-Seite in diesem Workspace nutzt, oder die des Browsers, wenn es keine gibt | das Modell, der Workspace, aus dem es stammt, die Sprachstimme | `/models` |
+| `model` | aktivierte Modelle mit Preisen und die Stimmmodelle | Preise, Kontextfenster, ob es hier das Standardmodell ist, die Stimmmodelle | `/models/<provider>/<model>` |
+| `voice` (`speech`, `transcription`) | die Transkriptions- und Sprachmodelle, die die Assistenten-Seite nutzt, oder die des Browsers, wenn es keine gibt | das Modell, die Sprachstimme | `/models?tab=voice` |
 | `agent` | Agenten des Workspace | Beschreibung, Werkzeuge, an wen er delegiert, was er erweitert | `/agents/<id>` |
 | `notification` | ungelesene Benachrichtigungen | Titel, Text, Schweregrad | |
 | `approval` | Werkzeugaufrufe und Aufgaben, die auf Ihre Genehmigung warten | Werkzeug, Grund, Run, Ablauf | der Run oder die Aufgabe |
-| `task`, `view`, `project`, `scenario`, `loop`, `flow`, `team`, `job` | so, wie die Referenzauswahl des Chats sie listet | so, wie die Auswahl sie darstellt | ihre Seite |
+| `task`, `view`, `project`, `loop`, `flow`, `team`, `job` | so, wie die Referenzauswahl des Chats sie listet | so, wie die Auswahl sie darstellt | ihre Seite |
 | `instance` | residente Kopien und Aufgabenkopien von Agenten | Status, Agent, Runs, die erste Zeile des Fehlers | `/instances/<id>` |
-| `browser` | Browser-Sessions | Besitzer, Website (nur der Host), nur lesbar oder nicht | `/browser` |
-| `watcher` | HTTP-Watcher | Zustand, Zielhost, letzte Prüfung, Fehler | `/watchers` |
-| `pulse` | proaktive Agenten | Zeitplan, heutige Nutzung, Ergebnisse der letzten Ticks | die Seite des Agenten |
-| `eval` | Eval-Sets mit ihrem letzten Run | Anzahl der Fälle, Grader und Runs eines Sets, oder Status, Kosten und Ergebnisse eines Runs | `/evals` |
 | `guardrail` | Guardrails | Stufe, Art, Aktion, Anzahl der Ereignisse je Aktion, nie der gefundene Text | `/guardrails` |
 | `tool` | der Werkzeugkatalog | Fähigkeiten, Genehmigung, der Modus hier, welche Agenten es halten, jüngste Entscheidungen | `/tools` |
 | `skill` | Skills | Prüfstatus, Version, Anzahl der Schritte, nie die Schritte | `/skills` |
@@ -80,7 +75,7 @@ Fragen zu jeder Seite beantwortet der Assistent mit einem einzigen schreibgesch�
 
 Es liefert Metadaten, nie die Antwort eines Runs, ein Log oder die Nachrichten eines Chats: Diese enthalten, was auch immer der Run verarbeitet hat, Webseiten eingeschlossen, und ein Agent, der solchen Text liest und zugleich Nachrichten senden kann, ist genau das, was der Capability Guard ablehnt ([tool policy](tool-policy.md)). Die Antwort ist auf der verlinkten Seite einen Klick entfernt. Jede Seite des Dashboards wird von einer Art oder von einem der eigenen Werkzeuge des Assistenten beantwortet. `tests/test_hub_action.py` schlägt fehl, wenn eine neue Seite ohne eines von beiden hinzukommt.
 
-Text, den ein Fremder geschrieben haben könnte, bleibt draußen: Eine Webadresse wird auf ihren Host reduziert, der Fehler eines entfernten Servers auf "hat einen Fehler", und die abgerufene Seite eines Watchers sowie der gefundene Text eines Guardrails werden nie gelesen.
+Text, den ein Fremder geschrieben haben könnte, bleibt draußen: Eine Webadresse wird auf ihren Host reduziert, der Fehler eines entfernten Servers auf "hat einen Fehler", und der gefundene Text eines Guardrails wird nie gelesen.
 
 ### Dienstweite Datensätze
 
@@ -90,27 +85,24 @@ Im Dienst-Thread hält der Assistent außerdem `service_lookup`, denselben Katal
 |---|---|---|---|
 | `health` | die Momentaufnahme und die Prüfungen des Doctors | Status, Zusammenfassung und Dokumentationsabschnitt einer Prüfung (`snapshot` für das Ganze) | `/health` |
 | `container` | verwaltete Container | Image, Status, Agent, Host | `/containers` |
-| `web_log` | was `web_search` und `fetch_url` gelesen haben | Host, Werkzeug, Status, Schweregrad, Anzahl der Flags | `/web-logs` |
+| `web_log` | was `fetch_url` gelesen hat | Host, Werkzeug, Status, Schweregrad, Anzahl der Flags | `/web-logs` |
 | `setting` | Anbieter, rag, web, execution | einfache Einstellungen; Geheimnisse nur als gesetzt oder nicht, URLs ohne Zugangsdaten | `/settings` |
 
-Die zwei Prüfungen des Doctors, die über das Netzwerk nach außen rufen (Anbieter, Browser), werden von einem Nachschlagen nicht ausgeführt. Ihre Karten verweisen auf die Seite Status.
+Die Prüfung des Doctors, die über das Netzwerk nach außen ruft (Anbieter), wird von einem Nachschlagen nicht ausgeführt. Ihre Karte verweist auf die Seite Status.
 
 ## Was er ändern kann
 
-`schedule_pulse` ist das eine Werkzeug, das etwas anlegt: Es macht aus einer Wendung wie "jeden Morgen um 8 sag mir das Wetter" einen [proaktiven Agenten](proactive.md#from-a-phrase), nach einer Karte, die den Zeitplan in einfachen Worten zeigt.
+Eine Wendung wie "jeden Morgen um 8 sag mir das Wetter" wird zu einem Job auf der Plan-Seite: Nach dem Ja der Person ruft der Assistent `schedule_task` auf (siehe [scheduling](scheduling.md)).
 
 `hub_action` tut eine kleine Sache mit einem Datensatz: eine Art, ein Verb und eine ID. Bauen, Bearbeiten und Löschen bleiben bei den Seiten und den Creator-Agenten, und nichts hier startet kostenpflichtige Arbeit.
 
 | Art | Aktionen |
 |---|---|
 | `instance` | `stop` (der Prozess einer residenten Kopie oder der aktuelle Run einer anderen Kopie), `restart` (eine residente Kopie) |
-| `browser` | `stop` (schließt die Session) |
-| `watcher`, `pulse` | `pause`, `resume` (das Aufwecken eines Pulse ist kostenpflichtige Arbeit und steht deshalb nicht hier) |
-| `eval` | `cancel` (ein laufender Batch-Eval-Run) |
 | `guardrail` | `enable`, `disable` |
 | `mcp` | `enable`, `disable` |
 
-Jeder Aufruf wartet auf ein Ja: `hub_action` fragt bei jedem Aufruf, was auch immer die Werkzeugrichtlinie des Workspace sagt, wie `delete_workspace`. Die Karte sagt in einem Satz, was geschehen wird ("Watcher Inbox in team pausieren: Er prüft nicht mehr, bis er fortgesetzt wird."). Sie beantworten sie am Bildschirm oder mit einem kurzen gesprochenen Ja. Wo niemand vor einer Karte sitzt, wird der Aufruf abgelehnt.
+Jeder Aufruf wartet auf ein Ja: `hub_action` fragt bei jedem Aufruf, was auch immer die Werkzeugrichtlinie des Workspace sagt, wie `delete_workspace`. Die Karte sagt in einem Satz, was geschehen wird ("Instanz Inbox helper in team stoppen: Ihr aktueller Lauf endet."). Sie beantworten sie am Bildschirm oder mit einem kurzen gesprochenen Ja. Wo niemand vor einer Karte sitzt, wird der Aufruf abgelehnt.
 
 ## Geführte Einrichtung
 
@@ -123,14 +115,13 @@ Die Anleitung (`common/setup_guide.py`, `GET /api/setup-guide`) ist eine Liste v
 | `model` | ein Modellanbieter einen Schlüssel hat oder ein eigenes Backend mit einem Modell | `propose_connection` kind `provider` |
 | `default_model` | der Standardanbieter laufen kann und ein Modell hat | `setup_step` `choose_model` (ausgewogen empfohlen) |
 | `voice` | `default` Sprach- und Transkriptionsmodelle hat | `setup_step` `voice_cloud` |
-| `web_search` | ein Anbieter für Websuche und ein Schlüssel gesetzt sind | `propose_connection` kind `provider` (brave, tavily, exa) |
 | `demo` | der Demo-Workspace vorhanden ist | `setup_step` `seed_demo` |
 | `health` | vom Assistenten nach `run_diagnostics` als erledigt markiert | `run_diagnostics` |
 | `first_chat` | ein Chat existiert | die Chat-Seite |
 | `accounts` | ein Jira- oder GitLab-Konnektor konfiguriert ist | `propose_connection` kind `connector` |
 | `first_agent` | ein eigener Agent der Person existiert | `agent_creator`, der Marktplatz |
 | `first_task` | eine Aufgabe existiert | `create_task` |
-| `automation` | ein Watcher oder ein Pulse existiert | `propose_connection` kind `watcher`, der Reiter Pulse |
+| `automation` | ein geplanter Job existiert | verweist auf `/plan`: Ein Zeitplan dort startet einen Agenten, einen Flow oder einen Loop zu den Zeiten, die Sie wählen |
 | `tour` | der Browser meldet, dass die Willkommenstour gemacht wurde | die Schaltfläche für die Tour im Reiter Einrichtung |
 
 Die ersten sechs gehören zur Einrichtung der Installation. Ob ein Schritt erledigt ist, wird bei jedem Aufruf aus dem Hub gelesen, ein Schritt, der auf seiner Seite erledigt wurde, wird in der Anleitung also ebenfalls abgehakt, und die Agenten, Chats und Aufgaben der Demo haken nichts ab. Gemerkt werden nur Überspringen, als erledigt markierte Schritte und ob die Anleitung läuft. **Übersprungene Schritte zurückholen** im Reiter Einrichtung (sichtbar, sobald etwas übersprungen oder markiert ist) hebt beides auf und lässt die Anleitung wieder ab dem ersten offenen Schritt laufen. Die Ersteinrichtung (Einstellungen, Ersteinrichtung) und die Tour wiederholt es nicht.
@@ -142,7 +133,7 @@ Solange die Anleitung läuft, trägt jeder Turn sie mit sich ("Guided setup" im 
 `setup_step` nimmt eine Änderung an der Installation vor und wartet wie `hub_action` bei jedem Aufruf auf ein Ja auf einer Karte, die sagt, was sich ändert ("Make openai/gpt-5.4 the hub's default model..."). Es macht eines von diesen:
 
 - `choose_model`: markiert das Modell im Katalog von [Modelle](models.md) mit einem Stern und aktiviert es, und schreibt `DEFAULT_PROVIDER` sowie das Modell des Anbieters in die `.env`, so wie es `ah setup` tut.
-- `voice_cloud`: Sprach- und Transkriptionsmodelle von OpenAI oder Google mit einer Stimme, in den Spezialmodellen von `default` (jeder Workspace ohne eigene nutzt sie).
+- `voice_cloud`: Sprach- und Transkriptionsmodelle von OpenAI oder Google mit einer Stimme, als Stimmmodelle des Hubs (Seite Modelle, Reiter Stimme).
 - `seed_demo`: der [Demo-Workspace](demo.md).
 
 Ein Schlüssel ist nie ein `setup_step`: `propose_connection` mit kind `provider` (Ziele `openai`, `anthropic`, `google`, `brave`, `tavily`, `exa`) zeigt eine Karte, in die die Person den Schlüssel tippt. Ein Modellschlüssel wird gegen die Modellliste des Anbieters geprüft, bevor etwas gespeichert wird. Ein abgelehnter Schlüssel lässt die Karte offen.
@@ -157,9 +148,9 @@ Genehmigungskarten und Verbindungskarten erreichen den Stream des Threads wie au
 
 ## Stimme
 
-Die Stimme ist ein Weg hinein und ein Weg hinaus desselben Turns, keine zweite Schleife: kein Speech-to-Speech-Modell, damit Richtlinien und Genehmigungen auf dem Weg bleiben. Beide Richtungen nutzen die Spezialmodelle des Workspace, in dem der Turn läuft (`?workspace=` bei `GET /api/assistant` und bei `/transcribe`; bei `/speak` der Run des Turns), und wo dieser Workspace keine hinzugefügt hat, die des Heimat-Workspace ([special models](special-models.md)). Sie werden vom Hub direkt aufgerufen, nicht als Agentenwerkzeuge: Ob gesprochen wird, entscheidet die Person, nicht das Modell.
+Die Stimme ist ein Weg hinein und ein Weg hinaus desselben Turns, keine zweite Schleife: kein Speech-to-Speech-Modell, damit Richtlinien und Genehmigungen auf dem Weg bleiben. Beide Richtungen nutzen die Stimmmodelle des Hubs: ein Sprach- und ein Transkriptionsmodell, gewählt auf der [Seite Modelle](models.md#stimme), Reiter Stimme, in welchem Workspace der Turn auch läuft. Sie werden vom Hub direkt aufgerufen, nicht als Agentenwerkzeuge: Ob gesprochen wird, entscheidet die Person, nicht das Modell.
 
-**Sprache hinein.** `POST /api/assistant/transcribe` mit der Aufnahme als Rumpf und ihrem `Content-Type` (`audio/webm`, `audio/ogg`, `audio/wav`, `audio/mp4` oder `audio/mpeg`), `?language=` (`en`, `ru`, `de`). `?purpose=wake` oder `?purpose=monitor` (das offene Mikrofon, das auf den Namen oder auf einen Stopp lauscht) benennt nur den Kosten-Run: "Voice input (wake phrase)", "Voice input (stop)". Die Antwort ist `{text, language, run_id, cost_usd, consent}`. Die Seite zeigt den Text, die Person kann ihn korrigieren, und er wird als gewöhnlicher Turn mit `voice: true` gesendet. Zwei Anfragen statt einer, damit ein falsch verstandenes Wort korrigiert wird, bevor es zur Anweisung wird. Die Aufnahme wird nicht aufbewahrt, nur ihr Preis, als eigener Run (Kanal `voice`, Titel "Voice input") im Heimat-Workspace. Höchstens 8 MB (`AGENTS_HUB_VOICE_MAX_BYTES`) und, bei WAV, 120 Sekunden (`AGENTS_HUB_VOICE_MAX_SECONDS`).
+**Sprache hinein.** `POST /api/assistant/transcribe` mit der Aufnahme als Rumpf und ihrem `Content-Type` (`audio/webm`, `audio/ogg`, `audio/wav`, `audio/mp4` oder `audio/mpeg`), `?language=` (`en`, `ru`, `de`). `?purpose=wake` oder `?purpose=monitor` (das offene Mikrofon, das auf den Namen oder auf einen Stopp lauscht) benennt nur den Kosten-Run: "Voice input (wake phrase)", "Voice input (stop)". Die Antwort ist `{text, language, run_id, cost_usd, consent}`. Die Seite zeigt den Text, die Person kann ihn korrigieren, und er wird als gewöhnlicher Turn mit `voice: true` gesendet. Zwei Anfragen statt einer, damit ein falsch verstandenes Wort korrigiert wird, bevor es zur Anweisung wird. Die Aufnahme wird nicht aufbewahrt, nur ihr Preis, als eigener Run (Kanal `voice`, Titel "Voice input") im Workspace, in dem der Turn laufen wird. Höchstens 8 MB (`AGENTS_HUB_VOICE_MAX_BYTES`) und, bei WAV, 120 Sekunden (`AGENTS_HUB_VOICE_MAX_SECONDS`).
 
 **Sprache heraus.** Der Stream jedes Turns beginnt mit einem Event `run`, das die Run-ID trägt. Die Seite liest den ersten Absatz der Antwort satzweise vor, während die Tokens eintreffen, mit `POST /api/assistant/speak` und `{run_id, text}` (höchstens 1000 Zeichen). Die Antwort ist Audio (`audio/mpeg` oder `audio/wav`, je nachdem, was das Modell liefert). Gelesen werden nur die eigenen Worte des Turns: Text, der nicht in dem steht, was der Turn gestreamt hat, oder in seiner Antwort im Datensatz, wird mit 403 `not_in_answer` abgelehnt, und ein Turn, dessen Antwort noch nicht aufgezeichnet ist, antwortet mit 409 `not_ready`. Markdown wird zuvor bereinigt: Ein Link wird nach seinem Ankertext gelesen, Hervorhebungen, Überschriften und Aufzählungszeichen entfallen, und Code und Tabellen werden durch "Details stehen auf dem Bildschirm" ersetzt. Der Preis wird dem Run des Turns zugeschlagen (`voice_calls`). 204, wenn nichts zum Vorlesen übrig bleibt.
 
@@ -177,8 +168,8 @@ Fehler, die die Seite behandelt: 409 `model_not_added` (kein Transkriptions- ode
 Eine Cloud-Stimme spricht alle Sprachen, doch zu einer Sprache passt oft eine
 Stimme besser als eine andere. Deshalb kann das Sprachmodell pro Sprachcode
 eine Stimme und, wo der Anbieter es erlaubt, ein Modell nennen (`languages`
-im Sprachmodell des Arbeitsbereichs, die Zeilen **Eine Stimme pro Sprache**
-auf der Seite Modelle, Reiter Spezial):
+im Sprachmodell, die Zeilen **Eine Stimme pro Sprache** auf der Seite
+Modelle, Reiter Stimme):
 
 ```json
 {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy",
@@ -192,9 +183,8 @@ Stimme dieser Sprache lesen sie; eine Sprache ohne eigene Zeile liest das
 Modell des Eintrags. Eine Antwort behält eine Stimme: die Sprache wird einmal
 bestimmt, aus dem, was der Zug bis zum ersten gesprochenen Satz gesagt hat,
 also liest eine russische Antwort mit englischem Zitat durchgehend die
-russische Stimme. Das gilt für `/speak`, für eine Stimmprobe in
-einer Sprache und für das Werkzeug `synthesize_speech`; die Stimme des
-Browsers wählt ihr Gebietsschema genauso.
+russische Stimme. Das gilt für `/speak` und für eine Stimmprobe in
+einer Sprache; die Stimme des Browsers wählt ihr Gebietsschema genauso.
 
 ## Limits
 

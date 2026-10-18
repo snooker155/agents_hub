@@ -71,7 +71,7 @@ vi.mock('../../api', () => ({
 // now, and Connectors.i18n.test.jsx carries the same coverage for them.
 const SECTIONS = [
   'providers', 'local', 'custom',
-  'execution', 'rag', 'observability', 'logging',
+  'execution', 'rag', 'logging',
 ];
 
 // A language is "reaching the page" when its own script/function words show up.

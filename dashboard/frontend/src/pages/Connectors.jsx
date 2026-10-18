@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { GitBranch, Link2, Ticket, Webhook } from 'lucide-react';
+import { BellRing, GitBranch, Link2, Ticket } from 'lucide-react';
 
 import TrackersConnector from '../components/connectors/TrackersConnector';
 import GitConnector from '../components/connectors/GitConnector';
-import WebhooksConnector from '../components/connectors/WebhooksConnector';
+import AlertRulesConnector from '../components/connectors/AlertRulesConnector';
 import { ConnectionProposalCard } from '../components/chat/ConnectionProposalCard';
 import { listConnectionProposals } from '../api/connectionProposals';
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -12,7 +12,8 @@ import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
 /**
- * Connectors: systems this hub reaches out to (GitLab, Jira, webhooks).
+ * Connectors: systems this hub reaches out to (GitLab, Jira), and the alert
+ * rules that raise a notification on their own.
  *
  * These lived as tabs inside Settings, next to model keys and log levels,
  * which is not where anyone looked for them.
@@ -65,7 +66,7 @@ function ProposedConnections() {
 const TABS = [
   { id: 'git', icon: GitBranch, Component: GitConnector },
   { id: 'trackers', icon: Ticket, Component: TrackersConnector },
-  { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
+  { id: 'alerts', icon: BellRing, Component: AlertRulesConnector },
 ];
 
 export default function Connectors() {

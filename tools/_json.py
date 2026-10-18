@@ -6,7 +6,7 @@ on success, ``{"ok": false, "error": "...", "code": "...", ...}`` on failure.
 Several private copies of these two functions existed across tools/ before
 this module, one per file that needed them: byte-for-byte identical in
 docs_tool.py, entity_runs.py and task_management.py, and a variant in
-eval_ops.py and service_ops.py that passed ``default=str`` to ``json.dumps``
+service_ops.py that passed ``default=str`` to ``json.dumps``
 so a payload could carry a datetime. All five now import from here, with
 ``default`` as an optional keyword so the ``str``-serializing variant is the
 same function rather than a fork of it.

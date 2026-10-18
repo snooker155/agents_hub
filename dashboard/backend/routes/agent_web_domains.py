@@ -1,5 +1,5 @@
 """
-Routes: an agent's own domain lists for the web tools (tools/web.py).
+Routes: an agent's own domain lists for the web tool (tools/web.py).
 
 ``GET/PUT /api/agents/{agent_id}/web-domains`` reads and writes
 ``AgentSpec.allowed_domains`` and ``AgentSpec.blocked_domains``. The

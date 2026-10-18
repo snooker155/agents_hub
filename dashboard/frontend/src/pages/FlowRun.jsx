@@ -290,8 +290,7 @@ function FlowRun() {
       <section className="flex min-h-0 flex-1 overflow-hidden bg-white">
         {/* Left column — tasks and history */}
         <div className="hidden w-[340px] shrink-0 flex-col overflow-hidden border-r border-slate-200 lg:flex">
-          {/* The tabs are the column's title, as on the playground's
-              scenario page (components/PageTabs.jsx). */}
+          {/* The tabs are the column's title (components/PageTabs.jsx). */}
           <div className="grid shrink-0 grid-cols-2 border-b border-gray-200">
             <ColumnTab
               active={leftTab === 'tasks'} onClick={() => setLeftTab('tasks')}
@@ -506,7 +505,6 @@ function FlowRun() {
                 run={runApi.selectedRun}
                 messages={runApi.runMessages}
                 onClose={() => setSelectedRunGroup(null)}
-                workspace={chatWorkspace}
               />
             ) : (
               <FlowChat

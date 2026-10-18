@@ -10,23 +10,14 @@ import { I18nProvider } from '../../i18n';
 const show = (item) => render(<I18nProvider><FeedItem e={item} /></I18nProvider>);
 
 describe('FeedItem — tool steps', () => {
-  it('summarises what the call is about, not just the tool name', () => {
-    show({ k: 'tool', tool: 'modify_world_tool', status: 'running',
-           input: '{"world_id": "wld_1", "add_locations": [{"name": "cellar"}]}' });
-    expect(screen.getByText('modify_world_tool')).toBeInTheDocument();
-    // The id is on screen already; which sections the edit touches is not.
-    expect(screen.getByText(/add_locations/)).toBeInTheDocument();
-    expect(screen.queryByText(/wld_1/)).not.toBeInTheDocument();
-  });
-
   it('renders a tool with no arguments as the bare name', () => {
-    show({ k: 'tool', tool: 'validate_world_tool', status: 'done' });
-    expect(screen.getByText('validate_world_tool')).toBeInTheDocument();
+    show({ k: 'tool', tool: 'validate_flow_tool', status: 'done' });
+    expect(screen.getByText('validate_flow_tool')).toBeInTheDocument();
   });
 
   it('shows why a failed tool failed', () => {
-    show({ k: 'tool', tool: 'modify_world_tool', status: 'error', error: 'World not found' });
-    expect(screen.getByText(/World not found/)).toBeInTheDocument();
+    show({ k: 'tool', tool: 'modify_flow_tool', status: 'error', error: 'Flow not found' });
+    expect(screen.getByText(/Flow not found/)).toBeInTheDocument();
   });
 });
 

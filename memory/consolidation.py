@@ -17,8 +17,7 @@ a tracked agent run: it has no tools, no loop, and nothing to approve, just
 one model call. ``runtime/jobs.py``'s mailbox is for a runner replica's own
 work queue (chat turns, entity turns) and would need a replica and an inbox
 message for something that is neither; a thread the backend process owns
-and polls by id is the simpler fit here, the same choice
-``evals/batch.py``'s own poll makes for its slower-moving class of job.
+and polls by id is the simpler fit here.
 
 Sessions: "a run (or chat conversation) that used this pool" is approximated
 as a recent run of an agent whose binding includes the pool, checked against

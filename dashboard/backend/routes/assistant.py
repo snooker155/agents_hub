@@ -31,11 +31,10 @@ Voice (chat/voice.py) is two more routes around the same turn, not another
 loop: ``POST /transcribe`` turns a recording into text, which the browser
 shows and sends as a turn with ``voice: true``; ``POST /speak`` reads aloud a
 sentence of a turn's answer (or the hub's own phrase for a waiting card or a
-long step). Both call the speech models directly (providers/media.py): the
-model of the workspace the turn runs in (``?workspace=``, the header's
-workspace on the page), else the home workspace's, with the personal
-fallback to ``default`` (:func:`voice_entry`), and both are charged: a transcription as a ``voice`` run of its
-own, speech on the turn's run. A short spoken yes or no while a card waits in
+long step). Both call the hub's voice models directly
+(providers/voice_models.py, chosen on the Models page, Voice tab), and both
+are charged: a transcription as a ``voice`` run of its own, in the workspace
+the turn will run in, speech on the turn's run. A short spoken yes or no while a card waits in
 the thread answers that card (audited with ``via: voice``), except a
 connection card, whose secret is only ever typed.
 """
@@ -45,7 +44,7 @@ import logging
 import os
 import re
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -104,7 +103,7 @@ class AssistantTurnIn(BaseModel):
     #: Whether the message was spoken: a transcript from ``/transcribe``.
     voice: bool = False
     #: The browser's IANA timezone (``Intl``), so "every morning at 8" means the
-    #: person's morning when the assistant schedules a pulse (schedule_pulse).
+    #: person's morning when the assistant schedules a job.
     timezone: str = ""
     #: The first run's screen the person asks from (common/first_run.py), while
     #: the first run is on; the turn then says so in its prompt.
@@ -628,11 +627,11 @@ def _context_setup(ctx: SimpleNamespace) -> None:
     _workspace_ctx.set(ctx.workspace)
 
 
-def voice_entry(purpose: str, workspace: str, home: str) -> Tuple[Optional[Dict[str, Any]], str]:
-    """The model voice uses for ``purpose``: :func:`providers.special.voice_entry`
+def voice_entry(purpose: str) -> Optional[Dict[str, Any]]:
+    """The model voice uses for ``purpose``: :func:`providers.voice_models.entry`
     (the assistant's lookup reads the same, so it names the models the page uses)."""
-    from providers import special
-    return special.voice_entry(purpose, workspace, home)
+    from providers import voice_models
+    return voice_models.entry(purpose)
 
 
 def voice_status(workspace: str, home: Optional[str] = None, viewer: Any = None) -> Dict[str, Any]:
@@ -640,22 +639,19 @@ def voice_status(workspace: str, home: Optional[str] = None, viewer: Any = None)
     the transcription and speech models it would use (None when there is
     none, and the page falls back to the browser's own), the speech model's
     default voice and the voices it is known to have."""
-    from providers import special
-    home = home or workspace
+    from providers import voice_models
 
     def model(purpose: str) -> Optional[Dict[str, Any]]:
-        entry, where = voice_entry(purpose, workspace, home)
+        entry = voice_entry(purpose)
         if not entry:
             return None
-        return {"provider": entry.get("provider"), "model": entry.get("model"), "workspace": where,
-                "inherited_from": entry.get(special.INHERITED_KEY)}
+        return {"provider": entry.get("provider"), "model": entry.get("model"), "workspace": workspace}
 
     speech = model("speech")
-    if speech is not None:
-        entry, _ = voice_entry("speech", workspace, home)
-        assert entry is not None  # model("speech") above found it
-        kind = special.provider_kind(str(entry.get("provider") or ""))
-        purpose = special.get_purpose("speech")
+    entry = voice_entry("speech")
+    if speech is not None and entry is not None:
+        kind = voice_models.provider_kind(str(entry.get("provider") or ""))
+        purpose = voice_models.get_purpose("speech")
         speech["voice"] = (entry.get("options") or {}).get("voice") or ""
         speech["voices"] = list(purpose.voices.get(kind, ())) if (purpose and kind) else []
         # A cloud voice speaks every language: none is tied to one.
@@ -683,22 +679,18 @@ def _meta(ctx: SimpleNamespace) -> Dict[str, Any]:
 
 # ── voice ────────────────────────────────────────────────────────────────────
 
-def _model_not_added(purpose: str, home: str) -> HTTPException:
-    from common import personal_workspace
-    where = (f"this personal workspace or in '{personal_workspace.FALLBACK}', which it falls back to"
-             if personal_workspace.is_personal(home) else f"workspace '{home}'")
+def _model_not_added(purpose: str) -> HTTPException:
     return HTTPException(status_code=409, detail={
         "code": "model_not_added", "purpose": purpose,
-        "message": f"No {purpose} model is added in {where}. Add one on the Models page, "
-                   "Special models tab.",
+        "message": f"No {purpose} model is chosen. Choose one on the Models page, Voice tab.",
     })
 
 
-def _speech_entry(purpose: str, workspace: str, home: str) -> Tuple[Dict[str, Any], str]:
-    entry, where = voice_entry(purpose, workspace, home)
+def _speech_entry(purpose: str) -> Dict[str, Any]:
+    entry = voice_entry(purpose)
     if not entry:
-        raise _model_not_added(purpose, workspace)
-    return entry, where
+        raise _model_not_added(purpose)
+    return entry
 
 
 def _provider_failed(what: str, exc: Exception) -> HTTPException:
@@ -745,21 +737,21 @@ async def transcribe(request: Request):
         raise HTTPException(status_code=413, detail={
             "code": "too_long", "message": f"The recording is longer than {int(MAX_AUDIO_SECONDS)} seconds."})
 
-    entry, where = _speech_entry("transcription", workspace, ctx.home)
+    entry = _speech_entry("transcription")
     language = str(request.query_params.get("language") or "").strip().lower()[:5] or None
     language = language or (entry.get("options") or {}).get("language")
     import asyncio
-    from providers import media, special
+    from providers import voice_models
     try:
-        ep = special.entry_endpoint(entry, where)
-        text = await asyncio.to_thread(media.transcribe, ep, entry["model"],
+        ep = voice_models.endpoint(entry["provider"])
+        text = await asyncio.to_thread(voice_models.transcribe, ep, entry["model"],
                                        (f"recording.{ext}", data, mime), language=language, prompt=None)
     except Exception as exc:  # noqa: BLE001 - the page shows the provider's reason
         raise _provider_failed("Transcription", exc)
     item = voice.call_entry("transcription", entry, _price(entry), 1)
     principal = ctx.principal
     user_id = str(principal.id) if (_multi() and principal is not None) else None
-    run_id = voice.record_input_run(workspace=where, user_id=user_id, item=item,
+    run_id = voice.record_input_run(workspace=workspace, user_id=user_id, item=item,
                                     agent_id=ASSISTANT_AGENT_ID, chars=len(text),
                                     purpose=request.query_params.get("purpose"))
     return {"text": text, "language": language, "run_id": run_id, "cost_usd": item["cost_usd"],
@@ -812,10 +804,6 @@ def _thread_run(principal: Any, run_id: str) -> Dict[str, Any]:
     return run
 
 
-def _home_of_thread(principal: Any, key: str) -> str:
-    return "default"
-
-
 def _phrase(body: SpeakIn, run: Dict[str, Any]) -> str:
     """What to read: a sentence of the turn's own answer, or the hub's own
     phrase for a card or a step. Anything else is refused."""
@@ -865,18 +853,16 @@ async def speak(body: SpeakIn, request: Request):
     left to say once the Markdown is cleaned."""
     principal = _principal(request)
     run = _thread_run(principal, body.run_id)
-    home = _home_of_thread(principal, run["_thread_key"])
     spoken = _phrase(body, run)
     if not spoken:
         return Response(status_code=204)
     if body.voice and not _VOICE_NAME_RE.match(body.voice):
         raise HTTPException(status_code=400, detail="voice must be a voice name")
-    turn_workspace = str(run.get("workspace") or home)
-    entry, where = _speech_entry("speech", turn_workspace, home)
+    entry = _speech_entry("speech")
     price = _price(entry)
     cost = None if price is None else price * len(spoken) / 1000.0
     import asyncio
-    from providers import media, special, speech_languages
+    from providers import speech_languages, voice_models
     # The answer's language picks its voice, once per turn: a sentence in
     # another language inside it keeps the same voice. The hub's own phrases
     # (a card, a long step) are in the page's language.
@@ -887,9 +873,9 @@ async def speak(body: SpeakIn, request: Request):
         language = speech_languages.text_language(spoken, body.language)
     entry, chosen_voice = speech_languages.pick(entry, language, body.voice)
     try:
-        ep = special.entry_endpoint(entry, where)
-        audio = await asyncio.to_thread(media.synthesize_speech, ep, entry["model"], spoken,
-                                        voice=chosen_voice, instructions=None,
+        ep = voice_models.endpoint(entry["provider"])
+        audio = await asyncio.to_thread(voice_models.synthesize_speech, ep, entry["model"], spoken,
+                                        voice=chosen_voice,
                                         options=dict(entry.get("options") or {}),
                                         timeout=CLOUD_SPEAK_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - the page falls back to the browser's voice
@@ -915,33 +901,33 @@ class SampleIn(BaseModel):
 async def voice_sample(body: SampleIn, request: Request):
     """A short line read with the speech model the turns use and ``voice``,
     so the settings can play a voice before it is picked: in the voice's own
-    language, else the page's (:func:`providers.special.sample_text`). Charged
+    language, else the page's (:func:`providers.voice_models.sample_text`). Charged
     like a transcription, as a ``voice`` run of its own. The line and its
     language come in ``X-Sample-Text`` (URL-encoded) and ``X-Sample-Language``."""
     ctx = resolve_thread(request, body.mode or None)
     workspace = _voice_workspace(ctx, body.workspace or None)
     if body.voice and not _VOICE_NAME_RE.match(body.voice):
         raise HTTPException(status_code=400, detail="voice must be a voice name")
-    entry, where = _speech_entry("speech", workspace, ctx.home)
+    entry = _speech_entry("speech")
     import asyncio
     from urllib.parse import quote
-    from providers import special, speech_languages
+    from providers import speech_languages, voice_models
     # A sample in a language is read with that language's voice, when set.
     entry, chosen_voice = speech_languages.pick(entry, body.language, body.voice, given_wins=True)
     try:
         audio, lang, text = await asyncio.to_thread(
-            special.voice_sample,
+            voice_models.voice_sample,
             {"provider": entry["provider"], "model": entry["model"], "voice": chosen_voice or "",
              "options": dict(entry.get("options") or {})},
-            entry.get(special.INHERITED_KEY) or where, body.language or None)
-    except special.SpecialModelError as exc:
+            body.language or None)
+    except voice_models.VoiceModelError as exc:
         raise _provider_failed("Speech synthesis", exc)
     price = _price(entry)
     item = voice.call_entry("speech", entry, None if price is None else price * len(text) / 1000.0,
                             round(len(text) / 1000.0, 3))
     principal = ctx.principal
     user_id = str(principal.id) if (_multi() and principal is not None) else None
-    voice.record_input_run(workspace=where, user_id=user_id, item=item, agent_id=ASSISTANT_AGENT_ID,
+    voice.record_input_run(workspace=workspace, user_id=user_id, item=item, agent_id=ASSISTANT_AGENT_ID,
                            chars=len(text), purpose="sample", output=f"Read a {len(text)}-character sample.")
     return Response(content=audio.data, media_type=audio.mime_type,
                     headers={"Cache-Control": "no-store", "X-Sample-Language": lang, "X-Sample-Text": quote(text)})

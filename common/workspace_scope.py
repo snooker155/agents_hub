@@ -15,7 +15,7 @@ run belongs to. Three rules carry that, each enforced where it can be:
   always have (``common.workspace_context.task_in_workspace``).
 * **Tools that see the whole service are for the service's own agents.**
   :data:`SERVICE_WIDE_TOOLS` (every run, session, container and instance of
-  the hub, its costs and logs, the system workspace's repository) are held only
+  the hub, its logs, the system workspace's repository) are held only
   by :data:`SERVICE_WIDE_AGENTS`: the service agent, and the maintenance
   loop's agents of the system workspace. Refused at save time for anybody
   else, taken off at build time.
@@ -47,7 +47,7 @@ SERVICE_WIDE_AGENTS = frozenset({"service_agent", "system_doctor", "system_engin
 SERVICE_WIDE_TOOLS = frozenset({
     # runs, sessions and their logs, of every workspace
     "list_runs", "run_log", "list_sessions", "search_errors", "routing_log", "web_log_recent",
-    "costs_summary", "prune_run_logs", "stop_run",
+    "prune_run_logs", "stop_run",
     # the hub's containers and resident instances
     "list_containers", "container_logs", "stop_container", "list_instances", "instance_logs",
     "instance_timeline", "stop_instance", "restart_instance",
@@ -78,7 +78,7 @@ ASSISTANT_AGENT = "assistant"
 #: written, and the assistant can also send messages out (the capability
 #: guard's trifecta); reading logs stays with the service agent.
 ASSISTANT_SERVICE_TOOLS: frozenset = frozenset({
-    "service_health", "run_diagnostics", "list_sessions", "routing_log", "costs_summary",
+    "service_health", "run_diagnostics", "list_sessions", "routing_log",
     "stop_run", "list_containers", "stop_container", "list_instances", "stop_instance",
     "restart_instance", "service_lookup",
 })

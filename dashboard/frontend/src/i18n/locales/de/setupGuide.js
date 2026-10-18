@@ -28,13 +28,9 @@ export default {
       title: 'Dem Assistenten eine Stimme geben',
       why: 'Mit einem Sprach- und einem Transkriptionsmodell hört und spricht der Assistent in jedem Browser.',
     },
-    web_search: {
-      title: 'Websuche einschalten',
-      why: 'Agenten können dann im Web suchen, nicht nur Seiten öffnen, die man ihnen gibt.',
-    },
     demo: {
       title: 'Den Demo-Arbeitsbereich ansehen',
-      why: 'Vier Agenten mit Chats, Ansichten und einem Pulse zeigen, was der Hub kann, noch bevor Sie etwas gebaut haben.',
+      why: 'Vier Agenten mit Chats, Ansichten und einem Team zeigen, was der Hub kann, noch bevor Sie etwas gebaut haben.',
     },
     people: {
       title: 'Ihr Team einladen',
@@ -66,7 +62,7 @@ export default {
     },
     automation: {
       title: 'Etwas von selbst laufen lassen',
-      why: 'Ein Watcher weckt einen Agenten bei neuer Post oder einer geänderten Seite; ein Pulse lässt einen Agenten nach Zeitplan nachsehen.',
+      why: 'Ein Zeitplan auf der Seite Plan startet einen Agenten, einen Flow oder eine Schleife zu den Zeiten, die Sie wählen.',
     },
     tour: {
       title: 'Die Willkommenstour machen',

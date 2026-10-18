@@ -56,9 +56,6 @@ def _fresh_database(db, path: Path) -> None:
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
     "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
-    # A developer's own browser service would answer the "not configured" tests.
-    "AGENTS_HUB_BROWSER_URL": ("browser_url", ""),
-    "AGENTS_HUB_BROWSER_TOKEN": ("browser_token", ""),
 }
 
 # Keys a guard resolves live (common.config.agent_execution_mode and
@@ -129,9 +126,8 @@ def provider_env_isolated(tmp_path, monkeypatch):
         if hasattr(settings, field):
             monkeypatch.setattr(settings, field, getattr(settings, field), raising=False)
     saved = {key: os.environ.get(key) for key in provider_env.PROVIDER_ENV_KEYS}
-    # The developer's own model keys reach nothing: a key alone now turns
-    # web_search on (tools/web.py effective_search_provider), and a test
-    # must never make a live call on it. A test that needs a key saves one.
+    # The developer's own model keys reach nothing: a test must never make a
+    # live call on one. A test that needs a key saves one.
     for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(key, raising=False)
         field = provider_env._SETTINGS_FIELD.get(key)
@@ -143,16 +139,6 @@ def provider_env_isolated(tmp_path, monkeypatch):
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
-
-
-@pytest.fixture(autouse=True)
-def browser_service_isolated(tmp_path, monkeypatch):
-    """Keep the developer's browser service out of the tests: its pid file
-    lives under the real ``.agents_hub``, and while that service runs, every
-    status probe in the suite found it alive and answered for it."""
-    from common import browser_service
-    monkeypatch.setattr(browser_service, "STATE_FILE", tmp_path / "browser_service.json")
-    monkeypatch.setattr(browser_service, "LOG_FILE", tmp_path / "browser_service.log")
 
 
 @pytest.fixture(autouse=True)
@@ -194,13 +180,6 @@ def fresh_db(tmp_path, monkeypatch):
                 thread.stop()
     except Exception:  # noqa: BLE001 - a teardown guard, never a failure of its own
         logging.getLogger(__name__).debug("heartbeat teardown failed", exc_info=True)
-    # The same for the outbox drainer (notify/outbound.py): once a test starts
-    # it, it polls the database for the rest of the session.
-    # Only a live one: shutdown() joins the queue, which nothing would drain.
-    outbound = _sys.modules.get("notify.outbound")
-    worker = getattr(outbound, "_worker", None) if outbound is not None else None
-    if worker is not None and worker.is_alive():
-        outbound.shutdown()  # never raises
 
     db._schema_ready = False
     db._local = threading.local()

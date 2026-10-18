@@ -2,7 +2,7 @@
 ``hub_lookup`` (chat/lookup.py, tools/hub_lookup.py; the assistant plan,
 stage 5, wave 1): the hub's records as the person behind the turn sees them.
 
-What is promised: a lookup lists and describes runs, sessions, spend, budgets,
+What is promised: a lookup lists and describes runs, sessions, budgets,
 models, agents, notifications and approvals, plus the reference kinds; it
 reads only workspaces the person can reach and never another person's
 personal workspace; it returns metadata, never a run's answer; every result
@@ -23,7 +23,6 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from chat import lookup  # noqa: E402
-from common import personal_workspace  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
@@ -96,15 +95,14 @@ def test_a_run_card_is_metadata_with_its_page_never_its_answer(single, hub):
 
 
 def test_voice_names_the_models_the_page_uses_and_the_browser_without_them(multi, hub):
-    from providers import special
+    from providers import voice_models
     bob = _user("bob")
     _member_of(bob, "team")
-    home = personal_workspace.ensure_personal_workspace(bob)
-    # nothing added anywhere: the page uses the browser's own
+    # nothing chosen: the page uses the browser's own
     card = lookup.lookup("voice", entity_id="speech", workspace="team", user_id=bob)
     assert card["fields"]["model"] is None and "browser" in card["fields"]["used_instead"]
-    # added in default: the person's home inherits it, a turn in team falls back to the home
-    special.save("default", {
+    # chosen on the Models page: the same pair in every workspace
+    voice_models.save({
         "speech": {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "alloy"}},
         "transcription": {"provider": "openai", "model": "gpt-4o-mini-transcribe"},
     })
@@ -112,13 +110,9 @@ def test_voice_names_the_models_the_page_uses_and_the_browser_without_them(multi
     assert [r["label"] for r in listed] == ["transcription: openai/gpt-4o-mini-transcribe",
                                            "speech: openai/gpt-4o-mini-tts"]
     speech = lookup.lookup("speech", entity_id="speech", workspace="team", user_id=bob)["fields"]
-    assert speech["voice"] == "alloy" and speech["from_workspace"] == "default"
-    # a model the workspace added itself wins
-    special.save("team", {"transcription": {"provider": "openai", "model": "whisper-1"}})
-    heard = lookup.lookup("voice", entity_id="transcription", workspace="team", user_id=bob)["fields"]
-    assert heard["model"] == "openai/whisper-1" and heard["from_workspace"] == "team"
-    # and the model list shows the special models as well
-    models = lookup.lookup("model", query="transcription", workspace=home, user_id=bob)["items"]
+    assert speech["voice"] == "alloy" and speech["model"] == "openai/gpt-4o-mini-tts"
+    # and the model list shows the voice models as well
+    models = lookup.lookup("model", query="transcription", workspace="team", user_id=bob)["items"]
     assert models and models[0]["label"] == "transcription: openai/gpt-4o-mini-transcribe"
 
 
@@ -211,8 +205,8 @@ def test_the_assistant_holds_hub_lookup_and_the_guard_allows_it(single, hub, mon
 # ── coverage of the dashboard ────────────────────────────────────────────────
 
 #: Pages wave 1 promised to cover (the plan's table).
-WAVE_1_PAGES = {"/messages", "/sessions", "/costs", "/models", "/agents", "/tasks", "/flows", "/teams",
-                "/loops", "/projects", "/playground", "/plan", "/artifacts"}
+WAVE_1_PAGES = {"/messages", "/sessions", "/models", "/agents", "/tasks", "/flows", "/teams",
+                "/loops", "/projects", "/plan", "/artifacts"}
 
 
 def _routes() -> set:

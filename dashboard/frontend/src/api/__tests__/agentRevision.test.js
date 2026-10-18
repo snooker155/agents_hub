@@ -50,7 +50,7 @@ describe('agentRevision', () => {
     expect(agentRevision('a1')).toBe('h1');
     await api.put('/agents/a1/definition', { instructions: 'x' });
     expect(ifMatch(sent[1])).toBe('"h1"');
-    await api.post('/agents/a1/proactive/wake');
+    await api.post('/agents/a1/versions/2/rollback');
     expect(ifMatch(sent[2])).toBeFalsy();
   });
 

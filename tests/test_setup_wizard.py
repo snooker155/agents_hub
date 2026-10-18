@@ -178,7 +178,7 @@ def test_written_env_is_accepted_by_the_service_settings(target, fake_probe, mon
     from common.config import Settings
     W.run(_asker({"shape": "local", "flow": "advanced",
                   "providers": {"openai": {"api_key": "sk-1"}}, "demo": False, "rag": False,
-                  "execution": "local", "web_search": "auto"}), no_start=True)
+                  "execution": "local"}), no_start=True)
     env = W.read_env(target / ".env")
     for key in env:
         monkeypatch.delenv(key, raising=False)
@@ -235,17 +235,13 @@ def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
     assert answered.voice == {"mode": "browser"} and answered.env["DEMO_WORKSPACE"] == "1"
 
 
-def test_voice_is_saved_in_the_default_workspace_keeping_its_other_models():
-    from providers import special
-    from workspace import create_workspace_folder
-    create_workspace_folder("default")
-    special.save("default", {"image": {"provider": "openai", "model": "gpt-image-1"}})
+def test_voice_is_saved_in_the_voice_models():
+    from providers import voice_models
     plan = W.Plan(providers={"openai": {"model": "gpt-5.4", "models": [], "presets": {}}})
     a = _asker({"voice": {"mode": "cloud", "voice": "onyx"}})
     W.step_voice(a, plan)
     W._apply_voice_local(a, plan)
-    stored = special.stored("default")
-    assert stored["image"]["model"] == "gpt-image-1"
+    stored = voice_models.stored()
     assert stored["speech"]["options"] == {"voice": "onyx"} and stored["transcription"]["price_usd"] == 0.003
 
 
@@ -259,7 +255,7 @@ def test_review_masks_a_password_in_any_url():
 def test_rag_on_the_local_shape_sets_the_store_and_may_add_the_extra(monkeypatch):
     monkeypatch.setattr(W, "_has_module", lambda name: False)
     plan = W.Plan(quick=False, fresh=True)
-    W.step_features(_asker({"demo": False, "execution": "local", "web_search": "auto", "rag": True}), plan)
+    W.step_features(_asker({"demo": False, "execution": "local", "rag": True}), plan)
     assert plan.env["RAG_VECTOR_DB"] == "chroma" and plan.pip_extras == ["rag"]
     assert "AGENTS_HUB_EGRESS_PROXY" not in plan.env
 

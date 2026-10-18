@@ -10,8 +10,8 @@ Good fits:
 
 Poor fits:
 - Code, a diff, or anything a development agent produced: use the Code Reviewer
-- Standalone fact-checking with no task and no sources to check against. The Web Search Agent
-  answers that directly; this agent exists to re-check claims against sources already at hand
+- Standalone fact-checking with no task and no sources to check against: this agent exists to
+  re-check claims against sources already at hand
 - Asking for the work to be fixed alongside the review: the Verifier reports, it does not repair
 
 How to invoke:
@@ -20,7 +20,5 @@ How to invoke:
   `get_task`
 - On block, the reason field carries the actionable feedback for the next iteration
 
-One limitation to know: delegating a fact to the Web Search Agent works in chat, not inside a
-tracked task, where `run_agent_tool` is refused by design. Running as a task review, this agent
-checks what the workspace, memory, and connected databases already show, and says so when a claim
-can only be settled by the live web.
+This agent checks what the workspace, memory, and connected databases already show, and says so
+when a claim can only be settled by the live web.

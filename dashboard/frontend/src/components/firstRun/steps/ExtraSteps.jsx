@@ -1,21 +1,19 @@
 /**
- * The screens after the voice, each with a "not now" or a plain choice: web
- * search, personal memory, the demo workspace. A screen whose answer is
- * already in place (a voice set by the local set, search through the model's
- * own key, the demo already there) says so and only asks to go on.
+ * The screens after the voice, each with a "not now" or a plain choice:
+ * personal memory, the demo workspace. A screen whose answer is already in
+ * place (the demo already there) says so and only asks to go on.
  */
 import { useEffect, useState } from 'react';
 import {
-  Brain, BrainCircuit, ExternalLink, Globe, LayoutGrid, Sparkles, SquareDashed,
+  Brain, BrainCircuit, LayoutGrid, Sparkles, SquareDashed,
 } from 'lucide-react';
 import { useI18n } from '../../../i18n';
-import { updateSettings } from '../../../api/models';
 import { setDemo } from '../../../api/demo';
 import { getWorkspacePersonalMemory, updateWorkspacePersonalMemory } from '../../../api/workspaces';
 import {
-  ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
+  ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, PrimaryButton, StepFrame,
 } from '../ui';
-import { PROVIDER_LABELS, errorText, fieldCls } from '../firstRunModel';
+import { errorText } from '../firstRunModel';
 
 /** Runs one save, then moves on; keeps the error on screen if it fails. */
 function useSave(next) {
@@ -35,91 +33,6 @@ function useSave(next) {
     }
   };
   return { busy, error, run };
-}
-
-const SEARCH = [
-  { id: 'brave', label: 'Brave', page: 'https://api-dashboard.search.brave.com/app/keys' },
-  { id: 'tavily', label: 'Tavily', page: 'https://app.tavily.com/home' },
-  { id: 'exa', label: 'Exa', page: 'https://dashboard.exa.ai/api-keys' },
-];
-
-export function SearchStep({ ctx, refreshCtx, next, configured }) {
-  const { t } = useI18n();
-  const [changing, setChanging] = useState(false);
-  const { busy, error, run } = useSave(next);
-  const [service, setService] = useState('brave');
-  const [key, setKey] = useState('');
-  const search = ctx?.search || {};
-  const on = Boolean(search.key_set);
-  const page = SEARCH.find((s) => s.id === service)?.page;
-
-  const save = () => run(async () => {
-    await updateSettings({ web_search_provider: service, web_search_api_key: key.trim() });
-    setKey('');
-    await refreshCtx();
-  });
-
-  const was = configured?.search;
-  if (was && !changing) {
-    const viaModel = was.source === 'model_key';
-    const label = viaModel
-      ? (PROVIDER_LABELS[was.provider] || was.provider)
-      : (SEARCH.find((s) => s.id === was.provider)?.label || was.provider);
-    return (
-      <ConfiguredFrame icon={Globe} title={t('firstRun.search.title')} subtitle={t('firstRun.search.subtitle')}
-        summary={label} detail={viaModel ? t('firstRun.search.viaModel', { provider: label }) : ''}
-        onContinue={() => next()} onChange={() => setChanging(true)} testId="first-run-search" t={t} />
-    );
-  }
-
-  return (
-    <StepFrame
-      icon={Globe}
-      title={t('firstRun.search.title')}
-      subtitle={t('firstRun.search.subtitle')}
-      testId="first-run-search"
-      footer={on ? (
-        <PrimaryButton onClick={() => next()} testId="first-run-continue">{t('firstRun.continue')}</PrimaryButton>
-      ) : (
-        <>
-          <PrimaryButton onClick={save} busy={busy} disabled={!key.trim()} testId="first-run-continue">{t('firstRun.search.turnOn')}</PrimaryButton>
-          <LaterButton onClick={() => next()} testId="first-run-later">{t('firstRun.notNow')}</LaterButton>
-        </>
-      )}
-    >
-      {on ? (
-        <DoneNote
-          testId="first-run-search-on"
-          title={t('firstRun.search.on')}
-          detail={search.source === 'model_key'
-            ? t('firstRun.search.viaModel', { provider: PROVIDER_LABELS[search.provider] || search.provider })
-            : t('firstRun.search.via', { provider: search.provider })}
-        />
-      ) : (
-        <div className="space-y-4">
-          <p className="text-sm text-center text-gray-500">{t('firstRun.search.why')}</p>
-          <Pills items={SEARCH} value={service} onChange={setService} />
-          <input
-            type="password"
-            autoComplete="new-password"
-            aria-label={t('firstRun.search.key')}
-            placeholder={t('firstRun.search.keyPlaceholder', { service: SEARCH.find((s) => s.id === service)?.label })}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            className={fieldCls}
-            data-testid="first-run-search-key"
-          />
-          {page && (
-            <a href={page} target="_blank" rel="noreferrer"
-              className="flex items-center justify-center gap-1 text-sm text-indigo-600 hover:text-indigo-800">
-              {t('firstRun.search.getKey')}<ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          )}
-        </div>
-      )}
-      <ErrorLine>{error}</ErrorLine>
-    </StepFrame>
-  );
 }
 
 export function MemoryStep({ next }) {

@@ -426,13 +426,13 @@ class ViewOwner(BaseModel):
     """Who produced this view: the run whose output it is.
 
     ``kind="run"`` names a row in the ``runs`` table (an agent run: a chat
-    turn, a flow node, a team member's turn, a scenario decision); the other
+    turn, a flow node, a team member's turn); the other
     kinds name a row in ``entity_runs`` (common/entity_runs.py), the flow,
-    loop, team or scenario run itself, which is what a person actually opens
+    loop or team run itself, which is what a person actually opens
     to see the work the view came out of. See ``views/owner.py`` for how the
     owner of a freshly created view is resolved.
     """
-    kind: Literal["run", "flow", "loop", "team", "scenario"]
+    kind: Literal["run", "flow", "loop", "team"]
     id: str
 
     @model_validator(mode="after")
@@ -456,7 +456,7 @@ class ViewEnvelope(BaseModel):
     other on read: giving either alone fills in the other (a ``run``-kind owner
     from ``run_id`` for old callers; ``run_id`` from an owner whose kind is
     ``run`` so a view opened by run id still resolves). An owner of any other
-    kind (``flow``/``loop``/``team``/``scenario``) leaves ``run_id`` at
+    kind (``flow``/``loop``/``team``) leaves ``run_id`` at
     whatever the caller passed, usually ``None``, since the view belongs to
     the entity run, not to an agent run.
     """

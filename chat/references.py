@@ -3,7 +3,7 @@ Chat context references — service entities the user attaches to a message.
 
 The composer's paperclip is not only a file picker. Next to "a file from my
 computer" the user can point at something the hub already holds — a task, a
-view, a project, a playground scenario, a loop, a flow, a team, an agent, a
+view, a project, a loop, a flow, a team, an agent, a
 scheduled job — and have it folded into the prompt for that one turn.
 
 Two halves live here:
@@ -16,8 +16,8 @@ Two halves live here:
   ``=== Attached <noun> ===`` sections, the same shape chat attachments use.
 
 Why render server-side instead of letting the agent fetch: an explicit pick has
-to work even when the agent has no tool for that kind — a playground scenario or
-a loop has none at all, so "ask the agent to load it" is not available. When the
+to work even when the agent has no tool for that kind — a loop
+has none at all, so "ask the agent to load it" is not available. When the
 agent *does* have a loading tool, the rendered block still names it with the id,
 so the agent can pull fresher or deeper detail on its own — the way it already
 does for tasks today.
@@ -269,63 +269,6 @@ def _render_project(entity_id: str) -> Optional[Dict[str, str]]:
     return {"title": project.name or f"Project {entity_id[:8]}", "body": "\n".join(lines), "workspace": project.workspace}
 
 
-# ── playground scenario ──────────────────────────────────────────────────────
-
-def _list_scenarios(workspace: Optional[str], project_id: Optional[str], query: str) -> List[Dict[str, Any]]:
-    from playground.store import list_scenarios
-
-    out = []
-    for scenario in list_scenarios(workspace or None):
-        if not _matches(query, scenario.name, scenario.description, scenario.environment, scenario.scenario_id):
-            continue
-        out.append(_item(
-            scenario.scenario_id,
-            scenario.name or scenario.scenario_id,
-            " · ".join(x for x in [scenario.environment, f"{len(scenario.roles)} roles"] if x),
-        ))
-    return out
-
-
-def _render_scenario(entity_id: str) -> Optional[Dict[str, str]]:
-    from playground.store import get_scenario, list_sim_runs
-
-    scenario = get_scenario(entity_id)
-    if scenario is None:
-        return None
-    lines = _fields({
-        "scenario_id": scenario.scenario_id,
-        "name": scenario.name,
-        "environment": scenario.environment,
-        "workspace": scenario.workspace,
-        "activation": scenario.activation,
-        "max_ticks": scenario.max_ticks,
-        "seed": scenario.seed,
-        "default_model": scenario.default_model,
-        "default_provider": scenario.default_provider,
-    })
-    lines += _prose("Description", scenario.description)
-    if scenario.roles:
-        lines += ["", "Roles:"]
-        for role in scenario.roles:
-            lines.append(
-                f"- {role.name or role.agent_id} ({role.role or 'no role'}) — "
-                f"agent={role.agent_id or '-'}; goal={role.goal or '-'}"
-            )
-    lines += _json_block("Environment params", scenario.env_params, limit=2000)
-    try:
-        runs = list_sim_runs(scenario_id=entity_id, limit=5)
-    except Exception:  # noqa: BLE001 - the scenario is rendered without recent runs
-        log.debug("scenario runs read failed", exc_info=True)
-        runs = []
-    if runs:
-        lines += ["", "Recent runs:"]
-        lines += [
-            f"- {r.sim_run_id} status={r.status} ticks={getattr(r, 'ticks_done', '')}"
-            for r in runs
-        ]
-    return {"title": scenario.name or f"Scenario {entity_id[:8]}", "body": "\n".join(lines), "workspace": scenario.workspace}
-
-
 # ── loop ─────────────────────────────────────────────────────────────────────
 
 def _list_loops(workspace: Optional[str], project_id: Optional[str], query: str) -> List[Dict[str, Any]]:
@@ -516,41 +459,7 @@ def _render_agent(entity_id: str) -> Optional[Dict[str, str]]:
         "tools": list(getattr(spec, "tools", None) or []),
     })
     lines += _prose("Description", getattr(spec, "description", ""))
-    lines += _pulse_lines(spec)
     return {"title": getattr(spec, "name", "") or entity_id, "body": "\n".join(lines)}
-
-
-def _pulse_lines(spec: Any) -> List[str]:
-    """The agent's pulse (docs/proactive.md), when it has one: the schedule,
-    its state, the next tick and the last tick's outcome, so a chat about the
-    agent can answer what it is up to on its own."""
-    try:
-        from proactive.service import status as pulse_status
-        body = pulse_status(spec.id, limit=5)
-    except Exception:  # noqa: BLE001 - no pulse to describe
-        return []
-    if not body or not (body.get("profile") or {}).get("enabled") or not body.get("job"):
-        return []
-    job = body["job"]
-    fields = {
-        "pulse": body.get("schedule"),
-        "pulse_status": job.get("status") + (f" ({job['paused_reason']})" if job.get("paused_reason") else ""),
-        "next_tick": job.get("run_at") if job.get("status") == "scheduled" else None,
-        "pending_events": len(job.get("pending_events") or []) or None,
-    }
-    usage = body.get("usage") or {}
-    if usage:
-        fields["today"] = f"{usage.get('runs', 0)} ticks, ${usage.get('spent_usd', 0):.2f}"
-    lines = _fields(fields)
-    last = next((t for t in body.get("ticks") or [] if t.get("outcome")), None)
-    if last:
-        text = f"{last.get('at', '')}: {last.get('outcome')}"
-        if last.get("summary"):
-            text += f". {last['summary']}"
-        if last.get("next_check"):
-            text += f" Next check: {last['next_check']}"
-        lines += _prose("Last tick", text)
-    return lines
 
 
 # ── scheduled job ────────────────────────────────────────────────────────────
@@ -623,8 +532,6 @@ KINDS: Dict[str, RefKind] = {
                 tools=("view_get",)),
         RefKind("project", "Project", "📁", _list_projects, _render_project,
                 lambda i: f"/projects/{quote(i)}"),
-        RefKind("scenario", "Scenario", "🎲", _list_scenarios, _render_scenario,
-                lambda i: f"/playground/{quote(i)}"),
         RefKind("loop", "Loop", "🔁", _list_loops, _render_loop,
                 lambda i: f"/loops?loop={quote(i)}"),
         RefKind("flow", "Flow", "🔀", _list_flows, _render_flow,

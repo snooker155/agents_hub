@@ -53,14 +53,14 @@ def test_the_first_call_has_no_tools_behind_it(callback):
 
 def test_each_call_names_the_tools_that_ran_before_it(callback):
     _call(callback)
-    _tool(callback, "list_environments_tool")
+    _tool(callback, "list_tasks")
     _call(callback)
-    _tool(callback, "create_scenario_tool")
+    _tool(callback, "create_flow_tool")
     _call(callback)
 
     invocations = callback.llm_invocations
     assert [i["tools"] for i in invocations] == [
-        [], ["list_environments_tool"], ["create_scenario_tool"],
+        [], ["list_tasks"], ["create_flow_tool"],
     ]
     # Everything after the first tool is a tool-driven call, as before.
     assert [i["kind"] for i in invocations] == ["llm", "tool", "tool"]
@@ -69,12 +69,12 @@ def test_each_call_names_the_tools_that_ran_before_it(callback):
 def test_parallel_tool_calls_all_land_on_the_call_they_fed(callback):
     """Two tools between one pair of calls belong to the same follow-up."""
     _call(callback)
-    _tool(callback, "validate_scenario_tool")
-    _tool(callback, "create_scenario_tool")
+    _tool(callback, "validate_flow_tool")
+    _tool(callback, "create_flow_tool")
     _call(callback)
 
     assert callback.llm_invocations[1]["tools"] == [
-        "validate_scenario_tool", "create_scenario_tool",
+        "validate_flow_tool", "create_flow_tool",
     ]
 
 

@@ -16,7 +16,7 @@ Each top-level bullet is one criterion. If the rubric has no bullets, its headin
 
 ## Grading
 
-After every completed run of the task, whether an agent, a flow, a team, a loop or a scenario worked it, an independent model grades the result criterion by criterion (orchestrator, code_reviewer and decomposer runs are skipped). For an agent run the result is the run's final answer and the grader also sees a short list of its tool calls; for the other executors it is the result they stored on the task. The grader never sees the agent's conversation. Each criterion gets passed or not, a score from 0 to 1, and feedback.
+After every completed run of the task, whether an agent, a flow, a team or a loop worked it, an independent model grades the result criterion by criterion (orchestrator, code_reviewer and decomposer runs are skipped). For an agent run the result is the run's final answer and the grader also sees a short list of its tool calls; for the other executors it is the result they stored on the task. The grader never sees the agent's conversation. Each criterion gets passed or not, a score from 0 to 1, and feedback.
 
 The outcome passes when every criterion passes, or when the mean score reaches the `threshold` if one is set (0 to 1). If it passes, the task resolves as usual. If not and attempts remain, the same agent or executor starts again. An agent and a flow read a "Definition of done" section plus "Outcome review of your previous attempt" with the grader's feedback per criterion in their instruction; a team or a loop gets the same text in the goal it starts from. Whatever waits on the task (an orchestrator continuation) waits for the last attempt.
 
@@ -46,18 +46,16 @@ When attempts run out with unmet criteria, the task is blocked with a reason tha
 
 `GET/PUT/DELETE /api/tasks/{id}/outcome` manage the rubric and settings. `GET /api/tasks/{id}/outcome/evaluations` lists all grading results with iteration, score, per-criterion feedback, grader model, tokens and cost. The task create and update routes accept `outcome` with the same validation.
 
-The same grader is available in [eval sets](evals.md) as the grader kind `rubric`; it calls a model, so it costs tokens.
-
 ## In loops
 
 Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop Creator's `create_loop_tool` / `modify_loop_tool`). With a rubric, each pass is graded per criterion instead of by the loop's evaluator. The loop stops when the rubric passes, the loop's `target_score` divided by 100 is the pass threshold on the mean score, and the unmet criteria with their feedback are what the next pass is told to fix.
 
 ## Cost
 
-Every grading is one model call about a whole attempt, and it is recorded as a run of its own: agent `outcome_grader`, channel `outcome`, with the grader's model and tokens. It never adds to the runs it graded, which each keep their own cost. The grading run is tied to the task, so the [Costs](costs.md) page counts it once, and to the work it graded through `parent_run_id`: the agent run, or the flow, team, loop or scenario run. A scenario's grading also carries its `sim_run_id` and a flow's its `flow_run_id`, the link the runs of that scenario or flow share, so summing those runs includes it. For a team, a loop or a scenario, whose run keeps a total cost, the grading's cost is added to that total, so the attempt's total says what it cost including its grading. The evaluation records the grading run's id as `grading_run_id`.
+Every grading is one model call about a whole attempt, and it is recorded as a run of its own: agent `outcome_grader`, channel `outcome`, with the grader's model and tokens. It never adds to the runs it graded, which each keep their own cost. The grading run is tied to the task, so the run cost counts it once, and to the work it graded through `parent_run_id`: the agent run, or the flow, team or loop run. A flow's grading also carries its `flow_run_id`, the link the runs of that flow share, so summing those runs includes it. For a team or a loop, whose run keeps a total cost, the grading's cost is added to that total, so the attempt's total says what it cost including its grading. The evaluation records the grading run's id as `grading_run_id`.
 
 ## An agent's default outcome
 
 An agent can carry its own outcome, the same shape as a task's, instead of every task that uses it repeating the rubric. `GET/PUT /api/agents/{id}/default-outcome` read and write it (an empty body clears it); the agent page's Behavior tab shows a card to view and edit it. A task is given the agent's default outcome once, when it is first assigned an agent and has no outcome of its own yet (`assign_executor`, `tasks/service.py`); a later reassignment to a different agent does not overwrite an outcome the task already has. The `outcome:` field on an agent's declarative file ([apply](apply.md)) manages it the same way.
 
-Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).
+Related: [loops](loops.md), [tasks](tasks.md).

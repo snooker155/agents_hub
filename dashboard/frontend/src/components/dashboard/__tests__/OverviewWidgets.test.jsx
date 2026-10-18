@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 
 import { I18nProvider } from '../../../i18n';
 import {
-  LiveWidget, RunsWidget, CostsWidget,
+  LiveWidget, RunsWidget,
 } from '../OverviewWidgets';
 
 // The Dashboard's load and spend widgets, each fed one section of
@@ -29,22 +29,6 @@ describe('OverviewWidgets', () => {
     fireEvent.mouseEnter(columns[1]);
     expect(chart.textContent).toContain('4');
     expect(chart.textContent).toContain('2');
-  });
-
-  it('shows spend and the costliest agents', () => {
-    wrap(<CostsWidget costs={{
-      today: 0.004, last_7d: 1.5, last_30d: 12.25, tokens_30d: 2_400_000, runs_30d: 40,
-      per_day: days([{ cost: 0.5 }, { cost: 1.0 }]),
-      top_agents: [{ key: 'visualizer', cost: 10, runs: 3 }, { key: 'main-agent', cost: 2.25, runs: 30 }],
-    }} />);
-    expect(screen.getByText('< $0.01')).toBeInTheDocument();
-    expect(screen.getByText('$12.25')).toBeInTheDocument();
-    expect(screen.getByText('visualizer')).toBeInTheDocument();
-  });
-
-  it('shows a section error instead of numbers', () => {
-    wrap(<CostsWidget costs={{ error: 'no table' }} />);
-    expect(screen.getByTestId('dash-costs')).toHaveTextContent('no table');
   });
 
   it('lists what runs now with links to each run, and counts the silent apart', () => {

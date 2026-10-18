@@ -23,7 +23,7 @@ Früher blieb nach dem Speichern eines Anbieterschlüssels (in den Einstellungen
 
 ## Preise
 
-Jedes Modell hat drei Preise in USD pro Million Tokens: **Eingabe**, **zwischengespeicherte Eingabe** und **Ausgabe**. Damit werden die aufgezeichneten Token-Mengen auf der Seite [costs](costs.md) in geschätzte Ausgaben umgerechnet. Ein Modell ohne Preis liefert Tokens, aber keine Kosten. Eine Summe von null bedeutet also "ohne Preis", nicht "kostenlos".
+Jedes Modell hat drei Preise in USD pro Million Tokens: **Eingabe**, **zwischengespeicherte Eingabe** und **Ausgabe**. Damit werden die aufgezeichneten Token-Mengen in der Kostenangabe jedes Runs in geschätzte Ausgaben umgerechnet. Ein Modell ohne Preis liefert Tokens, aber keine Kosten. Eine Summe von null bedeutet also "ohne Preis", nicht "kostenlos".
 
 Die zwischengespeicherte Eingabe hat einen eigenen Preis, weil der Anbieter sie in einer eigenen Zeile abrechnet. Eine Agentenschleife sendet bei jedem Schritt das ganze Gespräch erneut. Der Anbieter liefert alles außer der ersten Kopie dieses Präfixes aus seinem Prompt-Cache, zu einem Bruchteil des Eingabepreises. Ein Modell ohne eigene Angabe erhält ein Zehntel seines Eingabepreises, so viel berechnen die großen Anbieter. Setzen Sie das Feld, wo Ihr Anbieter davon abweicht.
 
@@ -59,14 +59,14 @@ Die Spalte Nachdenken zeigt pro Modell zwei Dinge: den Aufwand, den der Anbieter
 | gpt-5-pro | hoch | nichts (tiefer geht es nicht) |
 | Claude | aus | nichts |
 
-Die Tabelle wurde gegen die API gemessen (`providers/reasoning_profile.py`). Anbieter ohne Eintrag zeigen einen Strich. Ein Aufruf, der nie eine Stufe gewählt hat, etwa ein Chat-Titel oder ein Eval-Judge, sendet nichts und behält den Standard des Anbieters. Was eine positive Stufe im Chat zeigt, steht in [agents](agents.md).
+Die Tabelle wurde gegen die API gemessen (`providers/reasoning_profile.py`). Anbieter ohne Eintrag zeigen einen Strich. Ein Aufruf, der nie eine Stufe gewählt hat, etwa ein Chat-Titel oder ein Rubrik-Grader, sendet nichts und behält den Standard des Anbieters. Was eine positive Stufe im Chat zeigt, steht in [agents](agents.md).
 
 ## Anbieter
 
 API-Schlüssel und Basis-URLs liegen in den [Einstellungen](settings.md), nicht hier. Diese Seite behandelt, welche Modelle es gibt und was sie kosten. Lokale Anbieter (Ollama, LM Studio) und eigene OpenAI-kompatible Backends werden auf dieselbe Weise konfiguriert.
 
-## Spezialmodelle
+## Stimme
 
-Bild-, Video-, Sprach- und Transkriptionsmodelle sowie die eigenen Modelle eines Workspace sind keine Chat-Modelle und stehen nicht im Katalog. Der Reiter **Spezialmodelle** wählt sie für den Workspace, der in der Kopfzeile gewählt ist, im selben Formular wie in den Einstellungen dieses Workspace. Siehe [special models](special-models.md).
+Der Assistent hört und spricht mit zwei weiteren Modellen, die keine Chat-Modelle sind und nicht im Katalog stehen: ein **Transkriptionsmodell** macht aus einer Aufnahme Text, ein **Sprachmodell** liest die Antworten vor. Der Reiter **Stimme** wählt je eines für den ganzen Hub (Anbieter, Modell, Stimme, Preis pro Aufruf oder pro 1000 Zeichen und eine Stimme pro Sprache). **Beim Anbieter suchen** zeigt die passenden Modelle des Anbieters, **Verbindung prüfen** sucht das Modell in seiner Liste, ohne es auszuführen, und **Anhören** spielt einen kurzen Satz mit der gewählten Stimme. Jeder Sprachaufruf wird seinem Lauf berechnet. Ohne Modell nutzt der Assistent die Spracherkennung oder Sprachausgabe des Browsers. Der Sprachschritt beim ersten Start und `ah setup` schreiben dieselbe Wahl. Siehe [assistant](assistant.md).
 
-Verwandt: [settings](settings.md), [costs](costs.md), [special models](special-models.md).
+Verwandt: [settings](settings.md), [assistant](assistant.md).

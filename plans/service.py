@@ -373,10 +373,9 @@ def create_notification(
 ) -> Notification:
     """Persist an inbox entry and push it to live SSE subscribers.
 
-    The inbox (dashboard bell) is always the source of truth. ``channels``
-    picks which best-effort side channels also get it: ``"webhook"`` reaches
-    every enabled webhook endpoint (see ``notify.store``) whose events include
-    ``"notification"``. Omit it and the notification stays inbox-only.
+    The inbox (dashboard bell) is where every notification lands; there is
+    no other channel. ``channels`` is accepted for the callers that still pass
+    ``["dashboard"]`` and is otherwise ignored.
     """
     n = Notification(
         title=title,
@@ -387,38 +386,7 @@ def create_notification(
     )
     notification_store.add(n)
     _publish_notification(n)
-    if channels and "webhook" in channels:
-        _push_endpoints(workspace, "webhook", n)
     return n
-
-
-def _push_endpoints(workspace: Optional[str], kind: str, n: Notification) -> None:
-    """Best-effort delivery to every enabled ``kind`` endpoint subscribed to
-    the ``"notification"`` event; never raises. The endpoints are the ones
-    configured on the Connectors page's Webhooks tab."""
-    try:
-        from notify import outbound as notify_outbound
-        from notify import store as notify_store
-
-        ws = workspace or "default"
-        event = {
-            "id": str(uuid4()),
-            "type": "notification",
-            "workspace": ws,
-            "created_at": _now().isoformat(),
-            "data": {
-                "title": n.title,
-                "body": n.body,
-                "severity": n.severity,
-                "source": n.source,
-            },
-        }
-        for endpoint in notify_store.endpoints_for_event(ws, "notification"):
-            if endpoint.get("kind") != kind:
-                continue
-            notify_outbound.dispatch(endpoint, event)
-    except Exception:  # noqa: BLE001 - best effort delivery that never raises
-        log.debug("%s notification delivery failed", kind, exc_info=True)
 
 
 def _publish_notification(n: Notification) -> None:
@@ -589,7 +557,7 @@ _WEEKDAY_NAMES = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 
 def describe_cron(cron: str) -> Optional[str]:
     """A short, best effort English description of the cron shapes
-    ``proactive.profile.schedule_cron`` produces (``*/N * * * *``,
+    an interval schedule produces (``*/N * * * *``,
     ``0 */H * * *``, ``0 0 * * *``) plus the handful of patterns users type
     by hand (a fixed daily or weekly time). ``None`` for anything else; the
     cron preview still returns the fire times, just no prose.
@@ -773,7 +741,6 @@ def _record_fire(
     job: ScheduledJob, *, trigger: str, ok: bool, error_type: Optional[str],
     error: Optional[str], task_id: Optional[str], notification_id: Optional[str],
     loop_run_id: Optional[str], slot: datetime, duration_ms: int,
-    outcome: Optional[str] = None, summary: Optional[str] = None,
 ) -> Optional[FireRecord]:
     """Append one journal row; never raises (a journal write must not turn a
     successful, or already-failed, firing into a harder failure). Returns the
@@ -791,8 +758,6 @@ def _record_fire(
             notification_id=notification_id,
             loop_run_id=loop_run_id,
             duration_ms=duration_ms,
-            outcome=outcome,
-            summary=summary,
         ))
     except Exception:  # noqa: BLE001 - a failed journal write must not fail the tick
         log.debug("failed writing fire journal for job %s", job.id, exc_info=True)
@@ -846,10 +811,6 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
     result: Dict[str, Any] = {"job_id": str(job.id), "kind": job.kind.value}
     error: Optional[str] = None
     error_type: Optional[str] = None
-    # Heartbeat only: a tick skipped for quiet hours says when the window
-    # ends, and the next run is moved there instead of the next cron slot.
-    resume_at: Optional[datetime] = None
-    skip_summary: Optional[str] = None
 
     if already_fired:
         result["skipped"] = "already_fired_this_slot"
@@ -876,20 +837,6 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 fired = _fire_loop(job)
                 result["task_id"] = fired.get("task_id")
                 result["loop_run_id"] = fired.get("loop_run_id")
-            elif job.kind == JobKind.heartbeat:
-                # A tick of a proactive agent (proactive/service.py): the
-                # gates (quiet hours, budget, tick limit, busy) may skip it,
-                # which is a normal outcome rather than a failure.
-                from proactive.service import fire_heartbeat
-                fired = fire_heartbeat(job, trigger=trigger)
-                if fired.get("task_id"):
-                    result["task_id"] = fired["task_id"]
-                else:
-                    result["skipped"] = fired.get("outcome")
-                    result["outcome"] = fired.get("outcome")
-                    skip_summary = fired.get("summary")
-                    if fired.get("resume_at") is not None:
-                        resume_at = _ensure_aware(fired["resume_at"])
             elif job.kind == JobKind.memory_consolidate:
                 result["consolidation_id"] = _fire_memory_consolidate(job, trigger=trigger)
             else:
@@ -905,7 +852,7 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         "last_fired_at": now,
         "last_error": error,
     }
-    if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop, JobKind.heartbeat) and result.get("task_id"):
+    if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop) and result.get("task_id"):
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
     if job.kind == JobKind.memory_consolidate and result.get("consolidation_id"):
         fields["created_consolidation_ids"] = [*job.created_consolidation_ids, result["consolidation_id"]]
@@ -926,12 +873,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 fields["status"] = JobStatus.paused
                 fields["paused_reason"] = "target_missing" if target_missing else "errors"
                 _notify_job_paused(job, error, fields["consecutive_errors"])
-    elif job.kind != JobKind.heartbeat:
+    else:
         fields["consecutive_errors"] = 0
-    # A heartbeat's counter is fed by its *runs* (proactive.service.
-    # on_task_run_finished): a firing that only started the task says
-    # nothing about whether the tick will succeed, so it neither resets nor
-    # bumps the counter here.
 
     if job.recurrence == Recurrence.none:
         fields["status"] = JobStatus.failed if error else JobStatus.fired
@@ -946,8 +889,6 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
             # alive and try again shortly rather than crashing the scheduler.
             log.error("failed computing next run for job %s: %s", job.id, e)
             fields["run_at"] = now + timedelta(hours=1)
-        if resume_at is not None and resume_at > fields["run_at"]:
-            fields["run_at"] = resume_at
     plan_store.update(job.id, **fields)
     result["ok"] = error is None
     if error:
@@ -955,14 +896,10 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         result["error_type"] = error_type
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    outcome: Optional[str] = None
-    if job.kind == JobKind.heartbeat and not already_fired:
-        outcome = "error" if error else result.get("outcome")
     _record_fire(
         job, trigger=trigger, ok=error is None, error_type=error_type, error=error,
         task_id=result.get("task_id"), notification_id=result.get("notification_id"),
         loop_run_id=result.get("loop_run_id"), slot=slot, duration_ms=duration_ms,
-        outcome=outcome, summary=skip_summary,
     )
     return result
 
@@ -984,11 +921,9 @@ def _fire_agent_task(
     - preassigned agent + subprocess mode: launch the run directly.
     - no agent: set the task `ready` and let the orchestrator node route it.
 
-    ``description`` replaces the job's message as the task text (a heartbeat
-    tick builds its own prompt, proactive/service.py); ``notify=False`` skips
-    the "task started" inbox entry (a tick must not make noise before it
-    knows whether it has anything to say); ``launch_params`` reach the
-    launcher for a subprocess run (the tick's answer schema).
+    ``description`` replaces the job's message as the task text;
+    ``notify=False`` skips the "task started" inbox entry; ``launch_params``
+    reach the launcher for a subprocess run.
     """
     from tasks import service as tasks_service
     from tasks.models import CreatedBy, TaskStatus
@@ -1089,7 +1024,7 @@ def _fire_agent_task(
 def _fire_flow(job: ScheduledJob) -> str:
     """Trigger a flow run for a scheduled ``flow`` job. Returns the task id.
 
-    Reuses ``flow.launcher.trigger_flow`` so scheduled and webhook triggers share
+    Reuses ``flow.launcher.trigger_flow`` so scheduled and API triggers share
     concurrency + authorization semantics. A concurrency-capped skip raises, which
     ``fire_job`` records as ``last_error`` (the recurring job simply tries again
     next period) rather than crashing the scheduler.

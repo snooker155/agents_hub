@@ -108,7 +108,7 @@ the conversation's history; a `turn`, a whole chat request written there by
 the backend (chat/routing.py) and executed by the carrier as the chat
 pipeline, its events posted back to the backend for the conversation's
 channel and the instance's; and a `job`, one agent invocation the backend
-hands over (an eval case, a replay, a decomposition, the agent part of an
+hands over (a replay, a decomposition, the agent part of an
 entity chat), answered with a result document on the row. A resident instance
 is woken the moment a message is written, or else by checking its mailbox
 every `AGENTS_HUB_INSTANCE_POLL_SECONDS` (default 0.5). A message sitting in

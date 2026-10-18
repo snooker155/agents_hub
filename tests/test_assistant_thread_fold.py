@@ -2,7 +2,7 @@
 The assistant's thread as short-term memory.
 
 An entity chat shows its agent the last twelve messages and nothing else, which
-is right for a scenario or a view (the entity itself is re-rendered every turn)
+is right for a loop or a view (the entity itself is re-rendered every turn)
 and wrong for the assistant, whose thread is the conversation itself: turn
 seven used to vanish without a trace. A thread with ``fold_history`` folds its
 older turns into the session's summary after a reply and prompts with that

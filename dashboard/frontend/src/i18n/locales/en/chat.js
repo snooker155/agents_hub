@@ -163,7 +163,6 @@ export default {
     agent: 'Agent',
     job: 'Scheduled job',
     project: 'Project',
-    scenario: 'Scenario',
     loop: 'Loop',
     team: 'Team',
     file: 'File',

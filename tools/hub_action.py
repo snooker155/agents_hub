@@ -2,8 +2,8 @@
 ``hub_action``: one-step changes to the hub's records from a conversation
 (chat/actions.py, docs/assistant.md "What it can change").
 
-Stop or restart an instance, pause or resume a service, a watcher or a
-proactive agent, cancel an eval run and the like: a kind, a verb and an id.
+Stop or restart an instance, pause or resume a service and the like: a
+kind, a verb and an id.
 Every call waits for the person's yes on a card (tools/approval.py
 ``ALWAYS_GATED``), and runs with the person's role in the record's workspace.
 """
@@ -20,7 +20,7 @@ from tools.hub_lookup import ASSISTANT_AGENT_ID, _calling_agent
 
 
 class HubActionInput(BaseModel):
-    kind: str = Field(..., description="The kind of record, as hub_lookup names it: instance, service, watcher, ...")
+    kind: str = Field(..., description="The kind of record, as hub_lookup names it: instance, service, guardrail, ...")
     action: str = Field(..., description="stop, start, restart, pause, resume, enable, disable or cancel")
     id: str = Field(..., description="The record's id, from hub_lookup")
     workspace: Optional[str] = Field(None, description="The record's workspace when the id alone is ambiguous")
@@ -36,8 +36,7 @@ def _where() -> dict:
 @tool("hub_action", args_schema=HubActionInput)
 def hub_action(kind: str, action: str, id: str, workspace: Optional[str] = None) -> str:
     """Do one small thing to a record the person can reach: stop or restart an
-    instance; pause or resume a service, a watcher or a pulse (proactive
-    agent); stop a project deployment or a browser session; cancel an eval run;
+    instance; pause or resume a service; stop a project deployment;
     enable or disable a guardrail, a connection, an MCP server or a widget.
     Look the record up with hub_lookup first and say what will happen; the
     person then answers a card (or says yes), and only then the action runs.

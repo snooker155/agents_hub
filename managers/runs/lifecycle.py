@@ -53,23 +53,17 @@ def _agent_version_for(
     *,
     requested_version: Optional[int] = None,
     definition_hash: Optional[str] = None,
-    route_experiment: bool = False,
 ) -> Optional[int]:
     """The stored agent version this run builds from, best-effort.
 
-    Three sources, in order:
+    Two sources, in order:
 
     1. ``requested_version`` — a task or launch pinned a version explicitly
        (agents.agent_launcher / runtime.agent_run's ``--definition-version``).
        Used only when that version's row still exists; a pin whose row is
        gone is silently skipped (the factory falls back to the live
        definition, and the next branch names the version that actually is).
-    2. An open A/B experiment on this agent (``evals.experiments``): the arm
-       ``open_run``'s own ``_route_experiment`` call, just above this one, has
-       already pinned for this run/context. Only asked when ``route_experiment``
-       is true (``open_run``, not the pre-spawn placeholder ``preopen_run``,
-       where no build is about to happen in this process/context).
-    3. Otherwise, the stored version whose hash equals ``definition_hash``
+    2. Otherwise, the stored version whose hash equals ``definition_hash``
        (the live definition's fingerprint, computed the same way
        ``_definition_hash_for`` computes it) — the version a plain, unpinned
        run actually built. When the live definition has no row yet,
@@ -87,14 +81,6 @@ def _agent_version_for(
         if requested_version is not None:
             if agent_versions.get_version_row(agent_id, int(requested_version)) is not None:
                 return int(requested_version)
-
-        if route_experiment:
-            from evals.experiments import peek_pin
-            pin = peek_pin(agent_id)
-            if pin is not None and pin.get("version") is not None:
-                pin_version = int(pin["version"])
-                if agent_versions.get_version_row(agent_id, pin_version) is not None:
-                    return pin_version
 
         found = agent_versions.version_for_hash(agent_id, definition_hash)
         if found is not None:
@@ -275,11 +261,10 @@ def open_run(
         if dh:
             record["definition_hash"] = dh
     _upsert_run(record)
-    _route_experiment(run_id, agent_id, record)
     if "agent_version" not in record:
         av = _agent_version_for(
             agent_id, requested_version=agent_version_pin,
-            definition_hash=record.get("definition_hash"), route_experiment=True,
+            definition_hash=record.get("definition_hash"),
         )
         chain = _agent_chain_for(agent_id, av)
         if av is not None or chain:
@@ -297,23 +282,6 @@ def open_run(
             log.debug("add_run_to_session failed for %s/%s", session_id, run_id, exc_info=True)
     _notify_task_run_started(record)
     return run_id
-
-
-def _route_experiment(run_id: str, agent_id: Optional[str], record: Dict[str, Any]) -> None:
-    """Pick the run's arm when its agent has an A/B experiment running.
-
-    Every run path opens its record before it builds the agent, in the same
-    thread or a copy of its context, so this is where the arm is chosen; the
-    factory reads the pin when it builds (evals/experiments.py,
-    docs/experiments.md). Best-effort: a failure leaves the run on the live
-    definition.
-    """
-    try:
-        from evals.experiments import route_run
-        route_run(run_id, agent_id, task_id=record.get("task_id"),
-                  session_type=record.get("session_type"), channel=record.get("channel"))
-    except Exception:  # noqa: BLE001 - best-effort (see docstring): a failure leaves the run on the live definition
-        log.debug("experiment routing failed for run %s", run_id, exc_info=True)
 
 
 def close_run(
@@ -541,9 +509,8 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
         except Exception:  # noqa: BLE001 - best-effort (see docstring), must not break stopping the run
             log.debug("drop_continuations_for_task failed for task %s", task_id, exc_info=True)
 
-    # A run executing *inside this process* — a team turn, a playground
-    # decision — carries the server's own pid, because that is whose thread it
-    # is running on. Signalling that pid would take the backend down with it,
+    # A run executing *inside this process* — a team turn — carries the server's own pid, because
+    # that is whose thread it is running on. Signalling that pid would take the backend down with it,
     # so these are stopped the way an in-process chat turn is: mark the record
     # and let the run's stop callback abort at the next model or tool boundary.
     if rec.get("in_process"):

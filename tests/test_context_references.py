@@ -28,15 +28,15 @@ def a_task():
 
 
 @pytest.fixture
-def a_scenario():
-    from playground.models import Role, Scenario
-    from playground.store import save_scenario
-    return save_scenario(Scenario(
+def a_loop():
+    from loops.models import Loop
+    from loops.store import save_loop
+    return save_loop(Loop(
         name="Market day",
         description="Traders haggle",
         workspace="dev",
-        environment="market",
-        roles=[Role(agent_id="basic_agent", name="Trader", goal="Sell high")],
+        flow_id="f",
+        exit_criterion="Prices settle",
     ))
 
 
@@ -70,7 +70,7 @@ def _request(*refs, agent_id="orchestrator", message="look at this"):
 def test_every_catalogued_kind_is_offered_to_the_picker():
     offered = {k["kind"] for k in kind_catalog()}
     assert offered == set(KINDS)
-    assert {"task", "view", "project", "scenario", "loop"} <= offered
+    assert {"task", "view", "project", "loop"} <= offered
 
 
 def test_listing_finds_an_entity_and_links_to_its_page(a_task):
@@ -130,13 +130,13 @@ def test_an_attached_entity_reaches_the_prompt(a_task):
     assert "With charts" in prompt
 
 
-def test_a_kind_with_no_agent_tool_is_still_attached(a_scenario, agent_with_tools):
-    """The point of the explicit pick: a scenario has no loading tool at all, so
+def test_a_kind_with_no_agent_tool_is_still_attached(a_loop, agent_with_tools):
+    """The point of the explicit pick: a loop has no loading tool at all, so
     inlining it is the only way it can reach the agent."""
     agent_with_tools("orchestrator", ["task_management", "get_flow_tool"])
-    assert agent_can_load("orchestrator", "scenario") is False
+    assert agent_can_load("orchestrator", "loop") is False
 
-    request = _request(("scenario", a_scenario.scenario_id))
+    request = _request(("loop", a_loop.loop_id))
     resolve_references(request)
     prompt, _ = build_chat_context(request)
 

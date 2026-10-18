@@ -5,16 +5,10 @@ The key points record themselves through :func:`record`: an agent launch, a
 tool approval, a guardrail trip, a workspace policy change, a secret set, a
 file uploaded. There is one operator, so the row says what the hub did on
 their behalf rather than who among several did it; the actor columns stay
-because the rows and the webhooks carry them.
+because the rows carry them.
 
 A row is never updated or deleted by the application; only :func:`prune`
 removes rows older than ``AUDIT_RETENTION_DAYS`` (0 keeps all).
-
-Every row is also offered to the webhook endpoints of its workspace that
-subscribe to the ``audit`` event (docs/notifications.md), so a SIEM can
-collect it without reading the database. A row with no workspace goes to
-the endpoints of the ``default`` workspace, which is where an installation's
-global integrations live.
 
 Writing must never break the request it describes: :func:`record` swallows
 every error and logs it, because an audit failure is a monitoring problem,
@@ -35,9 +29,6 @@ log = logging.getLogger(__name__)
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-#: The webhook event name a row is delivered as.
-EVENT_NAME = "audit"
-
 def actor_fields(principal: Any) -> Dict[str, Optional[str]]:
     """The three actor columns from a principal (or None: the system itself)."""
     if principal is None:
@@ -54,7 +45,7 @@ def record(action: str, *, principal: Any = None, actor: Optional[Dict[str, Any]
            workspace: Optional[str] = None, ip: Optional[str] = None,
            method: Optional[str] = None, path: Optional[str] = None,
            result: str = "ok", details: Optional[Dict[str, Any]] = None) -> Optional[int]:
-    """Append one row and offer it to the ``audit`` webhooks. Never raises.
+    """Append one row. Never raises.
 
     ``principal`` is the usual way to say who; ``actor`` (the three columns
     as a dict) is for callers that only have ids, such as a login that failed
@@ -79,36 +70,7 @@ def record(action: str, *, principal: Any = None, actor: Optional[Dict[str, Any]
     except Exception:  # noqa: BLE001 - an audit write must not break the action it is recording
         log.warning("audit: could not record %s", action, exc_info=True)
         return None
-    entry = {
-        "id": row_id, "at": at, **fields, "action": str(action),
-        "object_type": object_type, "object_id": object_id, "workspace": workspace,
-        "ip": ip, "method": method, "path": path, "result": str(result),
-        "details": details or {},
-    }
-    _fan_out(entry)
     return row_id
-
-
-def _fan_out(entry: Dict[str, Any]) -> None:
-    """Hand the row to every ``audit`` webhook of its workspace."""
-    try:
-        from notify import outbound as notify_outbound
-        from notify import store as notify_store
-        workspace = entry.get("workspace") or "default"
-        endpoints = notify_store.endpoints_for_event(workspace, EVENT_NAME)
-        if not endpoints:
-            return
-        event = {
-            "id": f"audit-{entry.get('id')}",
-            "type": EVENT_NAME,
-            "workspace": workspace,
-            "created_at": entry["at"],
-            "data": entry,
-        }
-        for endpoint in endpoints:
-            notify_outbound.dispatch(endpoint, event)
-    except Exception:  # noqa: BLE001 - webhook fan-out is best-effort, must not break the audit write
-        log.debug("audit: webhook fan-out failed", exc_info=True)
 
 
 def _row_to_entry(row) -> Dict[str, Any]:
@@ -204,4 +166,4 @@ def prune(retention_days: Optional[int] = None) -> int:
     return int(cursor.rowcount or 0)
 
 
-__all__ = ["EVENT_NAME", "actions", "actor_fields", "prune", "query", "record"]
+__all__ = ["actions", "actor_fields", "prune", "query", "record"]

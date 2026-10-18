@@ -136,7 +136,7 @@ export default {
     sizes: 'Размеры',
     toolLabel: 'Имя инструмента',
     toolHint: 'Введите имя инструмента, чтобы увидеть, в какое состояние он попадает.',
-    toolPlaceholder: 'web_search',
+    toolPlaceholder: 'fetch_url',
     step: '{{tool}}, {{ms}} мс',
   },
 };

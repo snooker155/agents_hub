@@ -4,9 +4,8 @@ The watchdog's one sweep over every entity kind (managers.run_watchdog._sweep_en
 tests/test_flow_resume.py and tests/test_loop_resume.py already pin the
 flow and loop slices through the thin _sweep_flow_runs/_sweep_loop_runs
 wrappers this module keeps for them. These tests exercise the generalised
-sweep directly, against team and scenario runs, the two kinds whose own
-launcher (teams.launcher, playground.launcher) is being written alongside
-this change, so it is stubbed here rather than real (see _stub_module).
+sweep directly, against team runs, whose own
+launcher (teams.launcher) is stubbed here rather than real (see _stub_module).
 """
 from __future__ import annotations
 
@@ -84,28 +83,6 @@ def test_a_dead_team_run_without_a_checkpoint_is_failed_and_its_task_finalized(m
     assert finalized == [("t1", "failed", 1)]
 
 
-# ── scenario ─────────────────────────────────────────────────────────────
-
-def test_a_dead_scenario_run_with_a_checkpoint_is_resumed(monkeypatch):
-    _write_run("scenario", "sim-run-1", checkpoint={"ticks_done": 3})
-    calls = []
-    _stub_module(monkeypatch, "playground.launcher",
-                 resume_scenario_run=lambda run_id, **kw: calls.append((run_id, kw)))
-
-    assert run_watchdog._sweep_entity_runs(kinds=("scenario",)) == 1
-    assert calls == [("sim-run-1", {"auto": True})]
-
-
-def test_a_dead_scenario_run_without_a_checkpoint_is_failed(monkeypatch):
-    _write_run("scenario", "sim-run-2")
-    monkeypatch.setattr("managers.run_manager.finalize_flow_task", lambda *a, **k: None)
-
-    assert run_watchdog._sweep_entity_runs(kinds=("scenario",)) == 1
-    rec = entity_runs.get("sim-run-2")
-    assert rec["status"] == "failed"
-    assert "no checkpoint" in rec["error"]
-
-
 # ── the resume budget ────────────────────────────────────────────────────
 
 def test_attempts_beyond_the_cap_are_failed_not_resumed(monkeypatch):
@@ -151,7 +128,7 @@ def test_a_run_on_this_host_with_no_heartbeat_and_a_dead_pid_is_failed(monkeypat
 def test_an_orphan_without_pid_heartbeat_or_host_is_failed_not_resumed(monkeypatch):
     resumed = []
     monkeypatch.setattr(run_watchdog, "_resume_or_fail_entity_run", lambda rec: resumed.append(rec) or 1)
-    _write_run("scenario", "orphan-1", pid=None, heartbeat_at=None, task_id=None,
+    _write_run("team", "orphan-1", pid=None, heartbeat_at=None, task_id=None,
                started_at=_stale_iso(hours=24 * 20), checkpoint={"tick": 3})
     assert run_watchdog._sweep_entity_runs() == 1
     assert entity_runs.get("orphan-1")["status"] == "failed"
@@ -160,14 +137,14 @@ def test_an_orphan_without_pid_heartbeat_or_host_is_failed_not_resumed(monkeypat
 
 
 def test_a_fresh_record_without_a_heartbeat_yet_is_left_alone():
-    _write_run("scenario", "young-1", pid=None, heartbeat_at=None, task_id=None,
+    _write_run("team", "young-1", pid=None, heartbeat_at=None, task_id=None,
                started_at=_stale_iso(hours=0.01))
     run_watchdog._sweep_entity_runs()
     assert entity_runs.get("young-1")["status"] == "running"
 
 
 def test_another_hosts_orphan_is_not_judged_here():
-    _write_run("scenario", "far-1", pid=None, heartbeat_at=None, task_id=None,
+    _write_run("team", "far-1", pid=None, heartbeat_at=None, task_id=None,
                host="some-other-host", started_at=_stale_iso(hours=48))
     run_watchdog._sweep_entity_runs()
     assert entity_runs.get("far-1")["status"] == "running"

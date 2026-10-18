@@ -1,7 +1,7 @@
 """
 Session history for the entity build chats.
 
-Every page with a chat of its own — a scenario's builder, the Visualizer, the
+Every page with a chat of its own — a loop's builder, the Visualizer, the
 Service Agent, the memory reader — stores its conversation in
 :mod:`common.entity_chat_store` under one ``(kind, entity_id)`` key. Until now
 "Clear" was the only way out of a thread that had gone somewhere unhelpful, and

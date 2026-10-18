@@ -540,7 +540,6 @@ class AgentKind(Kind):
         Field("guardrails", want_list, _sorted_list),
         Field("secrets", want_list, _sorted_list),
         Field("shared", want_bool, _bool),
-        Field("proactive", want_mapping(), dict, partial=True),
         Field("outcome", _check_outcome, _norm_outcome),
     )
 
@@ -711,11 +710,6 @@ class AgentKind(Kind):
             definition = ctx.get(f"/api/agents/{_q(hub_id)}/definition") or {}
             for part in ("instructions", "capabilities", "usage"):
                 out[part] = _text(definition.get(part))
-        if "proactive" in wanted:
-            status = ctx.get(f"/api/agents/{_q(hub_id)}/proactive") or {}
-            profile = dict(status.get("profile") or {})
-            profile.pop("job_id", None)
-            out["proactive"] = profile
         if "skills" in wanted:
             out["skills"], out["_skill_ids"] = self._skills(ctx, hub_id, out["workspace"])
         if "outcome" in wanted:
@@ -851,8 +845,6 @@ class AgentKind(Kind):
                 ctx.call("PUT", f"{base}/secrets", json={"secrets": value})
             elif name == "shared":
                 ctx.call("POST", f"{base}/sharing", json={"shared": value})
-            elif name == "proactive":
-                ctx.call("PUT", f"{base}/proactive", json=value)
             elif name == "outcome":
                 ctx.call("PUT", f"{base}/default-outcome", json=value or {})
             else:  # pragma: no cover - create-only fields never reach a write

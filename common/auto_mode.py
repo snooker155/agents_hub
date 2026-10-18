@@ -12,7 +12,7 @@ it is on, two kinds of confirmation stop waiting for the person:
   already resolved. The policy trail and the audit log record it like any
   other approved call, with ``by: auto_mode``.
 * A tool whose own ``user_approved`` argument gates it (run_flow_tool,
-  run_team_tool, stop_run, run_eval_tool, ...): :func:`approved` lets the call
+  run_team_tool, stop_run, ...): :func:`approved` lets the call
   through and records the same settled row, so the person sees what ran.
 
 What auto mode does not touch: a call a rule denies (a deny policy, a hook

@@ -3,66 +3,9 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { INPUT_CLS } from './graphHelpers';
 
-// The shared secret POST /{flow_id}/trigger requires a signature against. The
-// value is write-only: the flow reports only whether one is set, so the field
-// offers Set and Clear and never shows what is stored.
-export function WebhookSecret({ flow, onSet }) {
-  const { t } = useI18n();
-  const [value, setValue] = useState('');
-  const [busy, setBusy] = useState(false);
-  const configured = !!flow.webhook_secret_configured;
-
-  const run = async (secret) => {
-    setBusy(true);
-    try {
-      await onSet(secret);
-      setValue('');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2 border-t border-slate-200 pt-3">
-      <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-        {t('flowEditor.webhookSecret')}
-      </label>
-      <p className="px-1 text-[11px] leading-5 text-slate-400">
-        {configured ? t('flowEditor.webhookSecretSet') : t('flowEditor.webhookSecretNotSet')}
-      </p>
-      <input
-        type="password"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={t('flowEditor.webhookSecretPlaceholder')}
-        className={INPUT_CLS}
-      />
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={busy || !value.trim()}
-          onClick={() => run(value.trim())}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {t('flowEditor.setSecret')}
-        </button>
-        <button
-          type="button"
-          disabled={busy || !configured}
-          onClick={() => run('')}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {t('flowEditor.clearSecret')}
-        </button>
-      </div>
-      <p className="px-1 text-[11px] leading-5 text-slate-400">{t('flowEditor.signatureHeaderNote')}</p>
-    </div>
-  );
-}
-
 // Flow-level meta editor: entry_point, mutability, recordability, and the
 // initial state-key defaults. Patches go to `flow` and mark the editor dirty.
-export function FlowSettings({ flow, nodes, onPatch, onSetWebhookSecret }) {
+export function FlowSettings({ flow, nodes, onPatch }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const mutability = flow.mutability !== false; // default true
@@ -144,8 +87,6 @@ export function FlowSettings({ flow, nodes, onPatch, onSetWebhookSecret }) {
             />
             <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.maxParallelHint')}</p>
           </div>
-
-          <WebhookSecret flow={flow} onSet={onSetWebhookSecret} />
         </div>
       ) : null}
     </div>

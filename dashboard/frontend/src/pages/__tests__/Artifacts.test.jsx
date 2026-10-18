@@ -28,7 +28,7 @@ const getWorkspaceFileUsage = vi.fn(() => ok({
   file_id: REC.file_id, total: 2,
   chats: [{ conversation_id: 'conv-1', title: 'Leave question', at: '2026-09-24T11:00:00Z' }],
   memory_pools: [{ pool_id: 'p1', name: 'HR knowledge', filename: 'handbook.md', status: 'indexed' }],
-  tasks: [], eval_cases: [],
+  tasks: [],
 }));
 const deleteWorkspaceFileObject = vi.fn(() => ok({ deleted: true }));
 

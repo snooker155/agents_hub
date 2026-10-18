@@ -3,7 +3,7 @@
  * steps, provider names, and how a server error reads.
  */
 
-export const STEPS = ['hello', 'language', 'appearance', 'model', 'choose_model', 'voice', 'search', 'memory', 'demo', 'done'];
+export const STEPS = ['hello', 'language', 'appearance', 'model', 'choose_model', 'voice', 'memory', 'demo', 'done'];
 export const MODEL_AT = STEPS.indexOf('model');
 
 export const PROVIDER_LABELS = {

@@ -19,7 +19,7 @@ describe('navMenu', () => {
   it('puts every page in exactly one place', () => {
     const all = paths(buildMenu({ t }));
     expect(new Set(all).size).toBe(all.length);
-    for (const p of ['/connectors', '/mcp', '/watchers']) {
+    for (const p of ['/connectors', '/mcp']) {
       expect(buildMenu({ t }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain(p);
     }
   });
@@ -73,9 +73,10 @@ describe('navMenu', () => {
     expect(all).toContain('/health');
   });
 
-  it('playground row follows the feature flag', () => {
-    expect(paths(buildMenu({ t, features: { playground: false } }))).not.toContain('/playground');
-    expect(paths(buildMenu({ t, features: {} }))).toContain('/playground');
+  it('has no row for the evals or the playground', () => {
+    const all = paths(buildMenu({ t }));
+    expect(all).not.toContain('/evals');
+    expect(all).not.toContain('/playground');
   });
 
   it('starts in the simple menu', () => {

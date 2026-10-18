@@ -139,7 +139,6 @@ def test_the_adapters_read_the_moved_rows(reopen_db, tmp_path):
     try:
         from flow import run_store
         from loops import store as loop_store
-        from playground import store as sim_store
         from teams import store as team_store
 
         assert run_store.get_flow_run("fr-1")["status"] == "running"
@@ -149,10 +148,6 @@ def test_the_adapters_read_the_moved_rows(reopen_db, tmp_path):
         assert loop.position["heartbeat_at"] == "2026-09-23T09:30:00+00:00"
         team = team_store.get_run("tr-1")
         assert team.status == "completed" and team.rounds_done == 3
-        sim = sim_store.get_sim_run("sim-1")
-        assert sim.status == "pending" and sim.scores == {"pnl": 1}
-        assert sim_store.get_story("sim-1") == {"title": "A day"}
-        assert sim_store.latest_runs_by_scenario(["scn-a"])["scn-a"].sim_run_id == "sim-1"
     finally:
         db._schema_ready = False
         db._local = threading.local()

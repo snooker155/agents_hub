@@ -343,7 +343,7 @@ async def _body_test_reconnecting_to_a_different_replica_refetches_instead_of_re
     SessionBroker instances stand in for two replicas here: the id issued by
     "replica A" is unknown to "replica B", so resume_client must report it as
     such — the same unknown-client path exercised above, just under the name
-    of the scenario this project actually cares about."""
+    of the case this project actually cares about."""
     from common.session_broker import SessionBroker
 
     replica_a = SessionBroker()

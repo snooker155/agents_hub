@@ -136,7 +136,7 @@ export default {
     sizes: 'Größen',
     toolLabel: 'Werkzeugname',
     toolHint: 'Geben Sie einen Werkzeugnamen ein, um zu sehen, welchem Zustand er entspricht.',
-    toolPlaceholder: 'web_search',
+    toolPlaceholder: 'fetch_url',
     step: '{{tool}}, {{ms}} ms',
   },
 };

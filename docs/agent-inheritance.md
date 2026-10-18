@@ -5,7 +5,7 @@ rest, and declare only what is different. The system agents
 ([system-agents](system-agents.md)) are good parents to build on — `analyst`
 for a finance or medical specialist that still queries the connected data the
 same way, `verifier` for a reviewer that checks a different kind of claim,
-`sourcer` and `screener` for a recruiting or vendor-sourcing pair — and any
+`screener` for a recruiting or vendor-screening specialist — and any
 agent can be a parent, system or custom, with one rule: **a system agent is
 a child only of another system agent** (the shipped `assistant` extends
 `main-agent`); your own agents can never make a system agent their child.
@@ -37,7 +37,7 @@ and setting it counts as the child overriding that key.
 **Never inherited, always the agent's own:** `id`, `name`, `description`,
 `domain`, `capacity`, `definition_id`, `memory_type`, `memory_data`,
 `owner_workspace`, `shared`, the review fields, `system`,
-`user_modified`, `is_default_chat_agent`, `proactive`, the `http_*` fields,
+`user_modified`, `is_default_chat_agent`, the `http_*` fields,
 `default_workspace_only`, and `capability_override` — a security exemption is
 granted per agent, reviewed on its own terms, never picked up from a parent.
 
@@ -105,7 +105,7 @@ frozen copy of the list.
             {"id": "finance_analyst", "name": "Analyst", "version": 2, "pinned": false}],
   "children": [],
   "fields": {"model": {"value": "inherit", "source": "analyst", "overridden": false}},
-  "list_deltas": {"tools": {"add": ["web_search"], "remove": []}},
+  "list_deltas": {"tools": {"add": ["search_memory"], "remove": []}},
   "effective_lists": {"tools": [{"value": "db_query", "source": "analyst", "added": false}]},
   "prompt": {"parent_sections": [{"heading": "How to work", "source": "analyst"}],
              "own_sections": [{"heading": "Finance specifics", "mode": "new"}],
@@ -208,7 +208,7 @@ file can declare only its own additions and removals:
 ---
 id: finance_analyst
 extends: analyst
-tools: [db_list_connections, db_schema, db_query, calculator, write_file, web_search, run_agent_tool]
+tools: [db_list_connections, db_schema, db_query, calculator, write_file, search_memory, run_agent_tool]
 ---
 
 ## Finance specifics
@@ -220,14 +220,14 @@ before anything leaves the team.
 ```markdown
 ---
 id: finance_reviewer
-extends: verifier
-delegates: [-web_searcher]
+extends: analyst
+delegates: [-visualizer]
 ---
 ```
 
 A file's own fields are its own overrides and deltas, read back the same way
 (`GET .../inheritance`), never the parent's effective values flattened in —
-so a file that only ever says `delegates: [-web_searcher]` keeps planning
+so a file that only ever says `delegates: [-visualizer]` keeps planning
 `unchanged` across repeated applies, and if the parent later changes, the
 child's effective set moves with it without the file needing an edit.
 Changing `extends` or `extends_version` on an existing agent goes through

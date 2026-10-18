@@ -24,7 +24,7 @@ That is the escape hatch, and it is one-way.
 - **Main Agent** — the default in Chat. Answers, delegates, and starts the
   long-running work after you approve the cost.
 - **Universal Agent** — a capable generalist with no fixed specialty; the
-  standard starting agent for scenarios and teams.
+  standard starting agent for teams.
 - **Service Agent** — the service itself: health, logs, failures, spend. See
   [service-health](service-health.md).
 - **Prompt Engineer** — writes prompts for use outside this product.
@@ -41,8 +41,8 @@ That is the escape hatch, and it is one-way.
 - **Agent Creator** — creates, inspects and edits agents.
 
 **Building things**
-- **Flow Creator**, **Loop Creator**, **Team Creator**, **Scenario Creator**,
-  **World Builder**, **Project Manager** — each owns one entity kind, and each
+- **Flow Creator**, **Loop Creator**, **Team Creator**,
+  **Project Manager** — each owns one entity kind, and each
   has its own chat on that entity's page.
 - **Architect Agent** — builds a project's structure graph from real source.
 - **Planner** — turns that graph into a task tree.
@@ -52,18 +52,13 @@ That is the escape hatch, and it is one-way.
   `code` views.
 - **Memory Extractor** — distils documents into a memory pool.
 
-**Measuring**
-- **Eval Agent** — builds eval sets, runs them and reads the score matrix back.
-  Prices a sweep before it runs and waits for approval. See [evals](evals.md).
-
 **Doing the work**
 - **SWE Agent** — reads and changes files.
 - **Code Reviewer** — reviews what was produced.
 - **Verifier**: checks non-code work, reports, figures, texts, plans, against
   its sources and against a task's rubric, then passes or blocks the task.
   The non-code counterpart of the Code Reviewer.
-- **Web Search Agent** — reaches the open web. Holds nothing private.
-- **Researcher** — combines workspace, memory and the web into a
+- **Researcher** — combines workspace and memory into a
   conclusion. Holds no outbound channel. Its id is `researcher`; the old id
   `researcher_agent` still works everywhere an agent id is accepted, and an
   existing install has its stored references renamed once at startup, with a
@@ -72,29 +67,14 @@ That is the escape hatch, and it is one-way.
   files, with the query or calculation behind every figure.
 - **Writer**: turns notes, research and data into a finished document, saved
   as a file in the workspace.
-- **Sourcer**: finds candidates for a stated need out in the open world, job
-  openings, candidates for a role, vendors, and returns a shortlist of links
-  with why each one matches. Holds no access to files or memory, by design.
 - **Screener**: scores one document against another, a CV against a job
   description, a posting against a CV and preferences, with quoted evidence,
   red flags and a recommendation.
 
-## Why the last two are separate
-
-One agent that could both read your files and fetch arbitrary URLs would be the
-blocked capability combination. So the role is split: one reaches out and holds
-nothing private, the other holds private data and cannot reach out, and they are
-connected by delegation. See [tools-and-capabilities](tools-and-capabilities.md).
-
-The Sourcer mirrors this split for its own purpose: it reaches the web only by
-delegating to the Web Search Agent, and holds no access to files or memory, so
-a shortlist built from the open web never carries anything private outward.
-Judging a candidate in depth is a separate step, handed to the Screener.
-
 ## Swapping one of them out
 
 The system agents reach each other by role, not by id: code goes to `@coder`,
-web searches to `@web_search`, views to `@visualizer`. A workspace can give a
+views to `@visualizer`. A workspace can give a
 role to another of its agents, an imported Claude Code for example, and every
 system agent that calls the role reaches that one there. See
 [workspace-roles](workspace-roles.md).

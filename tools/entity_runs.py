@@ -1,15 +1,14 @@
 """
-Launch, follow and stop the long-running entities: scenarios, teams, loops.
+Launch, follow and stop the long-running entities: teams and loops.
 
-These are kept apart from the builder tools in ``tools.scenario_management`` and
+These are kept apart from the builder tools in ``tools.team_management`` and
 its siblings for one reason: building is free and reversible, running is neither.
-A scenario run is N agents x T ticks of model calls, a team run is members x
-rounds, a loop run is a whole flow repeated — minutes of spend that nothing
-automatic will take back. So they form their own grant group (``entity_runs``),
-and an agent can be trusted to *design* a simulation without being trusted to
-*start* one.
+A team run is members x rounds, a loop run is a whole flow repeated: minutes of
+spend that nothing automatic will take back. So they form their own grant group
+(``entity_runs``), and an agent can be trusted to *design* a team without being
+trusted to *start* one.
 
-Three rules hold across all three kinds:
+Three rules hold across both kinds:
 
 * **Launching is approval-gated.** Like ``run_flow_tool``, each tool refuses
   unless ``user_approved`` is True, and the refusal carries the cost estimate —
@@ -161,157 +160,6 @@ def _started(kind: str, name: str, record: Dict[str, Any], run_key: str,
         run_key: record.get(run_key),
         "status": record.get("status"),
     }
-
-
-# ── Scenarios ─────────────────────────────────────────────────────────────────
-
-class RunScenarioInput(BaseModel):
-    scenario_id: str = Field(..., min_length=1,
-                             description="ID of the scenario to run (from list_scenarios_tool)")
-    user_approved: bool = Field(
-        False,
-        description=(
-            "Must be True. Set only after you have shown the user the cost "
-            "estimate and they have explicitly approved starting the simulation. "
-            "Never set True on the user's behalf."
-        ),
-    )
-    workspace: Optional[str] = Field(
-        None, description="Workspace to run in; defaults to the scenario's own"
-    )
-
-
-@tool("run_scenario_tool", args_schema=RunScenarioInput)
-def run_scenario_tool(scenario_id: str, user_approved: bool = False,
-                      workspace: Optional[str] = None) -> str:
-    """Start a playground simulation, AFTER the user has approved the spend.
-
-    A simulation is every role acting for up to max_ticks ticks — minutes of
-    model calls that no one can take back. So this refuses unless
-    `user_approved` is True, and the refusal hands you the cost estimate to show
-    the user first. Returns the sim_run_id immediately; the run continues in the
-    background. Use get_scenario_run_tool to report on it later.
-    """
-    try:
-        from playground import store
-        from playground.runner import estimate_cost
-
-        scenario = store.get_scenario(scenario_id)
-        if not scenario:
-            return _json_err("Scenario not found", code="not_found",
-                             extra={"scenario_id": scenario_id})
-        active_ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        conflict = _workspace_conflict("scenario", scenario_id, scenario.workspace, active_ws)
-        if conflict:
-            return conflict
-        if not scenario.roles:
-            return _json_err(
-                "This scenario has no roles — a simulation needs participants. "
-                "Add a cast with modify_scenario_tool first.",
-                code="invalid_scenario", extra={"scenario_id": scenario_id},
-            )
-
-        try:
-            estimate = estimate_cost(scenario)
-        except Exception:  # noqa: BLE001 — an estimate is help, not a precondition
-            estimate = None
-
-        if not _approved("run_scenario_tool", user_approved, {"scenario_id": scenario_id}):
-            return _approval_required("scenario", scenario_id,
-                                      "list_scenarios_tool", "run_scenario_tool", estimate)
-
-        run_ws = scenario.workspace or active_ws
-
-        # The launch is the shared envelope (playground/launcher.py): the
-        # record is written and the process spawned or queued before this
-        # returns, so the id is known at once.
-        from playground.launcher import start_scenario_run
-        try:
-            record = start_scenario_run(scenario_id, workspace=run_ws).to_dict()
-        except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
-            return _json_err(f"Failed to start the simulation: {type(e).__name__}: {e}",
-                             code="start_failed", extra={"scenario_id": scenario_id})
-
-        record_entity("scenario", scenario_id, "viewed", scenario.name)
-        payload = _started("scenario", scenario.name, record, "sim_run_id", "get_scenario_run_tool")
-        payload["scenario_id"] = scenario_id
-        if estimate:
-            payload["estimate"] = estimate
-        return _json_ok(payload)
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to run scenario: {e}")
-
-
-class GetScenarioRunInput(BaseModel):
-    sim_run_id: Optional[str] = Field(
-        None, description="The run to report on. Omit to take the scenario's most recent run."
-    )
-    scenario_id: Optional[str] = Field(
-        None, description="Report on this scenario's latest run, when no sim_run_id is given"
-    )
-
-
-@tool("get_scenario_run_tool", args_schema=GetScenarioRunInput)
-def get_scenario_run_tool(sim_run_id: Optional[str] = None,
-                          scenario_id: Optional[str] = None) -> str:
-    """How a simulation is going, or how it went: status, ticks, spend, scores.
-
-    Pass the sim_run_id, or a scenario_id to get its most recent run. Returns
-    the run's own summary — not the tick log, which is the artifact of record
-    and belongs on the scenario page rather than in a chat reply.
-    """
-    try:
-        from playground import store
-
-        if sim_run_id:
-            run = store.get_sim_run(sim_run_id)
-        elif scenario_id:
-            run = _latest_visible(store.list_sim_runs(scenario_id, limit=20))
-        else:
-            return _json_err("Provide either sim_run_id or scenario_id", code="invalid")
-
-        if not run or _run_hidden(run):
-            return _json_err("No simulation run found", code="not_found",
-                             extra={"sim_run_id": sim_run_id, "scenario_id": scenario_id})
-
-        d = run.to_dict()
-        return _json_ok({
-            "sim_run_id": d["sim_run_id"], "scenario_id": d["scenario_id"],
-            "status": d["status"], "live": d["status"] in LIVE_STATUSES,
-            "ticks_done": d["ticks_done"], "total_cost": d["total_cost"],
-            # The status says it ended; the stop reason says whether it ran out
-            # of ticks, went quiet, or hit a ceiling — which is the difference
-            # between "it finished" and "it was cut off".
-            "stop_reason": d["stop_reason"], "scores": d["scores"],
-            "error": d["error"],
-            "started_at": d["started_at"], "finished_at": d["finished_at"],
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to get the simulation run: {e}")
-
-
-class StopScenarioRunInput(BaseModel):
-    sim_run_id: str = Field(..., min_length=1, description="The simulation run to stop")
-
-
-@tool("stop_scenario_run_tool", args_schema=StopScenarioRunInput)
-def stop_scenario_run_tool(sim_run_id: str) -> str:
-    """Stop a running simulation now.
-
-    Not a between-ticks flag: the decisions in flight are interrupted, so the
-    spend ends with this call rather than at the end of the tick already under
-    way. The world is kept as of the last tick that completed.
-    """
-    try:
-        from playground import store
-        from playground.runner import stop_simulation
-
-        if _run_hidden(store.get_sim_run(sim_run_id)) or not stop_simulation(sim_run_id):
-            return _json_err("That simulation is not running", code="not_running",
-                             extra={"sim_run_id": sim_run_id})
-        return _json_ok({"message": "Simulation stopped.", "sim_run_id": sim_run_id})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to stop the simulation: {e}")
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
@@ -653,9 +501,6 @@ def stop_loop_run_tool(loop_run_id: str) -> str:
 
 
 ENTITY_RUN_TOOLS = [
-    run_scenario_tool,
-    get_scenario_run_tool,
-    stop_scenario_run_tool,
     run_team_tool,
     get_team_run_tool,
     stop_team_run_tool,
@@ -665,7 +510,6 @@ ENTITY_RUN_TOOLS = [
 ]
 
 __all__ = [
-    "run_scenario_tool", "get_scenario_run_tool", "stop_scenario_run_tool",
     "run_team_tool", "get_team_run_tool", "stop_team_run_tool",
     "run_loop_tool", "get_loop_run_tool", "stop_loop_run_tool",
     "ENTITY_RUN_TOOLS", "LIVE_STATUSES",

@@ -58,7 +58,7 @@ describe('the live mark', () => {
     expect(markState({ busy: true, speaking: true, tool: 'list_tasks' })).toBe('read');
     expect(markState({ busy: true, speaking: true, tool: 'hub_lookup', input: { kind: 'run' } })).toBe('search-history');
     expect(markState({ busy: true, speaking: true, thinking: true })).toBe('speak');
-    expect(markState({ busy: true, tool: 'web_search' })).toBe('search-web');
+    expect(markState({ busy: true, tool: 'search_web' })).toBe('search-web');
     expect(markState({ busy: true })).toBe('working');
     expect(markState({})).toBe('idle');
   });

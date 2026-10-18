@@ -1,6 +1,6 @@
 /**
  * The demo workspace: a workspace named `demo` seeded with agents, a project,
- * a flow, a team, a scenario, views and recorded runs (see docs/demo.md).
+ * a flow, a team, views and recorded runs (see docs/demo.md).
  * Separate from api/index.js because this whole surface belongs to the demo
  * feature.
  */

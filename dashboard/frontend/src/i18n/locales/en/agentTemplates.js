@@ -56,7 +56,7 @@ export default {
     },
     research_agent: {
       name: 'Research agent',
-      description: 'Researches a question on the web and in your files and memory, compares the sources and writes a cited brief with confidence levels and open questions.',
+      description: 'Researches a question in your files and memory, compares the sources and writes a cited brief with confidence levels and open questions.',
     },
     meeting_notes_agent: {
       name: 'Meeting notes agent',
@@ -69,10 +69,6 @@ export default {
     content_writer_agent: {
       name: 'Content writer',
       description: 'Drafts blog posts, newsletters and social posts in your brand voice from a brief: outline first, facts checked against your sources, headline variants.',
-    },
-    lead_research_agent: {
-      name: 'Lead research agent',
-      description: 'Researches an account or person from public sources and your CRM, writes an account brief and a personalised first outreach draft. Never sends.',
     },
   },
 };

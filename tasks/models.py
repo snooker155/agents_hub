@@ -286,8 +286,7 @@ class AgentState(str, Enum):
 
 
 class Executor(BaseModel):
-    """What is doing the work on a task: an agent, a flow, a team, a loop or
-    a scenario.
+    """What is doing the work on a task: an agent, a flow, a team or a loop.
 
     Before this (September 2026 stage-0 "unified run envelope"), a task could
     only be handed to an agent (``assigned_agent_type``). A flow, a team or a
@@ -296,15 +295,11 @@ class Executor(BaseModel):
     was sometimes not an agent at all. ``Executor`` names the kind
     explicitly, and is what ``tasks.assign.assign_executor_to_task`` dispatches
     on: ``kind`` picks the launcher (an agent run, ``flow.launcher``,
-    ``teams.launcher``, ``loops.runner`` or ``playground.launcher``), ``id``
-    is that kind's own id (an agent id, a flow id, a team id, a loop id or a
-    scenario id). A scenario run passes its executor to
-    ``managers.runs.task_finalize.finalize_task`` when it finishes
-    (``playground.runner._finalize_task``), the same way every other kind
-    does.
+    ``teams.launcher`` or ``loops.runner``), ``id``
+    is that kind's own id (an agent id, a flow id, a team id or a loop id).
     """
 
-    kind: Literal["agent", "flow", "team", "loop", "scenario"]
+    kind: Literal["agent", "flow", "team", "loop"]
     id: str
 
 

@@ -16,8 +16,8 @@ install's own configuration, so it needs an administrator (anyone outside
 **What they write is what the pages write.** The default model goes into the
 Models catalog (starred and enabled) and ``.env`` (``DEFAULT_PROVIDER`` and the
 provider's model, as `ah setup` does), and applies at once
-(common/provider_env.py); a voice goes into the ``default`` workspace's special
-models, which every personal workspace falls back to.
+(common/provider_env.py); a voice goes into the voice models
+(providers/voice_models.py), as the Models page's Voice tab writes them.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ OPERATIONS: Dict[str, Operation] = {op.name: op for op in (
                "model": "optional: the speech model, one of the provider's speech_models in setup_guide options "
                         "(default the first)",
                "voice": "optional: one of the voices setup_guide options lists"}),
-    Operation("seed_demo", "demo", "add the demo workspace: four agents with chats, views, a team and a pulse"),
+    Operation("seed_demo", "demo", "add the demo workspace: four agents with chats, views and a team"),
 )}
 
 
@@ -120,7 +120,7 @@ def _custom_backend(provider: str) -> Optional[Dict[str, Any]]:
 
 def options() -> Dict[str, Any]:
     """The choices the assistant offers, read now: each connected provider's
-    model tiers, the voices, the web search providers. Names only, never a
+    model tiers, the voices. Names only, never a
     key."""
     from common import setup_guide
     usable = setup_guide.usable_providers()
@@ -151,7 +151,6 @@ def options() -> Dict[str, Any]:
                       for p, s in VOICE_CLOUD.items()},
             "browser": "without models the page uses the browser's own voice (Chrome, Edge, Safari; not Firefox)",
         },
-        "web_search": ["brave", "tavily", "exa"],
         "providers_to_connect": [p for p in P.CLOUD if p not in usable],
     }
 
@@ -176,7 +175,7 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
                 f"(voice {voice}) and transcription {spec.get('transcription', '?')}, paid per use, "
                 f"for every workspace that has none of its own.")
     if operation == "seed_demo":
-        return "Add the demo workspace with four agents, their chats, views, a team and a pulse."
+        return "Add the demo workspace with four agents, their chats, views and a team."
     return ""
 
 
@@ -287,11 +286,8 @@ def voice_cloud(provider: str, voice: str = "", *, model: str = "", principal: A
 
 
 def _save_voice(entries: Dict[str, Any]) -> None:
-    from providers import special
-    from workspace import create_workspace_folder, get_workspace_folder
-    if not get_workspace_folder("default"):
-        create_workspace_folder("default")
-    special.save("default", {**special.stored("default"), **entries})
+    from providers import voice_models
+    voice_models.save({**voice_models.stored(), **entries})
 
 
 def seed_demo(*, principal: Any = None) -> Dict[str, Any]:

@@ -42,7 +42,7 @@ export const getWorkspaceFileText = (fileId, maxChars) =>
 export const getWorkspaceFileBlob = (fileId) =>
   api.get(`/files/${encodeURIComponent(fileId)}/content`, { responseType: 'blob' });
 
-// { file_id, chats, memory_pools, tasks, eval_cases, produced_by?, total }
+// { file_id, chats, memory_pools, tasks, produced_by?, total }
 export const getWorkspaceFileUsage = (fileId) => api.get(`/files/${encodeURIComponent(fileId)}/usage`);
 
 export const deleteWorkspaceFileObject = (fileId) => api.delete(`/files/${encodeURIComponent(fileId)}`);

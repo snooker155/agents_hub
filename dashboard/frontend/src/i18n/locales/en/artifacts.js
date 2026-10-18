@@ -1,6 +1,6 @@
 export default {
   title: 'Artifacts',
-  pageDescription: 'What the agents produced and work with: the views they built as answers and the files of this workspace, side by side. Upload a file once, then attach it by its id in the chat, add it to a memory pool, give it to a task or an eval case; open a view to keep editing it in conversation.',
+  pageDescription: 'What the agents produced and work with: the views they built as answers and the files of this workspace, side by side. Upload a file once, then attach it by its id in the chat, add it to a memory pool, or give it to a task; open a view to keep editing it in conversation.',
   loading: 'Loading…',
   viewsFolder: 'Views',
   viewCount_one: '{{count}} view',

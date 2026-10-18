@@ -118,16 +118,7 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "view_compute": {"name": "Compute (precise)"},
     "fetch_url": {"name": "Fetch URL"},
     "run_code": {"name": "Run Code (sandboxed)"},
-    "browser_open": {"name": "Browser: Open"},
-    "browser_read": {"name": "Browser: Read"},
-    "browser_act": {"name": "Browser: Act"},
-    "browser_screenshot": {"name": "Browser: Screenshot", "requires_workspace": True},
-    "browser_close": {"name": "Browser: Close"},
     "view_serve": {"name": "Serve (proxy)"},
-    "list_evals_tool": {"name": "List Eval Sets"},
-    "get_eval_tool": {"name": "Get Eval Set"},
-    "create_eval_tool": {"name": "Create Eval Set"},
-    "modify_eval_tool": {"name": "Modify Eval Set"},
     "web_log_recent": {"name": "Recent Web Calls"},
 }
 
@@ -254,16 +245,6 @@ def _workspace_files_specs() -> List[ToolSpec]:
             for t in WORKSPACE_FILE_TOOLS]
 
 
-def _special_model_specs() -> List[ToolSpec]:
-    # The workspace's special models (tools/special_models.py): images,
-    # video, speech, transcription and the workspace's own models. The
-    # workspace comes from the run, and a tool whose purpose has no model
-    # there is taken off the agent at build time.
-    from tools.special_models import SPECIAL_MODEL_TOOL_OBJECTS
-    return [spec_from_tool(t, category="special_models", requires_workspace=True)
-            for t in SPECIAL_MODEL_TOOL_OBJECTS]
-
-
 def _memory_specs() -> List[ToolSpec]:
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
@@ -365,11 +346,11 @@ def _agent_management_specs() -> List[ToolSpec]:
 def _schedule_management_specs() -> List[ToolSpec]:
     from tools.schedule_management import (
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        cancel_scheduled, update_scheduled,
     )
     tools = [
         schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        cancel_scheduled, update_scheduled,
     ]
     return [spec_from_tool(t, category="schedule_management") for t in tools]
 
@@ -381,26 +362,6 @@ def _flow_management_specs() -> List[ToolSpec]:
     )
     tools = [create_flow_tool, get_flow_tool, modify_flow_tool, delete_flow_tool, validate_flow_tool]
     return [spec_from_tool(t, category="flow_management") for t in tools]
-
-
-def _world_management_specs() -> List[ToolSpec]:
-    # Playground is optional (PLAYGROUND_ENABLED); off, the agent editor must
-    # not offer world-building tools. Ids stay in tools/capabilities.py's
-    # tables either way — only the catalog omits them. See docs/playground.md.
-    from common.config import playground_enabled
-    if not playground_enabled():
-        return []
-    from tools.world_management import WORLD_MANAGEMENT_TOOLS
-    return [spec_from_tool(t, category="world_management") for t in WORLD_MANAGEMENT_TOOLS]
-
-
-def _scenario_management_specs() -> List[ToolSpec]:
-    # Same optional-playground gate as _world_management_specs above.
-    from common.config import playground_enabled
-    if not playground_enabled():
-        return []
-    from tools.scenario_management import SCENARIO_MANAGEMENT_TOOLS
-    return [spec_from_tool(t, category="scenario_management") for t in SCENARIO_MANAGEMENT_TOOLS]
 
 
 def _team_management_specs() -> List[ToolSpec]:
@@ -425,16 +386,8 @@ def _project_management_specs() -> List[ToolSpec]:
 
 
 def _entity_run_specs() -> List[ToolSpec]:
-    # entity_runs.py groups three unrelated "launch a long-running entity"
-    # tools together (scenario, team, loop). Only the scenario ones belong to
-    # the optional playground; team/loop stay in the catalog regardless.
-    from common.config import playground_enabled
     from tools.entity_runs import ENTITY_RUN_TOOLS
-    tools = ENTITY_RUN_TOOLS
-    if not playground_enabled():
-        tools = [t for t in tools if getattr(t, "name", "") not in
-                 ("run_scenario_tool", "get_scenario_run_tool", "stop_scenario_run_tool")]
-    return [spec_from_tool(t, category="entity_runs") for t in tools]
+    return [spec_from_tool(t, category="entity_runs") for t in ENTITY_RUN_TOOLS]
 
 
 def _git_publish_specs() -> List[ToolSpec]:
@@ -455,19 +408,10 @@ def _visualization_specs() -> List[ToolSpec]:
 
 
 def _web_specs() -> List[ToolSpec]:
-    # Web tools are plain per-tool grants (no group alias): web_search and
-    # fetch_url are separately grantable on purpose — search is a far smaller
-    # injection surface than page content. See tools/capabilities.py.
+    # fetch_url is a plain per-tool grant (no group alias). See
+    # tools/capabilities.py.
     from tools.web import WEB_TOOLS
     return [spec_from_tool(t, category="web") for t in WEB_TOOLS]
-
-
-def _browser_specs() -> List[ToolSpec]:
-    # The browser tools are web access through a real browser (tools/browser.py),
-    # so they sit in the "web" category next to fetch_url rather than in a
-    # category of their own; the display names ("Browser: ...") group them.
-    from tools.browser import BROWSER_TOOLS
-    return [spec_from_tool(t, category="web") for t in BROWSER_TOOLS]
 
 
 def _service_ops_specs() -> List[ToolSpec]:
@@ -482,11 +426,10 @@ def _hub_lookup_specs() -> List[ToolSpec]:
     from tools.hub_action import HUB_ACTION_TOOLS
     from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
     from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
-    from tools.proactive_setup import PROACTIVE_SETUP_TOOLS
     from tools.setup_guide import SETUP_GUIDE_TOOLS
     return [spec_from_tool(t, category="service_ops")
             for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS,
-                      *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS, *PROACTIVE_SETUP_TOOLS)]
+                      *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS)]
 
 
 def _system_ops_specs() -> List[ToolSpec]:
@@ -495,11 +438,6 @@ def _system_ops_specs() -> List[ToolSpec]:
     # ever act on the copy under the state directory, never on a project.
     from tools.system_ops import SYSTEM_OPS_TOOLS
     return [spec_from_tool(t, category="system_ops") for t in SYSTEM_OPS_TOOLS]
-
-
-def _evals_specs() -> List[ToolSpec]:
-    from tools.eval_ops import EVAL_TOOLS
-    return [spec_from_tool(t, category="evals") for t in EVAL_TOOLS]
 
 
 def _documentation_specs() -> List[ToolSpec]:
@@ -533,7 +471,6 @@ def _workspace_management_specs() -> List[ToolSpec]:
 _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _filesystem_specs,
     _workspace_files_specs,
-    _special_model_specs,
     _memory_specs,
     _coordination_specs,
     _task_management_specs,
@@ -545,8 +482,6 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _workspace_management_specs,
     _schedule_management_specs,
     _flow_management_specs,
-    _world_management_specs,
-    _scenario_management_specs,
     _team_management_specs,
     _loop_management_specs,
     _project_management_specs,
@@ -554,11 +489,9 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _git_publish_specs,
     _visualization_specs,
     _web_specs,
-    _browser_specs,
     _service_ops_specs,
     _hub_lookup_specs,
     _system_ops_specs,
-    _evals_specs,
     _documentation_specs,
     _connector_specs,
 ]

@@ -11,7 +11,6 @@ export const OWNER_ROUTE = {
   run: (o) => `/messages/${o.id}`,
   team: (o) => (o.entity_id ? `/teams/${o.entity_id}?run=${o.id}` : null),
   flow: (o) => (o.entity_id ? `/flows/${o.entity_id}?run=${o.id}` : null),
-  scenario: (o) => (o.entity_id ? `/playground/${o.entity_id}?run=${o.id}` : null),
   loop: (o) => (o.entity_id ? `/loops?loop=${o.entity_id}&run=${o.id}` : '/loops'),
 };
 

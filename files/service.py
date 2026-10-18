@@ -3,12 +3,10 @@ Workspace files: a file uploaded once and referenced by its id everywhere.
 
 Before this module every surface that took a file kept its own copy of it: a
 chat attachment travelled as base64 in each request, a memory pool's knowledge
-file lived in the workspace's ``knowledge/`` folder, an eval case carried a
-text snapshot, and a task could not carry a file at all. The same document
+file lived in the workspace's ``knowledge/`` folder, and a task could not carry a file at all. The same document
 used in three places was three uploads with nothing tying them together. This
 is the Files API shape of the Anthropic and OpenAI platforms: upload once, get
-back ``file_<16 hex>``, and pass the id to a chat turn, a memory pool, a task
-or an eval case.
+back ``file_<16 hex>``, and pass the id to a chat turn, a memory pool or a task.
 
 A record (one row of ``workspace_files``, migration 0021) belongs to exactly
 one workspace. Its content lives under the state root at
@@ -92,7 +90,7 @@ DEFAULT_MAX_WORKSPACE_MB = 1024
 
 #: Where a file came from. Informational (the Files page filters on it); an
 #: unknown value is stored as given rather than refused.
-SOURCES = ("upload", "chat", "agent", "memory", "task", "eval", "api")
+SOURCES = ("upload", "chat", "agent", "memory", "task", "api")
 
 #: Extensions read as text whatever the guessed MIME type says. Covers the
 #: formats the brief names (text, markdown, JSON, CSV, code) plus the config
@@ -385,9 +383,7 @@ def create_file(workspace: str, name: str, data: bytes, *, mime_type: Optional[s
         shutil.rmtree(path.parent, ignore_errors=True)
         raise
     blobs.mirror(storage_key)
-    record = get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
-    _emit_file_event(ws, record, "added")
-    return record
+    return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
 
 
 def _storage_key(file_id: str) -> str:
@@ -593,19 +589,6 @@ def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
     return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, values))), "added"
 
 
-def _emit_file_event(ws: str, record: Optional[Dict[str, Any]], change: str) -> None:
-    """Tell the proactive agents listening for files (proactive/events.py).
-    Best-effort: the file is already stored, a pulse that cannot be woken
-    is logged and nothing else."""
-    if not record or change == "unchanged":
-        return
-    try:
-        from proactive.events import file_changed
-        file_changed(ws, record, change)
-    except Exception:  # noqa: BLE001 - waking a pulse is a side channel of the write
-        log.debug("file event dispatch failed for %s", record.get("file_id"), exc_info=True)
-
-
 def register_path(workspace: str, rel_path: str, *, source: str = "agent",
                   created_by: Optional[str] = None,
                   meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -622,8 +605,7 @@ def register_path(workspace: str, rel_path: str, *, source: str = "agent",
     """
     ws = _workspace_name(workspace)
     rel = workspace_rel_path(rel_path)
-    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
-    _emit_file_event(ws, record, status)
+    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
     return record
 
 
@@ -660,8 +642,7 @@ def write_folder_file(workspace: str, rel_path: str, data: bytes, *, source: str
         raise FileError(f"'{rel}' is not a regular file of workspace '{ws}'")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    record, status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
-    _emit_file_event(ws, record, status)
+    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
     return record
 
 

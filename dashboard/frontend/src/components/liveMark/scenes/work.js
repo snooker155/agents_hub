@@ -399,7 +399,7 @@ W.file = {
   }
 };
 
-/* scenario: start, a step, two branches, finish. The same layout serves
+/* flow: start, a step, two branches, finish. The same layout serves
    the build and the run. */
 var FLOW = {
   N: [[24, 7], [24, 18], [13, 30], [35, 30], [24, 41]],

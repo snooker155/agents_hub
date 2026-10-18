@@ -10,7 +10,7 @@ The hub, read only:
 - `list_models_tool`: the enabled models and the workspace's default model.
 - `list_agents_tool` / `get_agent_tool`: the agents there are, and one agent's details.
 - `list_tasks` / `list_scheduled`: the work in the workspace and what is scheduled.
-- `list_flows_tool`, `list_teams_tool`, `list_loops_tool`, `list_scenarios_tool`,
+- `list_flows_tool`, `list_teams_tool`, `list_loops_tool`,
   `list_projects_tool`: what has been built so far.
 
 What this agent does NOT do:

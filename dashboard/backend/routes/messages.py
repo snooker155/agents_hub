@@ -434,14 +434,12 @@ async def get_message_insights(run_id: str, request: Request):
 
 
 def _run_cost(run: dict, model: str, provider: str, token_usage: dict) -> dict:
-    """The run's estimated cost, the same figure the Costs page
-    count (common/costs_report.py ``_run_cost``). ``priced`` is False when the
+    """The run's estimated cost (common/pricing.py ``run_total_cost_usd``). ``priced`` is False when the
     catalog has no price for the run's model and it is not a local one, so the
     page can say "no price" instead of a misleading $0. Chat runs parse their
     totals from the log, so those replace the record's slim totals when it has
     none."""
-    from common.costs_report import _run_cost as costs_run_cost
-    from common.pricing import cost_is_known, load_price_map, run_tokens
+    from common.pricing import cost_is_known, load_price_map, run_tokens, run_total_cost_usd as costs_run_cost
 
     prices = load_price_map()
     priced_run = dict(run)

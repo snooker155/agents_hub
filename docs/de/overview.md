@@ -14,7 +14,6 @@ Workspace                  ein isolierter Ordner mit eigenen Agenten, Einstellun
  ├── Flow                  ein Graph aus Agenten, der als eine Pipeline läuft
  │    └── Loop             ein Flow, der wiederholt wird, bis ein Judge ihn für gut genug hält
  ├── Team                  eine Besetzung von Agenten, die über ein gemeinsames Board arbeiten
- ├── Szenario              Agenten, die in einer simulierten Welt handeln, Tick für Tick
  └── Ansicht               ein Diagramm, ein Graph oder eine 3D-Szene, die ein Agent gebaut hat
 ```
 
@@ -34,16 +33,16 @@ Jede dieser Arbeiten erzeugt dieselben drei Datensätze. Nur so lässt sich das 
 
 - **Chat** ist die Eingangstür: Sie sprechen direkt mit jedem Agenten, ohne Einrichtung.
 - **Aufgaben** sind für nachverfolgte Arbeit: zugewiesen, in Stufen gegliedert, fortsetzbar.
-- **Flows, Loops, Teams und Szenarien** sind für Arbeit, die mehr als einen Agenten oder mehr als einen Durchgang braucht.
+- **Flows, Loops und Teams** sind für Arbeit, die mehr als einen Agenten oder mehr als einen Durchgang braucht.
 
 ## Das Menü
 
-Die Seitenleiste folgt demselben Baum in fünf Gruppen: **Gespräch** (Assistent, Chat, Dashboard), **Arbeit** (Projekte, Aufgaben, der Plan, Artefakte, Flows, Loops, Teams, Workspaces), **Agenten und Bibliothek** (Agenten, Modelle, Skills, Speicher, der Marktplatz), **Integrationen** (Konnektoren, Watcher, MCP-Server) und **Protokolle** (Sitzungen, Läufe, Kosten, Evaluierungen, Einstellungen).
+Die Seitenleiste folgt demselben Baum in fünf Gruppen: **Gespräch** (Assistent, Chat, Dashboard), **Arbeit** (Projekte, Aufgaben, der Plan, Artefakte, Flows, Loops, Teams, Workspaces), **Agenten und Bibliothek** (Agenten, Modelle, Skills, Speicher, der Marktplatz), **Integrationen** (Konnektoren, MCP-Server) und **Protokolle** (Sitzungen, Läufe, Kosten, Evaluierungen, Einstellungen).
 
 Es gibt zwei Modi. Das **einfache Menü** behält fünfzehn Seiten, die ein Einsteiger braucht, darunter die Workspaces, dazu Einstellungen und Dokumentation. Das Dashboard fehlt darin: Wer den Hub für sich selbst nutzt, hat dort wenig zu beobachten. Es ist die Voreinstellung. Das **vollständige Menü** zeigt jede Seite. Der Schalter am Fuß des Menüs wechselt zwischen beiden, und der Browser merkt sich die Wahl. In keinem Modus wird eine Seite entfernt, und das einfache Menü ändert nie seine Form: Eine Seite außerhalb davon hebt die Zeile hervor, zu der sie gehört (Deployments, von der Plan-Seite geöffnet, heben Plan hervor, Loops und Teams heben Agenten-Flows hervor, Konnektoren heben Einstellungen hervor, ebenso Dashboard, Sitzungen und Kosten).
 
 ## Zwei Dinge, die Sie früh wissen sollten
 
-**Geld ist real.** Jeder Run kostet Tokens. Ein Szenario bedeutet: jede Rolle handelt in jedem Tick. Ein Team bedeutet: Mitglieder mal Runden. Ein Loop bedeutet: ein ganzer Flow, wiederholt. Die Werkzeuge, die diese Arbeiten starten, lehnen ab, bis Sie sie genehmigt haben, und die Ablehnung zeigt die Schätzung. Siehe [costs](costs.md).
+**Geld ist real.** Jeder Run kostet Tokens. Ein Team bedeutet: Mitglieder mal Runden. Ein Loop bedeutet: ein ganzer Flow, wiederholt. Die Werkzeuge, die diese Arbeiten starten, lehnen ab, bis Sie sie genehmigt haben, und die Ablehnung zeigt die Schätzung.
 
 **Fähigkeiten werden durchgesetzt.** Ein Agent, der Ihre privaten Daten lesen kann, Text von außen aufnimmt *und* Daten nach außen sendet, ist ein Werkzeug zum Datenabfluss. Das Produkt lehnt diese Kombination ab, statt nur davor zu warnen. Siehe [tools-and-capabilities](tools-and-capabilities.md).

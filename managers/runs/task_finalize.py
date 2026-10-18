@@ -65,7 +65,7 @@ def finalize_task(
                 _ts.TaskStatus.done,
             }
             current_task = _ts.get_task(tid)
-            # A flow, team, loop or scenario that finished a task with an
+            # A flow, team or loop that finished a task with an
             # outcome is graded like an agent run (tasks/outcome.py): another
             # attempt or a block replaces the normal transition. Only on the
             # executor path (no run id): an agent run was graded already by
@@ -606,16 +606,6 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                 )
             except Exception:  # noqa: BLE001 - an activity-log write is best-effort, must not break finalization
                 log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
-
-        # A proactive tick (proactive/service.py): read the structured outcome
-        # off the task result, price the run, write both onto the scheduler's
-        # journal row, notify when the agent acted. A no-op for every other
-        # task, after one activity-log read.
-        try:
-            from proactive.service import on_task_run_finished
-            on_task_run_finished(str(task_id_str), run or {}, status)
-        except Exception:  # noqa: BLE001 - the tick's bookkeeping must never fail the run it describes
-            log.debug("heartbeat finalize failed for run %s", run_id, exc_info=True)
 
         # Trigger session continuations bound to this run (run-bound entries
         # ignore other runs on the task, e.g. the orchestrator's own run).

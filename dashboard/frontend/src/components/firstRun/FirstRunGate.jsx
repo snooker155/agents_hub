@@ -24,7 +24,6 @@ import { useWelcomeTour } from '../docs/WelcomeTour';
 
 const FirstRun = lazy(() => import('./FirstRun'));
 
-const IS_DEMO = import.meta.env.VITE_DEMO === '1';
 const LANGUAGE_KEY = 'agents_hub_language';
 const THEME_KEY = 'theme';
 
@@ -45,7 +44,7 @@ export default function FirstRunGate({ children }) {
   const tour = useWelcomeTour();
   const { setLanguage } = useI18n();
   const { setTheme } = useTheme();
-  const skip = IS_DEMO || isEmbedded();
+  const skip = isEmbedded();
   const [state, setState] = useState(skip ? { required: false } : null);
   const [after, setAfter] = useState('');
   // Read on mount, before anything here can have written them.

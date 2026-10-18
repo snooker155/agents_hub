@@ -29,7 +29,6 @@ const KIND_STYLES = {
   loop:      'bg-amber-100 text-amber-700',
   team:      'bg-blue-100 text-blue-700',
   container: 'bg-emerald-100 text-emerald-700',
-  scenario:  'bg-pink-100 text-pink-700',
 };
 
 const STATUS_STYLES = {
@@ -80,10 +79,6 @@ function entityLink(group) {
       return group.parent_id ? `/loops?loop=${group.parent_id}&run=${group.id}` : '/loops';
     case 'container':
       return `/tasks/${group.id}`;
-    case 'scenario':
-      // The scenario page reads its run from ?run=, same as the run picker
-      // on that page itself (pages/PlaygroundScenario.jsx).
-      return group.parent_id ? `/playground/${group.parent_id}?run=${group.id}` : null;
     default:
       return null;
   }
@@ -189,7 +184,7 @@ export default function RunGroups() {
   };
 
   const visibleKinds = useMemo(
-    () => (kinds.length ? kinds : ['flow', 'loop', 'team', 'container', 'scenario']),
+    () => (kinds.length ? kinds : ['flow', 'loop', 'team', 'container']),
     [kinds],
   );
 

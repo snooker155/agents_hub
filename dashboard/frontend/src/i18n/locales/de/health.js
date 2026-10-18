@@ -94,12 +94,10 @@ export default {
       security: 'Sicherheitseinstellungen',
       stale_runs: 'Hängende Läufe und Leases',
       run_queue: 'Startwarteschlange',
-      outbox: 'Ausgehende Benachrichtigungen',
       broker: 'Redis-Broker',
       blob_store: 'Objektspeicher',
       oidc: 'Identitätsanbieter',
       disk: 'Freier Speicher',
-      browser: 'Browser-Dienst',
       docker: 'Docker',
       sandbox: 'Sandbox-Anbieter',
       frontend_build: 'Frontend-Build',
@@ -150,15 +148,6 @@ export default {
         ok_one: '{{count}} Start wartet.',
         ok_other: '{{count}} Starts warten.',
       },
-      outbox: {
-        unreadable: 'Der Postausgang konnte nicht gelesen werden: {{error}}.',
-        dead_one: '{{count}} Benachrichtigung wurde nach allen Wiederholungen aufgegeben.',
-        dead_other: '{{count}} Benachrichtigungen wurden nach allen Wiederholungen aufgegeben.',
-        pending_one: '{{count}} Benachrichtigung wartet auf Zustellung.',
-        pending_other: '{{count}} Benachrichtigungen warten auf Zustellung.',
-        ok_one: '{{count}} Benachrichtigung ausstehend, keine aufgegeben.',
-        ok_other: '{{count}} Benachrichtigungen ausstehend, keine aufgegeben.',
-      },
       broker: {
         off: 'Es ist kein Redis-Broker konfiguriert (AGENTS_HUB_BROKER_URL).',
         ok: 'Redis antwortet.',
@@ -178,13 +167,6 @@ export default {
       disk: {
         fail: 'Nur noch {{gb}} GB frei im Zustandsverzeichnis.',
         free: '{{gb}} GB frei im Zustandsverzeichnis.',
-      },
-      browser: {
-        off: 'Der Browser-Dienst ist nicht konfiguriert.',
-        unreachable: 'Der Browser-Dienst unter {{url}} ist nicht erreichbar: {{error}}.',
-        http: 'Der Browser-Dienst hat mit HTTP {{code}} geantwortet.',
-        noToken: 'Der Browser-Dienst antwortet, aber AGENTS_HUB_BROWSER_TOKEN ist nicht gesetzt.',
-        ok: 'Der Browser-Dienst antwortet.',
       },
       docker: {
         ok: 'Docker ist verfügbar.',

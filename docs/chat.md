@@ -77,7 +77,7 @@ have. Two things make that happen here.
 Every other provider is unaffected, and sends exactly what it sent before.
 
 The cache reads come back in the run's token usage and are reported separately
-from fresh input. The [costs](costs.md) page prices them at the model's cached
+from fresh input. Run costs price them at the model's cached
 rate, so a long conversation costs what the provider actually charged rather
 than what it would have cost with no cache at all.
 
@@ -156,7 +156,7 @@ your latest message). See [handoffs](handoffs.md).
 ## Costs and approvals
 
 Anything that spends real money stops and asks. An agent that offers to run a
-flow, loop, scenario or team will show the estimate and wait for a clear yes.
+flow, loop or team will show the estimate and wait for a clear yes.
 "Sounds good" is not approval, and agents are instructed to treat it as
 ambiguous.
 

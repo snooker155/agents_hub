@@ -20,11 +20,10 @@ What the fingerprint covers (a change to any of these rebuilds):
 - the target workspace, the build override params, and project-scope
 
 The key (not only the fingerprint) carries the build overrides, and that is
-where an A/B experiment arm lands: the factory adds ``definition_version`` to
-the overrides of a run routed to an arm (``evals/experiments.py``), so each
-stored version gets its own cache entry and two arms never share a build.
-A version pin (a task, a service, a chat turn) lands there the same way, and
-so does a run's ``run_overrides`` object (agents/run_overrides.py): a build
+where a version pin lands: the factory adds ``definition_version`` to the
+overrides of a run pinned to a stored version (a task, a service, a chat turn),
+so each stored version gets its own cache entry and two pins never share a
+build. So does a run's ``run_overrides`` object (agents/run_overrides.py): a build
 with another model, instructions or tool set is its own entry.
 
 What it deliberately does NOT cover: live memory *contents*. The memory section

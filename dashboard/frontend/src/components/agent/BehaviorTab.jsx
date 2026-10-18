@@ -331,7 +331,7 @@ export default function BehaviorTab() {
           {/* The secret names a run of this agent may receive (docs/secrets.md). */}
           <AgentSecretsCard agentId={id} readOnly={Boolean(agent.system)} />
 
-          {/* The hosts web_search, fetch_url and the browser may reach (tools/web.py). */}
+          {/* The hosts fetch_url may reach (tools/web.py). */}
           <AgentWebDomainsCard agentId={id} readOnly={Boolean(agent.system)} />
 
           {/* What a task assigned this agent inherits when it has no outcome of its own yet (tasks/outcome.py). */}

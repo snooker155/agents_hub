@@ -3,7 +3,7 @@ import { bestSplit } from '../split';
 
 describe('bestSplit', () => {
   it('pairs the cards so both columns hold about as much', () => {
-    // runs, costs, local models, endpoint, services, as measured at 1440 px
+    // runs, local models, endpoint, services, as measured at 1440 px
     expect(bestSplit([335, 424, 377, 168, 222])).toEqual([true, true, false, false, false]);
   });
 

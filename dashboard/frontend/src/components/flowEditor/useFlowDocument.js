@@ -176,18 +176,6 @@ export function useFlowDocument(deps) {
     }
   };
 
-  // Write-only: the secret goes up, and the flow comes back saying only whether
-  // one is set. An empty string clears it.
-  const handleSetWebhookSecret = async (secret) => {
-    try {
-      const { data } = await updateFlow(flowId, { webhook_secret: secret });
-      setFlow((prev) => ({ ...prev, webhook_secret_configured: !!data.webhook_secret_configured }));
-      toast.success(secret ? t('flowEditor.webhookSecretSaved') : t('flowEditor.webhookSecretCleared'));
-    } catch (error) {
-      toast.error(t('flowEditor.webhookSecretFailed'), errorDetail(error));
-    }
-  };
-
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
     [nodes, selectedNodeId]
@@ -207,7 +195,7 @@ export function useFlowDocument(deps) {
 
   return {
     agentOptions, handleCanvasEdgesChange, handleCanvasNodesChange, handleExportFlow,
-    handleSetWebhookSecret, loadFlow, persistFlow, selectedNode, setCanvasEdges,
+    loadFlow, persistFlow, selectedNode, setCanvasEdges,
     setCanvasNodes, unchosenCount, updateSelectedNode,
   };
 }

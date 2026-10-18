@@ -13,7 +13,7 @@ import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
 import { ARTIFACT_OP_META } from './artifactOps';
 
-function ProcessPanelContent({ processInsights, topology = null, graphRun = null, workspace = null }) {
+function ProcessPanelContent({ processInsights, topology = null, graphRun = null }) {
   const { t } = useI18n();
   const graphKey = (processInsights?.message_runs || [])
     .map((mr, idx) => `${mr?.run_id || mr?.message_id || idx}`)
@@ -62,7 +62,6 @@ function ProcessPanelContent({ processInsights, topology = null, graphRun = null
       <ProcessGraph
         key={graphKey}
         messageRuns={processInsights.message_runs || []}
-        evalCaseWorkspace={workspace}
       />
     </div>
   );

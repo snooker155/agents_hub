@@ -109,7 +109,7 @@ def _effective_violation(
     own severity, with the delegation path folded into ``sources`` and named
     in ``rule_id``/``title``/``explanation`` (the ``_via_delegation`` suffix)
     so the operator can see exactly which hop closed it. An agent that can
-    delegate to the web searcher (ingest and exfiltrate, on purpose) while
+    delegate to an agent that fetches web pages (ingest and exfiltrate, on purpose) while
     also reading private data itself effectively holds the whole trifecta,
     whether that reach sits in its own tool list or one hop away; narrowing
     ``delegates`` is how the block goes away, the same way removing an own

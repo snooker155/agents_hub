@@ -1,6 +1,6 @@
 """
 Flow triggers: the concurrency-guarded ``trigger_flow`` helper (shared by the
-webhook + scheduled job) and the scheduled ``flow`` job kind.
+trigger route + scheduled job) and the scheduled ``flow`` job kind.
 """
 from datetime import datetime, timezone
 

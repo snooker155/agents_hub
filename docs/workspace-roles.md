@@ -15,7 +15,6 @@ delegates code. The code is `agents/roles.py`.
 | Code reviewer | `@reviewer` | `code_reviewer` | the same |
 | Planner | `@planner` | `planner` | the same |
 | Visualizer | `@visualizer` | `visualizer` | the same, analyst |
-| Web search | `@web_search` | `web_searcher` | researcher, verifier, sourcer |
 | Verifier | `@verifier` | `verifier` | writer (handoff) |
 | Researcher | `@researcher` | `researcher` | your own agents |
 | Analyst | `@analyst` | `analyst` | your own agents |
@@ -84,12 +83,12 @@ reference reaches the same agent. Pinning the id again afterwards is kept.
 
 ## Gotchas
 
-- An instruction that names an agent by id (`call web_searcher`) still
+- An instruction that names an agent by id (`call swe_agent`) still
   reaches that agent only while it holds the role. The shipped instructions
   name the role.
 - The workspace's main chat agent is not a role: it is the workspace's
   default chat agent, set on the workspace page.
-- Flow nodes, team members and scenario roles name agents, not roles: their
+- Flow nodes and team members name agents, not roles: their
   editors check each id against the registry when they are saved.
 
-Related: [agents](agents.md), [imported-agents](imported-agents.md), [system-agents](system-agents.md), [handoffs](handoffs.md), [tools-and-capabilities](tools-and-capabilities.md), [workspaces](workspaces.md), [special-models](special-models.md).
+Related: [agents](agents.md), [imported-agents](imported-agents.md), [system-agents](system-agents.md), [handoffs](handoffs.md), [tools-and-capabilities](tools-and-capabilities.md), [workspaces](workspaces.md).

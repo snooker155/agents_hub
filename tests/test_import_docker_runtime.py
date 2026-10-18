@@ -1,6 +1,5 @@
 """Docker mode for imported agents: the hub builds the image and runs one
-container per workspace, mounting that workspace (and its eval folder when it
-lives elsewhere) at its own host path. Every docker call is faked.
+container per workspace, mounting that workspace at its own host path. Every docker call is faked.
 
 Run: ``python -m pytest tests/test_import_docker_runtime.py -q``
 """
@@ -15,7 +14,6 @@ import pytest
 from agents.importer import checks, docker_runtime
 from agents.importer.manifest import AgentManifest
 from agents.remote_agent import RemoteAgent
-from evals import snapshot
 
 
 def _cp(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
@@ -94,10 +92,9 @@ def test_mode_defaults_to_url_and_names_are_docker_safe():
     assert docker_runtime.container_name("claude-code", "my ws/x") == "agents-hub-import-claude-code-my-ws-x"
 
 
-# ── mounts: the workspace, and its eval folder when that lives elsewhere ────
+# ── mounts: the workspace ───────────────────────────────────────────────────
 
 def test_mounts_are_the_workspace_folder_at_its_own_path(monkeypatch):
-    monkeypatch.delenv(snapshot.EVAL_ROOT_ENV, raising=False)
     from workspace import WORKSPACES_ROOT
     mounts = docker_runtime.mounts_for("alpha")
     ws_dir = str((Path(WORKSPACES_ROOT) / "alpha").resolve())
@@ -105,53 +102,20 @@ def test_mounts_are_the_workspace_folder_at_its_own_path(monkeypatch):
     assert Path(ws_dir).is_dir()
 
 
-def test_a_custom_eval_root_is_mounted_too_for_that_workspace(monkeypatch, tmp_path):
-    monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "evalroot"))
-    from workspace import WORKSPACES_ROOT
-    mounts = docker_runtime.mounts_for("beta")
-    ws_dir = str((Path(WORKSPACES_ROOT) / "beta").resolve())
-    eval_dir = str((tmp_path / "evalroot" / "beta").resolve())
-    assert mounts == [(ws_dir, ws_dir), (eval_dir, eval_dir)]
-    assert Path(eval_dir).is_dir()
-    # never the root of all workspaces, never the root of all eval folders
-    assert str(Path(WORKSPACES_ROOT).resolve()) not in [m[0] for m in mounts]
-    assert str((tmp_path / "evalroot").resolve()) not in [m[0] for m in mounts]
+# ── the workspace a path belongs to ─────────────────────────────────────────
 
-
-# ── the eval root and the workspace a path belongs to ───────────────────────
-
-def test_isolation_dir_under_a_custom_root_is_always_made(monkeypatch, tmp_path):
-    monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "er"))
-    target = snapshot.isolation_dir("gamma", "run1", "case1", attempt=2)
-    assert target == (tmp_path / "er" / "gamma" / "run1" / "case1-2").resolve()
-    assert target.is_dir()
-    assert snapshot.workspace_of_eval_dir(str(target)) == "gamma"
-    assert snapshot.eval_root("gamma") == (tmp_path / "er" / "gamma").resolve()
-
-
-def test_default_eval_root_is_inside_the_workspace(monkeypatch):
-    monkeypatch.delenv(snapshot.EVAL_ROOT_ENV, raising=False)
-    from workspace import WORKSPACES_ROOT
-    assert snapshot.eval_root("delta") == (Path(WORKSPACES_ROOT) / "delta").resolve() / ".eval"
-    assert snapshot.eval_root("") is None
-    assert snapshot.workspace_of_eval_dir("/anywhere") is None
-
-
-def test_workspace_for_path_reads_workspace_project_and_eval_folders(monkeypatch, tmp_path):
-    monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "er"))
+def test_workspace_for_path_reads_workspace_and_project_folders():
     from workspace import WORKSPACES_ROOT
     root = Path(WORKSPACES_ROOT).resolve()
     assert docker_runtime.workspace_for_path(None) == "default"
     assert docker_runtime.workspace_for_path(str(root / "eps")) == "eps"
     assert docker_runtime.workspace_for_path(str(root / "eps" / "proj" / "src")) == "eps"
-    assert docker_runtime.workspace_for_path(str(tmp_path / "er" / "eps" / "run" / "case")) == "eps"
 
 
 # ── starting a container ────────────────────────────────────────────────────
 
 def test_ensure_container_runs_with_mounts_port_labels_and_declared_env(
         monkeypatch, descriptor, no_health_wait, tmp_path):
-    monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "er"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setenv("NOT_DECLARED", "secret")
     monkeypatch.delenv("CLAUDE_MODEL", raising=False)
@@ -163,8 +127,7 @@ def test_ensure_container_runs_with_mounts_port_labels_and_declared_env(
     run = next(c for c in fake.calls if c[0] == "run")
     from workspace import WORKSPACES_ROOT
     ws_dir = str((Path(WORKSPACES_ROOT) / "zeta").resolve())
-    eval_dir = str((tmp_path / "er" / "zeta").resolve())
-    assert f"{ws_dir}:{ws_dir}" in run and f"{eval_dir}:{eval_dir}" in run
+    assert f"{ws_dir}:{ws_dir}" in run
     assert run[run.index("-p") + 1].startswith("127.0.0.1:") and run[run.index("-p") + 1].endswith(":8430")
     assert f"{docker_runtime.LABEL_WORKSPACE}=zeta" in run
     assert f"{docker_runtime.LABEL_IMPORT}=claude-code" in run

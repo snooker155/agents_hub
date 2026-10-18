@@ -171,7 +171,6 @@ function FlowEditor() {
                   flow={flow}
                   nodes={nodes}
                   onPatch={patchFlow}
-                  onSetWebhookSecret={docApi.handleSetWebhookSecret}
                 />
                 <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
                   {t('flowEditor.selectNodeHint')}

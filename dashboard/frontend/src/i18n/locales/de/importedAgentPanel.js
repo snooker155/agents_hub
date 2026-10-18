@@ -21,7 +21,7 @@ export default {
   modeUrl: 'Ein Dienst, den Sie starten',
   modeUrlHint: 'Sie starten den Container oder Prozess selbst und tragen seine Adresse unten ein.',
   modeDocker: 'Docker auf diesem Host, gestartet vom Hub',
-  modeDockerHint: 'Der Hub baut das Image aus dem Klon und startet pro Arbeitsbereich einen Container. Der Ordner des Arbeitsbereichs wird unter seinem eigenen Pfad eingebunden, ebenso sein Eval-Ordner, wenn der woanders liegt; das Wurzelverzeichnis aller Arbeitsbereiche nie.',
+  modeDockerHint: 'Der Hub baut das Image aus dem Klon und startet pro Arbeitsbereich einen Container. Der Ordner des Arbeitsbereichs wird unter seinem eigenen Pfad eingebunden, aber nie das Wurzelverzeichnis aller Arbeitsbereiche nie.',
   dockerUnsupported: 'Das Manifest nennt kein Dockerfile, der Hub kann diesen Agenten also nicht bauen.',
   image: 'Image',
   imageBuilt: 'gebaut',

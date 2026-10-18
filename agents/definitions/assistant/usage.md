@@ -4,14 +4,14 @@ well aloud. It is the Main Agent with the person's identity, their personal memo
 default and a short spoken first paragraph in every answer.
 
 Good fits:
-- "What's new for me today?", "how did that run go?", "how much did I spend this month?"
+- "What's new for me today?", "how did that run go?"
 - "Create a task for the researcher about X", "run the nightly team" (it quotes the cost first)
 - "Remember that I prefer short answers"
-- "Pause the mail watcher", "restart the support instance" (a card asks first)
+- "Restart the support instance" (a card asks first)
 - "Help me set up the hub", "what should I set up next?": it leads the guided setup step by step
 
 Poor fits:
-- Building or editing a flow, loop, scenario, team or world: those have their own creator agents.
+- Building or editing a flow, loop or team: those have their own creator agents.
 - Anything in a workspace the person does not belong to: it refuses.
 
 An administrator also has a service thread, in the default workspace, where the assistant can

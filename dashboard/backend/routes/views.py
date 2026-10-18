@@ -92,7 +92,7 @@ _ASSET_CSP = (
 
 
 def _owner_entity_id(owner_kind: Optional[str], owner_id: Optional[str]) -> Optional[str]:
-    """The flow/team/scenario id an entity-kind owner's run belongs to.
+    """The flow/team id an entity-kind owner's run belongs to.
 
     A view's owner is recorded as a *run* (``owner_id`` is a row in
     ``entity_runs``), but a frontend link wants the entity itself, e.g.
@@ -716,8 +716,8 @@ async def save_code_view(view_id: str, payload: CodeSaveRequest):
 
 
 # ── the Studio build chat ─────────────────────────────────────────────────────
-# The Visualizer, pinned to one view: the same entity-chat surface the loop,
-# scenario and team builders use, so the conversation is stored server-side and
+# The Visualizer, pinned to one view: the same entity-chat surface the loop
+# and team builders use, so the conversation is stored server-side and
 # the floating page-chat panel can host it (see components/pageChat).
 
 VIEW_CHAT_KIND = "view"

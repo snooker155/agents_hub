@@ -89,7 +89,7 @@ def test_health_lists_the_snapshot_and_cheap_checks_only(single, hub):
     assert "snapshot" in ids
     assert "migrations" in ids and "disk" in ids
     # The networked checks never run on their own.
-    assert not ({"provider", "browser", "models_runtime"} & ids)
+    assert not ({"provider", "models_runtime"} & ids)
     for r in listed["items"]:
         assert r["url"] == "/health"
 
@@ -112,7 +112,7 @@ def test_health_networked_check_answers_skip_without_probing(single, hub, monkey
         raise AssertionError("a lookup must never make a network call")
     monkeypatch.setattr(httpx, "get", _boom)
 
-    card = lookup.lookup("health", entity_id="browser", admin=True)
+    card = lookup.lookup("health", entity_id="provider", admin=True)
     assert card["fields"]["status"] == "skip"
 
 

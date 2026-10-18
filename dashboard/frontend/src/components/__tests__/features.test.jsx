@@ -5,8 +5,8 @@ import { useFeatures } from '../features';
 import * as api from '../../api';
 
 function Probe() {
-  const { playground } = useFeatures();
-  return <span data-testid="flag">{String(playground)}</span>;
+  const features = useFeatures();
+  return <span data-testid="flag">{String(features.cluster !== false)}</span>;
 }
 
 const show = () => render(<FeaturesProvider><Probe /></FeaturesProvider>);
@@ -22,7 +22,7 @@ describe('FeaturesProvider', () => {
   });
 
   it('hides the feature the backend reports as off', async () => {
-    vi.spyOn(api, 'getHealth').mockResolvedValue({ data: { features: { playground: false } } });
+    vi.spyOn(api, 'getHealth').mockResolvedValue({ data: { features: { cluster: false } } });
     show();
     await waitFor(() => expect(flag()).toBe('false'));
   });

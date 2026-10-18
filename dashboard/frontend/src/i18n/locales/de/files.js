@@ -1,6 +1,6 @@
 export default {
   title: 'Dateien',
-  pageDescription: 'In diesem Arbeitsbereich gespeicherte Dateien. Laden Sie eine Datei einmal hoch und hängen Sie sie dann über ihre ID im Chat an, fügen Sie sie einem Speicherpool hinzu oder geben Sie sie einer Aufgabe oder einem Evaluationsfall.',
+  pageDescription: 'In diesem Arbeitsbereich gespeicherte Dateien. Laden Sie eine Datei einmal hoch und hängen Sie sie dann über ihre ID im Chat an, fügen Sie sie einem Speicherpool hinzu oder geben Sie sie einer Aufgabe.',
   selectWorkspace: 'Wählen Sie einen Arbeitsbereich, um seine Dateien zu sehen.',
   refresh: 'Aktualisieren',
   syncFolder: 'Aus Ordner synchronisieren',
@@ -30,7 +30,6 @@ export default {
     agent: 'Agent',
     memory: 'Speicher',
     task: 'Aufgabe',
-    eval: 'Evaluation',
     api: 'API',
     view: 'Ansichten',
   },
@@ -68,7 +67,6 @@ export default {
   usedChats: 'Chats',
   usedMemory: 'Speicherpools',
   usedTasks: 'Aufgaben',
-  usedEvals: 'Evaluationsfälle',
   producedBy: 'Vom Agenten {{agent}} gespeichert',
   openRun: 'Ausführung öffnen',
   untitledChat: 'Unterhaltung',
@@ -104,12 +102,6 @@ export default {
     title: 'Dateien',
     hint: 'Werden in das Arbeitsverzeichnis jeder Ausführung kopiert (task_files/) und im Prompt genannt. Unteraufgaben erhalten sie ebenfalls.',
     saveFailed: 'Die Dateien der Aufgabe konnten nicht gespeichert werden',
-  },
-  evalCase: {
-    label: 'Dateien',
-    hint: 'Werden in das Arbeitsverzeichnis des Falls kopiert und in seiner Eingabe genannt.',
-    badge_one: '{{count}} Datei',
-    badge_other: '{{count}} Dateien',
   },
   chat: {
     fromWorkspace: 'Aus den Dateien des Arbeitsbereichs',

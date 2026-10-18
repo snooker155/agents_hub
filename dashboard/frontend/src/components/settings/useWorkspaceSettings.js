@@ -16,7 +16,6 @@ import { patchWorkspaceSummary } from '../../api/workspaceSummary';
 const OVERRIDE_FIELDS = [
   'openai_base_url', 'openai_api_key', 'anthropic_api_key', 'google_api_key',
   'ollama_base_url', 'lmstudio_base_url',
-  'langfuse_secret_key', 'langfuse_public_key', 'langfuse_base_url',
   'orch_log_level',
   'rag_vector_db', 'rag_vector_db_url', 'rag_vector_db_api_key', 'rag_vector_db_collection',
   'rag_embedding_provider', 'rag_embedding_model', 'rag_embedding_api_key', 'rag_embedding_base_url',
@@ -74,8 +73,6 @@ export function useWorkspaceSettings(workspace) {
         openai_api_key_masked: data.openai_api_key_masked,
         anthropic_api_key_masked: data.anthropic_api_key_masked,
         google_api_key_masked: data.google_api_key_masked,
-        langfuse_secret_key_masked: data.langfuse_secret_key_masked,
-        langfuse_public_key_masked: data.langfuse_public_key_masked,
         rag_vector_db_api_key_masked: data.rag_vector_db_api_key_masked,
         rag_embedding_api_key_masked: data.rag_embedding_api_key_masked,
       });
@@ -174,11 +171,11 @@ export function useWorkspaceSettings(workspace) {
   const setCodeRunnerProvider = (provider) => saveCodeRunner({ code_runner_provider: provider });
   const toggleCodeRunnerFallback = (next) => saveCodeRunner({ code_runner_fallback: next ? 'local' : 'none' });
 
-  // Web search (tools/web.py): provider, key and result count behind the
-  // web_search tool. Machine-wide .env settings, read live by every process.
-  const [webSearchSaving, setWebSearchSaving] = useState(false);
-  const saveWebSearch = async (patch) => {
-    setWebSearchSaving(true);
+  // Web access (tools/web.py): fetch limits and the domain policy behind the
+  // fetch_url tool. Machine-wide .env settings, read live by every process.
+  const [webAccessSaving, setWebAccessSaving] = useState(false);
+  const saveWebAccess = async (patch) => {
+    setWebAccessSaving(true);
     setError('');
     try {
       await updateSettings(patch);
@@ -186,10 +183,10 @@ export function useWorkspaceSettings(workspace) {
       setGlobalSettings(data);
       return true;
     } catch (e) {
-      setError(`${t('settings.errors.webSearchSave')}: ` + (e.response?.data?.detail || e.message));
+      setError(`${t('settings.errors.webAccessSave')}: ` + (e.response?.data?.detail || e.message));
       return false;
     } finally {
-      setWebSearchSaving(false);
+      setWebAccessSaving(false);
     }
   };
 
@@ -339,8 +336,6 @@ export function useWorkspaceSettings(workspace) {
     openai_api_key: getFieldValue('openai_api_key'),
     anthropic_api_key: getFieldValue('anthropic_api_key'),
     google_api_key: getFieldValue('google_api_key'),
-    langfuse_secret_key: getFieldValue('langfuse_secret_key'),
-    langfuse_public_key: getFieldValue('langfuse_public_key'),
     rag_vector_db_api_key: getFieldValue('rag_vector_db_api_key'),
     rag_embedding_api_key: getFieldValue('rag_embedding_api_key'),
   };
@@ -357,7 +352,7 @@ export function useWorkspaceSettings(workspace) {
     temperatureSaving, saveGlobalTemperature,
     capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
     codeRunnerSaving, setCodeRunnerProvider, toggleCodeRunnerFallback,
-    webSearchSaving, saveWebSearch,
+    webAccessSaving, saveWebAccess,
     fetchErrors, providerStatus, providerTesting, testProvider,
   };
 }

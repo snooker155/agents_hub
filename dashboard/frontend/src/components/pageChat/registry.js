@@ -54,14 +54,6 @@ const ROUTE_SUBJECTS = [
     match: /^\/teams\/(.+)$/,
     subject: (m) => ({ scope: `team:${seg(m[1])}`, refs: [{ kind: 'team', id: seg(m[1]) }] }),
   },
-  // Before the scenario rule below: a world and the run history are not
-  // scenario ids, the same ordering the shell's title table needs.
-  { match: /^\/playground\/runs$/, subject: () => ({ scope: 'playground-runs' }) },
-  { match: /^\/playground\/worlds$/, subject: () => ({ scope: 'playground-worlds' }) },
-  {
-    match: /^\/playground\/([^/]+)$/,
-    subject: (m) => ({ scope: `scenario:${seg(m[1])}`, refs: [{ kind: 'scenario', id: seg(m[1]) }] }),
-  },
   // Two pages keep the entity in the query string rather than the path.
   {
     match: /^\/loops$/,

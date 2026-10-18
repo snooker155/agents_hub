@@ -66,7 +66,6 @@ export default {
     agentTaskHint: 'Запустить работу агента позже',
     flow: 'Поток',
     flowHint: 'Запускать поток по расписанию',
-    heartbeat: 'Пульс',
     memoryConsolidate: 'Консолидация памяти',
     memoryConsolidateHint: 'Свернуть пул и его недавние сессии в новый пул',
   },

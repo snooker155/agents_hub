@@ -22,7 +22,7 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from chat import voice  # noqa: E402
-from providers import media, special  # noqa: E402
+from providers import voice_models  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 SPEECH = {"provider": "openai", "model": "gpt-4o-mini-tts", "price_usd": 0.015}
@@ -64,8 +64,8 @@ def seeded(monkeypatch):
 
 @pytest.fixture
 def speech_models(seeded):
-    """Speech and transcription added in default; personal workspaces fall back to them."""
-    special.save("default", {"speech": SPEECH, "transcription": TRANSCRIPTION})
+    """The hub's speech and transcription models (the Models page, Voice tab)."""
+    voice_models.save({"speech": SPEECH, "transcription": TRANSCRIPTION})
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def http(monkeypatch):
             return httpx.Response(200, content=b"ID3-fake-mp3", headers={"content-type": "audio/mpeg"})
         return httpx.Response(404, json={"error": {"message": "unexpected"}})
 
-    monkeypatch.setattr(media, "_client",
+    monkeypatch.setattr(voice_models, "_client",
                         lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
     return calls
 
@@ -213,22 +213,23 @@ def _card_in_thread(client, bob, tool="run_team_tool", **fields):
 
 # ── what the page is told ────────────────────────────────────────────────────
 
-def test_voice_follows_the_workspace_the_turn_runs_in(client, seeded, http, fake_agent):
-    """Single mode: the home is ``default``, which added no voice models, and
-    the header's workspace did: the page, the transcript and the speech use
-    that workspace's models."""
+def test_voice_uses_the_hubs_voice_models_in_every_workspace(client, seeded, http, fake_agent):
+    """One pair of voice models for the hub (providers/voice_models.py): none
+    chosen, the page falls back to the browser's own; once chosen, a turn in
+    any workspace listens and speaks with them, and the transcription run is
+    filed in the workspace the turn will run in."""
     from managers import run_manager
     from workspace import create_workspace_folder
     create_workspace_folder("dev")
-    special.save("dev", {"speech": SPEECH, "transcription": TRANSCRIPTION})
+    assert client.get("/api/assistant", params={"workspace": "dev"}).json()["voice"]["speech"] is None
+    missing = _wav_post(client, {}, workspace="dev")
+    assert missing.status_code == 409 and "Voice tab" in missing.json()["detail"]["message"]
 
-    assert client.get("/api/assistant").json()["voice"]["speech"] is None
+    voice_models.save({"speech": SPEECH, "transcription": TRANSCRIPTION})
     meta = client.get("/api/assistant", params={"workspace": "dev"}).json()["voice"]
     assert meta["transcription"]["model"] == TRANSCRIPTION["model"] and meta["speech"]["workspace"] == "dev"
-    # A workspace that does not exist is not an error here: the home decides.
-    assert client.get("/api/assistant", params={"workspace": "nope"}).json()["voice"]["speech"] is None
+    assert client.get("/api/assistant").json()["voice"]["speech"]["model"] == SPEECH["model"]
 
-    assert _wav_post(client, {}).status_code == 409
     heard = _wav_post(client, {}, workspace="dev")
     assert heard.status_code == 200, heard.text
     assert run_manager.get_run_by_id(heard.json()["run_id"])["workspace"] == "dev"
@@ -240,10 +241,11 @@ def test_voice_follows_the_workspace_the_turn_runs_in(client, seeded, http, fake
 
 
 def test_the_models_page_offers_the_speech_voices():
-    purposes = {p["id"]: p for p in special.options_payload()["purposes"]}
+    purposes = {p["id"]: p for p in voice_models.options_payload()["purposes"]}
+    assert set(purposes) == {"speech", "transcription"}
     assert "alloy" in purposes["speech"]["voices"]["openai_compat"]
     assert "Kore" in purposes["speech"]["voices"]["google"]
-    assert purposes["image"]["voices"] == {}
+    assert purposes["transcription"]["voices"] == {}
 
 
 # ── the threads on the Chat page ─────────────────────────────────────────────

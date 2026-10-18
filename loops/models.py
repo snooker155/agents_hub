@@ -103,7 +103,7 @@ class Loop:
     evaluator_model: Optional[str] = None
     #: A markdown rubric. When set it replaces the evaluator above: every pass
     #: is graded per criterion by an independent model call
-    #: (``evals.graders.grade_rubric``, the grader a task's outcome uses), the
+    #: (``tasks.rubric_grader.grade_rubric``, the grader a task's outcome uses), the
     #: loop stops once every criterion passes, and the unmet criteria with the
     #: grader's feedback are what the next pass is told to fix. The mean
     #: criterion score, as 0-100, is the iteration's score, so ``target_score``

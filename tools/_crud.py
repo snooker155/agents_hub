@@ -1,6 +1,6 @@
 """
-CRUD tool factory shared by the entity management modules: flow, loop, team,
-scenario, world and project.
+CRUD tool factory shared by the entity management modules: flow, loop, team
+and project.
 
 Each of those modules hand-rolls the same skeleton per operation: a
 ``@tool(...)`` decorator naming the tool, a pydantic ``args_schema``, a
@@ -9,9 +9,8 @@ the way out. That skeleton is what this factory owns.
 
 It deliberately does NOT own the entity logic itself — the lookup, the payload
 shaping, the validation rules, the merge semantics. Those differ enough
-between a flow (no list tool at all; ids only), a loop or team or scenario
-(errors block the save; warnings do not), a world (nothing ever blocks a
-save; whole-list edits merge by name unless ``replace=True``) and a project
+between a flow (no list tool at all; ids only), a loop or team
+(errors block the save; warnings do not) and a project
 (enum fields; a folder created as a side effect) that folding them into shared
 code would trade six readable modules for one unreadable one — the task this
 factory was written for says as much: hooks for the entity-specific bits, not

@@ -272,7 +272,7 @@ def test_rollback_of_a_system_agent_sets_user_modified():
     assert restored.user_modified is True  # bootstrap sync must not revert this rollback
 
 
-# ── ensure_current_version (experiment arms) ─────────────────────────────────
+# ── ensure_current_version ─────────────────────────────────
 
 def test_ensure_current_version_snapshots_the_live_state_once():
     add_agent(_spec("cur_agent", tools=["read_file"]))

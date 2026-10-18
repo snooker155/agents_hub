@@ -195,7 +195,7 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
     Layers, in order: a task title prefix + the task description, then the
     ``base_instruction`` itself, then the parent task's goal (for subtasks),
     result excerpts from the tasks this task ``depends`` on, the most
-    recent prior agent output on this same task (re-run scenario), the
+    recent prior agent output on this same task (a re-run), the
     task's workspace files (copied into ``work_dir`` when given, see
     :func:`task_files_section`), and the task's outcome: its rubric as the
     definition of done, plus the grader's feedback when the previous attempt
@@ -291,7 +291,7 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
         except Exception:  # noqa: BLE001 - the prerequisite layer is optional, the instruction stands without it
             _log.debug("prerequisite results failed", exc_info=True)
 
-        # Append previous agent output on this same task (re-run scenario).
+        # Append previous agent output on this same task (a re-run).
         # Skip orchestrator results — they are assignment summaries, not work output.
         try:
             all_results = tasks_service.get_task_results(UUID(task_id))

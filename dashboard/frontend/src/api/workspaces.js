@@ -1,7 +1,7 @@
 /**
- * Workspaces: files, policy, roles, special models, personal memory, active workspace.
+ * Workspaces: files, policy, roles, personal memory, active workspace.
  */
-import api, { API_ORIGIN, authFetchHeaders } from './index';
+import api from './index';
 
 // Personal memory in a workspace: its switch and each agent's (memory/personal.py).
 export const getWorkspacePersonalMemory = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/personal-memory`);
@@ -9,39 +9,6 @@ export const updateWorkspacePersonalMemory = (name, enabled) => api.put(`/worksp
 // Workspace roles (agents/roles.py): which agent does each kind of work here.
 export const getWorkspaceRoles = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/roles`);
 export const updateWorkspaceRole = (name, role, agentId) => api.put(`/workspaces/${encodeURIComponent(name)}/roles/${encodeURIComponent(role)}`, { agent_id: agentId || null });
-// Special models (providers/special.py): images, video, speech, transcription, own models.
-export const getWorkspaceSpecialModels = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/special-models`);
-export const updateWorkspaceSpecialModels = (name, config) => api.put(`/workspaces/${encodeURIComponent(name)}/special-models`, config);
-export const checkWorkspaceSpecialModel = (name, body) => api.post(`/workspaces/${encodeURIComponent(name)}/special-models/check`, body);
-export const discoverWorkspaceSpecialModels = (name, purpose, provider) => api.get(
-  `/workspaces/${encodeURIComponent(name)}/special-models/discover`, { params: { purpose, provider } },
-);
-/** The voices of one model: `{voices, own, language, languages}`. */
-export const getWorkspaceSpecialModelVoices = (name, provider, model, config = {}) => api.get(
-  `/workspaces/${encodeURIComponent(name)}/special-models/voices`, { ...config, params: { purpose: 'speech', provider, model } },
-);
-/**
- * A short line read by a speech model the form holds,
- * `{provider, model, voice, options, language}`: `{blob, language, text}`.
- * Its own fetch, so a refusal's message survives a binary response type.
- */
-export async function sampleWorkspaceSpecialModel(name, body, { signal } = {}) {
-  const response = await fetch(`${API_ORIGIN}/api/workspaces/${encodeURIComponent(name)}/special-models/sample`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
-    signal,
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    let detail = '';
-    try { detail = (await response.json())?.detail; } catch { /* no body */ }
-    throw new Error(typeof detail === 'string' && detail ? detail : (detail?.message || `HTTP ${response.status}`));
-  }
-  let text = '';
-  try { text = decodeURIComponent(response.headers.get('X-Sample-Text') || ''); } catch { /* left out */ }
-  return { blob: await response.blob(), language: response.headers.get('X-Sample-Language') || '', text };
-}
-
 // Workspaces
 // Callers that ask at the same moment (the header, a page, React's double
 // mount in development) share the request in flight.

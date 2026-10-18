@@ -118,7 +118,7 @@ def _running_runs() -> int:
 
 def _tokens_by_workspace() -> Dict[str, int]:
     """Total (input+output) tokens per workspace, straight off the ``runs``
-    table's own token columns — the same numbers the costs page sums, just
+    table's own token columns — the same numbers the run views sum, just
     grouped by the database rather than in Python over every row."""
     try:
         rows = db.get_conn().execute(
@@ -132,7 +132,7 @@ def _tokens_by_workspace() -> Dict[str, int]:
 
 def _cost_by_workspace() -> Tuple[Dict[str, float], bool]:
     """Estimated USD spend per workspace, from the same catalog pricing
-    ``dashboard/backend/routes/costs.py`` uses (``common.pricing``).
+    the run views use (``common.pricing``).
 
     Grouped by (workspace, provider, model) in SQL first — a few dozen rows on
     any real deployment, never one row per run — and priced in Python from
@@ -211,7 +211,7 @@ def collect() -> List[Metric]:
     if computable:
         _emit(lines, "agents_hub_cost_usd_total",
               "Estimated USD spend per workspace, from catalog pricing "
-              "(common.pricing) — the same estimate the costs page shows.",
+              "(common.pricing) — the same estimate the run views show.",
               "gauge", [({"workspace": ws}, round(c, 6))
                         for ws, c in sorted(costs.items())])
     # else: the price catalog could not be read. Omitted rather than

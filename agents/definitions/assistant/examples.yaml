@@ -1,22 +1,22 @@
 # Example requests shown in the empty chat with this agent, by UI language.
 en:
 - What's new for me today?
-- How much did I spend this month?
+- How did my last run go?
 - Create a task for the researcher about our pricing
 - Remember that I prefer short answers
-- Pause the mail watcher
+- Every morning at 8, send me a summary of new tasks
 - What should I set up next?
 ru:
 - Что у меня нового сегодня?
-- Сколько денег ушло в этом месяце?
+- Как прошёл мой последний запуск?
 - Создай задачу для researcher про наши цены
 - Запомни, что я предпочитаю короткие ответы
-- Поставь почтовый вотчер на паузу
+- Каждое утро в 8 присылай сводку новых задач
 - Что мне настроить дальше?
 de:
 - Was gibt es heute Neues für mich?
-- Wie viel habe ich diesen Monat ausgegeben?
+- Wie lief mein letzter Run?
 - Leg für den researcher eine Aufgabe zu unseren Preisen an
 - Merk dir, dass ich kurze Antworten bevorzuge
-- Pausiere den Mail-Watcher
+- Schick mir jeden Morgen um 8 eine Übersicht der neuen Aufgaben
 - Was sollte ich als Nächstes einrichten?

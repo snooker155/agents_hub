@@ -54,4 +54,4 @@ reads it. An interrupt stops the team. See [steering](steering.md).
 - A centralized team with a weak leader degenerates into the leader doing all
   the work and paying for an audience.
 
-Related: [flows](flows.md), [agents](agents.md), [costs](costs.md), [steering](steering.md).
+Related: [flows](flows.md), [agents](agents.md), [steering](steering.md).

@@ -8,7 +8,6 @@ export default {
     channel: 'Chat channel',
     mcp_server: 'MCP server',
     database: 'Database',
-    watcher: 'Watcher',
     secret: 'Secret',
     // A model or web search key for the whole hub, not one workspace's.
     provider: 'Provider key (hub-wide)',

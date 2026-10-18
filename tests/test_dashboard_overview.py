@@ -1,5 +1,5 @@
 """
-The Dashboard's load and spend widgets (common/dashboard_overview.py).
+The Dashboard's load widgets (common/dashboard_overview.py).
 """
 from datetime import datetime, timedelta, timezone
 
@@ -33,7 +33,7 @@ def _seed_prices():
     })
 
 
-def test_runs_and_costs_by_day(monkeypatch):
+def test_runs_by_day(monkeypatch):
     _seed_prices()
     _run("r1", status="completed", ago=timedelta(hours=1))
     _run("r2", status="failed", ago=timedelta(hours=2), agent_id="a2", inbound=500_000)
@@ -54,14 +54,7 @@ def test_runs_and_costs_by_day(monkeypatch):
     assert len(per_day) == 14
     assert sum(d["completed"] for d in per_day) == 2
     assert sum(d["failed"] for d in per_day) == 1
-
-    costs = out["costs"]
-    # 1M input tokens at $2 per run; r2 is half of that.
-    assert round(costs["last_30d"], 2) == 5.00
-    assert round(costs["last_7d"], 2) == 5.00
-    assert costs["runs_30d"] == 3
-    assert round(sum(d["cost"] for d in costs["per_day"]), 2) == 5.00
-    assert costs["top_agents"][0]["key"] == "a1"
+    assert "costs" not in out
 
 
 def test_a_failing_section_does_not_blank_the_others(monkeypatch):

@@ -19,10 +19,6 @@ vi.mock('../../api/agentLoop', async () => {
   const real = await vi.importActual('../../api/agentLoop');
   return { ...real, getModelsCatalog: (...a) => getModelsCatalog(...a) };
 });
-vi.mock('../../api/browser', () => ({
-  getRunBrowserSession: () => Promise.reject({ response: { status: 404 } }),
-  setBrowserControl: () => ok({}),
-}));
 vi.mock('../stream', () => ({ useChannel: () => {} }));
 
 import LiveRunStream from '../LiveRunStream';

@@ -36,8 +36,8 @@ def _principal() -> Any:
 
 
 class SetupGuideInput(BaseModel):
-    action: str = Field("status", description="status (the guide), options (the choices for the model, voice "
-                                              "and web search steps), skip, unskip, done (mark a step the hub "
+    action: str = Field("status", description="status (the guide), options (the choices for the model and voice "
+                                              "steps), skip, unskip, done (mark a step the hub "
                                               "cannot see as done), undo, start, finish or dismiss")
     step: Optional[str] = Field(None, description="skip, unskip, done, undo: the step id from status")
 
@@ -47,7 +47,7 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
     """The person's guided setup of the hub: which steps are done, skipped or open,
     what comes next, why it matters and how you do it. `options` gives the choices
     for the next step (each connected provider's strongest, balanced and fastest
-    model, the cloud voices, the web search providers). Mark a step
+    model, the cloud voices). Mark a step
     skipped when the person does not want it, done when it is done in a way the hub
     cannot see, and finish when every step is done or skipped; dismiss when the
     person wants to stop. Neither works before the required steps (a model, the
@@ -120,7 +120,7 @@ def describe_call(tool_input: Any) -> str:
 
 
 class ShowInput(BaseModel):
-    path: str = Field(..., description="A page of the hub, starting with /, e.g. /models?tab=special or /connectors")
+    path: str = Field(..., description="A page of the hub, starting with /, e.g. /models?tab=voice or /connectors")
 
 
 @tool("show_on_screen", args_schema=ShowInput)

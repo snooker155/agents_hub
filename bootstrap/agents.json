@@ -21,8 +21,6 @@
         "calculator",
         "get_agent_tool",
         "assign_agent_tool",
-        "get_scenario_run_tool",
-        "stop_scenario_run_tool",
         "get_team_run_tool",
         "stop_team_run_tool",
         "get_loop_run_tool",
@@ -64,8 +62,6 @@
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
-        "world_builder",
-        "scenario_creator",
         "loop_creator",
         "team_creator",
         "project_manager"
@@ -328,7 +324,6 @@
         "run_agent_tool",
         "search_docs",
         "read_doc",
-        "generate_image",
         "scene_camera",
         "scene_light",
         "scene_environment"
@@ -374,8 +369,7 @@
         "read_file",
         "search_text",
         "search_docs",
-        "read_doc",
-        "generate_image"
+        "read_doc"
       ],
       "commands": [],
       "capacity": 1,
@@ -480,43 +474,11 @@
       "skills_enabled": false
     },
     {
-      "id": "eval_agent",
-      "name": "Eval Agent",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Builds eval sets, runs them and reads the score matrix back: turns a prompt change into a number instead of an impression. Prices a sweep before it runs and waits for approval.",
-      "domain": "testing",
-      "system": true,
-      "tools": [
-        "list_evals_tool",
-        "get_eval_tool",
-        "list_graders_tool",
-        "create_eval_tool",
-        "modify_eval_tool",
-        "add_eval_case_tool",
-        "remove_eval_case_tool",
-        "estimate_eval_tool",
-        "run_eval_tool",
-        "list_eval_runs_tool",
-        "get_eval_run_tool",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": false,
-      "temperature": 0.0,
-      "skills_enabled": false
-    },
-    {
       "id": "researcher",
       "name": "Researcher",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Synthesis agent: combines the workspace, shared memory, and the open web (delegated to the Web Search Agent) into a reasoned answer with sources. Reads widely and writes nothing.",
+      "description": "Synthesis agent: combines the workspace and shared memory into a reasoned answer with sources. Reads widely and writes nothing.",
       "domain": "research",
       "system": true,
       "tools": [
@@ -526,8 +488,6 @@
         "read_memory",
         "search_memory",
         "calculator",
-        "run_agent_tool",
-        "list_models_tool",
         "search_docs",
         "read_doc"
       ],
@@ -561,36 +521,6 @@
         "plan_enabled": false,
         "think_mode": "deep"
       },
-      "response_format": "buttons",
-      "clarify_gate": true,
-      "delegates": [
-        "@web_search"
-      ],
-      "capability_override": true
-    },
-    {
-      "id": "web_searcher",
-      "name": "Web Search Agent",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Searches the open web and reads the pages it finds, returning findings with sources. Holds no access to files or memory by design.",
-      "domain": "research",
-      "system": true,
-      "tools": [
-        "web_search",
-        "fetch_url",
-        "calculator",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": true,
-      "temperature": 0.3,
-      "skills_enabled": false,
       "response_format": "buttons",
       "clarify_gate": true
     },
@@ -627,10 +557,6 @@
         "create_task",
         "get_task_result",
         "update_task",
-        "list_scenarios_tool",
-        "run_scenario_tool",
-        "get_scenario_run_tool",
-        "stop_scenario_run_tool",
         "list_teams_tool",
         "run_team_tool",
         "get_team_run_tool",
@@ -650,12 +576,7 @@
         "update_workspace",
         "delete_workspace",
         "add_workspace_agent",
-        "remove_workspace_agent",
-        "generate_image",
-        "generate_video",
-        "synthesize_speech",
-        "transcribe_audio",
-        "ask_special_model"
+        "remove_workspace_agent"
       ],
       "commands": [],
       "capacity": 1,
@@ -678,8 +599,6 @@
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
-        "world_builder",
-        "scenario_creator",
         "loop_creator",
         "team_creator",
         "project_manager"
@@ -725,12 +644,7 @@
         "list_agents_tool",
         "get_flow_tool",
         "search_docs",
-        "read_doc",
-        "generate_image",
-        "generate_video",
-        "synthesize_speech",
-        "transcribe_audio",
-        "ask_special_model"
+        "read_doc"
       ],
       "commands": [],
       "capacity": 1,
@@ -754,8 +668,6 @@
         "main-agent",
         "prompt-engineer",
         "plot-manager",
-        "world_builder",
-        "scenario_creator",
         "loop_creator",
         "team_creator",
         "project_manager"
@@ -783,7 +695,6 @@
         "search_errors",
         "routing_log",
         "web_log_recent",
-        "costs_summary",
         "stop_run",
         "stop_instance",
         "restart_instance",
@@ -853,85 +764,6 @@
       }
     },
     {
-      "id": "world_builder",
-      "name": "World Builder",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Designs, creates, modifies, validates and deletes the playground worlds scenarios are cast in: locations, items, entities, world and character values, roles and the action API itself.",
-      "domain": "System",
-      "system": true,
-      "tools": [
-        "list_world_templates_tool",
-        "list_worlds_tool",
-        "get_world_tool",
-        "create_world_tool",
-        "modify_world_tool",
-        "validate_world_tool",
-        "delete_world_tool",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": false,
-      "skills_enabled": false
-    },
-    {
-      "id": "scenario_creator",
-      "name": "Scenario Creator",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Designs, creates, modifies, validates and deletes playground scenarios (multi-agent simulations) from the registered agents and the declared environments.",
-      "domain": "System",
-      "system": true,
-      "tools": [
-        "list_environments_tool",
-        "list_agents_tool",
-        "list_scenarios_tool",
-        "create_scenario_tool",
-        "get_scenario_tool",
-        "modify_scenario_tool",
-        "delete_scenario_tool",
-        "validate_scenario_tool",
-        "create_scenario_from_template_tool",
-        "run_scenario_tool",
-        "get_scenario_run_tool",
-        "stop_scenario_run_tool",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": false,
-      "skills_enabled": false,
-      "delegates": [
-        "orchestrator",
-        "agent_creator",
-        "decomposer",
-        "flow_creator",
-        "memory_extractor",
-        "architect_agent",
-        "@planner",
-        "@visualizer",
-        "@coder",
-        "@reviewer",
-        "main-agent",
-        "universal_agent",
-        "prompt-engineer",
-        "plot-manager",
-        "world_builder",
-        "loop_creator",
-        "team_creator",
-        "project_manager"
-      ]
-    },
-    {
       "id": "loop_creator",
       "name": "Loop Creator",
       "type": "langchain",
@@ -977,8 +809,6 @@
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
-        "world_builder",
-        "scenario_creator",
         "team_creator",
         "project_manager"
       ]
@@ -1026,8 +856,6 @@
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
-        "world_builder",
-        "scenario_creator",
         "loop_creator",
         "project_manager"
       ]
@@ -1146,7 +974,6 @@
         "list_flows_tool",
         "list_teams_tool",
         "list_loops_tool",
-        "list_scenarios_tool",
         "list_projects_tool"
       ],
       "commands": [],
@@ -1177,7 +1004,6 @@
         "search_memory",
         "read_memory",
         "calculator",
-        "run_agent_tool",
         "search_docs",
         "read_doc"
       ],
@@ -1188,11 +1014,7 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.1,
-      "skills_enabled": false,
-      "delegates": [
-        "@web_search"
-      ],
-      "capability_override": true
+      "skills_enabled": false
     },
     {
       "id": "analyst",
@@ -1243,8 +1065,7 @@
         "create_file",
         "calculator",
         "search_docs",
-        "read_doc",
-        "generate_image"
+        "read_doc"
       ],
       "commands": [],
       "capacity": 1,
@@ -1256,37 +1077,6 @@
       "skills_enabled": false,
       "handoffs": [
         "@verifier"
-      ]
-    },
-    {
-      "id": "sourcer",
-      "name": "Sourcer",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Finds candidates for a stated need in the open world: job openings for a job seeker, candidates for a role, vendors, partners, sources. Delegates every search to the Web Search Agent and returns a shortlist of links with why each one matches. Holds no access to files or memory by design, so a finder that reaches the web stays clean of private data.",
-      "domain": "research",
-      "system": true,
-      "tools": [
-        "run_agent_tool",
-        "write_file",
-        "write_memory",
-        "calculator",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": true,
-      "temperature": 0.3,
-      "skills_enabled": false,
-      "delegates": [
-        "@web_search"
-      ],
-      "handoffs": [
-        "screener"
       ]
     },
     {
@@ -1336,14 +1126,12 @@
             "assistant_conversations",
             "setup_guide",
             "setup_step",
-            "schedule_pulse",
             "show_on_screen",
             "service_lookup",
             "service_health",
             "run_diagnostics",
             "list_sessions",
             "routing_log",
-            "costs_summary",
             "stop_run",
             "list_containers",
             "stop_container",

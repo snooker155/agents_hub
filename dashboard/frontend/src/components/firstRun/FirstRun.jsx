@@ -15,7 +15,7 @@ import { useI18n } from '../../i18n';
 import { firstRunAction, getFirstRunContext, getFirstRunOptions } from '../../api/firstRun';
 import { AppearanceStep, HelloStep, LanguageStep } from './steps/WelcomeSteps';
 import { ChooseModelStep, ModelStep } from './steps/ModelSteps';
-import { DemoStep, MemoryStep, SearchStep } from './steps/ExtraSteps';
+import { DemoStep, MemoryStep } from './steps/ExtraSteps';
 import VoiceStep from './steps/VoiceStep';
 import AssistDock from './AssistDock';
 import useWizardAssistant from './useWizardAssistant';
@@ -26,7 +26,7 @@ import './firstRun.css';
 // The screens that need the providers asked (model tiers, voices).
 const NEEDS_OPTIONS = new Set(['choose_model', 'voice']);
 // From the voice screen on the assistant can talk: the screens after it carry it.
-const ASSISTED = new Set(['search', 'memory', 'demo', 'done']);
+const ASSISTED = new Set(['memory', 'demo', 'done']);
 
 export default function FirstRun({ initial, onFinish }) {
   const { t, language } = useI18n();
@@ -121,7 +121,6 @@ export default function FirstRun({ initial, onFinish }) {
   else if (step === 'model') body = <ModelStep {...props} />;
   else if (step === 'choose_model') body = <ChooseModelStep {...props} />;
   else if (step === 'voice') body = <VoiceStep {...props} assistant={assistant} onChecked={setChecked} />;
-  else if (step === 'search') body = <SearchStep {...props} />;
   else if (step === 'memory') body = <MemoryStep {...props} />;
   else if (step === 'demo') body = <DemoStep {...props} />;
   else body = <DoneStep ctx={ctx} onFinish={finish} assistantReady={checked?.model === 'ok'} />;

@@ -7,11 +7,11 @@ the app, and on which step; the app reads it once on load, so it stays cheap.
 or starts it again.
 
 The steps read and change the hub through these, besides routes of their own
-(``/api/setup-guide/model`` for the first key, ``/api/settings`` for web
-search, a workspace's personal memory, ``/api/demo``):
+(``/api/setup-guide/model`` for the first key, a workspace's personal
+memory, ``/api/demo``):
 
 * ``GET /api/first-run/context``: what is already set (providers, the default
-  model, search, demo, voice), no provider asked;
+  model, demo, voice), no provider asked;
 * ``GET /api/first-run/options``: each connected provider's model tiers and the
   voices (common/setup_ops.py ``options``), which asks the providers;
 * ``POST /api/first-run/op``: one setup operation (choose_model, voice_cloud,

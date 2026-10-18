@@ -117,8 +117,8 @@ describe('WorkspaceDetails settings tab', () => {
     for (const label of ['Execution', 'Tool policy', 'Task assignment', 'Secrets', 'Palette']) {
       expect(within(menu).getByText(label)).toBeTruthy();
     }
-    // Provider keys, RAG, observability and logging are not per workspace.
-    for (const heading of ['OpenAI', 'Ollama', 'Vector Database', 'Langfuse', 'Live Streaming']) {
+    // Provider keys, RAG and logging are not per workspace.
+    for (const heading of ['OpenAI', 'Ollama', 'Vector Database', 'Live Streaming']) {
       expect(screen.queryByText(heading)).toBeNull();
     }
     fireEvent.click(within(menu).getByText('Secrets'));

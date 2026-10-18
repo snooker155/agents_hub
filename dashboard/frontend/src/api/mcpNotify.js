@@ -27,19 +27,7 @@ export const listMcpServerTools = (id, workspace, refresh = false) =>
   api.get(`/mcp/servers/${encodeURIComponent(id)}/tools`,
           { params: { ...(workspace ? { workspace } : {}), ...(refresh ? { refresh: true } : {}) } });
 
-// ── Notifications: outbound endpoints + alert rules ──────────────────────────
-// Same masking convention as MCP servers: a webhook's secret comes back as its
-// last four characters, and sending that back unchanged keeps the stored value.
-export const listNotifyEndpoints = (workspace) => api.get('/notify/endpoints', inWorkspace(workspace));
-export const createNotifyEndpoint = (data, workspace) =>
-  api.post('/notify/endpoints', data, inWorkspace(workspace));
-export const updateNotifyEndpoint = (id, data, workspace) =>
-  api.patch(`/notify/endpoints/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
-export const deleteNotifyEndpoint = (id, workspace) =>
-  api.delete(`/notify/endpoints/${encodeURIComponent(id)}`, inWorkspace(workspace));
-export const testNotifyEndpoint = (id, workspace) =>
-  api.post(`/notify/endpoints/${encodeURIComponent(id)}/test`, null, inWorkspace(workspace));
-
+// ── Notifications: alert rules ───────────────────────────────────────────────
 export const listNotifyRules = (workspace) => api.get('/notify/rules', inWorkspace(workspace));
 export const createNotifyRule = (data, workspace) =>
   api.post('/notify/rules', data, inWorkspace(workspace));

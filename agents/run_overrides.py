@@ -2,9 +2,8 @@
 Per-run overrides: one object that changes how a single run's agent is built.
 
 A run may differ from its agent's record without the record changing: a
-script asks for a cheaper model, an eval tries a narrower tool set, a
-proactive tick puts its outbound tools on "ask" and wants a schema for its
-answer. Before this module each of those was a flag of its own
+script asks for a cheaper model, a
+caller wants a schema for the answer. Before this module each of those was a flag of its own
 (``--tool-policy``, ``--output-schema``, ``--provider``/``--model``). They are
 now keys of one ``overrides`` object, accepted the same way by a task launch
 (``params.overrides``, agents/agent_launcher.py), a chat turn and ``/v1``
@@ -74,9 +73,9 @@ TOOL_EDIT_KEYS = ("add", "remove")
 #: ``_create_tools``), accepted beside the catalog's ids.
 TOOL_GROUP_ALIASES = (
     "filesystem", "task_management", "agent_coordination", "agent_management",
-    "agent_flows", "flow_management", "scenario_management", "world_management",
+    "agent_flows", "flow_management",
     "team_management", "loop_management", "project_management", "entity_runs",
-    "schedule_management", "service_ops", "docs", "geometry", "evals",
+    "schedule_management", "service_ops", "docs", "geometry",
 )
 
 #: A system text longer than this is refused; the run record keeps at most
@@ -256,7 +255,7 @@ def fold_legacy(raw: Any, *, tool_policy: Any = None, output_schema: Any = None,
     """The overrides object with the old separate flags folded in.
 
     ``--tool-policy`` and ``--output-schema`` (and the ``tool_policy`` and
-    ``output_schema`` launch params a proactive tick sends) are aliases of
+    ``output_schema`` launch params) are aliases of
     the object's keys of the same name; a key the object already carries
     wins over the flag. Raises :class:`OverrideError`.
     """

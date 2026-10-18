@@ -333,7 +333,7 @@ async def start_run(team_id: str, data: RunIn):
 
 # ── The build chat ───────────────────────────────────────────────────────────
 #
-# Same shape as the loop, scenario and world build chats: the Team Creator edits
+# Same shape as the loop build chat: the Team Creator edits
 # this one team in place while the user watches the roster change beside the
 # conversation. Until this existed the agent had no way in at all — the Teams
 # page was a form, and team_creator was a system agent nothing called.

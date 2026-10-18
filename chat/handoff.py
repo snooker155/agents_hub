@@ -218,7 +218,7 @@ def current() -> Optional[HandoffSink]:
 class _PricedModel:
     """A chat model whose calls are counted as the running loop's auxiliary
     calls (common/aux_usage.py): the summary appears on the handing run's
-    ``loop.aux_calls``, is priced at its model on the Costs page and counts
+    ``loop.aux_calls``, is priced at its model in the run cost and counts
     against the run's money cap, like a tool policy classifier's call."""
 
     def __init__(self, llm: Any):

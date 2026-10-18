@@ -48,7 +48,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: docker
-    directories: [/, /dashboard/frontend, /deploy/models, /deploy/browser]
+    directories: [/, /dashboard/frontend, /deploy/models]
     target-branch: dev
     schedule: { interval: monthly }
     ignore:

@@ -246,15 +246,10 @@ def test_the_async_paths(server):
 
 # ── Where the rest of the hub reads the model ────────────────────────────────
 
-def test_the_batch_api_and_the_loop_recognise_the_driver(server):
+def test_the_loop_recognises_the_driver(server):
     from agents.loop_ext import anthropic_native as an
-    from providers import batch_api
     llm = _model(server)
     assert an.is_anthropic_client(llm) and an.model_id(llm) == "claude-opus-4-6"
-    target = batch_api.chat_model_target(llm)
-    assert target is not None and target.provider == "anthropic" and target.api_key == "ak-test"
-    body = batch_api.request_body(llm, [("system", "sys"), ("human", "hi")], [ping])
-    assert body["system"] == "sys" and body["tools"][0]["name"] == "ping" and "stream" not in body
 
 
 def test_the_base_url_comes_from_the_environment_when_not_given(server, monkeypatch):

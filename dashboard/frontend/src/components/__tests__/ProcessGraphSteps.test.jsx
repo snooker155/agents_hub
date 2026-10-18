@@ -3,9 +3,6 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 
 vi.mock('../../api', () => ({
   getMessageInsights: vi.fn(),
-  getEvalSetsForRun: vi.fn(() => new Promise(() => {})),
-  createEvalSet: vi.fn(),
-  addEvalCase: vi.fn(),
 }));
 
 import { I18nProvider } from '../../i18n';

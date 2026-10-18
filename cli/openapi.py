@@ -10,8 +10,8 @@ it at all.
 ``build_generated_groups`` turns every other tag in the schema into a typer
 command group of its own (``ah <tag> <verb>``), with verbs read off the path
 and method rather than hand-named, so a route added to the backend shows up
-here without a matching change in the CLI. The six entities with a page in the
-dashboard and a daily-use shape of their own (flow, loop, team, eval, mcp,
+here without a matching change in the CLI. The entities with a page in the
+dashboard and a daily-use shape of their own (flow, loop, team, mcp,
 user) get a hand-written group instead (cli/commands/), and are excluded here
 so the two do not collide or disagree.
 

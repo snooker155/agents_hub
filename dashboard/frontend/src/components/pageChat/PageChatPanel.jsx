@@ -18,7 +18,7 @@ import { PageChatContext, usePageChatPanel } from './pageChat';
  * What the panel shows depends on where the user is, and there are exactly two
  * cases:
  *
- * * **The page has a chat of its own** — a scenario's builder, the Service
+ * * **The page has a chat of its own** — a loop's builder, the Service
  *   Agent, the memory pool's reader. That chat is not replaced by a general
  *   one, because its agent is the point of it. The panel hosts it, the page
  *   folds its own column away, and the conversation carries on: same endpoint,

@@ -15,7 +15,7 @@ only by a lightweight ``view_ref`` (see :func:`view_ref`).
 
 Every view is owned by the run that made it (``owner_kind``/``owner_id``,
 migration 0013): ``run`` for an agent run (a row in ``runs``), or one of
-``flow``/``loop``/``team``/``scenario`` for the entity run itself (a row in
+``flow``/``loop``/``team`` for the entity run itself (a row in
 ``entity_runs``, common/entity_runs.py). See :mod:`views.models` for the
 ``ViewOwner`` shape and :mod:`views.owner` for how a fresh view's owner is
 resolved. ``run_id`` on the index row is kept as the pre-owner shorthand: set
@@ -271,7 +271,7 @@ def list_views(
     ``run_id`` is kept as the pre-owner shorthand every existing caller uses:
     it is an alias for "owned by that agent run" (``owner_kind='run'``), not a
     separate column read. Pass ``owner_kind``/``owner_id`` directly for a view
-    owned by a flow/loop/team/scenario run.
+    owned by a flow/loop/team run.
     """
     conn = db.get_conn()
     clauses: List[str] = []
@@ -329,7 +329,7 @@ def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = No
     """Replace a (non live) view's spec in place, validated against its kind.
 
     For a producer that republishes the same view as its source changes, a
-    scenario run's results table growing tick by tick (playground.lab_views),
+    results table growing tick by tick,
     where minting a new view per change would bury the one that matters. The
     view keeps its id, owner and state; ``view.json`` and ``base.json`` both
     take the new spec so a later fold or revert does not resurrect the old

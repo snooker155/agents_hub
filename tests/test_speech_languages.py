@@ -22,7 +22,7 @@ if BACKEND not in sys.path:
 
 from chat import voice  # noqa: E402
 from common import setup_ops  # noqa: E402
-from providers import media, special, speech_languages as sl  # noqa: E402
+from providers import speech_languages as sl, voice_models  # noqa: E402
 
 SPEECH = {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "nova"},
           "languages": {"ru": {"voice": "alloy"}}}
@@ -63,15 +63,15 @@ def test_a_cloud_language_names_another_voice_of_the_same_model():
 def test_the_entry_is_stored_and_checked_with_the_speech_model():
     from workspace import create_workspace_folder
     create_workspace_folder("default")
-    special.save("default", {"speech": SPEECH})
-    assert special.stored("default")["speech"]["languages"] == {"ru": {"voice": "alloy"}}
+    voice_models.save({"speech": SPEECH})
+    assert voice_models.stored()["speech"]["languages"] == {"ru": {"voice": "alloy"}}
     for bad in ({"russian": {"voice": "alloy"}}, {"ru": "alloy"}, {"ru": {"voice": "no spaces!"}}):
-        with pytest.raises(special.SpecialModelError):
-            special.save("default", {"speech": {**SPEECH, "languages": bad}})
+        with pytest.raises(voice_models.VoiceModelError):
+            voice_models.save({"speech": {**SPEECH, "languages": bad}})
     # Only the speech model takes it.
-    special.save("default", {"transcription": {"provider": "openai", "model": "gpt-4o-mini-transcribe",
+    voice_models.save({"transcription": {"provider": "openai", "model": "gpt-4o-mini-transcribe",
                                                "languages": {"ru": {"voice": "alloy"}}}})
-    assert "languages" not in special.stored("default")["transcription"]
+    assert "languages" not in voice_models.stored()["transcription"]
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def http(monkeypatch):
         calls.append(request)
         return httpx.Response(200, content=b"ID3-fake-mp3", headers={"content-type": "audio/mpeg"})
 
-    monkeypatch.setattr(media, "_client", lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(voice_models, "_client", lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
     return calls
 
 
@@ -95,7 +95,7 @@ def test_the_assistant_reads_each_answer_with_one_voice_of_its_language(monkeypa
     seed_registry_from_bootstrap()
     create_workspace_folder("default")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    special.save("default", {"speech": SPEECH})
+    voice_models.save({"speech": SPEECH})
     monkeypatch.setattr(route, "_thread_run", lambda principal, run_id: {
         "run_id": run_id, "workspace": "default", "_thread_key": "local"})
     monkeypatch.setattr(voice, "spoken_from_turn", lambda text, run: True)
@@ -120,7 +120,7 @@ def test_a_cloud_voice_takes_a_voice_per_language(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(setup_ops, "_key_of", lambda provider: "sk-test")
     setup_ops.perform("voice_cloud", {"provider": "openai", "voice": "nova", "voices": {"ru": "alloy", "de": "sage"}})
-    speech = special.stored("default")["speech"]
+    speech = voice_models.stored()["speech"]
     assert speech["options"]["voice"] == "nova"
     assert speech["languages"] == {"ru": {"voice": "alloy"}, "de": {"voice": "sage"}}
     with pytest.raises(setup_ops.SetupOpError):

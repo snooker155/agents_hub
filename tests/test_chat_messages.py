@@ -220,7 +220,7 @@ def test_the_agent_hands_the_conversation_to_the_executor():
 
 
 def test_a_run_without_a_conversation_invokes_exactly_as_before():
-    """Task runs, evals and delegations have no history; their payload must not
+    """Task runs and delegations have no history; their payload must not
     grow a key the prompt would then have to explain away."""
     executor = _Executor()
     _agent(executor).run("do the thing")

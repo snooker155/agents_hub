@@ -22,7 +22,7 @@ BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
-from common import preview_tickets  # noqa: E402 - after the sys.path shim above
+from common import terminal_tickets  # noqa: E402 - after the sys.path shim above
 from common import terminal as term  # noqa: E402 - same
 
 PASSWORD = "hunter2-but-longer"
@@ -139,12 +139,12 @@ def _user(user_id="u1"):
 
 
 def test_a_terminal_ticket_opens_only_its_own_target_and_only_once():
-    ticket = preview_tickets.mint_terminal(_user(), target_kind="run", target_id="r1")
-    assert preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r2") is None
-    assert preview_tickets.verify_terminal(ticket, target_kind="replica", target_id="r1") is None
-    found = preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r1")
+    ticket = terminal_tickets.mint_terminal(_user(), target_kind="run", target_id="r1")
+    assert terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r2") is None
+    assert terminal_tickets.verify_terminal(ticket, target_kind="replica", target_id="r1") is None
+    found = terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r1")
     assert found["user"] == "u1" and found["session"] is None
-    assert preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r1") is None
+    assert terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r1") is None
 
 
 # ── refusals ─────────────────────────────────────────────────────────────────

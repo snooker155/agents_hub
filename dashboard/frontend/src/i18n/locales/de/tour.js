@@ -28,10 +28,6 @@ export default {
       title: 'Teams',
       description: 'Eine Gruppe von Agenten, die über ein gemeinsames Nachrichtenboard arbeiten. Das Board ist die Arbeit und zugleich ihr Protokoll.',
     },
-    playground: {
-      title: 'Playground',
-      description: 'Agenten handeln Schritt für Schritt in einer simulierten Welt, mit dem Gedanken hinter jedem Zug und dem Zustand, den er verändert hat.',
-    },
     artifacts: {
       title: 'Artefakte',
       description: 'Was die Agenten gemacht haben: die Ansichten, die sie als Antwort gebaut haben (Diagramme, Graphen, 3D Szenen, Folien, Dokumente), und die Dateien des Workspace, als zwei Reiter einer Seite. Öffnen Sie eine Ansicht, um sie im Gespräch weiter zu bearbeiten.',

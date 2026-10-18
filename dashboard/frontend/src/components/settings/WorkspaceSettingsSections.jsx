@@ -1,5 +1,5 @@
 // The workspace-scoped settings: provider keys, local model servers, agent
-// execution, RAG, observability and logging. They are overrides stored in the
+// execution, RAG and logging. They are overrides stored in the
 // workspace's metadata, so the same fields are drawn on two pages: Settings,
 // for the workspace picked in the header, and the Settings tab of a workspace,
 // for that workspace. Both render these sections over one useWorkspaceSettings
@@ -271,33 +271,6 @@ export function LocalServersSection({ s }) {
         <><span className="font-medium text-gray-800">{t('settings.lmStudio')}</span> {t('settings.lmStudioIntro')}</>,
         t('settings.lmstudioServerAddress'), 'http://localhost:1234',
       )}
-    </div>
-  );
-}
-
-export function ObservabilitySection({ s }) {
-  const { t } = useI18n();
-  return (
-    <div className="space-y-5">
-      <SectionCard title={t('settings.langfuse')}>
-        <p className="text-sm text-gray-600">
-          {t('settings.langfuseIntroBefore')} <span className="font-medium text-gray-800">{t('settings.langfuse')}</span> {t('settings.langfuseIntroAfter')}
-        </p>
-        <div>
-          <KeyLabel field="langfuse_secret_key" s={s} label={t('settings.secretKey')} />
-          <SecretInput field="langfuse_secret_key" s={s} />
-        </div>
-        <div>
-          <KeyLabel field="langfuse_public_key" s={s} label={t('settings.publicKey')} />
-          <SecretInput field="langfuse_public_key" s={s} />
-        </div>
-        <div>
-          <FieldLabel field="langfuse_base_url" s={s}>{t('settings.baseUrl')}</FieldLabel>
-          <input type="text" value={s.g.langfuse_base_url || ''} onChange={e => s.setG('langfuse_base_url', e.target.value)}
-            placeholder="https://cloud.langfuse.com"
-            className={inputCls} />
-        </div>
-      </SectionCard>
     </div>
   );
 }
@@ -776,12 +749,12 @@ function SaveRow({ s, dirty, onSave, label, saved }) {
   const { t } = useI18n();
   return (
     <div className="flex items-center gap-3">
-      <button type="button" onClick={onSave} disabled={s.webSearchSaving || !dirty}
+      <button type="button" onClick={onSave} disabled={s.webAccessSaving || !dirty}
         className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-        {s.webSearchSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        {s.webSearchSaving ? t('common.saving') : label}
+        {s.webAccessSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        {s.webAccessSaving ? t('common.saving') : label}
       </button>
-      {saved && <span className="text-xs text-green-700">{t('settings.webSearchSaved')}</span>}
+      {saved && <span className="text-xs text-green-700">{t('settings.webAccessSaved')}</span>}
     </div>
   );
 }
@@ -791,99 +764,6 @@ function useSavedFlag() {
   const [saved, setSaved] = useState(false);
   const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 3000); };
   return [saved, flash];
-}
-
-/**
- * The search provider behind the ``web_search`` tool (tools/web.py): Brave,
- * Tavily or Exa, its key and how many results a call returns. Without a
- * provider the tool answers "not configured" and performs no search, which is
- * the message an agent then relays. Machine-wide .env settings, read live.
- */
-function WebSearchProviderCard({ s }) {
-  const { t } = useI18n();
-  const g = s.globalSettings || {};
-  // Edits are kept apart from the saved values (null = not edited), so a
-  // reload of the settings shows through without an effect copying state.
-  const [providerEdit, setProviderEdit] = useState(null);
-  const [maxResultsEdit, setMaxResultsEdit] = useState(null);
-  const [key, setKey] = useState('');
-  const [saved, flash] = useSavedFlag();
-  const savedProvider = g.web_search_provider || '';
-  const savedMax = Number(g.web_search_max_results || 5);
-  const provider = providerEdit ?? savedProvider;
-  const maxResults = maxResultsEdit ?? savedMax;
-  const dirty = provider !== savedProvider || key !== '' || Number(maxResults) !== savedMax;
-  // Anthropic and OpenAI search on the key the Models page holds, so the
-  // key field is for the search services only. With no provider chosen the
-  // backend picks a model provider whose key is set; the badge says which.
-  const modelProvider = provider === 'anthropic' || provider === 'openai';
-  const effective = g.web_search_effective_provider || '';
-  const configured = Boolean(effective) && Boolean(g.web_search_effective_key_set);
-  const providerNames = { brave: 'Brave Search', tavily: 'Tavily', exa: 'Exa', anthropic: 'Anthropic', openai: 'OpenAI' };
-  const save = async () => {
-    const patch = { web_search_provider: provider, web_search_max_results: Number(maxResults) || 5 };
-    if (key && !modelProvider) patch.web_search_api_key = key;
-    const ok = await s.saveWebSearch(patch);
-    if (ok) { setKey(''); setProviderEdit(null); setMaxResultsEdit(null); flash(); }
-  };
-  return (
-    <SectionCard
-      title={t('settings.webSearch')}
-      actions={(
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${configured ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
-          {configured
-            ? (g.web_search_effective_source === 'model_key'
-              ? t('settings.webSearchViaModelKey', { provider: providerNames[effective] || effective })
-              : t('settings.webSearchConfigured'))
-            : t('settings.webSearchNotConfigured')}
-        </span>
-      )}
-    >
-      <p className="text-xs text-gray-500">{t('settings.webSearchIntro')}</p>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchProvider')}</label>
-          <select value={provider} onChange={e => setProviderEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchProvider')}>
-            <option value="">{t('settings.webSearchProviderAuto')}</option>
-            <option value="anthropic">{t('settings.webSearchProviderModelKey', { provider: 'Anthropic' })}</option>
-            <option value="openai">{t('settings.webSearchProviderModelKey', { provider: 'OpenAI' })}</option>
-            <option value="brave">Brave Search</option>
-            <option value="tavily">Tavily</option>
-            <option value="exa">Exa</option>
-          </select>
-          {!provider && (
-            <p className="text-xs text-gray-400 mt-1">
-              {effective
-                ? t('settings.webSearchAutoPicks', { provider: providerNames[effective] || effective })
-                : t('settings.webSearchAutoNone')}
-            </p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {t('settings.webSearchApiKey')}
-            {!modelProvider && g.web_search_api_key_masked && <span className="ml-2 font-mono text-xs text-gray-400">{g.web_search_api_key_masked}</span>}
-          </label>
-          {modelProvider ? (
-            <p className="text-xs text-gray-500 py-2">{t('settings.webSearchModelKeyHint', { provider: providerNames[provider] })}</p>
-          ) : (
-            <input type="password" value={key} onChange={e => setKey(e.target.value)}
-              placeholder={g.web_search_api_key_masked ? t('settings.webSearchKeyKeep') : t('settings.webSearchKeyPlaceholder')}
-              autoComplete="off" className={inputCls} aria-label={t('settings.webSearchApiKey')} />
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchMaxResults')}</label>
-          <input type="number" min={1} max={20} value={maxResults} onChange={e => setMaxResultsEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchMaxResults')} />
-        </div>
-      </div>
-      <SaveRow s={s} dirty={dirty} onSave={save} label={t('settings.webSearchSave')} saved={saved} />
-      <p className="text-xs text-gray-400">
-        {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
-        <code className="bg-gray-100 rounded px-1 ml-1">WEB_SEARCH_PROVIDER</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_API_KEY</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_MAX_RESULTS</code>
-      </p>
-    </SectionCard>
-  );
 }
 
 /**
@@ -904,7 +784,7 @@ function WebFetchCard({ s }) {
   const val = (k) => edit[k] ?? savedVals[k];
   const dirty = Object.keys(savedVals).some((k) => Number(val(k)) !== savedVals[k]);
   const save = async () => {
-    const ok = await s.saveWebSearch({
+    const ok = await s.saveWebAccess({
       web_fetch_max_chars: Number(val('web_fetch_max_chars')),
       web_fetch_timeout: Number(val('web_fetch_timeout')),
       web_fetch_max_redirects: Number(val('web_fetch_max_redirects')),
@@ -960,7 +840,7 @@ function WebDomainPolicyCard({ s }) {
   const deny = denyEdit ?? savedDeny;
   const dirty = enabled !== savedEnabled || allow !== savedAllow || deny !== savedDeny;
   const save = async () => {
-    const ok = await s.saveWebSearch({
+    const ok = await s.saveWebAccess({
       web_domain_policy_enabled: enabled,
       web_allow_domains: listOf(allow),
       web_deny_domains: listOf(deny),
@@ -981,7 +861,7 @@ function WebDomainPolicyCard({ s }) {
           <label className="text-sm font-medium text-gray-700">{t('settings.webAllowPolicy')}</label>
           <p className="text-xs text-gray-500 mt-1">{t('settings.webAllowPolicyHint')}</p>
         </div>
-        <Toggle checked={enabled} disabled={s.webSearchSaving} onChange={setEnabledEdit} />
+        <Toggle checked={enabled} disabled={s.webAccessSaving} onChange={setEnabledEdit} />
       </div>
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webAllowDomains')}</label>
@@ -1024,7 +904,7 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
       setData(body);
     })
     .catch((e) => {
-      setError(e.response?.data?.detail || tRef.current('settings.errors.webSearchSave'));
+      setError(e.response?.data?.detail || tRef.current('settings.errors.webAccessSave'));
     }), [workspace]);
   useEffect(() => { load(); }, [load]);
 
@@ -1049,7 +929,7 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
       setEnabledEdit(null); setAllowEdit(null); setDenyEdit(null);
       flash();
     } catch (e) {
-      setError(e.response?.data?.detail || t('settings.errors.webSearchSave'));
+      setError(e.response?.data?.detail || t('settings.errors.webAccessSave'));
     } finally {
       setSaving(false);
     }
@@ -1088,20 +968,19 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
           {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {saving ? t('common.saving') : t('settings.wsDomainsSave', { workspace })}
         </button>
-        {saved && <span className="text-xs text-green-700">{t('settings.webSearchSaved')}</span>}
+        {saved && <span className="text-xs text-green-700">{t('settings.webAccessSaved')}</span>}
       </div>
       {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
     </SectionCard>
   );
 }
 
-/** The Web search page of Settings: provider, fetch limits and the global
+/** The Web access page of Settings: fetch limits and the global
  * domain policy. A workspace's own policy is on the workspace page, Settings
  * tab, "Web access" (WorkspaceDomainPolicyCard). */
-export function WebSearchSection({ s }) {
+export function WebAccessSection({ s }) {
   return (
     <div className="space-y-5">
-      <WebSearchProviderCard s={s} />
       <WebFetchCard s={s} />
       <WebDomainPolicyCard s={s} />
     </div>

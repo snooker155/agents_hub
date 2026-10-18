@@ -27,11 +27,11 @@ vi.mock('../../api', () => ({
 const SECTIONS = [
   'getting-started', 'installation', 'concepts', 'features', 'chat', 'workspaces', 'projects', 'tasks',
   'plan', 'views', 'agents', 'importing-agents', 'marketplace', 'skills', 'orchestrator',
-  'teams', 'flows', 'loops', 'tools', 'memory', 'web-logs', 'evals', 'playground',
-  'instances', 'nodes', 'containers', 'models', 'costs', 'providers', 'connectors',
+  'teams', 'flows', 'loops', 'tools', 'memory', 'web-logs',
+  'instances', 'nodes', 'containers', 'models', 'providers', 'connectors',
   'tutorials', 'cli', 'cli-api', 'faq',
   // Guide sections (GuideDoc, the docsGuide namespace).
-  'project-deployments', 'files', 'registry', 'agent-loop', 'steering', 'mcp', 'browser',
+  'project-deployments', 'files', 'registry', 'agent-loop', 'steering', 'mcp',
   'outcomes', 'sessions-runs', 'services', 'deployments', 'local-models', 'health',
   'production', 'accounts', 'widget', 'integrations', 'assistant',
 ];

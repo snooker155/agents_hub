@@ -32,7 +32,7 @@ ends it.
 
 ## Checkpoint and resume
 
-A loop runs as a process of its own, launched through the same envelope as a flow, a team and a scenario: `POST /api/loops/{id}/run` writes a `pending` record and spawns `runtime/loop_run.py` right there, so a loop keeps running whatever happens to the backend that started it. The iterations run the flow engine inside that process. The run beats a heartbeat every 15 seconds and again as each flow node finishes.
+A loop runs as a process of its own, launched through the same envelope as a flow and a team: `POST /api/loops/{id}/run` writes a `pending` record and spawns `runtime/loop_run.py` right there, so a loop keeps running whatever happens to the backend that started it. The iterations run the flow engine inside that process. The run beats a heartbeat every 15 seconds and again as each flow node finishes.
 After every iteration the run records its position (a checkpoint) with how many
 passes are done, the last output, the reviewer's last verdict, the best score,
 the patience counter and spend.
@@ -64,4 +64,4 @@ A loop can use an outcome rubric instead of the exit criterion and evaluator. Se
 The [system workspace](system-workspace.md) ships one loop of its own,
 `system_loop`, scheduled through a job of kind `loop` that starts paused.
 
-Related: [flows](flows.md), [outcomes](outcomes.md), [costs](costs.md), [system-workspace](system-workspace.md).
+Related: [flows](flows.md), [outcomes](outcomes.md), [system-workspace](system-workspace.md).

@@ -21,7 +21,7 @@ export default {
   modeUrl: 'A service you run',
   modeUrlHint: 'You start the container or process yourself and paste its URL below.',
   modeDocker: 'Docker on this host, run by the hub',
-  modeDockerHint: 'The hub builds the image from the clone and starts one container per workspace. The workspace folder is mounted at its own path, and so is its eval folder when that lives elsewhere; never the root of all workspaces.',
+  modeDockerHint: 'The hub builds the image from the clone and starts one container per workspace. The workspace folder is mounted at its own path, and never the root of all workspaces.',
   dockerUnsupported: 'The manifest names no Dockerfile, so the hub cannot build this agent.',
   image: 'Image',
   imageBuilt: 'built',

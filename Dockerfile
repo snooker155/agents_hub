@@ -187,5 +187,4 @@ CMD ["python", "-m", "runtime.instance_run"]
 
 # The dashboard frontend has its own image: dashboard/frontend/Dockerfile
 # (Vite dev server, or nginx serving the production bundle). It shares nothing
-# with these two, so it also keeps its own build context. The browser service
-# likewise: deploy/browser/Dockerfile.
+# with these two, so it also keeps its own build context.

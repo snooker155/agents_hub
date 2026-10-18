@@ -39,8 +39,8 @@ the price and a link here, and you change it on this page as usual.
 ## Pricing
 
 Each model carries three prices in USD per million tokens: **input**, **cached
-input** and **output**. They turn recorded token counts into estimated spend on
-the [costs](costs.md) page. A model with no price set contributes tokens but
+input** and **output**. They turn recorded token counts into estimated spend in
+the cost shown on each run. A model with no price set contributes tokens but
 no cost, so a zero total means "unpriced", not "free".
 
 Cached input is its own price because the provider bills it as its own line. An
@@ -96,7 +96,7 @@ nothing is asked for, billed and invisible:
 
 The table was measured against the API (`providers/reasoning_profile.py`);
 providers without one show a dash. A call that never chose a level, such as a
-chat title or an eval judge, sends nothing and keeps the provider default. For
+chat title or a rubric grader, sends nothing and keeps the provider default. For
 what a positive level shows in the chat, see [agents](agents.md).
 
 ## Providers
@@ -105,11 +105,18 @@ API keys and base URLs live in [settings](settings.md), not here. This page is
 about which models and what they cost. Local providers (Ollama, LM Studio) and
 custom OpenAI-compatible backends are configured the same way.
 
-## Special models
+## Voice
 
-Images, video, speech, transcription and models of a workspace's own are not
-chat models and are not in the catalog. The tab **Special models** picks them
-for the workspace chosen in the header, the same form as that workspace's
-settings. See [special models](special-models.md).
+The assistant listens and speaks with two more models that are not chat
+models and are not in the catalog: a **transcription** model turns a
+recording into text, a **speech** model reads the answers aloud. The tab
+**Voice** picks one of each for the whole hub (provider, model, voice, price
+per call or per 1000 characters, and a voice per language). **Find at
+provider** lists the provider's models that fit, **Check connection** looks
+for the model in the provider's list without running it, and **Listen** plays
+a short line with the chosen voice. Each voice call is charged to its run.
+A purpose left empty falls back to the browser's own recognition or speech.
+The first run's voice step and `ah setup` write the same choice. See
+[assistant](assistant.md).
 
-Related: [settings](settings.md), [costs](costs.md), [special models](special-models.md).
+Related: [settings](settings.md), [assistant](assistant.md).

@@ -109,7 +109,7 @@ def test_list_views_filters_by_owner_kind_and_id():
 def test_list_views_run_id_is_an_alias_for_owner_run():
     a = create_view("markdown", "A", {"markdown": "a"}, summary="a", run_id="run-9")
     create_view("markdown", "B", {"markdown": "b"}, summary="b",
-               owner={"kind": "scenario", "id": "run-9"})  # same id, different owner kind
+               owner={"kind": "team", "id": "run-9"})  # same id, different owner kind
     # run_id=... must only match the run-kind owner, not a same-id entity owner
     assert [v["view_id"] for v in list_views(run_id="run-9")] == [a.view_id]
 
@@ -186,15 +186,15 @@ def test_create_view_tool_picks_up_entity_env_owner(monkeypatch):
     import json
     from tools.views import create_view_tools
 
-    monkeypatch.setenv("AGENTS_HUB_ENTITY_RUN_ID", "scenario-run-1")
-    monkeypatch.setenv("AGENTS_HUB_ENTITY_RUN_KIND", "scenario")
+    monkeypatch.setenv("AGENTS_HUB_ENTITY_RUN_ID", "team-run-1")
+    monkeypatch.setenv("AGENTS_HUB_ENTITY_RUN_KIND", "team")
     tool = create_view_tools()[0]
     out = json.loads(tool.invoke({
         "view_kind": "markdown", "title": "T", "spec": '{"markdown": "hi"}', "summary": "s",
     }))
     assert out["ok"]
     got = get_view(out["view_id"])
-    assert got["owner"] == {"kind": "scenario", "id": "scenario-run-1"}
+    assert got["owner"] == {"kind": "team", "id": "team-run-1"}
 
 
 def test_publish_structured_response_owner_climbs_to_parent(monkeypatch):

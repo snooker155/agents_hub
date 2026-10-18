@@ -136,7 +136,7 @@ export default {
     sizes: 'Sizes',
     toolLabel: 'Tool name',
     toolHint: 'Type a tool name to see which state it maps to.',
-    toolPlaceholder: 'web_search',
+    toolPlaceholder: 'fetch_url',
     step: '{{tool}}, {{ms}} ms',
   },
 };

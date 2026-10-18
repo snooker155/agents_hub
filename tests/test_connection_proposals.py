@@ -103,27 +103,12 @@ def test_an_mcp_server_claims_everything_and_asks_for_secret_headers():
     assert err.value.code == "secret_from_agent"
 
 
-def test_a_watcher_asks_for_the_secret_it_names_when_the_workspace_lacks_it(key):
-    p = proposals.build("watcher", "status", {"kind": "http", "url": "https://status.acme.test/api",
-                                              "headers_secret": "STATUS_HEADERS"},
-                        workspace="acme")
-    fields = _keys(p)
-    assert fields["secret:STATUS_HEADERS"]["secret"]
-    assert proposals.required_role(p)["role"] == "owner"
-    from common import secrets
-    secrets.set_secret("acme", "STATUS_HEADERS", '{"Authorization": "Bearer t"}')
-    again = proposals.build("watcher", "status", {"kind": "http", "url": "https://status.acme.test/api",
-                                                  "headers_secret": "STATUS_HEADERS"},
-                            workspace="acme")
-    assert "secret:STATUS_HEADERS" not in _keys(again)
-    assert proposals.required_role(again)["role"] == "editor"
-
-
 def test_options_name_things_but_never_values(key, jira):
     from common import secrets
     secrets.set_secret("acme", "DEPLOY_KEY", "do-not-show")
     out = proposals.options(workspace="acme")
-    assert {"connector", "mcp_server", "watcher", "secret"} <= set(out)
+    assert {"connector", "mcp_server", "secret"} <= set(out)
+    assert "watcher" not in out
     assert not {"channel", "database"} & set(out)
     assert "DEPLOY_KEY" in out["secret"]["existing"]
     assert "do-not-show" not in json.dumps(out)

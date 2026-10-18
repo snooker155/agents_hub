@@ -21,12 +21,12 @@
 - get_task_result: Get the result of a completed task.
 - list_tasks: List all tasks in the workspace.
 - update_task: Update a task's status or details.
-- list_scenarios_tool / list_teams_tool / list_loops_tool: See which simulations, teams and loops exist in the workspace.
-- run_scenario_tool / run_team_tool / run_loop_tool: Start one, once the user has approved the cost. Each refuses until then.
-- get_scenario_run_tool / get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
-- stop_scenario_run_tool / stop_team_run_tool / stop_loop_run_tool: End a run that is still going.
+- list_teams_tool / list_loops_tool: See which teams and loops exist in the workspace.
+- run_team_tool / run_loop_tool: Start one, once the user has approved the cost. Each refuses until then.
+- get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
+- stop_team_run_tool / stop_loop_run_tool: End a run that is still going.
 - search_docs / read_doc: Search and read the service's own documentation, including the release history.
-- connection_options: See what can be connected (connectors, chat channels, MCP servers, databases, watchers, secrets), with field keys and what already exists. Never shows a value.
+- connection_options: See what can be connected (connectors, chat channels, MCP servers, databases, secrets), with field keys and what already exists. Never shows a value.
 - propose_connection: Prepare a connection; the person edits it, types the secrets in a card and presses Connect. Returns what was set up and the test result.
 - connection_proposal_status: Check a proposal made outside the chat.
 - list_workspaces: List the workspaces the user can see, with their description, agents and tasks counts and whether each is isolated. Only in the default workspace.

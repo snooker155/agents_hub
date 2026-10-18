@@ -1,6 +1,6 @@
 """Persistence for loop definitions, loop runs and the per-iteration log.
 
-Mirrors :mod:`playground.store`: run-level knobs ride in a ``config`` JSON
+Run-level knobs ride in a ``config`` JSON
 column rather than as columns, so tightening a ceiling never needs a migration.
 
 Loop *runs* live in the ``entity_runs`` table every kind of run shares

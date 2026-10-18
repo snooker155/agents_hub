@@ -23,7 +23,6 @@ from agents import agent_cache, prompt_assembly
 from agents import run_overrides as ro
 from agents.capability_guard import CapabilityViolation
 from agents.registry import AgentSpec, add_agent, replace_all_raw
-from evals import experiments
 from managers import run_manager as rm
 
 BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
@@ -44,14 +43,12 @@ def isolated_definitions(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def fresh_state(monkeypatch):
     replace_all_raw([])
-    experiments.clear_pins()
     agent_cache.invalidate()
     from common.config import settings
     monkeypatch.setattr(settings, "agent_cache_enabled", True)
     monkeypatch.setattr(settings, "agent_cache_ttl", 0)
     yield
     agent_cache.invalidate()
-    experiments.clear_pins()
     replace_all_raw([])
 
 

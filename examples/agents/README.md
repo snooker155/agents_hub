@@ -35,7 +35,7 @@ directly.
 description into prose, nothing else) and `quest-master-agent` (runs a player
 through a predefined quest, optionally delegating scene descriptions to a
 narrator agent "if available"). Companions to the seeded `plot-manager`
-(quest template authoring) and `scenario_creator` agents, which is why
+(quest template authoring), which is why
 `plot-manager` itself is not in this tree — it is seeded and live.
 
 **`jobs/`** — a three-stage job-search pipeline sharing one memory pool:

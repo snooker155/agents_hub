@@ -38,7 +38,6 @@ _RANK = {"ok": 0, "warn": 1, "fail": 2}
 DISK_WARN_BYTES = 2 * 1024 ** 3
 DISK_FAIL_BYTES = 500 * 1024 ** 2
 PROVIDER_TIMEOUT_SECONDS = 5.0
-BROWSER_TIMEOUT_SECONDS = 3.0
 MODELS_TIMEOUT_SECONDS = 3.0
 
 Result = Tuple[str, str, Dict[str, Any]]
@@ -308,31 +307,6 @@ def check_disk(snap: Dict[str, Any]) -> Result:
             detail)
 
 
-# ── browser ──────────────────────────────────────────────────────────────────
-
-def check_browser(snap: Dict[str, Any]) -> Result:
-    from common.config import settings
-    url = str(getattr(settings, "browser_url", "") or "").strip().rstrip("/")
-    if not url:
-        return ("skip", Msg("browser.off", "The browser service is not configured."), {})
-    import httpx
-    try:
-        resp = httpx.get(f"{url}/healthz", timeout=BROWSER_TIMEOUT_SECONDS)
-    except Exception as exc:  # noqa: BLE001 - reported as the check's result
-        return ("fail", Msg("browser.unreachable", f"The browser service at {url} is unreachable: "
-                                                   f"{type(exc).__name__}.",
-                            url=url, error=type(exc).__name__),
-                {"url": url, "error": str(exc)[:300]})
-    detail = {"url": url, "status_code": resp.status_code}
-    if resp.status_code >= 400:
-        return ("fail", Msg("browser.http", f"The browser service answered HTTP {resp.status_code}.",
-                            code=resp.status_code), detail)
-    if not str(getattr(settings, "browser_token", "") or "").strip():
-        return ("warn", Msg("browser.noToken", "The browser service answers but "
-                                               "AGENTS_HUB_BROWSER_TOKEN is not set."), detail)
-    return ("ok", Msg("browser.ok", "The browser service answers."), detail)
-
-
 # ── docker ───────────────────────────────────────────────────────────────────
 
 def check_docker(snap: Dict[str, Any]) -> Result:
@@ -526,7 +500,6 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("security", "Security settings", check_security),
     ("stale_runs", "Stale runs", check_stale_runs),
     ("disk", "Free disk", check_disk),
-    ("browser", "Browser service", check_browser),
     ("docker", "Docker", check_docker),
     ("sandbox", "Sandbox providers", check_sandbox),
     ("frontend_build", "Frontend build", check_frontend_build),

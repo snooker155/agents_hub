@@ -1,8 +1,8 @@
 """Projects API routes.
 
-A project lives inside a workspace and can be backed by a git repo, a frontend
-with a live preview and a backend with Swagger docs and a request proxy. The
-routes are split by domain; ``router`` is the one the app mounts.
+A project lives inside a workspace and can be backed by a git repo, with
+frontend and backend settings, and a backend with Swagger docs and a request
+proxy. The routes are split by domain; ``router`` is the one the app mounts.
 """
 from fastapi import APIRouter
 

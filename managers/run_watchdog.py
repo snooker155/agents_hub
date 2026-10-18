@@ -39,22 +39,22 @@ retention limit, and delivers messages that were written to a copy while it was
 busy (``instances.delivery.drain_idle``) — none of which has anywhere else to
 happen once the copy stopped running.
 
-Flow, loop, team and scenario runs are swept together, in one pass over
+Flow, loop and team runs are swept together, in one pass over
 :mod:`common.entity_runs` (:func:`_sweep_entity_runs`), because since stage 0 of
 the September 2026 plan they are one table with one status vocabulary
 (``common/run_status.py``): every kind is a process with a lease, a heartbeat
 and a checkpoint, whatever store its own adapter (flow.run_store, loops.store,
-teams.store, playground.store) wraps it in. For every one of them death is not
+teams.store) wraps it in. For every one of them death is not
 the end: each writes a checkpoint as it goes, so a run whose process is gone is
 **resumed** from it rather than failed, through the kind's own resumer
 (flow.launcher.resume_flow_run, loops.launcher.resume_loop_run,
-teams.launcher.resume_team_run, playground.launcher.resume_scenario_run, each
+teams.launcher.resume_team_run, each
 a relaunch of the kind's own process under the same run id). Only
 a run with no checkpoint (for a loop, one with no ``iterations_done`` yet), or
 one that has already been resumed :data:`MAX_AUTO_RESUMES` times, is closed as
 failed: a run that cannot get past its next step must not be restarted
 forever. Liveness is the run's ``heartbeat_at`` at a per-kind stale threshold
-(``FLOW_``/``LOOP_``/``TEAM_``/``SCENARIO_HEARTBEAT_STALE_SECONDS``), refreshed
+(``FLOW_``/``LOOP_``/``TEAM_HEARTBEAT_STALE_SECONDS``), refreshed
 every node/round/tick and at least every 15 seconds while an agent step runs,
 because a pid says only that *a* process exists: the pid of a crashed-and-reused
 number is alive, and a hung orchestrator's pid is alive too, while a heartbeat
@@ -128,8 +128,6 @@ LOOP_HEARTBEAT_STALE_SECONDS = float(os.environ.get("LOOP_HEARTBEAT_STALE_SECOND
 # turns are agent runs of their own); a plain default, generous enough that a
 # slow member turn does not read as a dead run.
 TEAM_HEARTBEAT_STALE_SECONDS = float(os.environ.get("TEAM_HEARTBEAT_STALE_SECONDS", "180"))
-# A scenario beats once per tick, the same shape as a team's rounds.
-SCENARIO_HEARTBEAT_STALE_SECONDS = float(os.environ.get("SCENARIO_HEARTBEAT_STALE_SECONDS", "180"))
 # How many times the watchdog may resume the same run by itself.
 MAX_AUTO_RESUMES = int(os.environ.get("RUN_MAX_AUTO_RESUMES", "2"))
 # An agent run beats every RUN_HEARTBEAT_SECONDS (runtime/agent_run.py); a run
@@ -494,7 +492,7 @@ def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:
 
 
 # ── The one sweep over every entity kind ────────────────────────────────────
-# flow, loop, team and scenario runs all live in common/entity_runs.py now,
+# flow, loop and team runs all live in common/entity_runs.py now,
 # one status vocabulary (common/run_status.py) and one shape of liveness: a
 # heartbeat, a checkpoint, a resume_attempts counter. This section replaced
 # the old per-kind _sweep_flow_runs/_sweep_loop_runs bodies (kept below as
@@ -508,7 +506,6 @@ _STALE_SECONDS: Dict[str, float] = {
     "flow": FLOW_HEARTBEAT_STALE_SECONDS,
     "loop": LOOP_HEARTBEAT_STALE_SECONDS,
     "team": TEAM_HEARTBEAT_STALE_SECONDS,
-    "scenario": SCENARIO_HEARTBEAT_STALE_SECONDS,
 }
 
 
@@ -530,11 +527,6 @@ def _resume_team_run(rec: Dict[str, Any]) -> None:
     resume_team_run(str(rec["run_id"]), auto=True)
 
 
-def _resume_scenario_run(rec: Dict[str, Any]) -> None:
-    from playground.launcher import resume_scenario_run
-    resume_scenario_run(str(rec["run_id"]), auto=True)
-
-
 #: Per kind: how to relaunch a dead run from its checkpoint. Every resumer
 #: takes the entity_runs record and is responsible for its own bookkeeping
 #: (resume_attempts, the checkpoint, the process); the sweep only decides
@@ -543,7 +535,6 @@ _RESUMERS: Dict[str, Callable[[Dict[str, Any]], None]] = {
     "flow": _resume_flow_run,
     "loop": _resume_loop_run,
     "team": _resume_team_run,
-    "scenario": _resume_scenario_run,
 }
 
 
@@ -708,7 +699,7 @@ def _check_pending_entity_run(rec: Dict[str, Any]) -> int:
 
 
 def _sweep_entity_runs(kinds: Optional[Iterable[str]] = None) -> int:
-    """One sweep over flow, loop, team and scenario runs (``kinds=None``), or
+    """One sweep over flow, loop and team runs (``kinds=None``), or
     just one kind's slice of it: :func:`_sweep_flow_runs` and
     :func:`_sweep_loop_runs` are exactly that, kept for the tests that already
     call them by name.

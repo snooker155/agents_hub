@@ -1,7 +1,7 @@
 # Workspace files
 
 A workspace file is a file stored once in a workspace and referenced by its
-id everywhere else: a chat turn, a memory pool, a task, an eval case, an
+id everywhere else: a chat turn, a memory pool, a task, an
 agent's tools. Upload a contract once, and the same `file_0123456789abcdef`
 is what the chat attaches, what the knowledge pool indexes and what a task
 run finds in its working directory. This is the Files API shape of the
@@ -118,12 +118,6 @@ archive, a spreadsheet) is named with its type and size, never inlined.
 the file that crosses it is cut with a marker and the files after it are
 named only.
 
-## Waking an agent
-
-A file added, uploaded or rewritten wakes every [proactive
-agent](proactive.md) of the workspace whose profile has a `file` trigger
-matching its path or name, with the file id, path and source as the event.
-
 ## Where it is used
 
 - **Chat.** The composer's attach menu has "From workspace files". An
@@ -150,8 +144,6 @@ matching its path or name, with the file id, path and source as the event.
   Subtasks, whether created with `add_subtask` or by `delegate_task_tool`,
   inherit the parent's files like its money cap. The task page has a Files
   card; the create form has a picker. See [tasks](tasks.md).
-- **Evals.** A case carries `file_ids`. It runs in an isolated directory with
-  the files copied in, and its input names them. See [evals](evals.md).
 - **Agent tools.** `list_workspace_files`, `read_workspace_file` (text in
   slices of up to 50,000 characters, with `next_offset`) and
   `save_workspace_file` (text an agent produced becomes a file with source
@@ -200,7 +192,7 @@ carry their citations too.
 | `GET /api/files/{id}` | the record |
 | `GET /api/files/{id}/text?max_chars=` | the text as agents see it (`kind`: text, pdf or binary) |
 | `GET /api/files/{id}/content` | the bytes, as a download |
-| `GET /api/files/{id}/usage` | chats, memory pools, tasks and eval cases that reference it |
+| `GET /api/files/{id}/usage` | chats, memory pools and tasks that reference it |
 | `DELETE /api/files/{id}` | delete (content removed, tombstone kept) |
 | `POST /api/shared-memory/{pool}/files/from-workspace` | add a file to a memory pool, `{"file_id"}` |
 | `GET /api/workspaces/{name}/files` | the folder's paths, with `ids` (path to file id) |

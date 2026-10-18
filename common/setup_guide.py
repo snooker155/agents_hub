@@ -5,7 +5,7 @@ at a time, led by the assistant (docs/assistant.md "Guided setup").
 `ah setup` (or the welcome window) does only what the assistant cannot do for
 itself: an account and one model to think with. From there the assistant takes
 the person through the rest by voice or text: the default model, its own voice,
-web search, the demo, the team, the hub's health, then a first chat, channel,
+the demo, the team, the hub's health, then a first chat, channel,
 account, agent, task and something that runs on its own. Each step here says
 why it matters, how it is detected as done, what the assistant does about it
 (a tool, a connection card, a page) and which page shows it.
@@ -167,21 +167,12 @@ def _default_model(ctx: _Ctx):
 
 def _voice(ctx: _Ctx):
     def read():
-        from providers import special
-        own = special.stored("default")
+        from providers import voice_models
+        own = voice_models.stored()
         return {k: own.get(k) for k in ("speech", "transcription")}
     have = ctx.get("voice", read) or {}
     parts = [f"{k} {v.get('provider')}/{v.get('model')}" for k, v in have.items() if isinstance(v, dict)]
     return all(isinstance(have.get(k), dict) for k in ("speech", "transcription")), ", ".join(parts)
-
-
-def _web_search(ctx: _Ctx):
-    from tools.web import effective_search_provider
-    eff = effective_search_provider()
-    provider = str(eff["provider"])
-    if provider and eff["source"] == "model_key":
-        provider = f"{provider} (model key)"
-    return bool(eff["key_set"]), provider
 
 
 def _demo(ctx: _Ctx):
@@ -237,19 +228,12 @@ def _first_task(ctx: _Ctx):
 
 
 def _automation(ctx: _Ctx):
-    def watchers(ws: Optional[str]) -> int:
-        from watchers.service import list_watchers
-        return len(list_watchers(ws))
-
-    def pulses(ws: Optional[str]) -> int:
-        from proactive.service import summary
-        return int(summary(ws)["totals"]["agents"])
-    w = ctx.count("watchers", watchers)
-    p = ctx.count("pulses", pulses)
-    if w is None and p is None:
-        return None, ""
-    parts = ([f"{w} watchers"] if w else []) + ([f"{p} pulses"] if p else [])
-    return bool(w or p), ", ".join(parts)
+    def schedules(ws: Optional[str]) -> int:
+        from plans import service as plan_service
+        from plans.models import Recurrence
+        return sum(1 for j in plan_service.list_jobs(workspace=ws) if j.recurrence != Recurrence.none)
+    n = ctx.count("schedules", schedules)
+    return (None if n is None else n > 0), (f"{n} schedules" if n else "")
 
 
 def _tour(ctx: _Ctx):
@@ -273,15 +257,9 @@ STEPS: tuple[Step, ...] = (
          "without them it uses the browser's own, which Firefox lacks.",
          "setup_step voice_cloud (a connected OpenAI or Google key, paid per use); skipping keeps the "
          "browser's voice.",
-         "/models?tab=special", _voice),
-    Step("web_search", GROUP_SETUP, "Turn on web search",
-         "Agents can then search the web, not only open pages they are given. An Anthropic or "
-         "OpenAI key already does this through that provider's own search.",
-         "propose_connection with kind provider and target anthropic or openai (a model key searches "
-         "too), or brave, tavily or exa: the person types the key into the card.",
-         "/settings/webSearch", _web_search),
+         "/models?tab=voice", _voice),
     Step("demo", GROUP_SETUP, "Look around the demo workspace",
-         "Four agents with chats, views and a pulse show what the hub does before anything is built.",
+         "Four agents with chats, views and a team show what the hub does before anything is built.",
          "setup_step seed_demo, then show_on_screen /workspaces/demo.",
          "/workspaces", _demo),
     Step("health", GROUP_SETUP, "Check the hub's health",
@@ -309,10 +287,9 @@ STEPS: tuple[Step, ...] = (
          "create_task for an agent with something the person actually needs, after a yes.",
          "/tasks", _first_task),
     Step("automation", GROUP_START, "Let something run on its own",
-         "A watcher wakes an agent on new mail or a changed page; a pulse lets an agent check in on a schedule.",
-         "propose_connection with kind watcher, or show_on_screen /watchers; a pulse is set on the agent's "
-         "Pulse tab.",
-         "/watchers", _automation),
+         "A schedule on the Plan page runs an agent, a flow or a loop at the times you choose.",
+         "Ask what should run and when, then schedule_task after a yes, or show_on_screen /plan.",
+         "/plan", _automation),
     Step("tour", GROUP_START, "Take the welcome tour",
          "Two minutes over the main pages, so you know where everything lives.",
          "The tour runs in the browser: ask the person to press Take the tour in the setup panel.",

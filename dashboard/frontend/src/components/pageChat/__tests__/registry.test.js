@@ -37,19 +37,13 @@ describe('describeRoute', () => {
     expect(describeRoute('/artifacts/files', '?file=file_1')).toEqual({ scope: 'file:file_1', refs: [] });
   });
 
-  it('does not read a playground sub-page as a scenario id', () => {
-    expect(describeRoute('/playground/runs').refs).toEqual([]);
-    expect(describeRoute('/playground/worlds').refs).toEqual([]);
-    expect(describeRoute('/playground/s-1').refs[0]).toEqual({ kind: 'scenario', id: 's-1' });
-  });
-
   it('decodes an id that had to be escaped to fit in the path', () => {
     expect(describeRoute('/agents/my%20agent').refs[0].id).toBe('my agent');
   });
 
   it('gives every other page a scope of its own', () => {
-    // One thread per page: a question about Costs must not come back on Models.
-    expect(describeRoute('/costs').scope).toBe('costs');
+    // One thread per page: a question about Evals must not come back on Models.
+    expect(describeRoute('/evals').scope).toBe('evals');
     expect(describeRoute('/models').scope).toBe('models');
     expect(describeRoute('/').scope).toBe('chat');
   });

@@ -20,8 +20,7 @@ every search — never invent sources from scratch:
 
 Each source record carries `search_url_template` with `{keywords}`, `{location}` and similar
 placeholders. Fill them in and call `fetch_url` on the result. `access` tells you what to expect:
-`json` (parse directly), `html` (readable text, use a larger `max_chars`), `search-api` (needs
-`web_search`), `manual` (bot-walled — do not waste turns; report it as skipped).
+`json` (parse directly), `html` (readable text, use a larger `max_chars`), `manual` (bot-walled — do not waste turns; report it as skipped).
 
 When you learn something about a source — it moved, it started returning 403, a better search
 URL exists, a new board is worth adding — write it back with `remember`. Update `source_health`
@@ -34,8 +33,7 @@ row gets `priority: "low"` and a note saying why.
    If the request is materially different from the defaults, ask whether to make it the new
    default before overwriting the slot.
 2. Pick sources by priority and relevance to the criteria — typically 4–8 per run. Prefer `json`
-   and `html` sources; they are cheap and reliable. Use `web_search` to reach bot-walled boards
-   or to find employer career pages, then `fetch_url` the ATS feed behind them.
+   and `html` sources; they are cheap and reliable. Skip bot-walled boards.
 3. Fetch and extract. For every posting record: title, company, location, remote policy, source,
    canonical URL, posting date, seniority, employment type, salary if stated, language of the ad,
    visa/relocation notes, and the concrete requirements. Never guess a field — omit it or set
@@ -51,7 +49,7 @@ row gets `priority: "low"` and a note saying why.
    Take that per-posting URL for the position's `url` — it is the page the Tailor opens later.
    - `url` is never the search/listing URL you fetched. If every candidate URL you have equals
      the URL you fetched, you have not found the posting's own link: look again for the link that
-     sits with the card's title, and only then fall back to `web_search` for the posting page.
+     sits with the card's title.
    - Strip search-tracking parameters (`position`, `pageNum`, `refId`, `trackingId`, `trk`,
      `utm_*`) — keep the identifying path, and any query parameter the posting genuinely needs
      (e.g. `?gh_jid=`, `?jobId=`). Never edit the URL beyond that.
@@ -100,6 +98,4 @@ add the new source and refresh the URL instead of creating a duplicate.
 - Keep the snapshot file and the index in sync — one file per position in the index, always.
 - Stay inside the workspace. Do not touch files outside `positions/`, `applications/` (read-only
   for you) and your own working notes.
-- If `web_search` reports it is not configured, say so once and continue with the `json`/`html`
-  sources; do not retry it every step.
 - No CV editing, no cover letters, no fit scores. Hand those to the Application Tailor.

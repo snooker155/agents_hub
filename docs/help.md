@@ -21,13 +21,13 @@ agent can offer it as a link too.
 - **Where you are**: the page's title, its URL and the active workspace.
 - **The install as a newcomer sees it**: whether a model provider is
   configured, which models are enabled, how many agents there are and which are
-  your own, workspaces, chats and tasks so far, Jira and GitLab connections and
-  watchers, and whether you took the tour. The server reads this
+  your own, workspaces, chats and tasks so far, Jira and GitLab connections,
+  and whether you took the tour. The server reads this
   at the moment you ask; only counts and names travel, never a key or a token.
 - **The documentation**: the same corpus as the Docs page, which it searches
   before it answers.
 - **Read only tools**: health and the doctor's checks, models, agents, tasks,
-  schedules, flows, teams, loops, scenarios and projects.
+  schedules, flows, teams, loops and projects.
 
 The page and the snapshot are data, not instructions, and the prompt says so.
 

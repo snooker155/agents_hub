@@ -3,7 +3,7 @@
  */
 import {
   Activity, AudioLines, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
-  Database, DollarSign, Download, Factory, FileText, FlaskConical, Folder, FolderGit2, Gamepad2,
+  Database, Download, Factory, FileText, Folder, FolderGit2,
   Gauge, Globe, GraduationCap, HardDriveDownload, HelpCircle, History, Images, KeyRound, Layers,
   MessageCircle, MessageSquareCode, Navigation, Network, Plug, Radio, Repeat, Rocket,
   ScrollText, Send, Server, ServerCog, SettingsIcon, Share2, ShieldCheck, Sparkles, Store,
@@ -16,8 +16,8 @@ import {
 } from './FeatureDocs';
 import { CliApi, Concepts, Features, GettingStarted, TryIt, Tutorials } from './GettingStartedDocs';
 import {
-  ConnectorsDoc, ContainersDoc, CostsDoc, EvalsDoc, HooksDoc, InstancesDoc, LoopsDoc, MemoryDoc,
-  ModelsDoc, OrchestratorDoc, PlanDoc, PlaygroundDoc, ProvidersDoc, TeamsDoc, ToolboxDoc,
+  ConnectorsDoc, ContainersDoc, HooksDoc, InstancesDoc, LoopsDoc, MemoryDoc,
+  ModelsDoc, OrchestratorDoc, PlanDoc, ProvidersDoc, TeamsDoc, ToolboxDoc,
 } from './PlatformDocs';
 import { CliGuide, Installation } from './SetupDocs';
 
@@ -73,14 +73,11 @@ export const GROUPS = [
       { id: 'loops', key: 'loops', icon: Repeat, render: LoopsDoc },
       { id: 'tools', key: 'tools', icon: Wrench, render: ToolboxDoc },
       guide('mcp', 'mcp', Plug, ['mcp']),
-      guide('browser', 'browser', Globe, ['browser']),
       { id: 'hooks', key: 'hooks', icon: ShieldCheck, render: HooksDoc },
       { id: 'memory', key: 'memory', icon: Database, render: MemoryDoc },
       { id: 'web-logs', key: 'webLogs', icon: Globe, render: WebLogsDoc },
-      { id: 'evals', key: 'evals', icon: FlaskConical, render: EvalsDoc },
-      guide('outcomes', 'outcomes', Target, ['outcomes', 'experiments']),
+      guide('outcomes', 'outcomes', Target, ['outcomes']),
       guide('sessions-runs', 'sessionsRuns', History, ['sessions-and-runs']),
-      { id: 'playground', key: 'playground', icon: Gamepad2, render: PlaygroundDoc },
     ],
   },
   {
@@ -90,7 +87,6 @@ export const GROUPS = [
       guide('deployments', 'deployments', Layers, ['deployments', 'sandboxes']),
       { id: 'containers', key: 'containers', icon: Box, render: ContainersDoc },
       { id: 'models', key: 'models', icon: Brain, render: ModelsDoc },
-      { id: 'costs', key: 'costs', icon: DollarSign, render: CostsDoc },
       { id: 'providers', key: 'providers', icon: SettingsIcon, render: ProvidersDoc },
       { id: 'connectors', key: 'connectors', icon: Send, render: ConnectorsDoc },
       guide('health', 'health', Activity, ['service-health', 'runbook', 'system-workspace']),

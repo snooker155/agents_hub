@@ -71,7 +71,6 @@ def test_container_hour_price_fails_open_on_garbage(monkeypatch):
 
 def test_a_reported_cost_still_gets_the_container_hours():
     """A wrapped CLI reports what its model calls cost, not the container the
-    hub ran it in: the costs route adds the hours on top."""
-    from dashboard.backend.routes import costs
+    hub ran it in: the run total adds the hours on top."""
     run = _run(container_cpus="1", reported_cost_usd=1.25)
-    assert abs(costs._run_cost(run, PRICES) - 1.30) < 1e-9
+    assert abs(pricing.run_total_cost_usd(run, PRICES) - 1.30) < 1e-9

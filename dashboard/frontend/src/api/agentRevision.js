@@ -12,13 +12,13 @@ const revisions = new Map();
 let conflictHandler = null;
 
 // Sub paths of /agents/{id} whose writes change the agent's record or its
-// definition. Run controls (proactive/wake, experiment, versions/rollback)
-// and deletes are left alone: they are not edits of a form.
+// definition. Run controls (versions/rollback) and deletes are left alone:
+// they are not edits of a form.
 const GUARDED = new Set([
   '', 'definition', 'description', 'memory', 'skills-config', 'episodic-config',
   'personal-memory', 'response-format', 'clarify-gate', 'self-delegation',
   'capability-override', 'tools', 'delegates', 'handoffs', 'reasoning', 'model',
-  'sharing', 'loop-settings', 'proactive', 'guardrails', 'secrets', 'tool-policy',
+  'sharing', 'loop-settings', 'guardrails', 'secrets', 'tool-policy',
 ]);
 const NOT_AN_AGENT = new Set(['tools', 'workspace-capacities', 'capability-check', 'create']);
 const WRITES = new Set(['put', 'post', 'patch']);

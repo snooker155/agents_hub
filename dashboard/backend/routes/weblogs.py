@@ -1,5 +1,5 @@
 """
-Web access log API — review what ``web_search`` and ``fetch_url`` actually read.
+Web access log API — review what ``fetch_url`` actually read.
 
 - ``GET    /api/web-logs``            sortable, filterable page of calls
 - ``GET    /api/web-logs/stats``      volume, failures, flagged calls, top hosts
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/web-logs", tags=["web-logs"])
 async def list_web_logs(
     limit: int = Query(200, ge=1, le=web_log.MAX_PAGE),
     offset: int = Query(0, ge=0),
-    kind: Optional[str] = Query(None, description="search | fetch"),
+    kind: Optional[str] = Query(None, description="fetch"),
     status: Optional[str] = Query(None, description="ok | refused | error | unsupported | not_configured"),
     workspace: Optional[str] = None,
     agent_id: Optional[str] = None,
@@ -32,8 +32,8 @@ async def list_web_logs(
     sort: Optional[str] = Query(None, description="created | kind | status | agent | duration | severity"),
     order: Optional[str] = Query(None, description="desc | asc"),
 ):
-    if kind and kind not in ("search", "fetch"):
-        raise HTTPException(status_code=400, detail="kind must be 'search' or 'fetch'")
+    if kind and kind != "fetch":
+        raise HTTPException(status_code=400, detail="kind must be 'fetch'")
     if min_severity and min_severity not in web_log.SEVERITY_ORDER:
         raise HTTPException(status_code=400, detail="min_severity must be low, medium or high")
     if sort and sort not in web_log.SORT_KEYS:

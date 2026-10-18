@@ -6,9 +6,6 @@ vi.mock('../../api', () => ({
     run_id: 'child', agent_id: 'visualizer', input: 'cube', output: 'Built v1',
     tools: [{ step: 1, tool: 'mesh_new', input: 'cube', output: 'ok' }],
   }] } })),
-  getEvalSetsForRun: vi.fn(() => new Promise(() => {})),
-  createEvalSet: vi.fn(),
-  addEvalCase: vi.fn(),
 }));
 
 import { getMessageInsights } from '../../api';
@@ -30,15 +27,9 @@ describe('ProcessGraph', () => {
   // jsdom has no layout, so no scrolling.
   beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
 
-  it('offers "to eval case" beside the details link when the host gives a workspace', () => {
-    show({ evalCaseWorkspace: 'ws' });
-    expect(screen.getByText('To eval case')).toBeInTheDocument();
-    expect(screen.getByText('View Full Details').closest('a')).toHaveAttribute('href', '/messages/r1');
-  });
-
-  it('leaves "to eval case" out elsewhere', () => {
+  it('links to the details page of a run', () => {
     show({});
-    expect(screen.queryByText('To eval case')).toBeNull();
+    expect(screen.getByText('View Full Details').closest('a')).toHaveAttribute('href', '/messages/r1');
   });
 
   it('opens a delegated run with its own steps, even from a truncated log line', async () => {

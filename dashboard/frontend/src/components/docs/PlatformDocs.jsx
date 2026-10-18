@@ -71,54 +71,6 @@ export function LoopsDoc() {
   );
 }
 
-export function EvalsDoc() {
-  const { t } = useI18n();
-  return (
-    <div>
-      <H2>{t('docs.evals')}</H2>
-      <P><Rich>{t('docs.evalsDoc.lead')}</Rich></P>
-      <H3>{t('docs.graders')}</H3>
-      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
-        <li><code className="bg-gray-100 px-1 rounded">exact</code>, <code className="bg-gray-100 px-1 rounded">substring</code>, <code className="bg-gray-100 px-1 rounded">regex</code> {t('docs.cheapAndDeterministic')}</li>
-        <li><code className="bg-gray-100 px-1 rounded">json_valid</code>, <code className="bg-gray-100 px-1 rounded">json_schema</code> {t('docs.structuralChecksForToolShaped')}</li>
-        <li><code className="bg-gray-100 px-1 rounded">assertions</code> {t('docs.aListOfContainsNot')}</li>
-        <li><code className="bg-gray-100 px-1 rounded">llm_judge</code> {t('docs.llmJudgeExplains')}</li>
-      </ul>
-      <P>{t('docs.gradersCarryWeightsSoOne')}</P>
-      <Callout tone="warn"><Rich>{t('docs.evalsDoc.sweepCallout')}</Rich></Callout>
-      <H3>{t('docs.whereCasesComeFrom')}</H3>
-      <P><Rich>{t('docs.evalsDoc.cases')}</Rich></P>
-      <H3>{t('docs.promptInjectionAudit')}</H3>
-      <P>{t('docs.evalsDoc.injection')}</P>
-      <CodeBlock label={t('docs.terminal')}>{`python -m evals.injection --static          # free: static audit of every agent
-python -m evals.injection --agent job_scout # live sweep against one agent
-python -m evals.injection --list            # show the corpus`}</CodeBlock>
-    </div>
-  );
-}
-
-export function PlaygroundDoc() {
-  const { t } = useI18n();
-  return (
-    <div>
-      <H2>{t('docs.agentPlayground')}</H2>
-      <P><Rich>{t('docs.playgroundDoc.lead')}</Rich></P>
-      <H3>{t('docs.scenarios')}</H3>
-      <P><Rich>{t('docs.playgroundDoc.scenarios')}</Rich></P>
-      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
-        <li><strong>{t('docs.stockExchange')}</strong> {t('docs.agentsTradeAgainstEachOther')}</li>
-        <li><strong>{t('docs.socialWorld')}</strong> {t('docs.agentsTalkFormOpinionsAnd')}</li>
-      </ul>
-      <H3>{t('docs.yourOwnWorlds')}</H3>
-      <P><Rich>{t('docs.playgroundDoc.worlds')}</Rich></P>
-      <H3>{t('docs.activationTitle')}</H3>
-      <P><Rich>{t('docs.playgroundDoc.activation')}</Rich></P>
-      <H3>{t('docs.theTickLogIsThe')}</H3>
-      <P><Rich>{t('docs.playgroundDoc.tickLog')}</Rich></P>
-    </div>
-  );
-}
-
 export function ModelsDoc() {
   const { t } = useI18n();
   return (
@@ -139,19 +91,6 @@ export function ModelsDoc() {
       <P><Rich>{t('docs.modelsDoc.usage')}</Rich></P>
       <Callout tone="warn"><Rich>{t('docs.modelsDoc.callout')}</Rich></Callout>
       <CorpusRefs ids={['models']} />
-    </div>
-  );
-}
-
-export function CostsDoc() {
-  const { t } = useI18n();
-  return (
-    <div>
-      <H2>{t('docs.costsBudgets')}</H2>
-      <P><Rich>{t('docs.costsDoc.lead')}</Rich></P>
-      <H3>{t('docs.budgetsAreEnforcedNotJust')}</H3>
-      <P><Rich>{t('docs.costsDoc.budgets')}</Rich></P>
-      <Callout tone="tip"><Rich>{t('docs.costsDoc.evalTip')}</Rich></Callout>
     </div>
   );
 }
@@ -186,7 +125,6 @@ export function ConnectorsDoc() {
         <li><strong>{t('docs.apiKeys')}</strong> {t('docs.openaiAnthropicGoogleCredentialsAnd')}</li>
         <li><strong>{t('docs.customBackends')}</strong> {t('docs.anyOpenaiCompatibleEndpointWith')}</li>
         <li><strong>{t('docs.localModels')}</strong> {t('docs.ollamaAndLmStudioEndpoints')}</li>
-        <li><strong>{t('docs.observability')}</strong> {t('docs.langfuseTracing')}</li>
         <li><strong>{t('docs.ragVectors')}</strong> {t('docs.ragVectorsExplains')}</li>
         <li><strong>{t('docs.system')}</strong> {t('docs.liveStreamingAgentExecutionMode')}</li>
       </ul>

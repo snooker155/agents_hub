@@ -22,7 +22,6 @@
         "tool-policy",
         "handoffs",
         "secrets",
-        "proactive",
         "agent-inheritance",
         "agent-templates"
       ],
@@ -46,11 +45,9 @@
       "surface": "Assistant",
       "related": [
         "system-agents",
-        "costs",
         "agent-inheritance",
         "workspaces",
-        "help",
-        "pwa"
+        "help"
       ],
       "headings": [
         "The page",
@@ -94,8 +91,7 @@
       "related": [
         "agents",
         "flows",
-        "teams",
-        "costs"
+        "teams"
       ],
       "headings": [
         "What you can point it at",
@@ -125,7 +121,6 @@
         "flows",
         "loops",
         "teams",
-        "evals",
         "mcp"
       ],
       "headings": [
@@ -172,15 +167,14 @@
       "id": "connectors",
       "title": "Connectors",
       "surface": "Connectors",
-      "summary": "Services this hub reaches out to: git providers (GitLab), issue trackers (Jira) and inbound webhooks, set up per workspace.",
+      "summary": "Services this hub reaches out to: git providers (GitLab) and issue trackers (Jira), set up per workspace.",
       "related": [
         "trackers",
         "projects",
         "views",
         "settings",
         "mcp",
-        "notifications",
-        "watchers"
+        "notifications"
       ],
       "headings": [
         "Connectors per workspace",
@@ -205,35 +199,8 @@
         "Images",
         "Delegation from a container",
         "The Containers page",
-        "Preview through the hub",
         "Why it matters beyond isolation",
         "Gotchas"
-      ]
-    },
-    {
-      "id": "costs",
-      "title": "Costs",
-      "summary": "Token and estimated USD spend, broken down by workspace, agent, model or project, with container hours priced on top and every counted run listed.",
-      "surface": "Costs",
-      "related": [
-        "loops",
-        "models",
-        "playground",
-        "workspaces",
-        "notifications",
-        "tasks",
-        "agent-loop",
-        "tool-policy",
-        "guardrails",
-        "outcomes"
-      ],
-      "headings": [
-        "Where the numbers come from",
-        "Container hours",
-        "Attribution",
-        "Runs",
-        "What actually costs money",
-        "Reducing it"
       ]
     },
     {
@@ -254,54 +221,6 @@
         "The firing journal",
         "Auto pause",
         "Gotchas"
-      ]
-    },
-    {
-      "id": "evals",
-      "title": "Evals",
-      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing. Online evals grade a sample of production runs by alert rule. Any run becomes a case with one button, and a sweep's failed cases can propose a revised prompt to apply as a new agent version.",
-      "surface": "Evals",
-      "related": [
-        "agents",
-        "costs",
-        "tools-and-capabilities",
-        "experiments",
-        "notifications",
-        "proactive"
-      ],
-      "headings": [
-        "The pieces",
-        "Targets",
-        "Cases from tasks",
-        "Cases with files",
-        "Cases from a run",
-        "Graders, cheapest first",
-        "Trajectory graders",
-        "Cost",
-        "Batch mode",
-        "Repeats and variance",
-        "Diff of two runs",
-        "Prompt suggestions from failed cases",
-        "The injection audit",
-        "Online evals",
-        "Why bother"
-      ]
-    },
-    {
-      "id": "experiments",
-      "title": "Experiments",
-      "summary": "A/B experiments between stored versions of an agent's definition: traffic shares, deterministic routing per run or conversation, and a per-arm report of outcomes, cost and online eval scores.",
-      "surface": "Agents",
-      "related": [
-        "evals",
-        "agents",
-        "notifications"
-      ],
-      "headings": [
-        "What an experiment is",
-        "How routing works",
-        "Reading the report",
-        "Rollback and new versions during an experiment"
       ]
     },
     {
@@ -379,8 +298,7 @@
         "deployment",
         "backup",
         "demo",
-        "changelog",
-        "pwa"
+        "changelog"
       ],
       "headings": [
         "Prerequisites",
@@ -427,7 +345,6 @@
       "summary": "A loop wraps a [flow](flows.md) and re-runs it, feeding back a reviewer's complaints, until an agent judges the result good enough.",
       "surface": "Loops",
       "related": [
-        "costs",
         "flows",
         "system-workspace",
         "outcomes"
@@ -509,8 +426,7 @@
       "related": [
         "skills",
         "tools-and-capabilities",
-        "workspaces",
-        "proactive"
+        "workspaces"
       ],
       "headings": [
         "The layers",
@@ -531,9 +447,8 @@
       "summary": "The Models page is the source of truth for which models exist, which are offered, what they cost, and which is default per provider.",
       "surface": "Models",
       "related": [
-        "costs",
         "settings",
-        "special-models"
+        "assistant"
       ],
       "headings": [
         "Catalog vs. enabled",
@@ -542,7 +457,7 @@
         "Pricing",
         "Context window",
         "Providers",
-        "Special models"
+        "Voice"
       ]
     },
     {
@@ -552,7 +467,6 @@
       "surface": null,
       "related": [
         "cli",
-        "costs",
         "installation",
         "system-agents",
         "tools-and-capabilities"
@@ -603,23 +517,6 @@
       ]
     },
     {
-      "id": "playground",
-      "title": "Playground: worlds and scenarios",
-      "summary": "The playground drops agents into a simulated world and runs it tick by tick, so you can watch behaviour rather than read about it.",
-      "surface": "Playground",
-      "related": [
-        "chat",
-        "costs",
-        "system-agents"
-      ],
-      "headings": [
-        "How a run works",
-        "Designing one",
-        "The lab environment",
-        "Gotchas"
-      ]
-    },
-    {
       "id": "projects",
       "title": "Projects",
       "summary": "A project is one codebase or one effort inside a workspace. It gives work a folder, a structure graph and a task tree.",
@@ -632,7 +529,6 @@
       "headings": [
         "What a project adds over a bare workspace",
         "The usual sequence",
-        "Preview",
         "Gotchas"
       ]
     },
@@ -645,8 +541,7 @@
         "service-health",
         "tasks",
         "notifications",
-        "deployments",
-        "proactive"
+        "deployments"
       ],
       "headings": [
         "Job kinds",
@@ -656,67 +551,6 @@
         "Lease and idempotency",
         "The firing journal",
         "Auto pause",
-        "Gotchas"
-      ]
-    },
-    {
-      "id": "proactive",
-      "title": "Proactive agents",
-      "summary": "An agent with a pulse of its own: it wakes up on a schedule, checks its sources, acts within a daily limit, writes to you only when it has something to say, and remembers between ticks what it saw.",
-      "surface": "Agents",
-      "related": [
-        "scheduling",
-        "agents",
-        "memory",
-        "notifications",
-        "costs",
-        "deployments",
-        "tasks",
-        "agent-loop",
-        "tools-and-capabilities",
-        "tool-policy",
-        "files",
-        "evals",
-        "demo",
-        "watchers"
-      ],
-      "headings": [
-        "What a tick is",
-        "The profile",
-        "Schedule and quiet hours",
-        "From a phrase",
-        "Budgets and limits",
-        "The tick's answer",
-        "Triggers besides the clock",
-        "Security",
-        "Memory between ticks",
-        "Notifications",
-        "The Pulse tab",
-        "The journal over time",
-        "API",
-        "Gotchas"
-      ]
-    },
-    {
-      "id": "watchers",
-      "title": "Watchers",
-      "summary": "Observers of outside state (a mailbox over IMAP, an HTTP resource) that poll on their own interval and wake a proactive agent when something changes, without running a model.",
-      "surface": "Watchers",
-      "related": [
-        "proactive",
-        "connectors",
-        "secrets",
-        "notifications",
-        "tools-and-capabilities",
-        "service-health",
-        "scheduling"
-      ],
-      "headings": [
-        "What a watcher is",
-        "Kinds",
-        "Waking an agent",
-        "Polling",
-        "API",
         "Gotchas"
       ]
     },
@@ -750,7 +584,6 @@
       "summary": "These two records are how everything in the product becomes observable. Why a run failed: its status, error and log, and what a stale run means.",
       "surface": "Sessions",
       "related": [
-        "costs",
         "instances",
         "service-health",
         "agent-loop"
@@ -775,8 +608,7 @@
         "models",
         "service-health",
         "workspaces",
-        "tools-and-capabilities",
-        "browser"
+        "tools-and-capabilities"
       ],
       "headings": [
         "What is here",
@@ -814,7 +646,6 @@
       "surface": "Agents",
       "related": [
         "agents",
-        "evals",
         "marketplace",
         "service-health",
         "tools-and-capabilities",
@@ -826,7 +657,6 @@
       "headings": [
         "What being a system agent means",
         "The roster",
-        "Why the last two are separate",
         "Swapping one of them out"
       ]
     },
@@ -842,9 +672,7 @@
         "projects",
         "sessions-and-runs",
         "notifications",
-        "costs",
-        "outcomes",
-        "proactive"
+        "outcomes"
       ],
       "headings": [
         "Status",
@@ -882,7 +710,6 @@
       "surface": "Teams",
       "related": [
         "agents",
-        "costs",
         "flows",
         "steering"
       ],
@@ -896,7 +723,7 @@
     {
       "id": "tools-and-capabilities",
       "title": "Tools and capabilities",
-      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator. The browser tools (Playwright in its own container, browser_open, browser_read, browser_act, browser_screenshot) and run_code (a sandboxed code interpreter in a throwaway container) live here too.",
+      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator. run_code, a sandboxed code interpreter in a throwaway container, lives here too.",
       "surface": "Agents",
       "related": [
         "agents",
@@ -904,9 +731,7 @@
         "service-health",
         "system-agents",
         "web-logs",
-        "mcp",
-        "browser",
-        "proactive"
+        "mcp"
       ],
       "headings": [
         "The capability model",
@@ -914,7 +739,6 @@
         "Consequences you will actually hit",
         "When a chat turn is refused",
         "Delegation counts as holding the capability",
-        "The browser tools",
         "run_code",
         "Group aliases",
         "Approval gates, which are a different thing"
@@ -928,7 +752,6 @@
       "related": [
         "service-health",
         "installation",
-        "costs",
         "models",
         "instances",
         "containers",
@@ -963,11 +786,10 @@
       "id": "web-logs",
       "title": "Web requests",
       "surface": "Web Requests",
-      "summary": "Every `web_search` and `fetch_url` call an agent made, recorded with the text it was actually handed. The **Web Requests** page is where you read them.",
+      "summary": "Every `fetch_url` call an agent made, recorded with the text it was actually handed. The **Web Requests** page is where you read them.",
       "related": [
         "tools-and-capabilities",
         "service-health",
-        "evals",
         "agents"
       ],
       "headings": [
@@ -987,7 +809,6 @@
       "related": [
         "agents",
         "cli",
-        "costs",
         "memory",
         "projects",
         "system-workspace",
@@ -1008,7 +829,7 @@
     {
       "id": "workspace-roles",
       "title": "Workspace roles",
-      "summary": "A role is a kind of work (coder, reviewer, web search, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in Claude Code, Codex or Aider is one setting.",
+      "summary": "A role is a kind of work (coder, reviewer, researcher, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in Claude Code, Codex or Aider is one setting.",
       "surface": "Workspace settings, Agent roles section",
       "related": [
         "agents",
@@ -1016,8 +837,7 @@
         "system-agents",
         "handoffs",
         "tools-and-capabilities",
-        "workspaces",
-        "special-models"
+        "workspaces"
       ],
       "headings": [
         "The roles",
@@ -1029,63 +849,33 @@
       ]
     },
     {
-      "id": "special-models",
-      "title": "Special models",
-      "summary": "Models for images, video, speech, transcription and a workspace's own models, added per workspace with no fallback except a personal workspace, which uses default's. Agents call generate_image, generate_video, synthesize_speech, transcribe_audio or ask_special_model; a purpose with no model answers model_not_added; results are saved as workspace files and priced against the run's money cap.",
-      "surface": "Models, Special models tab; Workspace settings, Special models section",
-      "related": [
-        "workspace-roles",
-        "models",
-        "files",
-        "costs",
-        "tools-and-capabilities",
-        "settings"
-      ],
-      "headings": [
-        "Purposes and tools",
-        "How an agent knows",
-        "Configuring",
-        "What a call produces",
-        "Money",
-        "Capabilities",
-        "Gotchas"
-      ]
-    },
-    {
       "id": "notifications",
       "title": "Notifications",
       "surface": "Connectors",
-      "summary": "Outbound webhooks, the in-app inbox, alert rules for a failed run or a low online eval score, and the signed, idempotent inbound webhooks (a flow trigger, and filing a task from outside).",
+      "summary": "The in-app inbox (the bell) and the alert rules that raise a notification when a run fails or spend goes over a limit.",
       "related": [
         "connectors",
         "scheduling",
-        "costs",
         "tasks",
         "instances",
-        "flows",
-        "evals",
-        "proactive"
+        "flows"
       ],
       "headings": [
-        "Outbound: webhooks",
+        "The inbox",
         "Alert rules",
-        "Inbound: signing and idempotency",
-        "Filing a task from outside",
         "Gotchas"
       ]
     },
     {
       "id": "deployment",
       "title": "Deploying for high availability",
-      "summary": "How to run the service on your machine with Docker Compose: backend, frontend and the optional browser service, ports and the bind address, the browser env vars, and releases, upgrading and rolling back with SQLite.",
+      "summary": "How to run the service on your machine with Docker Compose: backend and frontend, ports and the bind address, and releases, upgrading and rolling back with SQLite.",
       "surface": "Installation",
       "related": [
         "installation",
         "service-health",
         "backup",
-        "browser",
-        "changelog",
-        "pwa"
+        "changelog"
       ],
       "headings": [
         "The shapes",
@@ -1121,8 +911,7 @@
         "workspaces",
         "settings",
         "containers",
-        "cli",
-        "watchers"
+        "cli"
       ],
       "headings": [
         "Why this exists",
@@ -1166,38 +955,18 @@
     {
       "id": "demo",
       "title": "The demo workspace",
-      "summary": "A workspace called demo, seeded end to end: a small sample web shop, three custom agents, a flow, a team, a scenario, views, tasks in every status and a couple of recorded chats. Turned on with --with-demo or a Settings toggle.",
+      "summary": "A workspace called demo, seeded end to end: a small sample web shop, four custom agents, a flow, a loop, a paused weekly schedule, a team, views including a slide deck, tasks in every status and six recorded chats. Turned on with --with-demo or a Settings toggle.",
       "surface": "Settings",
       "related": [
         "installation",
         "workspaces",
         "agents",
         "tools-and-capabilities",
-        "playground",
-        "views",
-        "proactive"
+        "views"
       ],
       "headings": [
         "What it holds",
         "Turning it on"
-      ]
-    },
-    {
-      "id": "browser",
-      "title": "The browser",
-      "summary": "The agent's browser on screen: a live view of a run's browser session with the option to take control, and a free browsing page whose session can be handed to an agent. Built on the same browser service the browser tools use, under the same domain policy.",
-      "surface": "Chat",
-      "related": [
-        "tools-and-capabilities",
-        "sessions-and-runs",
-        "containers"
-      ],
-      "headings": [
-        "Watching a run's browser",
-        "Taking control",
-        "The Browser page",
-        "Handing a page to an agent",
-        "API"
       ]
     },
     {
@@ -1207,8 +976,7 @@
       "surface": "Containers",
       "related": [
         "containers",
-        "sessions-and-runs",
-        "browser"
+        "sessions-and-runs"
       ],
       "headings": [
         "Opening one",
@@ -1228,8 +996,7 @@
         "hooks",
         "tasks",
         "workspaces",
-        "guardrails",
-        "proactive"
+        "guardrails"
       ],
       "headings": [
         "Setting a policy",
@@ -1248,7 +1015,6 @@
       "related": [
         "tasks",
         "loops",
-        "evals",
         "agents",
         "apply"
       ],
@@ -1295,8 +1061,7 @@
         "tool-policy",
         "guardrails",
         "steering",
-        "sessions-and-runs",
-        "costs"
+        "sessions-and-runs"
       ],
       "headings": [
         "Where the settings live",
@@ -1369,14 +1134,12 @@
     {
       "id": "files",
       "title": "Workspace files",
-      "summary": "Files uploaded once and referenced by id in chat, memory, tasks and evals, plus numbered RAG citations in answers.",
+      "summary": "Files uploaded once and referenced by id in chat, memory and tasks, plus numbered RAG citations in answers.",
       "surface": "Files",
       "related": [
         "chat",
         "memory",
-        "tasks",
-        "evals",
-        "proactive"
+        "tasks"
       ],
       "headings": [
         "The object",
@@ -1386,26 +1149,6 @@
         "Where it is used",
         "Citations",
         "API"
-      ]
-    },
-    {
-      "id": "pwa",
-      "title": "Phone and installed app",
-      "summary": "The dashboard installs as an app on a phone or a desktop (a progressive web app), opens on the Assistant, keeps its shell offline and fits phone screens. Needs HTTPS; the quickstart compose file has an https profile with Caddy.",
-      "surface": "Install app",
-      "related": [
-        "assistant",
-        "chat",
-        "installation",
-        "deployment",
-        "demo"
-      ],
-      "headings": [
-        "Install it",
-        "On a phone",
-        "What works offline",
-        "HTTPS on a server",
-        "Gotchas"
       ]
     },
     {

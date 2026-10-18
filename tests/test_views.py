@@ -1045,7 +1045,7 @@ def test_checkpoint_routes(client):
     assert client.post(f"/api/views/{vid}/revert", json={}).status_code == 400
 
 
-# ── nn_trace runtime (scenario 2) ─────────────────────────────────────────────
+# ── nn_trace runtime ─────────────────────────────────────────────
 
 def test_nn_trace_frames_and_determinism():
     from views.compute import create_runtime
@@ -1328,7 +1328,7 @@ def test_scene_part_overrides_and_environment():
 
 # ── the Studio build chat ─────────────────────────────────────────────────────
 # The Visualizer pinned to one view, on the same entity-chat plumbing as the
-# loop and scenario builders. What is worth holding still is the wiring (the
+# loop builders. What is worth holding still is the wiring (the
 # endpoints exist, refuse an unknown view and an empty turn), and the prompt,
 # because it is the only per-view part of the turn.
 

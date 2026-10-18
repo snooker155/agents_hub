@@ -28,10 +28,6 @@ export default {
       title: 'Teams',
       description: 'A roster of agents working over one shared message board, which is both the work and the record of how it went.',
     },
-    playground: {
-      title: 'Playground',
-      description: 'Agents acting in a simulated world, tick by tick, with the thought behind each move and the state it changed.',
-    },
     artifacts: {
       title: 'Artifacts',
       description: 'What the agents made: the views they built as answers (charts, graphs, 3D scenes, decks, documents) and the workspace\'s files, as two tabs of one page. Open a view to keep editing it in conversation.',

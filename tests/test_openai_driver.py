@@ -365,13 +365,6 @@ def test_the_async_paths(server):
 
 # ── Where the rest of the hub reads the model ────────────────────────────────
 
-def test_the_batch_api_recognises_the_driver(server):
-    from providers import batch_api
-    target = batch_api.chat_model_target(_openai(server))
-    assert target is not None and target.provider == "openai" and target.api_key == "sk-test"
-    assert batch_api.chat_model_target(_local(server)) is None
-
-
 def test_no_tokenizer_is_loaded_for_an_estimate(server):
     llm = _local(server)
     assert llm.get_num_tokens("x" * 40) == 10

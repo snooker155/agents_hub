@@ -3,13 +3,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
-import { useFeatures } from './features';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
 import { Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
-import WatchersIndicator from './WatchersIndicator';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
@@ -19,7 +17,6 @@ import PageChatPanel from './pageChat/PageChatPanel';
 import HelpPanel from './help/HelpPanel';
 import { isEmbedded } from './embed';
 import WakeListener from './assistant/WakeListener';
-import InstallAppButton from './InstallAppButton';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -61,9 +58,6 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const { selectedWorkspace, setSelectedWorkspace, liveUpdates, toggleLiveUpdates } = useWorkspace();
   const { theme, setTheme } = useTheme();
-  // Optional features the backend reports at /api/health; a feature that is
-  // switched off has no sidebar row and no route (see App.jsx).
-  const features = useFeatures();
   const { t } = useI18n();
   // The guided setup's own pill, while it runs (docs/assistant.md "Guided
   // setup"); cheap, since useSetupGuide only polls while the guide is
@@ -291,7 +285,7 @@ const Layout = ({ children }) => {
   // default for their role, and is kept per browser.
   const [menuChoice, setMenuChoice] = useState(readMenuMode);
   const menuMode = menuChoice || defaultMenuMode();
-  const allGroups = buildMenu({ t, features });
+  const allGroups = buildMenu({ t });
   const menuGroups = visibleGroups(allGroups, menuMode);
   const moreCount = hiddenCount(allGroups);
   const toggleMenuMode = () => {
@@ -436,7 +430,6 @@ const Layout = ({ children }) => {
               </span>
             )}
           </button>
-          <InstallAppButton compact={sidebarCollapsed} />
           {/* On a phone the header keeps only what is used most; the rest of
               its controls live here, at the foot of the menu. */}
           {narrow && (
@@ -596,8 +589,6 @@ const Layout = ({ children }) => {
                 )}
               </span>
             )}
-            {/* Active watchers (docs/watchers.md): what is being observed right now */}
-            <WatchersIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}

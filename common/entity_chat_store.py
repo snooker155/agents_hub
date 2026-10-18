@@ -1,10 +1,10 @@
 """
 Persistence for entity build chats.
 
-A scenario, a loop — anything with a chat of its own on its page — needs the
+A loop, or anything with a chat of its own on its page — needs the
 conversation to survive a reload, and needs it to survive the *entity* being
 edited from the form next to it. So the transcript lives here rather than on the
-entity: saving a scenario must not reset the chat that helped write it.
+entity: saving a loop must not reset the chat that helped write it.
 
 Three things are stored per (kind, entity_id):
 

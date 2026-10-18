@@ -8,7 +8,6 @@ export default {
     channel: 'Чат-канал',
     mcp_server: 'MCP-сервер',
     database: 'База данных',
-    watcher: 'Вотчер',
     secret: 'Секрет',
     provider: 'Ключ провайдера (на весь хаб)',
   },

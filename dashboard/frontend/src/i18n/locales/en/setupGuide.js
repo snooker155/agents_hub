@@ -34,13 +34,9 @@ export default {
       title: 'Give the assistant a voice',
       why: 'With a speech and a transcription model the assistant hears and speaks in every browser.',
     },
-    web_search: {
-      title: 'Turn on web search',
-      why: 'Agents can then search the web, not only open pages they are given.',
-    },
     demo: {
       title: 'Look around the demo workspace',
-      why: 'Four agents with chats, views and a pulse show what the hub does before anything is built.',
+      why: 'Four agents with chats, views and a team show what the hub does before anything is built.',
     },
     people: {
       title: 'Invite your team',
@@ -72,7 +68,7 @@ export default {
     },
     automation: {
       title: 'Let something run on its own',
-      why: 'A watcher wakes an agent on new mail or a changed page; a pulse lets an agent check in on a schedule.',
+      why: 'A schedule on the Plan page runs an agent, a flow or a loop at the times you choose.',
     },
     tour: {
       title: 'Take the welcome tour',

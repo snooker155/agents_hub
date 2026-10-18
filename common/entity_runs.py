@@ -1,11 +1,11 @@
 """
-One table, ``entity_runs``, for the runs of flows, loops, teams and scenarios.
+One table, ``entity_runs``, for the runs of flows, loops and teams.
 
-A flow run, a loop run, a team run and a scenario run are the same kind of
+A flow run, a loop run and a team run are the same kind of
 thing: one execution of an entity, with a status, a process (pid, host or
 container), a heartbeat, a checkpoint to resume from, a log file, a cost, an
 error and a few timestamps, plus a handful of fields that are its own (a
-team's rounds and result, a scenario's scores, a loop's position). Until
+team's rounds and result, a loop's position). Until
 stage 0 of the September 2026 plan each kind had its own table with its own
 spelling of the common part, and only agent runs had a heartbeat or a place
 in the launch queue. Now every kind is a process with a lease, a heartbeat
@@ -14,8 +14,8 @@ the run groups page, a recursive stop, the deployment map) read one table.
 
 **The record.** A run is a free-form dict. The common fields are columns
 (``COLUMNS``), indexed and queryable; the whole record is also kept as JSON
-in ``doc``, so a key the table has no column for (a team's ``conversation_id``,
-a scenario's ``final_state``) is stored and read back unchanged. The
+in ``doc``, so a key the table has no column for (a team's ``conversation_id``)
+is stored and read back unchanged. The
 checkpoint has a column of its own, ``checkpoint``, because it is large and
 is written on its own schedule. On read the columns win over the document:
 a heartbeat stamped with one UPDATE is visible even though the document was
@@ -36,7 +36,7 @@ change. A status change is checked against the transition table in
 common/run_status.py and refused when the table forbids it.
 
 **Two surfaces.** :class:`EntityRunStore` is the per-kind view the adapters
-(flow/run_store.py, loops/store.py, teams/store.py, playground/store.py) are
+(flow/run_store.py, loops/store.py, teams/store.py) are
 built on; the module-level functions (:func:`get`, :func:`list_runs`,
 :func:`request_stop`, :func:`touch_heartbeat`, :func:`children`...) are the
 kind-agnostic surface the watchdog, the worker and the run groups use.
@@ -63,7 +63,7 @@ log = logging.getLogger(__name__)
 TABLE = "entity_runs"
 
 #: The kinds a record may have.
-KINDS: Tuple[str, ...] = ("flow", "loop", "team", "scenario")
+KINDS: Tuple[str, ...] = ("flow", "loop", "team")
 
 #: Per kind: the names its adapter's callers use for the run id and the
 #: entity id. A record carries these beside ``run_id`` and ``entity_id``.
@@ -71,7 +71,6 @@ KIND_FIELDS: Dict[str, Tuple[str, str]] = {
     "flow": ("flow_run_id", "flow_id"),
     "loop": ("loop_run_id", "loop_id"),
     "team": ("team_run_id", "team_id"),
-    "scenario": ("sim_run_id", "scenario_id"),
 }
 
 #: The ``<resource>.changed`` name each kind publishes. Unchanged from the
@@ -80,7 +79,6 @@ RESOURCES: Dict[str, str] = {
     "flow": "flow_runs",
     "loop": "loop_runs",
     "team": "team_runs",
-    "scenario": "sim_runs",
 }
 
 #: The plain columns, the key first. ``checkpoint`` and ``doc`` are JSON
@@ -268,8 +266,7 @@ def update(run_id: str, updates: Mapping[str, Any], *, notify: bool = True,
 def _evaluate_rules_on_finish(old: Mapping[str, Any], new: Mapping[str, Any]) -> None:
     """Run the workspace's alert rules once a container run reaches a
     terminal status, the way managers/runs/notifications.py does for a leaf
-    run: run_failed, spend thresholds and online evals (evals/online.py reads
-    ``kind`` off the record to filter by run kind). Best effort, and only on
+    run: run_failed and spend thresholds. Best effort, and only on
     the transition itself so a later bookkeeping write never fires it twice.
     """
     try:
@@ -503,7 +500,7 @@ class EntityRunStore(Generic[T]):
     """Run records of one kind over the shared table.
 
     ``convert`` turns a stored record into what callers get back (a plain
-    dict for flows, ``LoopRun``, ``TeamRun`` and ``SimRun`` for the others).
+    dict for flows, ``LoopRun``, and ``TeamRun`` for the others).
     ``order_by`` is the default list order and ``live_statuses`` the statuses
     :meth:`active` returns. ``notify`` replaces the session-broker publish,
     for tests.
@@ -611,7 +608,6 @@ _ADAPTERS: Dict[str, str] = {
     "flow": "flow.run_store",
     "loop": "loops.store",
     "team": "teams.store",
-    "scenario": "playground.store",
 }
 
 
@@ -623,7 +619,7 @@ def store_for(kind: str) -> EntityRunStore:
 
 
 def convert(rec: Dict[str, Any]) -> Any:
-    """A generic record in its kind's own shape (a ``TeamRun``, a ``SimRun``,
+    """A generic record in its kind's own shape (a ``TeamRun``,
     a ``LoopRun``, or the flow's dict)."""
     return store_for(str(rec.get("kind") or "")).convert(rec)
 

@@ -5,7 +5,7 @@ Es gibt vier Wege, den Dienst zum Laufen zu bringen. Der erste ist für eine Per
 | Weg | Sie brauchen | Sie erhalten |
 | --- | --- | --- |
 | [A. Docker, aus den veröffentlichten Images](#weg-a-docker-aus-den-veröffentlichten-images) | Docker | Das Dashboard auf `:8080`, den Zustand auf einem Volume, Agenten als Subprozesse. Nichts zu klonen oder zu bauen. |
-| [B. Docker Compose aus einem Checkout](#weg-b-docker-compose-aus-einem-checkout) | Docker, git | Dasselbe, aus dem Quellcode gebaut, dazu Container pro Agent und den Browser-Dienst |
+| [B. Docker Compose aus einem Checkout](#weg-b-docker-compose-aus-einem-checkout) | Docker, git | Dasselbe, aus dem Quellcode gebaut, dazu Container pro Agent |
 | [C. Das Installationsprogramm](#weg-c-das-installationsprogramm) | Python 3.11+, Node 22+ | Eine virtuelle Umgebung, den Befehl `ah` in Ihrem PATH, das Dashboard mit Hot Reload |
 | [D. Von Hand](#weg-d-von-hand) | Python 3.11+, Node 22+ | Weg C in seine Einzelteile zerlegt, für eine andere Form |
 
@@ -43,7 +43,7 @@ docker compose logs -f backend
 
 Auf dem Host gibt es bei diesem Weg keinen Befehl `ah`: Er liegt im Backend-Container, und ein Client auf dem Host ist ein eigener Schritt, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
-Was diese Form weglässt: Der Docker-Socket ist nicht eingebunden, daher können Agenten keine eigenen Container bekommen ([containers](containers.md)). Der Sandbox-Anbieter `docker` und der Browser-Dienst brauchen Weg B. Das Image ohne das Suffix `-rag` enthält keinen Embedding-Stack, deshalb bleibt `RAG_VECTOR_DB` auf `none`, solange Sie nicht das Tag mit `-rag` festlegen.
+Was diese Form weglässt: Der Docker-Socket ist nicht eingebunden, daher können Agenten keine eigenen Container bekommen ([containers](containers.md)). Der Sandbox-Anbieter `docker` braucht Weg B. Das Image ohne das Suffix `-rag` enthält keinen Embedding-Stack, deshalb bleibt `RAG_VECTOR_DB` auf `none`, solange Sie nicht das Tag mit `-rag` festlegen.
 
 ## Weg B: Docker Compose aus einem Checkout
 
@@ -57,7 +57,7 @@ Die `.env` ist hier optional: Der Stack startet ohne Anbieterschlüssel, und Sie
 
 Auch Compose legt `ah` nicht auf den Host: `docker compose exec backend ah ...` führt ihn im Container aus, und ein Client auf dem Host ist derselbe eigene Schritt wie bei Weg A, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
-Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet. Dieselbe Datei bringt den Browser-Dienst als Profil mit: `browser` (headless Chromium für die Browser-Werkzeuge).
+Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet.
 
 Compose hat keinen Vite-Dienst: Für eine HMR-Schleife beim Bearbeiten von Frontend-Code starten Sie `npm run dev` auf dem Host wie bei Weg C. Das Image bauen Sie neu (`docker compose up --build frontend`), wenn die Änderung im Container ankommen soll.
 
@@ -147,7 +147,7 @@ Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, d
 1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl) oder Compose aus diesem Checkout (Weg B). Danach QuickStart (nur, was sich nicht erraten lässt: Den Rest richtet der Assistent mit Ihnen ein, siehe [nach der Installation](#nach-der-installation-der-assistent-übernimmt)) oder Advanced.
 2. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
 3. **Stimme des Assistenten**: womit der [Assistent](assistant.md#voice) Sie hört und womit er seine Antworten vorliest, gespeichert als Transkriptions- und Sprachmodelle des Workspace `default` (jeder persönliche Workspace greift darauf zurück). Zur Wahl stehen ein Cloud-Anbieter, den Sie in Schritt 2 gewählt haben (OpenAI: `gpt-4o-mini-tts` und `gpt-4o-mini-transcribe` mit ihren Preisen; Google: Gemini TTS und Gemini Flash), mit einer seiner Stimmen; nur der Browser (seine eigene Erkennung und Stimme, nichts auf dem Server); oder vorerst nichts. QuickStart überlässt das dem Assistenten.
-4. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen, Websuche, RAG und der Browser-Dienst (beide Docker-Wege). HTTPS auf einer eigenen Domain für die veröffentlichten Images (Caddy und Let's Encrypt). QuickStart überlässt die Demo und die Websuche dem Assistenten und behält Browser und HTTPS bei, wo ein früherer Lauf sie eingeschaltet hat.
+4. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen und RAG. QuickStart überlässt die Demo dem Assistenten.
 5. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
 6. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog, setzt die Stimme des Assistenten und bietet an, den Hub zu starten (`ah up`, oder `docker compose up -d` und anschließend die Stimme über die API setzen). Unter Docker wartet das auf den Stack: Wird er nicht gestartet, bleibt die Stimme einem späteren Lauf oder der Seite Modelle überlassen. In diesem Checkout wird die Stimme direkt in die Datenbank geschrieben, unter Docker über die API des Stacks, sobald er antwortet.
 
@@ -172,7 +172,7 @@ Eine neue
 Installation öffnet statt der App einen eigenen Einrichtungsbildschirm: ohne
 Seitenleiste und Kopfleiste, eine Entscheidung pro Bildschirm, wie bei einem
 neuen Telefon. Der Reihe nach: Begrüßung, Sprache, hell oder dunkel, ein
-Modell, das Standardmodell, die Stimme des Assistenten, Websuche,
+Modell, das Standardmodell, die Stimme des Assistenten,
 persönlicher Speicher und der Demo-Arbeitsbereich, dann eine Übersicht mit
 dem Weg hinein (**Agents Hub verwenden**, **Mit dem Assistenten
 weitermachen** oder **Rundgang starten**).
@@ -189,8 +189,7 @@ Nur das Modell ist Pflicht: ein Schlüssel von OpenAI, Anthropic oder Google
 (vor dem Speichern beim Anbieter geprüft), ein Modellserver, der auf diesem
 Rechner schon läuft (Ollama, LM Studio; seine Modelle stehen zur Wahl).
 Jeder spätere Bildschirm hat **Nicht jetzt**, und ein
-Bildschirm, dessen Antwort schon feststeht (ein Schlüssel aus `ah setup`,
-Websuche über den Schlüssel des Modells), sagt das nur. Als Ganzes
+Bildschirm, dessen Antwort schon feststeht (ein Schlüssel aus `ah setup`), sagt das nur. Als Ganzes
 überspringen lässt sich die Einrichtung nicht.
 
 Der Schritt wird im Hub gespeichert: nach einem Neuladen oder in einem
@@ -202,7 +201,7 @@ begonnene Einrichtung mit dem Assistenten), hält sie nicht an.
 
 ### Nach der Installation: Der Assistent übernimmt
 
-Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Modell, mit dem er denken kann. Das erledigt der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, die Websuche, den Demo-Workspace, den Zustand des Hubs, dann einen ersten Chat, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
+Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Modell, mit dem er denken kann. Das erledigt der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, den Demo-Workspace, den Zustand des Hubs, dann einen ersten Chat, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
 
 `./install.sh` startet sie bei einer Erstinstallation aus einem Terminal von selbst (`--no-setup` überspringt sie, `--setup` führt sie bei einer Neuinstallation aus). Führen Sie sie erneut aus, wann immer sich eine Einstellung ändern soll: Jede Frage hat dann den geltenden Wert als Vorgabe, und eine leere Antwort bei einem Schlüssel behält den aktuellen Schlüssel.
 

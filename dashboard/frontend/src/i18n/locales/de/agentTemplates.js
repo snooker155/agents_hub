@@ -56,7 +56,7 @@ export default {
     },
     research_agent: {
       name: 'Recherche-Agent',
-      description: 'Recherchiert eine Frage im Web sowie in Ihren Dateien und Ihrem Gedächtnis, vergleicht die Quellen und schreibt einen Bericht mit Belegen, Sicherheitsgrad und offenen Fragen.',
+      description: 'Recherchiert eine Frage in Ihren Dateien und Ihrem Gedächtnis, vergleicht die Quellen und schreibt einen Bericht mit Belegen, Sicherheitsgrad und offenen Fragen.',
     },
     meeting_notes_agent: {
       name: 'Protokoll-Agent',
@@ -69,10 +69,6 @@ export default {
     content_writer_agent: {
       name: 'Content-Autor',
       description: 'Schreibt aus einem Briefing Blogbeiträge, Newsletter und Social Posts im Ton Ihrer Marke: erst die Gliederung, Fakten gegen Ihre Quellen geprüft, Überschriftenvarianten.',
-    },
-    lead_research_agent: {
-      name: 'Lead-Recherche',
-      description: 'Recherchiert ein Unternehmen oder eine Person aus öffentlichen Quellen und Ihrem CRM und schreibt ein Account-Briefing und einen persönlichen ersten Entwurf. Sendet nie.',
     },
   },
 };

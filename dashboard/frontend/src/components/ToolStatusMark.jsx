@@ -1,7 +1,7 @@
 /**
  * How one tool call went, as a dot in front of it: blinking while it runs,
  * green once it succeeded, red when it failed. The same mark on every surface
- * that draws a call (chat trail, process graph, run streams, playground), so
+ * that draws a call (chat trail, process graph, run streams), so
  * a run's state reads at a glance.
  */
 import { useI18n } from '../i18n';

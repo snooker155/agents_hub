@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -96,9 +96,6 @@ class FlowUpdate(BaseModel):
     # defaults, so a flow that never sets them behaves as it always did.
     max_parallel: Optional[int] = None
     on_error: Optional[str] = None
-    # Write-only: the shared secret POST /{flow_id}/trigger requires a signature
-    # against. Sending "" clears it; the flow is never read back with it.
-    webhook_secret: Optional[str] = None
     # False keeps a temporary flow an agent built for one run (run_new_flow_tool):
     # it joins the flow list and is no longer swept after a week.
     ephemeral: Optional[bool] = None
@@ -138,8 +135,8 @@ class FlowTrigger(BaseModel):
     """External trigger payload for POST /{flow_id}/trigger.
 
     ``seed`` is a JSON object merged into the flow's initial state. ``max_concurrent``
-    (0 = unlimited) caps simultaneous instances so a webhook/cron can't stack up
-    runaway runs.
+    (0 = unlimited) caps simultaneous instances so a script or a schedule can't
+    stack up runaway runs.
     """
     workspace: Optional[str] = None
     description: Optional[str] = None
@@ -148,16 +145,11 @@ class FlowTrigger(BaseModel):
 
 
 def _public_flow(flow: Dict[str, Any]) -> Dict[str, Any]:
-    """A flow record safe to hand to the dashboard.
-
-    The webhook secret is write-only: the trigger route compares against it, and
-    the page only ever needs to know whether one is set.
-    """
+    """A flow record safe to hand to the dashboard: a ``webhook_secret`` an
+    older version stored is never sent back."""
     if not isinstance(flow, dict):
         return flow
-    public = {k: v for k, v in flow.items() if k != "webhook_secret"}
-    public["webhook_secret_configured"] = bool(flow.get("webhook_secret"))
-    return public
+    return {k: v for k, v in flow.items() if k != "webhook_secret"}
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -256,15 +248,6 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                 )
             if "max_parallel" in patch and int(patch["max_parallel"]) < 1:
                 raise HTTPException(status_code=400, detail="max_parallel must be at least 1")
-            if "webhook_secret" in patch:
-                # An empty string is how the UI clears the secret: drop the key
-                # rather than storing "", which the trigger would read as falsy
-                # anyway but which would keep reporting the flow as configured.
-                secret = str(patch.pop("webhook_secret") or "").strip()
-                if secret:
-                    patch["webhook_secret"] = secret
-                else:
-                    f = {k: v for k, v in f.items() if k != "webhook_secret"}
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -488,35 +471,18 @@ async def resume_flow_run(flow_run_id: str, req: Optional[FlowResume] = None):
 
 
 @router.post("/{flow_id}/trigger")
-async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[FlowTrigger] = None):
-    """Webhook entry point: start a flow run from an external caller with an
-    optional JSON ``seed``, guarded by a per-flow concurrency cap.
+async def trigger_flow_endpoint(flow_id: str, req: Optional[FlowTrigger] = None):
+    """Start a flow run from a script with an optional JSON ``seed``, guarded
+    by a per-flow concurrency cap.
 
     Auth: when ``AGENTS_HUB_API_TOKEN`` is configured, the global middleware
-    already requires it on this ``/api`` route — no extra check here. When the
-    flow's own record carries a ``webhook_secret``, the caller must also sign
-    the request the same way ``notify.outbound`` signs what this hub sends out
-    (see docs/notifications.md); a flow with no secret configured keeps
-    today's behaviour unchanged. Returns 429 when the concurrency cap is hit,
-    403 when the flow isn't allowed in the workspace, 404 for an unknown flow,
-    401 for a missing/invalid signature and 409 for a replayed delivery.
+    already requires it on this ``/api`` route; no extra check here. Returns
+    429 when the concurrency cap is hit, 403 when the flow isn't allowed in
+    the workspace and 404 for an unknown flow.
     """
     flow = flow_store.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-
-    secret = flow.get("webhook_secret")
-    if secret:
-        from notify.inbound import seen_delivery, verify_signature
-
-        raw_body = await request.body()
-        signature = request.headers.get("X-AgentsHub-Signature", "")
-        timestamp = request.headers.get("X-AgentsHub-Timestamp", "")
-        delivery_id = request.headers.get("X-AgentsHub-Delivery", "")
-        if not verify_signature(secret, raw_body, signature, timestamp):
-            raise HTTPException(status_code=401, detail="Invalid or missing signature")
-        if delivery_id and seen_delivery(delivery_id):
-            raise HTTPException(status_code=409, detail="Delivery already processed")
 
     req = req or FlowTrigger()
     try:
@@ -526,7 +492,7 @@ async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[Flo
             description=req.description,
             seed=req.seed,
             max_concurrent=req.max_concurrent,
-            created_by="webhook",
+            created_by="api",
         )
         return {"status": "started", **result}
     except flow_launcher.FlowNotFoundError as e:

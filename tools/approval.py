@@ -64,10 +64,6 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "delete_team_tool",
     "delete_loop_tool",
     "delete_project_tool",
-    "delete_world_tool",
-    "delete_scenario_tool",
-    "delete_eval_tool",
-    "remove_eval_case_tool",
     # A whole workspace: its folder, settings and roster (an attached folder
     # is only detached). tools/workspace_management.py.
     "delete_workspace",
@@ -83,7 +79,6 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "git_publish",
     # Acts on a live website: a click can submit a form, buy, post or delete,
     # and typed text leaves the system. Opening and reading pages stay free.
-    "browser_act",
 })
 
 # Reasoning scratchpad tools are never gated: they have no effect outside the
@@ -118,8 +113,6 @@ ALWAYS_GATED: frozenset[str] = frozenset({
     "hub_action",
     # The guided setup's changes to the install (common/setup_ops.py).
     "setup_step",
-    # A pulse the assistant sets up from a phrase (proactive/from_phrase.py).
-    "schedule_pulse",
 })
 
 #: Tools whose approval card says in a sentence what the call would do:
@@ -128,7 +121,6 @@ ALWAYS_GATED: frozenset[str] = frozenset({
 CALL_DESCRIBERS: Dict[str, str] = {
     "hub_action": "tools.hub_action:describe_call",
     "setup_step": "tools.setup_guide:describe_call",
-    "schedule_pulse": "tools.proactive_setup:describe_call",
 }
 
 

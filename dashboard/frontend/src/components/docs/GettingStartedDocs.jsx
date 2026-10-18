@@ -2,8 +2,8 @@
  * Start-here sections of Docs: getting started, concepts, features, try it, tutorials, CLI and API.
  */
 import {
-  Brain, CalendarClock, CheckSquare, Compass, Database, DollarSign, Download, Factory,
-  FlaskConical, Folder, FolderGit2, Gamepad2, GraduationCap, Images, MessageCircle, Network,
+  Brain, CalendarClock, CheckSquare, Compass, Database, Download, Factory,
+  Folder, FolderGit2, GraduationCap, Images, MessageCircle, Network,
   Radio, Repeat, Send, Store, Users, UsersRound,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -106,17 +106,11 @@ AGENT_EXECUTION_MODE=local`}</CodeBlock>
         <FeatureCard icon={Repeat} title={t('docs.loops')} to="/loops">
           {t('docs.start.nextLoops')}
         </FeatureCard>
-        <FeatureCard icon={FlaskConical} title={t('docs.evals')} to="/evals">
-          {t('docs.start.nextEvals')}
-        </FeatureCard>
         <FeatureCard icon={GraduationCap} title={t('docs.skillsCatalog')} to="/skills">
           {t('docs.start.nextSkills')}
         </FeatureCard>
         <FeatureCard icon={Download} title={t('docs.nav.importingAgents')} to="/agents">
           {t('docs.start.nextImported')}
-        </FeatureCard>
-        <FeatureCard icon={DollarSign} title={t('docs.nav.costs')} to="/costs">
-          {t('docs.start.nextCosts')}
         </FeatureCard>
         <FeatureCard icon={Send} title={t('docs.nav.connectors')} to="/connectors">
           {t('docs.start.nextConnectors')}
@@ -225,17 +219,8 @@ export function Features() {
         <FeatureCard icon={Repeat} title={t('docs.loops')} to="/loops">
           {t('docs.reRunAFlowUntil')}
         </FeatureCard>
-        <FeatureCard icon={FlaskConical} title={t('docs.evals')} to="/evals">
-          {t('docs.datasetsGradersAndModelSweeps')}
-        </FeatureCard>
-        <FeatureCard icon={Gamepad2} title={t('docs.playground')} to="/playground">
-          {t('docs.dropAgentsIntoASimulated')}
-        </FeatureCard>
         <FeatureCard icon={Brain} title={t('docs.models')} to="/models">
           {t('docs.curateTheModelCatalogIts')}
-        </FeatureCard>
-        <FeatureCard icon={DollarSign} title={t('docs.costs')} to="/costs">
-          {t('docs.tokenAndUsdSpendBy')}
         </FeatureCard>
       </div>
       <CorpusRefs ids={['overview']} />
@@ -325,26 +310,6 @@ export function Tutorials() {
           <>{t('docs.in')} <Link className="text-indigo-600 underline" to="/studio">{t('docs.studio')}</Link>{t('docs.selectAnObjectInThe')}</>,
         ]}
       />
-
-      <Walkthrough
-        title={t('docs.proveAPromptChangeActually')}
-        steps={[
-          <>{t('docs.findARunThatWent')} <Link className="text-indigo-600 underline" to="/messages">{t('docs.messages')}</Link> {t('docs.andTurnItIntoAn')}</>,
-          <>{t('docs.addGradersOnThe')} <Link className="text-indigo-600 underline" to="/evals">{t('docs.evals')}</Link> {t('docs.pageSubstringOrJsonChecks')} <code className="bg-gray-100 px-1 rounded">llm_judge</code> {t('docs.onlyWhereARuleCannot')}</>,
-          <>{t('docs.press')} <strong>{t('docs.estimate')}</strong> {t('docs.toSeeWhatTheSweep')}</>,
-          <>{t('docs.changeThePromptReRun')}</>,
-        ]}
-      />
-
-      <Walkthrough
-        title={t('docs.putACapOnSpend')}
-        steps={[
-          <>{t('docs.priceTheModelsYouUse')} <Link className="text-indigo-600 underline" to="/models">{t('docs.models')}</Link> {t('docs.catalogCostNumbersAreOnly')}</>,
-          <>{t('docs.open')} <Link className="text-indigo-600 underline" to="/costs">{t('docs.costs')}</Link> {t('docs.andReadTheBreakdownBy')}</>,
-          <>{t('docs.setASoftLimitTo')}</>,
-          <>{t('docs.aRunThatWouldCross')}</>,
-        ]}
-      />
     </div>
   );
 }
@@ -357,7 +322,7 @@ export function CliApi() {
       <P>{t('docs.theBackendIsOrganisedBy')} <code className="bg-gray-100 px-1 rounded">{t('docs.api')}</code>:</P>
       <div className="flex flex-wrap gap-1.5 my-3">
         {['agents', 'agent-import', 'marketplace', 'tasks', 'plan', 'flows', 'flow-entities', 'loops',
-          'teams', 'stats', 'models', 'costs', 'evals', 'playground', 'shared-memory', 'skills',
+          'teams', 'stats', 'models', 'shared-memory', 'skills',
           'web-logs', 'workspaces', 'tools', 'sessions', 'messages', 'chat', 'instances',
           'projects', 'containers', 'settings', 'git', 'views', 'stream', 'health'].map((r) => (
           <span key={r} className="text-xs font-mono px-2 py-1 rounded-md bg-gray-100 text-gray-700">/{r}</span>

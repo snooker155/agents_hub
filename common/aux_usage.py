@@ -6,7 +6,7 @@ A run's token totals come from the callbacks on its own model calls
 on the run's behalf: the tool policy's classifier (tools/permission_policy.py),
 a guardrail's judge (guardrails/checks.py) and the repair of an answer that
 does not match its schema (agents/loop_ext/structured.py). Those calls are not
-in the run's totals, so they were free as far as the Costs page and the
+in the run's totals, so they were free as far as the run cost and the
 per-run money cap could tell. (The grader of a task's outcome runs after the
 run, about the whole attempt, and is recorded as a run of its own instead:
 tasks/outcome.py ``_record_grading_run``.)
@@ -108,29 +108,4 @@ def record(purpose: str, *, provider: Optional[str] = None, model: Optional[str]
     return item
 
 
-def record_flat(purpose: str, *, provider: str, model: str, cost_usd: Optional[float],
-                units: Optional[float] = None) -> Optional[Dict[str, Any]]:
-    """Count one call priced in dollars, not tokens: a picture, a clip of
-    video, a stretch of speech (tools/special_models.py). ``cost_usd`` None
-    means the workspace set no price; the call is still listed, at zero.
-    The entry carries ``cost_usd``, which ``common.pricing`` adds to the run's
-    cost."""
-    item: Dict[str, Any] = {
-        "purpose": str(purpose), "provider": str(provider or ""), "model": str(model or ""),
-        "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0,
-        "cost_usd": round(float(cost_usd or 0.0), 6),
-    }
-    if units is not None:
-        item["units"] = units
-    try:
-        from agents.agent_loop import current_state
-        state = current_state()
-    except Exception:  # noqa: BLE001 - no loop module means no run to count on
-        state = None
-    if state is None:
-        return item
-    state.aux_calls.append(item)
-    return item
-
-
-__all__ = ["entry", "record", "record_flat", "usage_of"]
+__all__ = ["entry", "record", "usage_of"]

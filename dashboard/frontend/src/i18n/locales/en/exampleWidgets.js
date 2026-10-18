@@ -184,7 +184,7 @@ export default {
   candidates: {
     devops: 'capabilities: CI, Docker, deploys',
     swe: 'capabilities: code editing',
-    researcher: 'capabilities: web search',
+    researcher: 'capabilities: reports, synthesis',
   },
   routeTask: 'Route task →',
   assignedTo: 'Assigned to {{agent}}',

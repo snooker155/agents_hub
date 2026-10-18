@@ -21,14 +21,14 @@ def test_scrubbed_env_drops_explicit_names_and_suffix_variants():
     base = {
         "GITHUB_TOKEN": "ghp_x",
         "AWS_SECRET_ACCESS_KEY": "aws_x",
-        "LANGFUSE_PUBLIC_KEY": "pk_x",
+        "TELEGRAM_BOT_TOKEN": "bot_x",
         "SOME_RANDOM_PASSWORD": "hunter2",
         "AGENTS_HUB_FEATURE_FLAG": "on",
     }
     out = scrubbed_env(base)
     assert "GITHUB_TOKEN" not in out
     assert "AWS_SECRET_ACCESS_KEY" not in out
-    assert "LANGFUSE_PUBLIC_KEY" not in out
+    assert "TELEGRAM_BOT_TOKEN" not in out
     assert "SOME_RANDOM_PASSWORD" not in out
     # Non-secret AGENTS_HUB_* settings pass through untouched.
     assert out["AGENTS_HUB_FEATURE_FLAG"] == "on"

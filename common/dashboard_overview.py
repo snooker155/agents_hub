@@ -1,18 +1,15 @@
 """
-The Dashboard's load and spend widgets (``GET /api/stats/overview``).
+The Dashboard's load widgets (``GET /api/stats/overview``).
 
 One call gathers what the front page shows about how the hub is used, so the
 page does not fan out to five endpoints on every live refresh:
 
 - ``runs``: agent runs per day for the last ``days`` days by outcome, and the
   last 24 hours' success rate and durations;
-- ``costs``: spend today, over 7 and 30 days, per day, and the agents and
-  models that cost the most over 30 days, priced exactly as the Costs page
-  prices them (common/costs_report.py ``_run_cost``);
 - ``services``: the agent services, their replicas and the turns they
   answered in the last 24 hours;
 - ``live``: what runs right now, of every kind (agent runs, flows, loops,
-  teams, scenarios), the launch queue, and the last few runs that ended.
+  teams), the launch queue, and the last few runs that ended.
 
 Each section is computed on its own and a failure leaves that section with
 an ``error`` instead of failing the page.
@@ -73,27 +70,19 @@ def _run_duration_ms(run: Dict[str, Any]) -> Optional[int]:
     return int(ms) if isinstance(ms, (int, float)) and ms > 0 else None
 
 
-def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dict[str, Any]:
-    """Both sections walk the same runs, so they are built in one pass."""
-    from common.costs_report import _run_cost
-    from common.pricing import EVALUATION_CHANNELS, load_price_map, run_tokens
+def _runs_section(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dict[str, Any]:
+    """Runs per day by outcome and the last 24 hours' success rate and durations."""
+    from common.pricing import EVALUATION_CHANNELS
 
-    prices = load_price_map()
     keys = _day_keys(now, days)
-    per_day = {k: {"date": k, "completed": 0, "failed": 0, "other": 0, "cost": 0.0, "tokens": 0}
+    per_day = {k: {"date": k, "completed": 0, "failed": 0, "other": 0}
                for k in keys}
     day_since = keys[0]
     since_24h = now - timedelta(hours=24)
-    today = now.date().isoformat()
-    since_7d = (now - timedelta(days=7)).isoformat()
-    since_30d = (now - timedelta(days=30)).isoformat()
 
     last24 = {"total": 0, "completed": 0, "failed": 0, "active": 0, "other": 0}
     durations: List[int] = []
     channels: Dict[str, int] = {}
-    spend = {"today": 0.0, "last_7d": 0.0, "last_30d": 0.0, "tokens_30d": 0, "runs_30d": 0}
-    by_agent: Dict[str, Dict[str, Any]] = {}
-    by_model: Dict[str, Dict[str, Any]] = {}
 
     for r in runs:
         if (r.get("channel") or "") in EVALUATION_CHANNELS:
@@ -103,34 +92,7 @@ def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dic
         if started is None:
             continue
         status = str(r.get("status") or "")
-        iso = started.isoformat()
         day = started.date().isoformat()
-
-        cost = 0.0
-        tokens = 0
-        if iso >= since_30d:
-            cost = _run_cost(r, prices)
-            inbound, outbound = run_tokens(r)
-            tokens = inbound + outbound
-            spend["last_30d"] += cost
-            spend["tokens_30d"] += tokens
-            spend["runs_30d"] += 1
-            if iso >= since_7d:
-                spend["last_7d"] += cost
-            if day == today:
-                spend["today"] += cost
-            agent = (r.get("agent_id") or "").strip() or "(unknown)"
-            a = by_agent.setdefault(agent, {"key": agent, "runs": 0, "cost": 0.0, "tokens": 0})
-            a["runs"] += 1
-            a["cost"] += cost
-            a["tokens"] += tokens
-            model = (r.get("model") or "").strip()
-            if model:
-                mkey = f"{(r.get('provider') or '').strip() or 'unknown'}/{model}"
-                m = by_model.setdefault(mkey, {"key": mkey, "runs": 0, "cost": 0.0, "tokens": 0})
-                m["runs"] += 1
-                m["cost"] += cost
-                m["tokens"] += tokens
 
         if day >= day_since and day in per_day:
             bucket = per_day[day]
@@ -140,8 +102,6 @@ def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dic
                 bucket["failed"] += 1
             else:
                 bucket["other"] += 1
-            bucket["cost"] += cost
-            bucket["tokens"] += tokens
 
         if started >= since_24h:
             last24["total"] += 1
@@ -160,18 +120,10 @@ def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dic
             channels[channel] = channels.get(channel, 0) + 1
 
     finished = last24["completed"] + last24["failed"]
-    for b in per_day.values():
-        b["cost"] = round(b["cost"], 4)
-
-    def _top(bucket: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-        rows = sorted(bucket.values(), key=lambda b: (-b["cost"], -b["runs"], b["key"]))[:5]
-        return [{**b, "cost": round(b["cost"], 4)} for b in rows]
-
     return {
         "runs": {
             "days": days,
-            "per_day": [{k: v for k, v in per_day[d].items() if k not in ("cost", "tokens")}
-                        for d in keys],
+            "per_day": [per_day[d] for d in keys],
             "last_24h": {
                 **last24,
                 "success_rate": round(last24["completed"] / finished * 100, 1) if finished else None,
@@ -179,17 +131,6 @@ def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dic
                 "p95_duration_ms": _percentile(durations, 0.95),
                 "channels": dict(sorted(channels.items(), key=lambda kv: -kv[1])),
             },
-        },
-        "costs": {
-            "today": round(spend["today"], 4),
-            "last_7d": round(spend["last_7d"], 4),
-            "last_30d": round(spend["last_30d"], 4),
-            "tokens_30d": spend["tokens_30d"],
-            "runs_30d": spend["runs_30d"],
-            "per_day": [{"date": d, "cost": per_day[d]["cost"], "tokens": per_day[d]["tokens"]}
-                        for d in keys],
-            "top_agents": _top(by_agent),
-            "top_models": _top(by_model),
         },
     }
 
@@ -288,8 +229,6 @@ def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any 
         log.warning("dashboard overview: runs unavailable", exc_info=True)
 
     out: Dict[str, Any] = {"generated_at": now.isoformat(), "days": days}
-    rc = _section("runs", lambda: _runs_and_costs(runs, now, days))
-    out["runs"] = rc.get("runs", rc)
-    out["costs"] = rc.get("costs", rc)
+    out["runs"] = _section("runs", lambda: _runs_section(runs, now, days)["runs"])
     out["live"] = _section("live", lambda: _live(workspace, runs, now))
     return out

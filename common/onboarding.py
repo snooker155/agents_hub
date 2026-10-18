@@ -11,7 +11,7 @@ renders it as a compact block for the prompt.
 It mirrors what the first-run checklist in the dashboard ticks
 (``components/docs/OnboardingChecklist.jsx``: providers, workspaces, agents, a
 first chat) and adds what a newcomer reaches next: models enabled on the Models
-page, custom agents, tasks and watchers.
+page, custom agents and tasks.
 
 Two properties:
 
@@ -104,12 +104,6 @@ def _tasks(workspace: Optional[str]) -> int:
     return int(total)
 
 
-def _watchers(workspace: Optional[str]) -> int:
-    from watchers.service import list_watchers
-
-    return len(list_watchers(_scope(workspace)))
-
-
 def _mcp_servers(workspace: Optional[str]) -> int:
     from mcp_client.store import list_servers
 
@@ -144,7 +138,6 @@ def hub_snapshot(workspace: Optional[str] = None, *, tour_done: Optional[bool] =
         "workspaces": _safe(_workspaces),
         "chats": _safe(lambda: _chats(workspace)),
         "tasks": _safe(lambda: _tasks(workspace)),
-        "watchers": _safe(lambda: _watchers(workspace)),
         "mcp_servers": _safe(lambda: _mcp_servers(workspace)),
         "accounts": _safe(_accounts),
         "skills": _safe(lambda: _skills(workspace)),
@@ -208,7 +201,6 @@ def render_snapshot(snap: Dict[str, Any]) -> List[str]:
     lines.append(f"- Workspaces: {_fmt(snap.get('workspaces'))}")
     lines.append(f"- Chats in this workspace: {_fmt(snap.get('chats'))}")
     lines.append(f"- Tasks in this workspace: {_fmt(snap.get('tasks'))}")
-    lines.append(f"- Watchers: {_fmt(snap.get('watchers'))}")
     lines.append(f"- MCP servers in this workspace: {_fmt(snap.get('mcp_servers'))}")
     accounts = snap.get("accounts")
     lines.append("- Connected accounts and services: "

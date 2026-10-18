@@ -66,7 +66,6 @@ export default {
     agentTaskHint: 'Run agent work later',
     flow: 'Flow',
     flowHint: 'Trigger a flow on a schedule',
-    heartbeat: 'Pulse',
     memoryConsolidate: 'Memory consolidation',
     memoryConsolidateHint: 'Fold a pool and its recent sessions into a new one',
   },

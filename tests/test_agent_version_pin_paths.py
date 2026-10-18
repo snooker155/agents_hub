@@ -24,7 +24,6 @@ import pytest
 from agents import prompt_assembly
 from agents import versions as av
 from agents.registry import AgentSpec, add_agent, get_agent, replace_all_raw
-from evals import experiments
 from managers import run_manager as rm
 
 BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
@@ -47,9 +46,7 @@ def isolated_definitions(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def fresh_registry():
     replace_all_raw([])
-    experiments.clear_pins()
     yield
-    experiments.clear_pins()
     replace_all_raw([])
 
 

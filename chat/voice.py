@@ -356,7 +356,8 @@ def wav_seconds(data: bytes) -> Optional[float]:
 
 def call_entry(purpose: str, entry: Dict[str, Any], cost: Optional[float],
                units: Optional[float] = None) -> Dict[str, Any]:
-    """One voice call as ``common.aux_usage.record_flat`` shapes it."""
+    """One voice call as a run's ``voice_calls`` holds it: priced in dollars
+    (``cost_usd``), which ``common.pricing`` adds to the run's cost."""
     item: Dict[str, Any] = {
         "purpose": f"voice:{purpose}", "provider": str(entry.get("provider") or ""),
         "model": str(entry.get("model") or ""), "input_tokens": 0, "output_tokens": 0,

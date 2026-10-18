@@ -1,6 +1,6 @@
 The default agent in the Chat page. Use it as the front door: it answers directly when it can,
 delegates when a specialist is better, and starts the long-running work (flows, loops,
-scenarios, teams) on your say-so.
+teams) on your say-so.
 
 Good fits:
 - "What's running right now, and how did last night's loop go?"
@@ -9,13 +9,13 @@ Good fits:
 - Open-ended requests where you don't yet know which agent should own the work
 
 Poor fits:
-- Building or editing an entity. Creating a flow, loop, scenario, team, world, or project
+- Building or editing an entity. Creating a flow, loop, team or project
   belongs to that entity's own creator agent, reached from its page. This agent can start and
   stop runs, not design them.
 - Writing or changing files. It reads the workspace but does not edit it — ask it to delegate to
   the SWE agent, or use that agent directly.
-- Anything needing the live web. Delegate to the Web Search Agent for a plain lookup, or
-  to the Researcher when the answer also depends on this project's files and memory.
+- Anything needing the live web. This edition has no web search; ask for a page by URL (the
+  `fetch_url` tool, if granted), or use the Researcher for the project's files and memory.
 
 How to invoke:
 - Just say what you want. It will ask a clarifying question when the request is genuinely

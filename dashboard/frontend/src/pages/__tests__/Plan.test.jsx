@@ -6,7 +6,7 @@ import { I18nProvider } from '../../i18n';
 
 // Plan (scheduled jobs + notifications). memory_consolidate (fifth-cycle
 // stage 2, "dreams") is one more job kind on top of notification/agent_task/
-// flow/heartbeat: a pool and a session limit instead of an agent or a flow.
+// flow: a pool and a session limit instead of an agent or a flow.
 
 const ok = (data) => Promise.resolve({ data });
 

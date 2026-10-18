@@ -6,7 +6,7 @@ A task may say what "done" means (``Task.outcome``): a markdown rubric, how
 many attempts the agent gets, which model grades, and an optional pass
 threshold. After every completed agent run on the task, the finalizer hands
 the run here (:func:`on_run_completed`). A fresh model call grades the result
-against the rubric one criterion at a time (``evals.graders.grade_rubric``,
+against the rubric one criterion at a time (``tasks.rubric_grader.grade_rubric``,
 the same grader a loop's rubric and an eval set use); the grading is kept on
 the task (``Task.outcome_evaluations``), and then:
 
@@ -297,7 +297,7 @@ def resolve_grader(grader: Any, workspace: Optional[str]) -> Dict[str, str]:
     """Which model grades: the one named, else ``AGENTS_HUB_OUTCOME_GRADER_MODEL``,
     else the workspace's model, else the global default (both parts empty).
     """
-    from evals.graders import split_model_ref
+    from tasks.rubric_grader import split_model_ref
 
     if grader:
         ref = split_model_ref(grader)
@@ -331,7 +331,7 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     ``trigger`` is ``run`` for the grading after a finished run (it counts
     against ``max_iterations``) or ``manual`` for "Grade now" (it does not).
     """
-    from evals.graders import _load_run_payload, grade_rubric
+    from tasks.rubric_grader import _load_run_payload, grade_rubric
 
     outcome = dict(getattr(task, "outcome", None) or {})
     rubric = str(outcome.get("rubric") or "").strip()
@@ -382,14 +382,14 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
     """Record one grading as its own run and return its id.
 
     A grading is one model call about a whole attempt: an agent run, or a
-    flow, team, loop or scenario run made of many runs, each of which already
+    flow, team or loop run made of many runs, each of which already
     carries its own tokens. So it is not added to any of them. It gets a run
     record of its own (agent ``outcome_grader``, channel ``outcome``) with the
     grader's model and tokens, tied to the task (so the task's money cap and
-    the Costs page count it once) and to the work it graded through
-    ``parent_run_id`` (plus ``sim_run_id`` or ``flow_run_id``, the link the
-    runs of a scenario or a flow share, so summing those runs includes it).
-    For a flow, team, loop or scenario the grading's cost is also added to that
+    the run cost count it once) and to the work it graded through
+    ``parent_run_id`` (plus ``flow_run_id``, the link the
+    runs of a flow share, so summing those runs includes it).
+    For a flow, team or loop the grading's cost is also added to that
     run's own total, when the run keeps one, so the attempt's total says what it
     cost including its grading. Written without the start and finish
     notifications of a task run: it is bookkeeping, not work on the task.
@@ -419,9 +419,7 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
                                 "passed": bool(evaluation.get("passed")), "score": evaluation.get("score")},
         }
         kind = getattr(executor, "kind", None)
-        if kind == "scenario" and parent_run_id:
-            record["sim_run_id"] = parent_run_id
-        elif kind == "flow" and parent_run_id:
+        if kind == "flow" and parent_run_id:
             record["flow_run_id"] = parent_run_id
         rm.upsert_run(record)
     except Exception:  # noqa: BLE001 - the grading stands; only its separate cost record is missing
@@ -435,7 +433,7 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
 
 
 def _add_to_run_total(run_id: str, cost: float) -> None:
-    """Add a grading's cost to a flow, team, loop or scenario run's own total
+    """Add a grading's cost to a flow, team or loop run's own total
     (``entity_runs.total_cost``), for the kinds that keep one."""
     if cost <= 0:
         return
@@ -630,7 +628,7 @@ def _act_on(tid: UUID, task: Any, outcome: Dict[str, Any], evaluation: Dict[str,
             evaluations: List[Dict[str, Any]], *, run_id: str,
             relaunch: Callable[[int, int], str], actor: str) -> bool:
     """What a recorded grading means for the task, the same for an agent run
-    and for a flow, team, loop or scenario: pass (False, the finalizer goes
+    and for a flow, team or loop: pass (False, the finalizer goes
     on as usual), block after repeated grader errors or at the attempt limit,
     or start the next attempt through ``relaunch(attempt, max_iterations)``."""
     from tasks import service as _ts
@@ -674,7 +672,7 @@ def _act_on(tid: UUID, task: Any, outcome: Dict[str, Any], evaluation: Dict[str,
 
 
 def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_iterations: int) -> str:
-    """Start the task's flow, team, loop or scenario again for the next attempt.
+    """Start the task's flow, team or loop again for the next attempt.
 
     Relaunched the way the retry policy relaunches a failed executor run
     (``tasks.assign.assign_executor_to_task``). A flow builds its input with
@@ -701,7 +699,7 @@ def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_it
 
 
 def on_executor_completed(task_id: Any) -> bool:
-    """Grade what a flow, team, loop or scenario produced for the task.
+    """Grade what a flow, team or loop produced for the task.
 
     The executor's counterpart of :func:`on_run_completed`, called by the
     generic finalizer when such a run completes. The graded result is the
@@ -728,7 +726,7 @@ def on_executor_completed(task_id: Any) -> bool:
     except Exception:  # noqa: BLE001 - no stored result grades as an empty answer
         log.debug("task results lookup failed for %s", tid, exc_info=True)
 
-    # An executor's run id names a flow, team, loop or scenario run, which is
+    # An executor's run id names a flow, team or loop run, which is
     # what the grading's own run is tied to (see _record_grading_run).
     evaluation = grade_outcome(task, output, run_id=None, trigger="run")
     evaluation["run_id"] = run_id or None

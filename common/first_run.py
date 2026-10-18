@@ -3,7 +3,7 @@ The first run: the install's own setup, done once in the browser before the
 rest of the app opens (docs/installation.md, "The first run in the browser").
 
 A full screen of its own, step by step: the language, light or dark, a model
-to think with and which one, the assistant's voice, web search, personal
+to think with and which one, the assistant's voice, personal
 memory, the demo workspace. Only the model is required; every other step has
 a "not now". There is no way past the whole of it, and once finished it does
 not come back (Settings, First setup, starts it again on purpose).
@@ -21,19 +21,18 @@ finding any, writes the first run as finished by the upgrade. That check runs
 once: a fresh install writes an empty record and is asked from then on.
 
 **What the steps change is written where the pages write it.** The model,
-the voice and the demo go through common/setup_ops.py, web search through the
-Settings route, personal memory through the workspace's own route. The record
-keeps only what no page holds: the step the person is on, so a reload goes on
+the voice and the demo go through common/setup_ops.py, personal memory
+through the workspace's own route. The record keeps only what no page holds: the step the person is on, so a reload goes on
 from there, and the language and the look they chose, so a second browser
 starts with them.
 
 **A screen whose setting is already in force shows it instead of asking.**
-``ah setup`` can set the model, the voice, web search and the demo before the
+``ah setup`` can set the model, the voice and the demo before the
 hub first starts; ``context()["configured"]`` reads where each of them is
 stored (no marker of its own) so the browser can say "already set up" with
 the value, and offer Continue or Change.
 
-A screen answered "not now" (the voice, web search, the demo) ends up skipped
+A screen answered "not now" (the voice, the demo) ends up skipped
 in the guided setup that follows, so the assistant does not offer it again.
 """
 from __future__ import annotations
@@ -51,14 +50,14 @@ _KEY = "install"
 
 #: The screens, in order. The browser draws them; the server only checks a
 #: saved step is one of them.
-STEPS = ("hello", "language", "appearance", "model", "choose_model", "voice", "search", "memory",
+STEPS = ("hello", "language", "appearance", "model", "choose_model", "voice", "memory",
          "demo", "done")
 LANGUAGES = ("en", "ru", "de")
 THEMES = ("light", "dark", "system")
 ACTIONS = ("progress", "finish", "restart")
 #: The guided setup's steps these screens already asked about: one still open
 #: when the first run ends was declined there, and the guide starts it skipped.
-GUIDE_STEPS = ("voice", "web_search", "demo")
+GUIDE_STEPS = ("voice", "demo")
 
 
 def _now() -> str:
@@ -189,11 +188,9 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
 SCREEN_ABOUT = {
     "voice": "the assistant's voice: a cloud voice (OpenAI or Google key) or the browser's own, "
              "then a short spoken check that the assistant hears and answers",
-    "search": "web search: a Brave, Tavily or Exa key, or nothing when an Anthropic or OpenAI key "
-              "already searches",
     "memory": "personal memory: whether agents keep what the person tells them about themselves "
               "(on the Memory page, per workspace and agent)",
-    "demo": "the demo workspace: four ready agents with chats, views, a team and a pulse, apart from "
+    "demo": "the demo workspace: four ready agents with chats, views and a team, apart from "
             "the person's own work",
     "done": "the summary of what was chosen, and the way into the app: Chat, the assistant's guided "
             "setup of the rest, or the tour",
@@ -235,30 +232,16 @@ def _configured_model() -> Optional[Dict[str, Any]]:
 
 
 def _configured_voice() -> Optional[Dict[str, Any]]:
-    """Both voice models of the default workspace: the assistant needs the
+    """Both voice models (providers/voice_models.py): the assistant needs the
     speech to talk and the transcription to listen, one alone is half a voice."""
-    from providers import special
-    own = special.stored("default")
+    from providers import voice_models
+    own = voice_models.stored()
     speech, heard = own.get("speech"), own.get("transcription")
     if isinstance(speech, dict) and isinstance(heard, dict):
         return {"speech": str(speech.get("model") or ""), "speech_provider": str(speech.get("provider") or ""),
                 "transcription": str(heard.get("model") or ""),
                 "transcription_provider": str(heard.get("provider") or "")}
     return None
-
-
-def _configured_search() -> Optional[Dict[str, Any]]:
-    """A named search service, or a model key that searches on its own."""
-    from common.config import live_setting
-    from tools.web import effective_search_provider
-    eff = effective_search_provider()
-    provider = str(eff["provider"])
-    if not provider:
-        return None
-    explicit = bool(live_setting("WEB_SEARCH_PROVIDER").strip())
-    if not explicit and not eff["key_set"]:
-        return None
-    return {"provider": provider, "source": str(eff["source"]), "key_set": bool(eff["key_set"])}
 
 
 def _configured_demo() -> Optional[Dict[str, Any]]:
@@ -276,11 +259,11 @@ def _configured_demo() -> Optional[Dict[str, Any]]:
 
 def configured() -> Dict[str, Optional[Dict[str, Any]]]:
     """Per screen, what is already in force (``None``: nothing, ask). Keys:
-    ``model`` (the choice of model), ``voice``, ``search``, ``demo``. A
+    ``model`` (the choice of model), ``voice``, ``demo``. A
     failure to read one means not configured, never an error."""
     out: Dict[str, Optional[Dict[str, Any]]] = {}
     for key, read in (("model", _configured_model), ("voice", _configured_voice),
-                      ("search", _configured_search), ("demo", _configured_demo)):
+                      ("demo", _configured_demo)):
         try:
             out[key] = read()
         except Exception:  # noqa: BLE001 - unreadable means ask
@@ -290,32 +273,25 @@ def configured() -> Dict[str, Optional[Dict[str, Any]]]:
 
 
 def context() -> Dict[str, Any]:
-    """What the model, voice and search steps start from, read now. Cheap: no
+    """What the model and voice steps start from, read now. Cheap: no
     provider is asked (``setup_ops.options`` does that, for the model step's
     tiers only)."""
     from common import setup_guide
-    from tools.web import effective_search_provider
     out: Dict[str, Any] = {"providers": [], "default_model": {},
-                           "search": {"provider": "", "source": "none"}, "demo": False, "voice": False}
+                           "demo": False, "voice": False}
     try:
         out["providers"] = setup_guide.usable_providers()
         out["default_model"] = setup_guide.default_model()
     except Exception:  # noqa: BLE001
         log.debug("first run: providers unreadable", exc_info=True)
     try:
-        eff = effective_search_provider()
-        out["search"] = {"provider": str(eff["provider"]), "source": str(eff["source"]),
-                         "key_set": bool(eff["key_set"])}
-    except Exception:  # noqa: BLE001
-        log.debug("first run: search unreadable", exc_info=True)
-    try:
         from common.demo_workspace import demo_status
         out["demo"] = bool(demo_status().get("present"))
     except Exception:  # noqa: BLE001
         log.debug("first run: demo unreadable", exc_info=True)
     try:
-        from providers import special
-        own = special.stored("default")
+        from providers import voice_models
+        own = voice_models.stored()
         out["voice"] = all(isinstance(own.get(k), dict) for k in ("speech", "transcription"))
     except Exception:  # noqa: BLE001
         log.debug("first run: voice unreadable", exc_info=True)

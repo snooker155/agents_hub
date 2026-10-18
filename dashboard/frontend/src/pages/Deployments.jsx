@@ -63,9 +63,6 @@ function StatusBadge({ status, pausedReason, t }) {
 function KindIcon({ kind }) {
   if (kind === 'flow') return <Workflow className="w-3.5 h-3.5" />;
   if (kind === 'loop') return <RotateCw className="w-3.5 h-3.5" />;
-  // A proactive agent's pulse (docs/proactive.md): owned by the agent's
-  // profile, listed here because every tick is a deployment-shaped firing.
-  if (kind === 'heartbeat') return <Activity className="w-3.5 h-3.5" />;
   return <Bot className="w-3.5 h-3.5" />;
 }
 
@@ -675,7 +672,7 @@ export default function Deployments() {
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
-  const fetchData = useCallback(() => getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat'])
+  const fetchData = useCallback(() => getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop'])
     .then(({ data }) => setJobs(data || []))
     .catch((err) => { console.error('Failed to load deployments', err); })
     .finally(() => setLoadedFor(workspaceFilter ?? '')), [workspaceFilter]);

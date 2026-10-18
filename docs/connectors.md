@@ -2,8 +2,7 @@
 
 Services this hub reaches out to with a credential you save once. **Integrations
 → Connectors** in the sidebar. Two exist: GitLab, a git provider, and Jira, an
-issue tracker. [Watchers](watchers.md) reach out too, but only to look: they
-poll a web resource and wake a proactive agent when it changes.
+issue tracker.
 
 Links to the old `/settings/git` tab redirect here.
 
@@ -55,13 +54,6 @@ a Jira project by key; a sync is idempotent and issues become tasks. Agents
 read, comment on, create and transition issues with the `tracker_*` tools. See
 [trackers](trackers.md).
 
-## Webhooks
-
-The **Webhooks** tab holds the outbound endpoints and alert rules of the
-workspace: signed deliveries of notifications to a URL of yours, and rules
-that raise a notification when a run fails. See
-[notifications](notifications.md).
-
 ## Setting up from the chat
 
 An agent can prepare a connection for you instead of you filling the form:
@@ -80,7 +72,7 @@ checks it later with `connection_proposal_status`.
 
 Kinds: `connector` (Jira or GitLab), `mcp_server` (it claims every capability; only you
 may untick one, and a stdio command is shown as a warning since connecting runs
-it on the hub's host), `watcher` (HTTP), `secret` and `provider` (a model
+it on the hub's host), `secret` and `provider` (a model
 provider key). The API is `GET /api/connection-proposals` and
 `POST /api/connection-proposals/{id}/apply`; Deny is the ordinary
 `POST /api/tool-approvals/{id}`.
@@ -95,4 +87,4 @@ provider key). The API is `GET /api/connection-proposals` and
 - **A token set in the environment wins.** A value in `.env` is not editable
   from the page, and the page says so rather than silently failing to save.
 
-Related: [trackers](trackers.md), [projects](projects.md), [settings](settings.md), [mcp](mcp.md), [notifications](notifications.md), [watchers](watchers.md), [secrets](secrets.md).
+Related: [trackers](trackers.md), [projects](projects.md), [settings](settings.md), [mcp](mcp.md), [notifications](notifications.md), [secrets](secrets.md).

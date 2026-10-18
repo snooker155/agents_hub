@@ -65,7 +65,6 @@ export default {
     agentTask: 'Задача агента',
     flow: 'Поток',
     loop: 'Цикл',
-    heartbeat: 'Пульс',
   },
   pausedReason: {
     manual: 'вручную',

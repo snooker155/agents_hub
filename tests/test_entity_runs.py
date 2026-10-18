@@ -1,5 +1,5 @@
 """
-Launching, following and stopping scenarios, teams and loops from a tool call.
+Launching, following and stopping teams and loops from a tool call.
 
 The load-bearing behaviour is the approval gate. Everything these tools start
 spends money that nothing automatic takes back, so the first call must refuse —
@@ -18,9 +18,9 @@ import time
 import pytest
 
 from tools.entity_runs import (
-    get_loop_run_tool, get_scenario_run_tool, get_team_run_tool,
-    run_loop_tool, run_scenario_tool, run_team_tool,
-    stop_loop_run_tool, stop_scenario_run_tool, stop_team_run_tool,
+    get_loop_run_tool, get_team_run_tool,
+    run_loop_tool, run_team_tool,
+    stop_loop_run_tool, stop_team_run_tool,
 )
 
 
@@ -43,136 +43,9 @@ def drain_threads():
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         if not [t for t in threading.enumerate()
-                if t.name.startswith(("sim-", "team-", "loop-")) and t.is_alive()]:
+                if t.name.startswith(("team-", "loop-")) and t.is_alive()]:
             return
         time.sleep(0.02)
-
-
-# ── Scenarios ─────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def scenario():
-    from playground import store
-    from playground.models import Role, Scenario
-
-    return store.save_scenario(Scenario(
-        name="Tavern", environment="social", max_ticks=5,
-        roles=[Role(agent_id="alpha", name="Mara")],
-    ))
-
-
-@pytest.fixture
-def sim_runner(monkeypatch, scenario):
-    """A ``start_scenario_run`` that writes its row and returns, without
-    spawning anything (the tool launches through playground/launcher.py)."""
-    from playground import store
-    from playground.models import SimRun
-    import playground.launcher as launcher
-
-    started = {}
-
-    def _fake_start(scenario_id, *, workspace=None, **kwargs):
-        run = store.save_sim_run(SimRun(scenario_id=scenario_id, status="pending",
-                                        workspace=workspace, environment="social"))
-        started["run"] = run
-        return run
-
-    monkeypatch.setattr(launcher, "start_scenario_run", _fake_start)
-    return started
-
-
-def test_a_simulation_is_not_started_without_approval(scenario, sim_runner):
-    out = call(run_scenario_tool, scenario_id=scenario.scenario_id)
-    assert out["ok"] is False
-    assert out["code"] == "approval_required"
-    # The refusal is the moment to show the user the number they are approving.
-    assert out["estimate"]["max_ticks"] == 5
-    assert "run" not in sim_runner
-
-
-def test_an_approved_simulation_starts_and_reports_its_id(scenario, sim_runner):
-    out = call(run_scenario_tool, scenario_id=scenario.scenario_id, user_approved=True)
-    assert out["ok"], out
-    assert out["sim_run_id"] == sim_runner["run"].sim_run_id
-    assert out["scenario_id"] == scenario.scenario_id
-
-
-def test_a_scenario_with_no_cast_is_refused_before_the_gate(sim_runner):
-    """An empty scenario cannot run at all, so it is a setup problem to fix —
-    not something to ask the user to approve."""
-    from playground import store
-    from playground.models import Scenario
-
-    empty = store.save_scenario(Scenario(name="Empty", environment="social"))
-    out = call(run_scenario_tool, scenario_id=empty.scenario_id, user_approved=True)
-    assert out["ok"] is False
-    assert out["code"] == "invalid_scenario"
-    assert "run" not in sim_runner
-
-
-def test_an_unknown_scenario_is_not_found(sim_runner):
-    out = call(run_scenario_tool, scenario_id="scn_missing", user_approved=True)
-    assert out["code"] == "not_found"
-
-
-def test_a_scenario_from_another_workspace_is_refused(monkeypatch, sim_runner):
-    from playground import store
-    from playground.models import Role, Scenario
-    import tools.entity_runs as entity_runs
-
-    other = store.save_scenario(Scenario(
-        name="Elsewhere", environment="social", workspace="other",
-        roles=[Role(agent_id="alpha", name="Mara")],
-    ))
-    monkeypatch.setattr(entity_runs, "resolve_active_workspace",
-                        lambda preferred=None: "here")
-    out = call(run_scenario_tool, scenario_id=other.scenario_id, user_approved=True)
-    assert out["code"] == "forbidden"
-    assert "run" not in sim_runner
-
-
-def test_a_failing_launch_is_reported_rather_than_raised(monkeypatch, scenario):
-    import playground.launcher as launcher
-
-    def _boom(*a, **k):
-        raise RuntimeError("the world would not build")
-
-    monkeypatch.setattr(launcher, "start_scenario_run", _boom)
-    out = call(run_scenario_tool, scenario_id=scenario.scenario_id, user_approved=True)
-    assert out["ok"] is False
-    assert out["code"] == "start_failed"
-    assert "the world would not build" in out["error"]
-
-
-def test_a_simulation_run_is_reported_by_id_or_by_scenario(scenario, sim_runner):
-    call(run_scenario_tool, scenario_id=scenario.scenario_id, user_approved=True)
-    run_id = sim_runner["run"].sim_run_id
-
-    by_id = call(get_scenario_run_tool, sim_run_id=run_id)
-    assert by_id["sim_run_id"] == run_id
-    assert by_id["live"] is True
-
-    by_scenario = call(get_scenario_run_tool, scenario_id=scenario.scenario_id)
-    assert by_scenario["sim_run_id"] == run_id
-
-
-def test_asking_about_a_run_needs_something_to_look_up():
-    assert call(get_scenario_run_tool)["code"] == "invalid"
-    assert call(get_scenario_run_tool, sim_run_id="sim_nope")["code"] == "not_found"
-
-
-def test_stopping_a_simulation_that_is_not_running_says_so(monkeypatch):
-    import playground.runner as runner
-    monkeypatch.setattr(runner, "stop_simulation", lambda rid: False)
-    out = call(stop_scenario_run_tool, sim_run_id="sim_1")
-    assert out["ok"] is False
-    assert out["code"] == "not_running"
-
-
-def test_stopping_a_live_simulation_reports_it(monkeypatch):
-    import playground.runner as runner
-    monkeypatch.setattr(runner, "stop_simulation", lambda rid: True)
-    assert call(stop_scenario_run_tool, sim_run_id="sim_1")["ok"]
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────────

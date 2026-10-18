@@ -126,7 +126,7 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
 
     # Nothing ran at all: reported as provider "none" (run_snippet's
     # "sandbox": "unavailable"), the same as an unsupported language, so a
-    # caller like playground/environments/lab.py can tell "the sandbox never
+    # caller can tell "the sandbox never
     # started, nothing to charge for" apart from "it started and something
     # else went wrong" (a refused mount, a timeout, a bad exit — all of which
     # keep the resolved provider's name).

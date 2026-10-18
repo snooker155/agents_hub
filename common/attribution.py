@@ -1,9 +1,9 @@
 """
-Who a run is charged to (docs/costs.md "Attribution").
+Who a run is charged to.
 
 A new run record carries ``launched_by`` (the user) and ``project_id`` (the
 project of its task, if any). ``managers.runs.store`` stamps agent runs and
-``common.entity_runs`` stamps flow, loop, team and scenario runs, both through
+``common.entity_runs`` stamps flow, loop and team runs, both through
 :func:`stamp`, once, when the record is created.
 
 In the backend ``launched_by`` comes from the request's context variable

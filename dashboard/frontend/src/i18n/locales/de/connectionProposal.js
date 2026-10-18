@@ -9,7 +9,6 @@ export default {
     channel: 'Chat-Kanal',
     mcp_server: 'MCP-Server',
     database: 'Datenbank',
-    watcher: 'Watcher',
     secret: 'Geheimnis',
     provider: 'Anbieter-Schlüssel (für den ganzen Hub)',
   },

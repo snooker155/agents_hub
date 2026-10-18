@@ -12,7 +12,7 @@ export const getLoop = (id) => api.get(`/loops/${id}`);
 export const updateLoop = (id, data) => api.put(`/loops/${id}`, data);
 export const deleteLoop = (id) => api.delete(`/loops/${id}`);
 export const estimateLoop = (id) => api.post(`/loops/${id}/estimate`);
-// The loop's own build chat — same shape as the scenario's.
+// The loop's own build chat — same shape as the team's.
 export const getLoopChat = (id) => api.get(`/loops/${id}/chat`);
 export const clearLoopChat = (id) => api.delete(`/loops/${id}/chat`);
 export const stopLoopChat = (id) => api.post(`/loops/${id}/chat/stop`);

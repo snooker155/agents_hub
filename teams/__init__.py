@@ -23,8 +23,7 @@ Three modes over one model, differing only in who gets to speak:
   fixed cast);
 * ``autonomous``  — nobody acts unless a colleague asked them to. The entry
   member takes the incoming request and either does it or hands it on by name;
-* ``parallel``    — every member acts every round against the board (the
-  playground's simultaneity aimed at a real goal).
+* ``parallel``    — every member acts every round against the board.
 
 A team is attachable to the same things an agent or a flow is: a task, or a
 chat request.

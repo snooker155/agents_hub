@@ -1,10 +1,9 @@
-"""An agent's own ``allowed_domains`` / ``blocked_domains`` for the web tools
-(agents/registry.py, tools/web.py, tools/browser.py), merged with the
+"""An agent's own ``allowed_domains`` / ``blocked_domains`` for the web tool
+(agents/registry.py, tools/web.py), merged with the
 workspace's and the global lists: workspace blocked always applies, the
 agent's allowed narrows, a blocked host wins, subdomains match.
 
-No network: search backends are replaced and fetch is refused before any
-request.
+No network: fetch is refused before any request.
 """
 from __future__ import annotations
 
@@ -31,9 +30,6 @@ def lists(monkeypatch):
     ws: dict = {}
     agent = {"spec": None}
     monkeypatch.setattr(web, "_workspace_web_settings", lambda workspace=None: ws)
-    # tools/browser.py binds the function at import.
-    from tools import browser
-    monkeypatch.setattr(browser, "_workspace_web_settings", lambda workspace=None: ws)
     monkeypatch.setattr(web, "_current_agent_spec", lambda: agent["spec"])
 
     class _Lists:
@@ -110,103 +106,6 @@ def test_fetch_url_refuses_with_a_clear_tool_result(lists):
     lists.agent(blocked=["evil.example"])
     out = web.fetch_url.invoke({"url": "https://evil.example/page"})
     assert "fetch_url refused" in out and "blocked_domains" in out
-
-
-# ── web_search ───────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def search(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "web_search_provider", "tavily")
-    monkeypatch.setattr(settings, "web_search_api_key", "k")
-    monkeypatch.setattr(web, "_SEARCH_CACHE", {})
-
-
-def test_search_passes_filters_to_a_backend_that_takes_them(lists, search, monkeypatch):
-    lists.workspace["web_deny_domains"] = ["ads.example"]
-    lists.agent(allowed=["python.org"], blocked=["wiki.python.org"])
-    seen = {}
-
-    def provider(q, n, k, t, include=None, exclude=None):
-        seen.update(include=include, exclude=exclude)
-        return [{"title": "ok", "url": "https://docs.python.org/x", "snippet": "s"},
-                {"title": "blocked", "url": "https://wiki.python.org/y", "snippet": "s"},
-                {"title": "outside", "url": "https://example.org/z", "snippet": "s"}]
-
-    monkeypatch.setitem(web._PROVIDERS, "tavily", provider)
-    out = web.web_search.invoke({"query": "python docs"})
-    assert seen["include"] == ["python.org"]
-    assert seen["exclude"] == ["ads.example", "wiki.python.org"]
-    # Whatever the backend did, the results are filtered by host.
-    assert "docs.python.org" in out
-    assert "wiki.python.org" not in out and "example.org" not in out
-
-
-def test_search_filters_results_for_a_backend_without_filters(lists, search, monkeypatch):
-    lists.agent(blocked=["evil.example"])
-    monkeypatch.setitem(web._PROVIDERS, "tavily", lambda q, n, k, t: [
-        {"title": "good", "url": "https://ok.example/a", "snippet": "s"},
-        {"title": "bad", "url": "https://www.evil.example/a", "snippet": "s"},
-    ])
-    out = web.web_search.invoke({"query": "q"})
-    assert "ok.example" in out and "evil.example" not in out
-
-
-def test_the_backends_send_their_own_filters(monkeypatch):
-    sent = []
-
-    class _Resp:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"results": [], "web": {"results": []}}
-
-    import httpx
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: sent.append((url, kw)) or _Resp())
-    monkeypatch.setattr(httpx, "get", lambda url, **kw: sent.append((url, kw)) or _Resp())
-    web._search_tavily("q", 3, "k", 1.0, include=["a.org"], exclude=["b.org"])
-    web._search_exa("q", 3, "k", 1.0, include=["a.org"], exclude=["b.org"])
-    web._search_brave("q", 3, "k", 1.0, include=["a.org"], exclude=["b.org"])
-    assert sent[0][1]["json"]["include_domains"] == ["a.org"]
-    assert sent[0][1]["json"]["exclude_domains"] == ["b.org"]
-    assert sent[1][1]["json"]["includeDomains"] == ["a.org"]
-    assert sent[1][1]["json"]["excludeDomains"] == ["b.org"]
-    assert sent[2][1]["params"]["q"] == "q site:a.org -site:b.org"
-
-
-def test_filters_are_part_of_the_cache_key(lists, search, monkeypatch):
-    calls = []
-
-    def provider(q, n, k, t, include=None, exclude=None):
-        calls.append(tuple(exclude or ()))
-        return [{"title": "t", "url": "https://ok.example/", "snippet": "s"}]
-
-    monkeypatch.setitem(web._PROVIDERS, "tavily", provider)
-    web.web_search.invoke({"query": "same"})
-    lists.agent(blocked=["evil.example"])
-    web.web_search.invoke({"query": "same"})
-    assert calls == [(), ("evil.example",)]
-
-
-# ── the browser ──────────────────────────────────────────────────────────────
-
-def test_browser_policy_takes_the_agent_lists(lists):
-    from tools import browser
-    lists.workspace["web_deny_domains"] = ["ads.example"]
-    lists.agent(allowed=["python.org"], blocked=["wiki.python.org"])
-    policy = browser.session_policy()
-    assert policy["deny_domains"] == ["ads.example", "wiki.python.org"]
-    assert policy["allow_domains"] == ["python.org"] and policy["allowlist_enabled"] is True
-
-    lists.workspace.update({"web_domain_policy_enabled": True, "web_allow_domains": ["docs.python.org"]})
-    assert browser.session_policy()["allow_domains"] == ["docs.python.org"]
-
-
-def test_intersect_domains():
-    assert web.intersect_domains(["python.org"], ["docs.python.org", "example.org"]) == ["docs.python.org"]
-    assert web.intersect_domains(["docs.python.org"], ["python.org"]) == ["docs.python.org"]
-    assert web.intersect_domains(["a.org"], ["b.org"]) == []
 
 
 # ── the route ────────────────────────────────────────────────────────────────

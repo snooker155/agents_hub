@@ -123,48 +123,7 @@ is the fastest way to see what an agent will actually have available.
 ## The Containers page
 
 Lists running and stopped containers, reads their logs, stops and removes them.
-A running container with an exposed `http_url` gets a **Preview** button; see
-below.
-
-## Preview through the hub
-
-A container's `http_url` is a link straight to the container, which only
-works when your browser can reach the container's host directly. The
-**Preview** button on the Containers page instead opens the page inside the
-hub, through a proxy: `POST /api/preview/tickets` mints a short-lived, signed
-ticket (`common/preview_tickets.py`) for `{kind: "container", name}` (a
-project's frontend uses the same proxy with kind `project`), and the page
-loads in an iframe pointed at
-`/preview/<ticket>/`, a path outside `/api` where the ticket itself is the
-credential (`dashboard/backend/routes/preview.py`).
-
-Why a ticket rather than a direct iframe: the iframe runs with `sandbox="allow-scripts allow-forms allow-popups allow-modals"`,
-deliberately without `allow-same-origin`, so the previewed page executes in
-an opaque origin and cannot read the dashboard's own storage. The ticket is re-resolved to the container's live `http_url`
-on every proxied request, not baked in at mint time, so it survives the
-container being restarted (a new port) for as long as the ticket itself has
-not expired.
-
-A ticket lives ten minutes. While the preview is open and the tab visible, the
-dashboard checks every four minutes whether the current ticket would run out
-before the next check, and only then calls `POST /api/preview/tickets/renew`
-(body `{ticket}`, or the mint body once the old one has lapsed) and points the
-iframe at the new ticket. The ticket is only checked when the frame makes a
-request, so this reloads the page about once per ticket lifetime rather than
-on every renewal. The renewal re-checks the target. A client that can read response headers
-gets the same from the proxy: a request served on a ticket past half its life
-carries a successor in `X-Preview-Ticket`. A preview left in a hidden tab past
-its ten minutes shows the expired page, which asks the dashboard for a fresh
-ticket.
-
-The proxy rewrites an HTML response's absolute-path URLs (`href="/`, `src="/`,
-`action="/`) to stay under the ticket prefix and injects a `<base>` tag when
-the page has none, by a plain regex over the markup, not a parser: an
-absolute-path URL built at runtime by JavaScript is the known limitation, and
-is never rewritten inside a `<script>` block on purpose. A same-origin
-redirect is rewritten to stay under the ticket too; a redirect elsewhere is
-left alone and simply leaves the frame. See docs/projects.md for the same
-mechanism applied to a project's frontend.
+A running container with an exposed `http_url` shows it as a link.
 
 ## Why it matters beyond isolation
 

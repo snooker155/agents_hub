@@ -259,8 +259,8 @@ conversation carries `auto_approve`:
   row is decided by `auto mode`, and the policy trail carries
   `auto_mode_approved`.
 - A tool gated by its own `user_approved` argument (`run_flow_tool`,
-  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`, `run_scenario_tool`,
-  `run_eval_tool`, `stop_run`, `stop_instance`, `restart_instance`,
+  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`,
+  `stop_run`, `stop_instance`, `restart_instance`,
   `stop_container`, `prune_run_logs`, `system_prune_branches`) runs as approved,
   and leaves the same resolved card.
 - The agent is told auto mode is on, so it does not stop to ask whether to go

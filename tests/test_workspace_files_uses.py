@@ -226,33 +226,6 @@ def test_a_task_run_materializes_its_files_and_keeps_its_citations(monkeypatch, 
     assert record["citations"][0]["workspace_file_id"] == spec["file_id"]
 
 
-# ── evals ────────────────────────────────────────────────────────────────────
-
-def test_an_eval_case_runs_with_its_files():
-    from evals import store as eval_store
-    from evals.models import Case, EvalSet
-    from evals.runner import compose_input, prepare_work_dir
-
-    contract = service.create_file("acme", "contract.txt", b"Term: 12 months.")
-    case = Case(input="How long is the term?", file_ids=[contract["file_id"]])
-    assert Case.from_dict(case.to_dict()).file_ids == [contract["file_id"]]
-    assert Case.from_dict({"input": "old case"}).file_ids == []
-
-    work = prepare_work_dir(case, "evr_files", "acme")
-    assert work and (Path(work) / "contract.txt").read_bytes() == b"Term: 12 months."
-    prompt = compose_input(case, work)
-    assert f"- contract.txt: contract.txt ({contract['file_id']}" in prompt
-    assert prompt.endswith("How long is the term?")
-
-    plain = Case(input="hi")
-    assert prepare_work_dir(plain, "evr_files", "acme") is None
-    assert compose_input(plain) == "hi"
-
-    eval_store.save_eval_set(EvalSet(name="contracts", workspace="acme", cases=[case]))
-    used = where_used(contract["file_id"])["eval_cases"]
-    assert used and used[0]["case_id"] == case.case_id
-
-
 # ── the agent tools ──────────────────────────────────────────────────────────
 
 def test_the_agent_tools_list_read_and_save_in_the_run_workspace():

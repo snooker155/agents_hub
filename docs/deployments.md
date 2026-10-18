@@ -1,11 +1,9 @@
 # Deployments
 
 The Deployments page (`/deployments`, under Workspace) is a working view over
-the scheduled jobs that produce real work: `agent_task`, `flow`, `loop` and
-`heartbeat` jobs from the [Plan page](scheduling.md), filtered so a reminder
-does not sit in the same list as a recurring pipeline. A `heartbeat` job is a
-[proactive agent](proactive.md)'s pulse: it is listed and journaled here, but
-owned and edited from the agent's own Pulse card. It adds the two things a
+the scheduled jobs that produce real work: `agent_task`, `flow` and
+`loop` jobs from the [Plan page](scheduling.md), filtered so a reminder
+does not sit in the same list as a recurring pipeline. It adds the two things a
 production-shaped schedule needs and the Plan page keeps out of its way: the
 resources a job hands to every run it starts, and a firing journal that
 answers "did this actually run, and what happened".
@@ -13,7 +11,7 @@ answers "did this actually run, and what happened".
 ## What a deployment is
 
 A `ScheduledJob` of kind `agent_task`, `flow` or `loop`, the same records the
-Plan page manages, listed here through `GET /api/plan/jobs?kinds=agent_task,flow,loop,heartbeat`.
+Plan page manages, listed here through `GET /api/plan/jobs?kinds=agent_task,flow,loop`.
 Each row shows its target (the agent, flow or loop it fires), its schedule
 (cron and timezone, or a recurrence interval, plus the next occurrence and a
 tooltip with the following few), status with a paused-reason badge,

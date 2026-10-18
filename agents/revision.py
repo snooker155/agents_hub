@@ -10,7 +10,7 @@ agent, and each write carries it back:
 
 * ``If-Match: "<hash>"`` on any ``PUT``, ``POST`` or ``PATCH`` under
   ``/api/agents/{agent_id}`` (the record's own fields, its definition, its
-  loop settings, tool policy, guardrails, secrets, proactive profile), or
+  loop settings, tool policy, guardrails, secrets), or
 * ``expected_version`` in the JSON body: a stored version number (the write
   goes through when that version's hash is the current one) or the hash
   itself as a string.

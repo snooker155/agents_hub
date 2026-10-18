@@ -1,19 +1,18 @@
 """
 ``hub_lookup`` / ``hub_action`` kinds of chat/lookup_kinds/runtime.py (the
 assistant plan, stage 5, waves 2 and 3): instance, service, deployment,
-environment, browser.
+environment.
 
 What is promised: each kind lists and describes its records as the person
 behind the turn sees them, a record of a workspace the person cannot reach
 answers "not found", every row and card carries the page that shows it, an
 instance's card never carries its messages, inbox or logs, and each action
-(instance stop/restart, service pause/resume, deployment stop, browser stop)
+(instance stop/restart, service pause/resume, deployment stop)
 does the one thing it says, refuses a viewer, and answers "not found" for a
 record outside the person's reach.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -173,108 +172,12 @@ def _make_deployment(workspace: str, **extra):
 
 # ── environment (read only) ──────────────────────────────────────────────────
 
-# ── browser ──────────────────────────────────────────────────────────────────
-
-class _FakeResp:
-    def __init__(self, status_code: int, payload: dict):
-        self.status_code = status_code
-        self._payload = payload
-
-    def json(self):
-        return self._payload
-
-
-def _patch_browser_service(monkeypatch, sessions: dict):
-    from routes import browser as browser_routes
-
-    def fake_service(method, path, **kwargs):
-        if path == "/sessions" and method == "GET":
-            ws = (kwargs.get("params") or {}).get("workspace")
-            items = [s for s in sessions.values() if not ws or s["workspace"] == ws]
-            return _FakeResp(200, {"sessions": items})
-        if method == "GET" and path.startswith("/sessions/"):
-            sid = path.rsplit("/", 1)[-1]
-            s = sessions.get(sid)
-            return _FakeResp(200, s) if s is not None else _FakeResp(404, {"detail": "no such session"})
-        if method == "DELETE" and path.startswith("/sessions/"):
-            sid = path.rsplit("/", 1)[-1]
-            if sid not in sessions:
-                return _FakeResp(404, {"detail": "no such session"})
-            del sessions[sid]
-            return _FakeResp(200, {"ok": True})
-        raise AssertionError(f"unexpected browser service call: {method} {path}")
-
-    monkeypatch.setattr(browser_routes, "_service", fake_service)
-
-
-def test_browser_list_card_and_reach(multi, hub, monkeypatch):
-    bob = _user("bob")
-    _member_of(bob, "team")
-    sessions = {
-        "sess_mine": {"session_id": "sess_mine", "run_id": "", "workspace": "team", "owner": "user",
-                      "label": "bob", "url": "https://example.com/page", "title": "Injected page title",
-                      "created_at": 1_700_000_000.0, "last_used_at": 1_700_000_100.0,
-                      "controlled_by": "", "read_only": False},
-        "sess_theirs": {"session_id": "sess_theirs", "run_id": "", "workspace": "other", "owner": "agent",
-                        "label": "", "url": "https://else.example", "title": "",
-                        "created_at": 1_700_000_000.0, "last_used_at": 1_700_000_050.0,
-                        "controlled_by": "", "read_only": True},
-    }
-    _patch_browser_service(monkeypatch, sessions)
-
-    listed = lookup.lookup("browser", workspace="team", user_id=bob)
-    assert [r["id"] for r in listed["items"]] == ["sess_mine"]
-    assert listed["items"][0]["url"] == "/browser"
-
-    card = lookup.lookup("browser", entity_id="sess_mine", workspace="team", user_id=bob)
-    assert card["fields"]["owner"] == "user"
-    assert card["fields"]["site"] == "example.com" and "/page" not in json.dumps(card)
-    assert "title" not in card["fields"]
-    assert "Injected page title" not in json.dumps(card)
-    assert card["url"] == "/browser"
-
-    with pytest.raises(LookupError_) as err:
-        lookup.lookup("browser", entity_id="sess_theirs", workspace="team", user_id=bob)
-    assert err.value.code == "not_found"
-
-
-def test_browser_action_stop(multi, hub, monkeypatch):
-    bob = _user("bob")
-    carol = _user("carol")
-    _member_of(bob, "team")
-    _member_of(carol, "team", role="viewer")
-    sessions = {
-        "sess_mine": {"session_id": "sess_mine", "run_id": "", "workspace": "team", "owner": "user",
-                      "label": "bob", "url": "https://example.com", "title": "",
-                      "created_at": 1_700_000_000.0, "last_used_at": 1_700_000_100.0,
-                      "controlled_by": "", "read_only": False},
-        "sess_theirs": {"session_id": "sess_theirs", "run_id": "", "workspace": "other", "owner": "agent",
-                        "label": "", "url": "", "title": "",
-                        "created_at": 1_700_000_000.0, "last_used_at": 1_700_000_050.0,
-                        "controlled_by": "", "read_only": True},
-    }
-    _patch_browser_service(monkeypatch, sessions)
-
-    assert actions.describe("browser", "stop", "sess_mine", workspace="team", user_id=bob) == (
-        "Close the browser session bob in team: whoever is driving it loses the page; "
-        "it can be reopened fresh.")
-
-
-    out = actions.perform("browser", "stop", "sess_mine", workspace="team", user_id=bob)
-    assert out["done"]
-    assert "sess_mine" not in sessions
-
-    with pytest.raises(LookupError_) as not_found:
-        actions.perform("browser", "stop", "sess_theirs", workspace="team", user_id=bob)
-    assert not_found.value.code == "not_found"
-
-
 # ── coverage ─────────────────────────────────────────────────────────────────
 
 def test_our_kinds_are_registered_and_cover_their_pages():
     covered = lookup.covered_pages()
-    for page, kind in (("/instances", "instance"), ("/nodes", "instance"), ("/browser", "browser")):
+    for page, kind in (("/instances", "instance"), ("/nodes", "instance")):
         assert covered.get(page) == kind
     assert "instance" not in lookup.kind_names(admin=True)
-    for kind in ("instance", "browser"):
+    for kind in ("instance",):
         assert kind in lookup.kind_names(admin=False)

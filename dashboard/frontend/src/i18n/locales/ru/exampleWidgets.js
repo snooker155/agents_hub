@@ -184,7 +184,7 @@ export default {
   candidates: {
     devops: 'возможности: CI, Docker, деплой',
     swe: 'возможности: правка кода',
-    researcher: 'возможности: веб-поиск',
+    researcher: 'возможности: отчёты, синтез',
   },
   routeTask: 'Направить задачу →',
   assignedTo: 'Назначено: {{agent}}',

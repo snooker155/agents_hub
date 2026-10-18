@@ -153,7 +153,7 @@ CLI's own process, not this hub's.
 on the closing `result` event as `total_cost_usd`. The adapter puts that
 figure on the stream's `usage` frame as an optional `cost_usd`, and the hub
 credits it to the run as `reported_cost_usd`, preferred over catalog pricing
-wherever a run's cost is read (`managers.runs.groups.runs_cost`, the Costs
+wherever a run's cost is read (`managers.runs.groups.runs_cost`, the run
 page). Practically: launching Claude Code from chat shows Anthropic's own
 bill for that call in the run record, not an estimate. Codex is not known to
 report a dollar figure of its own, so its runs are priced from its reported
@@ -187,16 +187,10 @@ choice is on the agent's page, under **Where it runs**:
 What each container gets:
 
 - **The workspace folder, at its own path.** Every run the hub sends carries
-  `workspace`, an absolute host path (the workspace, a project under it, or
-  an eval case folder). The container mounts
+  `workspace`, an absolute host path (the workspace or a project under it). The container mounts
   `<AGENTS_HUB_ROOT>/workspaces/<name>` at that same path, so the path the
   adapter receives is a directory it can open. Never the root of all
   workspaces: a container sees the one workspace it was started for.
-- **The workspace's eval folder, when it lives elsewhere.** Eval cases run in
-  `<workspace>/.eval/<run>/<case>` by default, which the first mount already
-  covers. With `AGENTS_HUB_EVAL_ROOT` set (see [evals](evals.md)), they run
-  under `<AGENTS_HUB_EVAL_ROOT>/<workspace>/...`, and that workspace's folder
-  there is mounted as a second volume, again at its host path.
 - **The declared environment.** Only the names the manifest lists under
   `runtime.env`, valued from the workspace's variables first and the hub's
   environment second. An undeclared variable never crosses. The hub adds

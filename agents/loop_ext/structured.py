@@ -37,9 +37,9 @@ MAX_REPAIR_ATTEMPTS = 2
 def _extract_json(text: str) -> Any:
     """Parse JSON from an answer that may carry prose or a code fence around it.
 
-    Same approach as ``evals.graders._extract_json`` (fence first, then the
+    Same approach as ``tasks.rubric_grader._extract_json`` (fence first, then the
     outermost brace/bracket span), kept as a local copy so this module has no
-    import-time dependency on ``evals``.
+    import-time dependency on ``tasks``.
     """
     text = (text or "").strip()
     if not text:

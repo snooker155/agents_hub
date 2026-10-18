@@ -81,7 +81,7 @@ def test_the_delegating_system_agents_can_pick_a_model():
     from agents.registry import get_agent
     from common.bootstrap import seed_registry_from_bootstrap
     seed_registry_from_bootstrap()
-    for agent_id in ("main-agent", "orchestrator", "researcher", "assistant"):
+    for agent_id in ("main-agent", "orchestrator", "assistant"):
         assert "list_models_tool" in get_agent(agent_id).tools, agent_id
     for agent_id in ("main-agent", "orchestrator", "assistant"):
         assert "delegate_task_tool" in get_agent(agent_id).tools, agent_id

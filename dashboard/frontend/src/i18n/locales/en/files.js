@@ -1,6 +1,6 @@
 export default {
   title: 'Files',
-  pageDescription: 'Files stored in this workspace. Upload a file once, then attach it by its id in the chat, add it to a memory pool, give it to a task or to an eval case.',
+  pageDescription: 'Files stored in this workspace. Upload a file once, then attach it by its id in the chat, add it to a memory pool, or give it to a task.',
   selectWorkspace: 'Pick a workspace to see its files.',
   refresh: 'Refresh',
   syncFolder: 'Sync from folder',
@@ -30,7 +30,6 @@ export default {
     agent: 'Agent',
     memory: 'Memory',
     task: 'Task',
-    eval: 'Eval',
     api: 'API',
     view: 'Views',
   },
@@ -68,7 +67,6 @@ export default {
   usedChats: 'Chats',
   usedMemory: 'Memory pools',
   usedTasks: 'Tasks',
-  usedEvals: 'Eval cases',
   producedBy: 'Saved by the agent {{agent}}',
   openRun: 'open the run',
   untitledChat: 'Conversation',
@@ -104,12 +102,6 @@ export default {
     title: 'Files',
     hint: 'Copied into the working directory of each run (task_files/) and named in the prompt. Subtasks get them too.',
     saveFailed: 'Could not save the task files',
-  },
-  evalCase: {
-    label: 'Files',
-    hint: 'Copied into the case\'s working directory and named in its input.',
-    badge_one: '{{count}} file',
-    badge_other: '{{count}} files',
   },
   chat: {
     fromWorkspace: 'From workspace files',

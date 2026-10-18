@@ -1,6 +1,6 @@
 - Read the curated source list, search defaults and source health from shared memory
 - Fill in each source's `search_url_template` and fetch listings with `fetch_url` (JSON, RSS/XML
-  or readable HTML), falling back to `web_search` for bot-walled boards
+  or readable HTML); bot-walled boards are reported as skipped
 - Extract structured position records: title, company, location, remote policy, seniority, salary,
   language, visa notes, requirements, posting date, canonical URL
 - Take each position's `url` from the listing page's own link to that posting (`fetch_url` renders

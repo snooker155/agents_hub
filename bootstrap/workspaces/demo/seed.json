@@ -50,29 +50,7 @@
         "list_files",
         "search_docs",
         "read_doc"
-      ],
-      "proactive": {
-        "enabled": true,
-        "cron": "0 9 * * 1-5",
-        "timezone": "Europe/Berlin",
-        "quiet_hours": {
-          "from": "20:00",
-          "to": "08:00"
-        },
-        "daily_budget_usd": 0.5,
-        "max_runs_per_day": 3,
-        "brief": "Open supplier-questions.md in the workspace files. For every question that has no answer yet, draft the reply the shop could send, in plain words, from what src/app.py and docs/notes.md say, and put the drafts in supplier-answers-draft.md beside it. Say clearly which questions the files do not answer. When there is nothing new since your last tick, stay quiet.",
-        "triggers": [
-          {
-            "kind": "file",
-            "pattern": "supplier-questions.md",
-            "source": "upload"
-          }
-        ],
-        "notify": [
-          "dashboard"
-        ]
-      }
+      ]
     }
   ],
   "project": {
@@ -172,29 +150,6 @@
         "manifest": "Assigns the round's work and signs off when it is ready."
       }
     ]
-  },
-  "scenario": {
-    "scenario_id": "demo_market",
-    "name": "Demo market",
-    "description": "A small two-trader market simulation used to show the Playground page. demo: true",
-    "narrative": "A quiet Tuesday at the Fernweh & Co. stall market: a shopkeeper watching stock and a shopper deciding what to buy.",
-    "environment": "market",
-    "mode": "personas",
-    "roles": [
-      {
-        "agent_id": "demo_writer",
-        "name": "Alice",
-        "role": "shopkeeper",
-        "goal": "Keep the stall stocked and answer questions about the gear honestly."
-      },
-      {
-        "agent_id": "demo_analyst",
-        "name": "Bob",
-        "role": "shopper",
-        "goal": "Decide which one item is worth buying today, and say why."
-      }
-    ],
-    "max_ticks": 6
   },
   "views": [
     {
@@ -352,6 +307,76 @@
       "spec": {
         "title": "Fernweh & Co.: August content report",
         "markdown": "# August content report\n\n## Content\n\nThe catalog, product and about pages were reviewed this month. The Trailpack\n32L was renamed from \"Rucksack 32\" everywhere, including the sample sales\ndata, so the name is consistent end to end.\n\n## Sales\n\nBackpacks were the top revenue category in August ($1,780), ahead of Bottles\n($1,200) and Maps ($645), even though Bottles sold in higher volume. See the\nattached chart and table for the day-by-day breakdown.\n\n## Next\n\nAdd a one-line description per product on the catalog page, and a short note\non materials to explain the Trailpack's price.\n"
+      }
+    },
+    {
+      "id_hint": "demo_view_slides",
+      "kind": "slides",
+      "title": "August review deck",
+      "summary": "Four slides on the Demo site's August: sales, content and next steps.",
+      "spec": {
+        "theme": "ocean",
+        "footer": "Fernweh & Co. · August",
+        "slides": {
+          "s1": {
+            "order": 0,
+            "layout": "title",
+            "title": "August review",
+            "subtitle": "Fernweh & Co. sample shop",
+            "icon": "🎒"
+          },
+          "s2": {
+            "order": 1,
+            "layout": "stats",
+            "title": "Revenue by category",
+            "items": [
+              {
+                "value": "$1,780",
+                "title": "Backpacks",
+                "text": "top revenue"
+              },
+              {
+                "value": "$1,200",
+                "title": "Bottles",
+                "text": "most units sold"
+              },
+              {
+                "value": "$645",
+                "title": "Maps",
+                "text": "steady"
+              }
+            ]
+          },
+          "s3": {
+            "order": 2,
+            "layout": "content",
+            "title": "Content",
+            "body": "- Catalog, product and about pages reviewed\n- Rucksack 32 renamed to **Trailpack 32L** everywhere\n- Categories match `data/sales.csv`",
+            "notes": "The rename also touched the sales data, so the chart and the copy agree."
+          },
+          "s4": {
+            "order": 3,
+            "layout": "timeline",
+            "title": "Next",
+            "items": [
+              {
+                "value": "Week 1",
+                "title": "Catalog blurbs",
+                "text": "one line per product"
+              },
+              {
+                "value": "Week 2",
+                "title": "Trailpack note",
+                "text": "waiting for the spec sheet"
+              },
+              {
+                "value": "Week 3",
+                "title": "September report",
+                "text": "same deck, new numbers"
+              }
+            ]
+          }
+        }
       }
     }
   ],
@@ -582,45 +607,29 @@
       "content": "# August content report\n\n## Content\n\nThe catalog, product and about pages were reviewed this month. The Trailpack\n32L was renamed from \"Rucksack 32\" everywhere, including the sample sales\ndata, so the name is consistent end to end.\n\n## Sales\n\nBackpacks were the top revenue category in August ($1,780), ahead of Bottles\n($1,200) and Maps ($645), even though Bottles sold in higher volume.\n\n| Category | Units | Revenue |\n|---|---|---|\n| Backpacks | 20 | $1,780 |\n| Bottles | 50 | $1,200 |\n| Maps | 43 | $645 |\n\n## Next\n\nAdd a one-line description per product on the catalog page, and a short note\non materials to explain the Trailpack's price.\n"
     }
   ],
-  "ticks": [
+  "loop": {
+    "loop_id": "demo_copy_loop",
+    "name": "Demo copy polish loop",
+    "description": "Runs the Demo content pipeline again until the reviewer is happy with the catalog copy. demo: true",
+    "flow_id": "demo_content_pipeline",
+    "exit_criterion": "Every product on the catalog page has a one-line description, the copy matches the names and prices in src/app.py, and nothing promises what the project files do not state.",
+    "max_iterations": 3,
+    "min_iterations": 1,
+    "target_score": 80.0,
+    "patience": 1,
+    "evaluator_mode": "agent",
+    "evaluator_agent_id": "demo_reviewer"
+  },
+  "schedules": [
     {
-      "agent_id": "demo_support",
-      "hours_ago": 2,
-      "outcome": "quiet",
-      "summary": "supplier-questions.md unchanged since yesterday; nothing to draft.",
-      "next_check": "Re-read supplier-questions.md; the spec sheet question is still open.",
-      "cost_usd": 0.0042
-    },
-    {
-      "agent_id": "demo_support",
-      "hours_ago": 26,
-      "outcome": "acted",
-      "summary": "Two new supplier questions (fabric weight, delivery window). Drafted both answers from src/app.py and docs/notes.md into supplier-answers-draft.md. The delivery window is not in the files: marked as a question to pass on.",
-      "next_check": "Check whether the delivery window got an answer in docs/notes.md.",
-      "cost_usd": 0.0188
-    },
-    {
-      "agent_id": "demo_support",
-      "hours_ago": 50,
-      "outcome": "quiet",
-      "summary": "No new questions.",
-      "next_check": "Nothing in particular.",
-      "cost_usd": 0.0039
-    },
-    {
-      "agent_id": "demo_support",
-      "hours_ago": 74,
-      "outcome": "quiet_hours",
-      "summary": "inside quiet hours until 08:00 Europe/Berlin",
-      "trigger": "schedule"
-    },
-    {
-      "agent_id": "demo_support",
-      "hours_ago": 98,
-      "outcome": "blocked",
-      "summary": "supplier-questions.md asks for the wholesale price list; the project files do not have it and I may not quote one. Someone needs to add it or tell me to skip the question.",
-      "next_check": "See whether the price list was added.",
-      "cost_usd": 0.0071
+      "title": "Weekly sales summary",
+      "kind": "agent_task",
+      "agent_id": "demo_analyst",
+      "message": "Read data/sales.csv in the Demo site project and summarise last week's revenue by category in three sentences.",
+      "recurrence": "cron",
+      "cron": "0 9 * * 1",
+      "timezone": "Europe/Berlin",
+      "paused": true
     }
   ]
 }

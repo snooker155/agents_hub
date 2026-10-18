@@ -10,7 +10,7 @@
  */
 import { createContext, useContext } from 'react';
 
-export const DEFAULT_FEATURES = { playground: true };
+export const DEFAULT_FEATURES = {};
 
 export const FeaturesContext = createContext(DEFAULT_FEATURES);
 

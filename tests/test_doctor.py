@@ -1,7 +1,7 @@
 """The doctor (common/doctor.py): each check judged over a fabricated snapshot,
 the overall status, the route's shape and ``ah doctor --json``.
 
-No network is touched: the provider probe and the browser's HTTP call are
+No network is touched: the provider probe is
 replaced, and docker availability is monkeypatched.
 """
 from __future__ import annotations
@@ -160,26 +160,6 @@ def test_disk_thresholds(monkeypatch, free, expected):
     usage = namedtuple("usage", "total used free")
     monkeypatch.setattr(doctor.shutil, "disk_usage", lambda p: usage(10 ** 12, 0, free))
     assert doctor.check_disk(_snap())[0] == expected
-
-
-def test_browser_skips_when_not_configured_and_fails_when_unreachable(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "browser_url", "", raising=False)
-    assert doctor.check_browser(_snap())[0] == "skip"
-
-    import httpx
-    monkeypatch.setattr(settings, "browser_url", "http://browser.invalid:9", raising=False)
-    monkeypatch.setattr(settings, "browser_token", "t", raising=False)
-
-    def unreachable(*a, **k):
-        raise httpx.ConnectError("refused")
-    monkeypatch.setattr(httpx, "get", unreachable)
-    assert doctor.check_browser(_snap())[0] == "fail"
-
-    class Ok:
-        status_code = 200
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: Ok())
-    assert doctor.check_browser(_snap())[0] == "ok"
 
 
 def test_docker(monkeypatch):

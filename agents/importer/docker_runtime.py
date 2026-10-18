@@ -13,13 +13,6 @@ ways, recorded on its descriptor as ``runtime_mode``:
   same files. Never the root of all workspaces: a container sees the one
   workspace it was started for.
 
-The eval runner puts a case's files under the workspace too
-(``<workspace>/.eval/<run>/<case>``), so that mount covers them. When
-``AGENTS_HUB_EVAL_ROOT`` moves the eval folders elsewhere
-(``evals.snapshot.eval_root``), that workspace's eval folder is mounted as a
-second volume, again at its host path. Both mounts are read-write: a coding
-agent's whole point is to edit the files.
-
 The container's port is published on ``127.0.0.1`` only, on a free port
 picked at start, and the URL is read back from the daemon rather than stored,
 so a record can never point at a port the daemon reassigned. The containers
@@ -61,17 +54,14 @@ BUILD_TIMEOUT = int(os.environ.get("AGENT_IMPORT_BUILD_TIMEOUT", "1800"))
 #: working directory without being told one per run.
 ENV_WORKSPACE = "AGENTS_HUB_WORKSPACE"
 
-
 class DockerRuntimeError(RuntimeError):
     """A Docker-mode operation the operator has to look at (image not built,
     daemon down, container that never became healthy)."""
-
 
 # ── small helpers ────────────────────────────────────────────────────────────
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def _docker(argv: List[str], timeout: int = 60) -> subprocess.CompletedProcess:
     """Run one docker CLI command. Raises :class:`DockerRuntimeError` when
@@ -83,48 +73,33 @@ def _docker(argv: List[str], timeout: int = 60) -> subprocess.CompletedProcess:
     except subprocess.TimeoutExpired as exc:
         raise DockerRuntimeError(f"docker {argv[0]} did not finish within {timeout}s") from exc
 
-
 def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", (value or "").strip()).strip("-") or "x"
-
 
 def is_docker_mode(remote: Optional[Dict[str, Any]]) -> bool:
     return str((remote or {}).get(MODE_KEY) or MODE_URL).strip().lower() == MODE_DOCKER
 
-
 def image_tag(agent_id: str) -> str:
     return f"{IMAGE_PREFIX}/{_slug(agent_id).lower()}:latest"
 
-
 def container_name(agent_id: str, workspace: str) -> str:
     return f"{CONTAINER_PREFIX}-{_slug(agent_id)}-{_slug(workspace)}"
-
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
-
 # ── the workspace a run belongs to ───────────────────────────────────────────
 
 def workspace_for_path(path: Optional[str]) -> str:
     """The workspace name a run's operating path belongs to.
 
-    The path is what ``create_agent`` was given: a workspace folder, a project
-    folder under it, or an eval case folder. An eval folder under a custom
-    ``AGENTS_HUB_EVAL_ROOT`` is outside the workspaces root, so it is asked
-    first. Nothing recognisable means the default workspace.
+    The path is what ``create_agent`` was given: a workspace folder or a project
+    folder under it. Nothing recognisable means the default workspace.
     """
     if not path:
         return "default"
-    try:
-        from evals.snapshot import workspace_of_eval_dir
-        found = workspace_of_eval_dir(path)
-        if found:
-            return found
-    except Exception:  # noqa: BLE001 - evals are optional at this layer
-        log.debug("workspace_for_path: eval root lookup failed", exc_info=True)
     try:
         from common.workspace_context import workspace_name_from_path
         return workspace_name_from_path(path) or "default"
@@ -132,10 +107,9 @@ def workspace_for_path(path: Optional[str]) -> str:
         log.debug("workspace_for_path: fallback", exc_info=True)
         return Path(str(path)).name or "default"
 
-
 def mounts_for(workspace: str) -> List[Tuple[str, str]]:
-    """``(host_path, container_path)`` pairs for one workspace: its folder,
-    and its eval folder when that lives outside it. Container paths equal
+    """``(host_path, container_path)`` pairs for one workspace: its folder.
+    Container paths equal
     host paths, which is what lets the per-run ``workspace`` resolve."""
     from managers.container_manager import _host_path
     from workspace import WORKSPACES_ROOT, create_workspace_folder
@@ -146,23 +120,7 @@ def mounts_for(workspace: str) -> List[Tuple[str, str]]:
         log.debug("mounts_for: could not create workspace folder", exc_info=True)
     ws_dir = (Path(WORKSPACES_ROOT) / workspace).resolve()
     mounts: List[Tuple[str, str]] = [(_host_path(ws_dir), str(ws_dir))]
-    try:
-        from evals.snapshot import eval_root
-        root = eval_root(workspace)
-        if root is not None:
-            root = Path(root).resolve()
-            try:
-                root.relative_to(ws_dir)
-                inside = True
-            except ValueError:
-                inside = False
-            if not inside:
-                root.mkdir(parents=True, exist_ok=True)
-                mounts.append((_host_path(root), str(root)))
-    except Exception:  # noqa: BLE001 - no evals package means no second mount
-        log.debug("mounts_for: eval root unavailable", exc_info=True)
     return mounts
-
 
 def container_env(descriptor: Dict[str, Any], workspace: str) -> Dict[str, str]:
     """The manifest's declared env, valued from the workspace's variables
@@ -190,7 +148,6 @@ def container_env(descriptor: Dict[str, Any], workspace: str) -> Dict[str, str]:
     out[ENV_WORKSPACE] = str((Path(WORKSPACES_ROOT) / workspace).resolve())
     return out
 
-
 # ── image ────────────────────────────────────────────────────────────────────
 
 def _image_id(tag: str) -> Optional[str]:
@@ -198,7 +155,6 @@ def _image_id(tag: str) -> Optional[str]:
     if result.returncode != 0:
         return None
     return (result.stdout or "").strip() or None
-
 
 def build_image(agent_id: str, descriptor: Dict[str, Any], *, no_cache: bool = False) -> Dict[str, Any]:
     """``docker build`` the agent's clone with the Dockerfile its manifest
@@ -231,7 +187,6 @@ def build_image(agent_id: str, descriptor: Dict[str, Any], *, no_cache: bool = F
         "commit": str(descriptor.get("commit") or ""),
     }
 
-
 # ── containers ───────────────────────────────────────────────────────────────
 
 def _inspect(name: str, fmt: str) -> Optional[str]:
@@ -239,7 +194,6 @@ def _inspect(name: str, fmt: str) -> Optional[str]:
     if result.returncode != 0:
         return None
     return (result.stdout or "").strip() or None
-
 
 def _published_url(name: str, port: int) -> Optional[str]:
     """The host side of the container's published port, as a base URL."""
@@ -258,11 +212,9 @@ def _published_url(name: str, port: int) -> Optional[str]:
             return f"http://{host}:{host_port}"
     return None
 
-
 def _port_of(descriptor: Dict[str, Any]) -> int:
     manifest = descriptor.get("manifest") if isinstance(descriptor.get("manifest"), dict) else {}
     return int(descriptor.get("port") or manifest.get("port") or 8080)
-
 
 def _wait_healthy(url: str, health_path: str, name: str) -> None:
     import httpx
@@ -288,7 +240,6 @@ def _wait_healthy(url: str, health_path: str, name: str) -> None:
     raise DockerRuntimeError(
         f"container {name} did not answer its health path within {HEALTH_WAIT_SECONDS}s ({last})")
 
-
 def container_record(agent_id: str, descriptor: Dict[str, Any], workspace: str) -> Optional[Dict[str, Any]]:
     """What the daemon knows about this agent's container for one workspace,
     or None when there is none."""
@@ -305,7 +256,6 @@ def container_record(agent_id: str, descriptor: Dict[str, Any], workspace: str) 
         "image_id": _inspect(name, "{{.Image}}"),
         "started_at": _inspect(name, "{{.State.StartedAt}}"),
     }
-
 
 def ensure_container(agent_id: str, descriptor: Dict[str, Any], workspace: str) -> Dict[str, Any]:
     """The running container for this agent and workspace, started when it
@@ -354,7 +304,6 @@ def ensure_container(agent_id: str, descriptor: Dict[str, Any], workspace: str) 
         "image_id": image_id, "started_at": _now()}
     return record
 
-
 def stop_containers(agent_id: str, descriptor: Dict[str, Any],
                     workspace: Optional[str] = None) -> List[str]:
     """Stop and remove this agent's container for one workspace, or all of
@@ -371,7 +320,6 @@ def stop_containers(agent_id: str, descriptor: Dict[str, Any],
         forget_container(name)
     return removed
 
-
 def list_containers(agent_id: str) -> List[Dict[str, Any]]:
     """Every container of this agent the daemon knows, running or not."""
     result = _docker([
@@ -386,7 +334,6 @@ def list_containers(agent_id: str) -> List[Dict[str, Any]]:
         out.append({"name": parts[0], "state": parts[1], "workspace": parts[2]})
     return out
 
-
 def status(agent_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
     """What the panel shows: the mode, the image, and the containers."""
     docker_block = dict(descriptor.get("docker") or {})
@@ -395,7 +342,7 @@ def status(agent_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
         "docker_available": True,
         "image": {"tag": image_tag(agent_id), "exists": False, **docker_block},
         "containers": [],
-        "mounts_note": "workspace folder, plus its eval folder when that lives elsewhere",
+        "mounts_note": "workspace folder",
     }
     try:
         out["image"]["exists"] = bool(_image_id(image_tag(agent_id)))
@@ -409,7 +356,6 @@ def status(agent_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
         out["error"] = str(exc)
     return out
 
-
 def url_for(agent_id: str, descriptor: Dict[str, Any], workspace_path: Optional[str]) -> str:
     """The base URL a run from ``workspace_path`` talks to, starting the
     workspace's container when needed."""
@@ -419,7 +365,6 @@ def url_for(agent_id: str, descriptor: Dict[str, Any], workspace_path: Optional[
     if not url:
         raise DockerRuntimeError(f"container {record.get('name')} publishes no port")
     return str(url)
-
 
 __all__ = [
     "DockerRuntimeError", "MODE_KEY", "MODE_URL", "MODE_DOCKER", "MODES",

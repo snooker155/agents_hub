@@ -4,8 +4,8 @@ These two records are how everything in the product becomes observable.
 
 ## Run
 
-One agent invocation. The atom. Every chat message, every flow node, every
-scenario tick, every delegation is a run, and each carries:
+One agent invocation. The atom. Every chat message, every flow node,
+every delegation is a run, and each carries:
 
 - which agent, model and provider
 - status: `running`, `completed`, `failed`, `stopped`
@@ -22,8 +22,8 @@ See [agent-loop](agent-loop.md) for the policies that populate the loop block.
 
 ## Entity runs
 
-Flows, loops, teams and scenarios run as processes of their own, spawned
-by the hub, and all four share one lifecycle. An entity run is one execution of any of these four kinds, recorded in
+Flows, loops and teams run as processes of their own, spawned
+by the hub, and all three share one lifecycle. An entity run is one execution of any of these three kinds, recorded in
 the `entity_runs` table alongside agent runs in the `runs` table.
 
 Entity runs share one status vocabulary:
@@ -56,33 +56,31 @@ Stopping a session stops every run still going inside it.
 ## Run group
 
 A session says which runs belong together. A **run group** says what set them
-going. Five things own a set of runs:
+going. Four things own a set of runs:
 
 | Kind | What it is | Its children |
 | --- | --- | --- |
 | `flow` | one execution of a flow | the runs of its nodes |
 | `loop` | a flow re-run until an agent judges it good enough | one flow group per iteration |
 | `team` | one execution of a team against a goal | the members' turns |
-| `scenario` | one execution of a scenario | the runs of its decisions per tick |
 | `container` | a parent task executing its subtasks | the runs on the subtasks |
 
 Whichever kind you ask about, the answers have the same shape: a status, when it
 started and finished, an error if there was one, the children, and the total
 cost. The cost is always the same sum, the catalog price of the group's own
-agent runs, so a flow, a loop, a team and a scenario are priced by one rule and
+agent runs, so a flow, a loop and a team are priced by one rule and
 a loop's spend is the spend of the flow runs inside it.
 
 Stopping a group stops the work it owns (recursive stop). A flow group signals
-its orchestrator and stops the node runs still in flight; a loop, team or
-scenario asks its entity run to stop at the next safe point, between iterations,
-rounds or ticks; a container pauses and re-queues the subtask it was on. Every
+its orchestrator and stops the node runs still in flight; a loop or
+team asks its entity run to stop at the next safe point, between iterations
+or rounds; a container pauses and re-queues the subtask it was on. Every
 entity run nested under the group is stopped through `parent_run_id`, then every
 leaf agent run they own.
 
 From the API: `GET /api/runs/groups?kind=&workspace=` lists them,
 `GET /api/runs/groups/{kind}/{id}` reads one, `POST .../stop` stops it. Each
-kind also keeps its own richer views under `/api/flows`, `/api/loops`, `/api/teams`
-and `/api/playground`; the group endpoints are for when you want all five at
+kind also keeps its own richer views under `/api/flows`, `/api/loops` and `/api/teams`; the group endpoints are for when you want all four at
 once.
 
 ## Reading a failure
@@ -103,7 +101,7 @@ orphan left by a process that died, not live work. They are counted separately
 from real failures because they mean something different.
 
 A running agent run stamps `heartbeat_at` every 15 seconds; a running entity
-run (flow, loop, team, scenario) does the same. The watchdog reads heartbeats
+run (flow, loop, team) does the same. The watchdog reads heartbeats
 first: a run quiet for its kind's threshold (default 180 seconds, 900 for loops)
 is dead whatever its pid says, and a run with a fresh heartbeat is alive
 whatever its pid says. The watchdog resumes a dead entity run from its checkpoint
@@ -138,4 +136,4 @@ view:
   data instead of trusting a stream that skipped a beat. The same happens on a
   `lagged` event.
 
-Related: [agent-loop](agent-loop.md), [instances](instances.md), [service-health](service-health.md), [costs](costs.md).
+Related: [agent-loop](agent-loop.md), [instances](instances.md), [service-health](service-health.md).

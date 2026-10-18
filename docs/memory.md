@@ -245,4 +245,4 @@ diff by block, note and slot next to Switch binding and Discard.
 - Journal notes are left out of the ranking: they are an append-only log read by
   date, and their bulk would swamp every other layer.
 
-Related: [workspaces](workspaces.md), [skills](skills.md), [proactive](proactive.md).
+Related: [workspaces](workspaces.md), [skills](skills.md).

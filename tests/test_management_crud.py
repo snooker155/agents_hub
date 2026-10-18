@@ -1,7 +1,7 @@
 """
 The CRUD factory (tools/_crud.py) and the shared json envelope (tools/_json.py).
 
-Six modules — flow, loop, team, scenario, world and project management — used
+Four modules: flow, loop, team and project management — used
 to hand-write their own ``@tool`` wiring for list/create/get/modify/delete/
 validate: a decorator, an args_schema, a try/except, a json_ok/json_err
 envelope. This file is the regression net for pulling that shared shape into
@@ -9,8 +9,7 @@ envelope. This file is the regression net for pulling that shared shape into
 are exactly what they were before the refactor (captured by exercising the
 pre-refactor tools and reading the current implementations); the business
 logic itself — validation rules, merge semantics, conflict checks — is already
-covered by test_entity_tools.py, test_loops.py, test_teams.py and
-test_worlds.py, so it is not duplicated here.
+covered by test_entity_tools.py, test_loops.py, and test_teams.py, so it is not duplicated here.
 """
 import json
 
@@ -79,9 +78,8 @@ def no_workspace(monkeypatch):
     """Run outside any workspace, so nothing is filtered by membership."""
     import common.workspace_context as wc
     monkeypatch.setattr(wc, "resolve_active_workspace", lambda preferred=None: None)
-    for module in ("tools.flow_management", "tools.scenario_management",
-                   "tools.team_management", "tools.loop_management",
-                   "tools.world_management"):
+    for module in ("tools.flow_management",
+                   "tools.team_management", "tools.loop_management"):
         mod = __import__(module, fromlist=["resolve_active_workspace"])
         monkeypatch.setattr(mod, "resolve_active_workspace", lambda preferred=None: None)
 
@@ -184,78 +182,6 @@ def test_team_tools_answer_with_the_same_shape_as_before(cast, no_workspace):
 
     missing = call(get_team_tool, team_id=tid)
     assert missing == {"ok": False, "error": "Team not found", "code": "not_found", "team_id": tid}
-
-
-# ── Scenario: list, create, get, modify, validate, delete ────────────────────
-
-def test_scenario_tools_answer_with_the_same_shape_as_before(cast, no_workspace):
-    from tools.scenario_management import (
-        create_scenario_tool, delete_scenario_tool, get_scenario_tool,
-        list_scenarios_tool, modify_scenario_tool, validate_scenario_tool,
-    )
-
-    listed = call(list_scenarios_tool)
-    assert set(listed) == {"ok", "workspace", "count", "scenarios"}
-
-    roles = [{"agent_id": "alpha", "name": "Mara", "role": "innkeeper"}]
-    created = call(create_scenario_tool, name="Tavern", environment="social", roles=roles)
-    assert set(created) == {"ok", "message", "scenario_id", "scenario"}
-    sid = created["scenario_id"]
-
-    got = call(get_scenario_tool, scenario_id=sid)
-    assert set(got) == {"ok", "scenario"}
-
-    modified = call(modify_scenario_tool, scenario_id=sid, description="x")
-    assert set(modified) == {"ok", "message", "scenario_id", "scenario"}
-
-    valid = call(validate_scenario_tool, scenario_id=sid)
-    assert set(valid) == {"ok", "valid", "errors", "warnings"}
-
-    deleted = call(delete_scenario_tool, scenario_id=sid)
-    assert set(deleted) == {"ok", "message", "scenario_id"}
-
-    missing = call(get_scenario_tool, scenario_id=sid)
-    assert missing == {"ok": False, "error": "Scenario not found", "code": "not_found",
-                        "scenario_id": sid}
-
-
-# ── World: list, create, get, modify, validate, delete ───────────────────────
-
-def test_world_tools_answer_with_the_same_shape_as_before(no_workspace):
-    from tools.world_management import (
-        create_world_tool, delete_world_tool, get_world_tool, list_worlds_tool,
-        modify_world_tool, validate_world_tool,
-    )
-
-    listed = call(list_worlds_tool)
-    assert set(listed) == {"ok", "workspace", "count", "worlds"}
-
-    created = call(create_world_tool, name="Keep", locations=[{"name": "yard"}])
-    assert set(created) == {
-        "ok", "world_id", "env_id", "name", "workspace", "world",
-        "problems", "notes", "created",
-    }
-    wid = created["world_id"]
-
-    got = call(get_world_tool, world_id=wid)
-    assert set(got) == {
-        "ok", "world_id", "env_id", "name", "workspace", "world", "problems", "notes",
-    }
-
-    modified = call(modify_world_tool, world_id=wid, description="x")
-    assert set(modified) == {
-        "ok", "world_id", "env_id", "name", "workspace", "world",
-        "problems", "notes", "updated",
-    }
-
-    valid = call(validate_world_tool, world_id=wid)
-    assert set(valid) == {"ok", "world_id", "valid", "problems", "notes"}
-
-    deleted = call(delete_world_tool, world_id=wid)
-    assert set(deleted) == {"ok", "world_id", "deleted"}
-
-    missing = call(get_world_tool, world_id=wid)
-    assert missing == {"ok": False, "error": f"World not found: {wid}", "code": "not_found"}
 
 
 # ── Project: list, create, get, modify, delete (no validate tool) ────────────
@@ -387,7 +313,7 @@ def test_a_handlers_docstring_becomes_the_tools_description():
 
 def test_loop_tools_carry_a_rubric_and_its_grader(cast, one_flow, no_workspace):
     """The Loop Creator can set, change and clear a rubric (loops graded per
-    criterion, evals.graders.grade_rubric) through its own tools."""
+    criterion, tasks.rubric_grader.grade_rubric) through its own tools."""
     from tools.loop_management import create_loop_tool, get_loop_tool, modify_loop_tool
 
     created = call(create_loop_tool, name="Graded", flow_id="flow-1",

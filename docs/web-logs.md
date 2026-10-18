@@ -1,6 +1,6 @@
 # Web requests
 
-Every `web_search` and `fetch_url` call an agent made, recorded with the text it
+Every `fetch_url` call an agent made, recorded with the text it
 was actually handed. The **Web Requests** page is where you read them.
 
 ## The two questions it answers
@@ -21,8 +21,7 @@ plain view.
 
 ## Refusals are logged too
 
-An SSRF block, a domain-policy denial, or search results withheld because their
-host is on the deny list all appear here. A tool that returned nothing is not
+An SSRF block or a domain-policy denial appears here. A tool that returned nothing is not
 the same as a tool that was never called, and the log is where the difference is
 visible.
 
@@ -53,4 +52,4 @@ capped JSONL file under the state root.
 - A high-severity flag on a page an agent summarised is worth reading before
   trusting the summary.
 
-Related: [tools-and-capabilities](tools-and-capabilities.md), [service-health](service-health.md), [evals](evals.md).
+Related: [tools-and-capabilities](tools-and-capabilities.md), [service-health](service-health.md).

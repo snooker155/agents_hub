@@ -3,7 +3,7 @@
 One function that reports whether the moving parts are alive: database
 reachability and the row counts of the core stores, the liveness of every
 background service, on-disk state sizes, provider readiness, the agent
-build cache, and a summary of every flow/loop/team/scenario run by kind
+build cache, and a summary of every flow/loop/team run by kind
 (common/entity_runs.py); the individual active runs are the Dashboard's
 job, this is just the count.
 
@@ -137,12 +137,6 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
         log.debug("plan_scheduler liveness check failed", exc_info=True)
         services["plan_scheduler"] = None
     try:
-        from watchers.runner import runner as _watchers
-        services["watchers"] = _watchers.is_running()
-    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
-        log.debug("watchers liveness check failed", exc_info=True)
-        services["watchers"] = None
-    try:
         from managers.run_watchdog import watchdog
         services["run_watchdog"] = watchdog.is_running()
     except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
@@ -189,7 +183,7 @@ def _providers() -> Dict[str, Any]:
 
 
 def _entity_runs() -> Dict[str, Any]:
-    """Counts of every flow, loop, team and scenario run, by kind and by kind
+    """Counts of every flow, loop and team run, by kind and by kind
     in an active status: the one table every kind's run lives in now
     (common/entity_runs.py). A summary only: the individual active runs are
     the Dashboard's job, not this snapshot's."""

@@ -6,7 +6,7 @@ Routes: a terminal into a run's container or a service replica's container
 ``replica``) checks, with the caller's ordinary credential, that the target
 has a running container here and that the caller may open a shell in it, and
 answers a one-time, minute-long terminal ticket for it
-(``common/preview_tickets.py``, ``mint_terminal``). A refusal is answered
+(``common/terminal_tickets.py``, ``mint_terminal``). A refusal is answered
 here with a message the panel shows as is: a run in local mode, a finished
 run, a container on another host, a role that does not reach, the per-user
 session limit. With ``{"session_id": ...}`` the ticket resumes that session
@@ -41,7 +41,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from common import identity, preview_tickets
+from common import identity, terminal_tickets
 from common import terminal as term
 
 log = logging.getLogger(__name__)
@@ -91,9 +91,9 @@ async def mint_ticket(kind: str, target_id: str, request: Request,
             term.manager().check_limit(principal.id if principal else "")
     except term.TerminalRefused as exc:
         raise _refusal(exc)
-    ttl = preview_tickets.TERMINAL_TTL_SECONDS
+    ttl = terminal_tickets.TERMINAL_TTL_SECONDS
     return {
-        "ticket": preview_tickets.mint_terminal(principal, target_kind=kind, target_id=target_id,
+        "ticket": terminal_tickets.mint_terminal(principal, target_kind=kind, target_id=target_id,
                                                 session_id=session_id, ttl_seconds=ttl),
         "expires_in": ttl,
         "container": target.container,
@@ -132,7 +132,7 @@ def _int(value: Any, default: int) -> int:
 
 @router.websocket("/{kind}/{target_id}/ws")
 async def terminal_socket(websocket: WebSocket, kind: str, target_id: str) -> None:
-    found = preview_tickets.verify_terminal(websocket.query_params.get("ticket") or "",
+    found = terminal_tickets.verify_terminal(websocket.query_params.get("ticket") or "",
                                             target_kind=kind, target_id=target_id)
     principal = term.principal_from_ticket(found) if found else None
     if found is None or principal is None:

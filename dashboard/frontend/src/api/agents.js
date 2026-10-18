@@ -76,14 +76,5 @@ export const getAgentTools = () => api.get('/agents/tools');
 export const refreshAgentTopology = (agentId) =>
   api.post(`/agent-import/${encodeURIComponent(agentId)}/topology`);
 
-// Online evals and A/B experiments of an agent (routes/agents.py,
-// docs/evals.md "Online evals", docs/experiments.md).
-export const getAgentOnlineEvals = (id, limit = 20) =>
-  api.get(`/agents/${id}/online-evals`, { params: { limit } });
-export const getAgentOnlineEvalSummary = (id) => api.get(`/agents/${id}/online-evals/summary`);
-export const getAgentExperiment = (id) => api.get(`/agents/${id}/experiment`);
-export const putAgentExperiment = (id, data) => api.put(`/agents/${id}/experiment`, data);
-export const endAgentExperiment = (id) => api.delete(`/agents/${id}/experiment`);
-export const getAgentExperimentReport = (id) => api.get(`/agents/${id}/experiment/report`);
 // Example requests for the empty chat, in the UI language.
 export const getAgentExamples = (id, lang) => api.get(`/agents/${encodeURIComponent(id)}/examples`, { params: lang ? { lang } : {} });

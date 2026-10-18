@@ -818,7 +818,7 @@ def _policy_payload(name: str) -> dict:
 # A workspace list, when set, replaces the global one of the same name for
 # runs in this workspace; an empty list means "use the global one". The
 # switch turns the allow list on for this workspace even when it is off
-# globally. Edited on Settings, "Web search", and read live by every process.
+# globally. Edited on Settings, "Web access", and read live by every process.
 
 _WEB_POLICY_KEYS = ("web_domain_policy_enabled", "web_allow_domains", "web_deny_domains")
 
@@ -1039,110 +1039,6 @@ async def update_workspace_role(request: Request, name: str, role: str, data: Wo
                  details={"role": role, "agent_id": data.agent_id or None})
     notify_change("workspaces")
     return {"workspace": name, "roles": roles.describe(name)}
-
-
-def _special_models_payload(name: str) -> dict:
-    from providers import special
-    return {
-        "workspace": name,
-        "own": special.masked(special.stored(name)),
-        "effective": special.masked(special.effective(name)),
-        "options": special.options_payload(),
-    }
-
-
-@router.get("/{name}/special-models")
-async def get_workspace_special_models(name: str):
-    """The special models of this workspace (providers/special.py): its own
-    choices, what it uses after the ``default`` workspace fills the gaps, and
-    the purposes, providers and model suggestions for the form."""
-    _require_workspace_folder(name)
-    return _special_models_payload(name)
-
-
-@router.get("/{name}/special-models/discover")
-async def discover_workspace_special_models(name: str, purpose: str, provider: str):
-    """The models ``provider`` has that fit ``purpose``, asked with this
-    workspace's connection settings. Nothing is stored: the form offers them."""
-    import asyncio
-    from providers import special
-    _require_workspace_folder(name)
-    try:
-        return await asyncio.to_thread(special.discover, purpose, provider, name)
-    except special.SpecialModelError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.get("/{name}/special-models/voices")
-async def workspace_special_model_voices(name: str, request: Request, provider: str, model: str = "",
-                                         purpose: str = "speech"):
-    """The voices of one model the form holds, so picking a model offers
-    them: the model's own (the hub runtime reads them from its files; of a
-    cloning model's recorded voices, the person's own and the shared
-    ones), else the ones known for the provider's API shape, with their
-    languages."""
-    import asyncio
-    from providers import special
-    _require_workspace_folder(name)
-    try:
-        return await asyncio.to_thread(special.voices_for, purpose, provider, model,
-                                       identity.request_principal(request))
-    except special.SpecialModelError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/{name}/special-models/sample")
-async def workspace_special_model_sample(name: str, payload: dict):
-    """A short line read by a speech model the form holds (saved or not),
-    as audio: in the voice's own language, else in ``language`` (the
-    page's). Writers only, like the check: it runs the model, and a cloud
-    model charges for it (a fraction of a cent, not counted on a run). The
-    line and its language come in ``X-Sample-Text`` (URL-encoded) and
-    ``X-Sample-Language``."""
-    import asyncio
-    from urllib.parse import quote
-    from fastapi import Response
-    from providers import special
-    _ensure_writable_workspace(name)
-    try:
-        audio, lang, text = await asyncio.to_thread(
-            special.voice_sample, payload, name, str(payload.get("language") or "") or None)
-    except special.SpecialModelError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return Response(content=audio.data, media_type=audio.mime_type,
-                    headers={"Cache-Control": "no-store", "X-Sample-Language": lang,
-                             "X-Sample-Text": quote(text)})
-
-
-@router.post("/{name}/special-models/check")
-async def check_workspace_special_model(name: str, payload: dict):
-    """Whether one model the form holds (saved or not) can be reached with
-    this workspace's connection settings, without running it. Writers only:
-    it sends requests to the address typed in, with the stored headers."""
-    import asyncio
-    from providers import special
-    _ensure_writable_workspace(name)
-    return await asyncio.to_thread(special.check, payload, name)
-
-
-@router.put("/{name}/special-models")
-async def update_workspace_special_models(request: Request, name: str, payload: dict):
-    """Replace this workspace's own special model choices. A purpose left
-    out uses the ``default`` workspace's choice."""
-    from providers import special
-    _ensure_writable_workspace(name)
-    try:
-        config = special.save(name, payload.get("special_models", payload))
-    except special.SpecialModelError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # Purposes and model ids only: a custom model's headers may carry a token.
-    audit.record("workspace.special_models", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request),
-                 details={"purposes": sorted(k for k in config if k != "custom"),
-                          "custom": [c["id"] for c in config.get("custom") or []]})
-    notify_change("workspaces")
-    return _special_models_payload(name)
 
 
 @router.get("/{name}/env")

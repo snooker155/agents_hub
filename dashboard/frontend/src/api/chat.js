@@ -96,7 +96,7 @@ export const getContextKinds = () => api.get('/context/kinds');
 export const getContextEntities = (kind, params) => api.get(`/context/${kind}`, { params });
 export const getContextEntityPreview = (kind, id) => api.get(`/context/${kind}/${encodeURIComponent(id)}/preview`);
 /**
- * Drive one turn of an entity build chat (a scenario's, a loop's) over SSE.
+ * Drive one turn of an entity build chat (a loop's, a team's) over SSE.
  *
  * The same wire format the project graph chat uses — `data: {json}` frames —
  * but the path is a parameter, because what differs between these chats is the
@@ -104,7 +104,7 @@ export const getContextEntityPreview = (kind, id) => api.get(`/context/${kind}/$
  * unlike the multiplexed chat page this holds one connection for the turn.
  *
  * @param {object} opts
- * @param {string} opts.path      API path under /api (e.g. from `scenarioChatUrl`).
+ * @param {string} opts.path      API path under /api (e.g. `/loops/<id>/chat`).
  * @param {string} opts.message   the user's turn.
  * @param {object} [opts.body]    extra fields for the turn's payload. The page
  *   chat sends what the user is looking at this way (scope, route, records);

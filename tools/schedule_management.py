@@ -11,7 +11,7 @@ auto-injected plan-store tools (save_plan / get_plan / list_plans / ...).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from langchain_core.tools import tool
@@ -146,11 +146,6 @@ class NotifyUserInput(BaseModel):
     title: str = Field(..., min_length=1, description="Short notification title shown to the user")
     message: str = Field("", description="Notification body text")
     severity: str = Field("info", description="One of: info, success, warning, error")
-    channels: Optional[List[str]] = Field(
-        None,
-        description="Extra delivery channels besides the inbox: slack or webhook, the endpoints "
-                    "configured for this workspace on the Connectors page's Webhooks tab.",
-    )
 
     @model_validator(mode="after")
     def _check_severity(self):
@@ -274,8 +269,7 @@ schedule_task.description += "\n\n" + _TIME_HELP
 
 
 @tool("notify_user", args_schema=NotifyUserInput)
-def notify_user(title: str, message: str = "", severity: str = "info",
-                channels: Optional[List[str]] = None) -> str:
+def notify_user(title: str, message: str = "", severity: str = "info") -> str:
     """Send the user an immediate notification (inbox + dashboard bell), right now.
 
     Use this when something happens that the user should see even when they are
@@ -283,13 +277,9 @@ def notify_user(title: str, message: str = "", severity: str = "info",
     finished a long piece of work with a noteworthy outcome, or are blocked and
     need their input. Do NOT use it for routine progress updates: run results
     are already reported to the user automatically.
-
-    Name the workspace's notification endpoints (slack, webhook) in
-    ``channels`` to push it there too; otherwise it is inbox/bell only.
     """
     try:
-        extra = [str(c).strip().lower() for c in (channels or []) if str(c).strip()]
-        channels = ["dashboard", *dict.fromkeys(extra)]
+        channels = ["dashboard"]
         n = plan_service.create_notification(
             title=title,
             body=message,
@@ -305,61 +295,6 @@ def notify_user(title: str, message: str = "", severity: str = "info",
         })
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to send notification: {e}")
-
-
-class WakeAgentInput(BaseModel):
-    agent_id: str = Field(..., min_length=1, description="The proactive agent to wake")
-    message: str = Field(..., min_length=1,
-                         description="What happened and why it should look now, one or two sentences")
-
-
-def _pulse_elsewhere(agent_id: str) -> bool:
-    """Whether ``agent_id``'s pulse ticks in another workspace than this
-    run's (proactive/service.py ``_job_workspace``): waking it would be a
-    side effect there, so it is answered like an unknown agent."""
-    from agents.registry import get_agent as reg_get_agent
-    spec = reg_get_agent(agent_id)
-    if spec is None:
-        return False
-    try:
-        from proactive.service import _job_workspace, profile_of
-        pulse_ws = _job_workspace(spec, profile_of(spec))
-    except Exception:  # noqa: BLE001 - no profile: agent_wake reports it
-        return False
-    return check_record(pulse_ws, what="agent", workspace=resolve_active_workspace()) is not None
-
-
-@tool("wake_agent", args_schema=WakeAgentInput)
-def wake_agent(agent_id: str, message: str) -> str:
-    """Wake another agent's pulse now, with a message saying why.
-
-    Only for an agent whose proactive profile is on and lists an ``agent``
-    trigger that accepts you (docs/proactive.md, "Triggers"). The message
-    joins the events of its next tick; nothing comes back to you. Use it when
-    you noticed something another agent watches for, not to delegate work:
-    for that, use the delegation tools.
-    """
-    try:
-        from common.agent_context import current_agent_id
-        from proactive.events import agent_wake
-        if _pulse_elsewhere(agent_id):
-            raise LookupError(f"Agent '{agent_id}' not found")
-        caller = current_agent_id.get()
-        result = agent_wake(caller, agent_id, message)
-    except LookupError as e:
-        return _json_err(str(e), code="not_found")
-    except PermissionError as e:
-        return _json_err(str(e), code="forbidden")
-    except Exception as e:  # noqa: BLE001 - the tool reports, never raises into the loop
-        return _json_err(f"Failed to wake agent: {e}")
-    if not result.get("ok"):
-        return _json_err(f"The pulse of '{agent_id}' is not accepting wakes ({result.get('reason')}).",
-                         code="unavailable")
-    return _json_ok({
-        "message": f"Agent '{agent_id}' will tick within its batching window.",
-        "pending_events": result.get("pending"), "run_at": result.get("run_at"),
-        "paused": result.get("paused", False),
-    })
 
 
 @tool("list_scheduled", args_schema=ListScheduledInput)

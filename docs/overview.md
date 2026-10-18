@@ -15,7 +15,6 @@ workspace                  an isolated folder + its own agents, settings and mem
  ├── flow                  a graph of agents, run as one pipeline
  │    └── loop             a flow re-run until a judge says it is good enough
  ├── team                  a roster of agents working over a shared board
- ├── scenario              agents acting in a simulated world, tick by tick
  └── view                  a chart, graph or 3D scene an agent built
 ```
 
@@ -40,7 +39,7 @@ want, and nothing the product ships will change them.
 
 - **Chat** is the front door: talk to any agent directly, no setup.
 - **Tasks** are for tracked work: assigned, staged, resumable.
-- **Flows, loops, teams and scenarios** are for work that needs more than one
+- **Flows, loops and teams** are for work that needs more than one
   agent, or more than one pass.
 
 ## The menu
@@ -48,8 +47,8 @@ want, and nothing the product ships will change them.
 The sidebar follows the same tree in five groups: **Conversation** (Assistant,
 Chat, Dashboard), **Work** (projects, tasks, the plan, artifacts, flows, loops,
 teams, workspaces), **Agents and library** (agents, models, skills, memory, the
-marketplace), **Integrations** (connectors, watchers, MCP servers) and
-**Records** (sessions, runs, costs, evals, settings).
+marketplace), **Integrations** (connectors, MCP servers) and
+**Records** (sessions, runs, costs, settings).
 
 It has two modes. The **simple menu** keeps fifteen pages, the ones a
 newcomer needs, workspaces among them, plus Settings and Docs, and leaves the
@@ -59,14 +58,13 @@ foot of the menu switches between them, and the browser remembers the choice.
 No page is removed in either mode, and the simple menu never changes shape: a
 page outside it lights up the row it belongs to (Deployments opened from the
 Plan page lights up Plan, Loops and Teams light up Agent Flows, Connectors light
-up Settings, and so do the Dashboard, Sessions and Costs).
+up Settings, and so do the Dashboard and Sessions).
 
 ## Two things worth knowing early
 
-**Money is real.** Every run costs tokens. A scenario is every role acting every
-tick; a team is members times rounds; a loop is a whole flow repeated. The tools
+**Money is real.** Every run costs tokens. A team is members times rounds; a loop is a whole flow repeated. The tools
 that start those refuse until you have approved them, and the refusal shows the
-estimate. See [costs](costs.md).
+estimate.
 
 **Capabilities are enforced.** An agent that can read your private data, ingest
 text from outside, *and* send data out is a data-exfiltration primitive. The

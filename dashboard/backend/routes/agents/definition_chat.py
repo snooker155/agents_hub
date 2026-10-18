@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 # ── The definition chat ──────────────────────────────────────────────────────
 #
-# Same shape as the loop, team, scenario and world build chats, with one
+# Same shape as the loop and team build chats, with one
 # difference in kind: the entity under edit is an agent's own definition. That
 # makes the warning below load-bearing — an agent editing a *system* agent is
 # detaching it from the shipped seed, and the user should hear that before it

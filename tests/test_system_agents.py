@@ -161,9 +161,9 @@ def _known_tool_ids() -> set[str]:
 
     aliases = {
         "filesystem", "task_management", "agent_coordination", "agent_management",
-        "agent_flows", "flow_management", "scenario_management", "world_management",
+        "agent_flows", "flow_management",
         "team_management", "loop_management", "project_management", "entity_runs",
-        "schedule_management", "service_ops", "docs", "geometry", "evals",
+        "schedule_management", "service_ops", "docs", "geometry",
     }
     return {t.id for t in get_all_tools()} | aliases
 
@@ -409,19 +409,15 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     form a blocked capability combination — reading private data alongside web
     access is the case this exists for. The seed wins and the extra is dropped.
 
-    Uses swe_agent rather than researcher: researcher's seed now
-    carries ``capability_override`` (its own tools read private data and it
-    delegates to the web searcher, a reviewed, deliberate combination — see
-    agents/definitions/researcher/capabilities.md), which would skip the
-    very check this test is pinning down. swe_agent has no override and reads
-    private data (read_file, list_files, search_text) the same way."""
+    Uses swe_agent, which has no ``capability_override`` and reads private
+    data (read_file, list_files, search_text)."""
     from common.bootstrap import _sync_system_agents
     from tools.capabilities import check_combination
 
     seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
     assert not seed.get("capability_override"), "precondition: this agent is not overridden"
     live = dict(seed)
-    live["tools"] = list(seed["tools"]) + ["web_search", "fetch_url"]
+    live["tools"] = list(seed["tools"]) + ["fetch_url"]
     assert check_combination(live["tools"]).blocking, "precondition: the merge is blocked"
     _write_registry([live])
 
@@ -430,25 +426,6 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     after = _read_registry()["swe_agent"]["tools"]
     assert set(after) == set(seed["tools"])
     assert check_combination(after) is None or not check_combination(after).blocking
-
-
-def test_the_web_agent_holds_no_private_data():
-    """The two research agents are mirror images on purpose: one reaches the web
-    and holds nothing private, the other holds private data and no outbound
-    channel. Either one alone is safe; one agent with both would not be."""
-    from tools.capabilities import check_combination
-
-    web = next(a for a in _seed_system_agents() if a["id"] == "web_searcher")
-    researcher = next(a for a in _seed_system_agents() if a["id"] == "researcher")
-
-    for ad in (web, researcher):
-        violation = check_combination(ad["tools"])
-        assert violation is None or not violation.blocking, f"{ad['id']}: {violation.message}"
-
-    combined = check_combination(list(web["tools"]) + list(researcher["tools"]))
-    assert combined is not None and combined.blocking, (
-        "the split is pointless if one agent could hold both tool sets"
-    )
 
 
 def test_sync_is_idempotent(seeded_system_agent):

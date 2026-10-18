@@ -15,7 +15,7 @@ import {
   activateEntityChatSession, deleteEntityChatSession, getEntityChatSessions,
 } from '../../api';
 
-const CHAT_REF = { kind: 'scenario', id: 's1' };
+const CHAT_REF = { kind: 'loop', id: 's1' };
 
 const SESSIONS = [
   { id: 's1', epoch: 1, active: true, title: 'start over', messages: 1, updated_at: null },
@@ -23,7 +23,7 @@ const SESSIONS = [
 ];
 
 const chatProps = (overrides = {}) => ({
-  path: '/playground/scenarios/s1/chat',
+  path: '/loops/s1/chat',
   loadChat: vi.fn().mockResolvedValue({
     data: {
       messages: [{ role: 'user', content: 'start over' }],
@@ -33,7 +33,7 @@ const chatProps = (overrides = {}) => ({
   }),
   clearChat: vi.fn().mockResolvedValue({ data: { cleared: true } }),
   stopChat: vi.fn().mockResolvedValue({ data: {} }),
-  title: 'Scenario',
+  title: 'Loop',
   ...overrides,
 });
 

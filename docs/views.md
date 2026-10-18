@@ -3,9 +3,9 @@
 A view is something an agent built to be looked at: a chart, a graph, a table, a
 3D scene, a simulation, a slide deck or a document.
 
-A view is owned by a run of any kind: an agent run, or a flow, loop, team or
-scenario run. The owner is `{kind: "run"|"flow"|"loop"|"team"|"scenario", id: "..."}`.
-A view created inside a flow node, a team turn or a scenario decision is owned
+A view is owned by a run of any kind: an agent run, or a flow, loop or
+team run. The owner is `{kind: "run"|"flow"|"loop"|"team", id: "..."}`.
+A view created inside a flow node or a team turn is owned
 by the containing entity run. A process launched for an entity run knows its
 owner from its environment.
 
@@ -50,7 +50,7 @@ lists them in its panel next to the changed files.
 - **Charts and graphs** from data the agent computed
 - **3D scenes** that show existing `.glb` or `.gltf` models bound in from the
   workspace, with cameras, lights and environments
-- **Simulations** — `view_compute` runs a scenario server-side on numpy and
+- **Simulations** — `view_compute` runs a simulation server-side on numpy and
   streams frames in: gravitational N-body, a 2D wave field, the 1D
   time-dependent Schrödinger equation, the per-layer activations of a forward
   pass. Optionally recorded as a replayable clip.

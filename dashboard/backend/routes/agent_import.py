@@ -316,8 +316,7 @@ async def get_import_details(agent_id: str):
 # ── Docker mode ─────────────────────────────────────────────────────────────
 #
 # The hub runs the imported agent's container itself, one per workspace, with
-# that workspace's folder mounted at its own host path (and its eval folder
-# when that lives elsewhere). See agents/importer/docker_runtime.py.
+# that workspace's folder mounted at its own host path. See agents/importer/docker_runtime.py.
 
 def _import_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))

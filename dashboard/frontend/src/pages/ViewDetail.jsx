@@ -291,7 +291,7 @@ export default function ViewDetail() {
               <Row label={t('viewDetail.fidelity')}>{view.fidelity}</Row>
               <Row label={t('viewDetail.complexity')}>{view.complexity}</Row>
               {/* Not run through t(): like view.kind above, an owner kind
-                  (run/flow/loop/team/scenario) is an internal vocabulary
+                  (run/flow/loop/team) is an internal vocabulary
                   word, not UI prose to translate. */}
               <Row label="Owner">
                 {(() => {

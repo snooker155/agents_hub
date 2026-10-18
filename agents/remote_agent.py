@@ -400,7 +400,7 @@ class _StreamState:
         hub's catalog. No model lookup is needed, and it is exact for whatever
         pricing the CLI's own provider actually charged. When present it is
         summed onto this stream's running total and written straight to the run
-        record, so ``managers.runs.groups.runs_cost`` and the Costs page can
+        record, so ``managers.runs.groups.runs_cost`` and the run views can
         prefer it over the catalog estimate.
         """
         prompt = int(usage.get("prompt_tokens") or 0)

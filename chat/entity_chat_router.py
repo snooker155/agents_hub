@@ -49,8 +49,7 @@ class EntityChatRoute:
     ``path`` is the route suffix registered on the caller's own router (which
     already carries that file's prefix). Keep it identical to what the copy it
     replaces used, including where it sits relative to a sibling catch-all —
-    a path whose segment count collides with one (``/evals/{eval_set_id}`` vs
-    ``/evals/chat``, ``/{memory_id}`` vs ``/chat``) has to be registered first,
+    a path whose segment count collides with one (``/{memory_id}`` vs ``/chat``) has to be registered first,
     same as the handler it replaces was.
 
     ``load`` resolves everything the GET / DELETE / stop routes need from one
@@ -79,7 +78,7 @@ class EntityChatRoute:
     #: Awaited right after the turn finishes, e.g. to emit a kind-specific
     #: "here is the entity now" event (``{"type": "team", "team": ...}``).
     post_turn: Optional[Callable[[asyncio.Queue, Any], Awaitable[None]]] = None
-    #: The world/scenario build chats report every tool's effect the moment it
+    #: Build chats can report every tool's effect the moment it
     #: lands, not just at the end of the turn — this returns the tap function
     #: (see ``RecordingQueue``) for one send, or None for the common case.
     tap: Optional[Callable[[Any], Optional[Callable[[dict], Any]]]] = None

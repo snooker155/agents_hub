@@ -75,7 +75,7 @@ def ws(tmp_path, monkeypatch):
 
 def test_the_main_agent_is_on_and_every_other_agent_off(seeded_registry, ws):
     assert personal.enabled(registry.get_agent("main-agent"), "default")
-    assert not personal.enabled(registry.get_agent("web_searcher"), "default")
+    assert not personal.enabled(registry.get_agent("analyst"), "default")
     assert not personal.enabled(_spec(), "default")
 
 
@@ -206,7 +206,7 @@ def test_the_pool_reaches_the_build_overrides_and_so_the_cache_key(seeded_regist
     create_agent("main-agent", workspace="default")
     as_user("bob")
     create_agent("main-agent", workspace="default")
-    create_agent("web_searcher", workspace="default")
+    create_agent("analyst", workspace="default")
     create_agent("main-agent", workspace="default", memory_pool="pinned")
 
     alice, bob, searcher, pinned = seen
@@ -319,23 +319,23 @@ def test_the_routes_switch_agents_and_the_workspace(api, ws):
     card = api.get("/api/agents/main-agent/personal-memory", params={"workspace": "default"}).json()
     assert (card["enabled"], card["workspace_enabled"], card["is_main_agent"]) == (True, True, True)
 
-    resp = api.post("/api/agents/web_searcher/personal-memory", params={"workspace": "default"},
+    resp = api.post("/api/agents/analyst/personal-memory", params={"workspace": "default"},
                     json={"enabled": True})
     assert resp.status_code == 200 and resp.json()["effective"] is True
 
     assert api.put("/api/workspaces/default/personal-memory", json={"enabled": False}).json()["enabled"] is False
-    card = api.get("/api/agents/web_searcher/personal-memory", params={"workspace": "default"}).json()
+    card = api.get("/api/agents/analyst/personal-memory", params={"workspace": "default"}).json()
     assert (card["enabled"], card["effective"]) == (True, False)
-    resp = api.post("/api/agents/web_searcher/personal-memory", params={"workspace": "default"},
+    resp = api.post("/api/agents/analyst/personal-memory", params={"workspace": "default"},
                     json={"enabled": False})
     assert resp.status_code == 409
 
 
 def test_making_an_agent_the_main_one_turns_its_personal_memory_on(api, ws):
-    api.post("/api/agents/web_searcher/personal-memory", params={"workspace": "default"},
+    api.post("/api/agents/analyst/personal-memory", params={"workspace": "default"},
              json={"enabled": False})
-    assert api.post("/api/agents/web_searcher/set-default-chat", params={"workspace": "default"}).status_code == 200
+    assert api.post("/api/agents/analyst/set-default-chat", params={"workspace": "default"}).status_code == 200
     settings = api.get("/api/workspaces/default/personal-memory").json()
-    assert settings["main_agent"] == "web_searcher"
-    assert settings["agents"]["web_searcher"] is True
+    assert settings["main_agent"] == "analyst"
+    assert settings["agents"]["analyst"] is True
     assert settings["agents"]["main-agent"] is True, "the old main agent keeps what it had"

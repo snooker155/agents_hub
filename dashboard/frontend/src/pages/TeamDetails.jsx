@@ -4,7 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, Play, Square, Trash2, Loader, Save, AlertTriangle, X, Crown,
   Wand2, MessageSquare, MessageSquarePlus, DollarSign, Eye, ExternalLink, Radio, Plus, DoorOpen,
-  History, Settings as SettingsIcon, UsersRound, RotateCcw, FlaskConical,
+  History, Settings as SettingsIcon, UsersRound, RotateCcw,
 } from 'lucide-react';
 import {
   getTeam, updateTeam, estimateTeam, startTeamRun, getTeamRuns, getTeamRun,
@@ -13,7 +13,6 @@ import {
 } from '../api';
 import EntityChat from '../components/EntityChat';
 import QuotedText from '../components/teamQuotes';
-import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ComposerDock from '../components/ComposerDock';
@@ -255,7 +254,6 @@ export default function TeamDetails() {
   const [resuming, setResuming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const boardEndRef = useRef(null);
   const goalRef = useRef(null);
   // Up to ten lines, then it scrolls (lib/autoGrow.js).
@@ -559,15 +557,6 @@ export default function TeamDetails() {
             >
               <DollarSign className="w-3.5 h-3.5 mr-1" /> {t('teamDetails.estimate')}
             </button>
-            {run?.team_run_id && !live && (
-              <button
-                onClick={() => setCaseDialogOpen(true)}
-                title={t('messageDetails.toEvalCaseHint')}
-                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
-              >
-                <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
-              </button>
-            )}
             {!live && run?.has_checkpoint && ['stopped', 'failed'].includes(run?.status) && (
               <button
                 onClick={handleResume} disabled={resuming}
@@ -1068,13 +1057,6 @@ export default function TeamDetails() {
           </ChatColumn>
         )}
       </div>
-      {caseDialogOpen && run?.team_run_id && (
-        <SaveAsEvalCaseDialog
-          runId={run.team_run_id}
-          workspace={run.workspace || selectedWorkspace}
-          onClose={() => setCaseDialogOpen(false)}
-        />
-      )}
     </PageContainer>
   );
 }

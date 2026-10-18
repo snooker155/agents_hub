@@ -36,11 +36,11 @@ in its own process: if that process is gone the watchdog marks the instance
 stopped, and the next message starts it again. The Process tab of the
 instance shows the carrier's status and log. See [instances](instances.md).
 
-**A loop, team or scenario run was stopped and needs to resume.** `POST
-/api/loops/runs/{id}/resume`, `POST /api/teams/runs/{id}/resume` or `POST
-/api/playground/runs/{id}/resume` relaunches the run from its checkpoint (for
-a loop, its position: the iteration after the last one it finished). A team or
-scenario run record shows `has_checkpoint: true` when resumption is possible.
+**A loop or team run was stopped and needs to resume.** `POST
+/api/loops/runs/{id}/resume` or `POST
+/api/teams/runs/{id}/resume` relaunches the run from its checkpoint (for
+a loop, its position: the iteration after the last one it finished). A team
+run record shows `has_checkpoint: true` when resumption is possible.
 The endpoints return 400 when there is nothing to resume.
 
 **A scheduled job never fired.** Jobs fire from a scheduler inside the backend,
@@ -50,7 +50,7 @@ the scheduler is alive, and the Plan page shows each job's status. See
 
 ## The numbers look wrong
 
-**Costs show tokens but $0.00.** Spend is computed by joining runs against
+**Runs show tokens but $0.00.** Cost is computed by joining runs against
 catalog pricing, so a model with no price contributes tokens and zero dollars.
 Set its prices per 1M tokens on the Models page; the numbers are derived at read
 time, so the fix is retroactive.

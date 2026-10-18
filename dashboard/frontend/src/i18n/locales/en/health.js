@@ -97,12 +97,10 @@ export default {
       security: 'Security settings',
       stale_runs: 'Stale runs and leases',
       run_queue: 'Launch queue',
-      outbox: 'Outbound notifications',
       broker: 'Redis broker',
       blob_store: 'Object store',
       oidc: 'Identity provider',
       disk: 'Free disk',
-      browser: 'Browser service',
       docker: 'Docker',
       sandbox: 'Sandbox providers',
       frontend_build: 'Frontend build',
@@ -153,15 +151,6 @@ export default {
         ok_one: '{{count}} launch waiting.',
         ok_other: '{{count}} launches waiting.',
       },
-      outbox: {
-        unreadable: 'The outbox could not be read: {{error}}.',
-        dead_one: '{{count}} notification was given up on after every retry.',
-        dead_other: '{{count}} notifications were given up on after every retry.',
-        pending_one: '{{count}} notification is waiting to be delivered.',
-        pending_other: '{{count}} notifications are waiting to be delivered.',
-        ok_one: '{{count}} notification pending, none given up on.',
-        ok_other: '{{count}} notifications pending, none given up on.',
-      },
       broker: {
         off: 'No Redis broker is configured (AGENTS_HUB_BROKER_URL).',
         ok: 'Redis answers.',
@@ -181,13 +170,6 @@ export default {
       disk: {
         fail: 'Only {{gb}} GB free under the state directory.',
         free: '{{gb}} GB free under the state directory.',
-      },
-      browser: {
-        off: 'The browser service is not configured.',
-        unreachable: 'The browser service at {{url}} is unreachable: {{error}}.',
-        http: 'The browser service answered HTTP {{code}}.',
-        noToken: 'The browser service answers but AGENTS_HUB_BROWSER_TOKEN is not set.',
-        ok: 'The browser service answers.',
       },
       docker: {
         ok: 'Docker is available.',

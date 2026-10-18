@@ -76,7 +76,7 @@ def _brief(record: Dict[str, Any]) -> Dict[str, Any]:
 
 class ListWorkspaceFilesInput(BaseModel):
     query: str = Field(default="", description="Part of a file name to search for (empty lists the newest files)")
-    source: str = Field(default="", description="Only files from this source: upload, chat, agent, memory, task, eval")
+    source: str = Field(default="", description="Only files from this source: upload, chat, agent, memory, task")
     limit: int = Field(default=50, description="How many files to return, at most 200")
 
 
@@ -149,7 +149,7 @@ class SaveWorkspaceFileInput(BaseModel):
 def save_workspace_file(name: str, content: str) -> str:
     """Save text you produced (a report, a table, a draft) as a workspace file
     and get its id back. The file shows on the Files page and can be attached
-    to a chat, a task, a memory pool or an eval case. Saving the same content
+    to a chat, a task or a memory pool. Saving the same content
     twice returns the file that already exists.
     """
     workspace = _workspace()

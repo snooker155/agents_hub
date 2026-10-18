@@ -3,10 +3,9 @@ What the assistant can change in the hub from a conversation: one-step actions
 on the records ``hub_lookup`` reads (chat/lookup.py), behind one tool
 (``hub_action``, tools/hub_action.py).
 
-An action is a verb on a kind ("stop" an instance, "pause" a watcher,
-"cancel" an eval run): one call, one effect, nothing to fill in. Building or
+An action is a verb on a kind ("stop" an instance, "disable" a guardrail): one call, one effect, nothing to fill in. Building or
 editing something stays with the pages and the creator agents; an action here
-is the kind of thing a person says in passing ("pause the mail watcher").
+is the kind of thing a person says in passing ("stop that instance").
 
 **Every call waits for a yes.** ``hub_action`` is on the list of tools that
 ask a person on every call, whatever the workspace's policy
@@ -38,7 +37,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HubAction:
-    #: The lookup kind it acts on ("instance", "watcher", ...).
+    #: The lookup kind it acts on ("instance", "guardrail", ...).
     kind: str
     #: The verb: stop, start, restart, pause, resume, enable, disable, cancel.
     action: str

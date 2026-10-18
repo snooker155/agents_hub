@@ -184,7 +184,7 @@ export default {
   candidates: {
     devops: 'Fähigkeiten: CI, Docker, Deployments',
     swe: 'Fähigkeiten: Code-Bearbeitung',
-    researcher: 'Fähigkeiten: Websuche',
+    researcher: 'Fähigkeiten: Berichte, Synthese',
   },
   routeTask: 'Aufgabe weiterleiten →',
   assignedTo: 'Zugewiesen an {{agent}}',

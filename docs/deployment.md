@@ -12,7 +12,7 @@ Every way of running it is the same code and the same records.
 | Shape | Start it | Made of | For |
 | --- | --- | --- | --- |
 | **Published images** | `deploy/quickstart/docker-compose.yml` ([installation](installation.md), Path A) | `ghcr.io/snooker155/agents-hub-backend` and `-frontend`, a named volume, agents as subprocesses | Nothing to clone or build |
-| **Compose from a checkout** | `docker compose up --build` (Path B) | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | Containers for agents, the browser service and the sandbox |
+| **Compose from a checkout** | `docker compose up --build` (Path B) | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | Containers for agents and the sandbox |
 | **Local install** | `./install.sh`, then `ah up` (Paths C and D) | A virtualenv and the Vite dev server | Working on the code |
 
 The release workflow publishes the images for amd64 and arm64 in two flavours
@@ -21,7 +21,7 @@ checkout-based shapes build.
 
 ## The compose file
 
-`docker-compose.yml` has three services.
+`docker-compose.yml` has two services.
 
 - **backend**: the API, with every agent as a subprocess inside it. It
   bind mounts the checkout (state lives in `.agents_hub/` there) and, by
@@ -31,9 +31,6 @@ checkout-based shapes build.
   group differs from the default (on macOS with Docker Desktop it is `0`).
 - **frontend**: the built dashboard behind nginx, which also proxies `/api`.
   A source change needs a rebuild of this service.
-- **browser**: headless Chromium for the `browser_*` tools, under the
-  `browser` profile, so a plain `docker compose up` never starts it
-  ([browser](browser.md)).
 
 Both published ports listen on `127.0.0.1` by default (`BACKEND_PORT` 8000,
 `WEB_PORT` 8080). There is no login, so set `HUB_BIND` in `.env` only to an
@@ -41,13 +38,8 @@ address of a network you alone can reach.
 
 ```bash
 docker compose up --build                       # backend and dashboard
-docker compose --profile browser up --build     # plus the browser service
 docker compose restart backend                  # picks up code changes
 ```
-
-For the browser service, `.env` needs `AGENTS_HUB_BROWSER_URL=http://browser:3000`
-and `AGENTS_HUB_BROWSER_TOKEN=<a long random string>`. The service refuses to
-start without the token.
 
 ## Releases
 
@@ -151,4 +143,4 @@ database the process is configured with, so run it with the same `.env` as
 the service. This sequence was run end to end
 from 0.1.0 to the current build and back.
 
-Related: [installation](installation.md), [backup](backup.md), [containers](containers.md), [browser](browser.md).
+Related: [installation](installation.md), [backup](backup.md), [containers](containers.md).

@@ -46,8 +46,8 @@ class HubLookupInput(BaseModel):
     kind: str = Field(..., description=(
         "What to look up: run (alias message), session, cost, model, voice (the transcription "
         "and speech models and the voice), agent, notification, "
-        "approval, task, view, project, scenario, loop, flow, team, job, instance, service, deployment, "
-        "environment, browser, watcher, pulse (proactive agents), eval, guardrail, tool, connection, "
+        "approval, task, view, project, loop, flow, team, job, instance, service, deployment, "
+        "environment, guardrail, tool, connection, "
         "skill, mcp, widget, distribution_install (Slack and Teams app installations), "
         "registry, account"))
     query: Optional[str] = Field(None, description="Text to filter the list by (a name, a status, an agent id)")
@@ -83,8 +83,8 @@ def hub_lookup(kind: str, query: Optional[str] = None, id: Optional[str] = None,
     """Look up the hub's records as the person you act for sees them: runs and
     their cost, sessions, spend this month, models,
     agents and their tools, unread notifications, approvals waiting, tasks,
-    flows, teams, instances, services, deployments, watchers, proactive agents,
-    evals, guardrails, tools, connections, MCP servers, their own account and
+    flows, teams, instances, services, deployments,
+    guardrails, tools, connections, MCP servers, their own account and
     the rest. Without `id` it lists; with `id` it describes one record. Each result has a `url`: link it as "show on screen". For "what is
     new" look up `notification` and `approval`; for "how much did I spend" look
     up `cost` with id `month`.

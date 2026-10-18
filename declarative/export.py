@@ -25,13 +25,6 @@ KIND_ALIASES = {
 }
 #: Folder each kind is written into.
 FOLDERS = {"agent": "agents", "memory_pool": "memory", "deployment": "deployments"}
-#: The proactive profile of an agent nobody configured (proactive/profile.py).
-PROACTIVE_DEFAULTS: Dict[str, Any] = {
-    "enabled": False, "interval_minutes": 60, "cron": "", "timezone": "UTC",
-    "quiet_hours": {"from": "", "to": ""}, "max_runs_per_day": 0,
-    "brief": "", "triggers": [],
-    "notify": ["dashboard"], "workspace": None, "auto_pause_after": 3,
-}
 
 
 @dataclass
@@ -85,7 +78,7 @@ def _trim(value: Any, default: Any) -> Any:
 #: A declarative composite field, mapped to the AgentSpec field name(s)
 #: GET .../inheritance's "fields" reports overridden against (docs/agent-inheritance.md).
 #: A field not listed here (description, domain, capacity, memory, skills,
-#: proactive, ...) is never inherited, so it is always this agent's own.
+#: ...) is never inherited, so it is always this agent's own.
 _INHERITANCE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
     "model": ("provider", "model", "base_url", "temperature", "max_tokens"),
     "reasoning": ("reasoning",),
@@ -142,9 +135,7 @@ def _agent_file(ctx: Context, observed: Dict[str, Any], hub_id: str,
         elif name == "model":
             value = (_trim(value, AgentKind.DEFAULTS["model"]) or None
                      if value.get("provider") != "inherit" else None)
-        elif name == "proactive":
-            value = _trim(value, PROACTIVE_DEFAULTS) if value.get("enabled") else None
-        if name in AgentKind.DEFAULTS and name not in ("model", "proactive", "memory", "skills"):
+        if name in AgentKind.DEFAULTS and name not in ("model", "memory", "skills"):
             value = _trim(value, AgentKind.DEFAULTS[name])
         if value in (None, [], {}, ""):
             continue

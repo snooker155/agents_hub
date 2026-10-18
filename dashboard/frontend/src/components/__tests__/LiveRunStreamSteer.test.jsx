@@ -15,10 +15,6 @@ vi.mock('../../api/steering', () => ({
   steerRun: (...a) => steerRun(...a),
   listRunSteering: (...a) => listRunSteering(...a),
 }));
-vi.mock('../../api/browser', () => ({
-  getRunBrowserSession: () => Promise.reject({ response: { status: 404 } }),
-  setBrowserControl: () => ok({}),
-}));
 vi.mock('../stream', () => ({ useChannel: () => {} }));
 
 import LiveRunStream from '../LiveRunStream';

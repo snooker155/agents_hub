@@ -41,7 +41,7 @@ html.dark body {
   background-color: var(--surface-page);
 }
 
-/* ── phones and the installed app (docs/pwa.md) ─────────────────────────── */
+/* ── phones ─────────────────────────── */
 
 @layer utilities {
   /* The visible height: on a phone 100vh counts the space behind the browser's
@@ -72,7 +72,7 @@ html.dark body {
     font-size: 16px !important;
   }
 
-  /* A header dropdown (the model picker, notifications, watchers) on a phone:
+  /* A header dropdown (the model picker, notifications) on a phone:
      a sheet under the header from edge to edge, rather than a popover hung
      off its button that runs past the side of the screen. */
   .header-sheet {

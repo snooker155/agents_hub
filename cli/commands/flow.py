@@ -3,7 +3,7 @@
 The daily-use shape of ``/api/flows`` (dashboard/backend/routes/flows.py): a
 hand-written group rather than the OpenAPI-generated one, because the routes
 that matter for a terminal are five of the router's twenty, and the ones that
-do not (webhook triggers, YAML import/export, sharing) stay reachable through
+do not (the trigger route, YAML import/export, sharing) stay reachable through
 `ah api` instead of cluttering this one. No method was added to either
 backend for this: every command below goes through the generic transport,
 ``hub().request(...)``.

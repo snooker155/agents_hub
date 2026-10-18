@@ -21,7 +21,6 @@ import { stateForTool, stateForTurn } from '../components/liveMark/activity';
 
 const RUN = [
   { thinking: true, ms: 1500 },
-  { tool: 'web_search', ms: 4000 },
   { tool: 'fetch_url', ms: 3500 },
   { tool: 'search_memory', ms: 3000 },
   { tool: 'get_task', ms: 140 },
@@ -30,7 +29,7 @@ const RUN = [
   { tool: 'write_file', ms: 5000 },
   { tool: 'run_code', ms: 2000 },
   { tool: 'create_view', ms: 4500 },
-  { tool: 'ask_special_model', ms: 3000 },
+  { tool: 'ask_user', ms: 3000 },
   { tool: 'notify_user', ms: 3500 },
   { waiting: true, ms: 2000 },
   { text: true, ms: 2500 },

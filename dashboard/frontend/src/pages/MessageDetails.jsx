@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, SquareTerminal } from 'lucide-react';
 
 import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
@@ -8,7 +8,6 @@ import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
 import AgentVersion from '../components/run/AgentVersion';
 import RunOverrides from '../components/run/RunOverrides';
-import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { LazyTerminalPanel } from '../components/terminal';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
@@ -303,12 +302,7 @@ export default function MessageDetails() {
   const [replayResult, setReplayResult] = useState(null);
   const [replayError, setReplayError] = useState('');
 
-  // "To eval case" — seeding an eval dataset from real traffic is the
-  // cheapest way to build one, so the button lives next to Replay rather than
-  // requiring a trip to the Evals page to type the input back in by hand.
-  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [caseSavedMessage, setCaseSavedMessage] = useState('');
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
@@ -479,17 +473,6 @@ export default function MessageDetails() {
               {t('messageDetails.replay')}
             </button>
           )}
-          {message?.channel !== 'replay' && message?.channel !== 'eval'
-            && (message?.status === 'completed' || message?.status === 'failed') && (
-            <button
-              onClick={() => setCaseDialogOpen(true)}
-              title={t('messageDetails.toEvalCaseHint')}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
-            >
-              <FlaskConical className="w-4 h-4" />
-              {t('messageDetails.toEvalCase')}
-            </button>
-          )}
           <button
             onClick={reload}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
@@ -517,17 +500,6 @@ export default function MessageDetails() {
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
 
-      {caseDialogOpen && (
-        <SaveAsEvalCaseDialog
-          runId={runId}
-          workspace={message?.workspace}
-          onClose={() => setCaseDialogOpen(false)}
-          onSaved={() => setCaseSavedMessage(t('messageDetails.savedAsEvalCase'))}
-        />
-      )}
-      {caseSavedMessage && (
-        <p className="text-xs text-green-600 mt-2">{caseSavedMessage}</p>
-      )}
 
       {/* Replay / regression panel */}
       {replayOpen && (
@@ -662,28 +634,6 @@ export default function MessageDetails() {
             <span className={META_VALUE}>{message.flow_node_label}</span>
             {message?.flow_node_id && (
               <span className="text-sm text-gray-400 ml-1">({message.flow_node_id})</span>
-            )}
-          </div>
-        )}
-        {/* A simulation turn: which scenario, which role, which tick. Without
-            these a sim run reads as an unattached agent call. */}
-        {message?.sim_run_id && (
-          <div>
-            <span className={META_LABEL}>{t('messageDetails.simulation')}</span>{' '}
-            {message?.scenario_id ? (
-              <button
-                onClick={() => navigate(`/playground/${message.scenario_id}`)}
-                className={`${META_VALUE} !text-fuchsia-600 hover:underline`}
-              >
-                {message.sim_role || message.sim_run_id}
-              </button>
-            ) : (
-              <span className={META_VALUE}>{message.sim_role || message.sim_run_id}</span>
-            )}
-            {message?.tick != null && (
-              <span className="text-sm text-gray-400 ml-1">
-                {t('messageDetails.simTick', { tick: message.tick })}
-              </span>
             )}
           </div>
         )}

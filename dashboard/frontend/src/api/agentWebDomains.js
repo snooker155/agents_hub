@@ -1,5 +1,5 @@
 /**
- * An agent's own domain lists for web_search, fetch_url and the browser
+ * An agent's own domain lists for fetch_url
  * (routes/agent_web_domains.py, tools/web.py). `allowed_domains` narrows the
  * agent to those hosts and their subdomains; `blocked_domains` adds to the
  * workspace's deny list.

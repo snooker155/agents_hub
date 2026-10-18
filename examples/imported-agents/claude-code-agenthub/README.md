@@ -64,9 +64,9 @@ Claude Code prices its own call and reports the dollar figure on the closing
 `result` event as `total_cost_usd`. The adapter puts that figure on the
 `usage` frame as `cost_usd`, and the hub (`agents.remote_agent._credit`)
 writes it to the run as `reported_cost_usd`, which `managers.runs.groups`
-and the Costs page prefer over pricing the reported token counts against
+and the run views prefer over pricing the reported token counts against
 the hub's own catalog. Practically: a Claude Code run's cost in the run
-record and on the Costs page is Anthropic's own bill for that call, not an
+record is Anthropic's own bill for that call, not an
 estimate.
 
 This only happens for a **streamed** run (chat, a flow node with someone

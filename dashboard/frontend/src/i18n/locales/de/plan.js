@@ -66,7 +66,6 @@ export default {
     agentTaskHint: 'Agentenarbeit später ausführen',
     flow: 'Flow',
     flowHint: 'Einen Flow nach Zeitplan auslösen',
-    heartbeat: 'Puls',
     memoryConsolidate: 'Gedächtniskonsolidierung',
     memoryConsolidateHint: 'Einen Pool und seine letzten Sitzungen zu einem neuen Pool falten',
   },

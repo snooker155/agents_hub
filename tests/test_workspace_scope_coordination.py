@@ -2,7 +2,7 @@
 (common/workspace_scope.py).
 
 Two workspaces, ``ws_a`` and ``ws_b``, each with its own records: tasks,
-scheduled jobs, flows, worlds, scenarios, teams, loops, runs, eval sets, and
+scheduled jobs, flows, teams, loops, runs, and
 an agent of its own. A run in ``ws_a`` sees and changes ``ws_a``'s records;
 ``ws_b``'s answer like missing ones (or are refused, for a side effect). The
 service's own agents (``SERVICE_WIDE_AGENTS``) still reach both.
@@ -190,65 +190,6 @@ def test_flow_tools_answer_another_workspaces_flow_as_missing(flows):
     assert flow_store.get_flow("flow-b") is not None
     with service():
         assert call(get_flow_tool, flow_id="flow-b")["flow"]["id"] == "flow-b"
-
-
-# ── tools/world_management.py ────────────────────────────────────────────────
-
-def test_world_tools_answer_another_workspaces_world_as_missing(two_ws):
-    from playground import store
-    from playground.worlds import WorldSpec, new_world_id
-    from tools.world_management import (
-        delete_world_tool, get_world_tool, list_worlds_tool, modify_world_tool, validate_world_tool,
-    )
-
-    def _world(name, ws):
-        return store.save_world(WorldSpec.from_dict({
-            "world_id": new_world_id(), "name": name, "workspace": ws,
-            "locations": [{"name": "hall"}],
-        }))
-    mine, theirs, shared = _world("Mine", "ws_a"), _world("Theirs", "ws_b"), _world("Shared", None)
-    with run_in("ws_a"):
-        assert call(get_world_tool, world_id=mine.world_id)["ok"] is True
-        for out in (call(get_world_tool, world_id=theirs.world_id),
-                    call(validate_world_tool, world_id=theirs.world_id),
-                    call(modify_world_tool, world_id=theirs.world_id, description="x"),
-                    call(delete_world_tool, world_id=theirs.world_id)):
-            assert out["code"] == "not_found"
-        names = {w["name"] for w in call(list_worlds_tool)["worlds"]}
-        assert names == {"Mine", "Shared"}
-        # A shared world is read everywhere, and changed only from default.
-        assert call(get_world_tool, world_id=shared.world_id)["ok"] is True
-        assert call(modify_world_tool, world_id=shared.world_id, description="x")["code"] == "not_found"
-    assert store.get_world(theirs.world_id) is not None
-    with service():
-        assert call(get_world_tool, world_id=theirs.world_id)["ok"] is True
-
-
-# ── tools/scenario_management.py ─────────────────────────────────────────────
-
-def test_scenario_tools_answer_another_workspaces_scenario_as_missing(two_ws):
-    from playground import store
-    from playground.models import Role, Scenario
-    from tools.scenario_management import (
-        create_scenario_tool, delete_scenario_tool, get_scenario_tool, list_scenarios_tool,
-        modify_scenario_tool,
-    )
-    mine = store.save_scenario(Scenario(name="Mine", environment="social", workspace="ws_a",
-                                        roles=[Role(agent_id="agent_a", name="Ann")]))
-    theirs = store.save_scenario(Scenario(name="Theirs", environment="social", workspace="ws_b",
-                                          roles=[Role(agent_id="agent_b", name="Bob")]))
-    with run_in("ws_a"):
-        assert call(get_scenario_tool, scenario_id=mine.scenario_id)["ok"] is True
-        for out in (call(get_scenario_tool, scenario_id=theirs.scenario_id),
-                    call(modify_scenario_tool, scenario_id=theirs.scenario_id, description="x"),
-                    call(delete_scenario_tool, scenario_id=theirs.scenario_id)):
-            assert out["code"] == "not_found"
-        assert [s["name"] for s in call(list_scenarios_tool)["scenarios"]] == ["Mine"]
-        out = call(create_scenario_tool, name="Cast", environment="social",
-                   roles=[{"agent_id": "agent_b", "name": "Bob"}])
-        assert out["code"] == "invalid_scenario"
-    with service():
-        assert call(get_scenario_tool, scenario_id=theirs.scenario_id)["ok"] is True
 
 
 # ── tools/team_management.py ─────────────────────────────────────────────────
@@ -480,42 +421,3 @@ def test_handoff_checks_the_target_against_the_runs_workspace(two_ws):
     assert out["code"] == "forbidden" and sink.intent is None
 
 
-# ── tools/eval_ops.py ────────────────────────────────────────────────────────
-
-def test_eval_tools_see_only_this_workspace(two_ws):
-    from evals import store
-    from evals.models import Case, EvalRun, EvalSet
-    from tools.eval_ops import (
-        add_eval_case_tool, create_eval_tool, estimate_eval_tool, get_eval_run_tool, get_eval_tool,
-        list_eval_runs_tool, list_evals_tool, modify_eval_tool, remove_eval_case_tool, run_eval_tool,
-    )
-    mine = store.save_eval_set(EvalSet(name="Mine", workspace="ws_a", agent_id="agent_a",
-                                       cases=[Case(input="hi", expected="hi")]))
-    theirs = store.save_eval_set(EvalSet(name="Theirs", workspace="ws_b", agent_id="agent_b",
-                                         cases=[Case(input="hi", expected="hi")]))
-    their_run = store.save_eval_run(EvalRun(eval_set_id=theirs.eval_set_id, workspace="ws_b"))
-    my_run = store.save_eval_run(EvalRun(eval_set_id=mine.eval_set_id, workspace="ws_a"))
-    their_team = _team("Theirs", "ws_b", "agent_b")
-    with run_in("ws_a"):
-        assert call(get_eval_tool, eval_set_id=mine.eval_set_id)["ok"] is True
-        sid = theirs.eval_set_id
-        for out in (call(get_eval_tool, eval_set_id=sid),
-                    call(modify_eval_tool, eval_set_id=sid, name="x"),
-                    call(add_eval_case_tool, eval_set_id=sid, input="q"),
-                    call(remove_eval_case_tool, eval_set_id=sid, case_id="c"),
-                    call(estimate_eval_tool, eval_set_id=sid),
-                    call(run_eval_tool, eval_set_id=sid),
-                    call(get_eval_run_tool, eval_run_id=their_run.eval_run_id)):
-            assert out["code"] == "not_found"
-        assert [s["name"] for s in call(list_evals_tool)["eval_sets"]] == ["Mine"]
-        runs = call(list_eval_runs_tool)["eval_runs"]
-        assert [r["eval_run_id"] for r in runs] == [my_run.eval_run_id]
-        # Measuring another workspace's agent or team would run it here.
-        assert call(create_eval_tool, name="x", agent_id="agent_b")["code"] == "not_found"
-        out = call(estimate_eval_tool, eval_set_id=mine.eval_set_id,
-                   configs=[{"target": {"kind": "team", "id": their_team.team_id}}])
-        assert out["code"] == "not_found"
-        assert call(estimate_eval_tool, eval_set_id=mine.eval_set_id)["ok"] is True
-    with service():
-        assert call(get_eval_tool, eval_set_id=theirs.eval_set_id)["ok"] is True
-        assert call(get_eval_run_tool, eval_run_id=their_run.eval_run_id)["ok"] is True

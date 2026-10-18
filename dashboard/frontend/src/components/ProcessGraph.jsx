@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowUpRight, ChevronDown, ChevronUp, FlaskConical, Repeat, Zap, Bot } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, ChevronUp, Repeat, Zap, Bot } from 'lucide-react';
 import { SKILL_TOOL, shortText, fmtDurationMs, plainMarkdown, preview } from './processUtils';
 import { toolInline } from './toolFormatters';
 import ProcessNode from './ProcessNode';
 import StepText from './StepText';
-import SaveAsEvalCaseDialog from './evals/SaveAsEvalCaseDialog';
 import { getMessageInsights } from '../api';
 import { useI18n } from '../i18n';
 
@@ -160,13 +159,9 @@ const RUN_STATUS_CLS = {
 // runs hang off that step, not off a timeline of their own, so they have no
 // timeline dot or connector.
 export default function ProcessGraph({
-  messageRuns = [], showDetailsLink = true, titleByAgent = false, evalCaseWorkspace = undefined, nested = false,
+  messageRuns = [], showDetailsLink = true, titleByAgent = false, nested = false,
 }) {
   const { t } = useI18n();
-  // "To eval case" is offered where the host passes a workspace for it (the
-  // Chat page's process panel); `null` is a valid "no workspace" choice.
-  const showEvalCase = evalCaseWorkspace !== undefined;
-  const [caseRunId, setCaseRunId] = useState(null);
   const [expandedNodes, setExpandedNodes] = useState(() => new Set(messageRuns.map((_, idx) => idx)));
   const lastNodeRef = useRef(null);
   const prevLengthRef = useRef(null);
@@ -347,27 +342,15 @@ export default function ProcessGraph({
                   <TokenPill label={t('processGraph.tools2')} value={toolCount} />
                   <TokenPill label={t('processGraph.duration')} value={fmtDurationMs(mr.duration_ms)} />
                 </div>
-                {mr.run_id && (showDetailsLink || showEvalCase) && (
+                {mr.run_id && showDetailsLink && (
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-                    {showEvalCase && mr.status !== 'running' && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setCaseRunId(mr.run_id); }}
-                        title={t('messageDetails.toEvalCaseHint')}
-                        className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700"
-                      >
-                        <FlaskConical className="w-3 h-3" /> {t('messageDetails.toEvalCase')}
-                      </button>
-                    )}
-                    {showDetailsLink && (
-                      <a
-                        href={`/messages/${mr.run_id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700"
-                      >
-                        <ArrowUpRight className="w-3 h-3" /> {t('processGraph.viewFullDetails')}
-                      </a>
-                    )}
+                    <a
+                      href={`/messages/${mr.run_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700"
+                    >
+                      <ArrowUpRight className="w-3 h-3" /> {t('processGraph.viewFullDetails')}
+                    </a>
                   </div>
                 )}
               </div>
@@ -493,13 +476,6 @@ export default function ProcessGraph({
           </div>
         );
       })}
-      {caseRunId && (
-        <SaveAsEvalCaseDialog
-          runId={caseRunId}
-          workspace={evalCaseWorkspace || undefined}
-          onClose={() => setCaseRunId(null)}
-        />
-      )}
     </div>
   );
 }

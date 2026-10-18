@@ -59,8 +59,8 @@ def test_the_corpus_covers_every_system_agent_surface():
     ids = {e["id"] for e in _index()}
     required = {
         "overview", "system-agents", "tools-and-capabilities", "agents",
-        "workspaces", "tasks", "flows", "loops", "teams", "playground",
-        "memory", "views", "costs", "service-health",
+        "workspaces", "tasks", "flows", "loops", "teams",
+        "memory", "views", "service-health",
     }
     assert required <= ids, f"missing: {sorted(required - ids)}"
 
@@ -71,7 +71,6 @@ def test_the_corpus_covers_every_system_agent_surface():
     ("how do loops stop", "loops"),
     ("capability guard trifecta", "tools-and-capabilities"),
     ("why did my run fail", "sessions-and-runs"),
-    ("how much does a scenario cost", "costs"),
     ("what is a workspace", "workspaces"),
     ("is the service healthy", "service-health"),
     ("attach a skill to an agent", "skills"),

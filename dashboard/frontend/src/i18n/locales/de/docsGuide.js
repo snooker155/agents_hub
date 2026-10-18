@@ -6,7 +6,7 @@ export default {
   "files": {
     "nav": "Dateien",
     "title": "Dateien des Arbeitsbereichs",
-    "lead": "Eine Datei des Arbeitsbereichs wird einmal gespeichert und überall über ihre id verwendet: in einer Chat-Nachricht, in einem Speicher-Pool, in einer Aufgabe, in einem Evaluierungsfall oder in dem, was ein Agent selbst gespeichert hat. Laden Sie sie einmal auf der Seite [Dateien](/files) hoch, und all diese Stellen finden dieselbe Datei.",
+    "lead": "Eine Datei des Arbeitsbereichs wird einmal gespeichert und überall über ihre id verwendet: in einer Chat-Nachricht, in einem Speicher-Pool, in einer Aufgabe oder in dem, was ein Agent selbst gespeichert hat. Laden Sie sie einmal auf der Seite [Dateien](/files) hoch, und all diese Stellen finden dieselbe Datei.",
     "s0": {
       "h": "Eine Datei finden",
       "p": "Die Seite [Dateien](/files) zeigt die Dateien des gewählten Arbeitsbereichs als Ordnerbaum oder als flache Tabelle, je nachdem, was Sie zuletzt gewählt haben; eine Suche öffnet jeden Ordner mit einem Treffer. Eine bestimmte Datei öffnen Sie direkt mit `/files?file=<id>`, dem Link, auf den ein Zitat im Chat oder ein Ergebnis von „wo verwendet\" führt."
@@ -24,7 +24,7 @@ export default {
       "points": [
         "Chat: Hängen Sie **Aus den Dateien des Arbeitsbereichs** in der Eingabe an, oder aktivieren Sie **Im Arbeitsbereich speichern** bei einem Upload, damit die Datei auch dort bleibt.",
         "Speicher: Der Dateien-Tab eines Pools kann eine Datei des Arbeitsbereichs hinzufügen; sie wird dann genauso für die Suche indexiert wie ein Upload.",
-        "Aufgaben und Evaluierungen: Dateien, die einer Aufgabe oder einem Evaluierungsfall angehängt sind, werden bei jedem Lauf in ihr Arbeitsverzeichnis kopiert.",
+        "Aufgaben: Dateien, die einer Aufgabe angehängt sind, werden bei jedem Lauf in ihr Arbeitsverzeichnis kopiert.",
         "Agenten: Ein Agent kann Dateien des Arbeitsbereichs mit eigenen Werkzeugen auflisten, lesen und speichern, und eine Chat-Antwort verlinkt, was er erzeugt hat."
       ]
     },
@@ -33,43 +33,6 @@ export default {
       "p": "Wenn ein Agent den Speicher durchsucht, kommen die verwendeten Abschnitte und Notizen nummeriert als `[n]` zurück, und die Antwort zeigt sie als Quellen unter dem Text. Ein Klick auf eine Quelle öffnet die dahinterliegende Datei des Arbeitsbereichs, oder, wenn es keine gibt, die Speicherseite."
     },
     "callout": "Dateien, die außerhalb des üblichen Wegs entstehen, etwa durch Claude Code, Codex oder eine Shell, werden nicht automatisch gelistet: nutzen Sie **Aus Ordner synchronisieren** auf der Seite Dateien, um sie zu registrieren."
-  },
-  "browser": {
-    "nav": "Browser",
-    "title": "Der Browser",
-    "lead": "Eine Live-Ansicht dessen, was die Browser-Sitzung eines Agenten gerade tut, mit der Möglichkeit, die Steuerung zu übernehmen, sowie eine Seite für freies Surfen, deren Sitzung an einen Agenten übergeben werden kann. Dafür muss der Browser-Dienst im Abschnitt **Browser** der Seite [Einstellungen](/settings) eingerichtet sein; ohne ihn sagt die Seite das selbst.",
-    "s0": {
-      "h": "Einrichtung",
-      "points": [
-        "Der Abschnitt **Browser** unter [Einstellungen](/settings) legt Adresse und Token des Dienstes fest, startet ihn und zeigt sein Protokoll, alles ohne Neustart.",
-        "Ein lokaler Prozess führt den Dienst auf dem Host des Hubs aus; ein Docker-Container führt ihn isoliert aus und wird nur angeboten, solange Docker antwortet.",
-        "Der lokale Modus braucht eine Chromium-Installation für Playwright, die derselbe Abschnitt mit einem Klick anbietet."
-      ]
-    },
-    "s1": {
-      "h": "Den Browser eines Laufs beobachten",
-      "points": [
-        "Ein Lauf, der ein Browser-Werkzeug aufruft, bekommt ein **Browser**-Panel in seiner Live-Ausgabe, das die Seite so zeigt, wie sie gezeichnet wird.",
-        "Kann der Live-Stream nicht verbinden, fragt das Panel stattdessen etwa einmal pro Sekunde ein Bild ab."
-      ]
-    },
-    "s2": {
-      "h": "Steuerung übernehmen",
-      "points": [
-        "**Steuerung übernehmen** macht aus dem Bild Klicks, Eingaben und Scrollen auf genau der Sitzung, die der Agent nutzt, gedacht für einen Login, ein Captcha oder einen Cookie-Hinweis, den ein Modell besser nicht selbst erledigt.",
-        "Es pausiert den Agenten beim nächsten Browserschritt, bis Sie **Freigeben** drücken, die Seite verlassen, oder ein Leerlauf-Timeout die Steuerung von selbst freigibt.",
-        "Wohin Sie navigieren, wird gegen die Domain-Richtlinie des Arbeitsbereichs geprüft, genau wie beim Agenten selbst."
-      ]
-    },
-    "s3": {
-      "h": "Freies Surfen und Übergabe",
-      "points": [
-        "**Browser** in der Navigation ist freies Surfen auf demselben Dienst: Arbeitsbereich wählen, eine **Neue Sitzung** öffnen und selbst steuern.",
-        "**An Agenten übergeben** auf einer offenen Sitzung legt eine Aufgabe für den gewählten Agenten mit der angehängten Sitzung an, sodass sein Lauf auf derselben Seite mit denselben Cookies weitermacht.",
-        "**Im Agenten-Browser öffnen** auf dem **Deploy**-Tab eines Projekts (siehe [Projekte](/projects)) öffnet hier direkt die deployte App, damit der Agent sie testen kann."
-      ]
-    },
-    "callout": "Eine Sitzung schließt sich nach einem Leerlauf-Timeout von selbst; Zusehen zählt als Nutzung, daher bleibt sie offen, solange jemand zuschaut."
   },
   "agentLoop": {
     "nav": "Agenten-Loop",
@@ -146,7 +109,7 @@ export default {
       "h": "Der Seiten-Chat",
       "p": "Die Schaltfläche unten rechts auf jeder Seite, die ein Gespräch über das führt, was die Seite gerade zeigt.",
       "points": [
-        "Manche Seiten, etwa ein Szenario, eine Loop, ein Team, die Definition eines Agenten oder ein Memory-Pool, haben ihren eigenen Chat mit eigenem Agenten; das Panel zeigt nur dieses Gespräch.",
+        "Manche Seiten, etwa eine Loop, ein Team, die Definition eines Agenten oder ein Memory-Pool, haben ihren eigenen Chat mit eigenem Agenten; das Panel zeigt nur dieses Gespräch.",
         "Alle anderen Seiten teilen sich einen festen Assistenten, der den Titel und die URL der Seite sowie die dort gezeigten Datensätze sieht.",
         "Zur gleichen Seite zurückzukehren öffnet dasselbe Gespräch wieder; **Clear** beginnt ein neues.",
         "Er legt nie etwas an, ändert oder löscht nie etwas ohne ein klares Ja zu genau dieser Aktion."
@@ -196,9 +159,9 @@ export default {
     "callout": "Eine größere Installation kann eine hub-weite Allowlist aktivieren (der MCP-Katalog auf [Agentenregister](/agent-registry)), sodass ein Workspace nur einen von einem Admin genehmigten Server anbinden darf."
   },
   "outcomes": {
-    "nav": "Ergebnisbewertung & Experimente",
-    "title": "Ergebnisbewertung (Outcomes) und Experimente",
-    "lead": "Ein Outcome bewertet das Ergebnis einer Task anhand einer Rubrik und kann sie für einen weiteren Versuch zurückschicken. Ein Experiment vergleicht zwei Versionen eines Agenten im echten Datenverkehr statt an einer Handvoll Testprompts.",
+    "nav": "Ergebnisbewertung",
+    "title": "Ergebnisbewertung (Outcomes)",
+    "lead": "Ein Outcome bewertet das Ergebnis einer Task anhand einer Rubrik und kann sie für einen weiteren Versuch zurückschicken.",
     "s0": {
       "h": "Outcome-Rubriken",
       "p": "Eine Markdown-Rubrik ist eine Liste von Kriterien: jeder Punkt der obersten Ebene ist eines, und eine Rubrik ohne Punkte fällt auf ein einziges Kriterium namens Overall zurück.",
@@ -216,25 +179,7 @@ export default {
         "**Grade now** bewertet den letzten abgeschlossenen Run, ohne etwas neu zu starten, und verbraucht keinen Versuch.",
         "Erhöhen Sie die Versuchsanzahl oder ändern Sie die Rubrik und starten Sie die Task neu, um es erneut zu versuchen."
       ]
-    },
-    "s2": {
-      "h": "A/B-Experimente an einem Agenten",
-      "p": "Jede Änderung an einem Agenten wird in seiner **Version History** auf dem Config-Tab als Schnappschuss gespeichert. Ein Experiment benennt zwei oder mehr dieser gespeicherten Versionen, Arme genannt, mit einem Anteil der Runs für jeden.",
-      "points": [
-        "Eingestellt auf dem Config-Tab des Agenten, Karte **Experiment**: Version A wählen, ihren Anteil, Version B, und starten.",
-        "Das Routing ist deterministisch: eine Chat-Konversation landet immer im selben Arm, ebenso eine gegebene Run-ID.",
-        "Der Bericht listet pro Arm die Runs, die Anzahl der abgeschlossenen und fehlgeschlagenen, die mittleren Kosten, die mittlere Tokenzahl, die mittlere Dauer, den mittleren Score und die Erfolgsquote.",
-        "Ein Agent hat höchstens ein offenes Experiment gleichzeitig."
-      ]
-    },
-    "s3": {
-      "h": "Ein Experiment beenden",
-      "points": [
-        "Das Beenden schickt jeden Run zur aktuellen Definition des Agenten zurück; nichts am gewinnenden Arm wird automatisch übernommen.",
-        "Setzen Sie über **Version History** auf die gewinnende Version zurück, wenn Sie sie behalten möchten."
-      ]
-    },
-    "callout": "Mittlerer Score und Erfolgsquote bleiben leer, solange der Agent keine Online-Eval-Regel hat, die seine Runs bewertet."
+    }
   },
   "sessionsRuns": {
     "nav": "Sessions & Runs",
@@ -242,7 +187,7 @@ export default {
     "lead": "Ein Run ist ein einzelner Agentenaufruf, die kleinste Einheit, die das Dashboard zeigt. Sessions und Run-Gruppen zeigen, wie Runs zusammengehören.",
     "s0": {
       "h": "Runs",
-      "p": "Jede Chat-Nachricht, jeder Flow-Knoten, jeder Szenario-Takt und jede Delegation ist ein Run.",
+      "p": "Jede Chat-Nachricht, jeder Flow-Knoten und jede Delegation ist ein Run.",
       "points": [
         "Der Status ist `running`, `completed`, `failed` oder `stopped`.",
         "Ein Run trägt seinen Agenten, sein Modell, seinen Provider, Eingabe, Ausgabe, Tokenzahlen, Dauer und, wenn er fehlgeschlagen ist, einen Fehler.",
@@ -253,7 +198,7 @@ export default {
       "h": "Sessions und Run-Gruppen",
       "p": "Eine Session gruppiert die Runs einer Konversation, einer Task oder eines Flows. Eine Run-Gruppe zeigt, was eine Reihe von Runs überhaupt ausgelöst hat.",
       "points": [
-        "Fünf Arten besitzen jeweils eine Reihe von Runs: Flow, Loop, Team, Szenario und Container.",
+        "Vier Arten besitzen jeweils eine Reihe von Runs: Flow, Loop, Team und Container.",
         "Die Seite [Laufgruppen](/run-groups) listet sie artübergreifend, jeweils mit Status, Gesamtkosten und ihren Kindern.",
         "Das Stoppen einer Gruppe stoppt alles, was sie besitzt, rekursiv bis hinunter zu den einzelnen Agent-Runs."
       ]
@@ -305,7 +250,7 @@ export default {
       "points": [
         "`GET /api/health` meldet die Datenbank, Run-Zahlen, Hintergrunddienste, Speichergröße und welche Provider-Schlüssel gesetzt sind; `null` bedeutet, die Prüfung konnte es nicht feststellen, nicht dass etwas ausgefallen ist.",
         "Der Doctor macht aus dieser Momentaufnahme Urteile: jede Prüfung liefert `ok`, `warn`, `fail` oder `skip` mit einem Satz und einer Lösung, der Gesamtstatus ist der schlechteste davon.",
-        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, veraltete Runs, die Run-Warteschlange, freier Speicherplatz, der Browser-Dienst, Docker, die Sandbox-Provider und der System-Workspace selbst."
+        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, veraltete Runs, die Run-Warteschlange, freier Speicherplatz, Docker, die Sandbox-Provider und der System-Workspace selbst."
       ]
     },
     "s1": {
@@ -364,17 +309,16 @@ export default {
   },
   "integrations": {
     "nav": "Integrationen",
-    "title": "Benachrichtigungen und Webhooks",
-    "lead": "Wie der Hub mit der Außenwelt spricht: signierte Webhooks und Alarmregeln, die selbst Benachrichtigungen auslösen.",
+    "title": "Benachrichtigungen und Alarmregeln",
+    "lead": "Wie der Hub Ihnen sagt, dass etwas passiert ist: der Posteingang unter der Glocke und Alarmregeln, die selbst Benachrichtigungen auslösen.",
     "s0": {
-      "h": "Webhooks und Alarmregeln",
-      "p": "Auf der Seite [Konnektoren](/connectors) erhält ein Endpunkt einen signierten Webhook, sobald der Posteingang eine Benachrichtigung auslöst oder eine Alarmregel greift. Eine Alarmregel kann selbst eine Benachrichtigung auslösen: für einen fehlgeschlagenen Lauf, Kosten eines Laufs oder eines Tages über einem Schwellenwert, oder ein Online-Eval-Ergebnis unter dem Zielwert.",
+      "h": "Alarmregeln",
+      "p": "Auf der Seite [Konnektoren](/connectors) schaltet der Tab Alarmregeln eine Regel scharf, die selbst eine Benachrichtigung auslöst: für einen fehlgeschlagenen Lauf oder Kosten eines Laufs oder eines Tages über einem Schwellenwert. Jede Benachrichtigung landet im Posteingang unter der Glocke.",
       "points": [
-        "Jede Webhook-Zustellung ist mit dem Secret des Endpunkts signiert; prüfen Sie den Header `X-AgentsHub-Signature`, bevor Sie ihr vertrauen.",
-        "Eine fehlgeschlagene Zustellung wird einmal wiederholt; ein Endpunkt, der die Nutzlast mit einer beliebigen Nicht-5xx-Antwort ablehnt, gilt als zugestellt."
+        "Eine Regel lässt sich auf einen Agenten beschränken und abschalten, ohne sie zu löschen."
       ]
     },
-    "callout": "Ein eingehender Webhook, der einen Task anlegt, hat keinen offenen Fallback: Ist für einen Workspace kein eingehendes Secret konfiguriert, lässt er sich überhaupt nicht ansprechen."
+    "callout": "Agenten schicken Ihnen mit notify_user eine Benachrichtigung, und eine geplante Benachrichtigung auf der Seite [Plan](/plan) landet im selben Posteingang."
   },
   "assistant": {
     "nav": "Assistent",
@@ -392,7 +336,7 @@ export default {
       "h": "Was er nachschlagen und ändern kann",
       "p": "`hub_lookup` liest Runs, Sitzungen, Ausgaben, Budgets, Modelle, Agenten, Benachrichtigungen, Freigaben und die Einträge jeder Seite. `hub_action` führt eine Aktion an einem Eintrag aus, etwa eine Instanz pausieren, und zeigt immer zuerst eine Karte.",
       "points": [
-        "Ein Satz wie „jeden Morgen um 8 eine Zusammenfassung schicken“ wird nach Ihrem Ja zu einem geplanten Puls.",
+        "Ein Satz wie „jeden Morgen um 8 eine Zusammenfassung schicken“ wird nach Ihrem Ja zu einem geplanten Job.",
         "Schlüssel eines Anbieters geben Sie selbst in eine Karte ein, nie in das Gespräch."
       ]
     },

@@ -113,4 +113,4 @@ See [system-workspace](system-workspace.md).
 - Files live in the workspace folder, not in the project folder, unless the
   agent was told a project. A file "gone missing" is usually one level up.
 
-Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [costs](costs.md), [system-workspace](system-workspace.md).
+Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [system-workspace](system-workspace.md).

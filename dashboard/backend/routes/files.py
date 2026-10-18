@@ -4,7 +4,7 @@ Workspace files API: upload once, reference by id (docs/files.md).
 ``/api/files`` is the HTTP face of ``files/service.py``: upload a file into a
 workspace, list and search a workspace's files, read one's metadata, text or
 content, delete it, and ask where it is used (chat conversations, memory
-pools, tasks, eval cases).
+pools, tasks).
 
 Access follows the workspace the file belongs to, the same two checks every
 workspace-scoped route makes: reading needs the workspace to be visible to
@@ -244,7 +244,7 @@ async def download_file(file_id: str, request: Request):
 
 @router.get("/{file_id}/usage")
 async def file_usage(file_id: str, request: Request):
-    """Where the file is referenced: chats, memory pools, tasks, eval cases."""
+    """Where the file is referenced: chats, memory pools, tasks."""
     _load_visible(request, file_id, include_deleted=True)
     return where_used(file_id)
 

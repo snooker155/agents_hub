@@ -20,8 +20,8 @@ def _spec(agent_id, tools, **kw):
 
 
 def test_service_wide_tools_belong_to_the_service_agents():
-    assert scope.offenders("helper", ["list_runs", "read_file", "costs_summary"]) == [
-        "list_runs", "costs_summary"]
+    assert scope.offenders("helper", ["list_runs", "read_file", "run_log"]) == [
+        "list_runs", "run_log"]
     assert scope.offenders("service_agent", ["list_runs", "container_logs"]) == []
     assert scope.offenders("system_doctor", ["list_runs", "search_errors"]) == []
     # Health and diagnostics say nothing about any workspace's data.
@@ -79,9 +79,9 @@ def test_a_run_loses_service_wide_tools_it_somehow_holds(monkeypatch):
     # A record written before the rule (or edited by hand) keeps working,
     # without the tools that see other workspaces.
     monkeypatch.setattr(scope, "check_agent_tools", lambda agent_id, tools: None)
-    agent = _build("legacy_ops", ["read_file", "list_runs", "costs_summary"], "team-a", monkeypatch)
+    agent = _build("legacy_ops", ["read_file", "list_runs", "run_log"], "team-a", monkeypatch)
     names = [t.name for t in agent._tools]
-    assert "read_file" in names and "list_runs" not in names and "costs_summary" not in names
+    assert "read_file" in names and "list_runs" not in names and "run_log" not in names
 
 
 def test_the_service_agent_is_not_pinned(monkeypatch):

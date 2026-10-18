@@ -141,7 +141,7 @@ class StandardAgent(AgentBase):
         (HumanMessage / AIMessage; tool messages are never replayed). It fills
         the prompt's ``chat_history`` placeholder, so the model reads prior turns
         as a conversation instead of as text folded into this turn's message.
-        Callers with no history (task runs, evals, delegation) pass none and the
+        Callers with no history (task runs, delegation) pass none and the
         payload is what it always was.
         """
         payload: dict = {"input": instruction}

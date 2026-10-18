@@ -32,14 +32,13 @@ import {
   listFlows,
   getSystemHealth,
 } from '../api';
-import { getProactiveSummary } from '../api/proactive';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 import { poolName } from '../components/memoryManager/helpers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import {
-  Panel, LiveWidget, RunsWidget, CostsWidget,
+  Panel, LiveWidget, RunsWidget,
 } from '../components/dashboard/OverviewWidgets';
 import { fmtBytes as formatBytes } from '../components/dashboard/format';
 import BalancedColumns from '../components/dashboard/BalancedColumns';
@@ -53,7 +52,6 @@ const Dashboard = () => {
   const [instanceCounts, setInstanceCounts] = useState({ live: 0, total: 0 });
   const [flows, setFlows] = useState([]);
   const [health, setHealth] = useState(null);
-  const [pulse, setPulse] = useState(null);
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const fetchData = useCallback(() => (
@@ -64,11 +62,10 @@ const Dashboard = () => {
       getInstancesSummary({ workspace: workspaceFilter }),
       listFlows(workspaceFilter),
       getSystemHealth(),
-      getProactiveSummary(workspaceFilter),
       getStatsOverview(workspaceFilter),
     ])
       .then(([statsResp, agentsResp, memResp, instSummaryResp, flowsResp, healthResp,
-              pulseResp, overviewResp]) => {
+              overviewResp]) => {
         // Each panel stands on its own: one failed endpoint must not blank the page.
         if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
         if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
@@ -78,7 +75,6 @@ const Dashboard = () => {
         }
         if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
         if (healthResp.status === 'fulfilled') setHealth(healthResp.value.data);
-        if (pulseResp.status === 'fulfilled') setPulse(pulseResp.value.data || null);
         if (overviewResp.status === 'fulfilled') setOverview(overviewResp.value.data || null);
       })
       .catch((error) => console.error('Error fetching dashboard data:', error))
@@ -166,22 +162,6 @@ const Dashboard = () => {
           subtext={t('dashboard.stats.customPipelines')}
           to="/flows"
         />
-        {/* Proactive agents (docs/proactive.md): only once a pulse is on. An
-            install that has none should not be told about a feature it has
-            not asked for. */}
-        {pulse?.totals?.agents > 0 && (
-          <StatCard
-            title={t('dashboard.stats.pulse')}
-            value={pulse.totals.agents}
-            icon={Activity}
-            color="bg-rose-500"
-            subtext={t('dashboard.stats.pulseSub', {
-              acted: pulse.totals.acted, quiet: pulse.totals.quiet, skipped: pulse.totals.skipped,
-            })}
-            to="/agents"
-            pulse={pulse.totals.running > 0}
-          />
-        )}
         <StatCard
           title={t('dashboard.stats.instances')}
           value={`${instanceCounts.live || 0}/${instanceCounts.total || 0}`}
@@ -266,7 +246,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* What runs now, load and spend: runs and costs
+      {/* What runs now and the load: runs
           (GET /api/stats/overview), and the memory pools, in two columns
           balanced by content. */}
       {overview && (
@@ -274,7 +254,6 @@ const Dashboard = () => {
           items={[
             { key: 'live', node: <LiveWidget live={overview.live} generatedAt={overview.generated_at} /> },
             { key: 'runs', node: <RunsWidget runs={overview.runs} /> },
-            { key: 'costs', node: <CostsWidget costs={overview.costs} /> },
             {
               key: 'memory',
               node: (
@@ -299,7 +278,6 @@ const Dashboard = () => {
 const BACKGROUND = [
   { key: 'plan_scheduler', label: 'serviceScheduler' },
   { key: 'run_watchdog', label: 'serviceWatchdog' },
-  { key: 'watchers', label: 'serviceWatchers' },
   { key: 'external_publisher', label: 'serviceLiveUpdates' },
 ];
 

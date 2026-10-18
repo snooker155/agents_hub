@@ -58,7 +58,7 @@ rest of the setup and the first steps, by voice or by text
 - `DEMO_WORKSPACE=1` in `.env` seeds a demo workspace on the first start, so
   every page has something to look at.
 - Agents run as subprocesses of the backend in this shape. Containers per
-  agent, the browser service and the sandbox need the checkout below.
+  agent and the sandbox need the checkout below.
 
 ### 2. From source
 
@@ -109,18 +109,18 @@ run into an eval case and sweep it.
 - **Define agents.** A folder of markdown, tools granted by name, layered memory, guardrails, structured output. Import one from git, or run Claude Code or Codex.
 - **See what happened.** Every run keeps its prompt, tool calls, tokens and cost. Agents answer with views: charts, tables, documents, slides. Evals turn a prompt change into a number.
 - **Talk to it.** An assistant that knows the whole service, by voice or text, with cloud speech models.
-- **Connect.** Jira and GitLab, MCP servers, a browser and a terminal for agents, generic webhooks.
+- **Connect.** Jira and GitLab, MCP servers, a browser and a terminal for agents.
 
 ## Deployment options
 
 | Shape | Start it | Made of | For |
 | --- | --- | --- | --- |
 | **Published images** | [`deploy/quickstart/docker-compose.yml`](./deploy/quickstart/docker-compose.yml) | Backend and dashboard images from GHCR, a named volume, agents as subprocesses | One person on one machine, nothing to clone or build |
-| **Compose from a checkout** | `docker compose up --build` | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | One machine, with containers for agents, the browser service and the sandbox |
+| **Compose from a checkout** | `docker compose up --build` | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | One machine, with containers for agents and the sandbox |
 | **Local install** | `./install.sh`, then `ah up` | A virtualenv and the Vite dev server | Working on the code |
 
-Every release publishes `agents-hub-backend`, `agents-hub-frontend`,
-`agents-hub-agents` and `agents-hub-browser` to GHCR for amd64 and arm64, the
+Every release publishes `agents-hub-backend`, `agents-hub-frontend`
+and `agents-hub-agents` to GHCR for amd64 and arm64, the
 backend and agents images in two flavours: plain, and `-rag` with the
 embedding stack. Upgrades, rollbacks and the release process are in
 [docs/deployment.md](./docs/deployment.md).
@@ -150,10 +150,10 @@ shipped documentation.
 | [Assistant](./docs/assistant.md) · [Workspaces](./docs/workspaces.md) · [Projects](./docs/projects.md) · [Tasks](./docs/tasks.md) · [Files](./docs/files.md) | The guide to the service, the unit of isolation, the codebase inside it, the tracked work, the files |
 | [Agents](./docs/agents.md) · [System agents](./docs/system-agents.md) · [Imported agents](./docs/imported-agents.md) · [Agent loop](./docs/agent-loop.md) | What an agent is made of, where agents come from, how a turn runs |
 | [Tools and capabilities](./docs/tools-and-capabilities.md) · [Tool policy](./docs/tool-policy.md) · [Guardrails](./docs/guardrails.md) · [Skills](./docs/skills.md) · [Memory](./docs/memory.md) · [Secrets](./docs/secrets.md) | What an agent can do, and what it can know |
-| [Chat](./docs/chat.md) · [Page chat](./docs/page-chat.md) · [Steering](./docs/steering.md) · [Handoffs](./docs/handoffs.md) · [Browser](./docs/browser.md) · [Terminal](./docs/terminal.md) | Talking to an agent, and what it can use on your behalf |
+| [Chat](./docs/chat.md) · [Page chat](./docs/page-chat.md) · [Steering](./docs/steering.md) · [Handoffs](./docs/handoffs.md) · [Terminal](./docs/terminal.md) | Talking to an agent, and what it can use on your behalf |
 | [Flows](./docs/flows.md) · [Loops](./docs/loops.md) · [Teams](./docs/teams.md) · [Instances](./docs/instances.md) | More than one agent, more than one pass, agents kept running |
-| [Views and Studio](./docs/views.md) · [Playground](./docs/playground.md) | What an agent builds to be looked at, and simulated worlds |
-| [Evals](./docs/evals.md) · [Outcomes](./docs/outcomes.md) · [Costs](./docs/costs.md) · [Web requests](./docs/web-logs.md) · [Sessions and runs](./docs/sessions-and-runs.md) | Measurement: quality, money, what came in from outside, what happened |
+| [Views and Studio](./docs/views.md) | What an agent builds to be looked at |
+| [Outcomes](./docs/outcomes.md) · [Web requests](./docs/web-logs.md) · [Sessions and runs](./docs/sessions-and-runs.md) | Measurement: quality, what came in from outside, what happened |
 | [Models](./docs/models.md) | The catalog and the providers |
 | [Connectors](./docs/connectors.md) · [MCP servers](./docs/mcp.md) · [Marketplace](./docs/marketplace.md) · [Notifications](./docs/notifications.md) | What the hub is wired to |
 | [Settings](./docs/settings.md) · [Containers](./docs/containers.md) · [Sandboxes](./docs/sandboxes.md) · [Service health](./docs/service-health.md) · [System workspace](./docs/system-workspace.md) · [Backup](./docs/backup.md) | Credentials, isolation, whether the moving parts are alive, the copy you restore |

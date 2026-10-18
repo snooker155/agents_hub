@@ -1,5 +1,5 @@
 """
-The hand-written entity groups (`ah flow`, `loop`, `team`, `eval`, `mcp`,
+The hand-written entity groups (`ah flow`, `loop`, `team`, `mcp`,
 `user`), against the real in-process app, through the generic transport
 (``hub().request``; cli/backend.py, cli/openapi.py).
 
@@ -10,9 +10,9 @@ transport the commands themselves use (``hub().request(...)``) rather than
 importing each entity's store module directly: it is one fewer API to know
 and it is exactly what `ah api post ...` would do by hand.
 
-Actually *running* a flow/loop/team/eval sweep spawns a real orchestrator or
+Actually *running* a flow/loop/team spawns a real orchestrator or
 calls a real model: out of scope here (each already has its own test suite —
-tests/test_flow_run_store.py, test_loops.py, test_teams.py, test_evals.py).
+tests/test_flow_run_store.py, test_loops.py, test_teams.py).
 What belongs here is the CLI wiring: does `ah flow run` reach the route, turn
 a 404 into a clean message, print what a run started returns. The unhappy
 path (a bad id) exercises that without paying for a real run.
@@ -159,41 +159,6 @@ def test_team_runs_starts_empty():
     result = runner.invoke(cli.app, ["team", "runs"])
     assert result.exit_code == 0, result.output
     assert "0 run(s)" in result.output
-
-
-# ---------------------------------------------------------------------------
-# ah eval
-# ---------------------------------------------------------------------------
-
-
-def _seed_eval(name="My Eval", **overrides):
-    body = {"name": name}
-    body.update(overrides)
-    return api("POST", "/api/evals", json=body)
-
-
-def test_eval_list_and_get():
-    evalset = _seed_eval()
-    listed = runner.invoke(cli.app, ["eval", "list"])
-    assert listed.exit_code == 0, listed.output
-    assert "My Eval" in listed.output
-
-    got = runner.invoke(cli.app, ["eval", "get", evalset["eval_set_id"]])
-    assert got.exit_code == 0, got.output
-    assert "My Eval" in got.output
-
-
-def test_eval_runs_starts_empty():
-    evalset = _seed_eval()
-    result = runner.invoke(cli.app, ["eval", "runs", evalset["eval_set_id"]])
-    assert result.exit_code == 0, result.output
-    assert "0 run(s)" in result.output
-
-
-def test_eval_diff_on_unknown_runs_is_a_clean_error():
-    result = runner.invoke(cli.app, ["eval", "diff", "run-a", "run-b"])
-    assert result.exit_code == 1
-    assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------

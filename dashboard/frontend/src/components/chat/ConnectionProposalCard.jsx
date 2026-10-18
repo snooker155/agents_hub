@@ -1,7 +1,7 @@
 /**
  * The card for a `propose_connection` tool approval (docs/hooks.md "In chat",
  * connection-proposals-contract.md): an agent asks to wire up a connector, a
- * chat channel, an MCP server, a database, a watcher or a workspace secret.
+ * chat channel, an MCP server, a database or a workspace secret.
  * The agent fills only the non-secret fields; the person edits them, types
  * the secrets here (they never pass through the model), and presses Connect.
  * The backend applies the change as the person, runs a test, and the turn

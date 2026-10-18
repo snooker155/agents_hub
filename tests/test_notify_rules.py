@@ -138,7 +138,7 @@ def test_evaluation_error_never_raises(ws, monkeypatch):
 
 
 def test_entity_run_reaching_a_terminal_status_evaluates_rules(ws, fired):
-    """A flow, team, loop or scenario run closing fires the same rules a leaf
+    """A flow, team or loop run closing fires the same rules a leaf
     run does (common/entity_runs.py hooks evaluate_run_finished on the
     transition), and only once: a later bookkeeping write is not a second
     finish."""

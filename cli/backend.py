@@ -323,7 +323,7 @@ class DirectBackend:
     # ---- generic transport (cli/openapi.py, the entity groups that reuse it) ----
     # Every command written against a hand-picked method above needs both
     # backends touched to add one route. This one method covers the rest: the
-    # OpenAPI-generated commands and the hand-written flow/loop/team/eval/mcp/
+    # OpenAPI-generated commands and the hand-written flow/loop/team/mcp/
     # user groups all call it instead of growing DirectBackend one route at a
     # time. It is imported here only when called, not at module load, so a
     # plain `ah agent list` still pays nothing for it.

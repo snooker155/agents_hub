@@ -60,7 +60,7 @@ function LiveThought({ text }) {
  * end of a turn without a refetch.
  *
  * @param {object}   props
- * @param {string}   props.path        API path for the streaming turn (e.g. `scenarioChatUrl(id)`).
+ * @param {string}   props.path        API path for the streaming turn (e.g. `/loops/<id>/chat`).
  * @param {object}   [props.body]      extra fields sent with every turn, read at
  *   send time rather than at render time — the page chat's subject is whatever
  *   is on screen *now*, which may have changed while the user typed.

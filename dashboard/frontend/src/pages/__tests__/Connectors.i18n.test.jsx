@@ -44,8 +44,8 @@ const EVIDENCE = {
   de: /\b(der|die|das|und|ein|eine|mit|für)\b/,
 };
 
-// [label, index in the tab strip]: git, trackers, webhooks.
-const TABS = [['GitLab', 0], ['Trackers', 1], ['Webhooks', 2]];
+// [label, index in the tab strip]: git, trackers, alert rules.
+const TABS = [['GitLab', 0], ['Trackers', 1], ['Alert rules', 2]];
 
 function show() {
   return render(

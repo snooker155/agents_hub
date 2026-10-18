@@ -8,7 +8,7 @@ the calculator.
 Every tool is classified by what it grants, not by what it is called:
 
 - **`ingests_untrusted`**: pulls text the operator does not control into the
-  agent's context (web fetches, page content, run logs, inbound webhook payloads).
+  agent's context (web fetches, page content, run logs).
 - **`reads_private`**: can read data the operator would not want published
   (files, memory, tasks, run records).
 - **`can_exfiltrate`**: can move agent-chosen bytes outside the system (a
@@ -30,10 +30,8 @@ against the single most dangerous tool.
 ## Consequences you will actually hit
 
 - **A web agent cannot also read your files or memory.** Split the work: one
-  agent fetches, another reasons over the result. That is exactly why the Web
-  Search Agent and the Researcher are separate.
-- **What a web tool actually read is recorded.** Every `web_search` and
-  `fetch_url` call, with the text handed back and the flags raised against it,
+  agent fetches, another reasons over the result.
+- **What a web tool actually read is recorded.** Every `fetch_url` call, with the text handed back and the flags raised against it,
   lands in the [web request log](web-logs.md).
 - **Log readers count as ingesting untrusted content.** A run log holds whatever
   that run handled, including pages it fetched. So the Service Agent, which
@@ -87,7 +85,7 @@ the 4xx or 402 body carry the structure as `refusal` (`code`
 An agent that cannot itself exfiltrate, but can hand a request to an agent
 that can, effectively can. `run_agent_tool`, `delegate_task_tool`,
 `wait_for_agent_tool`, `run_flow_tool`, `run_new_flow_tool`, `run_team_tool`,
-`run_loop_tool` and `run_scenario_tool` are the edges of that graph: each one
+`run_team_tool` and `run_loop_tool` are the edges of that graph: each one
 hands work (and, for the wait/poll tools, eventually the result) to another
 agent whose own tools are not in the caller's tool list at all.
 `run_new_flow_tool` builds the flow it runs, so it also checks every agent in
@@ -104,12 +102,12 @@ same guard at save time, so there is nothing extra to add on top.
 
 A combination that only closes through delegation blocks at the rule's own
 severity, exactly like one the agent's own tools form: an agent that reads
-private data and can notify the user cannot be given a web searcher as a
-delegate, since it then effectively holds all three. The rule id carries a
+private data and can notify the user cannot be given an agent that fetches
+web pages as a delegate, since it then effectively holds all three. The rule id carries a
 `_via_delegation` suffix and the report names the path, not just the tools:
 
 > Lethal trifecta via delegation: ingests untrusted content (via
-> run_agent_tool -> web_searcher: fetch_url, web_search) + reads private data
+> run_agent_tool -> fetcher: fetch_url) + reads private data
 > (read_file) + can send data outside (notify_user).
 
 Saving such a `delegates` list is refused with a 409 that carries this report,
@@ -181,39 +179,12 @@ fenced the same way as `get_task_result` (`chat/references.py`).
 `python -m evals.injection --static` checks the fences and the automatic quote
 against every corpus payload (the `hand-back fenced` count).
 
-## Web search provider
+## Web access
 
-`web_search` calls an external search API; the hub ships no search engine of
-its own. Settings, "Web search" picks the provider, the number of results a
-call returns and, for a search service, its API key, and writes them to
-`.env` as `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_API_KEY` and
-`WEB_SEARCH_MAX_RESULTS`. They are read live, so a change applies to the next
-call in the backend and in every runner without a restart.
-
-Two kinds of provider. **Anthropic** and **OpenAI** search through their own
-server-side search tool (the Messages API `web_search` tool, the Responses
-API `web_search` tool) on the key the Models page already holds, so no
-separate service or key is needed: the hub sends one request with a small
-model (`WEB_SEARCH_MODEL` overrides it), keeps the result list and the cited
-passages as snippets, and discards the prose. The provider bills each search
-on the same account as the model. **Brave Search**, **Tavily** and **Exa**
-are search services with a key of their own. Either way the agent gets the
-same tool: titles, URLs and snippets through the same untrusted-content
-envelope, domain policy, cache and web log, whatever model the agent itself
-runs on, including a local one.
-
-With no provider set the hub picks a model provider whose key is configured:
-the default provider from the Models page when it is Anthropic or OpenAI,
-else Anthropic, else OpenAI (skipped when `OPENAI_BASE_URL` points away from
-OpenAI, since a proxy or a local runtime rarely implements the search tool).
-The Settings card says which one a search would use. With nothing to search
-with, the tool performs no search and answers that it is not configured, an
-ordinary tool answer the agent relays to the user. `fetch_url` and the
-browser tools need none of this.
-
-The same page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
+`fetch_url` opens a page by its address and returns its readable text; the hub has
+no search tool. Settings, "Web access" is where it is tuned. The page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
 `WEB_FETCH_TIMEOUT`, `WEB_FETCH_MAX_REDIRECTS`) and the global domain policy:
-a deny list that always applies to fetches and to search results
+a deny list that always applies to fetches
 (`WEB_DENY_DOMAINS`), and an opt-in allow list (`WEB_DOMAIN_POLICY_ENABLED`,
 `WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach.
 A host matches itself and its subdomains. The file holds each list as a JSON
@@ -238,96 +209,9 @@ merge with the workspace's lists and the global ones above:
   subdomains.
 
 `fetch_url` refuses a host outside the merged lists with a tool result that
-names the list (`host 'x' is on this agent's blocked_domains`). `web_search`
-hands the lists to the search backend as its own filters (Tavily
-`include_domains` and `exclude_domains`, Exa `includeDomains` and
-`excludeDomains`, Brave `site:` and `-site:` in the query) and then filters the
-results by host whatever the backend did. The browser's session policy takes
-the agent's blocked hosts into its deny list and its allowed hosts into its
-allow list. `GET /api/agents/{id}/web-domains?workspace=` also answers the
-merged lists for that workspace.
-
-## The browser tools
-
-`browser_open`, `browser_read`, `browser_act`, `browser_screenshot` and
-`browser_close` drive a real headless Chromium. Use them for what `fetch_url`
-cannot read: pages rendered by JavaScript, content behind a click, a search
-form. `fetch_url` stays the first choice for a plain page: it is faster and
-has nothing to execute.
-
-- `browser_open(url)` opens a page and returns its title.
-- `browser_read(max_chars)` returns the page text as it is now, after scripts
-  and after any action. Text is extracted exactly as `fetch_url` extracts it
-  (scripts, comments and hidden elements dropped, links followed by their
-  URL) and wrapped in the same untrusted-content envelope.
-- `browser_act(action, selector, text)` clicks, fills, presses a key, scrolls
-  or selects an option. A selector is CSS, or `text=Sign in` to match by
-  visible text.
-- `browser_screenshot(full_page)` saves a PNG under `screenshots/` in the
-  run's workspace and returns its path.
-- `browser_close()` ends the session. Idle sessions also close on their own.
-
-Each run gets its own browser session (its own cookies and storage), keyed by
-the run id.
-
-A person can watch that session live from the run's output, take control of it
-(clicks, typing, an address bar, all under the same policy), browse on their
-own from the Browser page and hand a page to an agent, whose browser tools then
-continue in it. See [The browser](browser.md).
-
-### Enabling it
-
-The quickest way is **Settings → Browser**: address, token, local process or
-container, Start, Chromium install, all without a restart (see
-[The browser](browser.md), "Setting it up"). By hand, the browser runs as a
-separate service, `deploy/browser/`, in its own container. With compose:
-
-```
-# .env
-AGENTS_HUB_BROWSER_URL=http://browser:3000
-AGENTS_HUB_BROWSER_TOKEN=<a long random string>
-
-docker compose --profile browser up --build
-```
-
-Without those two settings the tools answer that the browser service is not
-configured, and the agent carries on. The service's own limits are
-environment variables on its container: `BROWSER_MAX_SESSIONS` (8),
-`BROWSER_IDLE_TIMEOUT` in seconds (300), `BROWSER_NAV_TIMEOUT_MS` (20000).
-
-### Security model
-
-The same rules as `fetch_url`, enforced twice:
-
-- **In the hub.** Every URL the agent names goes through `validate_url` (scheme,
-  the workspace's domain policy, the private-network block) before the service
-  is called at all, and the address the page ends up on after an open or an
-  action is checked again. A landing page that fails closes the session.
-- **In the service.** The session is created with the workspace's domain
-  policy (deny list, opt-in allow list, subdomain matching identical to
-  `fetch_url`). Every request the page makes, not only the one the agent asked
-  for, is routed through a filter: images, scripts, XHR, WebSockets and each
-  redirect hop. Redirects are fetched one hop at a time and the `Location` is
-  checked before the browser follows it. A request to a loopback, RFC1918,
-  link-local or cloud metadata address is refused on every address the host
-  resolves to. The check is the hub's own `common/ssrf.py`, copied into the
-  image at build time rather than rewritten. Service workers are blocked so
-  no request can bypass the filter, and downloads are off.
-- **Reachability.** The service requires the shared token on every call and
-  refuses to start without one. In compose it sits alone on its own network
-  with no published port, so pages cannot reach any other of our services.
-
-What remains: the host is resolved by the filter and then again by the
-browser, so a DNS answer that changes in between (rebinding) is not caught by
-the service alone. For a hard guarantee, add an egress firewall rule for the
-browser's network that drops private ranges.
-
-Capabilities: `browser_open`, `browser_read`, `browser_act` and
-`browser_screenshot` are classified exactly like `fetch_url`, ingesting
-untrusted content and able to send data out (the URL, and anything typed into
-a form). `browser_close` grants nothing. `browser_act` is not idempotent: an
-interrupted click is reported to a resumed run, never repeated blindly. With
-the approval gate on, it needs a yes every time.
+names the list (`host 'x' is on this agent's blocked_domains`).
+`GET /api/agents/{id}/web-domains?workspace=` also answers the merged lists for
+that workspace.
 
 ## run_code
 
@@ -406,7 +290,7 @@ members grant.
 
 ## Approval gates, which are a different thing
 
-Some tools refuse until `user_approved=True`: starting a flow, scenario, team or
+Some tools refuse until `user_approved=True`: starting a flow, team or
 loop, and every Service Agent action that stops something. That gate is about
 spending money and destroying state, not about data. The refusal carries the
 estimate or names what would be destroyed, so you approve with the number in
@@ -417,10 +301,4 @@ you agree. A workspace can also *enforce* it, holding a destructive call until a
 person answers on the task page, and run its own code around every tool call.
 See [hooks](hooks.md).
 
-A [proactive agent](proactive.md)'s profile is checked the same way: a
-webhook or file trigger counts as ingesting untrusted content, a
-delivery channel other than the inbox as sending data outside. `wake_agent`
-grants nothing: it nudges another agent's pulse and gets only an
-acknowledgement back.
-
-Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md), [proactive](proactive.md).
+Related: [agents](agents.md), [hooks](hooks.md), [system-agents](system-agents.md), [service-health](service-health.md), [web-logs](web-logs.md).

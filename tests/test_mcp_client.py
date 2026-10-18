@@ -315,7 +315,7 @@ def test_grants_come_from_the_server_the_operator_ticked(workspace):
 
     # And it composes with the built-in tools exactly as a built-in would: one
     # web tool on top of this server closes the trifecta.
-    assert capabilities_of(["mcp:tickets", "web_search"]) == {
+    assert capabilities_of(["mcp:tickets", "fetch_url"]) == {
         READS_PRIVATE, CAN_EXFILTRATE, INGESTS_UNTRUSTED}
 
 

@@ -69,7 +69,6 @@ def _seed_everything():
     DocStore("flows").put("f1", {"id": "f1", "nodes": [
         {"id": "n1", "agent_id": OLD, "data": {"entity_id": f"agent:{OLD}"}}]})
     DocStore("plans").put("j1", {"id": "j1", "kind": "agent_task", "agent_id": OLD})
-    DocStore("watchers").put("c1", {"id": "c1", "agent_id": OLD})
     DocStore("web_log").put("l1", {"agent_id": OLD})  # history
 
     with db.transaction() as conn:
@@ -78,10 +77,6 @@ def _seed_everything():
                      ("t1", "Team", OLD, json.dumps([{"agent_id": OLD, "manifest": "x"}]), "{}"))
         conn.execute("INSERT INTO loops (loop_id, name, config) VALUES (?, ?, ?)",
                      ("lp1", "Loop", json.dumps({"evaluator_agent": OLD})))
-        conn.execute("INSERT INTO scenarios (scenario_id, name, roles, config) VALUES (?, ?, ?, ?)",
-                     ("s1", "Sim", json.dumps([{"agent_id": OLD, "name": "Mara"}]), "{}"))
-        conn.execute("INSERT INTO eval_sets (eval_set_id, name, agent_id, target_kind, target_id) "
-                     "VALUES (?, ?, ?, ?, ?)", ("e1", "Set", OLD, "agent", OLD))
         conn.execute("INSERT INTO widgets (widget_id, workspace, name, agent_id, owner_id, public_key, "
                      "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                      ("wd1", "w1", "Widget", OLD, "u1", "pk1", NOW, NOW))
@@ -203,14 +198,10 @@ def test_migration_renames_every_stored_reference(legacy_registry):
     assert flow["nodes"][0]["agent_id"] == NEW
     assert flow["nodes"][0]["data"]["entity_id"] == f"agent:{NEW}"
     assert DocStore("plans").get("j1")["agent_id"] == NEW
-    assert DocStore("watchers").get("c1")["agent_id"] == NEW
 
     assert _value("SELECT leader_agent_id FROM teams WHERE team_id = ?", "t1") == NEW
     assert json.loads(_value("SELECT members FROM teams WHERE team_id = ?", "t1"))[0]["agent_id"] == NEW
     assert json.loads(_value("SELECT config FROM loops WHERE loop_id = ?", "lp1")) == {"evaluator_agent": NEW}
-    assert json.loads(_value("SELECT roles FROM scenarios WHERE scenario_id = ?", "s1"))[0]["agent_id"] == NEW
-    assert _value("SELECT agent_id FROM eval_sets WHERE eval_set_id = ?", "e1") == NEW
-    assert _value("SELECT target_id FROM eval_sets WHERE eval_set_id = ?", "e1") == NEW
     assert _value("SELECT agent_id FROM widgets WHERE widget_id = ?", "wd1") == NEW
     assert _value("SELECT agent_id FROM widget_threads WHERE thread_id = ?", "th1") == NEW
     assert _value("SELECT agent_id FROM services WHERE service_id = ?", "sv1") == NEW

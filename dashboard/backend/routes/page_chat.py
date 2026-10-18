@@ -18,7 +18,7 @@ Three deliberate properties:
 * **One fixed agent.** :data:`PAGE_CHAT_AGENT_ID` answers everywhere, so the
   panel is never a picker and the user never has to know which agent suits the
   page they happen to be on. Pages whose own builder agent *is* the point (a
-  scenario's, a team's) keep their own chat; the panel shows that one instead.
+  team's) keep their own chat; the panel shows that one instead.
 * **The records are rendered server-side.** The browser sends pointers
   (``kind`` + ``id``), never prompt text, so a page cannot smuggle instructions
   into the turn and a deleted record simply drops out.
@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["page-chat"])
 
 #: The one agent behind every page chat. General purpose and read-first: it can
-#: reach tasks, flows, agents, scenarios, teams, loops and the docs, which is
+#: reach tasks, flows, agents, teams, loops and the docs, which is
 #: the union of what the pages without a chat of their own are about.
 PAGE_CHAT_AGENT_ID = "main-agent"
 PAGE_CHAT_KIND = "page"

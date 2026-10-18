@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, AlertCircle, CheckCircle2, ChevronRight, CircleStop, DollarSign,
+  Activity, AlertCircle, CheckCircle2, ChevronRight, CircleStop,
   TrendingUp, XCircle,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import {
-  fmtAgo, fmtInt, fmtMs, fmtTokens, fmtUsd, runHref,
+  fmtAgo, fmtInt, fmtMs, runHref,
 } from './format';
 
 /*
- * The Dashboard's load and spend widgets, fed by one call
+ * The Dashboard's load widgets, fed by one call
  * (GET /api/stats/overview, common/dashboard_overview.py). Each widget gets
  * its own section of that answer and shows the section's `error` instead of
  * numbers when the backend could not compute it.
@@ -191,47 +191,6 @@ export const RunsWidget = ({ runs }) => {
   );
 };
 
-export const CostsWidget = ({ costs }) => {
-  const { t } = useI18n();
-  const top = costs?.top_agents || [];
-  const topMax = Math.max(...top.map((a) => a.cost), 0);
-  return (
-    <Panel
-      icon={DollarSign} iconColor="text-amber-500" testId="dash-costs"
-      title={t('dashboard.overview.costs.heading')}
-      to="/costs" linkLabel={t('dashboard.overview.costs.link')}
-    >
-      {costs?.error ? <SectionError message={costs.error} /> : (
-        <>
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <Tile label={t('dashboard.overview.costs.today')} value={fmtUsd(costs?.today)} />
-            <Tile label={t('dashboard.overview.costs.week')} value={fmtUsd(costs?.last_7d)} />
-            <Tile
-              label={t('dashboard.overview.costs.month')} value={fmtUsd(costs?.last_30d)}
-              hint={t('dashboard.overview.costs.tokens', { tokens: fmtTokens(costs?.tokens_30d) })}
-            />
-          </div>
-          <DayBars
-            testId="dash-costs-chart"
-            days={costs?.per_day || []}
-            series={[{ key: 'cost', label: t('dashboard.overview.costs.perDay'), color: 'bg-amber-400' }]}
-            format={fmtUsd}
-            height={56}
-          />
-          {top.length > 0 && (
-            <div className="mt-3">
-              <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('dashboard.overview.costs.topAgents')}</div>
-              {top.slice(0, 4).map((a) => (
-                <ShareRow key={a.key} label={a.key} value={fmtUsd(a.cost)} share={topMax ? a.cost / topMax : 0} />
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-};
-
 const ENDED_ICON = {
   completed: <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />,
   failed: <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />,
@@ -248,7 +207,7 @@ const RunRow = ({ item, children }) => {
 
 /**
  * What runs right now, of every kind: agent runs (a chat turn, a task, a
- * service's turn), flows, loops, teams and scenarios, plus the launch queue.
+ * service's turn), flows, loops and teams, plus the launch queue.
  * With nothing running it shows the last runs that ended instead. Records
  * still marked active but silent for long are counted apart: their process
  * most likely died without closing them. `generatedAt` is the overview's

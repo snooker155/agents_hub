@@ -86,8 +86,7 @@ export function useLiveResource(fetchFn, { type, deps = [], channel = 'app' } = 
  * page whose events arrive as a drawn-out burst rather than all at once.
  *
  * `fallbackMs` adds a slow safety-net interval on top of the subscription, for
- * a page whose *detail* has no event of its own: a team's board or a
- * simulation's ticks are published on their own run channel, and only the run
+ * a page whose *detail* has no event of its own: a team's board is published on their own run channel, and only the run
  * starting or finishing reaches the app channel. When that run channel drops,
  * the subscription alone would leave the page frozen. This is a floor, not a
  * poll: keep it at 30s or more, so it costs one request a minute rather than

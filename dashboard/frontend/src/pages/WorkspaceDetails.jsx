@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, Sparkles, Repeat } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, Repeat } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import ProjectCard from '../components/projects/ProjectCard';
@@ -11,7 +11,6 @@ import { PROJECT_GRID } from '../components/projects/projectCardConfig';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
-import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useTheme, resolvePalette } from '../components/theme';
 import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
@@ -1201,7 +1200,7 @@ const WorkspaceDetails = () => {
 
 // What is configured per workspace, laid out the way the Settings page lays
 // out its sections: a left-hand menu and one content column. Provider keys,
-// RAG, observability and logging are not here: they are not a property of a
+// RAG and logging are not here: they are not a property of a
 // workspace, so they live on the Settings page only. `saves` marks the
 // sections whose fields ride on the Save button; the others save themselves.
 const SETTINGS_GROUPS = [
@@ -1210,7 +1209,6 @@ const SETTINGS_GROUPS = [
     items: [
       { id: 'execution', icon: Server, saves: true },
       { id: 'roles', icon: Repeat },
-      { id: 'specialModels', icon: Sparkles },
       { id: 'toolPolicy', icon: Shield },
       { id: 'webPolicy', icon: Globe },
       { id: 'personalMemory', icon: UserRound },
@@ -1329,7 +1327,6 @@ function WorkspaceSettingsTab({ workspace, agents }) {
           )}
           {active.id === 'webPolicy' && <WorkspaceDomainPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
-          {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
           {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}

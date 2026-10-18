@@ -1,15 +1,15 @@
 """
-The one launch envelope for the runs of flows, loops, teams and scenarios.
+The one launch envelope for the runs of flows, loops and teams.
 
 An agent's task run has this shape (agents/agent_launcher.py): a *database
 half* prepares the run (its record, session, log path) and builds a plain
 JSON spec; a *process half* turns the spec into a process. Flows had their
-own copy of that shape; teams and scenarios ran on daemon threads of the API
+own copy of that shape; teams ran on daemon threads of the API
 process with no sandbox, no heartbeat, and stayed ``running`` forever after a
 restart.
 
 This module is the process half for every entity kind. A launcher
-(flow/launcher.py, loops/launcher.py, teams/launcher.py, playground/launcher.py) prepares its
+(flow/launcher.py, loops/launcher.py, teams/launcher.py) prepares its
 record in ``entity_runs`` (common/entity_runs.py) and calls :func:`dispatch`
 with a spec; from there the run is spawned, locally or in a container,
 exactly the way a task run is.
@@ -17,9 +17,9 @@ exactly the way a task run is.
 The spec, plain JSON and nothing secret::
 
     {
-      "kind": "team",                 # flow | loop | team | scenario
+      "kind": "team",                 # flow | loop | team
       "run_id": "...",                # the entity_runs key
-      "entity_id": "...",             # flow_id, team_id, scenario_id
+      "entity_id": "...",             # flow_id, loop_id, team_id
       "entrypoint": "team_run",       # runtime/<entrypoint>.py, -m runtime.<entrypoint>
       "cli_args": [...],              # the entrypoint's own arguments
       "workspace": "...",             # workspace name
@@ -37,7 +37,7 @@ The environment is rebuilt here from this process's own configuration
 run and beats its heartbeat from then on; the watchdog judges it by that beat
 and never by a pid on another host.
 
-Docker applies to a team or a scenario by the same rule as to an agent:
+Docker applies to a team by the same rule as to an agent:
 ``execution_mode`` on the spec, decided by the launcher from the workspace's
 agent execution mode, and the same hardened run container
 (runtime/docker_runner.py) with the same state transport. Flows and loops
@@ -65,7 +65,6 @@ ENTRYPOINTS: Dict[str, str] = {
     "flow": "flow_run",
     "loop": "loop_run",
     "team": "team_run",
-    "scenario": "scenario_run",
 }
 
 def utc_now_iso() -> str:

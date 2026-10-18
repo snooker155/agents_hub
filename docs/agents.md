@@ -100,7 +100,7 @@ bootstrap sync leaves it alone afterward.
 
 A task or a scheduled `agent_task` job can be pinned to a stored agent version via `agent_version`; `null` means the live definition. The launcher passes `--definition-version N` to the runtime, which builds the agent from that stored version. A version whose row has been deleted falls back to the live definition (logged).
 
-Every agent run record carries `agent_version`: the pin if it still existed, the A/B experiment arm's version if an experiment routed the run, or the version matching the live definition's hash. The hash is snapshotted on first use, so it is never null for a registered agent.
+Every agent run record carries `agent_version`: the pin if it still existed, or the version matching the live definition's hash. The hash is snapshotted on first use, so it is never null for a registered agent.
 
 The run page panel shows that version against the agent's current one and offers rollback: `POST /api/runs/{run_id}/rollback-agent` (same checks as the agent's own rollback route: refuses a version whose tool set the capability guard now blocks).
 
@@ -220,12 +220,8 @@ One page per agent, in tabs:
 - **Docker**: the agent's image and environment
   ([containers](containers.md)); when Docker is missing or not answering the
   tab says so instead of calling every image "not built".
-- **Pulse**: the agent's own schedule, quiet hours, brief and
-  triggers, and the feed of its ticks ([proactive](proactive.md)).
 - **Guardrails**: which guardrails already apply and the `selected` ones the
   agent opts into ([guardrails](guardrails.md)).
-- **Experiments**: an A/B experiment between two stored versions
-  ([experiments](experiments.md)).
 
 **Run** on the page starts a resident [instance](instances.md).
 
@@ -238,4 +234,4 @@ One page per agent, in tabs:
 - `run_agent_tool` is refused inside a tracked task. Use `delegate_task_tool`
   there (a subtask run, optionally on another model), or assign and start.
 
-Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md), [proactive](proactive.md).
+Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md).

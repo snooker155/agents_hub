@@ -2,8 +2,8 @@
 One vocabulary of run statuses, and the moves a run may make between them.
 
 Every kind of run the hub launches (an agent's task run, a flow, a loop, a
-team, a scenario) used to spell its lifecycle a little differently: a flow
-was ``pending`` before it ran, a scenario was ``starting``, a team was born
+team) used to spell its lifecycle a little differently: a flow
+was ``pending`` before it ran, a team was born
 ``running``, and a stop request was ``stop`` on an agent run but ``stopping``
 on a loop. Readers that wanted "is it still going" (the run groups page, the
 watchdog, the health snapshot) each kept their own union of those spellings.
@@ -178,7 +178,6 @@ _LEAF_ALIASES: Dict[str, str] = {
     "done": RunStatus.completed.value,
     "finished": RunStatus.completed.value,
     "error": RunStatus.failed.value,
-    "starting": RunStatus.pending.value,       # scenario runs before this module
 }
 
 

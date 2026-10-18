@@ -15,11 +15,10 @@ adjust first.
 | `invoice_agent`: Invoice agent | Extracts invoice fields, checks arithmetic, duplicates and purchase orders, prepares records for approval | none |
 | `contract_review_agent`: Contract review agent | Reviews a contract against the team's playbook, flags clauses by severity, proposes redlines, writes a memo | none |
 | `support_triage_agent`: Support triage agent | Classifies tickets by area, urgency and sentiment, finds the answer in the knowledge base, drafts a reply for a person to approve, escalates bugs as tasks | (jira) |
-| `research_agent`: Research agent | Researches a question on the web and in files and memory, compares sources, writes a cited brief with confidence levels and open questions | none |
+| `research_agent`: Research agent | Researches a question in files and memory, compares sources, writes a cited brief with confidence levels and open questions | none |
 | `meeting_notes_agent`: Meeting notes agent | Turns a transcript into a summary, decisions, action items with owners and dates and open questions, creates tasks, remembers decisions | (jira) |
 | `recruiting_screener_agent`: Recruiting screener | Screens CVs against must-haves and nice-to-haves with evidence, flags gaps, ignores protected characteristics, writes a shortlist and interview questions | none |
 | `content_writer_agent`: Content writer | Drafts blog posts, newsletters and social posts in the brand voice from a brief, outline first, facts tied to your sources, headline variants | none |
-| `lead_research_agent`: Lead research agent | Researches an account or person from public sources and the CRM, writes an account brief and a personalised first outreach draft, never sends | none |
 
 ## In the create wizard
 
@@ -50,9 +49,8 @@ template, so editing either one never changes the other.
 
 ## Why some channels are left out
 
-The research and lead research agents read web search results (untrusted)
-and private data (files, memory, the CRM), so they get no tool that can send
-data out: no `fetch_url`, where the agent picks the URL and a secret could
+The research agent reads private data (files, memory), so it gets no tool
+that can send data out: no `fetch_url`, where the agent picks the URL and a secret could
 leave in it, and no notification tools. The content writer cannot
 open links for the same reason, so you paste or upload its sources. The
 support triage agent drafts replies and never sends them.

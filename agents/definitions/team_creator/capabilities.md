@@ -9,4 +9,4 @@
 
 What this agent does NOT do:
 - Create or modify agents (use the Agent Creator)
-- Create flows, loops or scenarios (use the Flow Creator, Loop Creator, Scenario Creator)
+- Create flows or loops (use the Flow Creator, Loop Creator)

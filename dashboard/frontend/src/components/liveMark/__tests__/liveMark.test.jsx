@@ -58,11 +58,11 @@ describe('live mark poses', () => {
 
 describe('what the mark shows for a step', () => {
   it.each([
-    ['web_search', 'search-web'], ['search_memory', 'search-memory'], ['notion_search', 'search-kb'],
+    ['search_web', 'search-web'], ['search_memory', 'search-memory'], ['notion_search', 'search-kb'],
     ['search_docs', 'search-kb'], ['search_text', 'search-files'], ['list_workspace_files', 'search-files'],
     ['db_query', 'search-db'], ['search_errors', 'search-errors'], ['instance_logs', 'search-errors'],
     ['list_runs', 'search-history'], ['get_team_run_tool', 'search-history'],
-    ['fetch_url', 'search-doc'], ['read_file', 'search-doc'], ['browser_read', 'search-doc'],
+    ['fetch_url', 'search-doc'], ['read_file', 'search-doc'],
     ['write_file', 'write-file'], ['create_file', 'write-file'], ['save_workspace_file', 'write-file'],
     ['apply_unified_diff', 'write-code'], ['create_view', 'make-view'], ['slides_add', 'make-view'],
     ['mesh_extrude', 'make-3d'], ['mesh_history', 'make-3d'], ['view_serve', 'make-html'],
@@ -71,11 +71,10 @@ describe('what the mark shows for a step', () => {
     ['run_code', 'code'], ['run_shell', 'code'], ['system_run_tests', 'code'],
     ['get_task', 'read'], ['list_flows_tool', 'read'], ['view_get', 'read'],
     ['stop_team_run_tool', 'working'], ['delete_file', 'working'], ['clear_graph', 'working'], ['', 'working'],
-    ['service_health', 'search-errors'], ['costs_summary', 'search-db'], ['costs_report', 'search-db'],
+    ['service_health', 'search-errors'],
     ['remember', 'mark-goodrop'], ['recall', 'search-memory'], ['recall_episodes', 'search-memory'],
     ['create_task', 'write-file'], ['schedule_task', 'mark-gclock'], ['update_scheduled', 'mark-gclock'],
-    ['ask_special_model', 'relay-ask'], ['generate_image', 'mark-spiro'], ['generate_video', 'mark-spiro'],
-    ['synthesize_speech', 'speak'], ['notify_user', 'mark-antenna'], ['transcribe_audio', 'listen'],
+    ['notify_user', 'mark-antenna'],
     // the hub relay stories
     ['ask_user', 'relay-ask'], ['wait_for_agent_tool', 'relay-stream'], ['reject_assignment_tool', 'relay-handoff'],
     ['assign_agent_tool', 'relay-lead'], ['run_eval_tool', 'relay-delegate'], ['add_subtask', 'relay-team'],
@@ -114,7 +113,7 @@ describe('what the mark shows for a step', () => {
     expect(stateForTool('hub_action', { kind: 'loop', action: 'start' })).toBe('mark-cycle');
     expect(stateForTool('hub_action', { kind: 'instance', action: 'restart' })).toBe('relay-deploy');
     expect(stateForTool('hub_action', { kind: 'watcher', action: 'pause' })).toBe('mark-tetra');
-    expect(stateForTool('hub_action', { kind: 'scenario', action: 'resume' })).toBe('run-flow');
+    expect(stateForTool('hub_action', { kind: 'flow', action: 'resume' })).toBe('run-flow');
     expect(stateForTool('hub_action', { kind: 'team', action: 'start' })).toBe('run-team');
     expect(stateForTool('hub_action', { kind: 'pulse', action: 'resume' })).toBe('delegate');
     expect(stateForTool('hub_action', { kind: 'instance', action: 'stop' })).toBe('working');
@@ -135,7 +134,7 @@ describe('what the mark shows for a step', () => {
   });
 
   it('puts a waiting approval first, then the tool, the thought and the text', () => {
-    expect(stateForTurn({ waiting: true, tool: 'web_search', thinking: true })).toBe('wait');
+    expect(stateForTurn({ waiting: true, tool: 'search_web', thinking: true })).toBe('wait');
     expect(stateForTurn({ tool: 'write_file', thinking: true, text: true })).toBe('write-file');
     expect(stateForTurn({ thinking: true, text: true })).toBe('think');
     expect(stateForTurn({ text: true })).toBe('speak');
@@ -434,7 +433,7 @@ describe('the chat avatar while a turn runs', () => {
   it('is the live mark on the running tool, and the bot once the turn ends', () => {
     const msg = {
       id: 'a1', role: 'agent', content: '',
-      timeline: [{ type: 'tool', tool: 'web_search', running: true }],
+      timeline: [{ type: 'tool', tool: 'search_web', running: true }],
     };
     const { container, rerender } = wrap(<MessageBubble msg={msg} isStreaming agentName="Researcher" />);
     expect(container.querySelector('svg[data-state]').getAttribute('data-state')).toBe('search-web');

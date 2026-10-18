@@ -6,8 +6,7 @@ reads those records back rather than a second index that could drift:
 
 - a memory pool: ``rag_files[].workspace_file_id`` on the pool (set by
   ``POST /api/shared-memory/{id}/files/from-workspace``);
-- a task: ``Task.file_ids``;
-- an eval case: ``Case.file_ids`` inside its eval set.
+- a task: ``Task.file_ids``.
 
 A chat turn keeps no record of its own that outlives the request, so the
 attachment path writes a row to ``workspace_file_uses`` instead
@@ -60,23 +59,9 @@ def _tasks(file_id: str, workspace: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _eval_cases(file_id: str, workspace: str) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    try:
-        from evals import store as eval_store
-        for evalset in eval_store.list_eval_sets(workspace):
-            for case in evalset.cases:
-                if file_id in (getattr(case, "file_ids", None) or []):
-                    out.append({"eval_set_id": evalset.eval_set_id, "name": evalset.name,
-                                "case_id": case.case_id, "input": (case.input or "")[:120]})
-    except Exception:  # noqa: BLE001 - one unreadable store leaves its list empty
-        log.debug("files: could not scan eval sets for %s", file_id, exc_info=True)
-    return out
-
-
 def where_used(file_id: str) -> Dict[str, Any]:
     """Every place that references ``file_id``: chat conversations, memory
-    pools, tasks and eval cases, plus the run that produced it when an agent
+    pools and tasks, plus the run that produced it when an agent
     saved it. Works on a deleted file too (its tombstone names the
     workspace), so the Files page can say what a deletion left dangling."""
     record = service.get_file(file_id, include_deleted=True)
@@ -90,12 +75,11 @@ def where_used(file_id: str) -> Dict[str, Any]:
         "chats": chats,
         "memory_pools": _memory_pools(file_id),
         "tasks": _tasks(file_id, workspace),
-        "eval_cases": _eval_cases(file_id, workspace),
     }
     meta = record.get("meta") or {}
     if record.get("source") == "agent" and (meta.get("run_id") or meta.get("agent_id")):
         result["produced_by"] = {"run_id": meta.get("run_id"), "agent_id": meta.get("agent_id")}
-    result["total"] = sum(len(result[k]) for k in ("chats", "memory_pools", "tasks", "eval_cases"))
+    result["total"] = sum(len(result[k]) for k in ("chats", "memory_pools", "tasks"))
     return result
 
 

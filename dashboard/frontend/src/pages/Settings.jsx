@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw,
+  RefreshCw, Key, Cpu, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, Thermometer, RotateCcw,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getDemo, setDemo } from '../api/demo';
@@ -12,10 +12,9 @@ import { SectionCard, inputCls } from '../components/settingsUi';
 import { useI18n } from '../i18n';
 import {
   ProviderStatusBadge, SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
-  ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebSearchSection,
+  ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, LoggingSection, WebAccessSection,
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
-import BrowserServiceSection from '../components/settings/BrowserServiceSection';
 import PageLoader from '../components/PageLoader';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
@@ -49,10 +48,8 @@ const GROUPS = [
     key: 'system',
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
-      { id: 'webSearch',     key: 'webSearch',     icon: Globe },
-      { id: 'browser',       key: 'browser',       icon: MonitorSmartphone },
+      { id: 'webAccess',     key: 'webAccess',     icon: Globe },
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
-      { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
       // The first run is a single operator's (docs/installation.md, "The first run in the browser").
@@ -76,7 +73,7 @@ const BLANK_BACKEND = { id: '', label: '', adapter: 'openai', base_url: '', api_
 // The demo workspace: a workspace named `demo` seeded with recorded data so a
 // new install has something to look at. Not workspace scoped: it adds or
 // removes a whole workspace, through its own endpoint.
-const DEMO_COUNT_KEYS = ['agents', 'projects', 'tasks', 'flows', 'teams', 'scenarios', 'views', 'runs'];
+const DEMO_COUNT_KEYS = ['agents', 'projects', 'tasks', 'flows', 'teams', 'views', 'runs'];
 
 function DemoWorkspaceTab() {
   const { t } = useI18n();
@@ -472,15 +469,13 @@ export default function Settings() {
             {active.id === 'providers' && <ProvidersSection s={ws} />}
             {active.id === 'temperature' && <GlobalTemperatureSection s={ws} />}
             {active.id === 'local' && <LocalServersSection s={ws} />}
-            {active.id === 'observability' && <ObservabilitySection s={ws} />}
             {active.id === 'rag' && <RagSection s={ws} />}
             {active.id === 'custom' && <CustomBackendsTab />}
             {active.id === 'demo' && <DemoWorkspaceTab />}
             {active.id === 'firstRun' && <FirstRunSettings />}
             {active.id === 'logging' && <LoggingSection s={ws} />}
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
-            {active.id === 'webSearch' && <WebSearchSection s={ws} />}
-            {active.id === 'browser' && <BrowserServiceSection />}
+            {active.id === 'webAccess' && <WebAccessSection s={ws} />}
           </div>
         </div>
       </div>

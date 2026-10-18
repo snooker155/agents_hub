@@ -5,7 +5,6 @@ import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PageChatProvider } from './components/pageChat/PageChatContext';
 import { FeaturesProvider } from './components/FeaturesContext';
-import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
 
@@ -13,12 +12,11 @@ import FirstRunGate from './components/firstRun/FirstRunGate';
 // Pages are loaded on demand.
 // ---------------------------------------------------------------------------
 // Importing all forty-odd pages eagerly meant one bundle that had to parse the
-// flow editor, the 3-D scene view and the whole playground before the first
+// flow editor and the 3-D scene view before the first
 // screen could paint, however little of it the visitor was about to use. Each
 // `import()` below becomes its own chunk, named after the page; the modules a
-// family of pages shares (the `pages/playground/*` helpers, the view
-// renderers, the flow canvas) are factored out into a chunk of their own by
-// Rollup, so opening the second page of a family costs nothing extra.
+// family of pages shares (the view renderers, the flow canvas) are factored
+// out into a chunk of their own by Rollup, so opening the second page of a family costs nothing extra.
 //
 // Layout, the providers and the boundary stay eager: they are on screen for
 // every route, so deferring them would only add a round trip to every visit.
@@ -48,19 +46,10 @@ const Chat = lazy(() => import('./pages/Chat'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
-const Watchers = lazy(() => import('./pages/Watchers'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
-const Browser = lazy(() => import('./pages/Browser'));
-const Costs = lazy(() => import('./pages/Costs'));
-const Evals = lazy(() => import('./pages/Evals'));
-const Playground = lazy(() => import('./pages/Playground'));
-const PlaygroundScenario = lazy(() => import('./pages/PlaygroundScenario'));
-const PlaygroundRuns = lazy(() => import('./pages/PlaygroundRuns'));
-const PlaygroundWorlds = lazy(() => import('./pages/PlaygroundWorlds'));
-const PlaygroundWorld = lazy(() => import('./pages/PlaygroundWorld'));
 const Loops = lazy(() => import('./pages/Loops'));
 const Teams = lazy(() => import('./pages/Teams'));
 const TeamDetails = lazy(() => import('./pages/TeamDetails'));
@@ -108,7 +97,6 @@ function RouteBoundary({ children }) {
 const guard = (element) => <RouteBoundary>{element}</RouteBoundary>;
 
 function AppRoutes() {
-  const { playground } = useFeatures();
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
@@ -146,14 +134,12 @@ function AppRoutes() {
         <Route path="/messages" element={guard(<Messages />)} />
         <Route path="/messages/:runId" element={guard(<MessageDetails />)} />
         <Route path="/connectors" element={guard(<Connectors />)} />
-        <Route path="/watchers" element={guard(<Watchers />)} />
         <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
         <Route path="/nodes" element={<Navigate to="/instances" replace />} />
         <Route path="/guardrails" element={guard(<Guardrails />)} />
         <Route path="/containers" element={guard(<Containers />)} />
-        <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
@@ -164,25 +150,6 @@ function AppRoutes() {
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />
         <Route path="/models" element={guard(<Models />)} />
-        <Route path="/costs" element={guard(<Costs />)} />
-        <Route path="/evals" element={guard(<Evals />)} />
-        {/* The playground is optional (GET /api/health → features.playground).
-            Switched off, its routes are not registered at all and anything
-            under /playground lands on the dashboard, so a stale bookmark gets
-            a working page instead of a blank one. */}
-        {playground ? (
-          <>
-            <Route path="/playground" element={guard(<Playground />)} />
-            {/* Static before dynamic: "runs" and "worlds" are pages, not
-                scenario ids. */}
-            <Route path="/playground/runs" element={guard(<PlaygroundRuns />)} />
-            <Route path="/playground/worlds" element={guard(<PlaygroundWorlds />)} />
-            <Route path="/playground/worlds/:worldId" element={guard(<PlaygroundWorld />)} />
-            <Route path="/playground/:scenarioId" element={guard(<PlaygroundScenario />)} />
-          </>
-        ) : (
-          <Route path="/playground/*" element={<Navigate to="/dashboard" replace />} />
-        )}
         <Route path="/settings" element={guard(<Settings />)} />
         <Route path="/settings/:section" element={guard(<Settings />)} />
         <Route path="/docs" element={guard(<Docs />)} />
@@ -195,9 +162,7 @@ function AppRoutes() {
 }
 
 function App() {
-  // The base is '/' in the app and '/agents_hub/demo/' in the recorded demo
-  // built for the site (vite.config.js, VITE_DEMO), so the router follows
-  // Vite's BASE_URL rather than assuming the root.
+  // The router follows Vite's BASE_URL rather than assuming the root.
   return (
     <Router basename={import.meta.env.BASE_URL}>
       {/* Inside the router: the page chat's subject is the route, so it can

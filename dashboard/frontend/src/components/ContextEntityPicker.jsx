@@ -4,7 +4,7 @@ import { getContextKinds, getContextEntities, getContextEntityPreview } from '..
 import { useI18n } from '../i18n';
 
 // Picker for the hub records a chat message can carry alongside its files — a
-// task, a view, a project, a scenario, a loop, a flow, a team, an agent, a
+// task, a view, a project, a loop, a flow, a team, an agent, a
 // scheduled job. The kind rail and every row come from /api/context, which is a
 // shell over the same catalog the prompt builder renders from: whatever is
 // offered here is guaranteed to arrive in the agent's context.

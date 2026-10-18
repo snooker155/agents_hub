@@ -48,7 +48,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Import route modules organized by domain
 from routes import connectors as connectors_router
 from routes import trackers as trackers_router
-from routes import agent_import, agents, chats, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, projects, containers, messages, flow_entities, git, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
+from routes import agent_import, agents, chats, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, projects, containers, messages, flow_entities, git, marketplace, plan, stream, health, replay, views, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import help_chat as help_chat_router
 from routes import assistant as assistant_router
 from routes import setup_guide as setup_guide_router
@@ -76,7 +76,7 @@ log = logging.getLogger("dashboard.backend.main")
 async def lifespan(app: FastAPI):
     """Background services live exactly as long as the app does.
 
-    Startup wires up the broker, the plan scheduler, the watcher runner, the
+    Startup wires up the broker, the plan scheduler, the
     external-state publisher and the run watchdog; everything after the yield
     stops them again. Each is started inside its own try: a connector that
     will not come up must not take the API down with it.
@@ -99,21 +99,13 @@ async def lifespan(app: FastAPI):
     # The orchestrator node is started on demand by the user, not at startup.
 
     # The singleton supervisor (common/singletons.py) runs the background
-    # services that must exist exactly once in the process (online evals).
+    # services that must exist exactly once in the process.
     try:
         from common.singletons import supervisor as _supervisor
         await _supervisor.start()
-        log.info("✓ Singleton supervisor started (online_evals)")
+        log.info("✓ Singleton supervisor started")
     except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the singleton supervisor: {e}")
-
-    # Outbound webhook deliveries left in the outbox by an earlier process go
-    # out as soon as the drainer starts.
-    try:
-        from notify import outbound as _notify_outbound
-        _notify_outbound.start()
-    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
-        log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
@@ -122,15 +114,6 @@ async def lifespan(app: FastAPI):
         log.info("✓ Plan scheduler started")
     except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start plan scheduler: {e}")
-
-    # Start the watcher runner (polls mailboxes and HTTP resources, wakes the
-    # proactive agents listening; one replica through the "watchers" lease).
-    try:
-        from watchers.runner import runner as _watcher_runner
-        await _watcher_runner.start()
-        log.info("✓ Watcher runner started")
-    except Exception as e:  # noqa: BLE001 - watchers are optional, the app still serves
-        log.warning(f"⚠ Could not start the watcher runner: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
     # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
@@ -159,11 +142,6 @@ async def lifespan(app: FastAPI):
     if task:
         task.cancel()
     try:
-        from watchers.runner import runner as _watcher_runner
-        await _watcher_runner.stop()
-    except Exception:  # noqa: BLE001 - shutdown goes on whatever the runner says
-        log.debug("watcher runner stop failed", exc_info=True)
-    try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
@@ -176,11 +154,6 @@ async def lifespan(app: FastAPI):
     try:
         from common.singletons import supervisor as _supervisor
         await _supervisor.stop()
-    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
-        log.debug("_load: best-effort step failed", exc_info=True)
-    try:
-        from notify import outbound as _notify_outbound
-        _notify_outbound.shutdown()
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("_load: best-effort step failed", exc_info=True)
     try:
@@ -377,20 +350,7 @@ app.include_router(stats.router)
 app.include_router(models_router.router)
 
 # Costs domain: token/$ spend breakdowns
-app.include_router(costs.router)
 
-
-# Preview (feature 7a): project and container pages through the hub, behind a
-# short-lived ticket. See docs/containers.md.
-from routes import preview as preview_router
-app.include_router(preview_router.router)
-app.include_router(preview_router.public_router)
-
-
-# Browser (feature 7b): the agent's browser session on screen, and free
-# browsing on the same service. See docs/browser.md.
-from routes import browser as browser_router
-app.include_router(browser_router.router)
 
 # Terminal: a shell in a run's or a service replica's container, over a
 # ticketed WebSocket. See docs/terminal.md.
@@ -400,24 +360,13 @@ app.include_router(terminal_router.router)
 # Replay domain: re-run a recorded run and diff outputs (regression eval)
 app.include_router(replay.router)
 
-# Evals domain: batch replay across cases x models, scored by graders
-app.include_router(evals.router)
-
-# Playground domain: multi-agent simulation against a deterministic environment.
-# Optional: off (PLAYGROUND_ENABLED=false) skips both the routes and the
-# ``playground`` package import they would otherwise trigger. See
-# docs/playground.md, "Turning the playground off".
-from common.config import playground_enabled as _playground_enabled
-if _playground_enabled():
-    app.include_router(playground.router)
-
 # Memory domain: shared memory management
 app.include_router(memory.router)
 
 # Skills domain: workspace skill catalog, publishing, install-onto-agent
 app.include_router(skills.router)
 
-# Web log domain: recorded web_search / fetch_url calls and their responses
+# Web log domain: recorded fetch_url calls and their responses
 app.include_router(weblogs.router)
 
 # Workspaces domain: workspace management and tasks
@@ -474,11 +423,9 @@ from routes import (
     agent_loop_settings as agent_loop_settings_router,
     memory_versions as memory_versions_router,
     memory_consolidation as memory_consolidation_router,
-    agent_proactive as agent_proactive_router,
 )
 for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
-                     agent_loop_settings_router, memory_versions_router, memory_consolidation_router,
-                     agent_proactive_router):
+                     agent_loop_settings_router, memory_versions_router, memory_consolidation_router):
     app.include_router(_loop_router.router)
 
 # A tool call waiting for a person inside a chat turn: the chat's Approve and
@@ -490,16 +437,12 @@ app.include_router(tool_approvals_router.router)
 from routes import connection_proposals as connection_proposals_router
 app.include_router(connection_proposals_router.router)
 
-# An agent's own domain lists for web_search, fetch_url and the browser
+# An agent's own domain lists for fetch_url
 # (tools/web.py), on top of the workspace's and the global ones.
 from routes import agent_web_domains as agent_web_domains_router
 app.include_router(agent_web_domains_router.router)
 
-# Watchers (watchers/, docs/watchers.md): observers that wake a proactive agent.
-from routes import watchers as watchers_router
-app.include_router(watchers_router.router)
-
-# Files a workspace keeps by id (chat, memory, tasks and evals reuse them).
+# Files a workspace keeps by id (chat, memory and tasks reuse them).
 from routes import files as files_router
 app.include_router(files_router.router)
 
@@ -545,8 +488,7 @@ app.include_router(demo_router.router)
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)
 
-# Notifications domain: outbound webhook/slack endpoints, alert rules, and the
-# inbound task-filing webhook.
+# Notifications domain: the alert rules that raise in-app notifications.
 app.include_router(notify_router.router)
 
 # Identity domain: the auth-mode probe the frontend bootstraps from. There is
@@ -577,8 +519,8 @@ RELOAD_DIRS = [
     *(str(project_root / name) for name in
       ("agents", "common", "tools", "tasks", "chat", "flow", "providers",
        "instances", "managers", "workspace", "reasoning", "memory", "connectors",
-       "evals", "guardrails", "loops", "mcp_client", "notify", "plans", "proactive",
-       "sandbox", "teams", "watchers", "views", "declarative", "files", "projects")),
+       "guardrails", "loops", "mcp_client", "notify", "plans",
+       "sandbox", "teams", "views", "declarative", "files", "projects")),
 ]
 #: How long a reload waits for open connections before closing them.
 RELOAD_GRACE_SECONDS = 5

@@ -175,7 +175,7 @@ class AgentBase(ABC):
             # the human turn: the model reads them as a conversation, and the
             # prefix stays byte-identical from turn to turn, which is what a
             # provider prompt cache keys on. Optional, so a caller that passes no
-            # history (task runs, evals, delegation) invokes exactly as before.
+            # history (task runs, delegation) invokes exactly as before.
             MessagesPlaceholder(variable_name="chat_history", optional=True),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),

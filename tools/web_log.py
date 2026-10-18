@@ -1,5 +1,5 @@
 """
-Web access log — every ``web_search`` and ``fetch_url`` call, with what came
+Web access log — every ``fetch_url`` call, with what came
 back and what looked wrong with it.
 
 Two jobs, both of them review jobs:
@@ -156,8 +156,7 @@ def _excerpt(text: str, start: int, end: int, pad: int = 70) -> str:
 def scan_content(text: str, *, where: str = "response") -> List[Dict[str, Any]]:
     """Flag patterns in retrieved content that deserve a human look.
 
-    ``where`` labels the region scanned ("response", "hidden text", "search
-    results") so a flag raised against text hidden from human readers reads
+    ``where`` labels the region scanned ("response", "hidden text") so a flag raised against text hidden from human readers reads
     differently from the same phrase in the visible body.
     """
     if not text:
@@ -214,7 +213,7 @@ class WebCall:
         self.data: Dict[str, Any] = {
             "id": uuid4().hex,
             "ts": datetime.now(timezone.utc).isoformat(),
-            "kind": kind,             # "search" | "fetch"
+            "kind": kind,             # "fetch" (old entries may say "search")
             "status": "ok",           # ok | refused | error | not_configured
             "query": None,
             "url": None,

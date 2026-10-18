@@ -3,7 +3,7 @@
 `ah` drives the service from a terminal. Every entity that has a page in the
 dashboard has a command here, and the command is the application rather than
 a client of it: agents, tasks, workspaces and projects by hand, flows,
-loops, teams, evals and MCP servers with a group of their own, and
+loops, teams and MCP servers with a group of their own, and
 everything else through commands generated from the API's own schema. See
 [the commands](#the-commands) below, and [OpenAPI-driven commands](#openapi-driven-commands)
 for how the last part works.
@@ -69,9 +69,9 @@ Listings print an 8-character ID prefix, and every command that takes an ID
 accepts that prefix back. A call that runs an agent waits as long as the model
 takes, up to `AGENTS_HUB_AGENT_TIMEOUT` seconds (default 900, `0` for no limit).
 
-### Flows, loops, teams, evals, MCP
+### Flows, loops, teams, MCP
 
-The five entities with a daily-use shape of their own, each a group of
+The four entities with a daily-use shape of their own, each a group of
 commands rather than one:
 
 ```bash
@@ -92,12 +92,6 @@ ah team get <team-id>
 ah team run <team-id> ["the goal"]                  # defaults to the team's own description
 ah team runs [team-id] [--limit 50]
 ah team stop <team-run-id>
-
-ah eval list [--workspace ws]
-ah eval get <eval-set-id>
-ah eval run <eval-set-id> [--agent id ...] [--cost-ceiling 5.0]   # real, billable LLM calls
-ah eval runs <eval-set-id>
-ah eval diff <run-a> <run-b>                        # case-by-case, fixed vs. regressed
 
 ah mcp list [--workspace ws]
 ah mcp add <server-id> --command "..." [--arg a --arg b] [--transport stdio|http] [--url ...]
@@ -124,7 +118,7 @@ selected (see [Selecting a workspace](#selecting-a-workspace)).
 Beyond the hand-written groups, `ah` reads the backend's own OpenAPI schema
 and builds one command group per tag (`ah <tag> <verb>`) that has no
 hand-written group already: `ah sessions list`, `ah instances get <id>`,
-`ah costs list`, and everything else with a route but no
+and everything else with a route but no
 page shaped enough to deserve bespoke commands. The mapping from a route to a
 command:
 
@@ -148,7 +142,6 @@ command:
 ```bash
 ah sessions list --workspace default
 ah instances get <instance-id> --json-out
-ah costs list --workspace default --from-date 2026-09-01
 ```
 
 The schema itself comes from the running app (direct mode: `app.openapi()`;
@@ -365,6 +358,6 @@ The `cli` package in the repository:
   and `ah api`.
 - `cli/commands/`: one module per entity: `agent.py`, `task.py`,
   `workspace.py`, `project.py`, `instance.py`, `flow.py`, `loop.py`,
-  `team.py`, `eval.py`, `mcp.py`, `costs.py`, `files.py`, and `api.py` (wires up `cli/openapi.py`).
+  `team.py`, `mcp.py`, `files.py`, and `api.py` (wires up `cli/openapi.py`).
   Each registers a `typer.Typer()` that `cli/main.py` adds to the app.
 - `cli/rest_main.py`: the entry point for the REST-only binary above.

@@ -1,5 +1,5 @@
 // The model a run actually called, as recorded on the run, with its provider
-// under it. Shared by the run lists (Runs page, Costs page Runs tab). A run
+// under it. Shared by the run lists (Runs page). A run
 // that ended before its first model call has none; the cell shows a dash
 // rather than the agent's configured model, which would be a guess.
 export default function RunModelCell({ run }) {

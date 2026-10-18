@@ -7,8 +7,8 @@ lookup working; this module rewrites what an install has stored, so the old id
 stops spreading: the registry record itself, other agents' ``delegates`` and
 ``handoffs``, workspace metadata (``allowed_agents``, ``default_chat_agent``,
 per agent overrides and memory switches keyed by agent id), flows, scheduled
-jobs, watchers, teams, loops, scenarios, eval sets, live instances,
-services, widgets and their open threads, open experiments, consent settings
+jobs, teams, loops, live instances,
+services, widgets and their open threads, consent settings
 and the agent's version history.
 
 Historic records (runs, sessions, chats, task history, logs, results, memory
@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 #: else (logs, events, fires, notifications, memory content, chat threads) is
 #: history and keeps the id it was written with.
 CONFIG_STORES: Tuple[str, ...] = (
-    "agents", "workspaces", "flows", "flow_entities", "plans", "watchers",
+    "agents", "workspaces", "flows", "flow_entities", "plans",
     "guardrails", "environments",
     "git_connectors", "tool_policy_decisions", "procedures", "user_context",
 )
@@ -63,15 +63,11 @@ class _Table:
 TABLES: Tuple[_Table, ...] = (
     _Table("teams", "team_id", ids=("leader_agent_id",), docs=("members", "config")),
     _Table("loops", "loop_id", docs=("config",)),
-    _Table("scenarios", "scenario_id", docs=("roles", "config")),
-    _Table("eval_sets", "eval_set_id", ids=("agent_id", "target_id"), docs=("graders",)),
     _Table("widgets", "widget_id", ids=("agent_id",)),
     _Table("widget_threads", "thread_id", ids=("agent_id",)),
     _Table("services", "service_id", ids=("agent_id",), docs=("extra",)),
     _Table("instances", "instance_id", ids=("agent_id",), docs=("extra",),
            where="archived_at IS NULL"),
-    _Table("agent_experiments", "experiment_id", ids=("agent_id",), where="ended_at IS NULL",
-           unique=True),
     _Table("consent_settings", "agent_id", ids=("agent_id",), unique=True),
     _Table("consent_requests", "request_id", ids=("agent_id",)),
     _Table("agent_versions", "id", ids=("agent_id",), docs=("spec_json",), unique=True),

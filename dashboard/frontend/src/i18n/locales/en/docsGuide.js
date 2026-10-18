@@ -6,7 +6,7 @@ export default {
   "files": {
     "nav": "Files",
     "title": "Workspace files",
-    "lead": "A workspace file is stored once and referenced by its id everywhere it is used: a chat turn, a memory pool, a task, an eval case or an agent's own output. Upload it once on the [Files](/files) page and every one of those places finds the same file.",
+    "lead": "A workspace file is stored once and referenced by its id everywhere it is used: a chat turn, a memory pool, a task or an agent's own output. Upload it once on the [Files](/files) page and every one of those places finds the same file.",
     "s0": {
       "h": "Finding a file",
       "p": "The [Files](/files) page lists the selected workspace's files as a tree of folders or a flat table, whichever you last chose; a search opens every folder with a match. Open one file directly with `/files?file=<id>`, the link a chat citation or a \"where used\" result lands on."
@@ -24,7 +24,7 @@ export default {
       "points": [
         "Chat: attach **From workspace files** in the composer, or tick **store in workspace** on an upload to keep it there too.",
         "Memory: a pool's Files tab can add a workspace file, which indexes it for search the same way an upload is indexed.",
-        "Tasks and evals: files attached to a task or an eval case are copied into its working directory on every run.",
+        "Tasks: files attached to a task are copied into its working directory on every run.",
         "Agents: an agent can list, read and save workspace files with its own tools, and a chat reply links to what it produced."
       ]
     },
@@ -33,43 +33,6 @@ export default {
       "p": "When an agent searches memory, the passages and notes it uses come back numbered as `[n]`, and the reply shows them as sources under the text. Clicking a source opens the workspace file behind it, or the memory page when there is none."
     },
     "callout": "Files written outside the normal flow, by Claude Code, Codex or a shell, are not listed automatically: use **Sync from folder** on the Files page to register them."
-  },
-  "browser": {
-    "nav": "Browser",
-    "title": "The browser",
-    "lead": "A live view of what an agent's browser session is doing, with the option to take control, plus a free browsing page whose session can be handed to an agent. It needs the browser service configured on the [Settings](/settings) page's **Browser** section; without it, the page says so.",
-    "s0": {
-      "h": "Setting it up",
-      "points": [
-        "The **Browser** section under [Settings](/settings) sets the service address and token, starts it and shows its log, all without a restart.",
-        "A local process runs the service on the hub's own host; a docker container runs it isolated, offered only while docker answers.",
-        "Local mode needs a Chromium install for Playwright, which the same section offers with one click."
-      ]
-    },
-    "s1": {
-      "h": "Watching a run's browser",
-      "points": [
-        "A run that calls any browser tool gets a **Browser** panel in its live output, showing the page as it is drawn.",
-        "When the live stream cannot connect, the panel falls back to polling a picture roughly once a second instead."
-      ]
-    },
-    "s2": {
-      "h": "Taking control",
-      "points": [
-        "**Take control** turns the picture into clicks, typing and scrolling on the same session the agent uses, meant for a login, a captcha or a consent banner a model should not handle itself.",
-        "It pauses the agent at its next browser step until **Release**, until you leave the page, or after an idle timeout releases it automatically.",
-        "Whatever you navigate to is checked against the workspace's domain policy exactly like the agent's own browsing."
-      ]
-    },
-    "s3": {
-      "h": "Free browsing and handing off",
-      "points": [
-        "**Browser** in the navigation is free browsing on the same service: pick a workspace, open a **New session** and drive it yourself.",
-        "**Hand to agent** on an open session creates a task for the chosen agent with the session attached, so its run continues on the same page and cookies.",
-        "**Open in the agent browser** on a project's **Deploy** tab (see [Projects](/projects)) lands here already open on the deployed app, for the agent to test."
-      ]
-    },
-    "callout": "A session closes on its own after an idle timeout; watching it counts as use, so it stays open while someone is looking."
   },
   "agentLoop": {
     "nav": "Agent loop",
@@ -146,7 +109,7 @@ export default {
       "h": "The page chat",
       "p": "The button in the bottom-right corner of every page, holding a conversation about whatever the page is showing.",
       "points": [
-        "Some pages, such as a scenario, a loop, a team, an agent's own definition or a memory pool, have their own chat with their own agent; the panel just brings that conversation into view.",
+        "Some pages, such as a loop, a team, an agent's own definition or a memory pool, have their own chat with their own agent; the panel just brings that conversation into view.",
         "Every other page shares one fixed assistant that sees the page's title, URL and the records it is showing.",
         "Returning to the same page reopens the same conversation; **Clear** starts a fresh one.",
         "It never creates, changes or deletes anything without a clear yes to that exact action."
@@ -196,9 +159,9 @@ export default {
     "callout": "A larger install can turn on a hub-wide allowlist (the MCP catalog on [Agent registry](/agent-registry)) so a workspace may only attach a server an admin approved."
   },
   "outcomes": {
-    "nav": "Outcomes & experiments",
-    "title": "Outcome grading and experiments",
-    "lead": "An outcome grades a task's result against a rubric and can send it back for another attempt. An experiment compares two versions of an agent on live traffic instead of a handful of test prompts.",
+    "nav": "Outcome grading",
+    "title": "Outcome grading",
+    "lead": "An outcome grades a task's result against a rubric and can send it back for another attempt.",
     "s0": {
       "h": "Outcome rubrics",
       "p": "A markdown rubric is a list of criteria: each top-level bullet is one, and a rubric with no bullets falls back to a single criterion, Overall.",
@@ -216,25 +179,7 @@ export default {
         "**Grade now** grades the latest completed run without relaunching anything and does not use up an attempt.",
         "Raise the attempts or edit the rubric and restart the task to try again."
       ]
-    },
-    "s2": {
-      "h": "A/B experiments on an agent",
-      "p": "Every change to an agent is snapshotted in its **Version History**, on the Config tab. An experiment names two or more of those stored versions, called arms, and a share of runs for each.",
-      "points": [
-        "Set on the agent's Config tab, **Experiment** card: pick version A, its share, version B, and start.",
-        "Routing is deterministic: a chat conversation always lands on the same arm, and so does a given run id.",
-        "The report lists, per arm, its runs, completed and failed counts, mean cost, mean tokens, mean duration, mean score and pass rate.",
-        "An agent has at most one open experiment at a time."
-      ]
-    },
-    "s3": {
-      "h": "Ending an experiment",
-      "points": [
-        "Ending it sends every run back to the agent's current definition; nothing about a winning arm is applied automatically.",
-        "Roll back to the winning version from **Version History** if you want to keep it."
-      ]
-    },
-    "callout": "Mean score and pass rate stay empty until the agent has an online eval rule to grade its runs."
+    }
   },
   "sessionsRuns": {
     "nav": "Sessions & runs",
@@ -242,7 +187,7 @@ export default {
     "lead": "A run is one agent invocation, the smallest unit the dashboard shows. Sessions and run groups say how runs belong together.",
     "s0": {
       "h": "Runs",
-      "p": "Every chat message, flow node, scenario tick and delegation is a run.",
+      "p": "Every chat message, flow node and delegation is a run.",
       "points": [
         "Status is one of `running`, `completed`, `failed` or `stopped`.",
         "A run carries its agent, model, provider, input, output, token counts, duration and, when it failed, an error.",
@@ -253,7 +198,7 @@ export default {
       "h": "Sessions and run groups",
       "p": "A session groups the runs of one conversation, one task or one flow. A run group says what set a set of runs going in the first place.",
       "points": [
-        "Five kinds own a set of runs: flow, loop, team, scenario and container.",
+        "Four kinds own a set of runs: flow, loop, team and container.",
         "The [Run Groups](/run-groups) page lists them across kinds, each with a status, a total cost and its children.",
         "Stopping a group stops everything it owns, recursively down to the leaf agent runs."
       ]
@@ -305,7 +250,7 @@ export default {
       "points": [
         "`GET /api/health` reports the database, run counts, background services, storage size and provider keys set; a value of `null` means the check could not tell, not that the thing is down.",
         "The doctor turns that snapshot into judgements: each check comes back `ok`, `warn`, `fail` or `skip` with one sentence and a fix, and the overall status is the worst of them.",
-        "Checks include migrations, the default provider, CORS, stale runs, the run queue, disk space, the browser service, Docker, the sandbox providers and the system workspace itself."
+        "Checks include migrations, the default provider, CORS, stale runs, the run queue, disk space, Docker, the sandbox providers and the system workspace itself."
       ]
     },
     "s1": {
@@ -364,17 +309,16 @@ export default {
   },
   "integrations": {
     "nav": "Integrations",
-    "title": "Notifications and webhooks",
-    "lead": "How the hub talks to the outside world: signed webhooks, and alert rules that raise a notification on their own.",
+    "title": "Notifications and alert rules",
+    "lead": "How the hub tells you something happened: the inbox under the bell, and alert rules that raise a notification on their own.",
     "s0": {
-      "h": "Webhooks and alert rules",
-      "p": "On the [Connectors](/connectors) page, an endpoint receives a signed webhook whenever the inbox raises a notification or an alert rule fires. An alert rule can raise a notification on its own, for a failed run, a run or daily spend over a threshold, or an online eval score below target.",
+      "h": "Alert rules",
+      "p": "On the [Connectors](/connectors) page, the Alert rules tab arms a rule that raises a notification on its own, for a failed run or a run or daily spend over a threshold. Every notification lands in the inbox under the bell.",
       "points": [
-        "Every webhook delivery is signed with the endpoint's secret; verify the `X-AgentsHub-Signature` header before trusting it.",
-        "A failed delivery is retried once; an endpoint that rejects the payload with any non-5xx response is treated as delivered."
+        "A rule can be limited to one agent, and switched off without deleting it."
       ]
     },
-    "callout": "An inbound webhook that files a task has no open fallback: a workspace with no inbound secret configured cannot be posted to at all."
+    "callout": "Agents send you a notification with notify_user, and a scheduled notification on the [Plan](/plan) page lands in the same inbox."
   },
   "assistant": {
     "nav": "Assistant",
@@ -392,7 +336,7 @@ export default {
       "h": "What it can look up and change",
       "p": "`hub_lookup` reads runs, sessions, spend, budgets, models, agents, notifications, approvals and the records of every page. `hub_action` does one thing to one record, such as pausing an instance, and always shows a card first.",
       "points": [
-        "A phrase like \"every morning at 8 send me a summary\" becomes a scheduled pulse after your yes.",
+        "A phrase like \"every morning at 8 send me a summary\" becomes a scheduled job after your yes.",
         "Keys for a provider are typed by you into a card, never into the conversation."
       ]
     },

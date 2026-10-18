@@ -1,5 +1,5 @@
 """A loop graded against a rubric: the same per-criterion grader a task's
-outcome uses (evals.graders.grade_rubric), mapped onto the loop's Verdict.
+outcome uses (tasks.rubric_grader.grade_rubric), mapped onto the loop's Verdict.
 
 Without a rubric the old evaluator path runs unchanged (tests/test_loops.py
 covers it); these tests pin the rubric path, its persistence and its routes.
@@ -12,10 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from evals import graders
 from loops import evaluator, store
 from loops.models import Loop, Verdict
 from loops.runner import run_loop
+from tasks import rubric_grader as graders
 
 RUBRIC = "- **Sources**: every claim cites a source\n- **Length**: under 800 words\n"
 

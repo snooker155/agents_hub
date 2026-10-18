@@ -138,7 +138,7 @@ def start_flow_run(
     if desc:
         cli_args += ["--desc", desc]
 
-    # Optional structured seed state (scheduled/webhook triggers), passed as JSON
+    # Optional structured seed state (scheduled or API triggers), passed as JSON
     # and merged into the flow's initial state by runtime/flow_run.py.
     seed = params.get("seed")
     if isinstance(seed, dict) and seed:
@@ -327,7 +327,7 @@ def trigger_flow(
 ) -> Dict[str, Any]:
     """Create a task and start a flow run, guarded by concurrency + authorization.
 
-    Shared by the ``/trigger`` webhook and the scheduled ``flow`` job so both get
+    Shared by the ``/trigger`` route and the scheduled ``flow`` job so both get
     identical semantics. ``max_concurrent`` (0 = unlimited) caps how many
     instances of this flow may run at once. Raises ``FlowNotFoundError`` /
     ``FlowNotAuthorizedError`` / ``FlowConcurrencyError`` on the respective
@@ -352,7 +352,7 @@ def trigger_flow(
             f"Flow '{flow.get('name') or flow_id}' is not authorized for workspace '{ws_name}'"
         )
 
-    # Concurrency guard: prevents a runaway scheduled/webhook trigger from
+    # Concurrency guard: prevents a runaway scheduled or API trigger from
     # stacking up unbounded flow subprocesses.
     if max_concurrent and max_concurrent > 0:
         active = len(get_active_flow_runs(flow_id))

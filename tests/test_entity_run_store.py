@@ -1,11 +1,10 @@
 """
-The one run table behind flow, loop, team and scenario runs (common/entity_runs.py).
+The one run table behind flow, loop and team runs (common/entity_runs.py).
 
 Exercised through per-kind stores built here with a recording notify hook,
 so the tests see exactly which ``<resource>.changed`` events a write
 publishes, and through the kind-agnostic functions the watchdog and the run
-groups use. The adapters (flow/run_store.py, loops/store.py, teams/store.py,
-playground/store.py) have their own tests; these pin the shared semantics:
+groups use. The adapters (flow/run_store.py, loops/store.py, teams/store.py) have their own tests; these pin the shared semantics:
 one table, columns laid over the document, the checkpoint apart, the
 transition table enforced, both spellings of the ids on every record.
 """
@@ -266,21 +265,19 @@ def test_the_default_hook_publishes_through_the_session_broker(monkeypatch):
     calls = []
     monkeypatch.setattr("common.session_broker.notify_change",
                         lambda resource, **meta: calls.append((resource, meta)))
-    store = EntityRunStore("scenario")
-    store.upsert({"sim_run_id": "n3", "scenario_id": "S", "status": "pending"})
-    assert calls and calls[-1][0] == "sim_runs"
-    assert calls[-1][1]["sim_run_id"] == "n3"
+    store = EntityRunStore("loop")
+    store.upsert({"loop_run_id": "n3", "loop_id": "L", "status": "pending"})
+    assert calls and calls[-1][0] == "loop_runs"
+    assert calls[-1][1]["loop_run_id"] == "n3"
 
 
 def test_the_adapters_keep_their_resource_names():
     from flow import run_store
     from loops import store as loop_store
-    from playground import store as sim_store
     from teams import store as team_store
     assert run_store.RUNS.resource == "flow_runs"
     assert loop_store.RUNS.resource == "loop_runs"
     assert team_store.RUNS.resource == "team_runs"
-    assert sim_store.RUNS.resource == "sim_runs"
     assert entity_runs.store_for("team") is team_store.RUNS
 
 

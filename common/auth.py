@@ -59,7 +59,7 @@ class Principal:
     One value exists, :data:`LOCAL_PRINCIPAL`. The shape stays a dataclass
     because routes read ``principal.id``, ``principal.is_admin``,
     ``principal.kind`` and ``principal.reaches(workspace)`` off it, and the
-    terminal and preview tickets carry its fields.
+    terminal tickets carry its fields.
     """
     id: str
     username: str = ""

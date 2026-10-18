@@ -10,8 +10,8 @@ parent, resolved on read. The rules:
   ``overrides``.
 * :data:`MERGED_DICT_FIELDS` take the parent's keys, the child's keys win.
 * Everything else (:data:`NEVER_INHERITED`) is always the child's own: its
-  identity, ownership, memory binding, review state, the system flag, the
-  proactive profile, secrets of its own HTTP exposure and, on purpose, the
+  identity, ownership, memory binding, review state, the system flag,
+  secrets of its own HTTP exposure and, on purpose, the
   ``capability_override``: a security exemption is granted per agent, never
   passed down.
 
@@ -64,7 +64,7 @@ NEVER_INHERITED: Tuple[str, ...] = (
     "id", "name", "description", "domain", "capacity", "definition_id", "memory_type",
     "memory_data", "owner_workspace", "owner_user", "shared", "review_status", "review_note",
     "reviewed_by", "reviewed_at", "system", "user_modified", "is_default_chat_agent",
-    "proactive", "api_key", "github_identity", "http_expose", "http_port", "http_host_port",
+    "api_key", "github_identity", "http_expose", "http_port", "http_host_port",
     "node_type", "remote", "default_workspace_only", "capability_override",
 )
 

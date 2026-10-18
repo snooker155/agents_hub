@@ -396,11 +396,6 @@ function UsageList({ usage, t }) {
         {task.key ? `${task.key}: ` : ''}{task.title}
       </Link>
     ), (task) => `task:${task.task_id}`],
-    ['usedEvals', usage.eval_cases, (c) => (
-      <Link to={`/evals?set=${encodeURIComponent(c.eval_set_id)}`} className="text-indigo-600 hover:underline">
-        {c.name}: {c.input || c.case_id}
-      </Link>
-    ), (c) => `case:${c.case_id}`],
   ];
   return (
     <div className="space-y-2">

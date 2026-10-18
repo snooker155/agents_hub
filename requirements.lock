@@ -25,7 +25,6 @@ anyio==4.15.1
     #   google-genai
     #   httpx
     #   httpx2
-    #   langfuse
     #   langsmith
     #   mcp
     #   openai
@@ -37,8 +36,6 @@ attrs==26.1.0
     #   referencing
 authlib==1.8.0
     # via -r dashboard/backend/requirements.txt
-backoff==2.2.1
-    # via langfuse
 beautifulsoup4==4.15.0
     # via -r requirements-agents.txt
 certifi==2026.7.22
@@ -140,7 +137,6 @@ httpx==0.28.1
     #   anthropic
     #   google-genai
     #   langchain-core
-    #   langfuse
     #   mcp
     #   ollama
     #   openai
@@ -155,7 +151,6 @@ idna==3.20
     #   anyio
     #   httpx
     #   httpx2
-    #   langfuse
     #   requests
 jiter==0.17.0
     # via
@@ -185,8 +180,6 @@ langchain-ollama==1.1.0
     # via -r requirements-agents.txt
 langchain-protocol==0.0.19
     # via langchain-core
-langfuse==2.60.10
-    # via -r requirements-agents.txt
 langsmith==0.13.0
     # via langchain-core
 lxml==6.1.3
@@ -212,7 +205,6 @@ orjson==3.12.0 ; platform_python_implementation != 'PyPy'
 packaging==24.2
     # via
     #   langchain-core
-    #   langfuse
     #   langsmith
 pillow==12.3.0
     # via python-pptx
@@ -244,7 +236,6 @@ pydantic==2.13.5
     #   google-generativeai
     #   langchain-core
     #   langchain-google-genai
-    #   langfuse
     #   langsmith
     #   mcp
     #   ollama
@@ -300,7 +291,6 @@ requests==2.34.2
     #   google-api-core
     #   google-auth
     #   google-genai
-    #   langfuse
     #   langsmith
     #   requests-toolbelt
 requests-toolbelt==1.0.0
@@ -392,8 +382,6 @@ websockets==16.1.1
     #   -r dashboard/backend/requirements.txt
     #   google-genai
     #   langsmith
-wrapt==1.17.3
-    # via langfuse
 xlsxwriter==3.2.9
     # via python-pptx
 xxhash==4.0.1

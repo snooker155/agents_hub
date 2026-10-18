@@ -128,7 +128,6 @@ export default function ChatSidePanel() {
       processInsights={processInsights}
       topology={agentTopology}
       graphRun={graphRun}
-      workspace={workspace}
     />
   );
 

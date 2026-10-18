@@ -90,12 +90,12 @@ def invoke_agent(
     - ``run_id``: forwarded to ``agent.run`` as a keyword when set. Both agent
       implementations take ``(self, instruction, **kwargs)``, so a positional
       second argument raises TypeError — which is what it used to do, breaking
-      every caller that passed run_id (evals, replay, the lifecycle helper).
+      every caller that passed run_id (replay, the lifecycle helper).
 
     - ``history``: the conversation before this turn, as LangChain messages. A
       chat surface passes it so prior turns reach the model as messages instead
-      of as text folded into the prompt; every other caller (a task run, an
-      eval, a delegation) has no conversation and passes nothing. Agents that do
+      of as text folded into the prompt; every other caller (a task run, a
+      delegation) has no conversation and passes nothing. Agents that do
       not understand it ignore the keyword.
 
     - ``resume``: ``{"run_id", "value", "key"}`` to continue a run the agent

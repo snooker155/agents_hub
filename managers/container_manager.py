@@ -203,7 +203,7 @@ def _query(cmd: List[str]) -> subprocess.CompletedProcess:
 
 _PASS_PREFIXES = (
     "OPENAI_", "ANTHROPIC_", "GOOGLE_", "OLLAMA_", "LMSTUDIO_",
-    "LANGFUSE_", "RAG_", "LLM_", "ORCH_",
+    "RAG_", "LLM_", "ORCH_",
 )
 _PASS_EXACT = {
     "DEFAULT_PROVIDER",

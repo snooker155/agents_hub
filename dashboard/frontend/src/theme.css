@@ -485,7 +485,6 @@ html.dark {
 :where(html) .ring-indigo-500,
 :where(html) .ring-purple-500,
 :where(html) .ring-violet-500 { --tw-ring-color: var(--brand-500); }
-:where(html) .from-indigo-50 { --tw-gradient-from: #eef3ff var(--tw-gradient-from-position); --tw-gradient-to: rgba(238, 243, 255, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .from-indigo-600 { --tw-gradient-from: #2a4fbd var(--tw-gradient-from-position); --tw-gradient-to: rgba(42, 79, 189, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .group:hover .group-hover\:text-indigo-400,
 :where(html) .text-fuchsia-400,
@@ -504,18 +503,17 @@ html.dark {
 :where(html) .text-indigo-600,
 :where(html) .text-purple-600,
 :where(html) .text-violet-600 { color: var(--brand-600); }
-:where(html) .group:hover .group-hover\:text-indigo-700,
+:where(html) .hover\:ring-indigo-100:hover,
+:where(html) .ring-fuchsia-100,
+:where(html) .ring-indigo-100,
+:where(html) .ring-purple-100,
+:where(html) .ring-violet-100 { --tw-ring-color: var(--brand-100); }
 :where(html) .hover\:text-indigo-700:hover,
 :where(html) .hover\:text-violet-700:hover,
 :where(html) .text-fuchsia-700,
 :where(html) .text-indigo-700,
 :where(html) .text-purple-700,
 :where(html) .text-violet-700 { color: var(--brand-700); }
-:where(html) .hover\:ring-indigo-100:hover,
-:where(html) .ring-fuchsia-100,
-:where(html) .ring-indigo-100,
-:where(html) .ring-purple-100,
-:where(html) .ring-violet-100 { --tw-ring-color: var(--brand-100); }
 :where(html) .hover\:text-indigo-800:hover,
 :where(html) .text-fuchsia-800,
 :where(html) .text-indigo-800,
@@ -591,7 +589,6 @@ html.dark {
 :where(html.dark) .bg-blue-50,
 :where(html.dark) .hover\:bg-blue-50:hover { background-color: rgba(var(--hue-blue-rgb), 0.14); }
 :where(html.dark) .bg-blue-50\/40 { background-color: rgba(59, 130, 246, 0.056); }
-:where(html.dark) .bg-blue-50\/50 { background-color: rgba(59, 130, 246, 0.070); }
 :where(html.dark) .bg-cyan-100,
 :where(html.dark) .hover\:bg-cyan-100:hover { background-color: rgba(var(--hue-cyan-rgb), 0.22); }
 :where(html.dark) .bg-cyan-200 { background-color: rgba(var(--hue-cyan-rgb), 0.30); }
@@ -698,7 +695,6 @@ html.dark {
 :where(html.dark) .hover\:bg-gray-50:hover,
 :where(html.dark) .hover\:bg-slate-50:hover { background-color: var(--neutral-bg-50); }
 :where(html.dark) .bg-gray-50\/50 { background-color: rgba(12, 19, 34, 0.50); }
-:where(html.dark) .bg-gray-50\/60 { background-color: rgba(12, 19, 34, 0.60); }
 :where(html.dark) .bg-gray-50\/70 { background-color: rgba(12, 19, 34, 0.70); }
 :where(html.dark) .bg-gray-500,
 :where(html.dark) .bg-neutral-500,
@@ -1074,8 +1070,7 @@ html.dark {
 :where(html.dark) .border-red-200,
 :where(html.dark) .divide-red-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-red-rgb), 0.36); }
 :where(html.dark) .border-red-300,
-:where(html.dark) .divide-red-300 > :not([hidden]) ~ :not([hidden]),
-:where(html.dark) .hover\:border-red-300:hover { border-color: rgba(var(--hue-red-rgb), 0.46); }
+:where(html.dark) .divide-red-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-red-rgb), 0.46); }
 :where(html.dark) .border-red-50,
 :where(html.dark) .divide-red-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-red-rgb), 0.18); }
 :where(html.dark) .border-rose-100,
@@ -1199,7 +1194,6 @@ html.dark {
 :where(html.dark) .ring-indigo-500,
 :where(html.dark) .ring-purple-500,
 :where(html.dark) .ring-violet-500 { --tw-ring-color: var(--brand-border-500); }
-:where(html.dark) .from-indigo-50 { --tw-gradient-from: rgba(63, 102, 216, 0.16) var(--tw-gradient-from-position); --tw-gradient-to: transparent var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .from-indigo-600 { --tw-gradient-from: #3159cc var(--tw-gradient-from-position); --tw-gradient-to: rgba(49, 89, 204, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .group:hover .group-hover\:text-indigo-500,
 :where(html.dark) .hover\:text-indigo-500:hover,
@@ -1213,13 +1207,6 @@ html.dark {
 :where(html.dark) .text-indigo-600,
 :where(html.dark) .text-purple-600,
 :where(html.dark) .text-violet-600 { color: var(--brand-text-600); }
-:where(html.dark) .group:hover .group-hover\:text-indigo-700,
-:where(html.dark) .hover\:text-indigo-700:hover,
-:where(html.dark) .hover\:text-violet-700:hover,
-:where(html.dark) .text-fuchsia-700,
-:where(html.dark) .text-indigo-700,
-:where(html.dark) .text-purple-700,
-:where(html.dark) .text-violet-700 { color: var(--brand-text-700); }
 :where(html.dark) .hover\:bg-gray-100\/70:hover { background-color: rgba(24, 34, 58, 0.70); }
 :where(html.dark) .hover\:ring-indigo-100:hover,
 :where(html.dark) .ring-fuchsia-100,
@@ -1229,7 +1216,6 @@ html.dark {
 :where(html.dark) .hover\:text-amber-600:hover,
 :where(html.dark) .text-amber-500,
 :where(html.dark) .text-amber-600 { color: var(--hue-amber-400); }
-:where(html.dark) .hover\:text-amber-800:hover,
 :where(html.dark) .hover\:text-amber-900:hover,
 :where(html.dark) .text-amber-700,
 :where(html.dark) .text-amber-800,
@@ -1266,6 +1252,12 @@ html.dark {
 :where(html.dark) .hover\:text-green-600:hover,
 :where(html.dark) .text-green-500,
 :where(html.dark) .text-green-600 { color: var(--hue-green-400); }
+:where(html.dark) .hover\:text-indigo-700:hover,
+:where(html.dark) .hover\:text-violet-700:hover,
+:where(html.dark) .text-fuchsia-700,
+:where(html.dark) .text-indigo-700,
+:where(html.dark) .text-purple-700,
+:where(html.dark) .text-violet-700 { color: var(--brand-text-700); }
 :where(html.dark) .hover\:text-indigo-800:hover,
 :where(html.dark) .text-fuchsia-800,
 :where(html.dark) .text-indigo-800,
@@ -1295,16 +1287,6 @@ html.dark {
 :where(html.dark) .hover\:text-rose-600:hover,
 :where(html.dark) .text-rose-500,
 :where(html.dark) .text-rose-600 { color: var(--hue-rose-400); }
-:where(html.dark) .hover\:text-rose-700:hover,
-:where(html.dark) .text-rose-700,
-:where(html.dark) .text-rose-800,
-:where(html.dark) .text-rose-900,
-:where(html.dark) .text-rose-950 { color: var(--hue-rose-300); }
-:where(html.dark) .hover\:text-sky-900:hover,
-:where(html.dark) .text-sky-700,
-:where(html.dark) .text-sky-800,
-:where(html.dark) .text-sky-900,
-:where(html.dark) .text-sky-950 { color: var(--hue-sky-300); }
 :where(html.dark) .hover\:text-yellow-700:hover,
 :where(html.dark) .text-yellow-700,
 :where(html.dark) .text-yellow-800,
@@ -1478,8 +1460,16 @@ html.dark {
 :where(html.dark) .text-pink-800,
 :where(html.dark) .text-pink-900,
 :where(html.dark) .text-pink-950 { color: var(--hue-pink-300); }
+:where(html.dark) .text-rose-700,
+:where(html.dark) .text-rose-800,
+:where(html.dark) .text-rose-900,
+:where(html.dark) .text-rose-950 { color: var(--hue-rose-300); }
 :where(html.dark) .text-sky-500,
 :where(html.dark) .text-sky-600 { color: var(--hue-sky-400); }
+:where(html.dark) .text-sky-700,
+:where(html.dark) .text-sky-800,
+:where(html.dark) .text-sky-900,
+:where(html.dark) .text-sky-950 { color: var(--hue-sky-300); }
 :where(html.dark) .text-teal-500,
 :where(html.dark) .text-teal-600 { color: var(--hue-teal-400); }
 :where(html.dark) .text-teal-700,

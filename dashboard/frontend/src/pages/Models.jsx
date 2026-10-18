@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain, Sparkles,
+  Brain, AudioLines,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -14,7 +14,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
-import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
+import VoiceModels from '../components/models/VoiceModels';
 import PageLoader from '../components/PageLoader';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
@@ -713,19 +713,16 @@ function UsageTab() {
   );
 }
 
-// ── Special models tab ────────────────────────────────────────────────────────
+// ── Voice tab ─────────────────────────────────────────────────────────────────
 
 /**
- * The special models (providers/special.py) of the workspace picked in the
- * header: the same form as the workspace settings' Special models section,
- * so the two never drift.
+ * The speech and transcription models the assistant's voice uses
+ * (providers/voice_models.py): one pair for the hub, chosen only here.
  */
-function SpecialModelsTab() {
-  const { selectedWorkspace } = useWorkspace();
-  const workspace = selectedWorkspace || 'default';
+function VoiceTab() {
   return (
     <div className="max-w-3xl space-y-4 pt-2">
-      <WorkspaceSpecialModels key={workspace} workspace={workspace} />
+      <VoiceModels />
     </div>
   );
 }
@@ -734,11 +731,11 @@ function SpecialModelsTab() {
 
 export default function Models() {
   const { t } = useI18n();
-  // The tab lives in the address (?tab=special), so other pages can link to it.
+  // The tab lives in the address (?tab=voice), so other pages can link to it.
   const [params, setParams] = useSearchParams();
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
-    { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
+    { id: 'voice', label: t('models.tabs.voice'), icon: AudioLines },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
   const tab = TABS.some((d) => d.id === params.get('tab')) ? params.get('tab') : 'catalog';
@@ -768,7 +765,7 @@ export default function Models() {
         })}
       </div>
       {tab === 'catalog' && <CatalogTab />}
-      {tab === 'special' && <SpecialModelsTab />}
+      {tab === 'voice' && <VoiceTab />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>
   );

@@ -1,7 +1,7 @@
 """Task outcomes: a rubric, an independent grader, another attempt or a block.
 
 Covers tasks/outcome.py (rubric parsing, the definition, grading, what a
-finished run leads to), the rubric grader in evals/graders.py, the finalizer
+finished run leads to), the rubric grader in tasks/rubric_grader.py, the finalizer
 hook in managers/runs/task_finalize.py, the instruction sections in
 tasks/context.py and the routes in dashboard/backend/routes/outcomes.py.
 The grader's model is always a fake: nothing here reaches a provider.
@@ -13,13 +13,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from evals import graders
-from evals.graders import COSTED_GRADERS, GRADERS, grade, grade_rubric
-from evals.models import Case, GraderSpec
 from managers import run_manager as rm
 from tasks import outcome as oc
+from tasks import rubric_grader as graders
 from tasks import service as ts
+from tasks.rubric_grader import grade_rubric
 from tasks.models import TaskStatus
+
+def Case(**kw):
+    """What the grader reads off a case: the request, the rubric, no reference."""
+    return SimpleNamespace(input=kw.get("input", ""), rubric=kw.get("rubric"), expected=None)
+
+
+def grade(output, case, params=None):
+    return grade_rubric(output, case, dict(params or {}))
+
 
 RUBRIC = """# Definition of done
 - **Tests pass**: the whole suite runs green
@@ -160,14 +168,9 @@ def test_the_grader_is_the_named_one_then_the_env_then_the_workspace(monkeypatch
 
 # ── The rubric grader ─────────────────────────────────────────────────────────
 
-def test_rubric_is_a_registered_costed_grader():
-    assert GRADERS["rubric"] is grade_rubric
-    assert "rubric" in COSTED_GRADERS
-
-
 def test_every_criterion_passing_passes(fake_grader):
     fake = fake_grader(_grade_json())
-    r = grade("the work", Case(input="add a flag", rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("the work", Case(input="add a flag", rubric=RUBRIC), {})
     assert r.passed and r.score == 1.0
     assert [c["name"] for c in r.extra["criteria"]] == ["Tests pass", "Docs"]
     assert r.extra["cost_usd"] == 0.0042
@@ -180,7 +183,7 @@ def test_every_criterion_passing_passes(fake_grader):
 
 def test_one_unmet_criterion_fails_and_keeps_its_feedback(fake_grader):
     fake_grader(_grade_json(docs=False))
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("x", Case(rubric=RUBRIC), {})
     assert not r.passed
     assert r.score == pytest.approx(0.7)
     docs = r.extra["criteria"][1]
@@ -189,7 +192,7 @@ def test_one_unmet_criterion_fails_and_keeps_its_feedback(fake_grader):
 
 def test_a_threshold_lets_a_high_mean_pass(fake_grader):
     fake_grader(_grade_json(docs=False))
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric", {"threshold": 0.6}))
+    r = grade("x", Case(rubric=RUBRIC), {"threshold": 0.6})
     assert r.passed
 
 
@@ -198,7 +201,7 @@ def test_scores_on_other_scales_and_renamed_criteria_are_read(fake_grader):
         {"name": "tests  PASS", "passed": "yes", "score": 9},
         {"name": "Documentation", "score": "40%"},
     ]}))
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("x", Case(rubric=RUBRIC), {})
     tests, docs = r.extra["criteria"]
     assert tests["passed"] and tests["score"] == pytest.approx(0.9)
     assert docs["name"] == "Docs" and not docs["passed"] and docs["score"] == pytest.approx(0.4)
@@ -206,21 +209,21 @@ def test_scores_on_other_scales_and_renamed_criteria_are_read(fake_grader):
 
 def test_a_criterion_the_grader_skipped_is_a_fail(fake_grader):
     fake_grader(json.dumps({"criteria": [{"name": "Tests pass", "passed": True, "score": 1}]}))
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("x", Case(rubric=RUBRIC), {})
     assert not r.passed
     assert "did not assess" in r.extra["criteria"][1]["feedback"]
 
 
 def test_an_unreadable_grade_is_an_error_never_a_pass(fake_grader):
     fake_grader("It looks fine to me.")
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("x", Case(rubric=RUBRIC), {})
     assert not r.passed and r.extra["error"]
     assert "grader failed" in r.detail
 
 
 def test_a_model_that_raises_is_an_error(fake_grader):
     fake_grader(RuntimeError("provider down"))
-    r = grade("x", Case(rubric=RUBRIC), GraderSpec("rubric"))
+    r = grade("x", Case(rubric=RUBRIC), {})
     assert not r.passed and "RuntimeError" in r.extra["error"]
 
 
@@ -237,7 +240,7 @@ def test_the_tool_trail_reaches_the_grader_but_not_the_conversation(fake_grader)
 
 
 def test_no_rubric_refuses_to_grade():
-    r = grade("x", Case(), GraderSpec("rubric"))
+    r = grade("x", Case(), {})
     assert not r.passed and "no rubric" in r.detail
 
 
@@ -559,7 +562,7 @@ def test_task_routes_validate_an_outcome_on_create_and_update():
     assert ts.get_task(tid).outcome is None
 
 
-# ── A flow, team, loop or scenario finishing a task with an outcome ───────────
+# ── A flow, team or loop finishing a task with an outcome ───────────
 
 def _finish_executor(task_id, kind="team", output="The team added the flag.", params=None):
     from tasks.context import persist_task_result
@@ -658,28 +661,6 @@ def test_a_team_grading_is_tied_to_the_team_run_and_added_to_its_total(fake_grad
     [grading] = _grading_runs(t.id)
     assert grading["parent_run_id"] == "team-run-1"
     assert entity_runs.get("team-run-1")["total_cost"] == pytest.approx(0.5 + 0.0042)
-
-
-def test_a_scenario_grading_joins_the_runs_of_its_scenario_run(fake_grader, executor_launches):
-    from common import entity_runs
-    fake_grader(_grade_json())
-    t = _task_with_outcome()
-    entity_runs.upsert({"run_id": "scenario-run-1", "kind": "scenario", "entity_id": "sc-1",
-                        "status": "completed", "total_cost": 1.25})
-    # Every role's turn is a run of its own, tied to the scenario run.
-    turn = rm.new_unique_run_id()
-    rm.open_run(turn, "Critic", status="running", link_to_session=False, channel="sim",
-                sim_run_id="scenario-run-1")
-    rm.close_run(turn, status="completed", exit_code=0)
-    _finish_executor(t.id, kind="scenario")
-
-    [grading] = _grading_runs(t.id)
-    assert grading["sim_run_id"] == "scenario-run-1" and grading["parent_run_id"] == "scenario-run-1"
-    # No role turn is charged with it; the scenario run's total includes it.
-    assert "aux_calls" not in (rm.get_run_by_id(turn).get("loop") or {})
-    assert entity_runs.get("scenario-run-1")["total_cost"] == pytest.approx(1.25 + 0.0042)
-    scenario_runs = [r for r in rm.load_runs() if r.get("sim_run_id") == "scenario-run-1"]
-    assert {r["run_id"] for r in scenario_runs} == {turn, grading["run_id"]}
 
 
 def test_a_flow_grading_joins_the_runs_of_its_flow_run(fake_grader, executor_launches):

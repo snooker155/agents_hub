@@ -13,7 +13,7 @@ from agents.registry import get_agent, replace_all_raw
 SHIPPED = {"sre_agent", "ai_teammate", "gitlab_issue_agent",
            "invoice_agent", "contract_review_agent", "support_triage_agent",
            "research_agent", "meeting_notes_agent", "recruiting_screener_agent",
-           "content_writer_agent", "lead_research_agent"}
+           "content_writer_agent"}
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +113,7 @@ def test_create_twice_picks_a_free_id(client):
 
 
 def test_create_with_overrides_keeps_the_guard(client):
-    r = client.post("/api/agent-templates/lead_research_agent/create",
-                    json={"tools": ["web_search", "read_workspace_file", "run_shell"], "id": "risky_research"})
+    r = client.post("/api/agent-templates/research_agent/create",
+                    json={"tools": ["fetch_url", "read_workspace_file", "run_shell"], "id": "risky_research"})
     assert r.status_code == 409, r.text
     assert get_agent("risky_research") is None

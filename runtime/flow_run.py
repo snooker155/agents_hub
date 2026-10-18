@@ -172,7 +172,7 @@ def main() -> None:
     parser.add_argument("--run-id", required=True, help="Meta run ID created by flow_launcher")
     parser.add_argument("--session-id", required=True, help="Shared session ID for all node runs")
     parser.add_argument("--desc", default="", help="Shared context / description override")
-    parser.add_argument("--seed", default="", help="JSON seed state merged into the flow's initial state (scheduled/webhook triggers)")
+    parser.add_argument("--seed", default="", help="JSON seed state merged into the flow's initial state (scheduled or API triggers)")
     parser.add_argument("--resume-from", default="", help="Flow run id whose checkpoint this run continues")
     args = parser.parse_args()
 
@@ -279,7 +279,7 @@ def main() -> None:
         else:
             log.info(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
 
-    # Seed state (scheduled/webhook triggers): a JSON object merged into the
+    # Seed state (scheduled or API triggers): a JSON object merged into the
     # flow's initial state so external callers can parameterize a run.
     seed_state = None
     if (args.seed or "").strip():

@@ -17,7 +17,7 @@ from teams.models import BROADCAST, Team, TeamMessage, TeamRun, utc_iso
 log = logging.getLogger(__name__)
 
 # Run-level knobs share one JSON column, so tightening a ceiling never needs a
-# migration (same reasoning as playground.store).
+# migration (tightening a ceiling never needs one).
 _CONFIG_FIELDS = (
     "max_rounds", "max_concurrent", "turn_timeout", "cost_ceiling",
     "max_wall_seconds", "allow_direct_messages", "synthesize",

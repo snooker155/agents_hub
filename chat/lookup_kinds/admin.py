@@ -49,16 +49,16 @@ def _safe_details(raw: Any) -> Dict[str, Any]:
 
 # ── health (common/health.py snapshot + common/doctor.py's cheap checks) ────
 
-#: Checks that reach the network (a provider, the browser service, the model
-#: runtime) or otherwise probe something outside this process. The health
+#: Checks that reach the network (a provider) or otherwise probe something
+#: outside this process. The health
 #: kind never runs these on its own: a lookup is read on every turn, and
 #: paying a provider round trip for that would make "how's the service"
 #: slow and, for the provider check, billed. There is no cached last-result
 #: to fall back to (``run_doctor`` always runs the full list itself, in a
-#: worker thread, only for ``GET /api/health/doctor``), so these three are
-#: simply left out of what this kind lists or runs; asked for by id, they
-#: answer "skip" rather than probing live or pretending not to exist.
-_NETWORKED_CHECKS = frozenset({"provider", "browser"})
+#: worker thread, only for ``GET /api/health/doctor``), so this one is
+#: simply left out of what this kind lists or runs; asked for by id, it
+#: answers "skip" rather than probing live or pretending not to exist.
+_NETWORKED_CHECKS = frozenset({"provider"})
 
 #: The id of the one row that is the overall snapshot rather than a check.
 _SNAPSHOT_ID = "snapshot"
@@ -200,18 +200,15 @@ def _web_log_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
 # ── setting ──────────────────────────────────────────────────────────────────
 
 #: Fields the Settings page keeps only in ``.env``, never on the live
-#: ``Settings`` object (RAG, Langfuse, the secondary model names and the task
+#: ``Settings`` object (RAG, the secondary model names and the task
 #: assignment mode): read the same environment variables it reads, which is
 #: as cheap as reading the live object and, unlike re-parsing the ``.env``
 #: file, sees a value a deployment set directly in its environment too.
 _ENV_ONLY = {
     "anthropic_model": "ANTHROPIC_MODEL", "google_model": "GOOGLE_MODEL",
     "openai_base_url": "OPENAI_BASE_URL", "task_assignment_mode": "TASK_ASSIGNMENT_MODE",
-    "langfuse_base_url": "LANGFUSE_BASE_URL",
 }
-_ENV_ONLY_SECRETS = {
-    "langfuse_secret_key_set": "LANGFUSE_SECRET_KEY", "langfuse_public_key_set": "LANGFUSE_PUBLIC_KEY",
-}
+_ENV_ONLY_SECRETS = {}
 _RAG_ENV = {
     "rag_vector_db": ("RAG_VECTOR_DB", "none"), "rag_vector_db_url": ("RAG_VECTOR_DB_URL", ""),
     "rag_vector_db_collection": ("RAG_VECTOR_DB_COLLECTION", "agents_hub_rag"),
@@ -275,16 +272,7 @@ def _settings_categories() -> Dict[str, Dict[str, Any]]:
     for field, env_key in _RAG_ENV_SECRETS.items():
         rag[field] = bool(os.environ.get(env_key))
 
-    from tools.web import effective_search_provider
-    eff = effective_search_provider()
     web: Dict[str, Any] = {
-        "web_search_provider": (cfg.web_search_provider or "").strip().lower(),
-        "web_search_api_key_set": bool(cfg.web_search_api_key),
-        # The backend a search uses now: the setting, or a model provider
-        # (Anthropic, OpenAI) on its own key when no search provider is set.
-        "web_search_effective_provider": eff["provider"],
-        "web_search_effective_source": eff["source"],
-        "web_search_max_results": cfg.web_search_max_results,
         "web_fetch_max_chars": cfg.web_fetch_max_chars, "web_fetch_timeout": cfg.web_fetch_timeout,
         "web_fetch_max_redirects": cfg.web_fetch_max_redirects,
         "web_domain_policy_enabled": bool(cfg.web_domain_policy_enabled),
@@ -309,8 +297,7 @@ def _settings_categories() -> Dict[str, Dict[str, Any]]:
 _SETTING_SUMMARY = {
     "providers": lambda f: f"default: {f.get('default_provider')} / {f.get('model')}",
     "rag": lambda f: f.get("rag_vector_db") or "none",
-    "web": lambda f: (f.get("web_search_effective_provider") or f.get("web_search_provider")
-                      or "no search provider"),
+    "web": lambda f: ("domain policy on" if f.get("web_domain_policy_enabled") else "open web"),
     "execution": lambda f: f.get("agent_execution_mode") or "local",
 }
 
@@ -342,7 +329,7 @@ lookup.register(lookup.LookupKind(
     "container", "docker containers this hub manages", _list_containers, _container_card,
     ("/containers",), admin=True))
 lookup.register(lookup.LookupKind(
-    "web_log", "what web_search and fetch_url read: the host only, never the path or the page content",
+    "web_log", "what fetch_url read: the host only, never the path or the page content",
     _list_web_log, _web_log_card, ("/web-logs",), admin=True))
 lookup.register(lookup.LookupKind(
     "setting", "non-secret hub settings by category (providers, rag, web, execution); a secret "

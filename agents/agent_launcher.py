@@ -243,9 +243,8 @@ def prepare_run(
         if str(_name or "").strip():
             cli_args.extend(["--extra-secret", str(_name).strip()])
 
-    # The run's overrides as one flag (an answer schema and a tool policy of
-    # a proactive tick included, proactive/service.py): the child folds them
-    # into the build (agents/run_overrides.py).
+    # The run's overrides as one flag (an answer schema and a tool policy
+    # included): the child folds them into the build (agents/run_overrides.py).
     if run_overrides:
         cli_args.extend(["--overrides", json.dumps(run_overrides, ensure_ascii=False, sort_keys=True)])
 
@@ -300,8 +299,7 @@ def prepare_run(
         log.debug("prepare_run: ignored error", exc_info=True)
 
     # The effective cpu limit of a docker-mode run's container, so
-    # common.pricing can price the hours it lived once it ends (docs/costs.md
-    # "Container hours").
+    # common.pricing can price the hours it lived once it ends.
     container_profile: Dict[str, Any] = {}
     if execution_mode == "docker":
         try:
@@ -339,8 +337,7 @@ def prepare_run(
         "priority": int(params.get("priority") or 0) if str(params.get("priority") or "").lstrip("-").isdigit() else 0,
     }
     # Extra variables the caller asked every launch in its context to carry
-    # (runtime.entity_launch.child_env): a browser session handed to the
-    # agent, for one. Plain strings and never a secret, so they may travel
+    # (runtime.entity_launch.child_env), the run depth for one. Plain strings and never a secret, so they may travel
     # through the queue; the key is absent when there are none.
     extra = _child_env_extra()
     if extra:

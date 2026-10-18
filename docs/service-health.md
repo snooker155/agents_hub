@@ -9,7 +9,7 @@ same thing:
 
 - **database**: reachable, row counts per store, and how many runs are in a
   running state
-- **entity_runs**: counts by kind (flow, loop, team, scenario) and active runs
+- **entity_runs**: counts by kind (flow, loop, team) and active runs
   by kind
 - **services**: plan scheduler and run watchdog
 - **storage**: database size, WAL size, run-log size and file count, total
@@ -46,7 +46,6 @@ for a container health check. Both sit outside `/api`.
 | Everything is slow | runs by duration; then the model in use |
 | Scheduled jobs stopped | `services.plan_scheduler` |
 | Disk filling | `storage.run_logs_bytes` |
-| Costs spiked | costs by agent and model over the window |
 | An agent fetched something odd | the [web access log](web-logs.md) for that run |
 
 ## Doctor
@@ -100,12 +99,6 @@ the backend.
 Free space under the state directory. Warn under 2 GB, fail under 500 MB. Fix:
 prune old run logs (`prune_run_logs`), prune old `system/` branches, or give
 the volume more room.
-
-### Check: browser
-
-The browser service's `/healthz` answers. Skip when `AGENTS_HUB_BROWSER_URL`
-is not set; warn when it answers but `AGENTS_HUB_BROWSER_TOKEN` is missing.
-Fix: start `deploy/browser`, check the URL and the token.
 
 ### Check: docker
 

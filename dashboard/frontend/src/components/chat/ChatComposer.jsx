@@ -315,7 +315,7 @@ export default function ChatComposer() {
                 ${autoMode?.on ? 'border-amber-400' : 'border-gray-300'}`}
             >
               {/* Attach: a file from the computer, or a record the hub already
-                  holds (task / view / project / scenario / loop / …). An entity
+                  holds (task / view / project / loop / …). An entity
                   picked here is folded into the prompt whether or not the agent
                   owns a tool that could have fetched it. */}
               <div className="relative flex-shrink-0">

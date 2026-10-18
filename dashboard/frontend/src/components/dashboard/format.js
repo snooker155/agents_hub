@@ -69,7 +69,6 @@ export const runHref = (item) => {
     case 'flow': return `/flows/${entity}?run=${run}`;
     case 'team': return `/teams/${entity}?run=${run}`;
     case 'loop': return `/loops?loop=${entity}&run=${run}`;
-    case 'scenario': return `/playground/${entity}?run=${run}`;
     default: return null;
   }
 };

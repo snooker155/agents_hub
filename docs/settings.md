@@ -18,14 +18,9 @@ lives on the [models](models.md) page, not here.
   and whether a per-agent exemption requires a container
   (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`), see
   [tools-and-capabilities](tools-and-capabilities.md).
-- **Web search**: the provider behind the `web_search` tool (Brave, Tavily
-  or Exa), its key and the results per call, the `fetch_url` limits and the
-  global domain policy, written to `.env` and read live
-  ([tools-and-capabilities](tools-and-capabilities.md), "Web search
-  provider").
-- **Browser**: the browser service's address and token, local or
-  container mode, start and stop, and a Chromium install job
-  ([browser](browser.md)).
+- **Web access**: the `fetch_url` limits and the global domain policy,
+  written to `.env` and read live
+  ([tools-and-capabilities](tools-and-capabilities.md), "Web access").
 - Environment variables, per workspace.
 
 Anything set here is global. A workspace's own Settings tab overrides the
