@@ -7,16 +7,16 @@ the app, and on which step; the app reads it once on load, so it stays cheap.
 or starts it again.
 
 The steps read and change the hub through these, besides routes of their own
-(``/api/setup-guide/model`` for the first key, a workspace's personal
-memory, ``/api/demo``):
+(a workspace's personal memory, ``/api/demo``):
 
+* ``POST /api/first-run/model``: connect a provider and make its balanced
+  model the default (common/setup_ops.py ``first_model``), the key checked
+  against the provider first;
 * ``GET /api/first-run/context``: what is already set (providers, the default
-  model, demo, voice), no provider asked;
-* ``GET /api/first-run/options``: each connected provider's model tiers and the
-  voices (common/setup_ops.py ``options``), which asks the providers;
-* ``POST /api/first-run/op``: one setup operation (choose_model, voice_cloud,
-  seed_demo), the same the assistant's ``setup_step`` makes after
-  a yes; here pressing the button is the yes.
+  model, demo), no provider asked;
+* ``GET /api/first-run/options``: each connected provider's model tiers
+  (common/setup_ops.py ``options``), which asks the providers;
+* ``POST /api/first-run/op``: one setup operation (choose_model, seed_demo).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from common import identity
 router = APIRouter(prefix="/api/first-run", tags=["first-run"])
 
 #: What a first run may change through ``/op``.
-_OPERATIONS = ("choose_model", "voice_cloud", "seed_demo")
+_OPERATIONS = ("choose_model", "seed_demo")
 
 
 class FirstRunAction(BaseModel):
@@ -44,6 +44,12 @@ class FirstRunAction(BaseModel):
 class FirstRunOp(BaseModel):
     operation: str
     args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class FirstModel(BaseModel):
+    provider: str
+    api_key: str = ""
+    base_url: str = ""
 
 
 def _applies() -> None:
@@ -66,6 +72,18 @@ async def act(body: FirstRunAction):
                                        language=body.language, theme=body.theme)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/model")
+async def first_model(body: FirstModel, request: Request):
+    from common import setup_ops
+    principal = identity.request_principal(request)
+    try:
+        return await run_in_threadpool(setup_ops.first_model, body.provider, body.api_key, body.base_url,
+                                       principal=principal)
+    except setup_ops.SetupOpError as exc:
+        raise HTTPException(status_code=403 if exc.code == "forbidden" else 400,
+                            detail={"code": exc.code, "message": str(exc)})
 
 
 @router.get("/context")

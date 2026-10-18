@@ -4,8 +4,8 @@ Workspace roles: which agent does a kind of work in a workspace.
 A system agent that needs code written does not name ``swe_agent``; it names
 the role, ``@coder``. Each workspace says which of its agents holds each role
 (``roles`` in the workspace metadata), and an unbound role falls back to the
-product's own agent for it. Swapping the built-in coder for an imported Claude
-Code, Codex or Aider agent is then one setting on the workspace, not an edit of
+product's own agent for it. Swapping the built-in coder for an imported
+Aider agent is then one setting on the workspace, not an edit of
 every agent that delegates code work.
 
 Where a reference is resolved:

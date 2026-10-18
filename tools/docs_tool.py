@@ -89,7 +89,7 @@ def _path_for(entry: Dict[str, Any]) -> Any:
 
 
 #: Languages with a docs/<lang>/ folder of translated pages (the first hour
-#: ones: installation, overview, models, chat, assistant). A page missing
+#: ones: installation, overview, models, chat). A page missing
 #: there is served in English.
 TRANSLATED_LANGS = ("ru", "de")
 

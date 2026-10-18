@@ -218,7 +218,7 @@ def is_idempotent(tool: str) -> bool:
     except Exception:  # noqa: BLE001 - checkpointing must never break the run it protects
         log.debug("is_idempotent: ignored error", exc_info=True)
         return False
-    return tool not in NON_IDEMPOTENT_TOOLS and not tool.startswith("mcp__")
+    return tool not in NON_IDEMPOTENT_TOOLS
 
 
 def resume_steps(checkpoint: Dict[str, Any]) -> List[Dict[str, Any]]:

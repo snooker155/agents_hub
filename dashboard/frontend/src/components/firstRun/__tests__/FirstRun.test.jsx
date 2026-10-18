@@ -9,10 +9,9 @@ const firstRunApi = vi.hoisted(() => ({
   getFirstRunContext: vi.fn(),
   getFirstRunOptions: vi.fn(),
   firstRunOp: vi.fn(),
+  connectFirstModel: vi.fn(),
 }));
 vi.mock('../../../api/firstRun', () => firstRunApi);
-const setupApi = vi.hoisted(() => ({ connectFirstModel: vi.fn(), getSetupGuide: vi.fn(), setupGuideAction: vi.fn() }));
-vi.mock('../../../api/setupGuide', () => setupApi);
 const settingsApi = vi.hoisted(() => ({ updateSettings: vi.fn() }));
 vi.mock('../../../api/models', () => settingsApi);
 const demoApi = vi.hoisted(() => ({ setDemo: vi.fn() }));
@@ -20,21 +19,10 @@ vi.mock('../../../api/demo', () => demoApi);
 const wsApi = vi.hoisted(() => ({ getWorkspacePersonalMemory: vi.fn(), updateWorkspacePersonalMemory: vi.fn() }));
 vi.mock('../../../api/workspaces', () => wsApi);
 vi.mock('../../liveMark/LiveMark', () => ({ default: () => null }));
-const assistantApi = vi.hoisted(() => ({
-  getAssistant: vi.fn(), stopAssistant: vi.fn(), streamAssistantTurn: vi.fn(), transcribeRecording: vi.fn(),
-  sampleAssistantVoice: vi.fn(),
-}));
-vi.mock('../../../api/assistant', () => assistantApi);
-const speaker = vi.hoisted(() => ({ say: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), speaking: false, browser: false }));
-vi.mock('../../assistant/useSpeaker', () => ({ default: () => speaker, browserSpeechAvailable: () => false }));
-const recorder = vi.hoisted(() => ({
-  start: vi.fn(), stop: vi.fn(), cancel: vi.fn(), recording: false, level: 0, error: '', supported: true,
-}));
-vi.mock('../../assistant/useRecorder', () => ({ default: () => recorder }));
 
 const EMPTY = {
   providers: [], default_model: { provider: 'openai', model: '', usable: false },
-  demo: false, voice: false,
+  demo: false,
 };
 const CONNECTED = {
   ...EMPTY,
@@ -50,9 +38,6 @@ const OPTIONS = {
       },
     },
   },
-  voice: {
-    cloud: { openai: { connected: true, voices: ['alloy', 'nova'] }, google: { connected: false, voices: [] } },
-  },
 };
 
 const renderRun = (props = {}) => render(
@@ -66,12 +51,8 @@ const cont = () => fireEvent.click(screen.getByTestId('first-run-continue'));
 describe('FirstRun', () => {
   beforeEach(() => {
     localStorage.clear();
-    Object.values({ ...firstRunApi, ...setupApi, ...settingsApi, ...demoApi, ...wsApi, ...assistantApi })
+    Object.values({ ...firstRunApi, ...settingsApi, ...demoApi, ...wsApi })
       .forEach((fn) => fn.mockReset());
-    [speaker.say, speaker.cancel, recorder.start, recorder.stop].forEach((fn) => fn.mockReset());
-    setupApi.getSetupGuide.mockResolvedValue({ data: { work: null } });
-    assistantApi.getAssistant.mockResolvedValue({ data: { voice: { speech: null, transcription: null } } });
-    assistantApi.stopAssistant.mockResolvedValue({});
     firstRunApi.firstRunAction.mockResolvedValue({ data: {} });
     firstRunApi.getFirstRunContext.mockResolvedValue({ data: EMPTY });
     firstRunApi.getFirstRunOptions.mockResolvedValue({ data: OPTIONS });
@@ -103,10 +84,10 @@ describe('FirstRun', () => {
     fireEvent.click(screen.getByTestId('first-run-way-cloud'));
     expect(screen.getByTestId('first-run-connect')).toBeDisabled();
     fireEvent.change(screen.getByTestId('first-run-key'), { target: { value: 'sk-test' } });
-    setupApi.connectFirstModel.mockResolvedValue({ data: { ok: true } });
+    firstRunApi.connectFirstModel.mockResolvedValue({ data: { ok: true } });
     firstRunApi.getFirstRunContext.mockResolvedValue({ data: CONNECTED });
     fireEvent.click(screen.getByTestId('first-run-connect'));
-    await waitFor(() => expect(setupApi.connectFirstModel).toHaveBeenCalledWith({ provider: 'openai', api_key: 'sk-test', base_url: '' }));
+    await waitFor(() => expect(firstRunApi.connectFirstModel).toHaveBeenCalledWith({ provider: 'openai', api_key: 'sk-test', base_url: '' }));
 
     // Straight on to the choice of model, which the new provider made possible.
     await screen.findByTestId('first-run-choose');
@@ -115,13 +96,6 @@ describe('FirstRun', () => {
     fireEvent.click(screen.getByTestId('first-run-tier-fast'));
     cont();
     await waitFor(() => expect(firstRunApi.firstRunOp).toHaveBeenCalledWith('choose_model', { provider: 'openai', model: 'gpt-5.4-mini' }));
-
-    await screen.findByTestId('first-run-voice');
-    await screen.findByTestId('first-run-voice-cloud-openai');
-    expect(screen.queryByTestId('first-run-voice-cloud-google')).toBeNull();
-    fireEvent.click(screen.getByTestId('first-run-later'));
-
-    cont();
 
     await screen.findByTestId('first-run-memory');
     await waitFor(() => expect(screen.getByTestId('first-run-continue')).not.toBeDisabled());
@@ -136,12 +110,12 @@ describe('FirstRun', () => {
 
     await screen.findByTestId('first-run-done');
     fireEvent.click(screen.getByTestId('first-run-finish'));
-    await waitFor(() => expect(onFinish).toHaveBeenCalledWith('chat', { voice: false }));
+    await waitFor(() => expect(onFinish).toHaveBeenCalledWith('chat'));
     expect(firstRunApi.firstRunAction).toHaveBeenCalledWith('finish');
   });
 
   it('a saved step past the model screen with no model goes back to it', async () => {
-    renderRun({ initial: { step: 'voice' } });
+    renderRun({ initial: { step: 'memory' } });
     expect(await screen.findByTestId('first-run-model')).toBeTruthy();
   });
 
@@ -165,7 +139,7 @@ describe('FirstRun', () => {
     renderRun({ initial: { step: 'model' } });
     fireEvent.click(await screen.findByTestId('first-run-way-cloud'));
     fireEvent.change(screen.getByTestId('first-run-key'), { target: { value: 'bad' } });
-    setupApi.connectFirstModel.mockRejectedValue({ response: { status: 400, data: { detail: { code: 'rejected', message: 'nope' } } } });
+    firstRunApi.connectFirstModel.mockRejectedValue({ response: { status: 400, data: { detail: { code: 'rejected', message: 'nope' } } } });
     fireEvent.click(screen.getByTestId('first-run-connect'));
     expect(await screen.findByRole('alert')).toHaveTextContent('The provider did not accept it');
     expect(screen.getByTestId('first-run-model')).toBeTruthy();
@@ -186,109 +160,11 @@ describe('FirstRun', () => {
     await waitFor(() => expect(firstRunApi.firstRunOp).toHaveBeenCalledWith('choose_model', { provider: 'ollama', model: 'qwen3:14b' }));
   });
 
-  it('a cloud voice gets a voice for each language, then the check plays each one', async () => {
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: CONNECTED });
-    renderRun({ initial: { step: 'voice' } });
-    fireEvent.click(await screen.findByTestId('first-run-voice-cloud-openai'));
-    // A distinct voice per language by default; the person changes Russian.
-    expect(screen.getByTestId('first-run-voice-openai-ru')).toHaveValue('alloy');
-    fireEvent.change(screen.getByTestId('first-run-voice-openai-de'), { target: { value: 'nova' } });
-    assistantApi.getAssistant.mockResolvedValue({ data: { voice: {
-      speech: { provider: 'openai', model: 'gpt-4o-mini-tts', voice: 'nova', by_language: { ru: { voice: 'alloy' } } },
-      transcription: { provider: 'openai', model: 'gpt-4o-mini-transcribe' },
-    } } });
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...CONNECTED, voice: true } });
-    cont();
-    await waitFor(() => expect(firstRunApi.firstRunOp).toHaveBeenCalledWith('voice_cloud', {
-      provider: 'openai', voice: 'nova', voices: { en: 'nova', ru: 'alloy', de: 'nova' },
-    }));
-    expect(await screen.findByTestId('first-run-voice-check-step')).toBeTruthy();
-    expect(await screen.findByTestId('first-run-voice-of-ru')).toHaveTextContent('alloy');
-    expect(screen.getByTestId('first-run-voice-of-en')).toHaveTextContent('nova');
-  });
-
-  it('an OpenAI voice picks its speech model, and a voice the model lacks falls back', async () => {
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: CONNECTED });
-    firstRunApi.getFirstRunOptions.mockResolvedValue({ data: { ...OPTIONS, voice: { ...OPTIONS.voice, cloud: {
-      openai: { connected: true, voices: ['alloy', 'nova', 'verse'], speech_models: [
-        { id: 'gpt-4o-mini-tts', price: 0.015, voices: ['alloy', 'nova', 'verse'] },
-        { id: 'tts-1', price: 0.015, voices: ['alloy', 'nova'] },
-      ] },
-    } } } });
-    renderRun({ initial: { step: 'voice' } });
-    fireEvent.click(await screen.findByTestId('first-run-voice-cloud-openai'));
-    expect(screen.getByTestId('first-run-voice-model-gpt-4o-mini-tts')).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByText('Fastest to answer')).toBeTruthy();
-    fireEvent.change(screen.getByTestId('first-run-voice-openai-de'), { target: { value: 'verse' } });
-    fireEvent.click(screen.getByTestId('first-run-voice-model-tts-1'));
-    // tts-1 has no "verse": German goes back to a voice it has.
-    expect(screen.getByTestId('first-run-voice-openai-de')).toHaveValue('alloy');
-    cont();
-    await waitFor(() => expect(firstRunApi.firstRunOp).toHaveBeenCalledWith('voice_cloud', {
-      provider: 'openai', voice: 'nova', voices: { en: 'nova', ru: 'alloy', de: 'alloy' }, model: 'tts-1',
-    }));
-  });
-
-  it('the check: hello out loud, a yes, an answer by voice, then the assistant leads on', async () => {
-    const onFinish = vi.fn();
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...CONNECTED, voice: true, demo: true } });
-    assistantApi.getAssistant.mockResolvedValue({ data: { voice: {
-      speech: { provider: 'openai', model: 'gpt-4o-mini-tts', voice: 'nova', by_language: {} },
-      transcription: { provider: 'openai', model: 'gpt-4o-mini-transcribe' },
-    } } });
-    assistantApi.streamAssistantTurn.mockImplementation(async ({ body, onEvent }) => {
-      onEvent({ type: 'run', run_id: 'r1' });
-      onEvent({ type: 'token', token: 'Hi! I am your assistant. ' });
-      onEvent({ type: 'message', content: `Hi! I am your assistant. You said: ${body.message}` });
-    });
-    renderRun({ initial: { step: 'voice' }, onFinish });
-    fireEvent.click(await screen.findByTestId('first-run-greet'));
-    await waitFor(() => expect(assistantApi.streamAssistantTurn).toHaveBeenCalled());
-    expect(assistantApi.streamAssistantTurn.mock.calls[0][0].body).toMatchObject({ voice: false, first_run_screen: 'voice' });
-    expect(speaker.say).toHaveBeenCalledWith({ run_id: 'r1', text: 'Hi! I am your assistant.' });
-    expect(await screen.findByTestId('first-run-check-model-ok')).toBeTruthy();
-
-    fireEvent.click(await screen.findByTestId('first-run-heard-yes'));
-    expect(screen.getByTestId('first-run-check-speech-ok')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('first-run-talk'));
-    await waitFor(() => expect(recorder.start).toHaveBeenCalled());
-    const blob = new Blob(['x'], { type: 'audio/wav' });
-    recorder.stop.mockResolvedValue({ blob, type: 'audio/wav', seconds: 1.2 });
-    assistantApi.transcribeRecording.mockResolvedValue({ text: 'What can you do?' });
-    fireEvent.click(screen.getByTestId('first-run-talk'));
-    expect(await screen.findByTestId('first-run-voice-ready')).toBeTruthy();
-    expect(assistantApi.transcribeRecording.mock.calls[0][0]).toBe(blob);
-    expect(screen.getByTestId('first-run-check-hearing-ok')).toBeTruthy();
-    expect(assistantApi.streamAssistantTurn.mock.calls[1][0].body).toMatchObject({ message: 'What can you do?', voice: true });
-
-    // From here on the assistant is on every screen, asked about that screen.
-    cont();
-    await screen.findByTestId('first-run-memory');
-    // As in the chat: the microphone while the field is empty, Send once typed.
-    expect(screen.getByTestId('first-run-assist-mic')).toBeTruthy();
-    expect(screen.queryByTestId('first-run-assist-send')).toBeNull();
-    fireEvent.change(screen.getByTestId('first-run-assist-input'), { target: { value: 'Do I need this?' } });
-    expect(screen.queryByTestId('first-run-assist-mic')).toBeNull();
-    fireEvent.click(screen.getByTestId('first-run-assist-send'));
-    await waitFor(() => expect(assistantApi.streamAssistantTurn.mock.calls[2][0].body)
-      .toMatchObject({ message: 'Do I need this?', first_run_screen: 'memory' }));
-    expect(await screen.findByTestId('first-run-assist-answer')).toHaveTextContent('You said: Do I need this?');
-
-    await waitFor(() => expect(screen.getByTestId('first-run-continue')).not.toBeDisabled());
-    cont();
-    await screen.findByTestId('first-run-demo');
-    cont();
-    await screen.findByTestId('first-run-done');
-    fireEvent.click(screen.getByTestId('first-run-finish-assistant'));
-    await waitFor(() => expect(onFinish).toHaveBeenCalledWith('assistant', { voice: true }));
-  });
-
   describe('screens already set up', () => {
     const SET = {
       ...CONNECTED,
       configured: {
         model: { provider: 'anthropic', model: 'claude-sonnet-5' },
-        voice: { speech: 'gpt-4o-mini-tts', transcription: 'gpt-4o-transcribe' },
         demo: { enabled: false },
       },
     };
@@ -303,7 +179,7 @@ describe('FirstRun', () => {
       expect(screen.getByTestId('first-run-change')).toBeTruthy();
       expect(screen.queryByTestId('first-run-tier-balanced')).toBeNull();
       cont();
-      await screen.findByTestId('first-run-voice');
+      await screen.findByTestId('first-run-memory');
       expect(firstRunApi.firstRunOp).not.toHaveBeenCalled();
     });
 
@@ -313,13 +189,6 @@ describe('FirstRun', () => {
       fireEvent.click(screen.getByTestId('first-run-change'));
       expect(await screen.findByTestId('first-run-tier-balanced')).toBeTruthy();
       expect(screen.queryByTestId('first-run-choose-configured')).toBeNull();
-    });
-
-    it('shows the voice models, and Change opens the voice choice', async () => {
-      await open('voice');
-      expect(await screen.findByTestId('first-run-voice-configured')).toHaveTextContent('gpt-4o-mini-tts');
-      fireEvent.click(screen.getByTestId('first-run-change'));
-      expect(await screen.findByTestId('first-run-voice-cloud-openai')).toBeTruthy();
     });
 
     it('shows a demo decided off, and Change offers the choice', async () => {
@@ -340,7 +209,7 @@ describe('FirstRun', () => {
       renderRun({ initial: { step: 'model' } });
       fireEvent.click(await screen.findByTestId('first-run-way-cloud'));
       fireEvent.change(screen.getByTestId('first-run-key'), { target: { value: 'sk-test' } });
-      setupApi.connectFirstModel.mockResolvedValue({ data: { ok: true } });
+      firstRunApi.connectFirstModel.mockResolvedValue({ data: { ok: true } });
       firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...SET } });
       fireEvent.click(screen.getByTestId('first-run-connect'));
       expect(await screen.findByTestId('first-run-tier-balanced')).toBeTruthy();

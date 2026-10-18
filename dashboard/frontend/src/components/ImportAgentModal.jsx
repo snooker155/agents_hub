@@ -12,12 +12,10 @@ import {
   Loader,
   RefreshCw,
   Search,
-  Sparkles,
   X,
 } from 'lucide-react';
 import {
   discardAgentImport,
-  getAgentImportPresets,
   getAgentImportRequirements,
   inspectAgentRepo,
   registerImportedAgent,
@@ -40,14 +38,8 @@ const inputCls =
  *    was refused and forgotten.
  *
  * onDone(result) receives the backend's register response.
- *
- * ``preselectPreset`` opens the dialog already pointed at a bundled example
- * (see agents.importer.service.PRESETS): "Add Claude Code" and "Add Codex"
- * on the Agents page both go through this rather than a code path of their
- * own, so a preset import is checked and registered exactly like a
- * repository one, only without a URL to type.
  */
-export default function ImportAgentModal({ workspace = '', preselectPreset = '', onClose, onDone }) {
+export default function ImportAgentModal({ workspace = '', onClose, onDone }) {
   const { t } = useI18n();
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('');
@@ -56,11 +48,8 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
   const [showRequirements, setShowRequirements] = useState(true);
   const [showManifest, setShowManifest] = useState(false);
 
-  const [presets, setPresets] = useState([]);
-  const [selectedPreset, setSelectedPreset] = useState(preselectPreset || '');
-
   const [inspection, setInspection] = useState(null);
-  const [checking, setChecking] = useState(!!preselectPreset);
+  const [checking, setChecking] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
 
@@ -71,9 +60,6 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
     getAgentImportRequirements()
       .then(({ data }) => setRequirements(data))
       .catch(() => setRequirements(null));
-    getAgentImportPresets()
-      .then(({ data }) => setPresets(data.presets || []))
-      .catch(() => setPresets([]));
   }, []);
 
   // A staged clone left on the server when the dialog is closed without
@@ -83,27 +69,19 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
     onClose();
   };
 
-  // ``override.preset`` lets the mount effect check a preset before
-  // ``selectedPreset`` state has necessarily settled; every other caller
-  // reads the current selection off state.
-  const runCheck = async (override = {}) => {
-    const preset = override.preset ?? selectedPreset;
-    if (!preset && !repoUrl.trim()) return;
+  const runCheck = async () => {
+    if (!repoUrl.trim()) return;
     setChecking(true);
     setError('');
-    await inspectNow(preset);
+    await inspectNow();
   };
 
-  // The part of the check that runs after the busy flag is up. The mount
-  // effect calls this directly (``checking`` starts true for a preselected
-  // preset) so no state is set synchronously inside the effect.
-  const inspectNow = async (preset) => {
+  const inspectNow = async () => {
     // Re-checking supersedes the previous staged clone.
     if (inspection?.token) discardAgentImport(inspection.token).catch(() => {});
     try {
       const { data } = await inspectAgentRepo({
-        repo_url: preset ? undefined : repoUrl.trim(),
-        preset: preset || undefined,
+        repo_url: repoUrl.trim(),
         branch: branch.trim() || undefined,
         agent_id: form.id.trim() || undefined,
         url: form.url.trim() || undefined,
@@ -125,33 +103,10 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
     }
   };
 
-  // Opened via "Add Claude Code" / "Add Codex": run the check immediately so
-  // the operator lands on the readiness report, not an empty form they still
-  // have to know to submit.
-  useEffect(() => {
-    if (preselectPreset) inspectNow(preselectPreset);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preselectPreset]);
-
   // Re-run the checks against edited fields without re-cloning is not possible
   // server-side (the report is computed from the clone), so this simply repeats
   // the inspection — cheap, and it keeps one source of truth for the verdict.
   const recheckWithEdits = () => runCheck();
-
-  // Switching to a preset clears whatever was typed into the repository
-  // field, and the other way round, so the two sources can never both be
-  // half-filled when the check runs.
-  const choosePreset = (presetId) => {
-    setSelectedPreset(presetId);
-    setRepoUrl('');
-    setInspection(null);
-    setError('');
-  };
-  const useRepoInstead = () => {
-    setSelectedPreset('');
-    setInspection(null);
-    setError('');
-  };
 
   const doImport = async () => {
     if (!inspection) return;
@@ -160,9 +115,6 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
     try {
       const { data } = await registerImportedAgent({
         token: inspection.token,
-        // The inspection's own repo_url: for a preset that is the
-        // "preset:<id>" provenance marker /inspect resolved, not the (empty)
-        // repository field.
         repo_url: inspection.repo_url || repoUrl.trim(),
         agent_id: form.id.trim(),
         name: form.name.trim() || undefined,
@@ -203,88 +155,41 @@ export default function ImportAgentModal({ workspace = '', preselectPreset = '',
         </div>
 
         <div className="overflow-y-auto px-6 py-5 space-y-5">
-          {/* ── Bundled presets ───────────────────────────────────────────
-              Claude Code, Codex and anything else shipped under
-              examples/imported-agents/: no URL to type, just a button. */}
-          {presets.length > 0 && (
+          {/* ── Source ─────────────────────────────────────────────────── */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-3">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                {t('importAgentModal.bundledPresets')}
+                {t('importAgentModal.sourceUrl')}
               </label>
-              <div className="flex flex-wrap gap-2">
-                {presets.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => choosePreset(p.id)}
-                    disabled={p.available === false}
-                    title={p.description}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                      selectedPreset === p.id
-                        ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Source ─────────────────────────────────────────────────── */}
-          {selectedPreset ? (
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3 flex items-start justify-between gap-3">
-              <p className="text-sm text-indigo-900">
-                {t('importAgentModal.usingPreset', {
-                  name: presets.find((p) => p.id === selectedPreset)?.name || selectedPreset,
-                })}
+              <input
+                className={inputCls}
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && runCheck()}
+                placeholder={t('importAgentModal.httpsGithubComOwnerMy')}
+              />
+              {/* An A2A agent is already running and describes itself, so its
+                  card replaces the repository entirely. */}
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                {t('importAgentModal.sourceUrlHint')}
               </p>
-              <button
-                type="button"
-                onClick={useRepoInstead}
-                className="shrink-0 text-xs font-semibold text-indigo-700 hover:text-indigo-900"
-              >
-                {t('importAgentModal.useRepositoryInstead')}
-              </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-3">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                  {t('importAgentModal.sourceUrl')}
-                </label>
-                <input
-                  className={inputCls}
-                  value={repoUrl}
-                  onChange={(e) => setRepoUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && runCheck()}
-                  placeholder={t('importAgentModal.httpsGithubComOwnerMy')}
-                />
-                {/* An A2A agent is already running and describes itself, so its
-                    card replaces the repository entirely. */}
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                  {t('importAgentModal.sourceUrlHint')}
-                </p>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                  {t('importAgentModal.branch')}
-                </label>
-                <input
-                  className={inputCls}
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  placeholder={t('importAgentModal.default')}
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                {t('importAgentModal.branch')}
+              </label>
+              <input
+                className={inputCls}
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                placeholder={t('importAgentModal.default')}
+              />
             </div>
-          )}
+          </div>
 
           <button
             onClick={() => runCheck()}
-            disabled={(!selectedPreset && !repoUrl.trim()) || checking}
+            disabled={!repoUrl.trim() || checking}
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 disabled:opacity-50"
           >
             {checking ? <Loader className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}

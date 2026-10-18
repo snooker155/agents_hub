@@ -26,7 +26,6 @@ function useDefinitionChatDescriptor(agentId, workspace, onChanged) {
   }, [onChanged]);
 
   return useMemo(() => (agentId ? {
-    scope: `agent:${agentId}`,
     path: agentDefinitionChatUrl(agentId, workspace),
     loadChat, clearChat, stopChat, onEvent,
     title: t('agentDetails.definitionChat'),

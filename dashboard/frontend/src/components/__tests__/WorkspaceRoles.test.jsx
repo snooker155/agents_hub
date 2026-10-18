@@ -12,7 +12,7 @@ const ok = (data) => Promise.resolve({ data });
 const getWorkspaceRoles = vi.fn();
 const updateWorkspaceRole = vi.fn();
 const getAgents = vi.fn(() => ok([
-  { id: 'swe_agent', name: 'SWE Agent' }, { id: 'claude-code', name: 'Claude Code' },
+  { id: 'swe_agent', name: 'SWE Agent' }, { id: 'aider', name: 'Aider' },
 ]));
 
 vi.mock('../../api', () => ({
@@ -36,17 +36,17 @@ describe('WorkspaceRoles', () => {
 
   it('gives a role to another agent of the workspace and back to the default', async () => {
     getWorkspaceRoles.mockReturnValue(ok({ roles: [coder()] }));
-    updateWorkspaceRole.mockReturnValue(ok({ roles: [coder({ agent: 'claude-code', bound: 'claude-code' })] }));
+    updateWorkspaceRole.mockReturnValue(ok({ roles: [coder({ agent: 'aider', bound: 'aider' })] }));
     wrap(<WorkspaceRoles workspace="alpha" />);
 
     const select = await screen.findByLabelText('Coder');
     expect(screen.getByText('Called by: main-agent, orchestrator')).toBeTruthy();
-    await waitFor(() => expect(within(select).getByRole('option', { name: 'Claude Code' })).toBeTruthy());
+    await waitFor(() => expect(within(select).getByRole('option', { name: 'Aider' })).toBeTruthy());
     expect(within(select).getByRole('option', { name: 'SWE Agent (default)' })).toBeTruthy();
 
-    fireEvent.change(select, { target: { value: 'claude-code' } });
-    await waitFor(() => expect(updateWorkspaceRole).toHaveBeenCalledWith('alpha', 'coder', 'claude-code'));
-    await waitFor(() => expect(select).toHaveValue('claude-code'));
+    fireEvent.change(select, { target: { value: 'aider' } });
+    await waitFor(() => expect(updateWorkspaceRole).toHaveBeenCalledWith('alpha', 'coder', 'aider'));
+    await waitFor(() => expect(select).toHaveValue('aider'));
 
     updateWorkspaceRole.mockReturnValue(ok({ roles: [coder()] }));
     fireEvent.change(select, { target: { value: 'swe_agent' } });
@@ -54,8 +54,8 @@ describe('WorkspaceRoles', () => {
   });
 
   it('says when the bound agent left the workspace', async () => {
-    getWorkspaceRoles.mockReturnValue(ok({ roles: [coder({ bound: 'codex', stale: true })] }));
+    getWorkspaceRoles.mockReturnValue(ok({ roles: [coder({ bound: 'goose', stale: true })] }));
     wrap(<WorkspaceRoles workspace="alpha" />);
-    expect(await screen.findByText('codex is no longer in this workspace, so swe_agent holds the role.')).toBeTruthy();
+    expect(await screen.findByText('goose is no longer in this workspace, so swe_agent holds the role.')).toBeTruthy();
   });
 });

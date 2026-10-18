@@ -1,6 +1,6 @@
 // The tool capability model (tools/capabilities.py): capability names, the
 // blocked combinations and the delegation suffix, as the agent editor and
-// the MCP page show them. The backend text stays the fallback for a rule
+// the guardrails page show them. The backend text stays the fallback for a rule
 // this file does not know.
 export default {
   labels: {
@@ -17,10 +17,6 @@ export default {
     exfiltration_path: {
       title: 'Abflusspfad',
       explanation: 'Dieser Agent kann von Angreifern steuerbaren Text aufnehmen und Daten nach außen senden. Eingeschleuste Anweisungen haben einen direkten Kanal nach außen: alles, was schon im Kontext des Agenten ist, kann darüber abfließen. Nur gewähren, wenn die Reichweite nach außen der Zweck ist.',
-    },
-    system_workspace: {
-      title: 'Regel des System-Workspace',
-      explanation: 'Ein Agent des System-Workspace darf nie ein Push-, Shell-, Delegations- oder Ausgangswerkzeug halten.',
     },
   },
   viaDelegation: {

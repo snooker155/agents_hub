@@ -10,9 +10,8 @@ over the snapshot plus a probe of its own, each returning ``ok``, ``warn``,
 ``fail`` or ``skip`` with one sentence and a link to the docs section that
 says how to fix it (docs/service-health.md, "Doctor").
 
-Three callers share it: ``GET /api/health/doctor``, ``ah doctor`` and the
-Service Agent's ``run_diagnostics`` tool; the system workspace's doctor agent
-turns its findings into tasks (docs/system-workspace.md).
+Two callers share it: ``GET /api/health/doctor`` (the Health page) and
+``ah doctor``.
 
 Never raises. A check that errors reports ``fail`` with the error as its
 summary: a doctor that crashes on a broken install is useless exactly when it
@@ -47,7 +46,7 @@ class Msg(str):
     """A summary sentence that also carries a message key and the values in it,
     so the dashboard can say it in the reader's language
     (``health.doctor.summaries.<key>`` in the frontend locales). Every other
-    caller, ``ah doctor`` and the Service Agent among them, reads it as the
+    caller, ``ah doctor`` among them, reads it as the
     plain English string it is. ``parts`` holds the pieces of a sentence
     joined from several findings; each piece is a Msg of its own."""
 
@@ -394,35 +393,6 @@ def check_frontend_build(snap: Dict[str, Any]) -> Result:
             detail)
 
 
-# ── system workspace ─────────────────────────────────────────────────────────
-
-def check_system_workspace(snap: Dict[str, Any]) -> Result:
-    from common import system_workspace as sw
-    if not sw.enabled():
-        return ("skip", Msg("systemWorkspace.off", "The system workspace is turned off "
-                                                   "(SYSTEM_WORKSPACE=false)."), {})
-    from workspace import get_workspace_folder, get_workspace_metadata
-    exists = bool(get_workspace_folder(sw.WORKSPACE)) and bool(get_workspace_metadata(sw.WORKSPACE))
-    clone = sw.probe_clone()
-    detail = {"workspace": exists, "repo_dir": clone.get("repo_dir"), "clone": clone.get("exists"),
-              "head": clone.get("head"), "branch": clone.get("branch"),
-              "synced_at": clone.get("synced_at")}
-    if not exists:
-        return ("warn", Msg("systemWorkspace.missing", "The system workspace has not been created; "
-                                                       "it is seeded at startup."), detail)
-    if clone.get("error"):
-        return ("warn", Msg("systemWorkspace.cloneError", f"The repository copy has a problem: "
-                                                          f"{clone['error']}", error=clone["error"]),
-                detail)
-    if not clone.get("exists"):
-        return ("warn", Msg("systemWorkspace.notCloned", "The system workspace exists but its "
-                                                         "repository copy has not been made yet; "
-                                                         "sync it."), detail)
-    return ("ok", Msg("systemWorkspace.ok", f"The repository copy is at {clone.get('head')} on "
-                                            f"{clone.get('branch')}.",
-                      head=clone.get("head"), branch=clone.get("branch")), detail)
-
-
 # ── skills ───────────────────────────────────────────────────────────────────
 
 def check_skills(snap: Dict[str, Any]) -> Result:
@@ -503,7 +473,6 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("docker", "Docker", check_docker),
     ("sandbox", "Sandbox providers", check_sandbox),
     ("frontend_build", "Frontend build", check_frontend_build),
-    ("system_workspace", "System workspace", check_system_workspace),
     ("skills", "Skill safety review", check_skills),
 ]
 

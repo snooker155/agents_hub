@@ -6,7 +6,6 @@ import { FeedItem } from './ChatFeed';
 import ContextMeter from '../ContextMeter';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
-import { useInlineChatOpen } from '../pageChat/pageChat';
 import {
   getProjectTasksChat, clearProjectTasksChat,
   streamProjectTasksGenerate, stopProjectGraphChat,
@@ -18,9 +17,6 @@ import {
 // and replays the full session on reload. Calls onGenerated when tasks change.
 function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
   const { t } = useI18n();
-  // Drawn only while the Tasks tab has the planner open, so being mounted is
-  // being on screen: the floating launcher stands down meanwhile.
-  useInlineChatOpen();
   const [feed, setFeed] = useState([]);
   // Planning sessions run long and re-send their transcript each turn: the
   // meter under the composer says how much of the model's window is left.

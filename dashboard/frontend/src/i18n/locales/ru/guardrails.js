@@ -97,7 +97,7 @@ export default {
     source_tool: 'Прежний инструмент',
     source_argument: 'Его аргумент',
     sourceArgumentPlaceholder: 'то же имя, если пусто',
-    patternsHint: 'В именах инструментов * означает любой текст (mcp__bank__*). Аргументы задаются путём через точку (payee.account).',
+    patternsHint: 'В именах инструментов * означает любой текст (bank_*). Аргументы задаются путём через точку (payee.account).',
   },
   model: 'Модель-судья',
   modelPlaceholder: 'провайдер/модель, например anthropic/claude-haiku-4-5 (пусто: значение рабочего пространства)',

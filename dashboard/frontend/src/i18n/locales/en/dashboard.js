@@ -97,7 +97,7 @@ export default {
     },
     unavailable: 'No data',
     channels: {
-      chat: 'chat', voice: 'voice', local: 'local', flow: 'flows', team: 'teams', sim: 'simulations',
+      chat: 'chat', local: 'local', flow: 'flows', team: 'teams', sim: 'simulations',
       chat_delegate: 'delegation', continuation: 'continuations', api: 'API', telegram: 'Telegram',
       widget: 'widget', schedule: 'schedule', other: 'other',
     },

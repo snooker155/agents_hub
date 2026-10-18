@@ -97,7 +97,7 @@ export default {
     source_tool: 'Früheres Werkzeug',
     source_argument: 'Dessen Argument',
     sourceArgumentPlaceholder: 'gleicher Name, wenn leer',
-    patternsHint: 'Werkzeugnamen nehmen * als Platzhalter (mcp__bank__*). Argumente sind Pfade mit Punkten (payee.account).',
+    patternsHint: 'Werkzeugnamen nehmen * als Platzhalter (bank_*). Argumente sind Pfade mit Punkten (payee.account).',
   },
   model: 'Richtermodell',
   modelPlaceholder: 'Anbieter/Modell, z. B. anthropic/claude-haiku-4-5 (leer: der Standard des Arbeitsbereichs)',

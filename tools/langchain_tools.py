@@ -34,7 +34,7 @@ from agents.agent_launcher import (
 from common.entity_sink import record_entity
 from common.untrusted import agent_output_fence
 from common.workspace_context import filter_agents_for_workspace
-from common.workspace_scope import check_record, current_agent, is_service_wide
+from common.workspace_scope import check_record
 from common.session_service import get_or_create_task_session, add_run_to_session
 from tasks.context import augment_params_with_block_reason
 from tasks.service import (
@@ -146,11 +146,11 @@ def _delegation_blocked(agent_id: str) -> Optional[str]:
 def _agent_available(spec: Any, ws: Optional[str]) -> bool:
     """Whether ``spec`` may be run, assigned, inspected or delegated to from
     ``ws``: the notion the workspace's agent list uses
-    (``filter_agents_for_workspace``). The service's own agents reach every
-    agent; no workspace at all (the CLI) keeps every agent reachable."""
+    (``filter_agents_for_workspace``). No workspace at all (the CLI) keeps
+    every agent reachable."""
     if spec is None:
         return False
-    if not ws or is_service_wide(current_agent()):
+    if not ws:
         return True
     return bool(filter_agents_for_workspace([spec], ws))
 
@@ -160,10 +160,7 @@ def _agent_owner_error(spec: Any) -> Optional[str]:
 
     Only an agent owned by this run's workspace (``owner_workspace``; an
     agent with no owner belongs to ``default``) may be changed, and never a
-    system agent. The service's own agents may change any agent; a call with
-    no workspace (the CLI) is left as it was."""
-    if is_service_wide(current_agent()):
-        return None
+    system agent. A call with no workspace (the CLI) is left as it was."""
     ws = _active_workspace()
     if not ws:
         return None

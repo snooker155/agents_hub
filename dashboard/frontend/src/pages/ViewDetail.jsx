@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, Camera, Info, Link2, Maximize2, Minimize2, RefreshCw,
+  ArrowLeft, Boxes, Camera, Info, Link2, Maximize2, MessageSquare, Minimize2, RefreshCw,
   Trash2, AlertCircle,
 } from 'lucide-react';
 import {
   getView, applyViewOps, setViewState, deleteView, saveViewSnapshot, viewAssetUrl, getProjects,
 } from '../api';
 import CodeWorkbench from '../components/code/CodeWorkbench';
+import EntityChat from '../components/EntityChat';
 import useViewChatDescriptor from '../views/useViewChatDescriptor';
-import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useChannel } from '../components/stream';
 import { applyOp } from '../views/opsClient';
 import ViewRenderer from '../views/ViewRenderer';
@@ -75,23 +75,23 @@ export default function ViewDetail() {
   const [toast, setToast] = useState('');
   const viewportRef = useRef(null);
 
-  // The view's own chat (the Visualizer, the thread the Studio shows too) in
-  // the floating panel. A code view's Discuss and Edit put their text into
-  // its composer: straight away when the panel is open, or as soon as the
-  // chat mounts after the panel is opened for them.
+  // The view's own chat (the Visualizer, the thread the Studio shows too), in
+  // an aside opened on demand. A code view's Discuss and Edit put their text
+  // into its composer: straight away when the chat is open, or as soon as it
+  // mounts after they open it.
+  const [showChat, setShowChat] = useState(false);
   const composerRef = useRef(null);
   const pendingPrefillRef = useRef(null);
   const registerChatComposer = useCallback((fn) => {
     composerRef.current = fn;
     if (fn && pendingPrefillRef.current) { fn(pendingPrefillRef.current); pendingPrefillRef.current = null; }
   }, []);
-  usePageChat(useViewChatDescriptor(viewId, null, registerChatComposer));
-  const { setOpen: setChatOpen } = usePageChatPanel();
+  const viewChat = useViewChatDescriptor(viewId, null, registerChatComposer);
   const prefillChat = useCallback((text) => {
     if (composerRef.current) composerRef.current(text);
     else pendingPrefillRef.current = text;
-    setChatOpen(true);
-  }, [setChatOpen]);
+    setShowChat(true);
+  }, []);
   const codeChat = useMemo(() => ({ setInput: prefillChat }), [prefillChat]);
 
   // Save to project needs the workspace's projects; only a code view saves.
@@ -213,6 +213,10 @@ export default function ViewDetail() {
             {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
           <button onClick={load} title={t('viewDetail.reload')} className={btn}><RefreshCw className="w-4 h-4" /></button>
+          <button onClick={() => setShowChat((s) => !s)} title={showChat ? t('studio.hideChat') : t('studio.showChat')}
+            className={`${btn} ${showChat ? 'bg-gray-100 dark:bg-gray-800 text-indigo-600' : ''}`}>
+            <MessageSquare className="w-4 h-4" />
+          </button>
           <button onClick={() => setShowInfo((s) => !s)} title={t('viewDetail.details')}
             className={`${btn} ${showInfo ? 'bg-gray-100 dark:bg-gray-800 text-indigo-600' : ''}`}>
             <Info className="w-4 h-4" />
@@ -267,6 +271,19 @@ export default function ViewDetail() {
             </div>
           )}
         </div>
+
+        {showChat && viewChat && (
+          <aside className="w-[26rem] flex-shrink-0 border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0">
+            {/* Keyed on the view: another view is another thread. */}
+            <EntityChat
+              key={viewId}
+              {...viewChat}
+              onHide={() => setShowChat(false)}
+              heightClass="min-h-0 max-h-none"
+              className="flex-1 min-h-0 p-3"
+            />
+          </aside>
+        )}
 
         {showInfo && view && (
           <aside className="w-80 flex-shrink-0 border-l border-gray-200 dark:border-gray-700 overflow-y-auto">

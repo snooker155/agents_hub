@@ -2,7 +2,7 @@
  * The sidebar's map: five groups along the object tree of docs/overview.md,
  * and two ways of showing it.
  *
- * - conversation: where a person talks (the assistant, the chat) and the
+ * - conversation: where a person talks (the chat) and the
  *   overview of what is going on (the Dashboard, full menu only: a person
  *   using the hub for themselves has little to watch there).
  * - work: what gets done and when (projects, tasks, flows and the other
@@ -28,8 +28,7 @@ import {
   LayoutDashboard, CheckSquare, Folder, Database, Factory, Wrench, Users,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, FolderGit2, Box, Store,
   CalendarClock, BookOpen, Brain, Images, Repeat, UsersRound,
-  GraduationCap, Globe, Link2, Plug, Layers, Rocket, ShieldCheck,
-  AudioLines,
+  GraduationCap, Globe, Link2, Layers, Rocket, ShieldCheck,
 } from 'lucide-react';
 
 export const MENU_MODE_KEY = 'agents_hub_menu_mode';
@@ -66,8 +65,6 @@ export function buildMenu({ t }) {
     {
       key: 'conversation',
       items: [
-        // One agent for the whole service, by voice or text (docs/assistant.md).
-        { name: t('nav.assistant'), path: '/assistant', icon: AudioLines, simple: true },
         { name: t('nav.chat'), path: '/chat', icon: MessageCircle, simple: true },
         { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard, home: '/settings' },
       ],
@@ -111,12 +108,10 @@ export function buildMenu({ t }) {
     },
     {
       // Attaching something that is not defined in here: this service reaches
-      // out to a system you use (Connectors); MCP servers hand over tools
-      // nobody here has seen.
+      // out to a system you use (Connectors).
       key: 'integrations',
       items: [
         { name: t('nav.connectors'), path: '/connectors', icon: Link2, home: '/settings' },
-        { name: t('nav.mcp'), path: '/mcp', icon: Plug, home: '/settings' },
       ],
     },
     {

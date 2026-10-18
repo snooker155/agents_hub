@@ -16,13 +16,6 @@ export const recheckImportedAgent = (agentId, data) =>
 export const getAgentImportDetails = (agentId) =>
   api.get(`/agent-import/${encodeURIComponent(agentId)}`);
 
-// Bundled agent-import presets (examples/imported-agents/): Claude Code and
-// Codex behind the hub's HTTP contract, ready to import with no repository
-// URL. inspectAgentRepo/registerImportedAgent (above) already carry a
-// { preset } field through unchanged, so importing one reuses the same two
-// calls the import dialog already makes for a repository.
-export const getAgentImportPresets = () => api.get('/agent-import/presets');
-
 // Docker mode: the hub builds the agent's image from its clone and runs one
 // container per workspace, mounting that workspace's folder (and its eval
 // folder when that lives elsewhere) at its own host path. The agent page

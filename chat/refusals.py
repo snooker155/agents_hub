@@ -26,7 +26,6 @@ def capability_refusal(exc: Any) -> Dict[str, Any]:
     from agents import capability_guard as guard
     agent_id = str(getattr(exc, "agent_id", "") or "")
     body = dict(exc.violation.to_dict())
-    system_rule = guard.is_system_workspace_agent(agent_id) if agent_id else False
     out: Dict[str, Any] = {
         "code": CAPABILITY_GUARD,
         "agent_id": agent_id,
@@ -37,8 +36,7 @@ def capability_refusal(exc: Any) -> Dict[str, Any]:
         "capabilities": body.get("capabilities") or [],
         "sources": body.get("sources") or {},
         "guard_mode": guard.guard_mode(),
-        # The system workspace rule is never softened, so no button for it.
-        "override_allowed": not system_rule and body.get("rule_id") != _system_rule_id(),
+        "override_allowed": True,
     }
     if out["override_allowed"] and agent_id:
         out["override_requires_container"] = guard.override_requires_container()
@@ -47,11 +45,6 @@ def capability_refusal(exc: Any) -> Dict[str, Any]:
         except Exception:  # noqa: BLE001 - the card still works without the hint
             log.debug("override_honoured_at_build failed for %s", agent_id, exc_info=True)
     return out
-
-
-def _system_rule_id() -> str:
-    from tools.capabilities import SYSTEM_WORKSPACE_RULE_ID
-    return SYSTEM_WORKSPACE_RULE_ID
 
 
 def refusal_of(exc: BaseException, *, agent_id: Optional[str] = None,

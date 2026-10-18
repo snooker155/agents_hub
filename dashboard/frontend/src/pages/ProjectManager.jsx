@@ -6,7 +6,6 @@ import {
   projectRegistryChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
-import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ImportRepoModal from '../components/ImportRepoModal';
 import ProjectCard from '../components/projects/ProjectCard';
@@ -53,7 +52,6 @@ function useRegistryChatDescriptor(workspace, onProjectsChanged) {
   }, [onProjectsChanged]);
 
   return useMemo(() => ({
-    scope: `projects:${workspace || ''}`,
     path: projectRegistryChatUrl(workspace),
     loadChat, clearChat, stopChat, onEvent,
     title: t('projectManager.registryChat'),
@@ -92,9 +90,7 @@ export default function ProjectManager() {
     fetchProjects();
   }, [fetchProjects]);
 
-  // The same conversation the column shows, offered to the floating panel too.
   const registryChat = useRegistryChatDescriptor(selectedWorkspace, fetchProjects);
-  usePageChat(registryChat);
 
   // The create form follows the workspace switcher (adjusted while rendering).
   const [formWorkspaceFor, setFormWorkspaceFor] = useState(selectedWorkspace);

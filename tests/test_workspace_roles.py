@@ -48,11 +48,11 @@ def two_workspaces(seeded):
     from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
     for ws in (WS, OTHER):
         create_workspace_folder(ws)
-    registry.add_agent(_spec("claude-code", description="Claude Code CLI in a container"))
-    registry.add_agent(_spec("codex", description="Codex CLI in a container"))
-    # claude-code joins team-a only; team-b keeps the system agents.
+    registry.add_agent(_spec("aider", description="Aider CLI in a container"))
+    registry.add_agent(_spec("goose", description="Goose CLI in a container"))
+    # aider joins team-a only; team-b keeps the system agents.
     allowed = list(get_workspace_metadata(WS).get("allowed_agents") or [])
-    update_workspace_metadata(WS, {"allowed_agents": [*allowed, "claude-code"]})
+    update_workspace_metadata(WS, {"allowed_agents": [*allowed, "aider"]})
     return WS, OTHER
 
 
@@ -68,28 +68,28 @@ def test_an_unbound_role_is_held_by_its_default(two_workspaces):
 
 
 def test_a_binding_swaps_the_agent_in_its_workspace_only(two_workspaces):
-    roles.set_binding(WS, "coder", "claude-code")
-    assert roles.holder("coder", WS) == "claude-code"
-    assert roles.expand(["@coder", "@reviewer", "planner"], WS) == ["claude-code", "code_reviewer", "planner"]
-    assert roles.roles_held("claude-code", WS) == ["coder"]
+    roles.set_binding(WS, "coder", "aider")
+    assert roles.holder("coder", WS) == "aider"
+    assert roles.expand(["@coder", "@reviewer", "planner"], WS) == ["aider", "code_reviewer", "planner"]
+    assert roles.roles_held("aider", WS) == ["coder"]
     # The other workspace never sees the binding.
     assert roles.holder("coder", OTHER) == "swe_agent"
 
 
 def test_the_default_or_an_empty_agent_clears_the_binding(two_workspaces):
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     roles.set_binding(WS, "coder", "")
     assert roles.bindings(WS) == {}
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     roles.set_binding(WS, "coder", "swe_agent")
     assert roles.bindings(WS) == {}
 
 
 @pytest.mark.parametrize("role, agent, status", [
-    ("coder", "codex", 400),          # exists, but not in the workspace
+    ("coder", "goose", 400),          # exists, but not in the workspace
     ("coder", "nobody", 404),         # does not exist
     ("coder", "@reviewer", 400),      # a role is held by an agent
-    ("janitor", "claude-code", 404),  # no such role
+    ("janitor", "aider", 404),  # no such role
 ])
 def test_bad_bindings_are_refused(two_workspaces, role, agent, status):
     with pytest.raises(roles.RoleError) as err:
@@ -99,11 +99,11 @@ def test_bad_bindings_are_refused(two_workspaces, role, agent, status):
 
 
 def test_a_binding_whose_agent_is_gone_falls_back_to_the_default(two_workspaces):
-    roles.set_binding(WS, "coder", "claude-code")
-    registry.remove_agent("claude-code")
+    roles.set_binding(WS, "coder", "aider")
+    registry.remove_agent("aider")
     assert roles.holder("coder", WS) == "swe_agent"
     row = next(r for r in roles.describe(WS) if r["role"] == "coder")
-    assert row["stale"] and row["bound"] == "claude-code" and row["agent"] == "swe_agent"
+    assert row["stale"] and row["bound"] == "aider" and row["agent"] == "swe_agent"
 
 
 def test_agent_ids_cannot_start_with_the_role_prefix(seeded):
@@ -123,9 +123,9 @@ def test_a_caller_naming_the_role_may_delegate_to_the_holder_only(two_workspaces
     ws_token = _workspace_ctx.set(WS)
     try:
         assert _delegation_blocked("swe_agent") is None
-        assert _delegation_blocked("claude-code") is not None
-        roles.set_binding(WS, "coder", "claude-code")
-        assert _delegation_blocked("claude-code") is None
+        assert _delegation_blocked("aider") is not None
+        roles.set_binding(WS, "coder", "aider")
+        assert _delegation_blocked("aider") is None
         assert _delegation_blocked("swe_agent") is not None
     finally:
         _workspace_ctx.reset(ws_token)
@@ -140,7 +140,7 @@ def test_run_agent_tool_resolves_the_role_before_anything_else(two_workspaces, m
     from tools.langchain_tools import run_agent_tool
 
     registry.add_agent(_spec("lead", tools=["run_agent_tool"], delegates=["@reviewer"]))
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     agent_token = current_agent_id.set("lead")
     ws_token = _workspace_ctx.set(WS)
     try:
@@ -149,38 +149,38 @@ def test_run_agent_tool_resolves_the_role_before_anything_else(two_workspaces, m
         _workspace_ctx.reset(ws_token)
         current_agent_id.reset(agent_token)
     assert out["ok"] is False
-    assert "claude-code" in json.dumps(out)
+    assert "aider" in json.dumps(out)
 
 
 def test_handoff_targets_resolve_the_role(two_workspaces):
     from tools.handoff import create_handoff_tools
 
     registry.add_agent(_spec("drafter", handoffs=["@coder"]))
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     [tool] = create_handoff_tools(registry.get_agent("drafter"), WS)
-    assert "`claude-code`" in tool.description and "swe_agent" not in tool.description
+    assert "`aider`" in tool.description and "swe_agent" not in tool.description
 
 
 def test_list_agents_marks_the_holders(two_workspaces):
     from common.workspace_context import _workspace_ctx
     from tools.langchain_tools import list_agents_tool
 
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     token = _workspace_ctx.set(WS)
     try:
         listed = json.loads(list_agents_tool.invoke({}))["agents"]
     finally:
         _workspace_ctx.reset(token)
     by_id = {a["id"]: a for a in listed}
-    assert by_id["claude-code"]["roles"] == ["@coder"]
+    assert by_id["aider"]["roles"] == ["@coder"]
     assert "roles" not in by_id["swe_agent"]
     assert by_id["code_reviewer"]["roles"] == ["@reviewer"]
 
 
 def test_the_prompt_names_the_holder_of_each_role_the_agent_reaches(two_workspaces):
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
     text = roles.prompt_section(_spec("lead", delegates=["@coder", "planner"]), WS)
-    assert "`@coder`" in text and "`claude-code`" in text
+    assert "`@coder`" in text and "`aider`" in text
     assert "@planner" not in text
     assert roles.prompt_section(_spec("solo", delegates=["planner"]), WS) == ""
 
@@ -188,8 +188,8 @@ def test_the_prompt_names_the_holder_of_each_role_the_agent_reaches(two_workspac
 # ── the capability guard ─────────────────────────────────────────────────────
 
 def test_the_guard_sees_every_holder_of_a_role(two_workspaces):
-    roles.set_binding(WS, "coder", "claude-code")
-    assert set(roles.expand_all(["@coder", "planner"])) == {"swe_agent", "claude-code", "planner"}
+    roles.set_binding(WS, "coder", "aider")
+    assert set(roles.expand_all(["@coder", "planner"])) == {"swe_agent", "aider", "planner"}
 
 
 def test_a_binding_that_would_close_the_trifecta_for_a_caller_is_refused(two_workspaces):
@@ -209,7 +209,7 @@ def test_a_binding_that_would_close_the_trifecta_for_a_caller_is_refused(two_wor
     assert "lead" in str(err.value)
     assert roles.bindings(WS) == {}
     # The harmless one goes through.
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "coder", "aider")
 
 
 # ── the seed and an operator-edited system agent ─────────────────────────────
@@ -271,12 +271,12 @@ def test_the_roles_api(two_workspaces, client):
     rows = client.get(f"/api/workspaces/{WS}/roles").json()["roles"]
     assert [r["role"] for r in rows] == roles.role_ids()
 
-    resp = client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": "claude-code"})
+    resp = client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": "aider"})
     assert resp.status_code == 200, resp.text
     coder = next(r for r in resp.json()["roles"] if r["role"] == "coder")
-    assert coder["agent"] == "claude-code" and coder["agent_name"] == "Claude-Code"
+    assert coder["agent"] == "aider" and coder["agent_name"] == "Aider"
 
-    assert client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": "codex"}).status_code == 400
-    assert client.put(f"/api/workspaces/{WS}/roles/janitor", json={"agent_id": "codex"}).status_code == 404
+    assert client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": "goose"}).status_code == 400
+    assert client.put(f"/api/workspaces/{WS}/roles/janitor", json={"agent_id": "goose"}).status_code == 404
     assert client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": None}).status_code == 200
     assert roles.bindings(WS) == {}

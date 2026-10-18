@@ -33,13 +33,6 @@ def test_capability_violation_becomes_a_structured_refusal():
     assert "Agent 'scout'" in out["message"]
 
 
-def test_system_workspace_rule_has_no_override():
-    from agents.capability_guard import CapabilityViolation
-    from tools.capabilities import SYSTEM_WORKSPACE_RULE_ID, Violation
-    v = Violation(rule_id=SYSTEM_WORKSPACE_RULE_ID, title="t", explanation="e", capabilities=frozenset())
-    assert refusals.refusal_of(CapabilityViolation("x", v))["override_allowed"] is False
-
-
 def test_an_ordinary_error_is_not_a_refusal():
     assert refusals.refusal_of(RuntimeError("boom")) is None
 

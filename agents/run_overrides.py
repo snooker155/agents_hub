@@ -27,9 +27,6 @@ Keys (anything else is refused, ``OverrideError``):
 ``skills``
     ``true`` or ``false`` turns the agent's skills on or off for this run; a
     list of skill names turns them on and lists only those in the catalog.
-``mcp``
-    MCP server ids: the run gets ``mcp:<id>`` for each, instead of whatever
-    MCP servers the record names.
 ``tool_policy``
     Tool policy entries merged over the agent's own (tools/permission_policy.py).
 ``output_schema``
@@ -53,13 +50,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any, Dict, Iterable, List, Optional
 
 log = logging.getLogger(__name__)
 
 #: Every key the object accepts.
-KEYS = ("model", "provider", "system", "system_append", "tools", "skills", "mcp",
+KEYS = ("model", "provider", "system", "system_append", "tools", "skills",
         "tool_policy", "output_schema", "max_concurrent_delegates")
 
 #: Range accepted for ``max_concurrent_delegates`` (agent field and override alike).
@@ -75,15 +71,13 @@ TOOL_GROUP_ALIASES = (
     "filesystem", "task_management", "agent_coordination", "agent_management",
     "agent_flows", "flow_management",
     "team_management", "loop_management", "project_management", "entity_runs",
-    "schedule_management", "service_ops", "docs", "geometry",
+    "schedule_management", "docs", "geometry",
 )
 
 #: A system text longer than this is refused; the run record keeps at most
 #: ``RECORD_TEXT_CHARS`` of it.
 MAX_TEXT_CHARS = 200_000
 RECORD_TEXT_CHARS = 4_000
-
-_SERVER_ID = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
 
 
 class OverrideError(ValueError):
@@ -121,13 +115,9 @@ def known_tool_ids() -> set:
     return {t.id for t in get_all_tools()} | set(TOOL_GROUP_ALIASES)
 
 
-def _is_mcp(tool_id: str) -> bool:
-    return tool_id.startswith("mcp:") or tool_id.startswith("mcp__")
-
-
 def _check_tools(ids: Iterable[str], key: str) -> None:
     known = known_tool_ids()
-    unknown = sorted(t for t in ids if t not in known and not _is_mcp(t))
+    unknown = sorted(t for t in ids if t not in known)
     if unknown:
         raise OverrideError(f"overrides.{key}: unknown tool id(s): {', '.join(unknown)}")
 
@@ -232,13 +222,6 @@ def normalize(raw: Any, *, check_tool_ids: bool = True) -> Dict[str, Any]:
             out["skills"] = skills
         else:
             out["skills"] = sorted(_strings(skills, "skills"))
-    mcp = data.get("mcp")
-    if mcp is not None:
-        servers = _strings(mcp, "mcp")
-        bad = [s for s in servers if not _SERVER_ID.match(s)]
-        if bad:
-            raise OverrideError(f"overrides.mcp: not a server id: {', '.join(bad)}")
-        out["mcp"] = sorted(servers)
     if data.get("tool_policy") is not None:
         policy = _tool_policy(data["tool_policy"])
         if policy:
@@ -270,12 +253,12 @@ def fold_legacy(raw: Any, *, tool_policy: Any = None, output_schema: Any = None,
 # ── applying ─────────────────────────────────────────────────────────────────
 
 def changes_tools(overrides: Dict[str, Any]) -> bool:
-    return bool(overrides) and ("tools" in overrides or "mcp" in overrides)
+    return bool(overrides) and "tools" in overrides
 
 
 def effective_tools(record_tools: Iterable[str], overrides: Dict[str, Any]) -> List[str]:
     """The run's definition level tool list: the record's, edited by
-    ``tools`` and ``mcp``. Equal to the record's when neither is given."""
+    ``tools``. Equal to the record's when it is not given."""
     tools = [str(t) for t in (record_tools or [])]
     spec = (overrides or {}).get("tools")
     if isinstance(spec, list):
@@ -286,9 +269,6 @@ def effective_tools(record_tools: Iterable[str], overrides: Dict[str, Any]) -> L
         for tool_id in spec.get("add") or []:
             if tool_id not in tools:
                 tools.append(tool_id)
-    servers = (overrides or {}).get("mcp")
-    if servers is not None:
-        tools = [t for t in tools if not _is_mcp(t)] + [f"mcp:{s}" for s in servers]
     return tools
 
 

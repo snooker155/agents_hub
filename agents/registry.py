@@ -1290,19 +1290,14 @@ def _save_record(
         list(effective.tools or []) + secret_grant_ids(effective.secrets),
         previous_tools=(list(_prev.tools or []) + secret_grant_ids(_prev.secrets)) if _prev else None,
         override=bool(stored.capability_override),
-        # The workspace the record is owned by, so a brand new agent of the
-        # system workspace meets the no push rule at save time, not only at
-        # build time (agents.capability_guard.is_system_workspace_agent).
-        workspace=getattr(stored, "owner_workspace", None),
         # The spec being saved, not the (possibly stale-or-absent) registry
         # record: a brand-new agent, or one whose delegates list is being
         # narrowed in this very call, must be judged on the allowlist it is
         # about to have. See agents.capability_guard.check_agent_tools.
         delegates=list(effective.delegates or []),
     )
-    # One workspace per run (common/workspace_scope.py): tools that see the
-    # whole service belong to the service's own agents, workspace management
-    # to the main agent.
+    # One workspace per run (common/workspace_scope.py): workspace management
+    # belongs to the main agent.
     from common import workspace_scope
     workspace_scope.check_agent_tools(stored.id, list(effective.tools or []))
 

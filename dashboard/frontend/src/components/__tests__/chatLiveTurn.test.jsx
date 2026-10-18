@@ -35,7 +35,7 @@ beforeEach(() => {
 
 describe('reduceLiveTurn', () => {
   it('opens a turn on turn_start and fills it as the answer streams', () => {
-    let turn = reduceLiveTurn(null, { type: 'turn_start', message: 'hi', agent_id: 'assistant' });
+    let turn = reduceLiveTurn(null, { type: 'turn_start', message: 'hi', agent_id: 'main-agent' });
     turn = reduceLiveTurn(turn, { type: 'meta', run_id: 'r1' });
     turn = reduceLiveTurn(turn, { type: 'token', token: 'he' });
     turn = reduceLiveTurn(turn, { type: 'token', token: 'llo' });

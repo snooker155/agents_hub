@@ -84,7 +84,7 @@ Hidden entries (a leading dot, where the hub keeps `.logs`, `.views`,
 folders (`INDEX_SKIP_DIRS`) are never registered.
 
 Files written before the registry followed the tools, or by a process outside
-them (Claude Code, Codex, a shell in a sandbox), are picked up by an index of
+them (an external tool, a shell in a sandbox), are picked up by an index of
 the folder: **Sync from folder** on the Files page, `POST /api/files/index`
 or `ah files index [workspace|--all]`. The index registers every file the
 same way (a file under `knowledge/` gets source `memory`, under

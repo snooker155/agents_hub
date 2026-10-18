@@ -32,7 +32,7 @@ export default {
       "h": "Citations",
       "p": "When an agent searches memory, the passages and notes it uses come back numbered as `[n]`, and the reply shows them as sources under the text. Clicking a source opens the workspace file behind it, or the memory page when there is none."
     },
-    "callout": "Files written outside the normal flow, by Claude Code, Codex or a shell, are not listed automatically: use **Sync from folder** on the Files page to register them."
+    "callout": "Files written outside the normal flow, by an external tool or a shell, are not listed automatically: use **Sync from folder** on the Files page to register them."
   },
   "agentLoop": {
     "nav": "Agent loop",
@@ -82,8 +82,8 @@ export default {
   },
   "steering": {
     "nav": "Steering & handoffs",
-    "title": "Steering, handoffs and the page chat",
-    "lead": "A running agent is not a black box: you can talk to it while it works, hand a conversation to another agent, or open a chat tied to whatever page you are looking at.",
+    "title": "Steering and handoffs",
+    "lead": "A running agent is not a black box: you can talk to it while it works, or hand a conversation to another agent.",
     "s0": {
       "h": "Steering a run",
       "p": "Available while a run's status is `running`, from the chat composer or the Steer/Interrupt box on a task or run page.",
@@ -105,58 +105,6 @@ export default {
         "One turn hands over at most a few times (three by default), and the conversation never goes back to an agent that already held it."
       ]
     },
-    "s2": {
-      "h": "The page chat",
-      "p": "The button in the bottom-right corner of every page, holding a conversation about whatever the page is showing.",
-      "points": [
-        "Some pages, such as a loop, a team, an agent's own definition or a memory pool, have their own chat with their own agent; the panel just brings that conversation into view.",
-        "Every other page shares one fixed assistant that sees the page's title, URL and the records it is showing.",
-        "Returning to the same page reopens the same conversation; **Clear** starts a fresh one.",
-        "It never creates, changes or deletes anything without a clear yes to that exact action."
-      ]
-    },
-    "callout": "Every page chat turn is an ordinary run: it shows up in [Runs](/messages) with its own log and cost."
-  },
-  "mcp": {
-    "nav": "MCP servers",
-    "title": "MCP servers",
-    "lead": "An MCP server is somebody else's tool collection. Attach one on the [MCP servers](/mcp) page and its tools become ordinary tools you can grant to an agent.",
-    "s0": {
-      "h": "Attaching a server",
-      "p": "Configured per workspace: a server attached in one workspace is invisible to agents built in another.",
-      "points": [
-        "Pick a transport: `stdio` (a command and args run as a child process), `streamable_http` or `sse` (a URL and headers), or `websocket` (a URL only).",
-        "The **Test** button connects to the server, lists its tools, and shows which ones the current allowlist keeps."
-      ]
-    },
-    "s1": {
-      "h": "Granting tools to an agent",
-      "p": "A server's id becomes half of every tool name it produces.",
-      "points": [
-        "`mcp:<server_id>` grants the whole server.",
-        "`mcp__<server_id>__<tool_name>` grants one tool.",
-        "The id cannot be changed afterward; delete and re-add the server instead of renaming it."
-      ]
-    },
-    "s2": {
-      "h": "Capabilities and approval",
-      "p": "A remote tool cannot classify itself, so you declare its capabilities once per server.",
-      "points": [
-        "Tick whether the server ingests untrusted content, reads private data, or can send data outside.",
-        "An agent whose tools would close all three at once is refused when you try to save it.",
-        "Approval can gate none of the server's tools, all of them, or a chosen list, the same way it covers built-in tools.",
-        "A `stdio` server starts from a scrubbed environment: it never sees the backend's own provider keys."
-      ]
-    },
-    "s3": {
-      "h": "If an agent has fewer tools than expected",
-      "points": [
-        "A server that will not connect is skipped, not fatal: the agent is built with the tools that did resolve.",
-        "A tool count that has not loaded yet is not the same as zero; open the server or hit **Test** to make it connect.",
-        "Deleting a server does not edit the agents that named it; they simply lose those tools."
-      ]
-    },
-    "callout": "A larger install can turn on a hub-wide allowlist (the MCP catalog on [Agent registry](/agent-registry)) so a workspace may only attach a server an admin approved."
   },
   "outcomes": {
     "nav": "Outcome grading",
@@ -243,28 +191,19 @@ export default {
   },
   "health": {
     "nav": "Health",
-    "title": "Health, the runbook and the system workspace",
-    "lead": "The [Status](/health) page shows whether the moving parts are alive and, through the doctor, judges whether that state is actually fine. A system workspace watches the service's own diagnostics and proposes fixes as branches, never pushing on its own.",
+    "title": "Health and the runbook",
+    "lead": "The [Status](/health) page shows whether the moving parts are alive and, through the doctor, judges whether that state is actually fine.",
     "s0": {
       "h": "The snapshot and the doctor",
       "points": [
         "`GET /api/health` reports the database, run counts, background services, storage size and provider keys set; a value of `null` means the check could not tell, not that the thing is down.",
         "The doctor turns that snapshot into judgements: each check comes back `ok`, `warn`, `fail` or `skip` with one sentence and a fix, and the overall status is the worst of them.",
-        "Checks include migrations, the default provider, CORS, stale runs, the run queue, disk space, Docker, the sandbox providers and the system workspace itself."
+        "Checks include migrations, the default provider, CORS, stale runs, the run queue, disk space, Docker and the sandbox providers."
       ]
     },
     "s1": {
       "h": "The runbook",
       "p": "For a failure an operator actually hits (an invalid provider key, a model not enabled, a stuck run queue, a full disk, a stuck lease, a proxy buffering the live stream), the runbook gives the symptom, how to confirm it with the doctor or the health snapshot, and the fix. Most fixes are checked before anything runs, so a refusal, such as a budget cap or a disabled model, never leaves a run half done."
-    },
-    "s2": {
-      "h": "The system workspace",
-      "p": "A workspace named **system** where the service looks after itself: a scheduled loop reads its own diagnostics, files findings as tasks, and proposes fixes as commits on a branch of a private git copy of the repository.",
-      "points": [
-        "The loop never pushes: its agents hold no tool that can push or send data out, enforced at every level with no override.",
-        "A fix lands as a commit on a `system/<date>-<task>` branch; you fetch it, review it, and push it yourself.",
-        "The loop ships paused; turning it on is done from the Health page's system section."
-      ]
     },
     "callout": "A large `running_runs` count with no live instances usually means orphaned records from a process that died, not live work still in progress."
   },
@@ -320,36 +259,4 @@ export default {
     },
     "callout": "Agents send you a notification with notify_user, and a scheduled notification on the [Plan](/plan) page lands in the same inbox."
   },
-  "assistant": {
-    "nav": "Assistant",
-    "title": "Your assistant",
-    "lead": "One assistant for the whole service, by voice or text, on the [Assistant](/assistant) page. It answers questions about the hub, makes small changes behind a card you confirm, and leads the setup after the install.",
-    "s0": {
-      "h": "One thread per person",
-      "p": "Each person has their own thread. A turn runs in a workspace the person belongs to, and a conversation stays in the workspace it started in.",
-      "points": [
-        "The assistant extends the Main Agent, so it has the same tools plus its own lookups.",
-        "Administrators also get a service thread with health tools and the service lookups."
-      ]
-    },
-    "s1": {
-      "h": "What it can look up and change",
-      "p": "`hub_lookup` reads runs, sessions, spend, budgets, models, agents, notifications, approvals and the records of every page. `hub_action` does one thing to one record, such as pausing an instance, and always shows a card first.",
-      "points": [
-        "A phrase like \"every morning at 8 send me a summary\" becomes a scheduled job after your yes.",
-        "Keys for a provider are typed by you into a card, never into the conversation."
-      ]
-    },
-    "s2": {
-      "h": "Voice",
-      "p": "Push to talk, a conversation mode, or a wake phrase. Speech goes through the workspace's transcription and speech models, or the browser's own when none is set. A spoken yes answers a waiting card.",
-      "points": [
-        "Voice and installing the app on a phone need HTTPS."
-      ]
-    },
-    "s3": {
-      "h": "Limits",
-      "p": "Every turn is a run stamped with the person and counts toward their monthly limit. When a limit or the workspace budget is used up, the turn is refused with a card that says which one."
-    }
-  }
 };

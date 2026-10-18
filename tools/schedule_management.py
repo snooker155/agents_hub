@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from common.entity_sink import record_entity
 from common.workspace_context import filter_agents_for_workspace, resolve_active_workspace
-from common.workspace_scope import check_record, current_agent, is_service_wide
+from common.workspace_scope import check_record
 from plans.models import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
 from plans.service import job_to_dict
@@ -53,7 +53,7 @@ def _agent_unavailable(agent_id: str) -> bool:
     if spec is None:
         return True
     ws = resolve_active_workspace()
-    if not ws or is_service_wide(current_agent()):
+    if not ws:
         return False
     return not filter_agents_for_workspace([spec], ws)
 

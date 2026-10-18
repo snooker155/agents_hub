@@ -70,8 +70,8 @@ def descriptor() -> Dict[str, Any]:
         "manifest": {
             "port": 8430,
             "docker_context": ".",
-            "env": [{"name": "ANTHROPIC_API_KEY", "required": True},
-                    {"name": "CLAUDE_MODEL", "required": False}],
+            "env": [{"name": "OPENAI_API_KEY", "required": True},
+                    {"name": "AIDER_MODEL", "required": False}],
         },
     }
 
@@ -88,8 +88,8 @@ def test_mode_defaults_to_url_and_names_are_docker_safe():
     assert docker_runtime.is_docker_mode({}) is False
     assert docker_runtime.is_docker_mode({"runtime_mode": "url"}) is False
     assert docker_runtime.is_docker_mode({"runtime_mode": "Docker"}) is True
-    assert docker_runtime.image_tag("Claude Code") == "agents-hub-import/claude-code:latest"
-    assert docker_runtime.container_name("claude-code", "my ws/x") == "agents-hub-import-claude-code-my-ws-x"
+    assert docker_runtime.image_tag("Aider") == "agents-hub-import/aider:latest"
+    assert docker_runtime.container_name("aider", "my ws/x") == "agents-hub-import-aider-my-ws-x"
 
 
 # ── mounts: the workspace ───────────────────────────────────────────────────
@@ -116,13 +116,13 @@ def test_workspace_for_path_reads_workspace_and_project_folders():
 
 def test_ensure_container_runs_with_mounts_port_labels_and_declared_env(
         monkeypatch, descriptor, no_health_wait, tmp_path):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("NOT_DECLARED", "secret")
-    monkeypatch.delenv("CLAUDE_MODEL", raising=False)
+    monkeypatch.delenv("AIDER_MODEL", raising=False)
     fake = FakeDocker()
     monkeypatch.setattr(docker_runtime, "_docker", fake)
 
-    record = docker_runtime.ensure_container("claude-code", descriptor, "zeta")
+    record = docker_runtime.ensure_container("aider", descriptor, "zeta")
 
     run = next(c for c in fake.calls if c[0] == "run")
     from workspace import WORKSPACES_ROOT
@@ -130,11 +130,11 @@ def test_ensure_container_runs_with_mounts_port_labels_and_declared_env(
     assert f"{ws_dir}:{ws_dir}" in run
     assert run[run.index("-p") + 1].startswith("127.0.0.1:") and run[run.index("-p") + 1].endswith(":8430")
     assert f"{docker_runtime.LABEL_WORKSPACE}=zeta" in run
-    assert f"{docker_runtime.LABEL_IMPORT}=claude-code" in run
-    assert "ANTHROPIC_API_KEY=sk-test" in run
+    assert f"{docker_runtime.LABEL_IMPORT}=aider" in run
+    assert "OPENAI_API_KEY=sk-test" in run
     assert f"{docker_runtime.ENV_WORKSPACE}={ws_dir}" in run
-    assert not any(v.startswith("NOT_DECLARED=") or v.startswith("CLAUDE_MODEL=") for v in run)
-    assert run[-1] == "agents-hub-import/claude-code:latest"
+    assert not any(v.startswith("NOT_DECLARED=") or v.startswith("AIDER_MODEL=") for v in run)
+    assert run[-1] == "agents-hub-import/aider:latest"
     assert record["url"] == "http://127.0.0.1:49152"
     assert record["state"] == "running"
 
@@ -142,14 +142,14 @@ def test_ensure_container_runs_with_mounts_port_labels_and_declared_env(
 def test_ensure_container_refuses_without_an_image(monkeypatch, descriptor, no_health_wait):
     monkeypatch.setattr(docker_runtime, "_docker", FakeDocker(image_id=""))
     with pytest.raises(docker_runtime.DockerRuntimeError, match="not built"):
-        docker_runtime.ensure_container("claude-code", descriptor, "default")
+        docker_runtime.ensure_container("aider", descriptor, "default")
 
 
 def test_ensure_container_reuses_a_running_container_on_the_current_image(
         monkeypatch, descriptor, no_health_wait):
     fake = FakeDocker(existing={"state": "running", "image_id": "sha256:img1"})
     monkeypatch.setattr(docker_runtime, "_docker", fake)
-    record = docker_runtime.ensure_container("claude-code", descriptor, "default")
+    record = docker_runtime.ensure_container("aider", descriptor, "default")
     assert record["url"] == "http://127.0.0.1:49152"
     assert not any(c[0] in ("run", "rm") for c in fake.calls)
 
@@ -158,7 +158,7 @@ def test_ensure_container_replaces_a_container_on_an_older_image(
         monkeypatch, descriptor, no_health_wait):
     fake = FakeDocker(existing={"state": "running", "image_id": "sha256:old"})
     monkeypatch.setattr(docker_runtime, "_docker", fake)
-    docker_runtime.ensure_container("claude-code", descriptor, "default")
+    docker_runtime.ensure_container("aider", descriptor, "default")
     kinds = [c[0] for c in fake.calls]
     assert kinds.index("rm") < kinds.index("run")
 
@@ -172,7 +172,7 @@ def test_a_container_that_never_answers_is_removed(monkeypatch, descriptor):
         raise docker_runtime.DockerRuntimeError("no answer")
     monkeypatch.setattr(docker_runtime, "_wait_healthy", never)
     with pytest.raises(docker_runtime.DockerRuntimeError, match="no answer"):
-        docker_runtime.ensure_container("claude-code", descriptor, "default")
+        docker_runtime.ensure_container("aider", descriptor, "default")
     assert any(c[0] == "rm" for c in fake.calls)
 
 
@@ -184,9 +184,9 @@ def test_build_image_uses_the_clone_dockerfile_and_context(monkeypatch, descript
     descriptor["commit"] = "abc"
     fake = FakeDocker()
     monkeypatch.setattr(docker_runtime, "_docker", fake)
-    built = docker_runtime.build_image("claude-code", descriptor)
+    built = docker_runtime.build_image("aider", descriptor)
     build = next(c for c in fake.calls if c[0] == "build")
-    assert build[1:3] == ["-t", "agents-hub-import/claude-code:latest"]
+    assert build[1:3] == ["-t", "agents-hub-import/aider:latest"]
     assert build[build.index("-f") + 1] == str(clone / "Dockerfile.agenthub")
     assert build[-1] == str(clone.resolve())
     assert built["image_id"] == "sha256:img1" and built["commit"] == "abc"
@@ -195,7 +195,7 @@ def test_build_image_uses_the_clone_dockerfile_and_context(monkeypatch, descript
 def test_build_image_without_a_clone_is_an_operator_error(descriptor, monkeypatch):
     monkeypatch.setattr(docker_runtime, "_docker", FakeDocker())
     with pytest.raises(docker_runtime.DockerRuntimeError, match="clone is missing"):
-        docker_runtime.build_image("claude-code", descriptor)
+        docker_runtime.build_image("aider", descriptor)
 
 
 # ── the remote agent in docker mode ─────────────────────────────────────────
@@ -204,7 +204,7 @@ def test_capability_questions_never_start_a_container(monkeypatch, descriptor):
     def boom(*a, **k):
         raise AssertionError("url_for must not be called")
     monkeypatch.setattr(docker_runtime, "url_for", boom)
-    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="/tmp/x")
+    agent = RemoteAgent("aider", "Aider", descriptor, workspace="/tmp/x")
     assert agent.docker_mode and agent.has_endpoint
     assert agent.supports_streaming is True
     assert agent.supports_resume is False
@@ -218,17 +218,17 @@ def test_the_run_url_is_the_workspace_container(monkeypatch, descriptor):
         seen["args"] = (agent_id, workspace_path)
         return "http://127.0.0.1:50000"
     monkeypatch.setattr(docker_runtime, "url_for", url_for)
-    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="/ws/alpha")
+    agent = RemoteAgent("aider", "Aider", descriptor, workspace="/ws/alpha")
     assert agent.run_url == "http://127.0.0.1:50000/run"
     assert agent.stream_url == "http://127.0.0.1:50000/run/stream"
-    assert seen["args"] == ("claude-code", "/ws/alpha")
+    assert seen["args"] == ("aider", "/ws/alpha")
 
 
 def test_a_container_that_cannot_start_is_a_failed_result_not_an_exception(monkeypatch, descriptor):
     def url_for(*a, **k):
-        raise docker_runtime.DockerRuntimeError("the image for 'claude-code' is not built")
+        raise docker_runtime.DockerRuntimeError("the image for 'aider' is not built")
     monkeypatch.setattr(docker_runtime, "url_for", url_for)
-    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="/ws/alpha")
+    agent = RemoteAgent("aider", "Aider", descriptor, workspace="/ws/alpha")
     result = agent.run("hello")
     assert result.ok is False and "not built" in (result.error or "")
     health = agent.check_health()
@@ -245,12 +245,12 @@ def test_endpoint_check_passes_in_docker_mode_without_a_url():
 def test_health_check_reports_the_image_before_any_container(monkeypatch, descriptor):
     monkeypatch.setattr(docker_runtime, "status", lambda agent_id, d: {
         "docker_available": True, "image": {"exists": False}, "containers": []})
-    check = checks.check_health("", AgentManifest(found=True), descriptor, agent_id="claude-code")
+    check = checks.check_health("", AgentManifest(found=True), descriptor, agent_id="aider")
     assert check.ok is False and check.required is False and "not built" in check.detail
 
     monkeypatch.setattr(docker_runtime, "status", lambda agent_id, d: {
         "docker_available": True, "image": {"exists": True}, "containers": []})
-    check = checks.check_health("", AgentManifest(found=True), descriptor, agent_id="claude-code")
+    check = checks.check_health("", AgentManifest(found=True), descriptor, agent_id="aider")
     assert check.ok is True and "first run" in check.detail
 
 
@@ -260,25 +260,25 @@ def test_switching_modes_persists_and_leaving_docker_stops_containers(monkeypatc
     from agents import registry
     from agents.importer import service
 
-    spec = registry.AgentSpec(id="claude-code", name="Claude Code", type="remote",
+    spec = registry.AgentSpec(id="aider", name="Aider", type="remote",
                               entrypoint=service.REMOTE_ENTRYPOINT, tools=[], remote=dict(descriptor))
     saved: List[Any] = []
     stopped: List[Any] = []
-    monkeypatch.setattr(registry, "get_agent", lambda agent_id: spec if agent_id == "claude-code" else None)
+    monkeypatch.setattr(registry, "get_agent", lambda agent_id: spec if agent_id == "aider" else None)
     monkeypatch.setattr(registry, "add_agent", lambda s: saved.append(s))
     monkeypatch.setattr(service, "recheck", lambda agent_id, **k: {"runnable": True})
     monkeypatch.setattr(docker_runtime, "stop_containers", lambda *a, **k: stopped.append(a) or [])
 
-    out = service.set_runtime_mode("claude-code", "url")
+    out = service.set_runtime_mode("aider", "url")
     assert out["mode"] == "url" and saved[-1].remote["runtime_mode"] == "url"
     assert stopped, "leaving docker mode stops the agent's containers"
 
     spec.remote["runtime_mode"] = "url"
-    out = service.set_runtime_mode("claude-code", "docker")
+    out = service.set_runtime_mode("aider", "docker")
     assert out["mode"] == "docker" and saved[-1].remote["runtime_mode"] == "docker"
 
     with pytest.raises(service.ImportError_):
-        service.set_runtime_mode("claude-code", "cloud")
+        service.set_runtime_mode("aider", "cloud")
 
 
 def test_docker_mode_needs_a_dockerfile(monkeypatch, descriptor):

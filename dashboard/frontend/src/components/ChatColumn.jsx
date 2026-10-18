@@ -1,6 +1,5 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { MessagesSquare } from 'lucide-react';
-import { usePageChatPanel } from './pageChat/pageChat';
 import { DOCK_RESIZE_EVENT, currentDockHeight } from './composerDockState';
 
 /**
@@ -36,25 +35,10 @@ import { DOCK_RESIZE_EVENT, currentDockHeight } from './composerDockState';
 // eslint-disable-next-line react-refresh/only-export-components
 export function useChatColumn(defaultOpen = true) {
   const [open, setOpen] = useState(defaultOpen);
-  // The floating panel hosts this same conversation when it is open — same
-  // endpoint, same thread, same agent — so the column steps aside rather than
-  // running a second copy of it.
-  const { inlineSuppressed, setOpen: setPanelOpen } = usePageChatPanel();
-
-  // While the panel has the chat, the page's own button is the way back to the
-  // column: pressing it moves the conversation here rather than toggling a
-  // column the user cannot see.
-  const toggle = useCallback(() => {
-    if (inlineSuppressed) {
-      setPanelOpen(false);
-      setOpen(true);
-      return;
-    }
-    setOpen((o) => !o);
-  }, [inlineSuppressed, setPanelOpen]);
+  const toggle = useCallback(() => setOpen((o) => !o), []);
 
   return {
-    open: open && !inlineSuppressed,
+    open,
     setOpen,
     toggle,
     // Written out in full, never assembled from parts: Tailwind finds classes
@@ -64,7 +48,7 @@ export function useChatColumn(defaultOpen = true) {
     //
     // `items-start` keeps the chat at its own height instead of stretching it
     // to match a long page.
-    gridClass: open && !inlineSuppressed
+    gridClass: open
       ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] gap-6 items-start'
       : '',
     // The page's column. `min-w-0` only, so nothing about how the page scrolls

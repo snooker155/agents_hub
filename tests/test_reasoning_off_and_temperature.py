@@ -191,7 +191,6 @@ def test_a_workspace_temperature_no_longer_applies(monkeypatch):
     monkeypatch.setattr(workspace, "get_workspace_default_model_config", lambda m: {})
     monkeypatch.setattr(workspace, "get_effective_settings",
                         lambda name: {"temperature": "0.9", "max_tokens": "1234"})
-    monkeypatch.setattr("common.personal_workspace.model_source", lambda name: None)
 
     config = {"temperature": None, "max_tokens": None}
     get_factory()._resolve_model_config(config, "ws")

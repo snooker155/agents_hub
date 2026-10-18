@@ -2,10 +2,9 @@
  * A view's build chat (the Visualizer), pinned to one view.
  *
  * The same entity chat every other builder page has: the transcript lives on
- * the server under `view:<id>`, so a reload resumes the session and the
- * floating page-chat panel can host the very conversation the Studio's column
- * shows rather than opening a second one about the same view. The Studio and
- * the view's own page (pages/ViewDetail.jsx) register it through usePageChat.
+ * the server under `view:<id>`, so a reload resumes the session. The Studio
+ * draws it in its right-hand column, the view's own page (pages/ViewDetail.jsx)
+ * in an aside it opens on demand.
  *
  * `registerSend` is what makes the view's own buttons, a control the agent
  * authored, a `sendToAgent` bridge inside an html view, post into this chat;
@@ -26,7 +25,6 @@ export default function useViewChatDescriptor(viewId, registerSend = null, regis
   const stopChat = useCallback(() => stopViewChat(viewId), [viewId]);
 
   return useMemo(() => (viewId ? {
-    scope: `view:${viewId}`,
     path: viewChatUrl(viewId),
     loadChat, clearChat, stopChat, registerSend, registerComposer,
     title: t('studio.visualizer'),

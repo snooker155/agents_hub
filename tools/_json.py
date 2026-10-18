@@ -5,9 +5,9 @@ Every tool in this codebase answers in one of two shapes: ``{"ok": true, ...}``
 on success, ``{"ok": false, "error": "...", "code": "...", ...}`` on failure.
 Several private copies of these two functions existed across tools/ before
 this module, one per file that needed them: byte-for-byte identical in
-docs_tool.py, entity_runs.py and task_management.py, and a variant in
-service_ops.py that passed ``default=str`` to ``json.dumps``
-so a payload could carry a datetime. All five now import from here, with
+docs_tool.py, entity_runs.py and task_management.py, and a variant that
+passed ``default=str`` to ``json.dumps`` so a payload could carry a
+datetime. They all import from here now, with
 ``default`` as an optional keyword so the ``str``-serializing variant is the
 same function rather than a fork of it.
 """

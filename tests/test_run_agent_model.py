@@ -76,14 +76,14 @@ def test_a_model_outside_the_catalog_is_refused_before_the_run(chat):
 
 def test_the_delegating_system_agents_can_pick_a_model():
     """The seed hands the model list to the agents that delegate in chat, and
-    the assistant inherits both the tools and the rule from main-agent."""
+    main-agent's prompt carries the rule."""
     from agents.agent_factory import get_factory
     from agents.registry import get_agent
     from common.bootstrap import seed_registry_from_bootstrap
     seed_registry_from_bootstrap()
-    for agent_id in ("main-agent", "orchestrator", "assistant"):
+    for agent_id in ("main-agent", "orchestrator"):
         assert "list_models_tool" in get_agent(agent_id).tools, agent_id
-    for agent_id in ("main-agent", "orchestrator", "assistant"):
+    for agent_id in ("main-agent", "orchestrator"):
         assert "delegate_task_tool" in get_agent(agent_id).tools, agent_id
-    prompt = get_factory().load_definition("assistant")["system_prompt"]
+    prompt = get_factory().load_definition("main-agent")["system_prompt"]
     assert "Choosing a model for a delegate" in prompt

@@ -133,7 +133,7 @@ def validate_config(kind: str, config: Any) -> Dict[str, Any]:
 
 
 def _tool_pattern(value: Any, field: str) -> str:
-    """A tool name or a glob over tool names (``mcp__bank__*``)."""
+    """A tool name or a glob over tool names (``bank_*``)."""
     text = str(value or "").strip()
     if not text:
         raise ValueError(f"a sequence rule needs '{field}'")

@@ -38,7 +38,7 @@ from memory.procedural import Procedure, ProcedureStore, find_procedure
 from memory.skill_review import is_publishable, review_skill
 from models import (
     SkillCreate, SkillImportMarkdown, SkillInstall, SkillPin, SkillSharingUpdate,
-    SkillSourceAdd, SkillSync, SkillUpdate,
+    SkillSync, SkillUpdate,
 )
 from workspace import get_workspace_metadata, is_system_agent
 
@@ -333,65 +333,6 @@ async def import_skill_markdown(data: SkillImportMarkdown):
         allowed_tools=parsed.allowed_tools, version_op=skill_versions.OP_IMPORT,
         license=parsed.license, safety=safety,
     )
-
-
-# ── sources ──────────────────────────────────────────────────────────────────
-
-@router.get("/sources")
-async def list_skill_sources(workspace: str = Query(...)):
-    """Public repositories of skills (memory/skill_sources.py): the curated
-    list with its licenses, each saying whether this workspace already has
-    it and what the sync found, plus repositories added by URL."""
-    from memory.skill_sources import list_sources
-    from workspace import get_workspace_folder
-
-    if get_workspace_folder(workspace) is None:
-        raise HTTPException(status_code=404, detail=f"Workspace {workspace!r} not found")
-    return list_sources(workspace)
-
-
-@router.post("/sources")
-async def add_skill_source(data: SkillSourceAdd):
-    """Connect a repository of skills: clone it under the workspace's
-    ``.skills/sources`` and sync its skills. Returns the source, the sync
-    report (with the skills the review flagged) and whether it was already
-    there (then it is pulled and synced instead)."""
-    import asyncio
-
-    from memory.skill_sources import SourceError, add_source
-
-    try:
-        return await asyncio.to_thread(add_source, data.workspace.strip(), data.url,
-                                       branch=data.branch)
-    except SourceError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
-
-
-@router.post("/sources/{source_id}/update")
-async def update_skill_source(source_id: str, workspace: str = Query(...)):
-    """Pull a connected source and sync its skills: the sync report."""
-    import asyncio
-
-    from memory.skill_sources import SourceError, update_source
-
-    try:
-        return await asyncio.to_thread(update_source, workspace, source_id)
-    except SourceError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
-
-
-@router.delete("/sources/{source_id}")
-async def remove_skill_source(source_id: str, workspace: str = Query(...)):
-    """Disconnect a source: its clone and the catalog entries it brought are
-    deleted; copies attached to agents stay."""
-    import asyncio
-
-    from memory.skill_sources import SourceError, remove_source
-
-    try:
-        return await asyncio.to_thread(remove_source, workspace, source_id)
-    except SourceError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.get("/{skill_id}")

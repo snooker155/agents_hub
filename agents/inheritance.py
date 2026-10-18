@@ -30,8 +30,8 @@ the child's other sections are appended in order. ``capabilities.md`` and
 expansion), else the parent's.
 
 Limits: no cycles, at most :data:`MAX_CHAIN` agents in a chain (grandparent,
-parent, child), a system agent is a child only of another system agent (the
-shipped ``assistant`` extends ``main-agent``), a remote (imported) agent
+parent, child), a system agent is a child only of another system agent, a
+remote (imported) agent
 is neither a parent nor a child, and a child does not share another agent's
 definition folder (``definition_id``).
 """
@@ -322,8 +322,8 @@ def validate_extends(spec: Any) -> None:
     raws = _raw_map()
     parent = raws.get(parent_id)
     if spec.system and (parent is None or not parent.system):
-        # A shipped agent builds only on another shipped one (the assistant on
-        # the main agent), so the chain stays inside bootstrap/agents.json.
+        # A shipped agent builds only on another shipped one, so the chain
+        # stays inside bootstrap/agents.json.
         raise InheritanceError("A system agent can only extend another system agent.")
     if spec.is_remote():
         raise InheritanceError("An imported (remote) agent cannot extend another agent.")
@@ -398,7 +398,6 @@ def enforce_descendants(parent_id: str, descendants: Sequence[str],
                 list(new.tools or []) + secret_grant_ids(new.secrets),
                 previous_tools=(list(old.tools or []) + secret_grant_ids(old.secrets)) if old else None,
                 override=bool(raw.capability_override),
-                workspace=raw.owner_workspace,
                 delegates=list(new.delegates or []),
             )
         except InheritedCapabilityViolation:

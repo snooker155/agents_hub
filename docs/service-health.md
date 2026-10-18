@@ -4,8 +4,7 @@ Whether the moving parts are alive, and what to do when they are not.
 
 ## The snapshot
 
-`GET /api/health`, and the Service Agent's `service_health` tool, both report the
-same thing:
+`GET /api/health` reports:
 
 - **database**: reachable, row counts per store, and how many runs are in a
   running state
@@ -51,9 +50,8 @@ for a container health check. Both sit outside `/api`.
 ## Doctor
 
 The snapshot reports state; the doctor judges it. `GET /api/health/doctor`,
-`ah doctor` (add `--json` for the raw result; exits 1 when a check fails) and
-the Service Agent's `run_diagnostics` tool all run the same checks
-(`common/doctor.py`). Each comes back `ok`, `warn`, `fail` or `skip` with one
+and `ah doctor` (add `--json` for the raw result; exits 1 when a check fails)
+run the same checks (`common/doctor.py`). Each comes back `ok`, `warn`, `fail` or `skip` with one
 sentence, the numbers behind it, and a link to its section below. The overall
 status is the worst check; `skip` does not count. A check that errors reports
 `fail` with the error, so the doctor itself never crashes.
@@ -97,8 +95,7 @@ the backend.
 ### Check: disk
 
 Free space under the state directory. Warn under 2 GB, fail under 500 MB. Fix:
-prune old run logs (`prune_run_logs`), prune old `system/` branches, or give
-the volume more room.
+delete old run logs under the state directory, or give the volume more room.
 
 ### Check: docker
 
@@ -119,12 +116,6 @@ resolved default provider cannot run at all. Fix: start Docker, or set
 `dashboard/frontend/src`. Skip when there is no build (the dev server serves
 the frontend). Fix: `npm run build` in `dashboard/frontend`.
 
-### Check: system workspace
-
-The [system workspace](system-workspace.md) exists and its repository copy
-has been made. Skip when `SYSTEM_WORKSPACE=false`. Fix: restart to seed it,
-then sync the copy (`POST /api/system/sync`).
-
 ### Check: skills
 
 No skill attached to an agent carries a high flag from the
@@ -137,21 +128,4 @@ open the skill on the Skills page, read its flags, then detach or delete it,
 or keep it knowingly; for an unreviewed repository skill, **Sync from
 repositories**.
 
-## The Service Agent
-
-The [system agent](system-agents.md) that owns this. It reads health,
-containers, instances, sessions, runs, logs, the routing log, web calls
-and spend, and can stop a run, stop or restart a resident instance or a
-container, and prune old logs.
-
-Every one of those actions refuses until you approve it, and the refusal names
-what would be destroyed. It proposes the smallest thing that would fix the
-problem, and it reads before it stops.
-
-It has **no outbound channel at all**: no web, no file writes, no
-notifications. That is deliberate. It reads every log in the system, and logs
-hold whatever the service handled, so giving it a way out would turn the
-service's own diagnostics into an exfiltration path. See
-[tools-and-capabilities](tools-and-capabilities.md).
-
-Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md).
+Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md).

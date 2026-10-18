@@ -65,7 +65,6 @@ from tools.loop_management import LOOP_MANAGEMENT_TOOLS
 from tools.project_management import PROJECT_MANAGEMENT_TOOLS
 from tools.entity_runs import ENTITY_RUN_TOOLS
 from tools.git_publish import GIT_PUBLISH_TOOLS
-from tools.service_ops import SERVICE_OPS_TOOLS
 from tools.docs_tool import DOCS_TOOLS
 from tools.schedule_management import (
     schedule_notification,
@@ -349,10 +348,7 @@ class AgentFactory:
         if ws_name:
             try:
                 from workspace import get_effective_settings as _get_eff, get_workspace_metadata as _get_meta
-                from common.personal_workspace import model_source
-                # A personal workspace with no settings of its own runs with
-                # default's keys and base URLs (common/personal_workspace.py).
-                settings_ws = model_source(ws_name) or ws_name
+                settings_ws = ws_name
                 _ws_raw_overrides = (_get_meta(settings_ws) or {}).get("settings") or {}
                 if _ws_raw_overrides:
                     _eff = _get_eff(settings_ws)
@@ -481,16 +477,6 @@ class AgentFactory:
         # reversible, starting one is neither, so the run/follow/stop tools are
         # a group an agent can be given separately from the builder tools.
         entity_run_tools = list(ENTITY_RUN_TOOLS)
-        # Operating the service itself: read its health, logs and runs, and stop
-        # what is running. One group, because an agent asked to diagnose the
-        # service needs the whole view — a partial one produces guesses. The
-        # action half is gated inside the tools rather than split off here.
-        service_ops_tools = list(SERVICE_OPS_TOOLS)
-        # The maintenance loop's own tools: git work on the system workspace's
-        # repository copy and a test run in it. Only agents of that workspace
-        # may hold them (agents.capability_guard, the system workspace rule).
-        from tools.system_ops import SYSTEM_OPS_TOOLS
-        system_ops_tools = list(SYSTEM_OPS_TOOLS)
         # This product's own documentation, as a searchable corpus. Granted
         # widely: any agent a person talks to should be able to explain the
         # service rather than guess at it.
@@ -517,7 +503,6 @@ class AgentFactory:
             "project_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in project_tools],
             "entity_runs": [getattr(t, "name", getattr(t, "__name__", "")) for t in entity_run_tools],
             "schedule_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in schedule_tools],
-            "service_ops": [getattr(t, "name", getattr(t, "__name__", "")) for t in service_ops_tools],
             "docs": [getattr(t, "name", getattr(t, "__name__", "")) for t in docs_tools],
         }
 
@@ -572,10 +557,8 @@ class AgentFactory:
             # The pool-id tools reach only pools bound to the agent in this
             # workspace (memory/tool.py, common/workspace_scope.py): with none
             # bound they would refuse every call, so a workspace run does not
-            # offer them. Outside a workspace (and for the service's own
-            # agents) they stay as they were.
-            from common.workspace_scope import is_service_wide as _svc_wide
-            _generic = [] if (_ws_name and not _svc_wide(agent_id)) else [
+            # offer them. Outside a workspace they stay as they were.
+            _generic = [] if _ws_name else [
                 read_memory_tool, write_memory_tool, search_memory_tool,
                 read_structured_memory_tool, write_structured_memory_tool,
                 append_journal_tool,
@@ -592,7 +575,7 @@ class AgentFactory:
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, run_code]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *docs_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, run_code]
         # The workspace file objects (tools/workspace_files.py): plain per-tool
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
@@ -601,19 +584,6 @@ class AgentFactory:
         # like the web tools; each works only when its connector is set up.
         from tools.connector_tools import connector_tools
         available.extend(connector_tools())
-        # The assistant's view of the hub's records as the person sees them,
-        # the service-wide one, the one-step actions and the guided setup
-        # (tools/hub_lookup.py, tools/hub_action.py, tools/setup_guide.py):
-        # plain per-tool grants.
-        from tools.hub_action import HUB_ACTION_TOOLS
-        from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
-        from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
-        from tools.setup_guide import SETUP_GUIDE_TOOLS
-        available.extend(SETUP_GUIDE_TOOLS)
-        available.extend(HUB_LOOKUP_TOOLS)
-        available.extend(ASSISTANT_CONVERSATION_TOOLS)
-        available.extend(SERVICE_LOOKUP_TOOLS)
-        available.extend(HUB_ACTION_TOOLS)
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -644,12 +614,12 @@ class AgentFactory:
         is only not offered here (the generic memory tools in a workspace run,
         say). One it does not know means this process runs other code than the
         record was written for, like a replica started before the tool was
-        added: the prompt may still tell the model to use it. MCP and reasoning
+        added: the prompt may still tell the model to use it. Reasoning
         tools are resolved later in the build and are not judged here."""
         from tools.approval import REASONING_TOOL_NAMES
         from tools.registry import get_tool_by_id
         names = [n for n in dict.fromkeys(names)
-                 if n and not n.startswith("mcp") and n not in REASONING_TOOL_NAMES]
+                 if n and n not in REASONING_TOOL_NAMES]
         unknown = [n for n in names if get_tool_by_id(n) is None]
         if unknown:
             log.warning("agent %s asks for tools this process does not have: %s",
@@ -791,7 +761,7 @@ class AgentFactory:
             _spec = _snapshot[0]
 
         # Per-run overrides (agents/run_overrides.py), one object: the model,
-        # the instructions, the tool list, skills, MCP servers, a tool policy
+        # the instructions, the tool list, skills, a tool policy
         # merged over the record's and an answer schema (read by the
         # loop's structured-output extension off the spec). The spec takes the
         # policy, schema and skills switch here; the definition takes the
@@ -829,10 +799,6 @@ class AgentFactory:
         # memory tool has been added, so the run can recall but never change
         # the pool. Popped like memory_pool; it reached the cache key already.
         _memory_access = str(override_params.pop("memory_access", None) or "write").strip().lower()
-        # The assistant in an administrator's service thread (routes/assistant.py,
-        # common/workspace_scope.py ASSISTANT_SERVICE_TOOLS). Popped like
-        # memory_pool; it reached the cache key already.
-        _service_mode = bool(override_params.pop("service_mode", False))
 
         # Imported agents run outside this process: there is no prompt to
         # assemble, no tool set to grant and no model to build here, because all
@@ -1044,8 +1010,8 @@ class AgentFactory:
         if plan_gate is not None:
             from reasoning.plan_gate import gate_plan_tools
             reasoning_tools = gate_plan_tools(reasoning_tools, plan_gate)
-        # The think-gate wrap itself happens further down, after MCP tools are
-        # appended and after guard_action_tools — see the comment there.
+        # The think-gate wrap itself happens further down, after
+        # guard_action_tools — see the comment there.
         # reasoning_tools are appended after that too, unwrapped either way.
         reasoning_prompt = build_reasoning_prompt(reasoning)
         if reasoning_prompt:
@@ -1082,17 +1048,7 @@ class AgentFactory:
                 + _clarify_prompt
             )
 
-        # Tools from the external MCP servers this record asks for, by group
-        # alias (`mcp:<server>`) or by individual id (`mcp__<server>__<tool>`).
-        # Resolved here rather than in _create_tools because they are per
-        # workspace and involve a network round trip, and appended *before* the
-        # guard below on purpose: a tool defined on somebody else's server is
-        # the last one that should run outside the workspace's hooks and the
-        # approval gate. A server that will not connect is skipped with its
-        # error recorded on its own entry, never failing the build.
         from common.workspace_context import workspace_name_from_path as _ws_name_of
-        from mcp_client import append_mcp_tools
-        tools = append_mcp_tools(tools, tool_list, workspace)
 
         # A tool result past the workspace's spill size goes to a file under
         # tool-outputs/ and the model sees its head, its tail and the path
@@ -1122,12 +1078,6 @@ class AgentFactory:
         # spend once the model actually thinks. See reasoning/think_gate.py
         # and agents/hooks.py (``_guards_of`` unwraps a GatedTool to find the
         # ToolGuard it wraps, e.g. for ``pending_approval_for``).
-        #
-        # This also means the MCP tools appended just above are now gated on
-        # `think` like every other action tool — they were not before, since
-        # gating used to run ahead of the MCP append. That is a fix, not a
-        # side effect: an MCP tool is exactly the kind of action step / think
-        # mode is meant to slow down.
         if think_gate is not None:
             from reasoning.think_gate import gate_tools
             tools = gate_tools(tools, think_gate)
@@ -1197,18 +1147,16 @@ class AgentFactory:
                 )
 
         # One workspace per run (common/workspace_scope.py), in every
-        # workspace: tools that see the whole service stay with the service's
-        # own agents, workspace management with the main agent in "default",
+        # workspace: workspace management stays with the main agent in "default",
         # and a tool that takes a workspace may name only the run's own.
         from common import workspace_scope as _scope
         _run_ws = _ws_name_of(workspace) if workspace else None
         _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
-        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or "",
-                                             service_mode=_service_mode))
+        _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or ""))
         if _out_of_scope:
             tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
             log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
-        if _run_ws and not _scope.is_service_wide(agent_id):
+        if _run_ws:
             from agents.isolation_guard import pin_workspace
             tools = pin_workspace(tools, _run_ws)
 

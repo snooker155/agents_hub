@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from agents import registry
 from agents.capability_guard import (
-    CapabilityViolation, capability_warning, guard_mode, is_system_workspace_agent,
+    CapabilityViolation, capability_warning, guard_mode,
     override_honoured_at_build, override_requires_container,
 )
 from models import AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentCapabilityOverrideUpdate
@@ -53,7 +53,6 @@ def _capability_warning_dict(spec) -> Optional[Dict[str, Any]]:
         spec.id,
         list(spec.tools or []) + secret_grant_ids(spec.secrets),
         delegates=list(spec.delegates or []),
-        workspace=getattr(spec, "owner_workspace", None),
     )
     return v.to_dict() if v is not None else None
 
@@ -121,9 +120,6 @@ async def update_agent_capability_override(request: Request, agent_id: str, data
         raise HTTPException(status_code=404, detail="Agent not found")
     if not _can_edit_agent(request, spec):
         raise HTTPException(status_code=403, detail="Editor access to the agent's workspace is required")
-    if data.capability_override and is_system_workspace_agent(agent_id, spec.owner_workspace):
-        # The system workspace rule is never softened (docs/system-workspace.md).
-        raise HTTPException(status_code=400, detail="A system workspace agent cannot carry a capability override")
     new_spec = dataclasses.replace(spec, capability_override=bool(data.capability_override))
     try:
         registry.add_agent(new_spec)

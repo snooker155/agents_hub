@@ -54,11 +54,6 @@ belongs to (`common/workspace_scope.py`):
   found", and listings show only this workspace's records. An agent can be
   run, assigned or delegated to only when it is available in this workspace,
   and changed or deleted only when this workspace owns it.
-- **Tools that see the whole service belong to the service's own agents.**
-  Every run, session, container and instance of the hub, its costs and logs,
-  and the system workspace's repository are reached by `service_agent` and the
-  system workspace's `system_doctor` and `system_engineer` only. Another agent
-  cannot be given these tools (400), and loses them when it runs.
 - **Workspace management belongs to the main agent in `default`.** The tools
   that create and configure workspaces (`WORKSPACE_ADMIN_TOOLS`, see below)
   work only for `main-agent`, and only in a run of the `default` workspace.
@@ -80,7 +75,7 @@ user asks for it in the chat (`tools/workspace_management.py`):
 The rules are the dashboard's. A name is one word without slashes and must be
 new. System agents cannot be removed, an agent marked `default_workspace_only`
 stays in `default`, and another workspace's own agent needs to be shared
-first. `default` and `system` cannot be deleted, and deleting an
+first. `default` cannot be deleted, and deleting an
 attached workspace only detaches it: the directory stays.
 
 Secrets, hooks and the tool policy, environment variables, the web domain
@@ -97,13 +92,6 @@ person even where the workspace's approval gate is off.
 `default` always exists and cannot be deleted. Agents marked
 `default_workspace_only` are hidden everywhere else.
 
-## The system workspace
-
-`system` is seeded at startup (turn it off with `SYSTEM_WORKSPACE=false`). Its
-project is a git copy of this repository under the state directory, and a
-scheduled loop proposes fixes to the service there as branches, never pushing.
-See [system-workspace](system-workspace.md).
-
 ## Gotchas
 
 - Removing a custom agent from a workspace does not delete it; it stays in the
@@ -113,4 +101,4 @@ See [system-workspace](system-workspace.md).
 - Files live in the workspace folder, not in the project folder, unless the
   agent was told a project. A file "gone missing" is usually one level up.
 
-Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [system-workspace](system-workspace.md).
+Related: [projects](projects.md), [agents](agents.md), [memory](memory.md).

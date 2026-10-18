@@ -37,7 +37,7 @@ Jede dieser Arbeiten erzeugt dieselben drei Datensätze. Nur so lässt sich das 
 
 ## Das Menü
 
-Die Seitenleiste folgt demselben Baum in fünf Gruppen: **Gespräch** (Assistent, Chat, Dashboard), **Arbeit** (Projekte, Aufgaben, der Plan, Artefakte, Flows, Loops, Teams, Workspaces), **Agenten und Bibliothek** (Agenten, Modelle, Skills, Speicher, der Marktplatz), **Integrationen** (Konnektoren, MCP-Server) und **Protokolle** (Sitzungen, Läufe, Kosten, Evaluierungen, Einstellungen).
+Die Seitenleiste folgt demselben Baum in fünf Gruppen: **Gespräch** (Chat, Dashboard), **Arbeit** (Projekte, Aufgaben, der Plan, Artefakte, Flows, Loops, Teams, Workspaces), **Agenten und Bibliothek** (Agenten, Modelle, Skills, Speicher, der Marktplatz), **Integrationen** (Konnektoren) und **Protokolle** (Sitzungen, Läufe, Kosten, Evaluierungen, Einstellungen).
 
 Es gibt zwei Modi. Das **einfache Menü** behält fünfzehn Seiten, die ein Einsteiger braucht, darunter die Workspaces, dazu Einstellungen und Dokumentation. Das Dashboard fehlt darin: Wer den Hub für sich selbst nutzt, hat dort wenig zu beobachten. Es ist die Voreinstellung. Das **vollständige Menü** zeigt jede Seite. Der Schalter am Fuß des Menüs wechselt zwischen beiden, und der Browser merkt sich die Wahl. In keinem Modus wird eine Seite entfernt, und das einfache Menü ändert nie seine Form: Eine Seite außerhalb davon hebt die Zeile hervor, zu der sie gehört (Deployments, von der Plan-Seite geöffnet, heben Plan hervor, Loops und Teams heben Agenten-Flows hervor, Konnektoren heben Einstellungen hervor, ebenso Dashboard, Sitzungen und Kosten).
 

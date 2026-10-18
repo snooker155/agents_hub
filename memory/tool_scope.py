@@ -49,15 +49,12 @@ def _pool_in_scope(mem) -> bool:
     workspace. The tools that take a ``memory_id`` from the model check it
     here, so an id of another workspace's pool, or of a pool of this
     workspace the agent is not bound to, is answered like a missing one.
-    The service's own agents reach every pool; with no workspace at all (the
-    CLI) every pool is reachable, as before. An unknown agent (a bare tool
+    With no workspace at all (the CLI) every pool is reachable, as before. An unknown agent (a bare tool
     call inside a workspace) reaches the pools of that workspace."""
     from common.workspace_scope import (
-        check_record, current_agent, current_workspace, is_service_wide, same_workspace,
+        check_record, current_agent, current_workspace, same_workspace,
     )
     agent = current_agent()
-    if is_service_wide(agent):
-        return True
     ws = current_workspace()
     if not ws:
         return True

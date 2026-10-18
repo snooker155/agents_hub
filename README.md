@@ -46,10 +46,8 @@ curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/
 docker compose up -d
 ```
 
-Open **http://localhost:8080**. The welcome window asks for one model key
-(or uncomment one in `.env` first), then the assistant takes you through the
-rest of the setup and the first steps, by voice or by text
-([guided setup](docs/assistant.md#guided-setup)).
+Open **http://localhost:8080**. The first run asks for the language, the look
+and one model key (or uncomment one in `.env` first).
 
 - State lives on the `agents_hub_data` volume; `.env` is mounted into the
   backend, so keys entered in Settings survive an upgrade.
@@ -71,8 +69,7 @@ cd agents_hub
 ```
 
 On a first install it ends in `ah setup`, which asks for the providers and
-their default models, then offers to start the hub; the assistant in the
-dashboard sets up the rest with you. Otherwise, in a new terminal:
+their default models, then offers to start the hub. Otherwise, in a new terminal:
 
 ```bash
 ah up                           # API on :8000, dashboard on :5173
@@ -106,10 +103,9 @@ run into an eval case and sweep it.
 ## What it does
 
 - **Run work.** Chat with an agent or hand it a task. Put several on one problem as a flow, a loop, a team, or through the orchestrator. Keep an agent running as an instance.
-- **Define agents.** A folder of markdown, tools granted by name, layered memory, guardrails, structured output. Import one from git, or run Claude Code or Codex.
+- **Define agents.** A folder of markdown, tools granted by name, layered memory, guardrails, structured output. Import one from git.
 - **See what happened.** Every run keeps its prompt, tool calls, tokens and cost. Agents answer with views: charts, tables, documents, slides. Evals turn a prompt change into a number.
-- **Talk to it.** An assistant that knows the whole service, by voice or text, with cloud speech models.
-- **Connect.** Jira and GitLab, MCP servers, a browser and a terminal for agents.
+- **Connect.** Jira and GitLab, a browser and a terminal for agents.
 
 ## Deployment options
 
@@ -147,16 +143,16 @@ shipped documentation.
 
 | | |
 | --- | --- |
-| [Assistant](./docs/assistant.md) · [Workspaces](./docs/workspaces.md) · [Projects](./docs/projects.md) · [Tasks](./docs/tasks.md) · [Files](./docs/files.md) | The guide to the service, the unit of isolation, the codebase inside it, the tracked work, the files |
+| [Workspaces](./docs/workspaces.md) · [Projects](./docs/projects.md) · [Tasks](./docs/tasks.md) · [Files](./docs/files.md) | The unit of isolation, the codebase inside it, the tracked work, the files |
 | [Agents](./docs/agents.md) · [System agents](./docs/system-agents.md) · [Imported agents](./docs/imported-agents.md) · [Agent loop](./docs/agent-loop.md) | What an agent is made of, where agents come from, how a turn runs |
 | [Tools and capabilities](./docs/tools-and-capabilities.md) · [Tool policy](./docs/tool-policy.md) · [Guardrails](./docs/guardrails.md) · [Skills](./docs/skills.md) · [Memory](./docs/memory.md) · [Secrets](./docs/secrets.md) | What an agent can do, and what it can know |
-| [Chat](./docs/chat.md) · [Page chat](./docs/page-chat.md) · [Steering](./docs/steering.md) · [Handoffs](./docs/handoffs.md) · [Terminal](./docs/terminal.md) | Talking to an agent, and what it can use on your behalf |
+| [Chat](./docs/chat.md) · [Steering](./docs/steering.md) · [Handoffs](./docs/handoffs.md) · [Terminal](./docs/terminal.md) | Talking to an agent, and what it can use on your behalf |
 | [Flows](./docs/flows.md) · [Loops](./docs/loops.md) · [Teams](./docs/teams.md) · [Instances](./docs/instances.md) | More than one agent, more than one pass, agents kept running |
 | [Views and Studio](./docs/views.md) | What an agent builds to be looked at |
 | [Outcomes](./docs/outcomes.md) · [Web requests](./docs/web-logs.md) · [Sessions and runs](./docs/sessions-and-runs.md) | Measurement: quality, what came in from outside, what happened |
 | [Models](./docs/models.md) | The catalog and the providers |
-| [Connectors](./docs/connectors.md) · [MCP servers](./docs/mcp.md) · [Marketplace](./docs/marketplace.md) · [Notifications](./docs/notifications.md) | What the hub is wired to |
-| [Settings](./docs/settings.md) · [Containers](./docs/containers.md) · [Sandboxes](./docs/sandboxes.md) · [Service health](./docs/service-health.md) · [System workspace](./docs/system-workspace.md) · [Backup](./docs/backup.md) | Credentials, isolation, whether the moving parts are alive, the copy you restore |
+| [Connectors](./docs/connectors.md) · [Marketplace](./docs/marketplace.md) · [Notifications](./docs/notifications.md) | What the hub is wired to |
+| [Settings](./docs/settings.md) · [Containers](./docs/containers.md) · [Sandboxes](./docs/sandboxes.md) · [Service health](./docs/service-health.md) · [Backup](./docs/backup.md) | Credentials, isolation, whether the moving parts are alive, the copy you restore |
 
 **Going deeper**
 

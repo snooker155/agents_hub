@@ -33,8 +33,8 @@ describe('ImportedAgentPanel: where it runs', () => {
   beforeEach(() => {
     dockerApi.getImportedAgentDocker.mockResolvedValue({ data: {
       mode: 'docker', docker_available: true,
-      image: { tag: 'agents-hub-import/claude-code:latest', exists: true },
-      containers: [{ name: 'agents-hub-import-claude-code-w1', workspace: 'w1', state: 'running',
+      image: { tag: 'agents-hub-import/aider:latest', exists: true },
+      containers: [{ name: 'agents-hub-import-aider-w1', workspace: 'w1', state: 'running',
         url: 'http://127.0.0.1:49152', mounts: ['/hub/workspaces/w1'] }],
     } });
     dockerApi.setImportedAgentRuntimeMode.mockResolvedValue({ data: { mode: 'docker', report: { runnable: true, checks: [] } } });
@@ -52,10 +52,10 @@ describe('ImportedAgentPanel: where it runs', () => {
   });
 
   it('switching to docker saves the mode and builds the image at once', async () => {
-    render(<ImportedAgentPanel agent={{ id: 'claude-code', remote: remote() }} workspace="w1" />);
+    render(<ImportedAgentPanel agent={{ id: 'aider', remote: remote() }} workspace="w1" />);
     fireEvent.click(screen.getByLabelText(/importedAgentPanel.modeDocker/));
-    await waitFor(() => expect(dockerApi.setImportedAgentRuntimeMode).toHaveBeenCalledWith('claude-code', 'docker'));
-    await waitFor(() => expect(dockerApi.buildImportedAgentImage).toHaveBeenCalledWith('claude-code'));
+    await waitFor(() => expect(dockerApi.setImportedAgentRuntimeMode).toHaveBeenCalledWith('aider', 'docker'));
+    await waitFor(() => expect(dockerApi.buildImportedAgentImage).toHaveBeenCalledWith('aider'));
     // the containers the daemon knows, with the workspace mount named
     expect(await screen.findByText('w1')).toBeInTheDocument();
     expect(screen.getByText(/\/hub\/workspaces\/w1/)).toBeInTheDocument();
@@ -64,21 +64,21 @@ describe('ImportedAgentPanel: where it runs', () => {
   });
 
   it('in docker mode stops one workspace container and starts the current one', async () => {
-    render(<ImportedAgentPanel agent={{ id: 'claude-code', remote: remote({ runtime_mode: 'docker' }) }} workspace="w2" />);
+    render(<ImportedAgentPanel agent={{ id: 'aider', remote: remote({ runtime_mode: 'docker' }) }} workspace="w2" />);
     expect(await screen.findByText('w1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /importedAgentPanel.stop$/ }));
-    await waitFor(() => expect(dockerApi.stopImportedAgentContainer).toHaveBeenCalledWith('claude-code', 'w1'));
+    await waitFor(() => expect(dockerApi.stopImportedAgentContainer).toHaveBeenCalledWith('aider', 'w1'));
     // every Docker button stays disabled until the stop has settled and the list reloaded
     const start = screen.getByRole('button', { name: /importedAgentPanel.startForWorkspace/ });
     await waitFor(() => expect(start).not.toBeDisabled());
     fireEvent.click(start);
-    await waitFor(() => expect(dockerApi.startImportedAgentContainer).toHaveBeenCalledWith('claude-code', 'w2'));
+    await waitFor(() => expect(dockerApi.startImportedAgentContainer).toHaveBeenCalledWith('aider', 'w2'));
   });
 
   it('a re-check in docker mode does not send the empty URL', async () => {
     api.recheckImportedAgent.mockResolvedValue({ data: { report: { runnable: true, checks: [] } } });
-    render(<ImportedAgentPanel agent={{ id: 'claude-code', remote: remote({ runtime_mode: 'docker' }) }} workspace="w1" />);
+    render(<ImportedAgentPanel agent={{ id: 'aider', remote: remote({ runtime_mode: 'docker' }) }} workspace="w1" />);
     fireEvent.click(screen.getByRole('button', { name: /re-check/i }));
-    await waitFor(() => expect(api.recheckImportedAgent).toHaveBeenCalledWith('claude-code', { url: undefined, workspace: 'w1' }));
+    await waitFor(() => expect(api.recheckImportedAgent).toHaveBeenCalledWith('aider', { url: undefined, workspace: 'w1' }));
   });
 });

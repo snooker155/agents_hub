@@ -1,6 +1,6 @@
 // The tool capability model (tools/capabilities.py): capability names, the
 // blocked combinations and the delegation suffix, as the agent editor and
-// the MCP page show them. The backend text stays the fallback for a rule
+// the guardrails page show them. The backend text stays the fallback for a rule
 // this file does not know.
 export default {
   labels: {
@@ -17,10 +17,6 @@ export default {
     exfiltration_path: {
       title: 'Канал утечки',
       explanation: 'Этот агент может принимать текст, подконтрольный злоумышленнику, и отправлять данные наружу. У внедрённых инструкций есть прямой канал наружу: всё, что уже есть в контексте агента, может через него уйти. Давайте такое сочетание только когда выход наружу и есть цель.',
-    },
-    system_workspace: {
-      title: 'Правило системного воркспейса',
-      explanation: 'Агент системного воркспейса никогда не может держать инструменты push, оболочки, делегирования и отправки наружу.',
     },
   },
   viaDelegation: {

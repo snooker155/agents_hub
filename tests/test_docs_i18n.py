@@ -10,7 +10,6 @@ TRANSLATED_DOCS = [
     "overview",
     "models",
     "chat",
-    "assistant",
 ]
 
 # Languages that have translations

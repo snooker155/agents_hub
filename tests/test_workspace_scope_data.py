@@ -6,7 +6,7 @@ their deployments and repos, database connections, chat channels, memory pools).
 
 Two workspaces, ``acme`` (the run's) and ``globex``, each with its own record:
 the other workspace's record is answered like a missing one, the run's own
-works, and a service wide agent still reaches both.
+works.
 """
 from __future__ import annotations
 
@@ -73,13 +73,6 @@ def test_view_tools_see_only_this_workspaces_views(run_as, views):
     assert get_view(own)["title"] == "Hijacked"
 
 
-def test_a_service_wide_agent_reaches_every_view(run_as, views):
-    from tools.views import view_get
-    _own, other = views
-    run_as("service_agent")
-    assert _call(view_get, {"view_id": other})["ok"] is True
-
-
 def test_view_tools_without_a_workspace_keep_reaching_every_view(monkeypatch, views):
     from tools.views import view_get
     monkeypatch.setattr("common.workspace_scope.current_workspace", lambda: None)
@@ -101,9 +94,6 @@ def test_workspace_file_of_another_workspace_is_not_found(run_as):
     listed = {f["file_id"] for f in _call(list_workspace_files)["files"]}
     assert own["file_id"] in listed and other["file_id"] not in listed
 
-    run_as("service_agent")
-    assert _call(read_workspace_file, {"file_id": other["file_id"]})["text"] == "secret text"
-
 
 # ── the filesystem tools built without an operating path ────────────────────
 
@@ -121,9 +111,6 @@ def test_filesystem_tools_without_a_path_root_at_the_runs_workspace(run_as):
     assert out["ok"] is False and "escapes" in out["error"]
     out = _call(tools["write_file"], {"path": str(WORKSPACES_ROOT / OTHER / "x.txt"), "content": "x"})
     assert out["ok"] is False and not (WORKSPACES_ROOT / OTHER / "x.txt").exists()
-
-    run_as("service_agent")
-    assert _call(tools["read_file"], {"path": f"{OTHER}/note.txt"})["content"] == "other"
 
 
 # ── projects, deployments, repos, trackers ──────────────────────────────────
@@ -163,10 +150,6 @@ def test_project_tools_see_only_this_workspaces_projects(run_as, projects):
     out = _call(list_projects_tool, {"workspace": OTHER})
     assert out["ok"] is False
 
-    run_as("service_agent")
-    assert _call(get_project_tool, {"project_id": other.id})["ok"] is True
-    assert {p["project_id"] for p in _call(list_projects_tool, {"workspace": OTHER})["projects"]} == {other.id}
-
 
 def test_create_project_in_another_workspace_is_refused(run_as, projects):
     from tools.project_management import create_project_tool, _store
@@ -194,10 +177,6 @@ def test_deploy_and_publish_tools_do_not_find_another_workspaces_project(run_as,
     assert git_publish._resolve_project(projects[HOME].name).id == projects[HOME].id
     assert _call(git_publish.git_publish, {"project": projects[HOME].id, "title": "t"})["ok"] is True
     assert called == [(projects[HOME].id,)]
-
-    run_as("service_agent")
-    assert git_publish._resolve_project(other.id).id == other.id
-    assert trackers._resolve_project(other.name).id == other.id
 
 
 def test_a_same_named_project_elsewhere_does_not_make_a_name_ambiguous(run_as, projects):
@@ -298,9 +277,6 @@ def test_memory_tools_reach_only_the_pools_the_run_is_bound_to(run_as, pools):
         out = _call(search_memory_tool, {"memory_id": pid, "query": "other"})
         assert out["ok"] is False
     assert MemoryStore().get(other).notes[0]["content"] == "other"
-
-    run_as("service_agent")
-    assert _call(read_memory_tool, {"memory_id": other, "note_title": "n"})["content"] == "other"
 
 
 def test_memory_tools_without_a_workspace_keep_reaching_every_pool(monkeypatch, pools):

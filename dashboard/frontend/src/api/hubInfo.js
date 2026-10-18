@@ -17,12 +17,8 @@ export const getSystemHealth = () => api.get('/health');
 // e.g. 'changelog'. Returns { id, title, content, lang, truncated }.
 // lang defaults to the current UI language ('en', 'ru', or 'de'); the backend falls back to English.
 export const getDoc = (id, lang = '') => api.get(`/docs/${id}`, { params: { ...(lang ? { lang } : {}) } });
-// Service health, and the Service Agent's chat about it.
+// Service health.
 export const getHealth = () => api.get('/health');
-export const getServiceChat = () => api.get('/health/chat');
-export const clearServiceChat = () => api.delete('/health/chat');
-export const stopServiceChat = () => api.post('/health/chat/stop');
-export const serviceChatUrl = () => '/health/chat';
 export const getLogs = (runId) => api.get(`/logs/${runId}`);
 
 // Marketplace — catalog of agents published across workspaces

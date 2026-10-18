@@ -66,7 +66,7 @@ app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
 
-# agent/task/workspace/project/instance (cli/commands/), flow/loop/team/mcp
+# agent/task/workspace/project/instance (cli/commands/), flow/loop/team
 # (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
 # (cli/openapi.py) are registered at the bottom of this file, once every helper
 # they import from here (hub, call, console, the selection functions) exists.
@@ -1062,8 +1062,8 @@ def doctor(
     as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON."),
 ):
     """Check the service: migrations, the default provider, stale runs, the
-    launch queue, disk, the browser service, docker, the frontend
-    build and the system workspace. Exits 1 when any check fails."""
+    launch queue, disk, the browser service, docker and the frontend
+    build. Exits 1 when any check fails."""
     result = call(hub().doctor)
     if as_json:
         typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
@@ -1261,7 +1261,6 @@ from cli.commands.instance import instance_app  # noqa: E402
 from cli.commands.flow import flow_app  # noqa: E402
 from cli.commands.loop import loop_app  # noqa: E402
 from cli.commands.team import team_app  # noqa: E402
-from cli.commands.mcp import mcp_app  # noqa: E402
 from cli.commands.api import api_command  # noqa: E402
 from cli.commands.files import files_app  # noqa: E402
 from cli.commands.apply import apply_command  # noqa: E402
@@ -1275,7 +1274,6 @@ app.add_typer(instance_app, name="instance")
 app.add_typer(flow_app, name="flow")
 app.add_typer(loop_app, name="loop")
 app.add_typer(team_app, name="team")
-app.add_typer(mcp_app, name="mcp")
 app.add_typer(files_app, name="files")
 app.command("setup")(setup_command)
 # OpenClaw's name for the same first-run flow, for hands that type it.
@@ -1289,7 +1287,7 @@ app.command("apply")(apply_command)
 # below: not a permission list, just a fast "have we already got this one".
 _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
-    "mcp", "api", "server", "auth", "db", "secrets", "files",
+    "api", "server", "auth", "db", "secrets", "files",
     "up", "chat", "config", "shell-init", "shell-export",
     "setup", "onboard", "version", "doctor", "apply",
 }

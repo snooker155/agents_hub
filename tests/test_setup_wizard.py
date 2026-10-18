@@ -193,57 +193,17 @@ def test_a_local_server_is_written_as_typed(fake_probe):
     assert plan.env["OLLAMA_MODEL"] == "qwen3:8b"
 
 
-# ---- the assistant's voice -------------------------------------------------
+# ---- features ---------------------------------------------------------------
 
 
-def test_voice_from_a_cloud_provider_picks_its_models_and_voice():
-    plan = W.Plan(providers={"openai": {"model": "gpt-5.4", "models": [], "presets": {}}})
-    W.step_voice(_asker({"voice": {"mode": "cloud", "voice": "nova"}}), plan)
-    assert plan.voice["speech"] == {"provider": "openai", "model": "gpt-4o-mini-tts", "price_usd": 0.015,
-                                    "options": {"voice": "nova"}}
-    assert plan.voice["transcription"]["model"] == "gpt-4o-mini-transcribe"
-    assert any("speech model to openai/gpt-4o-mini-tts" in line for line in W.actions(plan))
-
-
-def test_a_voice_without_a_known_price_carries_none():
-    plan = W.Plan(current={"GOOGLE_API_KEY": "g-1"})
-    W.step_voice(_asker({"voice": {"mode": "cloud", "voice": "Puck"}}), plan)
-    assert plan.voice["speech"] == {"provider": "google", "model": "gemini-2.5-flash-preview-tts",
-                                    "options": {"voice": "Puck"}}
-    assert "price_usd" not in plan.voice["transcription"]
-
-
-def test_without_a_cloud_provider_the_voice_defaults_to_the_browser():
-    plan = W.Plan(fresh=True, quick=False)
-    W.step_voice(_asker({}), plan)
-    assert plan.voice == {"mode": "browser"}
-    with pytest.raises(SetupError, match="expected one of"):
-        W.step_voice(_asker({"voice": {"mode": "cloud"}}), W.Plan(fresh=True))
-    with pytest.raises(SetupError, match="expected one of"):
-        W.step_voice(_asker({"voice": {"mode": "local"}}), W.Plan(fresh=True))
-
-
-def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
+def test_quickstart_leaves_the_demo_to_the_first_run():
     plan = W.Plan(fresh=True)
-    W.step_voice(_asker({}), plan)
     W.step_features(_asker({}), plan)
-    assert plan.voice == {} and "DEMO_WORKSPACE" not in plan.env
-    # An answers file that names them still applies them.
+    assert "DEMO_WORKSPACE" not in plan.env
+    # An answers file that names it still applies it.
     answered = W.Plan(fresh=True)
-    W.step_voice(_asker({"voice": {"mode": "browser"}}), answered)
     W.step_features(_asker({"demo": True}), answered)
-    assert answered.voice == {"mode": "browser"} and answered.env["DEMO_WORKSPACE"] == "1"
-
-
-def test_voice_is_saved_in_the_voice_models():
-    from providers import voice_models
-    plan = W.Plan(providers={"openai": {"model": "gpt-5.4", "models": [], "presets": {}}})
-    a = _asker({"voice": {"mode": "cloud", "voice": "onyx"}})
-    W.step_voice(a, plan)
-    W._apply_voice_local(a, plan)
-    stored = voice_models.stored()
-    assert stored["speech"]["options"] == {"voice": "onyx"} and stored["transcription"]["price_usd"] == 0.003
-
+    assert answered.env["DEMO_WORKSPACE"] == "1"
 
 
 def test_review_masks_a_password_in_any_url():

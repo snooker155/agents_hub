@@ -11,7 +11,7 @@ it at all.
 command group of its own (``ah <tag> <verb>``), with verbs read off the path
 and method rather than hand-named, so a route added to the backend shows up
 here without a matching change in the CLI. The entities with a page in the
-dashboard and a daily-use shape of their own (flow, loop, team, mcp,
+dashboard and a daily-use shape of their own (flow, loop, team,
 user) get a hand-written group instead (cli/commands/), and are excluded here
 so the two do not collide or disagree.
 
@@ -347,7 +347,7 @@ def build_api_command(hub_getter: Callable[[], Any], call: Callable, console: Co
 # clumsier `ah <tag>` for these would only compete with the good one, or (for
 # "auth") mix login/session routes into what is otherwise plain CRUD.
 EXCLUDED_TAGS = {
-    "auth", "mcp", "secrets", "agents", "tasks", "workspaces", "projects",
+    "auth", "secrets", "agents", "tasks", "workspaces", "projects",
     "nodes",
 }
 

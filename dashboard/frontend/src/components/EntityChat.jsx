@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Brain, Loader2, MessageSquare, MessageSquarePlus, PanelRightClose, Send, StopCircle } from 'lucide-react';
 import { streamEntityChat } from '../api';
@@ -8,7 +8,6 @@ import { FeedItem } from './flow/ChatFeed';
 import ContextMeter from './ContextMeter';
 import { useContextUsage } from './contextUsage';
 import { useI18n } from '../i18n';
-import { useInlineChatOpen } from './pageChat/pageChat';
 import { autoGrowTextarea } from '../lib/autoGrow';
 
 //: A long thought would otherwise leave the chat blank for many seconds — the
@@ -61,9 +60,6 @@ function LiveThought({ text }) {
  *
  * @param {object}   props
  * @param {string}   props.path        API path for the streaming turn (e.g. `/loops/<id>/chat`).
- * @param {object}   [props.body]      extra fields sent with every turn, read at
- *   send time rather than at render time — the page chat's subject is whatever
- *   is on screen *now*, which may have changed while the user typed.
  * @param {function} props.loadChat    () => Promise<{data: {messages, trace}}>
  * @param {function} props.clearChat   () => Promise<any>
  * @param {function} props.stopChat    () => Promise<any>
@@ -90,11 +86,6 @@ function LiveThought({ text }) {
  * @param {string}   [props.className] extra classes on the panel root — pass
  *   `flex-1 min-h-0` where the chat should fill the card it sits in, so the
  *   composer lands on the card's floor instead of under the last message.
- * @param {boolean}  [props.inline]    false only for the copy inside the floating
- *   panel. Every other one is a chat the page is drawing itself, which is what
- *   tells the panel's launcher to stand down (see `useInlineChatOpen`).
- * @param {function} [props.renderReply] text => nodes for the agent's replies,
- *   for a host that renders more than plain text (the Help panel's links).
  * @param {string}   [props.composerClassName] extra classes on the composer
  *   block, replacing its default top margin — `mt-auto` pins it to the bottom
  *   of a panel that fills its card, and negative margins take its rule out to
@@ -102,7 +93,6 @@ function LiveThought({ text }) {
  */
 export default function EntityChat({
   path,
-  body = null,
   loadChat,
   clearChat,
   stopChat,
@@ -116,13 +106,10 @@ export default function EntityChat({
   emptyHint = '',
   heightClass = 'max-h-[28rem] min-h-[14rem]',
   className = '',
-  inline = true,
   composerClassName = '',
   onHide = null,
-  renderReply = null,
 }) {
   const { t } = useI18n();
-  useInlineChatOpen(inline);
   const [feed, setFeed] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -148,12 +135,6 @@ export default function EntityChat({
   const abortRef = useRef(null);
   const feedRef = useRef(null);
   const textareaRef = useRef(null);
-  // The turn's extra payload, kept in a ref so `runTurn` does not have to be
-  // rebuilt (and the composer re-rendered) every time the page beneath the
-  // chat changes what it is showing.
-  const bodyRef = useRef(body);
-  useLayoutEffect(() => { bodyRef.current = body; });
-
   // The threads this chat has been. Loaded from the key the server reports, so
   // no page has to know its own chat's storage key.
   const sessionHistory = useChatSessions(chatRef, sessionsKey);
@@ -232,7 +213,6 @@ export default function EntityChat({
       await streamEntityChat({
         path,
         message,
-        body: bodyRef.current,
         signal: ac.signal,
         onEvent: (ev) => {
           // Kept in sync with `trace_item_for` in chat/entity_chat.py, so a
@@ -528,7 +508,7 @@ export default function EntityChat({
             )}
           </div>
         ) : (
-          feed.map((e, i) => <FeedItem key={i} e={e} renderText={renderReply} />)
+          feed.map((e, i) => <FeedItem key={i} e={e} />)
         )}
 
         {/* The run's floor: something is always showing while a turn is open,

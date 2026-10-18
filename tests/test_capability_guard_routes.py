@@ -111,13 +111,6 @@ def test_override_off_again_keeps_the_record_and_refuses_new_reach(client):
     assert r.status_code == 409
 
 
-def test_system_workspace_agent_cannot_take_the_override(client, monkeypatch):
-    from common.system_workspace import WORKSPACE
-    add_agent(_spec("sys", ["read_file"], owner_workspace=WORKSPACE), user_edit=False)
-    r = client.post("/api/agents/sys/capability-override", json={"capability_override": True})
-    assert r.status_code == 400
-
-
 def test_guard_mode_follows_the_env_file_live(monkeypatch):
     from agents.capability_guard import guard_mode, override_requires_container
     assert guard_mode() == "block"

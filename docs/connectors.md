@@ -25,10 +25,7 @@ workspace's definition and fall back to the default's.
 Over the API every connector route takes `?workspace=` (the default when
 omitted): `GET`, `PUT` and `DELETE /api/connectors/{name}/config` and
 `POST /api/connectors/{name}/test`; `GET` answers `source` (`here` or
-`default`) and, on the default workspace, `defined_in`. A connection an agent
-proposes from the chat ([below](#setting-up-from-the-chat)) is defined in the
-workspace the agent runs in; proposed from the default workspace it lives
-everywhere.
+`default`) and, on the default workspace, `defined_in`.
 
 Clones, pulls, publishing and issue syncs of a [project](projects.md) use the
 project's workspace, whoever starts them.
@@ -54,37 +51,11 @@ a Jira project by key; a sync is idempotent and issues become tasks. Agents
 read, comment on, create and transition issues with the `tracker_*` tools. See
 [trackers](trackers.md).
 
-## Setting up from the chat
-
-An agent can prepare a connection for you instead of you filling the form:
-ask the main agent "connect our Jira" or "attach this MCP server". It calls
-`connection_options` to learn the field names, then `propose_connection`
-with every field that is not a secret. The chat shows a card with the fields
-(you may change any of them), an input for each secret, and Connect or Deny.
-Secrets never pass through the model: a token is typed into the card and goes
-from the browser to the hub, and a value the agent puts into a secret field is
-refused before any card appears. Connect applies the change as you. The turn waits on the card like any
-[approval in the chat](hooks.md) and then reads one line: what was set up and
-whether the test passed. Outside the dashboard chat (a task, a schedule) nobody
-is in front of a card: the proposal waits three days under "Proposed by agents"
-at the top of the Connectors page, with an inbox notification, and the agent
-checks it later with `connection_proposal_status`.
-
-Kinds: `connector` (Jira or GitLab), `mcp_server` (it claims every capability; only you
-may untick one, and a stdio command is shown as a warning since connecting runs
-it on the hub's host), `secret` and `provider` (a model
-provider key). The API is `GET /api/connection-proposals` and
-`POST /api/connection-proposals/{id}/apply`; Deny is the ordinary
-`POST /api/tool-approvals/{id}`.
-
 ## Gotchas
 
 - **Each connector saves itself.** There is no page-level save button: the
   sections write through their own endpoints as you use them.
-- **A proposal cannot be approved without applying it.** The plain approve
-  on `/api/tool-approvals/{id}` is refused for a connection proposal, since
-  the agent would read that the connection exists.
 - **A token set in the environment wins.** A value in `.env` is not editable
   from the page, and the page says so rather than silently failing to save.
 
-Related: [trackers](trackers.md), [projects](projects.md), [settings](settings.md), [mcp](mcp.md), [notifications](notifications.md), [secrets](secrets.md).
+Related: [trackers](trackers.md), [projects](projects.md), [settings](settings.md), [notifications](notifications.md), [secrets](secrets.md).

@@ -122,7 +122,7 @@ def task_assign(
         None, "--agent-version", min=1,
         help="Run this stored version of the agent (this launch only; the task's own pin otherwise)."),
     overrides: Optional[str] = typer.Option(
-        None, "--overrides", help="Per-run overrides as JSON (model, system, tools, skills, mcp, ...)."),
+        None, "--overrides", help="Per-run overrides as JSON (model, system, tools, skills, ...)."),
     overrides_file: Optional[str] = typer.Option(
         None, "--overrides-file", help="Read the per-run overrides from this JSON file (- for stdin)."),
 ):

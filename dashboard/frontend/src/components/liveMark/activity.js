@@ -9,35 +9,7 @@
  * pose (poses.js). A tool no rule knows gets one of a few rebuilds that mean
  * nothing in particular, always the same one for the same tool, so steps of
  * different tools look different.
- *
- * The assistant's catalog tools (hub_lookup, service_lookup, hub_action)
- * name what they reach in their input, so they go by its `kind` instead:
- * a run is a search of the history, a cost a search of the records, a
- * model or a skill a search of the tools.
  */
-
-// hub_lookup and service_lookup, by the kind of record (chat/lookup.py).
-const LOOKUP_KINDS = [
-  ['search-history', /^(run|message|session|job|audit|web_log|approval)$/],
-  ['search-errors', /^(health|guardrail)$/],
-  ['search-mail', /^notification$/],
-  ['search-tools', /^(model|voice|speech|transcription|tool|skill|mcp|mcp_server|connection|registry|widget)$/],
-  ['search-files', /^(view|project)$/],
-];
-
-// hub_action, by its verb and the kind it acts on (chat/actions.py).
-function stateForAction(input) {
-  const action = String(input.action || '').toLowerCase();
-  const kind = String(input.kind || '').toLowerCase();
-  if (/^(enable|disable|pause)$/.test(action)) return 'mark-tetra';
-  if (!/^(start|restart|resume)$/.test(action)) return 'working';
-  if (kind === 'loop') return 'mark-cycle';
-  if (kind === 'flow') return 'run-flow';
-  if (kind === 'team') return 'run-team';
-  if (/^(pulse|agent)$/.test(kind)) return 'delegate';
-  if (action === 'restart') return 'relay-deploy';
-  return 'working';
-}
 
 const RULES = [
   // Thinking a plan through: a graph grows and is pruned.
@@ -47,7 +19,6 @@ const RULES = [
   ['mark-gclock', /schedul|cron|timezone|(^|_)(time|date)(_|$)/],
   ['mark-arcs', /_status(_tool)?$|progress|monitor/],
   // Searches, by where they look.
-  ['search-errors', /^service_health$/],
   ['search-errors', /search_errors|_logs$|^logs_|error/],
   ['search-history', /^list_runs$|^run_log$|^list_sessions$|routing_log|web_log|^(get|list)_\w*runs?(_tool)?$|^instance_timeline$|run_history/],
   ['search-tools', /search_tools|tool_search|list_tools|find_tool/],
@@ -117,10 +88,10 @@ const RULES = [
   ['make-html', /html|view_serve|web_view/],
   ['make-view', /view|slides_|math_plot|chart/],
   ['mark-venn', /eval/],
-  ['write-code', /patch|diff|str_replace|edit_code|write_code|aider|claude_code|codex|commit/],
+  ['write-code', /patch|diff|str_replace|edit_code|write_code|aider|commit/],
   ['write-file', /^(write|create|save|edit|append)_(file|workspace_file|doc)|document_set|_append$|google_docs_create|create_page|create_issue|^(create|update)_task$/],
   // Poses.
-  ['code', /run_code|run_shell|run_tests|run_diagnostics|terminal|python|bash|exec/],
+  ['code', /run_code|run_shell|run_tests|terminal|python|bash|exec/],
   ['read', /^(read|fetch|get|list|load|open)_|(^|_)(list|get)_|_(read|import|get|status|stats|schema|list)$/],
 ];
 
@@ -134,28 +105,9 @@ function hash(text) {
   return Math.abs(h);
 }
 
-/** A tool call's input as an object: streams send it parsed or as JSON. */
-function inputOf(input) {
-  if (input && typeof input === 'object') return input;
-  if (typeof input !== 'string') return {};
-  try {
-    const data = JSON.parse(input);
-    return data && typeof data === 'object' ? data : {};
-  } catch {
-    return {};
-  }
-}
-
-export function stateForTool(name, input) {
+export function stateForTool(name) {
   const tool = String(name || '').toLowerCase();
   if (!tool) return 'working';
-  if (tool === 'hub_lookup' || tool === 'service_lookup') {
-    const kind = String(inputOf(input).kind || '').toLowerCase();
-    for (const [state, re] of LOOKUP_KINDS) if (re.test(kind)) return state;
-    // agents, teams, instances, budgets and the rest are records
-    return kind ? 'search-db' : 'read';
-  }
-  if (tool === 'hub_action') return stateForAction(inputOf(input));
   for (const [state, re] of RULES) if (re.test(tool)) return state;
   return UNKNOWN_TOOL_STATES[hash(tool) % UNKNOWN_TOOL_STATES.length];
 }
@@ -164,9 +116,9 @@ export function stateForTool(name, input) {
  * The state of a live chat turn: waiting for an approval, a tool, thinking,
  * writing the reply, or just working (nothing reported yet).
  */
-export function stateForTurn({ waiting, thinking, tool, input, text }) {
+export function stateForTurn({ waiting, thinking, tool, text }) {
   if (waiting) return 'wait';
-  if (tool) return stateForTool(tool, input);
+  if (tool) return stateForTool(tool);
   if (thinking) return 'think';
   if (text) return 'speak';
   return 'working';

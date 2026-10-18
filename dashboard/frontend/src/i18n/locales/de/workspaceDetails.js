@@ -152,7 +152,7 @@ export default {
   roles: {
     title: 'Agentenrollen',
     intro: 'Systemagenten geben Arbeit an eine Rolle, nicht an einen bestimmten Agenten: Code geht an @coder, Reviews an @reviewer. Wählen Sie, welcher Agent dieses Arbeitsbereichs jede Rolle übernimmt. Bis dahin übernimmt der eingebaute Agent die Rolle.',
-    importHint: 'Damit Claude Code, Codex oder Aider programmiert, fügen Sie ihn auf der Agentenseite hinzu (Claude Code hinzufügen, Codex hinzufügen, Aus Repository importieren), nehmen ihn in diesen Arbeitsbereich auf und wählen ihn hier.',
+    importHint: 'Damit ein importierter Agent wie Aider programmiert, fügen Sie ihn auf der Agentenseite hinzu (Aus Repository importieren), nehmen ihn in diesen Arbeitsbereich auf und wählen ihn hier.',
     openAgents: 'Agenten öffnen →',
     calledBy: 'Aufgerufen von: {{agents}}',
     noCallers: 'Noch ruft kein Agent dieses Arbeitsbereichs diese Rolle auf; eigene Agenten können sie in ihren Delegierten nennen.',

@@ -1,10 +1,8 @@
-// Route → title key. Pure data: kept at module scope so nothing rebuilds forty
-// regexes on every render, and in its own module because two surfaces name the
-// page the user is on — the shell's document title, and the page chat's header.
+// Route → title key, for the shell's document title. Pure data: kept at module
+// scope so nothing rebuilds forty regexes on every render.
 export const ROUTE_TITLES = [
   { match: /^\/$/, titleKey: 'layout.titles.chat' },
   { match: /^\/chat(\/.*)?$/, titleKey: 'layout.titles.chat' },
-  { match: /^\/assistant$/, titleKey: 'layout.titles.assistant' },
   { match: /^\/dashboard$/, titleKey: 'layout.titles.dashboard' },
   { match: /^\/orchestrator$/, titleKey: 'layout.titles.orchestrator' },
   { match: /^\/tasks$/, titleKey: 'layout.titles.tasks' },

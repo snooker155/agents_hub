@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BellRing, GitBranch, Link2, Ticket } from 'lucide-react';
 
 import TrackersConnector from '../components/connectors/TrackersConnector';
 import GitConnector from '../components/connectors/GitConnector';
 import AlertRulesConnector from '../components/connectors/AlertRulesConnector';
-import { ConnectionProposalCard } from '../components/chat/ConnectionProposalCard';
-import { listConnectionProposals } from '../api/connectionProposals';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
@@ -33,33 +31,6 @@ function WorkspaceScopeNote() {
       {t('connectors.workspaceBanner.title', { workspace })}{' '}
       {t('connectors.workspaceBanner.rule')}
     </span>
-  );
-}
-
-// The agent's own proposals for this workspace (connection-proposals-contract.md):
-// shown above the tabs so a pending one is not missed under whichever tab
-// happens to be open. A failed read just means nothing to show here yet; the
-// tab strip below still works.
-function ProposedConnections() {
-  const { t } = useI18n();
-  const { selectedWorkspace: workspace } = useWorkspace();
-  const [proposals, setProposals] = useState([]);
-
-  const load = useCallback(() => {
-    listConnectionProposals({ status: 'pending', workspace })
-      .then(({ data }) => setProposals(data?.proposals || []))
-      .catch(() => setProposals([]));
-  }, [workspace]);
-  useEffect(() => { load(); }, [load]);
-
-  if (proposals.length === 0) return null;
-  return (
-    <div className="space-y-2" data-testid="connection-proposals-panel">
-      <h2 className="text-sm font-semibold text-gray-800">{t('connectionProposal.panelTitle')}</h2>
-      {proposals.map((p) => (
-        <ConnectionProposalCard key={p.approval_id} approval={p} live onSettled={load} />
-      ))}
-    </div>
   );
 }
 
@@ -92,7 +63,6 @@ export default function Connectors() {
         )}
       />
 
-      <ProposedConnections />
 
       <div className="flex flex-wrap gap-1 border-b border-gray-200">
         {TABS.map(({ id, icon: Icon }) => (

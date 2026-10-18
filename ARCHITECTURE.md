@@ -64,8 +64,6 @@ Under those runtime layers, the backend works with several domain modules:
   Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call. The `_crud.py` factory builds the four entity management tool modules (flow, loop, team, project) from handlers and schemas; `_json.py` provides the shared JSON envelope for all tool results.
 - `connectors/`
   Outside-world integrations: Jira and git (GitLab provider, repo operations, issue sync).
-- `mcp_client/`
-  Connects to MCP servers configured per workspace and turns their tools into hub tools, named `mcp__<server id>__<tool name>` so the capability model can classify them.
 - `notify/`
   Alert rules (a failed run, spend over a threshold) that raise an in-app notification on their own.
 At a high level, the flow looks like this:
@@ -103,7 +101,6 @@ agents_hub/
 │   └── callbacks/           # Streaming, in-loop guards, run statistics
 ├── managers/                # Run records (a facade over managers/runs/), agent containers, run watchdog
 ├── runtime/                 # Subprocess entrypoints: agent_run, instance_run, flow_run, docker_runner
-├── mcp_client/              # MCP server connections, turned into hub tools
 ├── notify/                  # Alert rules that raise in-app notifications
 ├── common/
 │   ├── db.py                # database core (SQLite WAL) — runs, tasks, sessions, instances, views, evals …
@@ -201,7 +198,7 @@ agents_hub/
 - `instances/registry.py`
   The one call (`ensure_instance`) every execution channel makes to register a live copy of an agent, plus the state transitions that keep the Instances page honest.
 - `chat/entity_chat_router.py`
-  Factory that builds the four identical routes (GET for history, DELETE to clear, POST to send, POST to stop) that every entity chat (team, loop, memory pool, page chat) exposes, parametrized by entity type and load/prompt/spec/summarize hooks.
+  Factory that builds the four identical routes (GET for history, DELETE to clear, POST to send, POST to stop) that every entity chat (team, loop, memory pool) exposes, parametrized by entity type and load/prompt/spec/summarize hooks.
 - `projects/planner_service.py`
   The Planner agent, its system prompt assembly, and the agent builder with raised iteration limits for planning large projects.
 - `projects/git_service.py`
@@ -390,7 +387,7 @@ The backend is organized by route domains, registered in `dashboard/backend/main
 | Measurement | `stats`, `models`, `runs/{id}/replay` |
 | Knowledge | `shared-memory`, `web-logs`, `views` |
 | Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `containers` |
-| Integration | `git`, `settings`, `stream`, `health`, `mcp`, `notify` |
+| Integration | `git`, `settings`, `stream`, `health`, `notify` |
 
 The root endpoint (`GET /`) returns the API banner and the domains it serves. Most application endpoints live under `/api/*`.
 

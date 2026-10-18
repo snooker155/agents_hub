@@ -10,13 +10,11 @@ import en from '../../i18n/locales/en/health.js';
 import ru from '../../i18n/locales/ru/health.js';
 import de from '../../i18n/locales/de/health.js';
 
-// Feature 3's two new panels on the Health page: the doctor's structured self
-// checks, and the system workspace (its clone, its scheduled loop, its
-// branches). Both load independently of the plain up/down snapshot the rest
-// of the page already had, so they get their own mocked endpoints here.
+// The doctor's structured self checks on the Health page. They load
+// independently of the plain up/down snapshot, so they get their own mocked
+// endpoint here.
 
 const ok = (data) => Promise.resolve({ data });
-const notFound = () => Promise.reject({ response: { status: 404 } });
 
 const DOCTOR = {
   status: 'warn',
@@ -33,36 +31,10 @@ const DOCTOR = {
   ],
 };
 
-const SYSTEM = {
-  enabled: true,
-  workspace: 'system',
-  project_id: 'proj-1',
-  repo_dir: '/srv/agents_hub',
-  clone: {
-    exists: true, head: 'a1b2c3d4e5f', branch: 'main',
-    synced_at: '2026-09-24T09:00:00Z', error: null,
-  },
-  loop: {
-    loop_id: 'loop-1', flow_id: 'flow-1', job_id: 'job-1', scheduled: false,
-    recurrence: 'hours', every_hours: 24, next_run_at: null, last_run: null,
-  },
-  branches: [],
-};
-
 const getDoctor = vi.fn();
-const getSystem = vi.fn();
-const syncSystem = vi.fn(() => ok(SYSTEM.clone));
-const setSystemSchedule = vi.fn(() => ok({ ...SYSTEM.loop, scheduled: true }));
-const pruneSystemBranches = vi.fn(() => ok({ deleted: [] }));
-const getSystemBranches = vi.fn(() => ok([]));
 
 vi.mock('../../api/system', () => ({
   getDoctor: (...a) => getDoctor(...a),
-  getSystem: (...a) => getSystem(...a),
-  syncSystem: (...a) => syncSystem(...a),
-  setSystemSchedule: (...a) => setSystemSchedule(...a),
-  pruneSystemBranches: (...a) => pruneSystemBranches(...a),
-  getSystemBranches: (...a) => getSystemBranches(...a),
 }));
 
 // The SLO card loads on mount too; without this mock its call reached the
@@ -76,16 +48,7 @@ vi.mock('../../api/support', () => ({
 vi.mock('../../api/services', () => ({ getClusterStack: () => Promise.resolve({ data: { components: [] } }) }));
 vi.mock('../../api', () => ({
   getHealth: () => ok({ status: 'ok', database: {}, services: {}, storage: {}, providers: {} }),
-  getServiceChat: () => ok({ messages: [] }),
-  clearServiceChat: () => ok({}),
-  stopServiceChat: () => ok({}),
-  serviceChatUrl: () => '/health/chat',
 }));
-
-// The chat column is a whole conversation UI with its own fetches; none of
-// that is what this test is about, so it renders as nothing (same pattern as
-// MemoryManagerBlocks.test.jsx).
-vi.mock('../../components/EntityChat', () => ({ default: () => null }));
 
 import Health from '../Health';
 
@@ -95,13 +58,7 @@ const show = () => render(
 
 beforeEach(() => {
   getDoctor.mockClear();
-  getSystem.mockClear();
-  syncSystem.mockClear();
-  setSystemSchedule.mockClear();
-  pruneSystemBranches.mockClear();
-  getSystemBranches.mockClear();
   getDoctor.mockImplementation(() => ok(DOCTOR));
-  getSystem.mockImplementation(() => ok(SYSTEM));
 });
 
 describe('Health — Diagnostics', () => {
@@ -127,8 +84,6 @@ describe('Health — Diagnostics', () => {
   it('re-runs the checks on Run', async () => {
     show();
     await waitFor(() => expect(getDoctor).toHaveBeenCalledTimes(1));
-    // Exact name: "Prune" also contains the substring "run", so a /run/i
-    // regex over-matches it.
     const run = screen.getByRole('button', { name: 'Run' });
     // The button stays disabled while the mount load is in flight; the first
     // call above is made synchronously on mount, so on a slow runner the
@@ -221,44 +176,11 @@ describe('Health — doctor message keys', () => {
   };
 
   it.each([['en', en], ['ru', ru], ['de', de]])('%s has every key', (_lang, dict) => {
-    expect(keys.length).toBeGreaterThan(40);
-    expect(titleIds.length).toBeGreaterThan(10);
+    expect(keys.length).toBeGreaterThan(20);
+    expect(titleIds.length).toBeGreaterThan(5);
     const summaries = dict.doctor.summaries;
     const missing = keys.filter((k) => !has(summaries, k) && !has(summaries, `${k}_other`));
     expect(missing).toEqual([]);
     expect(titleIds.filter((id) => !has(dict.doctor.titles, id))).toEqual([]);
-  });
-});
-
-describe('Health — System workspace', () => {
-  it('shows the disabled message when the workspace is off', async () => {
-    getSystem.mockImplementation(notFound);
-    show();
-    await waitFor(() => expect(getSystem).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText(/SYSTEM_WORKSPACE=false/)).toBeInTheDocument());
-  });
-
-  it('shows the clone and loop state when the workspace is on', async () => {
-    show();
-    await waitFor(() => expect(screen.getByText('main')).toBeInTheDocument());
-    expect(screen.getByText('a1b2c3d')).toBeInTheDocument();
-  });
-
-  it('enabling the loop calls setSystemSchedule with the current interval', async () => {
-    show();
-    await waitFor(() => expect(screen.getByText('main')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /enable/i }));
-    await waitFor(() => expect(setSystemSchedule).toHaveBeenCalledWith(true, 24));
-  });
-
-  it('prunes branches after a confirmation, using the entered day count', async () => {
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('7');
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    show();
-    await waitFor(() => expect(screen.getByText('main')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /prune/i }));
-    await waitFor(() => expect(pruneSystemBranches).toHaveBeenCalledWith(7));
-    promptSpy.mockRestore();
-    confirmSpy.mockRestore();
   });
 });

@@ -185,8 +185,8 @@ def ensure_system_agent(agent_id: str) -> bool:
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
 _SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
-                      # A shipped child (``assistant``): its parent and its
-                      # own list deltas are part of its design too.
+                      # A shipped child: its parent and its own list
+                      # deltas are part of its design too.
                       "extends", "list_deltas")
 
 
@@ -267,10 +267,10 @@ def _sync_system_agents() -> list[str]:
         # so the record still reads like the shipped one.
         #
         # The one exception is an id the capability model no longer recognises
-        # at all: a tool that was renamed or retired (nodes became instances,
-        # so `node_logs` became `instance_logs`). It grants nothing, resolves
-        # to nothing at build time and only makes the guard log an unknown id
-        # on every build, so carrying it is not preservation, just noise.
+        # at all: a tool that was renamed or retired with its feature. It
+        # grants nothing, resolves to nothing at build time and only makes the
+        # guard log an unknown id on every build, so carrying it is not
+        # preservation, just noise.
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
         extra = [t for t in live_tools if t not in seed_tools]
@@ -437,7 +437,6 @@ def _hold_back_inherited_grants(before: list, after: list, changed: list) -> dic
                     cid, list(new.tools or []) + secret_grant_ids(new.secrets),
                     previous_tools=list(old.tools or []) + secret_grant_ids(old.secrets),
                     override=bool(rec.get("capability_override")),
-                    workspace=rec.get("owner_workspace"),
                     delegates=list(new.delegates or []),
                 )
                 continue
@@ -557,7 +556,6 @@ def ensure_initial_state() -> dict[str, bool]:
     result["system_agents_synced"] = bool(_sync_system_agents())
     result["role_references_adopted"] = bool(_adopt_role_references())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
-    result["system_workspace"] = _seed_system_workspace()
     result["demo_workspace"] = _seed_demo_workspace()
     return result
 
@@ -660,24 +658,10 @@ def _rename_legacy_agent_ids() -> bool:
     return bool(done.get("documents") or done.get("rows"))
 
 
-def _seed_system_workspace() -> bool:
-    """Seed the system workspace (common/system_workspace.py) when the setting
-    is on. Additive and never raising: a failure here must not stop the
-    service from starting, it is reported by the doctor instead."""
-    try:
-        from common.config import settings
-        if not bool(getattr(settings, "system_workspace", True)):
-            return False
-        from common.system_workspace import ensure_system_workspace
-        return bool(ensure_system_workspace())
-    except Exception:  # noqa: BLE001 - startup must not raise; the doctor reports a missing system workspace
-        log.debug("system workspace seed skipped", exc_info=True)
-        return False
-
-
 def _seed_demo_workspace() -> bool:
     """Seed the demo workspace (common/demo_workspace.py) when the setting is
-    on. Additive and never raising, like the system workspace."""
+    on. Additive and never raising: a failure here must not stop the service
+    from starting."""
     try:
         from common.config import settings
         if not bool(getattr(settings, "demo_workspace", False)):

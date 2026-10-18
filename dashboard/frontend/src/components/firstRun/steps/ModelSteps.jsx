@@ -8,8 +8,7 @@
 import { useState } from 'react';
 import { Brain, Cloud, Cpu, ExternalLink, Gauge, Server, Sparkles, Zap } from 'lucide-react';
 import { useI18n } from '../../../i18n';
-import { connectFirstModel } from '../../../api/setupGuide';
-import { firstRunOp } from '../../../api/firstRun';
+import { connectFirstModel, firstRunOp } from '../../../api/firstRun';
 import {
   ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';

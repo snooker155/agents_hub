@@ -1,7 +1,7 @@
 # Web requests
 
-Every `fetch_url` call an agent made, recorded with the text it
-was actually handed. The **Web Requests** page is where you read them.
+Every page an agent fetched from the web (`fetch_url`), recorded with the text
+it was actually handed. The **Web Requests** page is where you read them.
 
 ## The two questions it answers
 
@@ -31,13 +31,6 @@ Flags are **signals, not verdicts**, and deliberately eager: an article *about*
 prompt injection is flagged exactly like a page attempting it. Nothing here
 blocks a call. Blocking lives elsewhere: the SSRF guard, the domain policy and
 the [capability model](tools-and-capabilities.md).
-
-## From an agent
-
-`web_log_recent` gives the Service Agent the same list, which is how "what did
-this run fetch" gets answered without leaving the conversation. Because a log
-entry holds whatever the fetched page said, reading one counts as ingesting
-untrusted content.
 
 ## Configuration
 

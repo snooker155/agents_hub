@@ -34,11 +34,6 @@ vi.mock('../../components/stream', () => ({
   useStream: () => ({ connected: false }),
 }));
 
-vi.mock('../../components/pageChat/pageChat', () => ({
-  usePageChat: () => ({ open: false, toggle: () => {}, panel: null }),
-  usePageChatPanel: () => ({ inlineSuppressed: false, setOpen: () => {} }),
-}));
-
 vi.mock('../../components/EntityChat', () => ({ default: () => null }));
 
 vi.mock('../../api', () => ({

@@ -119,8 +119,6 @@ def test_user_approved_gates_pass_and_are_recorded(chat_turn):
     token = auto_mode.set_turn(True)
     try:
         assert auto_mode.approved("run_team_tool", False, {"team_id": "t"}) is True
-        # The person has to type into this card: auto mode never answers it.
-        assert auto_mode.approved("propose_connection", False) is False
     finally:
         auto_mode.reset_turn(token)
     rows = tool_approvals.list_for_run(run_id)
@@ -129,22 +127,9 @@ def test_user_approved_gates_pass_and_are_recorded(chat_turn):
     assert any(e.get("type") == "tool_approval_resolved" and e.get("auto") for e in events)
 
 
-def test_the_stop_run_gate_uses_auto_mode(chat_turn, monkeypatch):
-    from tools import service_ops
-    run_id, _ = chat_turn()
-    refused = json.loads(service_ops.stop_run.invoke({"run_id": "r-1"}))
-    assert refused["code"] == "approval_required"
-    token = auto_mode.set_turn(True)
-    try:
-        out = service_ops.stop_run.invoke({"run_id": "r-1"})
-    finally:
-        auto_mode.reset_turn(token)
-    assert "approval_required" not in out
-
-
 def test_only_interactive_chats_in_allowing_workspaces(settings):
     assert auto_mode.allowed_for("acme", None)
-    assert auto_mode.allowed_for("acme", "assistant-chat")
+    assert not auto_mode.allowed_for("acme", "assistant-chat")
     assert not auto_mode.allowed_for("acme", "telegram")
     assert not auto_mode.allowed_for("acme", "widget")
     settings["allow_auto_approve"] = False

@@ -25,7 +25,7 @@ OLD_CATEGORIES = {
     "documentation", "entity_runs", "execution", "filesystem",
     "flow_management", "loop_management", "memory",
     "project_management", "reasoning",
-    "schedule_management", "service_ops", "system_ops", "task_management",
+    "schedule_management", "task_management",
     "team_management",
     "visualization", "web",
     # tools/connector_tools.py and tools/trackers.py (Jira, GitLab)
@@ -33,10 +33,11 @@ OLD_CATEGORIES = {
 }
 
 # Size of the catalog in this single-user edition, after the tools of the
-# removed connectors, the Blender geometry engine, the remote nodes and the
-# project deployments went. The generated catalog must stay at least this big:
-# a smaller one means a tool was dropped by accident.
-OLD_CATALOG_SIZE = 160
+# removed connectors, the Blender geometry engine, the remote nodes, the
+# project deployments, the service and system workspace tools and connection
+# proposals went. The generated catalog must stay at least this big: a smaller
+# one means a tool was dropped by accident.
+OLD_CATALOG_SIZE = 134
 
 
 def _tool_objects_by_id() -> dict:
@@ -73,8 +74,6 @@ def _tool_objects_by_id() -> dict:
     from tools.project_management import PROJECT_MANAGEMENT_TOOLS
     from tools.entity_runs import ENTITY_RUN_TOOLS
     from tools.git_publish import GIT_PUBLISH_TOOLS
-    from tools.service_ops import SERVICE_OPS_TOOLS
-    from tools.system_ops import SYSTEM_OPS_TOOLS
     from tools.docs_tool import DOCS_TOOLS
     from tools.schedule_management import (
         schedule_notification, schedule_task, notify_user, list_scheduled,
@@ -90,10 +89,6 @@ def _tool_objects_by_id() -> dict:
     from memory.knowledge_extract import create_extraction_tools
     from tools.workspace_files import WORKSPACE_FILE_TOOLS
     from tools.connector_tools import connector_tools
-    from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
-    from tools.hub_action import HUB_ACTION_TOOLS
-    from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
-    from tools.setup_guide import SETUP_GUIDE_TOOLS
 
     tools = [
         calculator, run_shell, ask_user, think,
@@ -111,7 +106,7 @@ def _tool_objects_by_id() -> dict:
         validate_flow_tool, run_new_flow_tool,
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
-        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS,
+        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *DOCS_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
         cancel_scheduled, update_scheduled,
         *WEB_TOOLS, run_code,
@@ -121,9 +116,6 @@ def _tool_objects_by_id() -> dict:
         *create_extraction_tools("__test__"),
         *WORKSPACE_FILE_TOOLS,
         *connector_tools(),
-        *HUB_LOOKUP_TOOLS,
-        *SERVICE_LOOKUP_TOOLS,
-        *HUB_ACTION_TOOLS, *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS,
     ]
     return {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}
 

@@ -226,9 +226,7 @@ run does, and writes nothing until you confirm a review of every value:
 
 1. **Install**: this checkout (Path C), Docker from the published images
    (Path A, into a folder of your choice) or Compose from this checkout
-   (Path B). Then QuickStart (only what cannot be guessed: the
-   assistant sets up the rest with you, see
-   [after the install](#after-the-install-the-assistant-takes-over)) or
+   (Path B). Then QuickStart (only what cannot be guessed) or
    Advanced.
 2. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
    Each key or address is checked by asking the provider for its model list,
@@ -236,28 +234,15 @@ run does, and writes nothing until you confirm a review of every value:
    (balanced, strongest, fastest), from the whole list, or typed. On this
    machine the presets are also enabled in the [Models](models.md) catalog
    with the default starred.
-3. **Assistant voice**: what the [assistant](assistant.md#voice) hears you
-   with and reads its answers aloud with, saved as the `default` workspace's
-   transcription and speech models (every personal workspace falls back to
-   them). A cloud provider chosen in step 2 (OpenAI: `gpt-4o-mini-tts` and
-   `gpt-4o-mini-transcribe` with their prices; Google: Gemini TTS and Gemini
-   Flash) with one of its voices; the browser only (its own recognition and
-   voice, nothing on the server); or not now. QuickStart
-   leaves this to the assistant.
-4. **Features**: in Advanced the demo workspace, the dashboard port, where
-   agents run and RAG. QuickStart leaves the demo to the assistant.
-5. **Review** of every setting it will write (secrets masked) and every
+3. **Features**: in Advanced the demo workspace, the dashboard port, where
+   agents run and RAG.
+4. **Review** of every setting it will write (secrets masked) and every
    action it will take.
-6. **Apply**: installs missing Python extras, writes `.env` (the previous one is
-   kept as `.env.bak-<time>`), fills the catalog, sets the assistant's voice
-   and offers to start the hub (`ah up`, or `docker compose up -d` followed by
-   setting the voice through the API). In Docker that waits for the stack, so
-   without starting it the voice is left for a later run or the Models page.
-   On this checkout the voice is written straight into the database; in
-   Docker it goes through the stack's API once it answers.
+5. **Apply**: installs missing Python extras, writes `.env` (the previous one is
+   kept as `.env.bak-<time>`), fills the catalog and offers to start the hub
+   (`ah up`, or `docker compose up -d`).
 
-An answers file that names `voice.mode` or `demo` still applies them in
-QuickStart.
+An answers file that names `demo` still applies it in QuickStart.
 
 ### Setup from Docker
 
@@ -285,20 +270,9 @@ owner, although the container ran as root to use the socket.
 A new install opens on a
 setup screen of its own instead of the app: no sidebar, no header, one
 decision per screen, the way a new phone sets itself up. In order: hello,
-the language, light or dark, a model, the default model, the assistant's
-voice, personal memory and the demo workspace, then a summary
-with the way in (**Start using Agents Hub**, **Continue with the
-assistant** or **Take the tour**).
-
-On the voice screen an OpenAI voice also picks its speech model:
-`gpt-4o-mini-tts` (the default, newest and most natural), `tts-1` (fastest
-to answer) or `tts-1-hd` (clearer, slower). Then you meet the assistant: it says hello out loud, each
-language in a voice of its own ([a voice per language](assistant.md#a-voice-per-language)),
-you say whether you heard it, answer by voice and hear the reply, which checks
-the model, the speech model and the transcription model in one go. From then
-on every screen has the assistant at its foot, asked by voice or by typing
-about that screen, and the last screen hands over to it, by voice when it was
-heard.
+the language, light or dark, a model key and the default model, personal
+memory and the demo workspace, then a summary with the way in (**Start using
+Agents Hub** or **Take the tour**).
 
 Only the model is required: a key of OpenAI, Anthropic or Google (checked
 with the provider before it is saved), a model server already running on
@@ -310,21 +284,7 @@ The step is saved on the hub, so a reload or another browser goes on where
 it stopped; the language and look chosen there are what a new browser starts
 with. Once finished it does not come back; **Settings, First setup** runs
 it again on purpose. An install that was already in use when it was
-upgraded (a chat, or a guided setup started) is never stopped by it.
-
-### After the install: the assistant takes over
-
-The console (or the browser) does only what the assistant cannot do for
-itself: one model to think with. The first run above does it and its
-**Continue with the assistant** leads here. From there the
-[assistant](assistant.md#guided-setup) leads the rest of the setup one step at
-a time, by voice or by text: the default model, its own voice,
-the demo workspace, the hub's health, then a first chat, an agent of your own,
-a task and something that runs on its own. It makes each change after your yes
-on a card, keys are typed into a card, never said or typed into the
-conversation, and the page of each step opens beside the conversation. A
-**Setup** pill in the header shows how far it has got and brings you back to
-it.
+upgraded (a chat started) is never stopped by it.
 
 `./install.sh` runs it by itself on a first install from a terminal
 (`--no-setup` skips it, `--setup` runs it on a re-install). Run it again
@@ -347,14 +307,10 @@ default, and a missing required answer stops with its name:
   "shape": "docker",
   "dir": "/srv/agents-hub",
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
-  "voice": {"mode": "cloud", "provider": "openai", "voice": "alloy"},
   "demo": false,
   "start": true
 }
 ```
-
-`voice.mode` is `cloud` (with `voice.provider` when two fit and
-`voice.voice`), `browser` or `skip`.
 
 ## Configuration
 

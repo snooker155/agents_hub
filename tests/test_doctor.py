@@ -236,17 +236,6 @@ def test_frontend_build(tmp_path, monkeypatch):
     assert status == "warn" and "App.jsx" in summary
 
 
-def test_system_workspace_check(monkeypatch):
-    from common import system_workspace as sw
-    monkeypatch.setattr(sw, "enabled", lambda: False)
-    assert doctor.check_system_workspace(_snap())[0] == "skip"
-    monkeypatch.setattr(sw, "enabled", lambda: True)
-    assert doctor.check_system_workspace(_snap())[0] == "warn"  # not seeded yet
-    sw.ensure_system_workspace()
-    status, summary, _d = doctor.check_system_workspace(_snap())
-    assert status == "warn" and "sync" in summary  # seeded, not cloned
-
-
 # ── the three outputs ────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -295,13 +284,6 @@ def test_cli_doctor_exits_1_on_fail(monkeypatch):
     result = CliRunner().invoke(cli_main.app, ["doctor"])
     assert result.exit_code == 1
     assert "disk" in result.stdout and "Full." in result.stdout
-
-
-def test_service_tool_wraps_the_doctor(quiet_probes):
-    from tools.service_ops import run_diagnostics
-    out = json.loads(run_diagnostics.invoke({}))
-    assert out["ok"] is True
-    assert out["doctor"]["checks"]
 
 
 @pytest.mark.parametrize("origins,expected", [

@@ -3,7 +3,7 @@
 `ah` drives the service from a terminal. Every entity that has a page in the
 dashboard has a command here, and the command is the application rather than
 a client of it: agents, tasks, workspaces and projects by hand, flows,
-loops, teams and MCP servers with a group of their own, and
+loops and teams with a group of their own, and
 everything else through commands generated from the API's own schema. See
 [the commands](#the-commands) below, and [OpenAPI-driven commands](#openapi-driven-commands)
 for how the last part works.
@@ -69,9 +69,9 @@ Listings print an 8-character ID prefix, and every command that takes an ID
 accepts that prefix back. A call that runs an agent waits as long as the model
 takes, up to `AGENTS_HUB_AGENT_TIMEOUT` seconds (default 900, `0` for no limit).
 
-### Flows, loops, teams, MCP
+### Flows, loops, teams
 
-The four entities with a daily-use shape of their own, each a group of
+The three entities with a daily-use shape of their own, each a group of
 commands rather than one:
 
 ```bash
@@ -92,12 +92,6 @@ ah team get <team-id>
 ah team run <team-id> ["the goal"]                  # defaults to the team's own description
 ah team runs [team-id] [--limit 50]
 ah team stop <team-run-id>
-
-ah mcp list [--workspace ws]
-ah mcp add <server-id> --command "..." [--arg a --arg b] [--transport stdio|http] [--url ...]
-ah mcp remove <server-id>
-ah mcp test <server-id>                             # connect now, report what is there
-ah mcp tools <server-id> [--refresh]
 ```
 
 Every one of these calls the same generic transport as the generated commands
@@ -109,7 +103,7 @@ app in-process, which means importing it, route modules and all, the first
 time any one of these (or `ah api`, or a generated command) runs in a
 session; `ah agent list` and the rest of the commands in [The
 commands](#the-commands) above import only what they individually need and
-stay at their existing speed. `ah mcp` and `ah flow`/`ah loop`/`ah team` need
+stay at their existing speed. `ah flow`/`ah loop`/`ah team` need
 a workspace the same way the dashboard does: `--workspace`, or one already
 selected (see [Selecting a workspace](#selecting-a-workspace)).
 
@@ -358,6 +352,6 @@ The `cli` package in the repository:
   and `ah api`.
 - `cli/commands/`: one module per entity: `agent.py`, `task.py`,
   `workspace.py`, `project.py`, `instance.py`, `flow.py`, `loop.py`,
-  `team.py`, `mcp.py`, `files.py`, and `api.py` (wires up `cli/openapi.py`).
+  `team.py`, `files.py`, and `api.py` (wires up `cli/openapi.py`).
   Each registers a `typer.Typer()` that `cli/main.py` adds to the app.
 - `cli/rest_main.py`: the entry point for the REST-only binary above.

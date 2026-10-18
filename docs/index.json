@@ -39,30 +39,6 @@
       ]
     },
     {
-      "id": "assistant",
-      "title": "Assistant",
-      "summary": "Your own assistant, by voice or text: the Assistant page with the live mark and push to talk, the assistant system agent, which extends the Main Agent, one thread at /api/assistant, turns in any workspace, speech in and out with cloud speech models or the browser's own, a spoken yes for a waiting card, read-only hub_lookup over every page's records, one-step changes with hub_action behind a card or a spoken yes, a service thread with health tools, and the guided setup it leads after the install (setup_guide, setup_step behind a card, show_on_screen, keys through a provider card).",
-      "surface": "Assistant",
-      "related": [
-        "system-agents",
-        "agent-inheritance",
-        "workspaces",
-        "help"
-      ],
-      "headings": [
-        "The page",
-        "One thread",
-        "Where a turn runs",
-        "The service thread",
-        "What it can look up",
-        "Guided setup",
-        "Answers",
-        "Voice",
-        "A voice per language",
-        "Limits"
-      ]
-    },
-    {
       "id": "agent-inheritance",
       "title": "Agent inheritance",
       "summary": "An agent can extend another: start from its prompt, tools, model and the rest, and declare only what is different. A system agent can be a parent, never a child.",
@@ -120,8 +96,7 @@
         "backup",
         "flows",
         "loops",
-        "teams",
-        "mcp"
+        "teams"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -173,7 +148,6 @@
         "projects",
         "views",
         "settings",
-        "mcp",
         "notifications"
       ],
       "headings": [
@@ -278,7 +252,6 @@
         "The shape of an agent",
         "Pausing to ask",
         "The import flow",
-        "Claude Code and Codex",
         "What you give up",
         "Gotchas"
       ]
@@ -307,7 +280,6 @@
         "Path C: the installer",
         "Path D: by hand",
         "The first run in the browser",
-        "After the install: the assistant takes over",
         "Configuration",
         "Checking it worked",
         "Where state lives",
@@ -346,7 +318,6 @@
       "surface": "Loops",
       "related": [
         "flows",
-        "system-workspace",
         "outcomes"
       ],
       "headings": [
@@ -396,29 +367,6 @@
       ]
     },
     {
-      "id": "mcp",
-      "title": "MCP servers",
-      "surface": "MCP servers",
-      "summary": "Attach an external Model Context Protocol server as a group of tools: per workspace, classified by the capabilities its operator declares, and gated by the same hooks and approvals the built-in tools use.",
-      "related": [
-        "connectors",
-        "tools-and-capabilities",
-        "hooks",
-        "agents",
-        "workspaces"
-      ],
-      "headings": [
-        "In the dashboard",
-        "Attaching one",
-        "The id scheme",
-        "Capabilities",
-        "Approval",
-        "Security notes",
-        "How it behaves at runtime",
-        "Gotchas"
-      ]
-    },
-    {
       "id": "memory",
       "title": "Memory",
       "summary": "Agents have several complementary memory layers, bound to a pool. Core memory blocks are always in the prompt; the rest are ranked and fetched with tools. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces. Personal memory is one private pool per workspace that the agents share, switched per workspace and per agent.",
@@ -447,8 +395,7 @@
       "summary": "The Models page is the source of truth for which models exist, which are offered, what they cost, and which is default per provider.",
       "surface": "Models",
       "related": [
-        "settings",
-        "assistant"
+        "settings"
       ],
       "headings": [
         "Catalog vs. enabled",
@@ -456,8 +403,7 @@
         "A first key switches on a model",
         "Pricing",
         "Context window",
-        "Providers",
-        "Voice"
+        "Providers"
       ]
     },
     {
@@ -477,43 +423,6 @@
         "Where work actually happens",
         "The menu",
         "Two things worth knowing early"
-      ]
-    },
-    {
-      "id": "page-chat",
-      "title": "Page chat",
-      "summary": "The button in the corner of every page: a chat about the page you are on, holding the records that page is showing.",
-      "surface": "Everywhere",
-      "related": [
-        "chat",
-        "agents",
-        "system-agents",
-        "sessions-and-runs"
-      ],
-      "headings": [
-        "Two kinds of page",
-        "What the assistant is given",
-        "One thread per page",
-        "Gotchas"
-      ]
-    },
-    {
-      "id": "help",
-      "title": "Help",
-      "summary": "The Help button in the header: the Support agent, for when you are lost. It reads what is set up and what is missing and suggests the next steps with links to the right pages.",
-      "surface": "Everywhere",
-      "related": [
-        "page-chat",
-        "system-agents",
-        "chat",
-        "sessions-and-runs",
-        "overview"
-      ],
-      "headings": [
-        "What it is for",
-        "What the agent is given",
-        "How it differs from the page chat",
-        "Gotchas"
       ]
     },
     {
@@ -567,15 +476,13 @@
         "system-agents",
         "tools-and-capabilities",
         "troubleshooting",
-        "web-logs",
-        "system-workspace"
+        "web-logs"
       ],
       "headings": [
         "The snapshot",
         "Reading it correctly",
         "The usual diagnoses",
-        "Doctor",
-        "The Service Agent"
+        "Doctor"
       ]
     },
     {
@@ -620,7 +527,7 @@
     {
       "id": "skills",
       "title": "Skills",
-      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from any SKILL.md folder of a project repository, public skill sources connected in one click, a safety review with flags, scripts and the license verdict on every imported skill, SKILL.md import and export.",
+      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from any SKILL.md folder of a project repository, a safety review with flags, scripts and the license verdict on every imported skill, SKILL.md import and export.",
       "surface": "Skills Catalog",
       "related": [
         "agents",
@@ -651,8 +558,7 @@
         "tools-and-capabilities",
         "workspaces",
         "agent-inheritance",
-        "workspace-roles",
-        "assistant"
+        "workspace-roles"
       ],
       "headings": [
         "What being a system agent means",
@@ -730,8 +636,7 @@
         "hooks",
         "service-health",
         "system-agents",
-        "web-logs",
-        "mcp"
+        "web-logs"
       ],
       "headings": [
         "The capability model",
@@ -786,7 +691,7 @@
       "id": "web-logs",
       "title": "Web requests",
       "surface": "Web Requests",
-      "summary": "Every `fetch_url` call an agent made, recorded with the text it was actually handed. The **Web Requests** page is where you read them.",
+      "summary": "Every page an agent fetched from the web (`fetch_url`), recorded with the text it was actually handed. The **Web Requests** page is where you read them.",
       "related": [
         "tools-and-capabilities",
         "service-health",
@@ -796,7 +701,6 @@
         "The two questions it answers",
         "Refusals are logged too",
         "Reading a flag correctly",
-        "From an agent",
         "Configuration",
         "Gotchas"
       ]
@@ -811,7 +715,6 @@
         "cli",
         "memory",
         "projects",
-        "system-workspace",
         "demo",
         "settings"
       ],
@@ -822,14 +725,13 @@
         "One workspace per run",
         "Managing workspaces from the chat",
         "The default workspace",
-        "The system workspace",
         "Gotchas"
       ]
     },
     {
       "id": "workspace-roles",
       "title": "Workspace roles",
-      "summary": "A role is a kind of work (coder, reviewer, researcher, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in Claude Code, Codex or Aider is one setting.",
+      "summary": "A role is a kind of work (coder, reviewer, researcher, visualizer and more) and each workspace says which of its agents does it. System agents call @coder rather than swe_agent, so swapping in an imported agent such as Aider is one setting.",
       "surface": "Workspace settings, Agent roles section",
       "related": [
         "agents",
@@ -924,32 +826,6 @@
         "Agent identity in external systems",
         "Gotchas",
         "Related"
-      ]
-    },
-    {
-      "id": "system-workspace",
-      "title": "The system workspace",
-      "summary": "A workspace where the service looks after itself: a git copy of this repository under the state directory, a doctor agent that files [system] tasks and an engineer agent that proposes fixes as system/ branches of the copy. A scheduled maintenance loop, paused by default, never pushes; a human fetches and pushes.",
-      "surface": "Health",
-      "related": [
-        "service-health",
-        "loops",
-        "workspaces",
-        "tools-and-capabilities"
-      ],
-      "headings": [
-        "The copy",
-        "The two agents",
-        "The flow and the loop",
-        "The schedule",
-        "The git rule",
-        "Taking a branch out",
-        "When the service runs in docker",
-        "Tests",
-        "Pruning",
-        "What the doctor checks",
-        "Routes",
-        "Deferred"
       ]
     },
     {

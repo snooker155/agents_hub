@@ -23,7 +23,6 @@ import { FeedItem } from './ChatFeed';
 import ContextMeter from '../ContextMeter';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
-import { useInlineChatOpen } from '../pageChat/pageChat';
 
 // `icon` (a lucide component), `borderStyle`, and `radius` are optional per-kind
 // tweaks; styleNode applies them. Most kinds are a plain rounded box.
@@ -212,9 +211,6 @@ function ProjectGraph({ projectId }) {
   const [showChat, setShowChat] = useState(true);
   const [showThinking, setShowThinking] = useState(true);  // render the agent's reasoning trace
   const abortRef = useRef(null);
-  // While this chat is open its composer owns the bottom-right corner, so the
-  // floating page-chat launcher stands down until it is folded away.
-  useInlineChatOpen(showChat);
 
   const onNodesChange = useCallback((changes) => {
     setNodes((nds) => applyNodeChanges(changes, nds));

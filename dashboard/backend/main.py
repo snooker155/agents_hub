@@ -48,10 +48,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Import route modules organized by domain
 from routes import connectors as connectors_router
 from routes import trackers as trackers_router
-from routes import agent_import, agents, chats, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, projects, containers, messages, flow_entities, git, marketplace, plan, stream, health, replay, views, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
-from routes import help_chat as help_chat_router
-from routes import assistant as assistant_router
-from routes import setup_guide as setup_guide_router
+from routes import agent_import, agents, chats, context_refs, entity_chats, tasks, flows, stats, memory, workspaces, tools, sessions, chat, projects, containers, messages, flow_entities, git, marketplace, plan, stream, health, replay, views, skills, weblogs, loops, teams, instances, notify as notify_router
 from routes import first_run as first_run_router
 from routes import auth as auth_router
 from routes import secrets as secrets_router
@@ -310,11 +307,6 @@ app.include_router(agents.router)
 app.include_router(agent_import.router)
 
 
-# MCP domain: external MCP servers attached per workspace as a group of tools.
-# Beside the connectors in the sidebar, and the same direction: this hub reaches
-# out to a server somebody else runs. See docs/mcp.md.
-app.include_router(mcp_router.router)
-
 # Marketplace domain: catalog of agents published across workspaces
 app.include_router(marketplace.router)
 
@@ -396,14 +388,6 @@ app.include_router(chats.router)
 # What the chat composer can attach besides a file: the entity picker's catalog
 app.include_router(context_refs.router)
 
-# The page chat: one assistant, any page, about the records that page is showing
-app.include_router(page_chat.router)
-
-# The Help panel: the support agent, one thread per user, about the product itself
-app.include_router(help_chat_router.router)
-app.include_router(assistant_router.router)
-# The guided setup the assistant leads (common/setup_guide.py)
-app.include_router(setup_guide_router.router)
 # The first run: the install's own setup in the browser, once (common/first_run.py)
 app.include_router(first_run_router.router)
 
@@ -432,10 +416,6 @@ for _loop_router in (tool_policy_router, outcomes_router, steering_router, guard
 # Deny, and the waiting run's side under /api/run-state (docs/hooks.md).
 from routes import tool_approvals as tool_approvals_router
 app.include_router(tool_approvals_router.router)
-# A connection an agent proposed (connectors/proposals.py), finished by a
-# person: the apply half of the same waiting call.
-from routes import connection_proposals as connection_proposals_router
-app.include_router(connection_proposals_router.router)
 
 # An agent's own domain lists for fetch_url
 # (tools/web.py), on top of the workspace's and the global ones.
@@ -478,8 +458,7 @@ app.include_router(health.router)
 # /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
 app.include_router(ops_router.router)
 
-# System workspace domain: the repository copy, the maintenance loop and its
-# branches (docs/system-workspace.md).
+# The running release and its newest schema migration (ah version).
 app.include_router(system_router.router)
 
 # Demo workspace domain: present or not, add or remove (docs/demo.md).
@@ -519,7 +498,7 @@ RELOAD_DIRS = [
     *(str(project_root / name) for name in
       ("agents", "common", "tools", "tasks", "chat", "flow", "providers",
        "instances", "managers", "workspace", "reasoning", "memory", "connectors",
-       "guardrails", "loops", "mcp_client", "notify", "plans",
+       "guardrails", "loops", "notify", "plans",
        "sandbox", "teams", "views", "declarative", "files", "projects")),
 ]
 #: How long a reload waits for open connections before closing them.

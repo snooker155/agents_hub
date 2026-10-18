@@ -1,30 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, CheckCircle, Database, GitBranch, HardDrive,
-  KeyRound, Loader, Pause, Play, RefreshCw, Server, Stethoscope, Trash2, ChevronDown, ChevronRight,
+  Activity, AlertTriangle, CheckCircle, Database, HardDrive,
+  KeyRound, Loader, RefreshCw, Server, Stethoscope, ChevronDown, ChevronRight,
 } from 'lucide-react';
-import {
-  getHealth, getServiceChat, clearServiceChat, stopServiceChat, serviceChatUrl,
-} from '../api';
-import {
-  getDoctor, getSystem, syncSystem, setSystemSchedule, pruneSystemBranches, getSystemBranches,
-} from '../api/system';
-import EntityChat from '../components/EntityChat';
-import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { getHealth } from '../api';
+import { getDoctor } from '../api/system';
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import { usePageChat } from '../components/pageChat/pageChat';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
 import PageLoader from '../components/PageLoader';
 
 /**
- * Health — the service looking at itself.
+ * Health: the service looking at itself.
  *
- * Two halves that answer different questions. The snapshot answers "is anything
- * obviously wrong", at a glance, without reading logs. The chat answers "why",
- * because the Service Agent beside it can follow a symptom down through nodes,
- * runs and logs, which no static panel can do.
+ * The snapshot answers "is anything obviously wrong", at a glance, without
+ * reading logs; the doctor's checks judge it and link the docs.
  *
  * The snapshot deliberately shows `null` differently from `false`: a probe that
  * could not run is not a service that is down, and conflating the two sends
@@ -132,8 +123,8 @@ function DoctorBadge({ status }) {
   );
 }
 
-// The doctor answers in English (common/doctor.py), which `ah doctor` and the
-// Service Agent read as is. Each summary also carries its message key and
+// The doctor answers in English (common/doctor.py), which `ah doctor` reads
+// as is. Each summary also carries its message key and
 // values, so the page says it in the reader's language; a key this build's
 // locales do not have yet keeps the English sentence.
 function doctorParams(params) {
@@ -297,225 +288,11 @@ function DiagnosticsSection() {
   );
 }
 
-// The system workspace: its clone, its scheduled loop and its recent
-// branches. Reads GET /api/system once on mount; a 404 means the feature is
-// off entirely, which is shown as one line rather than an error.
-function SystemWorkspaceCard() {
-  const { t } = useI18n();
-  const toast = useToast();
-  const [system, setSystem] = useState(null);
-  const [disabled, setDisabled] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [scheduleSaving, setScheduleSaving] = useState(false);
-  const [pruning, setPruning] = useState(false);
-  const [everyHours, setEveryHours] = useState(24);
-
-  // A promise chain rather than an async body, so the effect below may call it
-  // without a synchronous setState.
-  const load = useCallback(() => getSystem()
-    .then(({ data }) => {
-      setSystem(data);
-      setDisabled(false);
-      if (data?.loop?.every_hours) setEveryHours(data.loop.every_hours);
-    })
-    .catch((e) => {
-      if (e?.response?.status === 404) {
-        setDisabled(true);
-        setSystem(null);
-      } else {
-        toast.error(t('health.system.unreachable'), errorDetail(e));
-      }
-    })
-    .finally(() => setLoading(false)), [t, toast]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      const { data } = await syncSystem();
-      setSystem((prev) => (prev ? { ...prev, clone: data } : prev));
-      toast.success(t('health.system.syncDone'));
-    } catch (e) {
-      toast.error(t('health.system.syncFailed'), errorDetail(e));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const pushSchedule = async (enabled, hours) => {
-    setScheduleSaving(true);
-    try {
-      const { data } = await setSystemSchedule(enabled, hours);
-      setSystem((prev) => (prev ? { ...prev, loop: data } : prev));
-    } catch (e) {
-      toast.error(t('health.system.scheduleFailed'), errorDetail(e));
-    } finally {
-      setScheduleSaving(false);
-    }
-  };
-
-  const handleToggleSchedule = () => pushSchedule(!system?.loop?.scheduled, everyHours);
-
-  // The interval only reaches the backend once a schedule exists to apply it
-  // to — typing a number while paused just holds it for the next Enable.
-  const handleEveryHoursBlur = (raw) => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return;
-    setEveryHours(n);
-    if (system?.loop?.scheduled) pushSchedule(true, n);
-  };
-
-  const handlePrune = async () => {
-    const raw = window.prompt(t('health.system.prunePrompt'), '14');
-    if (raw === null) return;
-    const days = Number(raw);
-    if (!Number.isFinite(days) || days < 0) return;
-    if (!window.confirm(t('health.system.pruneConfirm', { days }))) return;
-    setPruning(true);
-    try {
-      const { data } = await pruneSystemBranches(days);
-      const deleted = data?.deleted || [];
-      toast.success(t('health.system.pruneDone', { count: deleted.length }));
-      const { data: branches } = await getSystemBranches();
-      setSystem((prev) => (prev ? { ...prev, branches } : prev));
-    } catch (e) {
-      toast.error(t('health.system.pruneFailed'), errorDetail(e));
-    } finally {
-      setPruning(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <Card icon={GitBranch} title={t('health.system.title')}>
-        <PageLoader size="sm" label={t('health.loading')} />
-      </Card>
-    );
-  }
-
-  if (disabled) {
-    return (
-      <Card icon={GitBranch} title={t('health.system.title')}>
-        <p className="text-sm text-gray-500">{t('health.system.disabled')}</p>
-      </Card>
-    );
-  }
-
-  const clone = system?.clone || {};
-  const loop = system?.loop || {};
-  const branches = system?.branches || [];
-
-  return (
-    <Card icon={GitBranch} title={t('health.system.title')}>
-      <div className="mb-3 pb-3 border-b border-gray-100">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('health.system.clone')}</span>
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={syncing}
-            className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-          >
-            {syncing
-              ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-              : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-            {t('health.system.sync')}
-          </button>
-        </div>
-        <Row label={t('health.system.status')}
-             value={clone.exists ? t('health.system.cloned') : t('health.system.notCloned')} />
-        {clone.branch && <Row label={t('health.system.branch')} value={clone.branch} />}
-        {clone.head && <Row label={t('health.system.head')} value={String(clone.head).slice(0, 7)} />}
-        {clone.synced_at && <Row label={t('health.system.syncedAt')} value={new Date(clone.synced_at).toLocaleString()} />}
-        {clone.error && <p className="text-xs text-red-600 mt-1">{clone.error}</p>}
-      </div>
-
-      <div className="mb-3 pb-3 border-b border-gray-100">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('health.system.loop')}</span>
-          <button
-            type="button"
-            onClick={handleToggleSchedule}
-            disabled={scheduleSaving}
-            className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-lg border disabled:opacity-50 ${
-              loop.scheduled
-                ? 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100'
-                : 'text-green-700 bg-green-50 border-green-200 hover:bg-green-100'}`}
-          >
-            {loop.scheduled ? <Pause className="w-3.5 h-3.5 mr-1" /> : <Play className="w-3.5 h-3.5 mr-1" />}
-            {loop.scheduled ? t('health.system.pause') : t('health.system.enable')}
-          </button>
-        </div>
-        <Row label={t('health.system.state')}
-             value={loop.scheduled ? t('health.system.scheduled') : t('health.system.paused')} />
-        <div className="flex items-baseline justify-between gap-3 py-1 text-sm">
-          <span className="text-gray-500">{t('health.system.everyHours')}</span>
-          <span className="flex items-center gap-1.5">
-            <input
-              type="number"
-              min={1}
-              value={everyHours}
-              onChange={(e) => setEveryHours(e.target.value)}
-              onBlur={(e) => handleEveryHoursBlur(e.target.value)}
-              className="w-16 text-right font-semibold text-gray-900 border border-gray-200 rounded px-1.5 py-0.5 text-sm tabular-nums"
-            />
-            <span className="text-xs text-gray-400">{t('health.system.hours')}</span>
-          </span>
-        </div>
-        {loop.next_run_at && <Row label={t('health.system.nextRun')} value={new Date(loop.next_run_at).toLocaleString()} />}
-        {loop.last_run && (
-          <div className="flex items-baseline justify-between gap-3 py-1 text-sm">
-            <span className="text-gray-500">{t('health.system.lastRun')}</span>
-            <Link to={`/loops?run=${loop.last_run.loop_run_id}`} className="font-semibold text-indigo-600 hover:text-indigo-800">
-              {loop.last_run.status}
-              {loop.last_run.finished_at ? ` · ${new Date(loop.last_run.finished_at).toLocaleString()}` : ''}
-            </Link>
-          </div>
-        )}
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('health.system.branches')}</span>
-          <button
-            type="button"
-            onClick={handlePrune}
-            disabled={pruning}
-            className="inline-flex items-center px-2 py-1 text-xs font-semibold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1" /> {t('health.system.prune')}
-          </button>
-        </div>
-        {branches.length === 0 ? (
-          <p className="text-sm text-gray-400 italic">{t('health.system.noBranches')}</p>
-        ) : (
-          <div className="space-y-1">
-            {branches.map((b) => (
-              <div key={b.name} className="flex items-center gap-2 text-sm py-1">
-                <span className="font-mono text-xs text-gray-700 truncate flex-1 min-w-0">{b.name}</span>
-                <span className="text-xs text-gray-400 shrink-0">{t('health.system.ageDays', { count: b.age_days ?? 0 })}</span>
-                {b.task_id && (
-                  <Link to={`/tasks/${b.task_id}`} className="text-xs text-indigo-600 hover:text-indigo-800 shrink-0">
-                    {t('health.system.taskLink')}
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 export default function Health() {
   const { t } = useI18n();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const chat = useChatColumn(true);
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
@@ -530,34 +307,6 @@ export default function Health() {
     .finally(() => setLoading(false)), [t]);
 
   useEffect(() => { load(); }, [load]);
-
-  // The chat's own turn refreshes the snapshot: an action tool may have stopped
-  // something, and a stale panel beside a fresh answer reads as a bug.
-  const onEvent = useCallback((ev) => {
-    if (ev.type === 'health' && ev.health) setHealth(ev.health);
-  }, []);
-
-  const loadChat = useCallback(() => getServiceChat(), []);
-  const clearChat = useCallback(() => clearServiceChat(), []);
-  const stopChat = useCallback(() => stopServiceChat(), []);
-
-  // One descriptor, two places it can be drawn: the column beside the page, and
-  // the floating panel. Built here rather than at each surface so the two can
-  // never drift into being two different conversations.
-  const chatDescriptor = useMemo(() => ({
-    scope: 'service',
-    path: serviceChatUrl(),
-    loadChat, clearChat, stopChat, onEvent,
-    title: t('health.agentChat'),
-    emptyHint: t('health.agentChatHint'),
-    suggestions: [
-      t('health.suggestAnythingBroken'),
-      t('health.suggestWhyFailed'),
-      t('health.suggestCost'),
-      t('health.suggestDisk'),
-    ],
-  }), [loadChat, clearChat, stopChat, onEvent, t]);
-  usePageChat(chatDescriptor);
 
   const db = health?.database || {};
   const counts = db.counts || {};
@@ -580,15 +329,14 @@ export default function Health() {
             {degraded ? t('health.degraded') : t('health.ok')}
           </span>
         )}
-        actions={<>
-          <ChatToggle open={chat.open} onToggle={chat.toggle} label={t('health.agentChat')} />
+        actions={
           <button
             onClick={load}
             className="inline-flex items-center px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
             <RefreshCw className="w-3.5 h-3.5 mr-1" /> {t('health.refresh')}
           </button>
-        </>}
+        }
       />
 
       {error && (
@@ -597,14 +345,12 @@ export default function Health() {
         </div>
       )}
 
-      <div className={chat.gridClass}>
-        <div className={chat.mainClass}>
       {/* Two independent stacks rather than one grid: grid rows stretch each
           card to its neighbour's height, and a card that grows (diagnostics
           loading its checks) would drag the cards beside it along. The long
           diagnostics list gets a column of its own; everything else stacks
           beside it, so neither column leaves a hole under a short card. */}
-      <div className={`grid grid-cols-1 gap-4 items-start ${chat.open ? '2xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
+      <div className="grid grid-cols-1 gap-4 items-start lg:grid-cols-2">
         <div className="space-y-4 min-w-0">
           <DiagnosticsSection />
           {!loading && (
@@ -624,7 +370,6 @@ export default function Health() {
           )}
         </div>
         <div className="space-y-4 min-w-0">
-          <SystemWorkspaceCard />
           {loading ? (
             <PageLoader label={t('health.loading')} />
           ) : (
@@ -663,14 +408,6 @@ export default function Health() {
             </>
           )}
         </div>
-      </div>
-        </div>
-
-        {chat.open && (
-          <ChatColumn>
-            <EntityChat {...chatDescriptor} {...FILL_COLUMN} />
-          </ChatColumn>
-        )}
       </div>
     </PageContainer>
   );

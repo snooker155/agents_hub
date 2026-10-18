@@ -20,7 +20,7 @@ def setup_command(
     no_start: bool = typer.Option(False, "--no-start", help="Configure only; do not offer to start the hub."),
 ):
     """Install and configure the hub step by step: how it runs, providers and
-    default models, the assistant's voice, features. Run it again to change
+    default models, features. Run it again to change
     any of it; every question then defaults to the value in force."""
     # Imported here, not at the top: cli.main imports this module while it is
     # itself still loading, and the steps import cli.main for the CLI state.

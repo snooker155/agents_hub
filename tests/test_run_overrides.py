@@ -2,7 +2,7 @@
 
 Covers the object itself (keys, validation, canonical form, the old
 ``tool_policy``/``output_schema`` flags folded in), what it does to a build
-(agents/agent_factory.py: model, instructions, tools, skills, MCP, policy,
+(agents/agent_factory.py: model, instructions, tools, skills, policy,
 schema), the capability guard on the overridden tool set, the build cache
 keyed on it (agents/agent_cache.py), and every way in: a task launch
 (agents/agent_launcher.py, tasks/assign.py), ``runtime.agent_run
@@ -95,7 +95,6 @@ def test_unknown_key_is_refused():
     ({"tool_policy": {"run_shell": "sometimes"}}, "mode must be one of"),
     ({"output_schema": {"type": "not-a-type"}}, "not a valid JSON Schema"),
     ({"output_schema": []}, "non-empty JSON object"),
-    ({"mcp": ["bad id!"]}, "not a server id"),
     ({"system": ""}, "must not be empty"),
     ({"skills": "yes"}, "list of strings"),
     ({"model": 3}, "must be a string"),
@@ -111,8 +110,8 @@ def test_bad_values_are_refused(raw, match):
 
 def test_canonical_form_is_order_independent():
     a = ro.normalize({"tools": {"remove": ["run_shell"], "add": ["read_file", "list_files"]},
-                      "model": " small ", "mcp": ["z", "a"], "skills": ["s2", "s1"]})
-    b = ro.normalize(json.dumps({"skills": ["s1", "s2"], "mcp": ["a", "z"], "model": "small",
+                      "model": " small ", "skills": ["s2", "s1"]})
+    b = ro.normalize(json.dumps({"skills": ["s1", "s2"], "model": "small",
                                  "tools": {"add": ["list_files", "read_file"], "remove": ["run_shell"]}}))
     assert a == b
     assert list(a) == sorted(a)
@@ -134,7 +133,6 @@ def test_legacy_flags_fold_into_the_object():
 def test_effective_tools_and_definition():
     assert ro.effective_tools(["a", "b"], {"tools": ["c"]}) == ["c"]
     assert ro.effective_tools(["a", "b"], {"tools": {"add": ["c"], "remove": ["a"]}}) == ["b", "c"]
-    assert ro.effective_tools(["a", "mcp:old", "mcp__old__x"], {"mcp": ["new"]}) == ["a", "mcp:new"]
     assert ro.effective_tools(["a"], {}) == ["a"]
 
     definition = {"system_prompt": "Base", "tools": ["a"], "model": "m"}
@@ -211,21 +209,6 @@ def test_skills_switch(agent, isolated_definitions, monkeypatch):
     assert "get_skill" in on.tool_names
     off = factory._build_agent(agent, run_overrides={"skills": False})
     assert off.spec.skills_enabled is False
-
-
-def test_mcp_override_names_the_servers(agent, isolated_definitions, monkeypatch):
-    import mcp_client
-
-    seen = {}
-
-    def fake_append(tools, tool_list, workspace):
-        seen["list"] = list(tool_list)
-        return tools
-
-    monkeypatch.setattr(mcp_client, "append_mcp_tools", fake_append)
-    factory = _factory(isolated_definitions, monkeypatch)
-    factory._build_agent(agent, run_overrides={"mcp": ["github"]})
-    assert "mcp:github" in seen["list"]
 
 
 def test_guard_refuses_a_new_combination(agent, isolated_definitions, monkeypatch):

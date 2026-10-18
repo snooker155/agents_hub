@@ -494,7 +494,7 @@ export default function MessageDetails() {
       )}
 
       {/* What this run was asked to build differently from its agent
-          (run.overrides: model, instructions, tools, skills, MCP, policy, schema). */}
+          (run.overrides: model, instructions, tools, skills, policy, schema). */}
       <RunOverrides run={message} />
 
       {/* Metadata card */}

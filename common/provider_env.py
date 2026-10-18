@@ -3,8 +3,8 @@ The model provider settings in force now, for this process and the ones it start
 
 The backend reads ``.env`` into its environment once, at its start
 (dashboard/backend/main.py), and every agent process and runner replica
-starts from a copy of that environment. A key typed on the Settings page, in
-the welcome window or into the assistant's connection card lands in ``.env``
+starts from a copy of that environment. A key typed on the Settings page or in
+the first run lands in ``.env``
 (routes/settings.py), so without this module it would reach nothing until a
 restart: the chat turns of a long-lived runner replica would go on without a
 key, or with the old one.

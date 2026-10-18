@@ -132,38 +132,6 @@ without counting it as a change. For a deeper, offline second opinion
 install Cisco's open-source `skill-scanner` (Apache 2.0); the doctor says
 whether it is on the path.
 
-## Sources
-
-**Sources** on the Skills page lists public repositories of skills whose
-license was checked by hand (`memory/skill_sources.py`): Anthropic's
-reference collection, Sentry, Hugging Face, Microsoft, Trail of Bits, Expo,
-Cloudflare and one community collection, each with its publisher and
-license. **Connect** clones the repository into a hidden folder of the
-workspace, `.skills/sources/<owner>-<name>`, with a small `<id>.json` next
-to it naming the URL and branch, and syncs its skills. A source is not a
-project: it gets no tasks, board or files tab, and the workspace's file
-index and the Artifacts page leave the folder out. **Update** pulls the
-clone and syncs again, so the catalog entries follow as described above;
-**Disconnect** deletes the clone and the catalog entries it brought, while
-copies already attached to agents keep their own text. Any other `https`
-repository on github.com, gitlab.com or bitbucket.org can be connected by
-URL (or `owner/name` for GitHub) and goes through the same review; a
-repository the workspace already has is updated, not cloned twice. Sources
-an earlier build made as projects tagged `skills` are moved here the first
-time the list is opened, keeping the ids of their skills.
-
-Not on the list, on purpose: open marketplaces and install leaderboards
-(skills.sh, ClawHub), where the audit above found the malicious skills, and
-link indexes such as VoltAgent/awesome-agent-skills, which hold no skills
-themselves. A repository's license applies to its skills unless a SKILL.md
-says otherwise: anthropics/skills is Apache 2.0, but its `docx`, `pdf`,
-`pptx` and `xlsx` skills declare a proprietary license and come in marked
-not open.
-
-Pin what you attach. A connected source moves with its upstream; an attached
-copy that is pinned to the version you reviewed keeps that text whatever the
-next pull brings, and the card says when an update is available.
-
 ## SKILL.md in and out
 
 **Import SKILL.md** takes pasted text or a file and creates a skill from it.
@@ -183,10 +151,6 @@ numbered list after the instructions), ready to commit into a
 | `POST /api/skills/sync` | `{"workspace", "project_id"?}`: scan the skill folders; the report lists `flagged` |
 | `POST /api/skills/import-md` | `{"workspace", "content", "agent_id"?}`: create from SKILL.md text, reviewed |
 | `GET /api/skills/{id}/export` | the skill as SKILL.md |
-| `GET /api/skills/sources?workspace=` | the curated sources with license, connection state and counts, plus repositories added by URL |
-| `POST /api/skills/sources` | `{"workspace", "url", "branch"?}`: clone under `.skills/sources` and sync; returns `source`, `sync`, `already_present` |
-| `POST /api/skills/sources/{id}/update?workspace=` | pull the clone and sync; returns `source`, `sync` |
-| `DELETE /api/skills/sources/{id}?workspace=` | delete the clone and its catalog entries; returns `removed` |
 
 Every skill in the API carries `license`, `publishable` and `safety`
 (`severity`, `flags[]`, `scripts[]`, `license_open`, `scanned_at`, or null

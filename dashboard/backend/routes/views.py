@@ -717,8 +717,7 @@ async def save_code_view(view_id: str, payload: CodeSaveRequest):
 
 # ── the Studio build chat ─────────────────────────────────────────────────────
 # The Visualizer, pinned to one view: the same entity-chat surface the loop
-# and team builders use, so the conversation is stored server-side and
-# the floating page-chat panel can host it (see components/pageChat).
+# and team builders use, so the conversation is stored server-side.
 
 VIEW_CHAT_KIND = "view"
 # The general view agent; a kind a specialist owns (views/focus.py:

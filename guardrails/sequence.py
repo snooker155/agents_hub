@@ -20,7 +20,7 @@ A ``sequence`` guardrail (guardrails/models.py) holds one rule:
 * ``same_as``: ``argument`` of ``tool`` equals ``source_argument`` of an
   earlier call of ``source_tool``.
 
-Tool names are matched as globs (``mcp__bank__*``), argument paths are dotted
+Tool names are matched as globs (``bank_*``), argument paths are dotted
 (``payee.account``). The action is ``block`` (the call is refused, the reason
 goes back as the tool's output) or ``ask`` (held for a person through the
 guard's ``_hold``: a task parks, a chat turn waits for an answer).

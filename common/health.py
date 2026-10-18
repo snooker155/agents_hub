@@ -7,9 +7,9 @@ build cache, and a summary of every flow/loop/team run by kind
 (common/entity_runs.py); the individual active runs are the Dashboard's
 job, this is just the count.
 
-It lives here rather than in the route so both callers can use it: the
-``GET /api/health`` endpoint and the Service Agent's ``service_health`` tool.
-Neither should have to go through HTTP to reach the other.
+It lives here rather than in the route so the ``GET /api/health`` endpoint and
+the doctor (common/doctor.py) read the same snapshot without going through
+HTTP.
 
 Never raises. A probe that fails is reported as failed, because a health check
 that errors out tells an operator less than one that says which part is down.

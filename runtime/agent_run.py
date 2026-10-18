@@ -299,11 +299,11 @@ def main():
     ap.add_argument("--tool-policy", metavar="JSON",
                     help="Tool policy entries for this run alone, merged over the agent's own")
     # The per-run overrides object (agents/run_overrides.py): model, system,
-    # tools, skills, mcp, tool_policy, output_schema. --tool-policy and
+    # tools, skills, tool_policy, output_schema. --tool-policy and
     # --output-schema above are its aliases and fold into it.
     ap.add_argument("--overrides", metavar="JSON",
                     help="Per-run overrides as one JSON object (model, provider, system, "
-                         "system_append, tools, skills, mcp, tool_policy, output_schema)")
+                         "system_append, tools, skills, tool_policy, output_schema)")
     ap.add_argument("--overrides-file", metavar="PATH",
                     help="Read the per-run overrides object from this JSON file")
     args = ap.parse_args()

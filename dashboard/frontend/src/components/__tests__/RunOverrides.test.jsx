@@ -20,7 +20,6 @@ describe('RunOverrides', () => {
         system_append: 'Be brief.',
         tools: { add: ['read_file'], remove: ['run_shell'] },
         skills: false,
-        mcp: ['github'],
         output_schema: { type: 'object' },
       },
     });
@@ -28,7 +27,6 @@ describe('RunOverrides', () => {
     expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
     expect(screen.getByText('Be brief.')).toBeInTheDocument();
     expect(screen.getByText('added: read_file; removed: run_shell')).toBeInTheDocument();
-    expect(screen.getByText('github')).toBeInTheDocument();
     expect(screen.getByText('off')).toBeInTheDocument();
     expect(screen.getByText(/"type": "object"/)).toBeInTheDocument();
   });

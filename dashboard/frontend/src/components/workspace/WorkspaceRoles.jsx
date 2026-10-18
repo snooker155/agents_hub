@@ -10,7 +10,7 @@ import { useI18n } from '../../i18n';
  * Which agent does each kind of work in this workspace (agents/roles.py).
  * System agents hand code to `@coder`, reviews to `@reviewer` and so on; a
  * role is held by the product's own agent until the workspace gives it to
- * another of its agents, an imported Claude Code, Codex or Aider for
+ * another of its agents, an imported Aider agent for
  * example. Saves itself on each change, like the personal memory card.
  */
 export default function WorkspaceRoles({ workspace }) {

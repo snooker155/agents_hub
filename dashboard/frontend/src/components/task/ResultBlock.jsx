@@ -2,10 +2,8 @@
  * One agent result of a task with a rendered and raw view toggle.
  */
 import { Code2, Eye } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import MarkdownRenderer from '../MarkdownRenderer';
-import SystemPatchCard from '../SystemPatchCard';
-import { parseSystemPatch } from '../systemPatch';
 import { useI18n } from '../../i18n';
 
 // One agent result with its own Rendered / Raw view toggle.
@@ -13,11 +11,6 @@ function ResultBlock({ entry }) {
   const { t } = useI18n();
   const [view, setView] = useState('rendered');
   const text = String(entry.result ?? '');
-  // A result the system loop wrote leads with a machine readable marker line;
-  // the card built from it goes above the diff, and the marker itself is
-  // stripped so it never renders as literal markdown text.
-  const patch = useMemo(() => parseSystemPatch(text), [text]);
-  const renderedText = patch ? patch.body : text;
   return (
     <div className="border border-indigo-100 rounded-lg p-3 bg-indigo-50">
       <div className="flex items-center gap-3 mb-2">
@@ -49,8 +42,7 @@ function ResultBlock({ entry }) {
       </div>
       {view === 'rendered' ? (
         <div className="bg-white rounded-md p-3 border border-indigo-100">
-          {patch && <SystemPatchCard meta={patch.meta} />}
-          <MarkdownRenderer content={renderedText} />
+          <MarkdownRenderer content={text} />
         </div>
       ) : (
         <pre className="text-xs text-gray-700 whitespace-pre-wrap">{text}</pre>

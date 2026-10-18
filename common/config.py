@@ -247,15 +247,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    # The system workspace (docs/system-workspace.md): a workspace whose project
-    # is a git clone of this repository kept beside the state directory, with
-    # the doctor and a scheduled maintenance loop working on that copy and
-    # never on the running instance's own tree. On by default; the copy is
-    # made lazily, the loop's schedule ships paused.
-    system_workspace: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("SYSTEM_WORKSPACE", "system_workspace"),
-    )
     # The demo workspace (docs/demo.md): agents, a project, a flow, a team,
     # views and recorded runs seeded from bootstrap/workspaces/demo so
     # a fresh install has something to look at. Off by default; install.sh

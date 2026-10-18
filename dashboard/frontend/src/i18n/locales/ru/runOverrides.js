@@ -8,7 +8,6 @@ export default {
     system_append: 'Инструкции (дополнены)',
     tools: 'Инструменты',
     skills: 'Навыки',
-    mcp: 'MCP серверы',
     tool_policy: 'Политика инструментов',
     output_schema: 'Схема ответа',
   },

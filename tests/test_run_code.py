@@ -107,9 +107,9 @@ def test_images_are_configurable_per_language():
     assert rc.parse_images('{"ruby": "ruby:3"}') == rc.DEFAULT_IMAGES
 
 
-def test_docker_available_is_reexported_for_doctor_and_system_workspace():
-    # common/doctor.py and common/system_workspace.py both do
-    # `from tools.run_code import docker_available`; it must keep resolving.
+def test_docker_available_is_reexported_for_the_doctor():
+    # common/doctor.py does `from tools.run_code import docker_available`;
+    # it must keep resolving.
     assert rc.docker_available is docker_mod.docker_available
 
 

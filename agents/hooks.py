@@ -905,7 +905,7 @@ class ToolGuard:
                 return held
             # Nobody in front of a card (Telegram, the widget, a channel,
             # /v1): there is nothing to park and nobody to answer a parked
-            # call, so the gate stays advisory, exactly like tools/service_ops.py.
+            # call, so the gate stays advisory.
             return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))
 
         if check_approved and self._consume(call):
@@ -948,7 +948,7 @@ class ToolGuard:
             if ctx is None:
                 return None
             from common import auto_mode
-            if call.tool not in auto_mode.NEVER_AUTO and auto_mode.is_on(call.run_id):
+            if auto_mode.is_on(call.run_id):
                 # The person said yes in advance (common/auto_mode.py): the
                 # card is recorded and shown already approved, nobody waits.
                 auto_mode.settle(

@@ -35,9 +35,7 @@ log = logging.getLogger(__name__)
 # (agents/checkpoint.py). A read, a search or a listing can simply be issued
 # again; a call that changes something outside the run cannot be repeated
 # blindly, because it may already have happened. These are the tools whose
-# interrupted call the resumed model is told about instead of retrying. Every
-# MCP tool (``mcp__*``) is treated the same way: a foreign server's side
-# effects are unknown here.
+# interrupted call the resumed model is told about instead of retrying.
 
 NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "run_shell", "run_code", "git_publish", "git_commit", "git_push",
@@ -46,21 +44,13 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
     "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
-    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
-    "hub_action",
-    # The guided setup's changes (common/setup_ops.py): a default model, a
-    # voice or the demo workspace, each already made once it ran.
-    "setup_step",
-    # The system workspace's repository copy (tools/system_ops.py): a commit,
-    # a written task result and a branch deletion have each already happened.
-    "system_commit", "system_attach_patch", "system_prune_branches",
     # A workspace created or deleted from the chat (tools/workspace_management.py).
     "create_workspace", "delete_workspace",
 })
 
 
 def is_idempotent(tool_id: str) -> bool:
-    return tool_id not in NON_IDEMPOTENT_TOOLS and not tool_id.startswith(("mcp__", "mcp:"))
+    return tool_id not in NON_IDEMPOTENT_TOOLS
 
 
 # ── The three capabilities ────────────────────────────────────────────────────
@@ -145,66 +135,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # tool, which is why it is a restricted grant.
     "fetch_url": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
 
-    # ── service operations ───────────────────────────────────────────────────
-    # Two claims are being made here, and the second one is the interesting one.
-    #
-    # Anything that returns run, session or instance *content* reads private
-    # data: a run record carries its input and output, an instance timeline
-    # carries the conversation, the routing log carries task titles.
-    #
-    # Log-bearing tools also ingest untrusted content. A run log holds whatever
-    # that run handled (pages it fetched, issues strangers wrote), so reading
-    # one pulls attacker-controllable text into the reader's context just as
-    # surely as fetching the page would. Claiming that
-    # honestly is what stops a log reader from ever being combined with an
-    # outbound channel, which is exactly the shape that would turn the service's
-    # own diagnostics into an exfiltration path.
-    #
-    # The action tools (stop_run, stop_instance, restart_instance,
-    # stop_container, prune_run_logs) grant nothing: they stop and delete,
-    # which the approval gate governs, rather than moving data, which is what
-    # this table is about. Pure metadata tools (service_health,
-    # list_containers) grant nothing either — counts and statuses.
-    "container_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "instance_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "run_log": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "list_runs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "search_errors": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "instance_timeline": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "web_log_recent": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "list_instances": frozenset({READS_PRIVATE}),
-    "list_sessions": frozenset({READS_PRIVATE}),
-    # The assistant's lookup over the hub's records (chat/lookup.py): runs,
-    # sessions, spend, tasks and the rest as metadata, never a run's answer,
-    # a log or a chat's messages, so it reads private data without ingesting
-    # untrusted text and can sit beside notify_user.
-    "hub_lookup": frozenset({READS_PRIVATE}),
-    # The administrator's service-wide lookup: users, the audit trail, health,
-    # containers, settings without secrets, web log hosts. Metadata as well.
-    "service_lookup": frozenset({READS_PRIVATE}),
-    # The assistant's past conversations with the person
-    # (tools/assistant_conversations.py): titles and the person's own
-    # messages in their own thread, never an answer or a tool's output.
-    "assistant_conversations": frozenset({READS_PRIVATE}),
-    # The guided setup (common/setup_guide.py): which steps are done, provider
-    # names, counts and model ids read from the install, never a key or a
-    # record's content.
-    "setup_guide": frozenset({READS_PRIVATE}),
-    "routing_log": frozenset({READS_PRIVATE}),
-
-    # ── system workspace (tools/system_ops.py) ───────────────────────────────
-    # system_run_tests returns the tail of a pytest run over the repository
-    # copy: the operator's own code and whatever it prints, so it reads
-    # private data. It does not claim can_exfiltrate, and that claim is only
-    # fully true in one of its two runners. In docker mode the run is a
-    # container with --network none, like run_code's sandbox. In local mode it
-    # is a subprocess with a stripped environment (no keys, no database URL,
-    # a throwaway state directory) but the host's network, so test code the
-    # agent wrote could open a socket; docs/system-workspace.md tells the
-    # operator to run the system workspace in docker for that reason. The
-    # other system_* tools grant nothing (REVIEWED_NO_GRANT below).
-    "system_run_tests": frozenset({READS_PRIVATE}),
-
     # ── outbound channels ────────────────────────────────────────────────────
     # These deliver free text to the person's notification inbox. The
     # destination is the operator, but the *payload* is agent-controlled, so
@@ -230,15 +160,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "tracker_comment": frozenset({CAN_EXFILTRATE}),
     "tracker_transition": frozenset({CAN_EXFILTRATE}),
     "tracker_create_issue": frozenset({CAN_EXFILTRATE}),
-    # Connection proposals (tools/connection_setup.py, connectors/proposals.py).
-    # They grant nothing: connection_options returns names and configured
-    # flags, never a value, URL or command of an existing item;
-    # propose_connection only records a proposal a person applies (secrets
-    # typed by that person, an MCP claim reset to every capability), and the
-    # one line it reads back is the hub's own summary of what was done.
-    "connection_options": frozenset(),
-    "propose_connection": frozenset(),
-    "connection_proposal_status": frozenset(),
 
     # ── agent and job reads ──────────────────────────────────────────────────
     # get_agent_tool returns instructions.md, capabilities.md and usage.md in
@@ -434,34 +355,6 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # neither private data nor untrusted input.
     "search_docs", "read_doc",
 
-
-    # ── service ops: pure metadata and destructive actions ───────────────────
-    # service_health and list_containers are counts and statuses, not
-    # content. stop_run, stop_instance, restart_instance,
-    # stop_container and prune_run_logs stop and delete, which the approval
-    # gate governs, not data.
-    "service_health", "list_containers",
-    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
-    # run_diagnostics (common/doctor.py) returns check statuses, counts and
-    # one sentence summaries, the same class of metadata as service_health.
-    "run_diagnostics",
-    # hub_action (chat/actions.py) stops, pauses or resumes one record after a
-    # person's yes on its card; it returns the new state, nothing read.
-    "hub_action",
-    # setup_step (common/setup_ops.py) sets the default model, the assistant's
-    # voice or the demo after a person's yes; it returns a sentence, nothing
-    # read. show_on_screen only names a dashboard page for the person's screen.
-    "setup_step", "show_on_screen",
-
-    # ── system workspace: the repository copy ────────────────────────────────
-    # system_repo_sync fetches the local repository into the local copy and
-    # returns a head and a branch name. system_commit writes a commit into the
-    # copy and echoes the branch, sha and file names the agent itself changed.
-    # system_attach_patch writes the diff into the task result (the product's
-    # own store) and returns the branch, commit and a diff stat.
-    # system_prune_branches deletes branches of the copy, which the approval
-    # gate governs. None of them moves data outside the system.
-    "system_repo_sync", "system_commit", "system_attach_patch", "system_prune_branches",
 })
 
 # Reviewed and classified, but outside the catalog.
@@ -485,80 +378,10 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
     # The group's reads carry the grant its read tools do.
     "project_management": frozenset({READS_PRIVATE}),
     "entity_runs": frozenset({READS_PRIVATE}),
-    # The service-ops group carries what its log readers carry: run and session
-    # content is private, and a log holds whatever the run handled, which can be
-    # a page it fetched or a message a stranger sent it.
-    "service_ops": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     # Product documentation the operator installed with the product. Public by
     # construction, so it is neither private data nor untrusted input.
     "docs": frozenset(),
 }
-
-
-# ── External MCP servers ──────────────────────────────────────────────────────
-#
-# An MCP server is a collection of tools defined somewhere else, attached per
-# workspace (see mcp_client/). Its tools cannot appear in the tables above:
-# they are not in this repository, they differ per workspace, and a remote
-# server is free to rename them between two agent builds.
-#
-# They are still classified, just from a different source. The operator ticks
-# the three capabilities once per server when attaching it, and every tool from
-# that server inherits them. Per server rather than per tool because a per-tool
-# claim would have to be derived from the tool's own name or description, and a
-# server that calls its exfiltration endpoint ``get_weather`` would then classify
-# itself. The one party who can make an honest claim is the person who attached
-# the server.
-
-MCP_TOOL_PREFIX = "mcp__"
-MCP_ALIAS_PREFIX = "mcp:"
-
-
-def _mcp_server_of(tool_id: str) -> Optional[str]:
-    """The server id behind an MCP tool id or group alias, else ``None``.
-
-    ``mcp__<server>__<tool>`` names one tool, ``mcp:<server>`` names the whole
-    server the way ``filesystem`` names the filesystem group. Server ids are
-    validated (``mcp_client.store.validate_id``) to contain no double
-    underscore, so this split has exactly one reading.
-    """
-    text = str(tool_id or "")
-    if text.startswith(MCP_ALIAS_PREFIX):
-        return text[len(MCP_ALIAS_PREFIX):].strip().lower() or None
-    if text.startswith(MCP_TOOL_PREFIX):
-        server, sep, tool = text[len(MCP_TOOL_PREFIX):].partition("__")
-        if sep and server and tool:
-            return server.strip().lower()
-    return None
-
-
-def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
-    """Capabilities an MCP tool id or alias grants, or ``None`` if it is neither.
-
-    ``None`` and ``frozenset()`` mean different things here: the first says
-    "this is not an MCP id, keep looking", the second says "it is, and its
-    server grants nothing". A server that is not configured in the active
-    workspace also reads as granting nothing, and that is accurate rather than
-    lenient: with no configuration there is no server to connect to, so the
-    agent gets no tool from it either (``mcp_client.client.expand_ids``).
-
-    The lookup is lazy and defensive by design — this module must stay
-    importable without the MCP package, and a capability check must never be
-    the thing that raises.
-    """
-    server = _mcp_server_of(tool_id)
-    if server is None:
-        return None
-    try:
-        from common.workspace_context import resolve_active_workspace
-        from mcp_client.store import server_capabilities
-        return server_capabilities(resolve_active_workspace(), server)
-    except Exception:  # noqa: BLE001 - an unreadable MCP config grants nothing, the run goes on
-        log.warning(
-            "capability model: could not read the configuration of MCP server %r "
-            "— treating it as granting nothing.", server,
-        )
-        return frozenset()
 
 
 # ── Configuration-dependent grants ────────────────────────────────────────────
@@ -568,8 +391,7 @@ def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
 # but has no way in for untrusted text and no way out. With
 # CODE_RUNNER_FALLBACK=local the same snippet runs as a host subprocess with
 # the network and the host's filesystem, which is run_shell's whole trifecta.
-# The claim is looked up lazily the way ``mcp_grants`` reads a server's
-# configuration, and fails closed: if the setting cannot be read, the worst
+# The claim is looked up lazily and fails closed: if the setting cannot be read, the worst
 # case applies.
 
 _RUN_CODE_SANDBOXED: FrozenSet[str] = frozenset({READS_PRIVATE})
@@ -890,71 +712,6 @@ def channel_capabilities(channel: Optional[str]) -> Set[str]:
     return set()
 
 
-# ── The system workspace rule ─────────────────────────────────────────────────
-#
-# The system workspace (common/system_workspace.py) runs a scheduled loop over a
-# clone of this repository. The product owner's rule is that it never pushes,
-# and that nothing it does can send anything out. That is enforced here, at the
-# agent level, not in a prompt: an agent of the system workspace may hold no
-# tool that pushes, runs a shell, sends data outside (any can_exfiltrate grant,
-# built in or MCP), or delegates to another agent that might. Without such a
-# tool in the set, an approval request for a push cannot even arise.
-#
-# Unlike the combination rules below, this one is not subject to
-# capability_override, grandfathering or CAPABILITY_GUARD=off: the guard
-# functions in agents/capability_guard.py check it before any of those.
-
-SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
-    # Pushing and shells, by name: git_push is not a catalog tool today, and is
-    # listed so it can never become one silently.
-    "git_publish", "git_push", "run_shell",
-    # Arbitrary code with the host's network unless container isolated.
-    "run_code",
-    # Every tool in the grant table that can send data outside.
-    "fetch_url",
-    "notify_user", "schedule_notification", "view_serve", "schedule_management",
-    # The connector tools that write outward (tools/connector_tools.py).
-    "tracker_comment", "tracker_transition", "tracker_create_issue",
-    # Delegation reaches other agents' tools, which this rule cannot see.
-    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
-    "run_new_flow_tool", "run_team_tool", "run_loop_tool",
-})
-
-SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"
-
-
-def system_workspace_offenders(tool_ids: Iterable[str]) -> List[str]:
-    """Tool ids a system workspace agent may not hold: the named set plus
-    anything whose grant (built in, alias or MCP) includes can_exfiltrate."""
-    out: List[str] = []
-    for tid in tool_ids or []:
-        tid = str(tid)
-        if tid in out:
-            continue
-        if tid in SYSTEM_WORKSPACE_FORBIDDEN_TOOLS or CAN_EXFILTRATE in grants_of(tid):
-            out.append(tid)
-    return out
-
-
-def check_system_workspace_tools(tool_ids: Iterable[str]) -> Optional["Violation"]:
-    """The blocking violation a system workspace agent's tool set forms, or None."""
-    offenders = system_workspace_offenders(tool_ids)
-    if not offenders:
-        return None
-    return Violation(
-        rule_id=SYSTEM_WORKSPACE_RULE_ID,
-        title="System workspace: no way out",
-        explanation=(
-            "Agents of the system workspace work on a copy of this repository and "
-            "must never push, run a shell, delegate, or send anything outside. A "
-            "human fetches their branches and pushes them. Remove these tools."
-        ),
-        capabilities=frozenset({CAN_EXFILTRATE}),
-        sources={CAN_EXFILTRATE: offenders},
-        severity="block",
-    )
-
-
 # ── Blocked combinations ──────────────────────────────────────────────────────
 #
 # ``reads_private + can_exfiltrate`` and ``reads_private + ingests_untrusted``
@@ -1065,12 +822,6 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
         return frozenset()
     if tool_id.startswith(SECRET_GRANT_PREFIX):
         return frozenset({READS_PRIVATE})
-    # An MCP tool is classified by its server's configuration rather than by a
-    # table in this file — see ``mcp_grants``. Checked before the unknown-tool
-    # warning below, which would otherwise fire for every external tool.
-    external = mcp_grants(tool_id)
-    if external is not None:
-        return external
     if not _is_known_tool(tool_id):
         log.warning(
             "capability model: unknown tool id %r — treating as granting nothing. "
@@ -1094,7 +845,7 @@ def is_recognised_tool_id(tool_id: str) -> bool:
     """True when ``grants_of`` would classify the id rather than warn about it.
 
     Exactly the recognition path of :func:`grants_of`: a classification table,
-    a group alias, a secret grant, an MCP id (any server, configured or not)
+    a group alias, a secret grant
     or a catalog tool. ``False`` is the id ``grants_of`` logs as unknown, and
     the one a stored tool list no longer has any use for: a renamed or retired
     tool grants nothing and resolves to nothing at build time.
@@ -1104,7 +855,7 @@ def is_recognised_tool_id(tool_id: str) -> bool:
     if (tool_id in CAPABILITY_GRANTS or tool_id in CAPABILITY_GRANTS_EXTRA
             or tool_id in ALIAS_GRANTS or tool_id in REVIEWED_NO_GRANT):
         return True
-    if tool_id.startswith(SECRET_GRANT_PREFIX) or _mcp_server_of(tool_id) is not None:
+    if tool_id.startswith(SECRET_GRANT_PREFIX):
         return True
     return _is_known_tool(tool_id)
 
@@ -1196,7 +947,7 @@ __all__ = [
     "INGESTS_UNTRUSTED", "READS_PRIVATE", "CAN_EXFILTRATE", "CAPABILITIES",
     "CAPABILITY_LABELS", "CAPABILITY_GRANTS", "CAPABILITY_GRANTS_EXTRA",
     "REVIEWED_NO_GRANT", "ALIAS_GRANTS", "DELEGATING_TOOLS",
-    "MCP_TOOL_PREFIX", "MCP_ALIAS_PREFIX", "mcp_grants", "is_recognised_tool_id",
+    "is_recognised_tool_id",
     "UNTRUSTED_CHANNELS", "channel_capabilities",
     "BLOCKED_COMBINATIONS", "Rule", "Violation",
     "grants_of", "capabilities_of", "capability_sources",
@@ -1205,6 +956,4 @@ __all__ = [
     "check_effective_combination",
     "SECRET_GRANT_PREFIX", "secret_grant_ids",
     "run_code_grants",
-    "SYSTEM_WORKSPACE_FORBIDDEN_TOOLS", "SYSTEM_WORKSPACE_RULE_ID",
-    "system_workspace_offenders", "check_system_workspace_tools",
 ]

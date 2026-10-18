@@ -1,5 +1,5 @@
 """
-The hand-written entity groups (`ah flow`, `loop`, `team`, `mcp`,
+The hand-written entity groups (`ah flow`, `loop`, `team`,
 `user`), against the real in-process app, through the generic transport
 (``hub().request``; cli/backend.py, cli/openapi.py).
 
@@ -159,47 +159,6 @@ def test_team_runs_starts_empty():
     result = runner.invoke(cli.app, ["team", "runs"])
     assert result.exit_code == 0, result.output
     assert "0 run(s)" in result.output
-
-
-# ---------------------------------------------------------------------------
-# ah mcp
-# ---------------------------------------------------------------------------
-
-
-def test_mcp_needs_a_workspace():
-    from cli.main import _read_state
-    assert _read_state().get("workspace") is None
-    result = runner.invoke(cli.app, ["mcp", "list"])
-    assert result.exit_code == 1
-    assert "workspace" in result.output.lower()
-
-
-def test_mcp_add_list_remove(monkeypatch):
-    api("POST", "/api/workspaces", json={"name": "mcp_cli_ws"})
-    monkeypatch.setenv("AGENTS_HUB_WORKSPACE", "mcp_cli_ws")
-
-    added = runner.invoke(cli.app, ["mcp", "add", "search", "--transport", "stdio",
-                                    "--command", "echo", "--arg", "hi"])
-    assert added.exit_code == 0, added.output
-    assert "search" in added.output
-
-    listed = runner.invoke(cli.app, ["mcp", "list"])
-    assert listed.exit_code == 0, listed.output
-    assert "search" in listed.output
-
-    removed = runner.invoke(cli.app, ["mcp", "remove", "search", "--yes"])
-    assert removed.exit_code == 0, removed.output
-
-    listed_again = runner.invoke(cli.app, ["mcp", "list"])
-    assert "search" not in listed_again.output
-
-
-def test_mcp_tools_on_an_unknown_server_is_a_clean_error(monkeypatch):
-    api("POST", "/api/workspaces", json={"name": "mcp_cli_ws2"})
-    monkeypatch.setenv("AGENTS_HUB_WORKSPACE", "mcp_cli_ws2")
-    result = runner.invoke(cli.app, ["mcp", "tools", "no-such-server"])
-    assert result.exit_code == 1
-    assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------

@@ -97,7 +97,7 @@ export default {
     source_tool: 'Earlier tool',
     source_argument: 'Its argument',
     sourceArgumentPlaceholder: 'same name when blank',
-    patternsHint: 'Tool names take * as a wildcard (mcp__bank__*). Arguments are dotted paths (payee.account).',
+    patternsHint: 'Tool names take * as a wildcard (bank_*). Arguments are dotted paths (payee.account).',
   },
   model: 'Judge model',
   modelPlaceholder: 'provider/model, e.g. anthropic/claude-haiku-4-5 (blank: the workspace default)',

@@ -70,15 +70,6 @@ export default function useToolPolicy({ agentId, workspace, onSaved, loadFailedT
     () => Object.fromEntries((data?.effective || []).map((row) => [row.tool, row])),
     [data],
   );
-  // Tools an ``mcp:<server>`` group on the record stands for (the backend
-  // expands it from the server's last connect): shown with their group.
-  const groupOf = useMemo(() => {
-    const out = {};
-    for (const [alias, ids] of Object.entries(data?.groups || {})) {
-      for (const id of ids || []) out[id] = alias;
-    }
-    return out;
-  }, [data]);
 
   const setMode = useCallback((tool, mode) => {
     setSaved(false);
@@ -111,7 +102,7 @@ export default function useToolPolicy({ agentId, workspace, onSaved, loadFailedT
 
   return {
     data, draft, decisions, loading, saving, error, saved, dirty,
-    effective, groupOf, setMode, save, reload,
+    effective, setMode, save, reload,
     modes: Array.isArray(data?.modes) && data.modes.length ? data.modes : TOOL_POLICY_MODES,
   };
 }

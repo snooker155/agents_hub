@@ -2,10 +2,10 @@
  * Registry of the Docs sections and the corpus id to section lookup.
  */
 import {
-  Activity, AudioLines, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
+  Activity, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
   Database, Download, Factory, FileText, Folder, FolderGit2,
   Gauge, Globe, GraduationCap, HardDriveDownload, HelpCircle, History, Images, KeyRound, Layers,
-  MessageCircle, MessageSquareCode, Navigation, Network, Plug, Radio, Repeat, Rocket,
+  MessageCircle, MessageSquareCode, Navigation, Network, Radio, Repeat, Rocket,
   ScrollText, Send, Server, ServerCog, SettingsIcon, Share2, ShieldCheck, Sparkles, Store,
   Target, Terminal, Users, UsersRound, Webhook, Wrench,
 } from 'lucide-react';
@@ -44,7 +44,6 @@ export const GROUPS = [
     key: 'workspace',
     items: [
       { id: 'chat', key: 'chat', icon: MessageCircle, render: TryIt },
-      guide('assistant', 'assistant', AudioLines, ['assistant']),
       { id: 'workspaces', key: 'workspaces', icon: Folder, render: WorkspacesDoc },
       { id: 'projects', key: 'projects', icon: FolderGit2, render: ProjectsDoc },
       guide('files', 'files', FileText, ['files']),
@@ -63,7 +62,7 @@ export const GROUPS = [
       { id: 'orchestrator', key: 'orchestrator', icon: Network, render: OrchestratorDoc },
       { id: 'teams', key: 'teams', icon: UsersRound, render: TeamsDoc },
       guide('agent-loop', 'agentLoop', Gauge, ['agent-loop', 'tool-policy', 'guardrails']),
-      guide('steering', 'steering', Navigation, ['steering', 'handoffs', 'page-chat']),
+      guide('steering', 'steering', Navigation, ['steering', 'handoffs']),
     ],
   },
   {
@@ -72,7 +71,6 @@ export const GROUPS = [
       { id: 'flows', key: 'flows', icon: Factory, render: FlowsDoc },
       { id: 'loops', key: 'loops', icon: Repeat, render: LoopsDoc },
       { id: 'tools', key: 'tools', icon: Wrench, render: ToolboxDoc },
-      guide('mcp', 'mcp', Plug, ['mcp']),
       { id: 'hooks', key: 'hooks', icon: ShieldCheck, render: HooksDoc },
       { id: 'memory', key: 'memory', icon: Database, render: MemoryDoc },
       { id: 'web-logs', key: 'webLogs', icon: Globe, render: WebLogsDoc },
@@ -89,7 +87,7 @@ export const GROUPS = [
       { id: 'models', key: 'models', icon: Brain, render: ModelsDoc },
       { id: 'providers', key: 'providers', icon: SettingsIcon, render: ProvidersDoc },
       { id: 'connectors', key: 'connectors', icon: Send, render: ConnectorsDoc },
-      guide('health', 'health', Activity, ['service-health', 'runbook', 'system-workspace']),
+      guide('health', 'health', Activity, ['service-health', 'runbook']),
       guide('production', 'production', ServerCog, ['deployment', 'scaling', 'workers', 'storage', 'backup']),
     ],
   },

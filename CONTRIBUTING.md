@@ -52,8 +52,8 @@ npx vitest run                       # frontend tests
 
 The suite is large and safe to run in parallel: every test gets
 its own SQLite file and `tmp_path` from `tests/conftest.py`. The long tail is
-the tests that start real processes (git in a throwaway repository, MCP
-servers, `python -X importtime`); `--durations=20` shows them. If
+the tests that start real processes (git in a throwaway repository,
+`python -X importtime`); `--durations=20` shows them. If
 pytest is slow to even start, check which plugins your interpreter autoloads
 (`opik`, `langsmith` and friends from an unrelated environment add seconds to
 every run): `-p no:opik`, or `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, or a `.venv`
@@ -248,7 +248,7 @@ The `guard()` function handles `RouteBoundary` with a per-route error boundary, 
 
 **3. Add the route title in `src/components/routeTitles.js`**
 
-`ROUTE_TITLES` is an ordered list of `{match, titleKey}` entries; the first regex that matches the pathname names the page for the document title and the page chat header. The title itself is a locale string under `layout.titles`:
+`ROUTE_TITLES` is an ordered list of `{match, titleKey}` entries; the first regex that matches the pathname names the page for the document title and the page header. The title itself is a locale string under `layout.titles`:
 
 ```javascript
 // src/components/routeTitles.js (excerpt)

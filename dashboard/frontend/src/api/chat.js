@@ -1,5 +1,5 @@
 /**
- * Chat sessions, the chat SSE transport, entity and page chats, context pickers.
+ * Chat sessions, the chat SSE transport, entity chats, context pickers.
  */
 import api, { API_ORIGIN, authFetchHeaders } from './index';
 
@@ -140,12 +140,3 @@ export const deleteEntityChatSession = (ref, sessionId) =>
   api.delete('/entity-chats/sessions', {
     params: { kind: ref.kind, entity_id: ref.id, session_id: sessionId },
   });
-
-// The page chat — the floating panel that follows the user from page to page.
-// One agent, one thread per `scope`, and the records the page is showing sent
-// as pointers with the turn (see routes/page_chat.py). The streaming turn goes
-// through `streamEntityChat` with those pointers as its extra body.
-export const getPageChat = (scope) => api.get('/page-chat', { params: { scope } });
-export const clearPageChat = (scope) => api.delete('/page-chat', { params: { scope } });
-export const stopPageChat = (scope) => api.post('/page-chat/stop', null, { params: { scope } });
-export const pageChatUrl = () => '/page-chat';

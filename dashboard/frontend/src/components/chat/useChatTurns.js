@@ -22,10 +22,8 @@ export function useChatTurns() {
   const [turns, setTurns] = useState({});
   const ref = useRef({});
 
-  // `stop`: how this turn is stopped when it is not a chat run (a turn of an
-  // Assistant conversation is stopped through /api/assistant/stop).
-  const begin = useCallback((convId, ctrl, { detach = null, stop = null } = {}) => {
-    ref.current[convId] = { ctrl, detach, stop, runId: null, sessionId: null };
+  const begin = useCallback((convId, ctrl, { detach = null } = {}) => {
+    ref.current[convId] = { ctrl, detach, runId: null, sessionId: null };
     setTurns((prev) => ({ ...prev, [convId]: { runId: null, sessionId: null } }));
   }, []);
 

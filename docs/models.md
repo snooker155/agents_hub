@@ -22,8 +22,7 @@ the workspace default and the whole workspace moves.
 
 ## A first key switches on a model
 
-Saving a provider key (Settings, the welcome window, or the assistant's
-connection card) used to leave a trip to this page before the first run: enable
+Saving a provider key (Settings or the first run) used to leave a trip to this page before the first run: enable
 a model and set its price. Now, when the provider has no enabled model yet, the
 hub enables one default model for it (`common/default_model.py`, one table:
 `gpt-5.4-mini` for OpenAI, `claude-sonnet-5-5` for Anthropic,
@@ -105,18 +104,4 @@ API keys and base URLs live in [settings](settings.md), not here. This page is
 about which models and what they cost. Local providers (Ollama, LM Studio) and
 custom OpenAI-compatible backends are configured the same way.
 
-## Voice
-
-The assistant listens and speaks with two more models that are not chat
-models and are not in the catalog: a **transcription** model turns a
-recording into text, a **speech** model reads the answers aloud. The tab
-**Voice** picks one of each for the whole hub (provider, model, voice, price
-per call or per 1000 characters, and a voice per language). **Find at
-provider** lists the provider's models that fit, **Check connection** looks
-for the model in the provider's list without running it, and **Listen** plays
-a short line with the chosen voice. Each voice call is charged to its run.
-A purpose left empty falls back to the browser's own recognition or speech.
-The first run's voice step and `ah setup` write the same choice. See
-[assistant](assistant.md).
-
-Related: [settings](settings.md), [assistant](assistant.md).
+Related: [settings](settings.md).

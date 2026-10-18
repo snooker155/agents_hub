@@ -16,11 +16,10 @@ export const ELEMENT_TIMEOUT_MS = 3000;
 /**
  * The tour's stops, in order. Selectors are ones the pages already render:
  * every page has a PageHeader (a <header> inside <main>), Chat has its
- * composer textarea, Agents its card grid and the Assistant its talk button. A stop with a `feature` exists
- * only when the backend has that feature enabled.
+ * composer textarea, Agents its card grid. A stop with a `feature` exists only
+ * when the backend has that feature enabled.
  */
 export const TOUR_STOPS = [
-  { id: 'assistant', path: '/assistant', element: '[data-tour="assistant-talk"]' },
   { id: 'chat', path: '/chat', element: 'main textarea' },
   { id: 'agents', path: '/agents', element: 'main .grid' },
   { id: 'tasks', path: '/tasks', element: 'main header' },

@@ -466,9 +466,9 @@ export default {
     gateTitle: 'The approval gate',
     gateBody: 'The gate holds a tool call until a person decides. It is opt-in per workspace:',
     gateSettingsLabel: 'workspace settings',
-    gateTools: 'With it on, these tools need a yes every time: `run_shell`, `run_code`, `delete_file`, `apply_unified_diff`, the `delete_*` entity tools, `stop_run`, `stop_instance`, `restart_instance`, `stop_container` and `prune_run_logs`. An agent record can adjust the list for itself: `approval_tools` adds tool ids, `approval_exempt` removes them, and the exemption wins.',
+    gateTools: 'With it on, these tools need a yes every time: `run_shell`, `run_code`, `delete_file`, `apply_unified_diff`, the `delete_*` entity tools and `delete_workspace`. An agent record can adjust the list for itself: `approval_tools` adds tool ids, `approval_exempt` removes them, and the exemption wins.',
     gateTask: 'In a task, the agent stops and the task moves to `awaiting_approval` with the pending call on it; **Approve** and **Deny** both re-run the agent with a resume instruction, and approving records the exact call (tool and arguments) so a repeat of it is let through once. In the dashboard chat, the call waits inside the same turn: a card shows it with **Approve**, **Deny** and a note, the run owner or an admin answers, and the turn runs the call or reads the refusal (600 seconds by default, then it is refused). Telegram, the widget, channels and `/v1` have nobody in front of a card, so there the gate refuses the call and tells the agent to say exactly what it wanted to run.',
-    advisoryTip: '`tools/service_ops.py` and the entity run tools have always refused destructive calls with an `approval_required` error, letting the agent proceed once it calls again with `user_approved=True`. That convention is unchanged; the gate enforces the same shape of message rather than inventing a second one.',
+    advisoryTip: 'The entity run tools have always refused destructive calls with an `approval_required` error, letting the agent proceed once it calls again with `user_approved=True`. That convention is unchanged; the gate enforces the same shape of message rather than inventing a second one.',
   },
   nav: {
     groups: {

@@ -373,18 +373,8 @@ def get_workspace_default_model_config(meta: Dict[str, Any] | None) -> Dict[str,
        the Models page and robust against the Settings page replacing ``settings``.
     1. legacy ``settings.default_model.{provider,model}``
     2. legacy ``settings.default_provider`` + that provider's model field
-
-    A personal workspace (common/personal_workspace.py) that sets none of
-    these takes ``default``'s; no other workspace falls back anywhere.
     """
-    own = _own_default_model_config(meta)
-    if own.get("provider") or own.get("model"):
-        return own
-    if isinstance(meta, dict) and meta.get("personal_of"):
-        fallback = get_workspace_metadata("default")
-        if isinstance(fallback, dict) and not fallback.get("personal_of"):
-            return _own_default_model_config(fallback)
-    return own
+    return _own_default_model_config(meta)
 
 
 def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:

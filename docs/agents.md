@@ -133,7 +133,6 @@ One run can differ from its agent without the agent changing: an `overrides` obj
 | `system_append` | appended to the agent's instructions (after `system` when both are given) |
 | `tools` | a list that replaces the tool list, or `{"add": [...], "remove": [...]}` |
 | `skills` | `true` or `false` turns skills on or off; a list of skill names lists only those |
-| `mcp` | MCP server ids; the run gets `mcp:<id>` for each instead of the record's servers |
 | `tool_policy` | entries merged over the agent's tool policy |
 | `output_schema` | JSON Schema the final answer must match |
 | `max_concurrent_delegates` | 1..32, over the agent's own default (6); see "Delegation" below |

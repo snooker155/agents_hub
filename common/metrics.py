@@ -2,8 +2,8 @@
 dependency: the text exposition format is a handful of lines per metric, and a
 dependency earns its place by saving more than that).
 
-:func:`render` lives here rather than in the route so the Service Agent (or a
-future scrape-adjacent tool) can call it directly, the same reason
+:func:`render` lives here rather than in the route so other code can call it
+directly, the same reason
 ``common/health.py`` sits apart from ``dashboard/backend/routes/health.py``.
 
 Kept cheap on purpose: every number below comes from a handful of aggregate

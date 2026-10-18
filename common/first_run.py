@@ -3,43 +3,37 @@ The first run: the install's own setup, done once in the browser before the
 rest of the app opens (docs/installation.md, "The first run in the browser").
 
 A full screen of its own, step by step: the language, light or dark, a model
-to think with and which one, the assistant's voice, personal
-memory, the demo workspace. Only the model is required; every other step has
-a "not now". There is no way past the whole of it, and once finished it does
-not come back (Settings, First setup, starts it again on purpose).
+to think with and which one, personal memory, the demo workspace. Only the
+model is required; every other step has a "not now". There is no way past the
+whole of it, and once finished it does not come back (Settings, First setup,
+starts it again on purpose).
 
-**One per install, single operator only.** The record is one document,
-``install``, in the ``first_run`` collection. In ``multi`` mode the first
-administrator is made on the login screen and each person gets the welcome
-window and the guided setup (common/setup_guide.py), so the first run does not
-apply there.
+**One per install.** The record is one document, ``install``, in the
+``first_run`` collection.
 
 **An install that is already in use is never stopped.** The first time the
-record is read and there is none, the hub looks for signs of use (a guided
-setup already started, a chat outside the demo and system workspaces) and,
-finding any, writes the first run as finished by the upgrade. That check runs
-once: a fresh install writes an empty record and is asked from then on.
+record is read and there is none, the hub looks for signs of use (a chat
+outside the demo workspace) and, finding any, writes the first run as finished
+by the upgrade. That check runs once: a fresh install writes an empty record
+and is asked from then on.
 
-**What the steps change is written where the pages write it.** The model,
-the voice and the demo go through common/setup_ops.py, personal memory
-through the workspace's own route. The record keeps only what no page holds: the step the person is on, so a reload goes on
-from there, and the language and the look they chose, so a second browser
-starts with them.
+**What the steps change is written where the pages write it.** The model and
+the demo go through common/setup_ops.py, personal memory through the
+workspace's own route. The record keeps only what no page holds: the step the
+person is on, so a reload goes on from there, and the language and the look
+they chose, so a second browser starts with them.
 
 **A screen whose setting is already in force shows it instead of asking.**
-``ah setup`` can set the model, the voice and the demo before the
-hub first starts; ``context()["configured"]`` reads where each of them is
-stored (no marker of its own) so the browser can say "already set up" with
-the value, and offer Continue or Change.
-
-A screen answered "not now" (the voice, the demo) ends up skipped
-in the guided setup that follows, so the assistant does not offer it again.
+``ah setup`` can set the model and the demo before the hub first starts;
+``context()["configured"]`` reads where each of them is stored (no marker of
+its own) so the browser can say "already set up" with the value, and offer
+Continue or Change.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from common.docstore import DocStore
 
@@ -50,14 +44,10 @@ _KEY = "install"
 
 #: The screens, in order. The browser draws them; the server only checks a
 #: saved step is one of them.
-STEPS = ("hello", "language", "appearance", "model", "choose_model", "voice", "memory",
-         "demo", "done")
+STEPS = ("hello", "language", "appearance", "model", "choose_model", "memory", "demo", "done")
 LANGUAGES = ("en", "ru", "de")
 THEMES = ("light", "dark", "system")
 ACTIONS = ("progress", "finish", "restart")
-#: The guided setup's steps these screens already asked about: one still open
-#: when the first run ends was declined there, and the guide starts it skipped.
-GUIDE_STEPS = ("voice", "demo")
 
 
 def _now() -> str:
@@ -78,17 +68,10 @@ def applies() -> bool:
 def _in_use() -> bool:
     """Signs that this install was set up before the first run existed."""
     try:
-        from common import setup_guide
-        if setup_guide.load_state(None):
-            return True
-    except Exception:  # noqa: BLE001
-        log.debug("first run: guide state unreadable", exc_info=True)
-    try:
         from common import chat_store
         total = int(chat_store.list_chats(workspace=None, limit=1)["total"])
         if total:
-            theirs = total - sum(int(chat_store.list_chats(workspace=ws, limit=1)["total"])
-                                 for ws in ("demo", "system"))
+            theirs = total - int(chat_store.list_chats(workspace="demo", limit=1)["total"])
             return theirs > 0
     except Exception:  # noqa: BLE001
         log.debug("first run: chats unreadable", exc_info=True)
@@ -133,8 +116,7 @@ def status() -> Dict[str, Any]:
 
 
 def language() -> Optional[str]:
-    """The language chosen in the first run, if any (for defaults such as the
-    voice's language)."""
+    """The language chosen in the first run, if any."""
     try:
         doc = _store.get(_KEY)
     except Exception:  # noqa: BLE001
@@ -162,14 +144,10 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
         # A tab left open on a finished first run must not reopen it.
         return status()
     if action == "finish":
-        from common import setup_guide
-        if not setup_guide.usable_providers():
+        from common import setup_ops
+        if not setup_ops.usable_providers():
             raise ValueError("connect a model first: nothing runs without one")
         doc.update(completed_at=_now(), step="done", via="first_run")
-        try:
-            setup_guide.skip_open(None, list(GUIDE_STEPS))
-        except Exception:  # noqa: BLE001 - the guide asks again, nothing lost
-            log.warning("first run: declined steps not passed to the guide", exc_info=True)
     elif action == "restart":
         doc.update(completed_at=None, step="hello", restarted_at=_now())
         doc.pop("via", None)
@@ -183,64 +161,12 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
     return status()
 
 
-#: What each screen from the voice on is about, for the assistant's turn: from
-#: the voice screen on the assistant can talk, and it answers questions there.
-SCREEN_ABOUT = {
-    "voice": "the assistant's voice: a cloud voice (OpenAI or Google key) or the browser's own, "
-             "then a short spoken check that the assistant hears and answers",
-    "memory": "personal memory: whether agents keep what the person tells them about themselves "
-              "(on the Memory page, per workspace and agent)",
-    "demo": "the demo workspace: four ready agents with chats, views and a team, apart from "
-            "the person's own work",
-    "done": "the summary of what was chosen, and the way into the app: Chat, the assistant's guided "
-            "setup of the rest, or the tour",
-}
-
-
-def prompt_lines(screen: str) -> List[str]:
-    """The block an assistant turn asked from the first run carries: only
-    while the first run is on and for a screen the assistant is offered on."""
-    if screen not in SCREEN_ABOUT:
-        return []
-    got = status()
-    if not got["required"]:
-        return []
-    later = [s for s in STEPS[STEPS.index(screen) + 1:] if s in SCREEN_ABOUT]
-    lines = [
-        "The person is going through the hub's first setup, a full screen of its own; the rest of "
-        "the app is hidden until it ends.",
-        f"Screen now: {screen}: {SCREEN_ABOUT[screen]}.",
-        "Screens after it: " + (", ".join(later) if later else "none"),
-    ]
-    if got.get("language"):
-        lines.append(f"Language chosen in the setup: {got['language']}; answer in it unless the person "
-                     f"writes in another.")
-    lines.append("Answer in two or three short sentences, they are read aloud. Explain and advise; the "
-                 "person makes each choice with the screen's own buttons, so call no tool that changes "
-                 "anything (setup_step, propose_connection) and no show_on_screen, and never ask for a key "
-                 "in the conversation. After the setup you can lead the rest of it.")
-    return lines
-
-
 def _configured_model() -> Optional[Dict[str, Any]]:
     """A default model that can run: a usable provider and a model on it."""
-    from common import setup_guide
-    cur = setup_guide.default_model()
+    from common import setup_ops
+    cur = setup_ops.default_model()
     if cur.get("usable") and cur.get("model"):
         return {"provider": str(cur["provider"]), "model": str(cur["model"])}
-    return None
-
-
-def _configured_voice() -> Optional[Dict[str, Any]]:
-    """Both voice models (providers/voice_models.py): the assistant needs the
-    speech to talk and the transcription to listen, one alone is half a voice."""
-    from providers import voice_models
-    own = voice_models.stored()
-    speech, heard = own.get("speech"), own.get("transcription")
-    if isinstance(speech, dict) and isinstance(heard, dict):
-        return {"speech": str(speech.get("model") or ""), "speech_provider": str(speech.get("provider") or ""),
-                "transcription": str(heard.get("model") or ""),
-                "transcription_provider": str(heard.get("provider") or "")}
     return None
 
 
@@ -259,11 +185,10 @@ def _configured_demo() -> Optional[Dict[str, Any]]:
 
 def configured() -> Dict[str, Optional[Dict[str, Any]]]:
     """Per screen, what is already in force (``None``: nothing, ask). Keys:
-    ``model`` (the choice of model), ``voice``, ``demo``. A
+    ``model`` (the choice of model), ``demo``. A
     failure to read one means not configured, never an error."""
     out: Dict[str, Optional[Dict[str, Any]]] = {}
-    for key, read in (("model", _configured_model), ("voice", _configured_voice),
-                      ("demo", _configured_demo)):
+    for key, read in (("model", _configured_model), ("demo", _configured_demo)):
         try:
             out[key] = read()
         except Exception:  # noqa: BLE001 - unreadable means ask
@@ -273,15 +198,14 @@ def configured() -> Dict[str, Optional[Dict[str, Any]]]:
 
 
 def context() -> Dict[str, Any]:
-    """What the model and voice steps start from, read now. Cheap: no
+    """What the model and demo steps start from, read now. Cheap: no
     provider is asked (``setup_ops.options`` does that, for the model step's
     tiers only)."""
-    from common import setup_guide
-    out: Dict[str, Any] = {"providers": [], "default_model": {},
-                           "demo": False, "voice": False}
+    from common import setup_ops
+    out: Dict[str, Any] = {"providers": [], "default_model": {}, "demo": False}
     try:
-        out["providers"] = setup_guide.usable_providers()
-        out["default_model"] = setup_guide.default_model()
+        out["providers"] = setup_ops.usable_providers()
+        out["default_model"] = setup_ops.default_model()
     except Exception:  # noqa: BLE001
         log.debug("first run: providers unreadable", exc_info=True)
     try:
@@ -289,15 +213,9 @@ def context() -> Dict[str, Any]:
         out["demo"] = bool(demo_status().get("present"))
     except Exception:  # noqa: BLE001
         log.debug("first run: demo unreadable", exc_info=True)
-    try:
-        from providers import voice_models
-        own = voice_models.stored()
-        out["voice"] = all(isinstance(own.get(k), dict) for k in ("speech", "transcription"))
-    except Exception:  # noqa: BLE001
-        log.debug("first run: voice unreadable", exc_info=True)
     out["configured"] = configured()
     return out
 
 
-__all__ = ["ACTIONS", "LANGUAGES", "SCREEN_ABOUT", "STEPS", "THEMES", "act", "applies", "configured", "context",
-           "language", "load", "prompt_lines", "status"]
+__all__ = ["ACTIONS", "LANGUAGES", "STEPS", "THEMES", "act", "applies", "configured", "context",
+           "language", "load", "status"]

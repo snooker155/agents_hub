@@ -16,11 +16,15 @@ export const firstRunAction = (action, { step, language, theme } = {}) =>
     ...(theme ? { theme } : {}),
   });
 
-/** What is already set: providers, the default model, search, demo, voice. */
+/** What is already set: providers, the default model, search, demo. */
 export const getFirstRunContext = () => api.get('/first-run/context');
 
-/** Each connected provider's model tiers and the voices; asks the providers. */
+/** Each connected provider's model tiers; asks the providers. */
 export const getFirstRunOptions = () => api.get('/first-run/options');
 
-/** One setup operation: choose_model, voice_cloud or seed_demo. */
+/** One setup operation: choose_model or seed_demo. */
 export const firstRunOp = (operation, args = {}) => api.post('/first-run/op', { operation, args });
+
+/** Connect the first provider: checked with the provider before it is saved. */
+export const connectFirstModel = ({ provider, api_key, base_url }) =>
+  api.post('/first-run/model', { provider, api_key, base_url });

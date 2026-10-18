@@ -26,7 +26,6 @@ function useMemoryChatDescriptor(workspace, memoryId, onChanged) {
   }, [onChanged]);
 
   return useMemo(() => ({
-    scope: `memory:${workspace || ''}:${memoryId || ''}`,
     path: memoryChatUrl(workspace, memoryId),
     loadChat, clearChat, stopChat, onEvent,
     title: t('memoryManager.askChat'),

@@ -36,7 +36,7 @@ A `sequence` guardrail is a rule about the order and the totals of a run's tool 
 - `sum_max`: the values of `argument` across every call of `tools` add up to at most `max`. The call that would cross the limit is stopped; a value that is there but is not a number is stopped too, since a total that cannot be read cannot be kept. A call without the argument adds nothing. Example: no more than 500 in transfers per run.
 - `same_as`: `argument` of `tool` must equal `source_argument` (the same name when left blank) of an earlier call of `source_tool`. With no earlier call, the call is stopped. Example: refund only to the account the order was paid from.
 
-Tool names take `*` as a wildcard (`mcp__bank__*`), arguments are dotted paths into the call's input (`payee.account`, a number indexes a list). Values compare as numbers when both read as numbers (`42` equals `"42.0"`), as text otherwise.
+Tool names take `*` as a wildcard (`bank_*`), arguments are dotted paths into the call's input (`payee.account`, a number indexes a list). Values compare as numbers when both read as numbers (`42` equals `"42.0"`), as text otherwise.
 
 The action `block` refuses the call: the refusal, naming the guardrail and the reason, goes back to the model as the tool's output, so it can take another route. `ask` holds the call for a person through the same path as the tool policy's `always_ask`: in a task the run parks on the call until someone approves or denies it on the task page; in chat the call waits as the chat's approval does. When several rules object to one call, a block wins over an ask.
 

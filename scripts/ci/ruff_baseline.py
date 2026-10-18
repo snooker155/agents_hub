@@ -1,7 +1,7 @@
 """Baseline gate for the blind-except rules (BLE001, S110).
 
 `pyproject.toml` only enforces BLE001/S110 in a handful of packages
-(`common/`, `managers/`, `notify/`, `a2a/`, `mcp_client/`, `workspace/`); every
+(`common/`, `managers/`, `notify/`, `a2a/`, `workspace/`); every
 other package still has unreviewed blind excepts and ignores both rules
 (`[tool.ruff.lint.per-file-ignores]`). Turning the rules on everywhere at once
 would fail CI on pre-existing code nobody has reviewed yet.

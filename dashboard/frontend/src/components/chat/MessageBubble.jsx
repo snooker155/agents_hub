@@ -28,7 +28,7 @@ import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
 import LiveMark from '../liveMark/LiveMark';
 import { stateForTurn } from '../liveMark/activity';
-import { Bot, Mic, User } from 'lucide-react';
+import { Bot, User } from 'lucide-react';
 
 function WorkingDots({ label }) {
   return (
@@ -71,12 +71,6 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         </div>
         <div data-prompt-bubble className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
-          {/* Said aloud to the Assistant: the line is its transcript. */}
-          {msg.voice && (
-            <span className="mt-1 flex items-center gap-1 text-[11px] text-indigo-100" data-testid="spoken-caption">
-              <Mic className="w-3 h-3" /> {t('chat.assistantThread.spoken')}
-            </span>
-          )}
           {caption && (
             <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
               {msg.steer.mode === 'system' && <span className="font-semibold mr-1">{t('steering.systemTag')}</span>}
@@ -119,7 +113,6 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
       waiting: !!waitingOn,
       thinking: !!liveThought,
       tool: runningTool,
-      input: activity?.kind === 'tool' ? activity.input : undefined,
       text: !!text,
     })
     : null;

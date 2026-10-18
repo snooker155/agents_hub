@@ -7,16 +7,13 @@ Two things live here, deliberately together because they are one policy:
   explicit human yes: the ones that delete, stop, restart or write over
   something. :func:`needs_approval` layers the per-agent overrides on top
   (``AgentSpec.approval_tools`` adds, ``AgentSpec.approval_exempt`` removes).
-* **The refusal text.** ``tools/service_ops.py`` has refused destructive calls
-  with an ``approval_required`` JSON error since long before this gate existed,
-  and that convention is what the agents are prompted for. The gate reuses it
-  verbatim in chat (:func:`approval_required_text`) instead of inventing a
-  second wording, and service_ops delegates its own helper here so there is one
-  message shape to keep.
+* **The refusal text.** A refused call answers with an ``approval_required``
+  JSON error, the convention the agents are prompted for
+  (:func:`approval_required_text`), so there is one message shape to keep.
 
 The gate itself is opt-in per workspace (``settings.require_tool_approval``,
 default off), so an installation that never turns it on behaves exactly as
-before: the list is inert and service_ops stays the only, advisory, check.
+before: the list is inert.
 
 Where a call is *held* depends on the surface, and that split is the whole point
 (see agents/hooks.py for the gate that applies it):
@@ -31,7 +28,7 @@ Where a call is *held* depends on the surface, and that split is the whole point
   timed out or stopped wait hands back.
 - Everywhere else in chat (Telegram, the widget, channels, ``/v1``) nobody is
   in front of a card, so the gate refuses the call and tells the agent to say
-  what it wanted to run. That is advisory, exactly like service_ops.
+  what it wanted to run. That is advisory.
 """
 from __future__ import annotations
 
@@ -56,9 +53,6 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "delete_file",
     "apply_unified_diff",
     # Deleting a hub entity: the record and its history go with it.
-    # Deleting branches from the system workspace's repository copy: a
-    # branch is a patch a human has not reviewed yet (tools/system_ops.py).
-    "system_prune_branches",
     "delete_agent_tool",
     "delete_flow_tool",
     "delete_team_tool",
@@ -67,13 +61,6 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     # A whole workspace: its folder, settings and roster (an attached folder
     # is only detached). tools/workspace_management.py.
     "delete_workspace",
-    # Stopping or restarting something that is running: whatever it was
-    # producing is lost.
-    "stop_run",
-    "stop_instance",
-    "restart_instance",
-    "stop_container",
-    "prune_run_logs",
     # Sends workspace content outside the system: a push, plus a PR/MR opened
     # from it. Not reversible from in here once GitHub/GitLab has it.
     "git_publish",
@@ -97,10 +84,8 @@ REASONING_TOOL_NAMES = frozenset({
 })
 
 # ``ask_user`` is how an agent reaches the human in the first place. Gating it
-# would need approval to ask for approval. ``propose_connection`` is a person's
-# answer by construction (connectors/proposals.py): gating it would show two
-# cards for one decision.
-NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user", "propose_connection"})
+# would need approval to ask for approval.
+NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user"})
 
 
 #: Tools that wait for a person's yes on every call, whatever the gate, the
@@ -108,20 +93,12 @@ NEVER_GATED = REASONING_TOOL_NAMES | frozenset({"ask_user", "propose_connection"
 #: itself. Deleting a workspace removes its folder and every record in it.
 ALWAYS_GATED: frozenset[str] = frozenset({
     "delete_workspace",
-    # The assistant's one-step changes to the hub's records (chat/actions.py):
-    # a person says yes to each one, on its card or aloud.
-    "hub_action",
-    # The guided setup's changes to the install (common/setup_ops.py).
-    "setup_step",
 })
 
 #: Tools whose approval card says in a sentence what the call would do:
 #: tool id -> "module:function" taking the call's input, returning the
 #: sentence or "" (then the card keeps the generic reason).
-CALL_DESCRIBERS: Dict[str, str] = {
-    "hub_action": "tools.hub_action:describe_call",
-    "setup_step": "tools.setup_guide:describe_call",
-}
+CALL_DESCRIBERS: Dict[str, str] = {}
 
 
 def describe_call(tool_id: str, tool_input: Any) -> str:
@@ -154,47 +131,7 @@ def needs_approval(tool_id: str, agent_spec: Any = None) -> bool:
     exempt = {str(x) for x in (getattr(agent_spec, "approval_exempt", None) or [])}
     if name in exempt:
         return False
-    return name in NEEDS_APPROVAL or name in extra or _mcp_needs_approval(name)
-
-
-def _mcp_needs_approval(tool_id: str) -> bool:
-    """True when this MCP tool's server says calls to it need a human yes.
-
-    The list above cannot name these: the tools live on somebody else's server,
-    they differ per workspace, and their ids are only known once a server is
-    attached. So the claim is made where the server is configured — ``approval``
-    is ``"none"``, ``"all"``, or the names of the tools to gate — and read back
-    here, which keeps one gate rather than two.
-
-    The stored list may name a tool either way round: ``search`` as the remote
-    server calls it, or ``mcp__tickets__search`` as the hub does. Both are the
-    same tool, and an operator reading either the page or an agent record should
-    not have to know which spelling this file wanted.
-    """
-    if not tool_id.startswith("mcp__"):
-        return False
-    try:
-        from common.workspace_context import resolve_active_workspace
-        from mcp_client.client import split_tool_id
-        from mcp_client.store import get_server
-
-        split = split_tool_id(tool_id)
-        if split is None:
-            return False
-        server_id, remote_name = split
-        record = get_server(resolve_active_workspace(), server_id)
-        if record is None:
-            return False
-        approval = record.get("approval")
-        if isinstance(approval, (list, tuple, set)):
-            return tool_id in approval or remote_name in approval
-        return str(approval or "none").strip().lower() == "all"
-    except Exception:  # noqa: BLE001 - an unreadable config must not make every call look gated
-        log.debug("tool_needs_approval: server config unreadable", exc_info=True)
-        # Same failure posture as ``approval_gate_enabled``: an unreadable
-        # config must not make every tool call look gated, which would stop the
-        # run outright.
-        return False
+    return name in NEEDS_APPROVAL or name in extra
 
 
 def workspace_name(value: Optional[str] = None) -> Optional[str]:

@@ -52,14 +52,6 @@ SETTINGS_PAGE_ONLY = (
 
 # ── who and where ────────────────────────────────────────────────────────────
 
-def _system_workspace() -> str:
-    try:
-        from common.system_workspace import WORKSPACE
-        return WORKSPACE
-    except Exception:  # noqa: BLE001 - the name is fixed; the module is optional
-        return "system"
-
-
 def _run_workspace() -> Optional[str]:
     """The workspace of the running call, from the run itself only (never the
     workspace the dashboard has selected)."""
@@ -297,8 +289,6 @@ def list_workspaces() -> str:
             item["description"] = meta["description"]
         if name == "default":
             item["default"] = True
-        if name == _system_workspace():
-            item["system"] = True
         items.append(item)
     return json_ok({"workspaces": items, "count": len(items)})
 
@@ -333,7 +323,6 @@ def get_workspace(name: str) -> str:
         "attached_target": str(workspace_target(name)) if attached else None,
         "tasks_count": _tasks_by_workspace().get(name, 0),
         "default": name == "default",
-        "system": name == _system_workspace(),
         "settings_page_only": SETTINGS_PAGE_ONLY,
     })
 
@@ -360,12 +349,6 @@ def create_workspace(name: str, description: Optional[str] = None,
     if not is_valid_workspace_name(name) or name.startswith("."):
         return json_err(f"'{name}' is not a valid workspace name: use one name without slashes",
                         code="invalid_name")
-    if name == _system_workspace():
-        return json_err(f"'{name}' is reserved for the system workspace", code="invalid_name")
-    from common import personal_workspace
-    if personal_workspace.is_reserved_name(name):
-        return json_err(f"names starting with '{personal_workspace.PREFIX}' are reserved for "
-                        "personal workspaces", code="invalid_name")
     entry = ws_storage.WORKSPACES_ROOT / name
     if entry.exists() or entry.is_symlink():
         return json_err(f"workspace '{name}' already exists", code="exists")
@@ -425,8 +408,6 @@ def update_workspace(name: str, description: Optional[str] = None,
     missing = _find(name, user)
     if missing:
         return missing
-    if name == _system_workspace():
-        return json_err("the system workspace is configured by the service", code="forbidden")
     forbidden = _manage_refusal(name, user, "changing workspace")
     if forbidden:
         return forbidden
@@ -475,8 +456,6 @@ def add_workspace_agent(name: str, agent_id: str) -> str:
     missing = _find(name, user)
     if missing:
         return missing
-    if name == _system_workspace():
-        return json_err("the system workspace is configured by the service", code="forbidden")
     forbidden = _manage_refusal(name, user, "changing workspace")
     if forbidden:
         return forbidden
@@ -509,8 +488,6 @@ def remove_workspace_agent(name: str, agent_id: str) -> str:
     missing = _find(name, user)
     if missing:
         return missing
-    if name == _system_workspace():
-        return json_err("the system workspace is configured by the service", code="forbidden")
     forbidden = _manage_refusal(name, user, "changing workspace")
     if forbidden:
         return forbidden
@@ -539,8 +516,8 @@ def remove_workspace_agent(name: str, agent_id: str) -> str:
 @tool("delete_workspace", args_schema=_NameArgs)
 def delete_workspace(name: str) -> str:
     """Delete a workspace with its folder, tasks' home and settings. Always
-    waits for a person's yes. The default, the system and a personal
-    workspace cannot be deleted. An attached workspace is only detached: the directory it points
+    waits for a person's yes. The default workspace cannot be deleted. An
+    attached workspace is only detached: the directory it points
     at is kept."""
     refused = _out_of_scope()
     if refused:
@@ -549,11 +526,6 @@ def delete_workspace(name: str) -> str:
     name = _clean_name(name)
     if name == "default":
         return json_err("the default workspace cannot be deleted", code="forbidden")
-    if name == _system_workspace():
-        return json_err("the system workspace cannot be deleted", code="forbidden")
-    from common import personal_workspace
-    if personal_workspace.is_personal(name):
-        return json_err("a personal workspace cannot be deleted", code="forbidden")
     user = _acting_user()
     missing = _find(name, user)
     if missing:

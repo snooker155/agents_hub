@@ -152,7 +152,7 @@ export default {
   roles: {
     title: 'Agent roles',
     intro: 'System agents hand work to a role, not to a particular agent: code goes to @coder, reviews to @reviewer. Pick which agent of this workspace holds each role. Until you do, the product\'s own agent holds it.',
-    importHint: 'To make Claude Code, Codex or Aider the coder, add it on the Agents page (Add Claude Code, Add Codex, Import from repo), add it to this workspace, then choose it here.',
+    importHint: 'To make an imported agent such as Aider the coder, add it on the Agents page (Import from repo), add it to this workspace, then choose it here.',
     openAgents: 'Open Agents →',
     calledBy: 'Called by: {{agents}}',
     noCallers: 'No agent in this workspace calls this role yet; your own agents can name it in their delegates.',

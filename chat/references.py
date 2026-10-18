@@ -598,7 +598,7 @@ def render_entity(kind: str, entity_id: str) -> Optional[Dict[str, str]]:
         body = body[:MAX_REFERENCE_CHARS] + "\n...[truncated — open the entity or use its tool for the rest]"
     # The record's workspace (None for one that has none, such as an agent or
     # a global flow), so a caller that must not show another workspace's
-    # records can drop it (routes/assistant.py).
+    # records can drop it.
     return {"title": rendered.get("title") or str(entity_id), "body": body,
             "workspace": rendered.get("workspace")}
 

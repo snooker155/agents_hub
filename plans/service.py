@@ -175,7 +175,6 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
                 agent_id, list(spec.tools or []) + secret_grant_ids(names),
                 previous_tools=list(spec.tools or []) + secret_grant_ids(spec.secrets or []),
                 override=bool(spec.capability_override), delegates=list(spec.delegates or []),
-                workspace=getattr(spec, "owner_workspace", None),
             )
             if violation is not None and violation.blocking and guard_mode() == "block":
                 raise ValueError(f"secrets refused by the capability guard: {violation.message}")

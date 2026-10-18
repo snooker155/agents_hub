@@ -67,10 +67,6 @@ class ChatRequest(BaseModel):
     # loop, flow, team, agent or scheduled job the user picked in the
     # composer. Rendered into the prompt for this turn only.
     references: List[ChatReference] = []
-    # The message was spoken and transcribed (a Telegram voice note, see
-    # connectors/telegram/telegram_voice.py): the prompt says so, so the agent
-    # reads a misheard word as one rather than taking it literally.
-    voice: bool = False
     # Where this exchange originated, recorded as the run's ``message_origin`` so
     # the Messages list can distinguish e.g. Telegram runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.
@@ -99,13 +95,13 @@ class ChatRequest(BaseModel):
     # service's own pin (services/store.py) applies when this is empty.
     agent_version: Optional[int] = None
     # Per-run overrides for this turn (agents/run_overrides.py): model,
-    # provider, system, system_append, tools, skills, mcp, tool_policy,
+    # provider, system, system_append, tools, skills, tool_policy,
     # output_schema. An unknown key is a 400; a tool set the capability
     # guard refuses is a 409. Kept on the run record as ``overrides``.
     overrides: Optional[Dict[str, Any]] = None
     # Auto mode (common/auto_mode.py): the person switched it on in this
     # conversation, so every confirmation of the turn is accepted without a
-    # card. Honoured only from the Chat page or the assistant's thread, and
+    # card. Honoured only from the Chat page, and
     # only where the workspace allows it (pipelines.execute_locally checks).
     auto_approve: bool = False
 

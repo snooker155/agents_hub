@@ -4,8 +4,7 @@
 Two workspaces, ``ws_a`` and ``ws_b``, each with its own records: tasks,
 scheduled jobs, flows, teams, loops, runs, and
 an agent of its own. A run in ``ws_a`` sees and changes ``ws_a``'s records;
-``ws_b``'s answer like missing ones (or are refused, for a side effect). The
-service's own agents (``SERVICE_WIDE_AGENTS``) still reach both.
+``ws_b``'s answer like missing ones (or are refused, for a side effect).
 """
 from __future__ import annotations
 
@@ -36,10 +35,6 @@ def run_in(workspace, agent_id="main-agent"):
         current_agent_id.reset(agent_token)
         reset_state(state_token)
         _workspace_ctx.reset(ws_token)
-
-
-def service():
-    return run_in("ws_a", agent_id="service_agent")
 
 
 @pytest.fixture
@@ -107,14 +102,6 @@ def test_task_tools_see_only_this_workspace(tasks):
     assert svc_get_task(tasks["b"].id).status.value != "stopped"
 
 
-def test_a_service_wide_agent_reaches_another_workspaces_task(tasks):
-    from tools.task_management import get_task, update_task
-    b = str(tasks["b"].id)
-    with service():
-        assert call(get_task, id=b)["task"]["id"] == b
-        assert call(update_task, id=b, description="seen by the service")["ok"] is True
-
-
 def test_no_workspace_at_all_keeps_todays_behaviour(tasks, monkeypatch):
     import common.workspace_context as wc
     from tools import task_management
@@ -144,8 +131,6 @@ def test_scheduled_jobs_of_another_workspace_are_invisible(two_ws):
         assert call(schedule_task, title="t", delay_minutes=5, agent_id="agent_a")["ok"] is True
         assert call(cancel_scheduled, id=str(mine.id))["ok"] is True
     assert plan_service.get_job(theirs.id).status.value == "scheduled"
-    with service():
-        assert call(cancel_scheduled, id=str(theirs.id))["ok"] is True
 
 
 # ── tools/flow_management.py and the flow tools of tools/langchain_tools.py ──
@@ -188,8 +173,6 @@ def test_flow_tools_answer_another_workspaces_flow_as_missing(flows):
         assert out["code"] == "invalid_flow"
         assert any("agent_b" in e for e in out["errors"])
     assert flow_store.get_flow("flow-b") is not None
-    with service():
-        assert call(get_flow_tool, flow_id="flow-b")["flow"]["id"] == "flow-b"
 
 
 # ── tools/team_management.py ─────────────────────────────────────────────────
@@ -222,8 +205,6 @@ def test_team_tools_answer_another_workspaces_team_as_missing(two_ws):
         assert call(create_team_tool, name="Own", mode="parallel",
                     members=[{"agent_id": "agent_a", "name": "A", "manifest": "m"}])["ok"] is True
     assert store.get_team(theirs.team_id) is not None
-    with service():
-        assert call(get_team_tool, team_id=theirs.team_id)["ok"] is True
 
 
 # ── tools/loop_management.py ─────────────────────────────────────────────────
@@ -246,8 +227,6 @@ def test_loop_tools_answer_another_workspaces_loop_as_missing(flows):
         # A loop that would repeat another workspace's flow is refused.
         out = call(create_loop_tool, name="Borrowed", flow_id="flow-b", exit_criterion="done")
         assert out["code"] == "invalid_loop"
-    with service():
-        assert call(get_loop_tool, loop_id=theirs.loop_id)["ok"] is True
 
 
 # ── tools/entity_runs.py ─────────────────────────────────────────────────────
@@ -273,9 +252,6 @@ def test_entity_runs_of_another_workspace_are_refused(two_ws, monkeypatch):
         assert stopped == []
         assert call(get_team_run_tool, team_run_id=my_run.team_run_id)["ok"] is True
         assert call(stop_team_run_tool, team_run_id=my_run.team_run_id)["ok"] is True
-    with service():
-        assert call(get_team_run_tool, team_run_id=their_run.team_run_id)["ok"] is True
-        assert call(stop_team_run_tool, team_run_id=their_run.team_run_id)["ok"] is True
 
 
 # ── tools/langchain_tools.py: agents and task coordination ───────────────────
@@ -288,8 +264,6 @@ def test_get_agent_only_for_an_agent_available_here(two_ws):
         assert call(get_agent_tool, agent_id="agent_b")["code"] == "not_found"
         ids = {a["id"] for a in call(list_agents_tool)["agents"]}
         assert "agent_b" not in ids and "agent_a" in ids
-    with service():
-        assert call(get_agent_tool, agent_id="agent_b")["ok"] is True
 
 
 def test_modify_agent_only_for_an_agent_this_workspace_owns(two_ws):
@@ -305,9 +279,6 @@ def test_modify_agent_only_for_an_agent_this_workspace_owns(two_ws):
     assert get_agent("sysbot").description == "sysbot agent"
     with run_in("default"):
         assert call(modify_agent_tool, agent_id="helper", description="default owns it")["ok"] is True
-    with service():
-        assert call(modify_agent_tool, agent_id="agent_b", description="service")["ok"] is True
-    assert get_agent("agent_b").description == "service"
 
 
 def test_delete_agent_only_for_an_agent_this_workspace_owns(two_ws):
@@ -319,8 +290,6 @@ def test_delete_agent_only_for_an_agent_this_workspace_owns(two_ws):
         assert call(delete_agent_tool, agent_id="agent_a")["ok"] is True
     assert get_agent("agent_b") is not None and get_agent("sysbot") is not None
     assert get_agent("agent_a") is None
-    with service():
-        assert call(delete_agent_tool, agent_id="agent_b")["ok"] is True
 
 
 def test_create_agent_cannot_extend_another_workspaces_agent(two_ws, tmp_path, monkeypatch):
@@ -353,8 +322,6 @@ def test_assign_and_follow_only_this_workspaces_tasks_and_agents(tasks):
         # Another workspace's agent is not assignable to this workspace's task.
         out = call(assign_agent_tool, task_id=str(tasks["a"].id), agent_id="agent_b")
         assert out["code"] == "forbidden"
-    with service():
-        assert call(get_agent_status_tool, task_id=b)["ok"] is True
 
 
 def test_run_agent_tool_refuses_an_agent_not_available_here(two_ws):

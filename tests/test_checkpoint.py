@@ -83,7 +83,6 @@ def test_an_interrupted_idempotent_call_is_dropped_and_a_side_effect_is_flagged(
     assert msgs[-1].content == ck.INTERRUPTED_NOTE
     assert "interrupted" in ck.resume_instruction(
         {**base, "pending": {"step": 1, "tool": "run_shell", "args": {}}})
-    assert ck.is_idempotent("mcp__github__create_issue") is False
     assert ck.is_idempotent("read_file") is True
 
 

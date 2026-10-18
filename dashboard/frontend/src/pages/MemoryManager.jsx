@@ -3,7 +3,6 @@ import { Database, Cpu, Users, RefreshCw, FileSearch } from 'lucide-react';
 import { getSharedMemories } from '../api';
 import { useWorkspace } from '../components/workspace';
 import EntityChat from '../components/EntityChat';
-import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -55,10 +54,8 @@ export default function MemoryManager() {
     fetchMemories();
   }, [fetchMemories]);
 
-  // The pool chat, drawn in the column beside the pools or in the floating
-  // panel. Registered only on the Pools tab: that is the only tab it is about.
+  // The pool chat, drawn in the column beside the pools.
   const memoryChat = useMemoryChatDescriptor(workspaceFilter, selectedPoolId, fetchMemories);
-  usePageChat(activeTab === 'pools' ? memoryChat : null);
 
   return (
     <PageContainer>

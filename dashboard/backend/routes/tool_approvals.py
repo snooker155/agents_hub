@@ -136,28 +136,19 @@ def decide_approval(approval_id: str, body: DecideBody, request: Request):
 
 
 def answer(approval: Dict[str, Any], run: Dict[str, Any], principal: Any, decision: str,
-           note: str = "", *, via: Optional[str] = None) -> Dict[str, Any]:
+           note: str = "") -> Dict[str, Any]:
     """Settle a waiting call for a person who may answer it (the caller
     checked :func:`require_answerer`) and record it in the audit log.
-    ``via`` says how the answer came when it was not the card's buttons:
-    ``voice`` for a spoken yes or no to the assistant (routes/assistant.py).
     Raises 400 for an unknown decision, 409 when the call no longer waits."""
     approval_id = str(approval.get("approval_id") or "")
     decision = str(decision or "").strip().lower()
     if decision not in tool_approvals.DECISIONS:
         raise HTTPException(status_code=400, detail="decision must be approve or deny")
-    if decision == "approve" and approval.get("tool") == "propose_connection":
-        # A yes here would tell the agent the connection exists while nothing
-        # was set up: a proposal is approved by applying it.
-        raise HTTPException(status_code=400, detail="a connection proposal is approved by applying it: "
-                                                    "POST /api/connection-proposals/{id}/apply")
     author = principal or "operator"
     settled = tool_approvals.decide(approval_id, decision, note=note, author=author)
     details = {"run_id": approval.get("run_id"), "tool": approval.get("tool"),
                "decision": decision, "note": (note or "").strip()[:500],
                "agent_id": approval.get("agent_id"), "approval_id": approval_id}
-    if via:
-        details["via"] = via
     if settled is None:
         current = tool_approvals.get(approval_id) or approval
         audit.record("tool.approval", principal=principal, object_type="tool",

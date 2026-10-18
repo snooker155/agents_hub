@@ -3,7 +3,7 @@
  * a run's tool calls. `after` lets a tool run only once another one ran,
  * `sum_max` caps the total of one argument across calls, `same_as` makes an
  * argument match the one an earlier call used. Tool names take globs
- * (`mcp__bank__*`), arguments are dotted paths (`payee.account`); the
+ * (`bank_*`), arguments are dotted paths (`payee.account`); the
  * backend (guardrails/models.py) validates the same shape.
  */
 import { useI18n } from '../../i18n';

@@ -144,14 +144,13 @@ Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, d
 
 `ah setup` fragt sich durch die ganze Installation, so wie der erste Start von OpenClaw, und schreibt nichts, bis Sie eine Übersicht über jeden Wert bestätigt haben:
 
-1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl) oder Compose aus diesem Checkout (Weg B). Danach QuickStart (nur, was sich nicht erraten lässt: Den Rest richtet der Assistent mit Ihnen ein, siehe [nach der Installation](#nach-der-installation-der-assistent-übernimmt)) oder Advanced.
+1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl) oder Compose aus diesem Checkout (Weg B). Danach QuickStart (nur, was sich nicht erraten lässt) oder Advanced.
 2. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
-3. **Stimme des Assistenten**: womit der [Assistent](assistant.md#voice) Sie hört und womit er seine Antworten vorliest, gespeichert als Transkriptions- und Sprachmodelle des Workspace `default` (jeder persönliche Workspace greift darauf zurück). Zur Wahl stehen ein Cloud-Anbieter, den Sie in Schritt 2 gewählt haben (OpenAI: `gpt-4o-mini-tts` und `gpt-4o-mini-transcribe` mit ihren Preisen; Google: Gemini TTS und Gemini Flash), mit einer seiner Stimmen; nur der Browser (seine eigene Erkennung und Stimme, nichts auf dem Server); oder vorerst nichts. QuickStart überlässt das dem Assistenten.
-4. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen und RAG. QuickStart überlässt die Demo dem Assistenten.
-5. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
-6. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog, setzt die Stimme des Assistenten und bietet an, den Hub zu starten (`ah up`, oder `docker compose up -d` und anschließend die Stimme über die API setzen). Unter Docker wartet das auf den Stack: Wird er nicht gestartet, bleibt die Stimme einem späteren Lauf oder der Seite Modelle überlassen. In diesem Checkout wird die Stimme direkt in die Datenbank geschrieben, unter Docker über die API des Stacks, sobald er antwortet.
+3. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen und RAG.
+4. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
+5. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog und bietet an, den Hub zu starten (`ah up` oder `docker compose up -d`).
 
-Eine Antwortdatei, die `voice.mode` oder `demo` nennt, wendet beides auch in QuickStart an.
+Eine Antwortdatei, die `demo` nennt, wendet es auch in QuickStart an.
 
 ### Einrichtung aus Docker
 
@@ -171,19 +170,10 @@ In einem Ordner, der schon eine `docker-compose.yml` enthält (ein Checkout oder
 Eine neue
 Installation öffnet statt der App einen eigenen Einrichtungsbildschirm: ohne
 Seitenleiste und Kopfleiste, eine Entscheidung pro Bildschirm, wie bei einem
-neuen Telefon. Der Reihe nach: Begrüßung, Sprache, hell oder dunkel, ein
-Modell, das Standardmodell, die Stimme des Assistenten,
-persönlicher Speicher und der Demo-Arbeitsbereich, dann eine Übersicht mit
-dem Weg hinein (**Agents Hub verwenden**, **Mit dem Assistenten
-weitermachen** oder **Rundgang starten**).
-
-Auf dem Bildschirm der Stimme wählt eine OpenAI-Stimme auch ihr Sprachmodell: `gpt-4o-mini-tts` (Standard, am neuesten und natürlichsten), `tts-1` (antwortet am schnellsten) oder `tts-1-hd` (klarer, langsamer). Dann lernen Sie den Assistenten kennen: er sagt laut
-Hallo, jede Sprache mit eigener Stimme ([eine Stimme pro Sprache](assistant.md)),
-Sie sagen, ob Sie ihn gehört haben, antworten per Stimme und hören die Antwort;
-so werden Modell, Sprachausgabe und Spracherkennung in einem Zug geprüft.
-Danach hat jeder Bildschirm den Assistenten unten, per Stimme oder Text zu
-diesem Bildschirm zu fragen, und der letzte Bildschirm übergibt an ihn, per
-Stimme, wenn er zu hören war.
+neuen Telefon. Der Reihe nach: Begrüßung, Sprache, hell oder dunkel,
+ein Modellschlüssel und das Standardmodell, persönlicher Speicher und der
+Demo-Arbeitsbereich, dann eine Übersicht mit dem Weg hinein (**Agents Hub
+verwenden** oder **Rundgang starten**).
 
 Nur das Modell ist Pflicht: ein Schlüssel von OpenAI, Anthropic oder Google
 (vor dem Speichern beim Anbieter geprüft), ein Modellserver, der auf diesem
@@ -196,12 +186,7 @@ Der Schritt wird im Hub gespeichert: nach einem Neuladen oder in einem
 anderen Browser geht es an derselben Stelle weiter, und ein neuer Browser
 übernimmt Sprache und Darstellung. Abgeschlossen erscheint sie nicht wieder;
 **Einstellungen, Ersteinrichtung** startet sie bewusst erneut. Eine
-Installation, die vor dem Update schon genutzt wurde (ein Chat oder eine
-begonnene Einrichtung mit dem Assistenten), hält sie nicht an.
-
-### Nach der Installation: Der Assistent übernimmt
-
-Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Modell, mit dem er denken kann. Das erledigt der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, den Demo-Workspace, den Zustand des Hubs, dann einen ersten Chat, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
+Installation, die vor dem Update schon genutzt wurde (ein Chat), hält sie nicht an.
 
 `./install.sh` startet sie bei einer Erstinstallation aus einem Terminal von selbst (`--no-setup` überspringt sie, `--setup` führt sie bei einer Neuinstallation aus). Führen Sie sie erneut aus, wann immer sich eine Einstellung ändern soll: Jede Frage hat dann den geltenden Wert als Vorgabe, und eine leere Antwort bei einem Schlüssel behält den aktuellen Schlüssel.
 
@@ -219,13 +204,10 @@ Für eine unbeaufsichtigte Installation hat jede Frage einen Schlüssel, und ein
   "shape": "docker",
   "dir": "/srv/agents-hub",
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
-  "voice": {"mode": "cloud", "provider": "openai", "voice": "alloy"},
   "demo": false,
   "start": true
 }
 ```
-
-`voice.mode` ist `cloud` (mit `voice.provider`, wenn zwei passen, und `voice.voice`), `browser` oder `skip`.
 
 ## Konfiguration
 

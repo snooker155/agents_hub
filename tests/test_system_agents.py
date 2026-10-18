@@ -129,7 +129,7 @@ def _granted_tools(ad: dict) -> set[str]:
 
     tools = set(ad.get("tools") or [])
     if ad.get("extends"):
-        # A shipped child (the assistant): its parent's tools and its deltas.
+        # A shipped child: its parent's tools and its deltas.
         from agents.inheritance import merge_list
         parent = next(a for a in _seed_system_agents() if a["id"] == ad["extends"])
         tools = set(merge_list(sorted(_granted_tools(parent)),
@@ -163,7 +163,7 @@ def _known_tool_ids() -> set[str]:
         "filesystem", "task_management", "agent_coordination", "agent_management",
         "agent_flows", "flow_management",
         "team_management", "loop_management", "project_management", "entity_runs",
-        "schedule_management", "service_ops", "docs", "geometry",
+        "schedule_management", "docs", "geometry",
     }
     return {t.id for t in get_all_tools()} | aliases
 

@@ -206,12 +206,11 @@ def test_an_existing_name_is_refused(made):
     assert out["ok"] is False and out["code"] == "exists"
 
 
-def test_default_and_system_cannot_be_deleted(main_run):
+def test_default_cannot_be_deleted(main_run):
     from workspace import create_workspace_folder, get_workspace_folder
     create_workspace_folder("default")
-    for name in ("default", "system"):
-        out = _call(wm.delete_workspace, name=name)
-        assert out["ok"] is False and out["code"] == "forbidden"
+    out = _call(wm.delete_workspace, name="default")
+    assert out["ok"] is False and out["code"] == "forbidden"
     assert get_workspace_folder("default") is not None
 
 

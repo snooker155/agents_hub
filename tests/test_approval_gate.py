@@ -57,7 +57,7 @@ def _guard(workspace="acme", spec=None):
 def test_the_default_list_holds_the_destructive_tools():
     assert approval.needs_approval("run_shell")
     assert approval.needs_approval("delete_file")
-    assert approval.needs_approval("stop_instance")
+    assert approval.needs_approval("delete_agent_tool")
     assert not approval.needs_approval("read_file")
 
 
@@ -158,21 +158,6 @@ def test_in_chat_the_gate_refuses_instead_of_parking(gate_on):
     assert body["code"] == "approval_required"
     assert body["action"] == "run_shell"
     assert "rm -rf build" in body["effect"]
-
-
-def test_the_chat_refusal_matches_the_service_ops_shape():
-    from tools.service_ops import _approval_required
-    body = json.loads(_approval_required("stop_run", "r-1", "terminate run r-1"))
-    assert body == {
-        "ok": False,
-        "error": ("stop_run needs the user's approval. It would terminate run r-1. "
-                  "Tell the user exactly this, and only call again with "
-                  "user_approved=True once they have agreed."),
-        "code": "approval_required",
-        "action": "stop_run",
-        "target": "r-1",
-        "effect": "terminate run r-1",
-    }
 
 
 # -------------------- approved calls --------------------

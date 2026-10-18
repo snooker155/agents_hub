@@ -20,7 +20,7 @@ describe('OverviewWidgets', () => {
       days: 3,
       per_day: days([{ completed: 1, failed: 0, other: 0 }, { completed: 4, failed: 2, other: 0 }, { completed: 0, failed: 0, other: 0 }]),
       last_24h: { total: 6, completed: 4, failed: 2, success_rate: 66.7, avg_duration_ms: 2500,
-        p95_duration_ms: 9000, channels: { chat: 5, voice: 1 } },
+        p95_duration_ms: 9000, channels: { chat: 5, telegram: 1 } },
     }} />);
     expect(screen.getByText('66.7%')).toBeInTheDocument();
     expect(screen.getByText('2.5 s')).toBeInTheDocument();

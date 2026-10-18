@@ -5,11 +5,11 @@ import { useI18n } from '../../i18n';
 /**
  * RunOverrides: what this run was asked to build differently from its agent
  * (`run.overrides`, agents/run_overrides.py): model, instructions, tools,
- * skills, MCP servers, tool policy, answer schema. Renders nothing for a run
+ * skills, tool policy, answer schema. Renders nothing for a run
  * that had none.
  */
 
-const ORDER = ['provider', 'model', 'system', 'system_append', 'tools', 'skills', 'mcp', 'tool_policy', 'output_schema'];
+const ORDER = ['provider', 'model', 'system', 'system_append', 'tools', 'skills', 'tool_policy', 'output_schema'];
 
 function Value({ name, value, t }) {
   if (name === 'tools' && value && !Array.isArray(value) && typeof value === 'object') {

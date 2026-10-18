@@ -6,17 +6,11 @@ import { useStream, useLiveRefetch } from './stream';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
-import { Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useI18n } from '../i18n';
-import OnboardingModal from './docs/OnboardingModal';
-import useSetupGuide from './setup/useSetupGuide';
 import { routeTitleKey } from './routeTitles';
-import PageChatPanel from './pageChat/PageChatPanel';
-import HelpPanel from './help/HelpPanel';
-import { isEmbedded } from './embed';
-import WakeListener from './assistant/WakeListener';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -59,10 +53,6 @@ const Layout = ({ children }) => {
   const { selectedWorkspace, setSelectedWorkspace, liveUpdates, toggleLiveUpdates } = useWorkspace();
   const { theme, setTheme } = useTheme();
   const { t } = useI18n();
-  // The guided setup's own pill, while it runs (docs/assistant.md "Guided
-  // setup"); cheap, since useSetupGuide only polls while the guide is
-  // active or a step's own work is going on.
-  const { guide, act: guideAct } = useSetupGuide();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: the `model` part of GET /api/workspaces/{name}/summary
   // - global_default: DEFAULT_PROVIDER + its model from .env (lowest-priority fallback)
@@ -202,14 +192,7 @@ const Layout = ({ children }) => {
     wsDefault.provider === globalDefault.provider &&
     (wsDefault.model || '') === (globalDefault.model || '')
   );
-  // A personal workspace (common/personal_workspace.py) reads as the
-  // person's own, never by its generated name.
-  const workspaceLabel = (ws) => {
-    if (ws.name === 'default') return t('layout.workspaceDefaultAll');
-    if (ws.own_personal) return t('layout.workspacePersonal');
-    if (ws.personal) return t('layout.workspacePersonalOf', { name: ws.personal_label || ws.personal_of });
-    return ws.name;
-  };
+  const workspaceLabel = (ws) => (ws.name === 'default' ? t('layout.workspaceDefaultAll') : ws.name);
 
   const displayModel = (() => {
     const op = workspaceModel.override?.provider || '';
@@ -322,16 +305,8 @@ const Layout = ({ children }) => {
       <span>{t(currentThemeOption.labelKey)}</span>
     </button>
   );
-  // A page the assistant opened beside itself ("show on screen"): the page
-  // alone, without the sidebar, the header and the panels around it.
-  if (isEmbedded()) {
-    return <main className="app-shell h-viewport overflow-y-auto">{children}</main>;
-  }
-
   return (
     <div className="app-shell flex h-viewport overflow-hidden px-safe">
-      {/* First-run onboarding (auto-opens once; re-openable from Docs) */}
-      <OnboardingModal />
       {narrow && drawerOpen && (
         <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
       )}
@@ -485,7 +460,7 @@ const Layout = ({ children }) => {
                   <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
                   {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
                   {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
-                  {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
+                  {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.defaultSuffix')}</span>}
                 </span>
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
@@ -558,37 +533,6 @@ const Layout = ({ children }) => {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            {/* The guided setup's own progress, while it runs: hidden on the
-                Assistant page itself, since it is already there. */}
-            {guide?.active && !guide.complete && location.pathname !== '/assistant' && (
-              <span className="flex items-center rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => navigate('/assistant?setup=1')}
-                  title={t('setupGuide.pill', { done: guide.done, total: guide.total })}
-                  className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors ${guide.can_close ? 'pr-1 sm:pr-1.5' : ''}`}
-                >
-                  <ListChecks className="w-3.5 h-3.5" />
-                  <span>{t('setupGuide.pill', { done: guide.done, total: guide.total })}</span>
-                  <span className="hidden sm:inline-block w-10 h-1 rounded-full bg-indigo-200 overflow-hidden">
-                    <span className="block h-full bg-indigo-600"
-                      style={{ width: `${guide.total ? (guide.done / guide.total) * 100 : 0}%` }} />
-                  </span>
-                </button>
-                {/* Closable once the required steps are done (common/setup_guide.py). */}
-                {guide.can_close && (
-                  <button
-                    type="button"
-                    onClick={() => guideAct('dismiss')}
-                    title={t('setupGuide.closeHint')}
-                    aria-label={t('setupGuide.close')}
-                    className="p-1 mr-1 rounded-full hover:bg-indigo-100 transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </span>
-            )}
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}
@@ -613,16 +557,9 @@ const Layout = ({ children }) => {
             {!narrow && themeButton}
             {/* Interface language */}
             {!narrow && <LanguageSwitcher />}
-            {/* Help (docs/help.md): the Support agent, for a user who is lost */}
-            <HelpPanel />
           </div>
         </header>
         <main className="flex-1 min-h-0 overflow-y-auto pb-safe">{children}</main>
-        {/* The chat that follows the page: a button in the corner everywhere
-            but on the Chat page, which is one already. */}
-        <PageChatPanel />
-        {/* The assistant's wake phrase on every page, when it is chosen on the Assistant page. */}
-        <WakeListener />
       </div>
     </div>
   );

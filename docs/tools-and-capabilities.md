@@ -33,9 +33,6 @@ against the single most dangerous tool.
   agent fetches, another reasons over the result.
 - **What a web tool actually read is recorded.** Every `fetch_url` call, with the text handed back and the flags raised against it,
   lands in the [web request log](web-logs.md).
-- **Log readers count as ingesting untrusted content.** A run log holds whatever
-  that run handled, including pages it fetched. So the Service Agent, which
-  reads every log, is given no outbound channel at all.
 - **Adding a tool in the editor can be refused.** The message names the
   capabilities that collided.
 
@@ -50,8 +47,7 @@ visible on the agent page and in the log rather than pretending it is gone.
   combination on that agent, in its own tools or reached through an agent it
   delegates to, is saved and returned as `capability_warning`. Turning it off
   again never fails: the record keeps what it already holds, and the next tool
-  or delegate that would widen it is refused again. A system workspace agent
-  never gets the switch.
+  or delegate that would widen it is refused again.
 - **For every agent.** Settings, "Agent execution", "Capability guard":
   `block` (default), `warn` or `off`, written to `.env` as `CAPABILITY_GUARD`
   and read live, so the change applies to the next save or build without a
@@ -71,8 +67,7 @@ the guard to `warn`.
 A turn stopped by the guard shows a card in the chat, not a red error: the
 reason in plain words and the button **Allow for this agent**. The button
 records the same per-agent exception as the agent editor's switch
-(`POST /api/agents/{id}/capability-override`). The system workspace rule has
-no button. If the guard is in
+(`POST /api/agents/{id}/capability-override`). If the guard is in
 `block` mode and exceptions require a container, the card says the exception
 is saved but the turn still stops until the agent runs in a container. After
 the action, **Try again** sends the same message. The streamed `done` event and
@@ -280,18 +275,17 @@ and `ingests_untrusted`, writing grants `can_exfiltrate`.
 | Git (GitLab) | `git_publish` | `can_exfiltrate` |
 | Issue trackers (Jira) | `tracker_list_issues`, `tracker_get_issue`, `tracker_sync` | `reads_private`, `ingests_untrusted` |
 | | `tracker_comment`, `tracker_transition`, `tracker_create_issue` | `can_exfiltrate` |
-| Connection proposals | `connection_options`, `propose_connection`, `connection_proposal_status` | none: names and flags only, a person applies the change ([connectors](connectors.md)) |
 
 ## Group aliases
 
-A tool list may name a group (`filesystem`, `task_management`, `service_ops`,
+A tool list may name a group (`filesystem`, `task_management`, `docs`,
 `entity_runs`, …) instead of its members. A group grants the union of what its
 members grant.
 
 ## Approval gates, which are a different thing
 
 Some tools refuse until `user_approved=True`: starting a flow, team or
-loop, and every Service Agent action that stops something. That gate is about
+loop. That gate is about
 spending money and destroying state, not about data. The refusal carries the
 estimate or names what would be destroyed, so you approve with the number in
 front of you.

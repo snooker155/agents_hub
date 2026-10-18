@@ -27,7 +27,6 @@ import {
   ShieldAlert,
   Terminal,
   Scale,
-  Library,
 } from 'lucide-react';
 import {
   getSkills,
@@ -42,7 +41,6 @@ import {
 import { exportSkillMarkdown, syncSkills, updateSkillFromOrigin } from '../api/skillVersions';
 import SkillHistoryModal from '../components/skills/SkillHistoryModal';
 import SkillImportModal from '../components/skills/SkillImportModal';
-import SkillSourcesModal from '../components/skills/SkillSourcesModal';
 import SkillDetailModal from '../components/skills/SkillDetailModal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -82,7 +80,6 @@ const SkillsCatalog = () => {
   const [installAgent, setInstallAgent] = useState('');
   const [historyFor, setHistoryFor] = useState(null); // skill whose versions are open
   const [importOpen, setImportOpen] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const notify = (text) => {
@@ -355,13 +352,6 @@ const SkillsCatalog = () => {
               className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
             />
           </div>
-          <button
-            onClick={() => setSourcesOpen(true)}
-            title={t('skillsCatalog.sources.title')}
-            className="inline-flex items-center px-3 py-2 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <Library className="w-3.5 h-3.5 mr-1.5" /> {t('skillsCatalog.sources.button')}
-          </button>
           <button
             onClick={syncFromRepos}
             disabled={syncing}
@@ -864,14 +854,6 @@ const SkillsCatalog = () => {
           targets={targets}
           onClose={() => setImportOpen(false)}
           onImported={() => fetchData()}
-        />
-      )}
-
-      {sourcesOpen && (
-        <SkillSourcesModal
-          workspace={workspace}
-          onClose={() => setSourcesOpen(false)}
-          onChanged={() => fetchData()}
         />
       )}
     </PageContainer>

@@ -8,7 +8,6 @@ export default {
     system_append: 'Instructions (appended)',
     tools: 'Tools',
     skills: 'Skills',
-    mcp: 'MCP servers',
     tool_policy: 'Tool policy',
     output_schema: 'Answer schema',
   },

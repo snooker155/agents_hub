@@ -44,10 +44,10 @@ want, and nothing the product ships will change them.
 
 ## The menu
 
-The sidebar follows the same tree in five groups: **Conversation** (Assistant,
-Chat, Dashboard), **Work** (projects, tasks, the plan, artifacts, flows, loops,
+The sidebar follows the same tree in five groups: **Conversation** (Chat,
+Dashboard), **Work** (projects, tasks, the plan, artifacts, flows, loops,
 teams, workspaces), **Agents and library** (agents, models, skills, memory, the
-marketplace), **Integrations** (connectors, MCP servers) and
+marketplace), **Integrations** (connectors) and
 **Records** (sessions, runs, costs, settings).
 
 It has two modes. The **simple menu** keeps fifteen pages, the ones a

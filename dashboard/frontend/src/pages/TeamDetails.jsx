@@ -13,7 +13,6 @@ import {
 } from '../api';
 import EntityChat from '../components/EntityChat';
 import QuotedText from '../components/teamQuotes';
-import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ComposerDock from '../components/ComposerDock';
 import { useWorkspace } from '../components/workspace';
@@ -71,10 +70,9 @@ const TABS = [
  * The team's own build chat, pinned to this team: the Team Creator edits the
  * roster in place and the page picks up the result.
  *
- * One descriptor, because the same conversation has two homes — the column
- * beside the roster, and the floating page chat. The callbacks are memoised on
- * the team id because EntityChat loads its transcript in an effect keyed on
- * them; fresh closures each render would refetch the conversation continuously.
+ * Drawn in the column beside the roster. The callbacks are memoised on the
+ * team id because EntityChat loads its transcript in an effect keyed on them;
+ * fresh closures each render would refetch the conversation continuously.
  */
 function useTeamChatDescriptor(teamId, onTeamChanged) {
   const { t } = useI18n();
@@ -88,7 +86,6 @@ function useTeamChatDescriptor(teamId, onTeamChanged) {
   }, [onTeamChanged]);
 
   return useMemo(() => (teamId ? {
-    scope: `team:${teamId}`,
     path: teamChatUrl(teamId),
     loadChat, clearChat, stopChat, onEvent,
     title: t('teamDetails.buildChat'),
@@ -259,14 +256,12 @@ export default function TeamDetails() {
   // Up to ten lines, then it scrolls (lib/autoGrow.js).
   useEffect(() => { autoGrowTextarea(goalRef.current); }, [goal]);
 
-  // The build chat, drawn either in the column beside the roster or in the
-  // floating panel — one descriptor, so it is the same conversation either way.
+  // The build chat, drawn in the column beside the roster.
   const applyTeamFromChat = useCallback((updated) => {
     setTeam(updated);
     setDraft(updated);
   }, []);
   const teamChat = useTeamChatDescriptor(team?.team_id, applyTeamFromChat);
-  usePageChat(teamChat);
 
   useEffect(() => {
     (async () => {

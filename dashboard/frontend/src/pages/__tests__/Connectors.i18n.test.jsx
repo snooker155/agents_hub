@@ -31,13 +31,6 @@ vi.mock('../../api', () => ({
   deleteConnectorConfig: () => ok({}),
   testConnector: () => ok({ ok: true }),
 }));
-// The "Proposed by agents" panel (connection-proposals-contract.md): no
-// proposals here, so the panel renders nothing and every tab's text stays
-// exactly what it was before that panel existed.
-vi.mock('../../api/connectionProposals', () => ({
-  listConnectionProposals: () => ok({ proposals: [] }),
-  applyConnectionProposal: () => ok({}),
-}));
 
 const EVIDENCE = {
   ru: /[А-Яа-я]/,

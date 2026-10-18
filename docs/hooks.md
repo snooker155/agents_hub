@@ -180,8 +180,8 @@ The gate holds a tool call until a person decides. It is opt-in per workspace:
 
 With it off (the default), only a hook's `ask` decision can require approval.
 With it on, these tools need a yes every time: `run_shell`, `delete_file`,
-`apply_unified_diff`, the `delete_*` entity tools, `remove_eval_case_tool`,
-`stop_run`, `stop_instance`, `restart_instance`, `stop_container` and `prune_run_logs`.
+`apply_unified_diff`, the `delete_*` entity tools, `remove_eval_case_tool` and
+`delete_workspace`.
 Every one of them ends something, drops something, or writes over something a
 person may not get back.
 
@@ -236,10 +236,7 @@ turn waits shows the card again.
 
 The same happens for an agent the turn delegates to.
 
-In the [assistant](assistant.md#voice)'s thread a card can also be answered
-by voice: a short spoken yes or no while the card waits settles it. A
-connection card never is: its secret is
-typed into the card.
+A connection card is never settled for you: its secret is typed into the card.
 
 API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
 `GET /api/tool-approvals/{id}`, and `POST /api/tool-approvals/{id}` with
@@ -249,8 +246,7 @@ waits).
 ## Auto mode
 
 A person can accept every confirmation of a conversation in advance: the
-**Auto** toggle under the chat's input box (or Shift+Tab in the box), and the
-same button in the [assistant](assistant.md)'s header. While it is on, an amber
+**Auto** toggle under the chat's input box (or Shift+Tab in the box). While it is on, an amber
 banner above the conversation says so, with **Turn off**, and every turn of the
 conversation carries `auto_approve`:
 
@@ -259,9 +255,7 @@ conversation carries `auto_approve`:
   row is decided by `auto mode`, and the policy trail carries
   `auto_mode_approved`.
 - A tool gated by its own `user_approved` argument (`run_flow_tool`,
-  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`,
-  `stop_run`, `stop_instance`, `restart_instance`,
-  `stop_container`, `prune_run_logs`, `system_prune_branches`) runs as approved,
+  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`) runs as approved,
   and leaves the same resolved card.
 - The agent is told auto mode is on, so it does not stop to ask whether to go
   ahead.
@@ -271,7 +265,7 @@ guardrail, the capability guard) is still refused, since a refusal is
 not a confirmation; and a connection card still waits, because its secret is
 yours to type.
 
-It is honoured only from the Chat page and the assistant's thread. You can
+It is honoured only from the Chat page. You can
 turn it off for a workspace (Settings, Tool policy, **Allow auto mode in chat**, or
 `PUT /api/workspaces/{name}/policy` with `{"allow_auto_approve": false}`); the
 toggle is then disabled and the server drops the flag. The flag is checked per
@@ -279,7 +273,7 @@ turn on the server, and written on the run record (`auto_approve`).
 
 ## What stays advisory
 
-`tools/service_ops.py` and the entity run tools have always refused destructive
+The entity run tools have always refused destructive
 calls with an `approval_required` error that names what would be destroyed, and
 let the agent proceed once it calls again with `user_approved=True`. That
 convention is unchanged and is what agents are prompted for; the gate reuses the

@@ -4,10 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Docs from '../Docs';
 import { I18nProvider } from '../../i18n';
 
-// OnboardingModal now depends on the guided setup (useSetupGuide) rather than
-// only on localStorage, so its own coverage moved to
-// components/docs/__tests__/OnboardingModal.test.jsx, which mocks that guide.
-
 // The Docs page used to mix translated strings with hardcoded English prose, so
 // half of it kept its language when the switcher changed. These tests render
 // every section in every language and fail on either symptom: an unresolved
@@ -31,9 +27,9 @@ const SECTIONS = [
   'instances', 'nodes', 'containers', 'models', 'providers', 'connectors',
   'tutorials', 'cli', 'cli-api', 'faq',
   // Guide sections (GuideDoc, the docsGuide namespace).
-  'project-deployments', 'files', 'registry', 'agent-loop', 'steering', 'mcp',
+  'project-deployments', 'files', 'registry', 'agent-loop', 'steering',
   'outcomes', 'sessions-runs', 'services', 'deployments', 'local-models', 'health',
-  'production', 'accounts', 'widget', 'integrations', 'assistant',
+  'production', 'accounts', 'widget', 'integrations',
 ];
 
 // A language is "reaching the page" when its own script/function words show up.
@@ -78,10 +74,10 @@ describe('Docs full reference language', () => {
 
   it('asks for the page in the interface language', async () => {
     localStorage.setItem('agents_hub_language', 'ru');
-    const { container } = renderAt('/docs/assistant', <Docs />);
+    const { container } = renderAt('/docs/steering', <Docs />);
     const details = container.querySelector('details');
     details.open = true;
     fireEvent(details, new Event('toggle'));
-    await waitFor(() => expect(getDocMock).toHaveBeenCalledWith('assistant', 'ru'));
+    await waitFor(() => expect(getDocMock).toHaveBeenCalledWith('steering', 'ru'));
   });
 });

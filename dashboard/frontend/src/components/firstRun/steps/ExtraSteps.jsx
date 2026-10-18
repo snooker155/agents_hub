@@ -1,5 +1,5 @@
 /**
- * The screens after the voice, each with a "not now" or a plain choice:
+ * The screens after the model, each with a "not now" or a plain choice:
  * personal memory, the demo workspace. A screen whose answer is already in
  * place (the demo already there) says so and only asks to go on.
  */

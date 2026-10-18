@@ -21,8 +21,6 @@ log = logging.getLogger(__name__)
 
 MODULES = (
     "tools.trackers",
-    # Not a connector of its own: proposing one (connectors/proposals.py).
-    "tools.connection_setup",
     # Not a connector either: the main agent's workspace management
     # (tools/workspace_management.py), catalogued under agent_management.
     "tools.workspace_management",

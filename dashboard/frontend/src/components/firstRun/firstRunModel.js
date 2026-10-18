@@ -3,7 +3,7 @@
  * steps, provider names, and how a server error reads.
  */
 
-export const STEPS = ['hello', 'language', 'appearance', 'model', 'choose_model', 'voice', 'memory', 'demo', 'done'];
+export const STEPS = ['hello', 'language', 'appearance', 'model', 'choose_model', 'memory', 'demo', 'done'];
 export const MODEL_AT = STEPS.indexOf('model');
 
 export const PROVIDER_LABELS = {
@@ -32,13 +32,6 @@ export function stepFrom(ctx, step, dir) {
   const order = STEPS.indexOf(step);
   if (dir > 0) return list.find((s) => STEPS.indexOf(s) > order) || list[list.length - 1];
   return [...list].reverse().find((s) => STEPS.indexOf(s) < order) || list[0];
-}
-
-/** A model id as a person reads it: "gpt-4o-mini-tts" is "Gpt". */
-export function voiceLabel(model) {
-  const m = String(model || '');
-  const head = m.split(/[-_]/)[0] || m;
-  return head ? `${head[0].toUpperCase()}${head.slice(1)}` : '';
 }
 
 /** The server's message for a failed call, by code where the step knows it. */

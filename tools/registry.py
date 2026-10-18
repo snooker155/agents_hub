@@ -119,7 +119,6 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "fetch_url": {"name": "Fetch URL"},
     "run_code": {"name": "Run Code (sandboxed)"},
     "view_serve": {"name": "Serve (proxy)"},
-    "web_log_recent": {"name": "Recent Web Calls"},
 }
 
 
@@ -414,32 +413,6 @@ def _web_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="web") for t in WEB_TOOLS]
 
 
-def _service_ops_specs() -> List[ToolSpec]:
-    from tools.service_ops import SERVICE_OPS_TOOLS
-    return [spec_from_tool(t, category="service_ops") for t in SERVICE_OPS_TOOLS]
-
-
-def _hub_lookup_specs() -> List[ToolSpec]:
-    # The assistant's view of the hub's records (chat/lookup.py), the
-    # administrator's service-wide one, and its one-step actions on them
-    # (chat/actions.py).
-    from tools.hub_action import HUB_ACTION_TOOLS
-    from tools.hub_lookup import HUB_LOOKUP_TOOLS, SERVICE_LOOKUP_TOOLS
-    from tools.assistant_conversations import ASSISTANT_CONVERSATION_TOOLS
-    from tools.setup_guide import SETUP_GUIDE_TOOLS
-    return [spec_from_tool(t, category="service_ops")
-            for t in (*HUB_LOOKUP_TOOLS, *SERVICE_LOOKUP_TOOLS, *HUB_ACTION_TOOLS,
-                      *ASSISTANT_CONVERSATION_TOOLS, *SETUP_GUIDE_TOOLS)]
-
-
-def _system_ops_specs() -> List[ToolSpec]:
-    # The system workspace's repository copy (tools/system_ops.py,
-    # common/system_workspace.py): its own category, because these tools only
-    # ever act on the copy under the state directory, never on a project.
-    from tools.system_ops import SYSTEM_OPS_TOOLS
-    return [spec_from_tool(t, category="system_ops") for t in SYSTEM_OPS_TOOLS]
-
-
 def _documentation_specs() -> List[ToolSpec]:
     from tools.docs_tool import DOCS_TOOLS
     return [spec_from_tool(t, category="documentation") for t in DOCS_TOOLS]
@@ -447,7 +420,7 @@ def _documentation_specs() -> List[ToolSpec]:
 
 def _connector_specs() -> List[ToolSpec]:
     # Tools that act through a connector (tools/connector_tools.py): the
-    # issue tracker and the connection proposals. One category, "connectors",
+    # issue tracker. One category, "connectors",
     # because each is only as available as the connector it sits on.
     from tools.connector_tools import connector_tools
     from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
@@ -489,9 +462,6 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _git_publish_specs,
     _visualization_specs,
     _web_specs,
-    _service_ops_specs,
-    _hub_lookup_specs,
-    _system_ops_specs,
     _documentation_specs,
     _connector_specs,
 ]
@@ -554,32 +524,6 @@ def get_tools_by_category(category: str) -> List[ToolSpec]:
     return [t for t in _catalog() if t.category == category]
 
 
-def list_mcp_tool_specs(workspace: Optional[str] = None) -> List[ToolSpec]:
-    """Catalog entries for the MCP tools attached to one workspace.
-
-    A second list beside the catalog, never folded into it. The catalog is
-    static and every id in it is classified in ``tools/capabilities.py`` — a
-    property the classification test asserts — while these are defined on
-    somebody else's server, differ per workspace and can change between two
-    calls. Merging them would make that assertion unstateable and would make
-    ``TOOL_CATALOG`` depend on which workspace happened to be active.
-
-    Their capabilities still resolve through the same ``grants_of`` the catalog
-    uses: an MCP id is answered from its server's configuration (see
-    ``tools.capabilities.mcp_grants``), so ``ToolSpec.to_dict`` reports the
-    operator's declared grants for these exactly as it does for built-ins.
-
-    Never raises: the agent editor asking what is attached must not fail
-    because a server is unreachable or the package is not installed.
-    """
-    try:
-        from mcp_client.client import mcp_tool_specs
-        return mcp_tool_specs(workspace)
-    except Exception:
-        logger.exception("tool catalog: failed to list MCP tools for workspace %r", workspace)
-        return []
-
-
 def get_tool_by_id(tool_id: str) -> Optional[ToolSpec]:
     """Get a specific tool by ID."""
     for t in _catalog():
@@ -597,5 +541,4 @@ __all__ = [
     "get_all_tools",
     "get_tools_by_category",
     "get_tool_by_id",
-    "list_mcp_tool_specs",
 ]

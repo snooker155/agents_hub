@@ -8,7 +8,6 @@ import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getInstancesSummary, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import EntityChat from '../components/EntityChat';
-import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -287,8 +286,7 @@ const AgentDetails = () => {
     }
   }, [id, selectedWorkspace, workspaceFilter]);
 
-  // The definition chat: the column beside the Config tab and the floating page
-  // chat are two frames around this one conversation.
+  // The definition chat, in the column beside the Config tab.
   const definitionChat = useDefinitionChatDescriptor(agent?.id, selectedWorkspace, fetchData);
 
   // Three tabs own enough state to be their own concern; each loads on the tab
@@ -297,7 +295,6 @@ const AgentDetails = () => {
   const model = useAgentModel({ id, t });
   const skills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
   const versions = useAgentVersions({ id, activeTab, onRolledBack: fetchData, t });
-  usePageChat(definitionChat);
 
   useEffect(() => {
     fetchData();
@@ -353,7 +350,6 @@ const AgentDetails = () => {
       }
     };
     fetchTools();
-    // MCP servers are attached per workspace, so the list changes with it.
   }, [selectedWorkspace]);
 
   // Load the delegation allowlist and the set of agents available to delegate to.

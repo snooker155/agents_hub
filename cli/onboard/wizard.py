@@ -1,9 +1,8 @@
 """`ah setup`: install and configure the hub from the terminal.
 
-A guided first run in six steps: how to run it (this checkout, or Docker from
-the published images), the model providers and their default models, the
-assistant's voice (speech and transcription models), a few features, a
-review, and then the work itself.
+A guided first run in five steps: how to run it (this checkout, or Docker from
+the published images), the model providers and their default models, a few
+features, a review, and then the work itself.
 
 Nothing is written until the review is confirmed. Every question is asked
 through :mod:`cli.onboard.ui`, so the same steps run from an answers file for
@@ -11,10 +10,8 @@ an unattended install (``ah setup --answers setup.json --yes``), and
 ``--dry-run`` stops after the review.
 
 What it writes is what the rest of the service already reads: ``.env`` (the
-same keys the Settings page edits), the model catalog the Models page edits
-(``providers/catalog.py``), and the assistant's speech and transcription
-models (the Models page's Voice tab, ``providers/voice_models.py``). It
-holds no state of its own, so running it again is how a setting is changed
+same keys the Settings page edits) and the model catalog the Models page
+edits (``providers/catalog.py``). It holds no state of its own, so running it again is how a setting is changed
 later: every question then defaults to the value in force.
 """
 from __future__ import annotations
@@ -36,12 +33,10 @@ from rich.table import Table
 from rich import box
 
 from cli.onboard import probe as P
-# The voice choices, shared with the assistant's guided setup in the hub.
-from cli.onboard.presets import VOICE_CLOUD
 from cli.onboard.ui import Asker, SetupError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-STEPS = 6
+STEPS = 5
 
 SHAPES = [
     ("local", "This machine, from this checkout", "a virtualenv, `ah up`, the dashboard on :5173"),
@@ -146,9 +141,6 @@ class Plan:
     generated_notes: list = field(default_factory=list)  # warnings printed with them
     providers: dict = field(default_factory=dict)  # provider -> {model, models, presets}
     pip_extras: list = field(default_factory=list)
-    # The assistant's voice: mode and the voice model entries
-    # (providers/voice_models.py).
-    voice: dict = field(default_factory=dict)
 
     def cur(self, key: str, default: str = "") -> str:
         """The value in force: what this run already decided, then the file."""
@@ -183,7 +175,7 @@ def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional
         plan.shape = a.choose("shape", "How should Agents Hub run?", SHAPES, default="local")
 
     plan.quick = not advanced and a.choose("flow", "How many questions?", [
-        ("quick", "QuickStart", "only what cannot be guessed; the assistant sets up the rest with you"),
+        ("quick", "QuickStart", "only what cannot be guessed; the rest keeps its defaults"),
         ("advanced", "Advanced", "every choice: execution, RAG"),
     ], default="quick") == "quick"
 
@@ -355,91 +347,18 @@ def step_providers(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 3: the assistant's voice
+# Step 3: features
 # ---------------------------------------------------------------------------
 
 
-def step_voice(a: Asker, plan: Plan) -> None:
-    """The assistant listens and speaks with the hub's transcription and
-    speech models (providers/voice_models.py). Saved once the hub's database (or, in Docker, its API) is there."""
-    a.section(3, STEPS, "Assistant voice",
-              "What the assistant hears you with and reads its answers aloud with "
-              "(the Voice tab of the Models page).")
-    if plan.quick and not a.answered("voice.mode"):
-        a.note("Left to the assistant: it offers a voice on its first run in the dashboard, and the "
-               "browser's own voice works until then.")
-        return
-    cloud = [p for p in VOICE_CLOUD if p in plan.providers or _configured(plan, p)]
-    options = []
-    if cloud:
-        options.append(("cloud", "A cloud provider", ", ".join(P.LABELS[p] for p in cloud) + "; paid per use"))
-    options += [
-        ("browser", "The browser only", "Chrome or Safari listen and speak themselves; nothing on the server"),
-        ("skip", "Not now", "add the models later on the Models page"),
-    ]
-    mode = a.choose("voice.mode", "How should the assistant hear and speak?", options,
-                    default="cloud" if cloud else "browser")
-    plan.voice = {"mode": mode}
-    if mode == "cloud":
-        provider = cloud[0] if len(cloud) == 1 else a.choose(
-            "voice.provider", "Which provider?", [(p, P.LABELS[p], VOICE_CLOUD[p]["speech"]) for p in cloud],
-            default=cloud[0])
-        spec = VOICE_CLOUD[provider]
-        voice = a.choose("voice.voice", "Its voice (the assistant page and the Models page can change it)",
-                         [(v, v, "") for v in spec["voices"]], default=spec["voices"][0])
-        # The same entries common/setup_ops.voice_cloud saves when the
-        # assistant sets the voice in the dashboard; a price only when known.
-        plan.voice.update({
-            "speech": {"provider": provider, "model": spec["speech"], "options": {"voice": voice},
-                       **({"price_usd": spec["speech_price"]} if spec["speech_price"] is not None else {})},
-            "transcription": {"provider": provider, "model": spec["transcription"], "options": {},
-                              **({"price_usd": spec["transcription_price"]}
-                                 if spec["transcription_price"] is not None else {})},
-        })
-    elif mode == "browser":
-        a.note("The assistant page uses the browser's own recognition and voice; Firefox has neither.")
-
-
-def _voice_entries(plan: Plan) -> dict:
-    return {k: plan.voice[k] for k in ("speech", "transcription")}
-
-
-def _voice_actions(plan: Plan) -> list[str]:
-    v = plan.voice
-    if not v.get("speech"):
-        return []
-    where = "in the database"
-    return [f"set the default workspace's speech model to {v['speech']['provider']}/{v['speech']['model']} "
-            f"and transcription to {v['transcription']['provider']}/{v['transcription']['model']} {where}"]
-
-
-def _voice_done(a: Asker, plan: Plan) -> None:
-    a.ok("Assistant voice: " + ", ".join(f"{k} {e['provider']}/{e['model']}"
-                                         for k, e in _voice_entries(plan).items()) + ".")
-
-
-def _apply_voice_local(a: Asker, plan: Plan) -> None:
-    if not plan.voice.get("speech"):
-        return
-    try:
-        # The same write the assistant's setup_step makes.
-        from common.setup_ops import _save_voice
-        _save_voice(_voice_entries(plan))
-        _voice_done(a, plan)
-    except Exception as exc:  # noqa: BLE001 - the rest of the setup stands; say what to do
-        a.warn(f"The assistant's voice was not set ({exc}). Add it on the Models page, Voice tab.")
-
-
-
 def step_features(a: Asker, plan: Plan) -> None:
-    a.section(4, STEPS, "Features")
+    a.section(3, STEPS, "Features")
     if not plan.quick or a.answered("demo"):
         demo = a.confirm("demo", "Seed the demo workspace on the first start (four agents, chats, views)?",
                          plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
         plan.env["DEMO_WORKSPACE"] = "1" if demo else "0"
     else:
-        a.note("The demo workspace and the rest: the assistant offers them in the "
-               "dashboard, one at a time.")
+        a.note("The demo workspace: the first run in the dashboard offers it.")
 
     if plan.quick:
         return
@@ -460,7 +379,7 @@ def step_features(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 5: review
+# Step 4: review
 # ---------------------------------------------------------------------------
 
 _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
@@ -485,12 +404,11 @@ def actions(plan: Plan) -> list[str]:
     out.append(f"write {plan.env_file}" + (" (the current one is backed up)" if plan.env_file.exists() else ""))
     if plan.providers:
         out.append("put the chosen models into the Models catalog, each provider's default starred")
-    out += _voice_actions(plan)
     return out
 
 
 def step_review(a: Asker, plan: Plan) -> None:
-    a.section(5, STEPS, "Review")
+    a.section(4, STEPS, "Review")
     table = Table(box=box.SIMPLE, show_header=True, pad_edge=False)
     table.add_column("setting", style="bold")
     table.add_column("value")
@@ -506,7 +424,7 @@ def step_review(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 6: apply
+# Step 5: apply
 # ---------------------------------------------------------------------------
 
 
@@ -568,7 +486,6 @@ def apply_local(a: Asker, plan: Plan) -> None:
         return
     if plan.providers:
         _apply_catalog(a, plan)
-    _apply_voice_local(a, plan)
 
 
 # ---------------------------------------------------------------------------
@@ -585,18 +502,16 @@ def _farewell(a: Asker, plan: Plan, started: bool) -> None:
              "open http://localhost:5173",
              "ah doctor                 check every part"]
     lines += ["ah setup                  change any of this later"]
-    # From here the assistant leads (common/setup_guide.py): the welcome window
-    # hands over to it, or asks for a model key first when none was given.
-    lines += ["", "In the dashboard, choose Talk or Type in the welcome window: the assistant takes you"]
-    lines += (["through the rest of the setup (the default model, its voice, a first",
-               "agent and task)."] if plan.providers else
-              ["through the rest. It asks for a model key first, since none was given here."])
+    # The first run in the browser (common/first_run.py) asks for the rest.
+    lines += ["", "In the dashboard, the first run asks for the language, the look and personal memory,"]
+    lines += (["and shows the model chosen here."] if plan.providers else
+              ["and for a model key first, since none was given here."])
     a.panel("\n".join(lines), title="Next", style="green")
 
 
 def _banner(a: Asker) -> None:
     a.panel("[bold]Agents Hub setup[/bold]\n"
-            "How it runs, the model providers, the assistant's voice, a few features.\n"
+            "How it runs, the model providers, a few features.\n"
             "[dim]Nothing is written until you confirm the review. Ctrl-C stops at any point.[/dim]",
             style="cyan")
 
@@ -609,7 +524,6 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         a.note("Cancelled; nothing was changed.")
         return 0
     step_providers(a, plan)
-    step_voice(a, plan)
     step_features(a, plan)
     step_review(a, plan)
     if dry_run:
@@ -619,7 +533,7 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         a.note("Cancelled; nothing was changed.")
         return 0
 
-    a.section(6, STEPS, "Applying")
+    a.section(5, STEPS, "Applying")
     apply_local(a, plan)
     _farewell(a, plan, started=False)
     if not no_start and a.interactive and a.confirm("start", "Start it now (ah up)?", True):

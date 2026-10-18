@@ -68,10 +68,9 @@ describe('what the mark shows for a step', () => {
     ['mesh_extrude', 'make-3d'], ['mesh_history', 'make-3d'], ['view_serve', 'make-html'],
     ['add_graph_node', 'make-flow'], ['run_flow_tool', 'run-flow'], ['run_team_tool', 'run-team'],
     ['create_agent_tool', 'make-agent'], ['delegate_task_tool', 'delegate'], ['run_agent_tool', 'delegate'],
-    ['run_code', 'code'], ['run_shell', 'code'], ['system_run_tests', 'code'],
+    ['run_code', 'code'], ['run_shell', 'code'],
     ['get_task', 'read'], ['list_flows_tool', 'read'], ['view_get', 'read'],
     ['stop_team_run_tool', 'working'], ['delete_file', 'working'], ['clear_graph', 'working'], ['', 'working'],
-    ['service_health', 'search-errors'],
     ['remember', 'mark-goodrop'], ['recall', 'search-memory'], ['recall_episodes', 'search-memory'],
     ['create_task', 'write-file'], ['schedule_task', 'mark-gclock'], ['update_scheduled', 'mark-gclock'],
     ['notify_user', 'mark-antenna'],
@@ -80,7 +79,7 @@ describe('what the mark shows for a step', () => {
     ['assign_agent_tool', 'relay-lead'], ['run_eval_tool', 'relay-delegate'], ['add_subtask', 'relay-team'],
     ['tracker_transition', 'relay-flow'], ['deploy_project', 'relay-deploy'], ['restart_instance', 'relay-deploy'],
     // the rebuilds of the mark
-    ['think', 'mark-graph'], ['system_prune_branches', 'mark-graph'], ['google_calendar_list', 'mark-3dclock'],
+    ['think', 'mark-graph'], ['google_calendar_list', 'mark-3dclock'],
     ['list_scheduled', 'mark-gclock'], ['get_agent_status_tool', 'mark-arcs'], ['write_memory', 'mark-goodrop'],
     ['notion_import', 'mark-capture'], ['mesh_export', 'mark-net'], ['validate_flow_tool', 'mark-venn'],
     ['create_eval_tool', 'mark-venn'], ['list_evals_tool', 'read'], ['tracker_sync', 'mark-ring'],
@@ -94,30 +93,9 @@ describe('what the mark shows for a step', () => {
     ['toggle_watcher', 'mark-tetra'], ['create_world_tool', 'mark-3dmorph'], ['sim_configure', 'mark-3d'],
     ['create_workspace', 'make-team'], ['add_workspace_agent', 'make-team'], ['get_workspace', 'read'],
     ['delete_workspace', 'working'], ['remove_workspace_agent', 'working'],
-    ['list_sessions', 'search-history'], ['run_diagnostics', 'code'],
+    ['list_sessions', 'search-history'],
   ])('%s → %s', (tool, state) => {
     expect(stateForTool(tool)).toBe(state);
-  });
-
-  it.each([
-    ['run', 'search-history'], ['session', 'search-history'], ['audit', 'search-history'],
-    ['health', 'search-errors'], ['notification', 'search-mail'], ['model', 'search-tools'],
-    ['skill', 'search-tools'], ['view', 'search-files'], ['agent', 'search-db'], ['cost', 'search-db'],
-    ['budget', 'search-db'], ['', 'read'],
-  ])('a lookup of %s → %s', (kind, state) => {
-    expect(stateForTool('hub_lookup', { kind })).toBe(state);
-    expect(stateForTool('service_lookup', JSON.stringify({ kind }))).toBe(state);
-  });
-
-  it('reads a one-step action by its verb and kind', () => {
-    expect(stateForTool('hub_action', { kind: 'loop', action: 'start' })).toBe('mark-cycle');
-    expect(stateForTool('hub_action', { kind: 'instance', action: 'restart' })).toBe('relay-deploy');
-    expect(stateForTool('hub_action', { kind: 'watcher', action: 'pause' })).toBe('mark-tetra');
-    expect(stateForTool('hub_action', { kind: 'flow', action: 'resume' })).toBe('run-flow');
-    expect(stateForTool('hub_action', { kind: 'team', action: 'start' })).toBe('run-team');
-    expect(stateForTool('hub_action', { kind: 'pulse', action: 'resume' })).toBe('delegate');
-    expect(stateForTool('hub_action', { kind: 'instance', action: 'stop' })).toBe('working');
-    expect(stateForTool('hub_action', 'not json')).toBe('working');
   });
 
   it('gives a tool no rule knows one of the rebuilds that stand for nothing, the same one each time', () => {
@@ -127,10 +105,6 @@ describe('what the mark shows for a step', () => {
       expect(stateForTool(n)).toBe(stateForTool(n));
     });
     expect(new Set(names.map((n) => stateForTool(n))).size).toBeGreaterThan(1);
-  });
-
-  it('passes the input of a turn\'s tool on', () => {
-    expect(stateForTurn({ tool: 'hub_lookup', input: { kind: 'cost' } })).toBe('search-db');
   });
 
   it('puts a waiting approval first, then the tool, the thought and the text', () => {

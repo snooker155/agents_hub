@@ -7,13 +7,11 @@ skill holding ``SKILL.md`` (YAML frontmatter with ``name`` and
 instructions refer to (scripts, templates, reference notes). A team that
 already keeps its skills next to its code gets them in the hub without
 retyping: :func:`sync_workspace` scans every skill root of a workspace (the
-workspace folder itself, each project's cloned repository, each project
-folder and each connected skill source) and keeps one catalog entry per skill
+workspace folder itself, each project's cloned repository and each project
+folder) and keeps one catalog entry per skill
 folder in step with it. The walk (:func:`skill_dirs`) finds the layouts the
 ecosystem uses, from ``.claude/skills/<name>`` to ``skills/<name>``,
-``plugins/<name>`` and a single skill at the root of its repository, so a
-public collection cloned under ``.skills/sources`` (memory/skill_sources.py)
-comes in the same way.
+``plugins/<name>`` and a single skill at the root of its repository.
 
 Every skill found is reviewed (memory/skill_review.py): flags for injection
 phrasing and the other shapes malicious skills take, the files an agent could
@@ -161,7 +159,7 @@ def render_skill_md(procedure: Any) -> str:
 class FoundSkill:
     skill_dir: Path            # absolute
     rel_dir: str               # relative to the workspace folder, posix
-    root_label: str            # which root it came from (workspace / project / source)
+    root_label: str            # which root it came from (workspace / project)
     project_id: Optional[str]
     parsed: Optional[ParsedSkill]
     resources: List[str]
@@ -169,8 +167,6 @@ class FoundSkill:
     error: Optional[str] = None
     # memory/skill_review.py: flags, scripts, license verdict.
     safety: Optional[Dict[str, Any]] = None
-    # memory/skill_sources.py: the connected source it came from.
-    source_id: Optional[str] = None
 
 
 def _list_resources(skill_dir: Path) -> List[str]:
@@ -266,7 +262,7 @@ def skill_dirs(root: Path, *, exclude: Iterable[Path] = ()) -> List[Path]:
 
 
 def discover(root: Path, ws_folder: Path, *, label: str = "",
-             project_id: Optional[str] = None, source_id: Optional[str] = None,
+             project_id: Optional[str] = None,
              exclude: Iterable[Path] = ()) -> List[FoundSkill]:
     """Every skill folder under ``root`` (:func:`skill_dirs`), parsed and
     reviewed (memory/skill_review.py)."""
@@ -284,7 +280,7 @@ def discover(root: Path, ws_folder: Path, *, label: str = "",
         raw = skill_md.read_bytes()[: MAX_SKILL_MD_BYTES + 1]
         resources = _list_resources(skill_dir)
         entry = FoundSkill(skill_dir=skill_dir, rel_dir=rel_dir, root_label=label,
-                           project_id=project_id, source_id=source_id, parsed=None,
+                           project_id=project_id, parsed=None,
                            resources=resources, sha256=_folder_hash(raw, resources, skill_dir))
         if len(raw) > MAX_SKILL_MD_BYTES:
             entry.error = f"SKILL.md is larger than {MAX_SKILL_MD_BYTES // 1024} KB"
@@ -313,18 +309,16 @@ class SkillRoot:
     path: Path
     label: str
     project_id: Optional[str] = None
-    source_id: Optional[str] = None
 
     @property
     def scoped(self) -> bool:
-        """A project or source root, as opposed to the workspace folder."""
-        return bool(self.project_id or self.source_id)
+        """A project root, as opposed to the workspace folder."""
+        return bool(self.project_id)
 
 
 def skill_roots(workspace: str) -> List[SkillRoot]:
     """Each place a workspace keeps skills: the workspace folder, each
-    project's cloned repository and each project folder, and each connected
-    skill source (memory/skill_sources.py). Duplicates (a repo cloned into
+    project's cloned repository and each project folder. Duplicates (a repo cloned into
     the project folder) collapse."""
     from workspace import get_workspace_folder
     from workspace.storage import project_folder_name
@@ -347,12 +341,6 @@ def skill_roots(workspace: str) -> List[SkillRoot]:
         for candidate in candidates:
             if candidate.is_dir():
                 roots.append(SkillRoot(candidate, project.name, project_id=project.id))
-    try:
-        from memory.skill_sources import connected_sources, source_label
-        for meta in connected_sources(workspace):
-            roots.append(SkillRoot(Path(meta["path"]), source_label(meta), source_id=meta["id"]))
-    except Exception:  # noqa: BLE001 - an unreadable source must not hide the other skills
-        log.warning("skill sync: could not list skill sources of %s", workspace, exc_info=True)
     seen = set()
     unique: List[SkillRoot] = []
     for root in roots:
@@ -375,11 +363,10 @@ def _repo_key(procedure: Any) -> Optional[str]:
     return str(repo.get("dir") or "") or None
 
 
-def sync_workspace(workspace: str, *, project_id: Optional[str] = None,
-                   source_id: Optional[str] = None) -> Dict[str, Any]:
+def sync_workspace(workspace: str, *, project_id: Optional[str] = None) -> Dict[str, Any]:
     """Bring the workspace's repo skills in step with the folders on disk.
 
-    With ``project_id`` (or ``source_id``) only that project's (source's)
+    With ``project_id`` only that project's
     roots are scanned, and only its entries can be marked missing. Returns a report: ``added``, ``updated``,
     ``unchanged``, ``missing``, ``followed`` (attached copies moved along),
     ``errors`` (folders that could not be read, with the reason).
@@ -399,21 +386,18 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None,
     roots = all_roots
     if project_id:
         roots = [r for r in roots if r.project_id == project_id]
-    elif source_id:
-        roots = [r for r in roots if r.source_id == source_id]
 
-    # Project and source roots first, so a skill inside one is attributed to
-    # it; the walk from the workspace folder then skips every such root, and
-    # the folder that holds the sources whether connected or not.
-    from memory.skill_sources import SOURCES_DIR
+    # Project roots first, so a skill inside one is attributed to it; the walk
+    # from the workspace folder then skips every such root, and the hidden
+    # .skills folder (clones of public collections made by an earlier version).
     scoped_roots = [r for r in roots if r.scoped]
     ordered = scoped_roots + [r for r in roots if not r.scoped]
-    ws_exclude = [r.path for r in all_roots if r.scoped] + [ws_folder / SOURCES_DIR.parts[0]]
+    ws_exclude = [r.path for r in all_roots if r.scoped] + [ws_folder / ".skills"]
     found: Dict[str, FoundSkill] = {}
     for root in ordered:
         exclude = [] if root.scoped else ws_exclude
         for entry in discover(root.path, ws_folder, label=root.label, project_id=root.project_id,
-                              source_id=root.source_id, exclude=exclude):
+                              exclude=exclude):
             found.setdefault(entry.rel_dir, entry)
 
     def _note_flagged(procedure: Any, safety: Optional[Dict[str, Any]]) -> None:
@@ -435,7 +419,7 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None,
             report["errors"].append({"dir": rel_dir, "error": entry.error or "unreadable"})
             continue
         repo_meta = {
-            "dir": rel_dir, "project_id": entry.project_id, "source_id": entry.source_id,
+            "dir": rel_dir, "project_id": entry.project_id,
             "root": entry.root_label, "sha256": entry.sha256, "synced_at": _now(),
             "missing": False,
         }
@@ -486,8 +470,6 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None,
             continue
         repo = dict(procedure.repo or {})
         if project_id and repo.get("project_id") != project_id:
-            continue
-        if source_id and repo.get("source_id") != source_id:
             continue
         if repo.get("missing"):
             continue

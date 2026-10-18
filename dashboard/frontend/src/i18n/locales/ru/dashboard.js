@@ -97,7 +97,7 @@ export default {
     },
     unavailable: 'Нет данных',
     channels: {
-      chat: 'чат', voice: 'голос', local: 'локально', flow: 'потоки', team: 'команды', sim: 'симуляции',
+      chat: 'чат', local: 'локально', flow: 'потоки', team: 'команды', sim: 'симуляции',
       chat_delegate: 'делегирование', continuation: 'продолжения', api: 'API', telegram: 'Telegram',
       widget: 'виджет', schedule: 'расписание', other: 'прочее',
     },

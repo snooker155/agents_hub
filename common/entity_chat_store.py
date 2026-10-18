@@ -23,9 +23,6 @@ Three things are stored per (kind, entity_id):
   reopen any of it. Reopening is a swap, not a copy: the chosen thread becomes
   the live one (epoch included), so the next turn continues it in Messages under
   the conversation id it already had.
-* ``switch_to`` — a thread a turn asked to reopen once it ends (the assistant's
-  ``assistant_conversations`` tool): a turn cannot swap the thread it is
-  writing into, so the route that ran it does the swap afterwards.
 
 Storage is a :class:`common.docstore.DocStore` collection, one document per
 ``"<kind>:<entity_id>"``, so a read-modify-write is atomic across processes and
@@ -99,33 +96,7 @@ class EntityChatStore:
             "started_at": session.get("started_at")
             or (messages[0].get("at") if messages else None),
             "updated_at": session.get("updated_at"),
-            "workspaces": cls._workspaces(messages),
-            "workspace": cls._thread_workspace(session),
         }
-
-    @staticmethod
-    def _workspaces(messages: List[dict]) -> List[str]:
-        """The workspaces a thread's turns ran in, in the order first used.
-        Only a chat whose turns can run elsewhere than its home (the
-        assistant) stamps its messages; the rest give an empty list."""
-        out: List[str] = []
-        for m in messages:
-            ws = m.get("workspace")
-            if ws and ws not in out:
-                out.append(ws)
-        return out
-
-    @classmethod
-    def _thread_workspace(cls, session: Dict[str, Any], unstamped: Optional[str] = None) -> Optional[str]:
-        """The one workspace a thread belongs to, for a chat whose
-        conversations each stay in one (the assistant): where its first turn
-        ran, else the workspace an empty live thread was opened for, else
-        ``unstamped`` for a thread from before turns were stamped."""
-        messages = session.get("messages") or []
-        stamped = cls._workspaces(messages)
-        if stamped:
-            return stamped[0]
-        return session.get("workspace") or (unstamped if messages else None)
 
     @staticmethod
     def _epoch_high(entry: Dict[str, Any]) -> int:
@@ -190,7 +161,6 @@ class EntityChatStore:
             "trace": trace,
             "started_at": (messages[0].get("at") if messages else None) or _now(),
             "updated_at": entry.get("updated_at") or _now(),
-            **({"workspace": entry["workspace"]} if entry.get("workspace") else {}),
         })
         entry["sessions"] = kept[-MAX_ARCHIVED_SESSIONS:]
 
@@ -236,22 +206,6 @@ class EntityChatStore:
             "has_history": self._has_history(entry),
         }
 
-    def threads(self, kind: str, entity_id: str) -> List[Dict[str, Any]]:
-        """Every thread with its transcript, the live one first: what the
-        Chat page shows as text (the assistant's threads, routes/chats.py).
-        Empty threads are left out."""
-        entry = self.docs.get(self._key(kind, entity_id))
-        if not entry:
-            return []
-        out = []
-        for session, active in [(entry, True)] + [(s, False) for s in (entry.get("sessions") or [])]:
-            messages = list(session.get("messages") or [])
-            if not messages:
-                continue
-            out.append({**self._summary(session, active=active), "transcript": messages,
-                        "updated_at": session.get("updated_at") or messages[-1].get("at")})
-        return out
-
     def list_sessions(self, kind: str, entity_id: str,
                       timeout: float = 10.0) -> List[Dict[str, Any]]:
         """Every thread this entity has: the live one first, then the archive."""
@@ -265,7 +219,7 @@ class EntityChatStore:
     def append_message(self, kind: str, entity_id: str, role: str, content: str,
                        timeout: float = 10.0, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Append one chat turn, creating the session if it does not exist yet.
-        ``meta`` rides along on the message (a spoken turn's ``voice``)."""
+        ``meta`` rides along on the message (the reply's run id)."""
         msg = {**(meta or {}), "role": role, "content": content, "at": _now()}
         key = self._key(kind, entity_id)
         with self.docs.transaction():
@@ -299,7 +253,7 @@ class EntityChatStore:
         dropped, which is what a caller resetting an entity wants.
         ``archive=False`` with ``new_session`` drops the thread being left but
         still opens a new epoch, so the next turn is a new conversation in
-        Messages (the assistant's "clear the transcript").
+        Messages.
         """
         key = self._key(kind, entity_id)
         with self.docs.transaction():
@@ -375,79 +329,6 @@ class EntityChatStore:
             entry["updated_at"] = _now()
             self.docs.put(key, entry)
             return True
-
-    def enter_workspace(self, kind: str, entity_id: str, workspace: str,
-                        unstamped: str = "default") -> bool:
-        """Make the live thread one of ``workspace``'s, for a chat whose
-        conversations each stay in one workspace (the assistant). A live
-        thread of another workspace is filed, and this workspace's latest
-        conversation reopened, or a new one started. ``unstamped`` is the
-        workspace of a thread from before turns were stamped. Returns whether
-        the live thread changed."""
-        key = self._key(kind, entity_id)
-        with self.docs.transaction():
-            entry = self.docs.get(key)
-            if not entry:
-                return False
-            if self._thread_workspace(entry, unstamped) == workspace:
-                if entry.get("workspace") != workspace:
-                    # Remembered, so a blank thread started here later is still this workspace's.
-                    entry["workspace"] = workspace
-                    self.docs.put(key, entry)
-                return False
-            own = [s for s in (entry.get("sessions") or [])
-                   if self._thread_workspace(s, unstamped) == workspace]
-            empty = not entry.get("messages") and not entry.get("trace")
-            if empty and (not own or not entry.get("workspace")):
-                # A blank thread that is nobody's yet, or nothing to reopen: it is this workspace's now.
-                entry["workspace"] = workspace
-                self.docs.put(key, entry)
-                return False
-            self._archive_active(entry)
-            if own:
-                chosen = max(own, key=lambda s: (s.get("updated_at") or "", int(s.get("epoch") or 0)))
-                epoch = int(chosen.get("epoch") or 0)
-                entry["sessions"] = [s for s in (entry.get("sessions") or [])
-                                     if int(s.get("epoch") or 0) != epoch]
-                entry["messages"] = list(chosen.get("messages") or [])
-                entry["trace"] = list(chosen.get("trace") or [])
-                entry["session_epoch"] = epoch
-            else:
-                entry["session_epoch"] = self._next_epoch(entry)
-                entry["messages"] = []
-                entry["trace"] = []
-            entry["workspace"] = workspace
-            entry["updated_at"] = _now()
-            self.docs.put(key, entry)
-            return True
-
-    def request_switch(self, kind: str, entity_id: str, session_id: str, run_id: str = "") -> bool:
-        """Ask for ``session_id`` to become the live thread once the running
-        turn ends (:meth:`take_switch`). False when there is no such thread."""
-        key = self._key(kind, entity_id)
-        with self.docs.transaction():
-            entry = self.docs.get(key)
-            if not entry:
-                return False
-            epochs = [int(entry.get("session_epoch") or 0)] + [
-                int(s.get("epoch") or 0) for s in (entry.get("sessions") or [])]
-            if session_id not in {self.session_id(e) for e in epochs}:
-                return False
-            entry["switch_to"] = {"session_id": session_id, "run_id": run_id, "at": _now()}
-            self.docs.put(key, entry)
-            return True
-
-    def take_switch(self, kind: str, entity_id: str) -> Optional[Dict[str, Any]]:
-        """The switch a turn asked for, removed from the entry; None when
-        nothing was asked."""
-        key = self._key(kind, entity_id)
-        with self.docs.transaction():
-            entry = self.docs.get(key)
-            if not entry or not entry.get("switch_to"):
-                return None
-            switch = entry.pop("switch_to")
-            self.docs.put(key, entry)
-            return switch
 
     def delete(self, kind: str, entity_id: str, timeout: float = 10.0) -> bool:
         """Drop an entity's chat entirely — called when the entity is deleted."""

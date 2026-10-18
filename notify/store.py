@@ -1,7 +1,7 @@
 """Per-workspace alert rules.
 
-Stored inside the workspace's metadata, the same way ``mcp_client.store`` keeps
-its server list: a hub has a handful of rules, they change rarely, and living
+Stored inside the workspace's metadata, the way other per-workspace settings
+are kept: a hub has a handful of rules, they change rarely, and living
 inside the workspace record means they follow the workspace without a store of
 their own to migrate.
 

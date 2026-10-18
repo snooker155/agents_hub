@@ -3,7 +3,7 @@
 A role is a kind of work, and each workspace says which of its agents does it.
 The system agents do not hand code to `swe_agent`; they hand it to `@coder`,
 and the workspace decides who that is. Until it decides, the product's own
-agent holds the role. Swapping the built-in coder for Claude Code, Codex or
+agent holds the role. Swapping the built-in coder for an imported agent such as
 Aider is one setting on the workspace, not an edit of every agent that
 delegates code. The code is `agents/roles.py`.
 
@@ -32,8 +32,7 @@ id returns the role to its default). Another workspace keeps its own choice.
 
 To make an outside coding agent the coder:
 
-1. On the Agents page, **Add Claude Code**, **Add Codex** or **Import from
-   repo** for Aider ([imported agents](imported-agents.md)).
+1. On the Agents page, **Import from repo** ([imported agents](imported-agents.md)).
 2. Add it to the workspace (workspace page, Agents tab).
 3. In the workspace settings, Agent roles, pick it for Coder.
 

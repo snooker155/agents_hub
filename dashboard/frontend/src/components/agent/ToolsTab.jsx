@@ -156,7 +156,7 @@ export default function ToolsTab() {
             {/* Capability guard escape hatch: with the switch on, a blocked
                 combination on this agent (own tools or reached through a
                 delegate) is saved and shown as a warning instead of refused.
-                A system workspace agent never gets the switch. */}
+                A built-in (system) agent never gets the switch. */}
             {!agent?.system && (
               <label className={`mb-4 flex items-start gap-3 rounded-lg border p-3 cursor-pointer ${capabilityOverride ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
                 <input
@@ -276,9 +276,6 @@ export default function ToolsTab() {
                                   <div className="min-w-0">
                                     <div className={`text-sm font-semibold truncate ${enabled ? 'text-green-900' : 'text-gray-800'}`} title={tool}>{meta.label || tool}</div>
                                     <div className="text-xs text-gray-500 mt-0.5 truncate" title={meta.description || tool}>{meta.description || tool}</div>
-                                    {policy.groupOf[tool] && (
-                                      <div className="text-[11px] text-gray-400 mt-0.5">{t('toolPolicy.fromGroup', { group: policy.groupOf[tool] })}</div>
-                                    )}
                                   </div>
                                   <span className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border flex items-center justify-center text-xs font-bold ${
                                     enabled ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300 text-transparent group-hover:border-indigo-300'

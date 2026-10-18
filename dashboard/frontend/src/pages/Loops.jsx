@@ -11,8 +11,6 @@ import {
   getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
-import InPanelNote from '../components/pageChat/InPanelNote';
-import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
 import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 
@@ -481,11 +479,8 @@ export default function Loops() {
     setLoops((prev) => prev.map((l) => (l.loop_id === loop.loop_id ? { ...l, ...loop } : l)));
   }, []);
 
-  // The selected loop's build chat, drawn either in the Chat tab or in the
-  // floating panel — one descriptor, so it is the same conversation either way.
+  // The selected loop's build chat, drawn in the Chat tab.
   const loopChat = useLoopChatDescriptor(selected?.loop_id, applyLoopFromChat);
-  usePageChat(loopChat);
-  const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
 
   return (
     <PageContainer>
@@ -655,12 +650,7 @@ export default function Loops() {
 
               {mode === 'chat' ? (
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  {/* The tab is where this chat lives; while the floating panel
-                      is holding the same conversation, it says so rather than
-                      running a second copy of it. */}
-                  {panelHoldsChat
-                    ? <InPanelNote />
-                    : <EntityChat {...loopChat} heightClass="max-h-[32rem] min-h-[18rem]" />}
+                  <EntityChat {...loopChat} heightClass="max-h-[32rem] min-h-[18rem]" />
                 </div>
               ) : mode === 'setup' ? (
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
@@ -980,7 +970,6 @@ function useLoopChatDescriptor(loopId, onLoopChanged) {
   }, [onLoopChanged]);
 
   return useMemo(() => (loopId ? {
-    scope: `loop:${loopId}`,
     path: loopChatUrl(loopId),
     loadChat, clearChat, stopChat, onEvent,
     title: t('loops.buildChat'),

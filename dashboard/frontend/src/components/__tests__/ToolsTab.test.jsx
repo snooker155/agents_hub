@@ -206,7 +206,7 @@ describe('ToolsTab', () => {
 
   it('offers the workspace roles as delegation targets', async () => {
     rolesApi.getWorkspaceRoles.mockResolvedValue({ data: { roles: [
-      { role: 'coder', ref: '@coder', default: 'swe_agent', agent: 'claude-code', agent_name: 'Claude Code' },
+      { role: 'coder', ref: '@coder', default: 'swe_agent', agent: 'aider', agent_name: 'Aider' },
     ] } });
     renderTab({ selectedTools: ['read_file', 'run_agent_tool'], allAgents: [] });
     const roles = await screen.findByTestId('delegation-roles');
@@ -214,20 +214,5 @@ describe('ToolsTab', () => {
     expect(within(roles).getByText(/agentDetails.delegationRoleHolder/)).toBeTruthy();
     fireEvent.click(within(roles).getByRole('button', { name: 'Off' }));
     expect(page.current.toggleDelegate).toHaveBeenCalledWith('@coder');
-  });
-
-  it('shows which MCP group a tool came from', async () => {
-    api.getAgentToolPolicy.mockResolvedValue({ data: {
-      ...policyBody(),
-      effective: [{ tool: 'mcp__tickets__search', mode: 'always_allow', source: 'default' }],
-      groups: { 'mcp:tickets': ['mcp__tickets__search'] },
-    } });
-    renderTab({
-      regularToolIds: ['mcp__tickets__search'],
-      toolCategories: [{ category: 'mcp', ids: ['mcp__tickets__search'] }],
-      toolsMeta: {},
-    });
-    await screen.findByLabelText('toolPolicy.defaultMode');
-    expect(await screen.findByText(/toolPolicy.fromGroup.*mcp:tickets/)).toBeTruthy();
   });
 });

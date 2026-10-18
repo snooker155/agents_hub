@@ -12,7 +12,6 @@ export default {
     more: '+{{count}}',
     hint: 'Простое меню оставляет то, что нужно для начала; полное показывает все страницы. Страницы те же, меняется только карта.',
   },
-  assistant: 'Ассистент',
   chat: 'Чат',
   dashboard: 'Дашборд',
   workspaces: 'Пространства',
@@ -47,5 +46,4 @@ export default {
   comingSoonItem: '{{name}} — скоро',
   health: 'Статус',
   connectors: 'Коннекторы',
-  mcp: 'MCP-серверы',
 };

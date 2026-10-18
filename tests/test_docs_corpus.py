@@ -204,7 +204,7 @@ def test_every_system_agent_can_reach_the_corpus():
             continue
         tools = ad.get("tools") or []
         if ad.get("extends"):
-            # A shipped child (the assistant) holds its parent's tools.
+            # A shipped child holds its parent's tools.
             parent = by_id[ad["extends"]].get("tools") or []
             tools = merge_list(parent, (ad.get("list_deltas") or {}).get("tools"))
         assert "search_docs" in tools and "read_doc" in tools, (

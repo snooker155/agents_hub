@@ -14,7 +14,6 @@ import { applyOp } from '../views/opsClient';
 import ViewRenderer from '../views/ViewRenderer';
 import ControlsPanel from '../views/ControlsPanel';
 import EntityChat from '../components/EntityChat';
-import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import useViewChatDescriptor from '../views/useViewChatDescriptor';
 
 import { AppBar } from '../components/PageLayout';
@@ -217,14 +216,9 @@ export default function Studio() {
   // on it, and a fresh function each render would re-register continuously.
   const registerChatSend = useCallback((fn) => { chatSendRef.current = fn; }, []);
 
-  // The view's build chat, drawn either in the column on the right or in the
-  // floating panel — one descriptor, so it is the same conversation either way.
+  // The view's build chat, in the column on the right.
   const viewChat = useViewChatDescriptor(viewId, registerChatSend);
-  usePageChat(viewChat);
-  const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
-  // Folding the chat away is also how the canvas gets the full width, and how
-  // the floating page-chat launcher comes back — it stands down while a chat
-  // of the page's own is on screen.
+  // Folding the chat away is also how the canvas gets the full width.
   const [showChat, setShowChat] = useState(true);
   // The chat's Clear lands in this panel's own header, left of the fold-away
   // button — state rather than a ref so the chat re-renders once the slot
@@ -326,7 +320,7 @@ export default function Studio() {
           </button>
           {/* Last in the row: bringing the chat back is the counterpart of the
               fold-away button at the far right of the screen it returns to. */}
-          {!showChat && !panelHoldsChat && (
+          {!showChat && (
             <button onClick={() => setShowChat(true)} title={t('studio.showChat')}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
               <PanelRightOpen className="w-4 h-4" />
@@ -395,9 +389,8 @@ export default function Studio() {
           </div>
         </div>
 
-        {/* The studio chat, folded away while the floating panel is showing
-            it: same endpoint, same thread, drawn in one place at a time. */}
-        {showChat && !panelHoldsChat && (
+        {/* The studio chat. */}
+        {showChat && (
           <div className="w-[28rem] border-l border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col">
             <div className="flex items-center px-3 py-2 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">

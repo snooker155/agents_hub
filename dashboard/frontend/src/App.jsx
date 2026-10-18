@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import PageLoader from './components/PageLoader';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
-import { PageChatProvider } from './components/pageChat/PageChatContext';
 import { FeaturesProvider } from './components/FeaturesContext';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
@@ -23,7 +22,6 @@ import FirstRunGate from './components/firstRun/FirstRunGate';
 const TaskManager = lazy(() => import('./pages/TaskManager'));
 const AgentManager = lazy(() => import('./pages/AgentManager'));
 const Connectors = lazy(() => import('./pages/Connectors'));
-const Mcp = lazy(() => import('./pages/Mcp'));
 const AgentDetails = lazy(() => import('./pages/AgentDetails'));
 const TaskDetails = lazy(() => import('./pages/TaskDetails'));
 const WorkspaceManager = lazy(() => import('./pages/WorkspaceManager'));
@@ -43,7 +41,6 @@ const Instances = lazy(() => import('./pages/Instances'));
 const InstanceDetail = lazy(() => import('./pages/InstanceDetail'));
 const MessageDetails = lazy(() => import('./pages/MessageDetails'));
 const Chat = lazy(() => import('./pages/Chat'));
-const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
@@ -103,7 +100,6 @@ function AppRoutes() {
         <Route path="/" element={guard(<Chat />)} />
         <Route path="/chat" element={guard(<Chat />)} />
         <Route path="/chat/:convId" element={guard(<Chat />)} />
-        <Route path="/assistant" element={guard(<Assistant />)} />
         <Route path="/dashboard" element={guard(<Dashboard />)} />
         <Route path="/orchestrator" element={guard(<Orchestrator />)} />
         <Route path="/tasks" element={guard(<TaskManager />)} />
@@ -134,7 +130,6 @@ function AppRoutes() {
         <Route path="/messages" element={guard(<Messages />)} />
         <Route path="/messages/:runId" element={guard(<MessageDetails />)} />
         <Route path="/connectors" element={guard(<Connectors />)} />
-        <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
         <Route path="/nodes" element={<Navigate to="/instances" replace />} />
@@ -165,19 +160,15 @@ function App() {
   // The router follows Vite's BASE_URL rather than assuming the root.
   return (
     <Router basename={import.meta.env.BASE_URL}>
-      {/* Inside the router: the page chat's subject is the route, so it can
-          only be resolved under one. */}
       <AuthProvider>
         <FeaturesProvider>
-          <PageChatProvider>
-              {/* A new install sets itself up first
-                  (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
-              <FirstRunGate>
-                <Layout>
-                  <AppRoutes />
-                </Layout>
-              </FirstRunGate>
-          </PageChatProvider>
+          {/* A new install sets itself up first
+              (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
+          <FirstRunGate>
+            <Layout>
+              <AppRoutes />
+            </Layout>
+          </FirstRunGate>
         </FeaturesProvider>
       </AuthProvider>
     </Router>

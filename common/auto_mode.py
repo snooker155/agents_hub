@@ -17,9 +17,7 @@ it is on, two kinds of confirmation stop waiting for the person:
 
 What auto mode does not touch: a call a rule denies (a deny policy, a hook
 that blocks, a guardrail, the capability guard) is refused as before, since a
-refusal is not a confirmation; and a card that needs the person to type
-something (``propose_connection``: the secrets are theirs to enter) still
-waits for them.
+refusal is not a confirmation.
 
 Where the flag comes from: the turn's request, checked by
 :func:`allowed_for` (an interactive chat surface, a workspace that allows it),
@@ -41,12 +39,9 @@ DECIDED_BY = "auto mode"
 #: The guard's word for what decided (``by`` on the trail and the event).
 BY = "auto_mode"
 
-#: Calls auto mode never answers: the person has to type into the card.
-NEVER_AUTO = frozenset({"propose_connection"})
-
-#: Message origins whose person can switch auto mode on: the Chat page and the
-#: assistant's thread (common/tool_approvals.INTERACTIVE_ORIGINS).
-INTERACTIVE_SOURCES = frozenset({"chat", "assistant-chat"})
+#: Message origins whose person can switch auto mode on: the Chat page
+#: (common/tool_approvals.INTERACTIVE_ORIGINS).
+INTERACTIVE_SOURCES = frozenset({"chat"})
 
 _turn: ContextVar[Optional[bool]] = ContextVar("auto_mode_turn", default=None)
 
@@ -160,8 +155,6 @@ def approved(tool: str, user_approved: bool, tool_input: Any = None, *, reason: 
     approved by auto mode, see :func:`settle`)."""
     if user_approved:
         return True
-    if tool in NEVER_AUTO:
-        return False
     run_id = current_run_id()
     if not is_on(run_id):
         return False
@@ -190,7 +183,7 @@ def prompt_note() -> str:
 
 
 __all__ = [
-    "BY", "DECIDED_BY", "INTERACTIVE_SOURCES", "NEVER_AUTO",
+    "BY", "DECIDED_BY", "INTERACTIVE_SOURCES",
     "allowed_for", "approved", "current_run_id", "is_on", "prompt_note", "reset_turn", "set_turn",
     "settle",
 ]

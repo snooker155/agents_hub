@@ -32,7 +32,7 @@ export default {
       "h": "Zitate",
       "p": "Wenn ein Agent den Speicher durchsucht, kommen die verwendeten Abschnitte und Notizen nummeriert als `[n]` zurück, und die Antwort zeigt sie als Quellen unter dem Text. Ein Klick auf eine Quelle öffnet die dahinterliegende Datei des Arbeitsbereichs, oder, wenn es keine gibt, die Speicherseite."
     },
-    "callout": "Dateien, die außerhalb des üblichen Wegs entstehen, etwa durch Claude Code, Codex oder eine Shell, werden nicht automatisch gelistet: nutzen Sie **Aus Ordner synchronisieren** auf der Seite Dateien, um sie zu registrieren."
+    "callout": "Dateien, die außerhalb des üblichen Wegs entstehen, etwa durch ein externes Werkzeug oder eine Shell, werden nicht automatisch gelistet: nutzen Sie **Aus Ordner synchronisieren** auf der Seite Dateien, um sie zu registrieren."
   },
   "agentLoop": {
     "nav": "Agenten-Loop",
@@ -82,8 +82,8 @@ export default {
   },
   "steering": {
     "nav": "Steuerung & Übergabe",
-    "title": "Eingreifen in einen Agenten, Gesprächsübergabe und der Seiten-Chat",
-    "lead": "Ein laufender Agent ist keine Blackbox: Sie können ihm während der Arbeit eine Nachricht schicken, ein Gespräch an einen anderen Agenten übergeben oder einen Chat öffnen, der an die Seite gebunden ist, auf der Sie sich gerade befinden.",
+    "title": "Eingreifen in einen Agenten und Gesprächsübergabe",
+    "lead": "Ein laufender Agent ist keine Blackbox: Sie können ihm während der Arbeit eine Nachricht schicken oder ein Gespräch an einen anderen Agenten übergeben.",
     "s0": {
       "h": "In einen laufenden Run eingreifen",
       "p": "Verfügbar, solange der Status eines Runs `running` ist: über das Chat-Eingabefeld oder das Steer/Interrupt-Feld auf einer Task- oder Run-Seite.",
@@ -105,58 +105,6 @@ export default {
         "Eine Runde übergibt höchstens ein paar Mal (standardmäßig dreimal), und das Gespräch geht nie an einen Agenten zurück, der es schon einmal hatte."
       ]
     },
-    "s2": {
-      "h": "Der Seiten-Chat",
-      "p": "Die Schaltfläche unten rechts auf jeder Seite, die ein Gespräch über das führt, was die Seite gerade zeigt.",
-      "points": [
-        "Manche Seiten, etwa eine Loop, ein Team, die Definition eines Agenten oder ein Memory-Pool, haben ihren eigenen Chat mit eigenem Agenten; das Panel zeigt nur dieses Gespräch.",
-        "Alle anderen Seiten teilen sich einen festen Assistenten, der den Titel und die URL der Seite sowie die dort gezeigten Datensätze sieht.",
-        "Zur gleichen Seite zurückzukehren öffnet dasselbe Gespräch wieder; **Clear** beginnt ein neues.",
-        "Er legt nie etwas an, ändert oder löscht nie etwas ohne ein klares Ja zu genau dieser Aktion."
-      ]
-    },
-    "callout": "Jede Runde des Seiten-Chats ist ein gewöhnlicher Run: er erscheint unter [Läufe](/messages) mit eigenem Log und eigenen Kosten."
-  },
-  "mcp": {
-    "nav": "MCP-Server",
-    "title": "MCP-Server",
-    "lead": "Ein MCP-Server ist eine fremde Sammlung von Tools. Binden Sie ihn auf der Seite [MCP-Server](/mcp) an, und seine Tools werden zu gewöhnlichen Tools, die Sie einem Agenten zuweisen können.",
-    "s0": {
-      "h": "Einen Server anbinden",
-      "p": "Pro Workspace konfiguriert: ein Server, der in einem Workspace angebunden ist, bleibt für Agenten unsichtbar, die in einem anderen gebaut werden.",
-      "points": [
-        "Wählen Sie einen Transport: `stdio` (ein Befehl mit Argumenten, als Kindprozess gestartet), `streamable_http` oder `sse` (eine URL mit Headern) oder `websocket` (nur eine URL).",
-        "Die Schaltfläche **Test** verbindet sich mit dem Server, listet seine Tools auf und zeigt, welche davon die aktuelle Allowlist behält."
-      ]
-    },
-    "s1": {
-      "h": "Tools an einen Agenten vergeben",
-      "p": "Die Server-ID wird zur Hälfte jedes Tool-Namens, den er erzeugt.",
-      "points": [
-        "`mcp:<server_id>` vergibt den ganzen Server.",
-        "`mcp__<server_id>__<tool_name>` vergibt ein einzelnes Tool.",
-        "Die ID lässt sich nachträglich nicht ändern; löschen Sie den Server und legen Sie ihn neu an, statt ihn umzubenennen."
-      ]
-    },
-    "s2": {
-      "h": "Capabilities und Freigabe",
-      "p": "Ein entferntes Tool kann sich nicht selbst einstufen, deshalb legen Sie seine Capabilities einmal pro Server fest.",
-      "points": [
-        "Kreuzen Sie an, ob der Server nicht vertrauenswürdige Inhalte verarbeitet, private Daten liest oder Daten nach außen senden kann.",
-        "Ein Agent, dessen Tools alle drei Punkte gleichzeitig erfüllen würden, wird beim Speichern abgelehnt.",
-        "Die Freigabe kann für keines der Tools des Servers gelten, für alle oder für eine ausgewählte Liste, genau wie bei den eingebauten Tools.",
-        "Ein `stdio`-Server startet in einer bereinigten Umgebung: er sieht nie die eigenen Provider-Schlüssel des Backends."
-      ]
-    },
-    "s3": {
-      "h": "Wenn ein Agent weniger Tools hat als erwartet",
-      "points": [
-        "Ein Server, der sich nicht verbinden lässt, wird übersprungen, nicht als Fehler behandelt: der Agent wird mit den Tools gebaut, die sich auflösen ließen.",
-        "Eine Tool-Anzahl, die noch nicht geladen wurde, ist nicht dasselbe wie null; öffnen Sie den Server oder klicken Sie auf **Test**, damit er sich verbindet.",
-        "Das Löschen eines Servers ändert nicht die Agenten, die ihn genannt haben; sie verlieren einfach diese Tools."
-      ]
-    },
-    "callout": "Eine größere Installation kann eine hub-weite Allowlist aktivieren (der MCP-Katalog auf [Agentenregister](/agent-registry)), sodass ein Workspace nur einen von einem Admin genehmigten Server anbinden darf."
   },
   "outcomes": {
     "nav": "Ergebnisbewertung",
@@ -243,28 +191,19 @@ export default {
   },
   "health": {
     "nav": "Health",
-    "title": "Health, das Runbook und der System-Workspace",
-    "lead": "Die Seite [Status](/health) zeigt, ob die beweglichen Teile am Leben sind, und der Doctor beurteilt, ob dieser Zustand tatsächlich in Ordnung ist. Ein System-Workspace beobachtet die eigene Diagnose des Dienstes und schlägt Korrekturen als Branches vor, ohne je selbst zu pushen.",
+    "title": "Health und das Runbook",
+    "lead": "Die Seite [Status](/health) zeigt, ob die beweglichen Teile am Leben sind, und der Doctor beurteilt, ob dieser Zustand tatsächlich in Ordnung ist.",
     "s0": {
       "h": "Die Momentaufnahme und der Doctor",
       "points": [
         "`GET /api/health` meldet die Datenbank, Run-Zahlen, Hintergrunddienste, Speichergröße und welche Provider-Schlüssel gesetzt sind; `null` bedeutet, die Prüfung konnte es nicht feststellen, nicht dass etwas ausgefallen ist.",
         "Der Doctor macht aus dieser Momentaufnahme Urteile: jede Prüfung liefert `ok`, `warn`, `fail` oder `skip` mit einem Satz und einer Lösung, der Gesamtstatus ist der schlechteste davon.",
-        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, veraltete Runs, die Run-Warteschlange, freier Speicherplatz, Docker, die Sandbox-Provider und der System-Workspace selbst."
+        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, veraltete Runs, die Run-Warteschlange, freier Speicherplatz, Docker und die Sandbox-Provider."
       ]
     },
     "s1": {
       "h": "Das Runbook",
       "p": "Für einen Fehler, den ein Betreiber tatsächlich erlebt (ein ungültiger Provider-Schlüssel, ein nicht aktiviertes Modell, eine festhängende Run-Warteschlange, ein voller Datenträger, eine festhängende Lease, ein Proxy, der den Live-Stream puffert), gibt das Runbook das Symptom, wie man es mit dem Doctor oder der Health-Momentaufnahme bestätigt, und die Lösung. Die meisten Prüfungen erfolgen, bevor etwas läuft, sodass eine Ablehnung, etwa ein Budgetlimit oder ein deaktiviertes Modell, nie einen halb ausgeführten Run hinterlässt."
-    },
-    "s2": {
-      "h": "Der System-Workspace",
-      "p": "Ein Workspace namens **system**, in dem der Dienst sich selbst betreut: ein geplanter Loop liest die eigene Diagnose, legt Befunde als Aufgaben an und schlägt Korrekturen als Commits auf einem Branch einer privaten Git-Kopie des Repositorys vor.",
-      "points": [
-        "Der Loop pusht nie: seine Agenten besitzen kein Tool, das pushen oder Daten nach außen senden kann, auf jeder Ebene durchgesetzt, ohne Ausnahme.",
-        "Eine Korrektur landet als Commit auf einem Branch `system/<Datum>-<Aufgabe>`: Sie holen ihn selbst, prüfen ihn und pushen ihn selbst.",
-        "Der Loop wird pausiert ausgeliefert; aktiviert wird er über den System-Bereich der Health-Seite."
-      ]
     },
     "callout": "Eine hohe Zahl bei `running_runs` ohne lebende Instanzen bedeutet meist verwaiste Datensätze eines abgestürzten Prozesses, nicht tatsächlich laufende Arbeit."
   },
@@ -320,36 +259,4 @@ export default {
     },
     "callout": "Agenten schicken Ihnen mit notify_user eine Benachrichtigung, und eine geplante Benachrichtigung auf der Seite [Plan](/plan) landet im selben Posteingang."
   },
-  "assistant": {
-    "nav": "Assistent",
-    "title": "Ihr Assistent",
-    "lead": "Ein Assistent für den ganzen Dienst, per Sprache oder Text, auf der Seite [Assistent](/assistant). Er beantwortet Fragen zum Hub, nimmt kleine Änderungen nach Ihrer Bestätigung auf einer Karte vor und führt nach der Installation durch die Einrichtung.",
-    "s0": {
-      "h": "Ein Gespräch pro Person",
-      "p": "Jede Person hat ihr eigenes Gespräch. Ein Zug läuft in einem Workspace, zu dem die Person gehört, und ein Gespräch bleibt in dem Workspace, in dem es begonnen hat.",
-      "points": [
-        "Der Assistent erweitert den Main Agent: dieselben Werkzeuge und dazu eigene Abfragen.",
-        "Administratoren erhalten zusätzlich ein Dienstgespräch mit Werkzeugen für den Zustand des Dienstes."
-      ]
-    },
-    "s1": {
-      "h": "Was er nachschlagen und ändern kann",
-      "p": "`hub_lookup` liest Runs, Sitzungen, Ausgaben, Budgets, Modelle, Agenten, Benachrichtigungen, Freigaben und die Einträge jeder Seite. `hub_action` führt eine Aktion an einem Eintrag aus, etwa eine Instanz pausieren, und zeigt immer zuerst eine Karte.",
-      "points": [
-        "Ein Satz wie „jeden Morgen um 8 eine Zusammenfassung schicken“ wird nach Ihrem Ja zu einem geplanten Job.",
-        "Schlüssel eines Anbieters geben Sie selbst in eine Karte ein, nie in das Gespräch."
-      ]
-    },
-    "s2": {
-      "h": "Sprache",
-      "p": "Zum Sprechen drücken, Gesprächsmodus oder ein Weckwort. Sprache läuft über die Erkennungs- und Sprachmodelle des Workspace, sonst über die des Browsers. Ein gesprochenes Ja beantwortet eine wartende Karte.",
-      "points": [
-        "Sprache und die Installation der App auf dem Telefon brauchen HTTPS."
-      ]
-    },
-    "s3": {
-      "h": "Limits",
-      "p": "Jeder Zug ist ein Run mit dem Namen der Person und zählt zu ihrem Monatslimit. Ist ein Limit oder das Budget des Workspace aufgebraucht, wird der Zug mit einer Karte abgelehnt, die sagt, welches."
-    }
-  }
 };

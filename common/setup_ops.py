@@ -1,33 +1,25 @@
 """
-What the assistant can set up in the hub during the guided setup
-(common/setup_guide.py), behind one tool (``setup_step``, tools/setup_guide.py).
+What the first run in the browser sets up in the hub (common/first_run.py,
+routes/first_run.py): the first model, the default model, the demo workspace.
+A key is typed into the first run's own form and checked against the provider
+before it is saved.
 
-Three operations, the ones `ah setup` makes in the terminal and the rest of a
-first setup that needs no secret: choose the default model, give the assistant
-a cloud voice, seed the demo workspace. A key is never one of them: it is typed into a connection card
-(connectors/proposals.py, kind ``provider``).
-
-**Every call waits for a yes.** ``setup_step`` is on the list of tools that ask
-on every call (tools/approval.py ``ALWAYS_GATED``), and its card says what the
-call would change in a sentence from :func:`describe`. Each operation is the
-install's own configuration, so it needs an administrator (anyone outside
-``multi`` mode) and is written to the audit log as ``setup.<operation>``.
+Each operation is the install's own configuration and is written to the audit
+log as ``setup.<operation>``.
 
 **What they write is what the pages write.** The default model goes into the
 Models catalog (starred and enabled) and ``.env`` (``DEFAULT_PROVIDER`` and the
 provider's model, as `ah setup` does), and applies at once
-(common/provider_env.py); a voice goes into the voice models
-(providers/voice_models.py), as the Models page's Voice tab writes them.
+(common/provider_env.py).
 """
 from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from cli.onboard import probe as P
-from cli.onboard.presets import VOICE_CLOUD, speech_models
 
 log = logging.getLogger(__name__)
 
@@ -48,35 +40,60 @@ class SetupOpError(ValueError):
 @dataclass(frozen=True)
 class Operation:
     name: str
-    #: The guide step it completes.
-    step: str
     summary: str
     #: Argument -> hint, for the tool's description.
     params: Dict[str, str] = field(default_factory=dict)
 
 
 OPERATIONS: Dict[str, Operation] = {op.name: op for op in (
-    Operation("choose_model", "default_model",
-              "make a model the hub's default, for every workspace without its own",
+    Operation("choose_model", "make a model the hub's default, for every workspace without its own",
               {"provider": "openai, anthropic, google, ollama, lmstudio or a custom backend id",
-               "model": "the model id, from setup_guide options"}),
-    Operation("voice_cloud", "voice",
-              "give the assistant a cloud voice: speech and transcription models of a connected provider",
-              {"provider": "openai or google (its key must be connected)",
-               "model": "optional: the speech model, one of the provider's speech_models in setup_guide options "
-                        "(default the first)",
-               "voice": "optional: one of the voices setup_guide options lists"}),
-    Operation("seed_demo", "demo", "add the demo workspace: four agents with chats, views and a team"),
+               "model": "the model id, from the options"}),
+    Operation("seed_demo", "add the demo workspace: four agents with chats, views and a team"),
 )}
 
 
 # ── who and what is there ─────────────────────────────────────────────────────
 
-def _require_admin(principal: Any) -> None:
-    from common import setup_guide
-    if not setup_guide.is_admin(principal):
-        raise SetupOpError("Only an administrator sets up the hub itself; this person is not one.",
-                           code="forbidden")
+def usable_providers() -> List[str]:
+    """Providers an agent can call right now: a key set, a local server named,
+    a custom backend registered."""
+    from common import provider_env
+    env = provider_env.live()
+    out = [p for p, key in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"),
+                            ("google", "GOOGLE_API_KEY")) if env.get(key)]
+    out += [p for p, key in (("ollama", "OLLAMA_MODEL"), ("lmstudio", "LMSTUDIO_MODEL")) if env.get(key)]
+    try:
+        # A custom backend counts once it has a model to call: its own default,
+        # or one enabled in the catalog.
+        from providers import list_backends
+        from providers.catalog import load_catalog_raw
+        catalog = load_catalog_raw() or {}
+        for b in list_backends():
+            bid = str(b.get("id") or "")
+            found = catalog.get(bid)
+            entry: Dict[str, Any] = found if isinstance(found, dict) else {}
+            enabled = any(isinstance(m, dict) and m.get("enabled") for m in entry.get("models") or [])
+            if bid and (b.get("default_model") or enabled):
+                out.append(bid)
+    except Exception:  # noqa: BLE001 - no custom backends readable
+        log.debug("setup: custom backends unreadable", exc_info=True)
+    return out
+
+
+def default_model() -> Dict[str, Any]:
+    """The model every workspace without its own falls back to, and whether it can run."""
+    from common import provider_env
+    env = provider_env.live()
+    provider = env.get("DEFAULT_PROVIDER") or "openai"
+    model = env.get(P.MODEL_VAR.get(provider, ""), "")
+    if not model and provider not in P.MODEL_VAR:
+        try:
+            from providers import get_backend
+            model = str((get_backend(provider) or {}).get("default_model") or "")
+        except Exception:  # noqa: BLE001
+            model = ""
+    return {"provider": provider, "model": model, "usable": provider in usable_providers()}
 
 
 def _audit(principal: Any, op: str, details: Dict[str, Any]) -> None:
@@ -84,7 +101,7 @@ def _audit(principal: Any, op: str, details: Dict[str, Any]) -> None:
         from common import audit
         from common.auth import LOCAL_PRINCIPAL
         audit.record(f"setup.{op}", principal=principal or LOCAL_PRINCIPAL, object_type="setup",
-                     object_id=op, workspace="default", details={"via": "setup_step", **details})
+                     object_id=op, workspace="default", details={"via": "first_run", **details})
     except Exception:  # noqa: BLE001 - the change stands; the audit trail is best effort here
         log.warning("setup: audit of %s failed", op, exc_info=True)
 
@@ -119,11 +136,9 @@ def _custom_backend(provider: str) -> Optional[Dict[str, Any]]:
 
 
 def options() -> Dict[str, Any]:
-    """The choices the assistant offers, read now: each connected provider's
-    model tiers, the voices. Names only, never a
-    key."""
-    from common import setup_guide
-    usable = setup_guide.usable_providers()
+    """The choices the first run offers, read now: each connected provider's
+    model tiers. Names only, never a key."""
+    usable = usable_providers()
     models: Dict[str, Any] = {}
     for provider in usable:
         if provider in P.PROVIDERS:
@@ -143,40 +158,14 @@ def options() -> Dict[str, Any]:
             models[provider] = {"listed": False, "custom": True,
                                 "default_model": backend.get("default_model") or ""}
     return {
-        "default_model": setup_guide.default_model(),
+        "default_model": default_model(),
         "models": models,
-        "voice": {
-            "cloud": {p: {"speech": s["speech"], "transcription": s["transcription"], "voices": s["voices"],
-                          "speech_models": speech_models(p), "connected": bool(_key_of(p))}
-                      for p, s in VOICE_CLOUD.items()},
-            "browser": "without models the page uses the browser's own voice (Chrome, Edge, Safari; not Firefox)",
-        },
         "providers_to_connect": [p for p in P.CLOUD if p not in usable],
     }
 
 
-# ── describing a call (the card's sentence) ───────────────────────────────────
-
-def _args(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Strings, but an object (a voice per language) is kept as it is."""
-    return {str(k): (v if isinstance(v, dict) else str(v).strip())
-            for k, v in (raw or {}).items() if v not in (None, "", {})}
-
-
-def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
-    a = _args(args)
-    if operation == "choose_model":
-        return (f"Make {a.get('provider', '?')}/{a.get('model', '?')} the hub's default model: every "
-                f"workspace without a model of its own uses it from the next message.")
-    if operation == "voice_cloud":
-        spec = VOICE_CLOUD.get(a.get("provider", ""), {})
-        voice = a.get("voice") or (spec.get("voices") or ["?"])[0]
-        return (f"Give the assistant {a.get('provider', '?')}'s voice: speech {a.get('model') or spec.get('speech', '?')} "
-                f"(voice {voice}) and transcription {spec.get('transcription', '?')}, paid per use, "
-                f"for every workspace that has none of its own.")
-    if operation == "seed_demo":
-        return "Add the demo workspace with four agents, their chats, views and a team."
-    return ""
+def _args(raw: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    return {str(k): str(v).strip() for k, v in (raw or {}).items() if v not in (None, "")}
 
 
 # ── the operations ────────────────────────────────────────────────────────────
@@ -195,19 +184,18 @@ def choose_model(provider: str, model: str, *, principal: Any = None, check: boo
     provider = (provider or "").strip().lower()
     model = (model or "").strip()
     if not provider or not model:
-        raise SetupOpError("Name the provider and the model (setup_guide options lists them).", code="missing")
+        raise SetupOpError("Name the provider and the model (the options list them).", code="missing")
     custom = None if provider in P.PROVIDERS else _custom_backend(provider)
     if provider not in P.PROVIDERS and custom is None:
         raise SetupOpError(f"Unknown provider '{provider}'.", code="unknown_provider")
     if provider in P.CLOUD and not _key_of(provider):
-        raise SetupOpError(f"No {P.LABELS[provider]} key is connected yet: offer propose_connection with "
-                           f"kind provider first.", code="no_key")
+        raise SetupOpError(f"No {P.LABELS[provider]} key is connected yet.", code="no_key")
     if check and provider in P.PROVIDERS:
         found = listing(provider)
         if found.ok and found.models and model not in found.models:
             near = [m for m in found.models if m.startswith(model)]
             if not near:
-                raise SetupOpError(f"{P.LABELS[provider]} does not offer '{model}'. Pick one from setup_guide "
+                raise SetupOpError(f"{P.LABELS[provider]} does not offer '{model}'. Pick one from the "
                                    f"options.", code="unknown_model")
             model = sorted(near, reverse=True)[0]
     m = _models_route()
@@ -237,59 +225,6 @@ def choose_model(provider: str, model: str, *, principal: Any = None, check: boo
             "summary": f"The default model is now {provider}/{model}."}
 
 
-def voice_cloud(provider: str, voice: str = "", *, model: str = "", principal: Any = None,
-                voices: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """A cloud voice; ``model`` is one of the provider's speech models (the
-    first when empty); ``voices`` names another voice of the same model for a
-    language (``{"ru": "alloy"}``), read when a line is in that language."""
-    provider = (provider or "").strip().lower()
-    spec = VOICE_CLOUD.get(provider)
-    if spec is None:
-        raise SetupOpError(f"A cloud voice comes from {' or '.join(VOICE_CLOUD)}.", code="unknown_provider")
-    if not _key_of(provider):
-        raise SetupOpError(f"No {P.LABELS[provider]} key is connected: offer propose_connection with kind "
-                           f"provider first; until then the page uses the browser's own voice.", code="no_key")
-    offered = speech_models(provider)
-    model = (model or "").strip() or offered[0]["id"]
-    chosen = next((m for m in offered if m["id"] == model), None)
-    if chosen is None:
-        raise SetupOpError(f"'{model}' is not one of {provider}'s speech models: "
-                           f"{', '.join(m['id'] for m in offered)}.", code="unknown_model")
-    names = chosen["voices"]
-    voice = (voice or "").strip() or names[0]
-    known = {v.lower(): v for v in names}
-    if voice.lower() not in known:
-        raise SetupOpError(f"'{voice}' is not one of {model}'s voices: {', '.join(names)}.",
-                           code="unknown_voice")
-    by_language: Dict[str, Dict[str, str]] = {}
-    for lang, name in (voices or {}).items():
-        lang, name = str(lang or "").strip().lower(), str(name or "").strip()
-        if not name:
-            continue
-        if name.lower() not in known:
-            raise SetupOpError(f"'{name}' is not one of {model}'s voices: {', '.join(names)}.",
-                               code="unknown_voice")
-        by_language[lang] = {"voice": known[name.lower()]}
-    entries = {
-        "speech": {"provider": provider, "model": model, "options": {"voice": known[voice.lower()]},
-                   **({"languages": by_language} if by_language else {}),
-                   **({"price_usd": chosen["price"]} if chosen.get("price") is not None else {})},
-        "transcription": {"provider": provider, "model": spec["transcription"], "options": {},
-                          **({"price_usd": spec["transcription_price"]}
-                             if spec.get("transcription_price") is not None else {})},
-    }
-    _save_voice(entries)
-    _audit(principal, "voice_cloud", {"provider": provider, "model": model, "voice": known[voice.lower()]})
-    return {"ok": True, "summary": f"The assistant now hears with {spec['transcription']} and speaks with "
-                                   f"{model} (voice {known[voice.lower()]}). The page uses them "
-                                   f"from the next answer."}
-
-
-def _save_voice(entries: Dict[str, Any]) -> None:
-    from providers import voice_models
-    voice_models.save({**voice_models.stored(), **entries})
-
-
 def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
     from common.demo_workspace import demo_status, ensure_demo_workspace
     ensure_demo_workspace()
@@ -301,9 +236,6 @@ def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
 
 _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "choose_model": lambda a, p: choose_model(a.get("provider", ""), a.get("model", ""), principal=p),
-    "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), model=a.get("model", ""),
-                                            principal=p,
-                                            voices=a.get("voices") if isinstance(a.get("voices"), dict) else None),
     "seed_demo": lambda a, p: seed_demo(principal=p),
 }
 
@@ -313,20 +245,16 @@ def perform(operation: str, args: Optional[Dict[str, Any]] = None, *, principal:
     operation = str(operation or "").strip().lower()
     if operation not in OPERATIONS:
         raise SetupOpError(f"operation must be one of {', '.join(OPERATIONS)}", code="unknown_operation")
-    _require_admin(principal)
-    out = _RUNNERS[operation](_args(args), principal)
-    out["step"] = OPERATIONS[operation].step
-    return out
+    return _RUNNERS[operation](_args(args), principal)
 
 
-# ── the first model, from the welcome window ─────────────────────────────────
+# ── the first model ──────────────────────────────────────────────────────────
 
 def first_model(provider: str, api_key: str = "", base_url: str = "", *, principal: Any = None) -> Dict[str, Any]:
     """Connect a provider and make its balanced model the default, in one go:
-    the one step before the assistant can talk at all. The key is checked
-    against the provider first and saved only when it works."""
+    the one step before any agent can run. The key is checked against the
+    provider first and saved only when it works."""
     from common import provider_env
-    _require_admin(principal)
     provider = (provider or "").strip().lower()
     if provider not in P.PROVIDERS:
         raise SetupOpError(f"provider is one of {', '.join(P.PROVIDERS)}", code="unknown_provider")
@@ -355,5 +283,5 @@ def first_model(provider: str, api_key: str = "", base_url: str = "", *, princip
     return {**result, "models": len(found.models)}
 
 
-__all__ = ["OPERATIONS", "Operation", "SetupOpError", "choose_model", "describe",
-           "first_model", "listing", "options", "perform", "seed_demo", "voice_cloud"]
+__all__ = ["OPERATIONS", "Operation", "SetupOpError", "choose_model", "default_model",
+           "first_model", "listing", "options", "perform", "seed_demo", "usable_providers"]

@@ -25,15 +25,7 @@ That is the escape hatch, and it is one-way.
   long-running work after you approve the cost.
 - **Universal Agent** — a capable generalist with no fixed specialty; the
   standard starting agent for teams.
-- **Service Agent** — the service itself: health, logs, failures, spend. See
-  [service-health](service-health.md).
 - **Prompt Engineer** — writes prompts for use outside this product.
-- **Support**: the Help button in the header. Explains the product, reads what
-  is set up and what is missing, and suggests the next steps with links. Reads
-  only; changes nothing. See [help](help.md).
-- **Assistant**: your own assistant. The Main Agent (it `extends` it) with
-  personal memory on and answers that open with a short spoken part. Its
-  service thread also checks the hub's health. See [assistant](assistant.md).
 
 **Coordinating**
 - **Orchestrator** — drives the task lifecycle and picks the agent for each task.
@@ -75,7 +67,7 @@ That is the escape hatch, and it is one-way.
 
 The system agents reach each other by role, not by id: code goes to `@coder`,
 views to `@visualizer`. A workspace can give a
-role to another of its agents, an imported Claude Code for example, and every
+role to another of its agents, an imported Aider agent for example, and every
 system agent that calls the role reaches that one there. See
 [workspace-roles](workspace-roles.md).
 

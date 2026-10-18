@@ -12,8 +12,7 @@ class JobKind(str, Enum):
     notification = "notification"
     agent_task = "agent_task"
     flow = "flow"
-    # Starts a run of a loop (loops/launcher.py). Used by the system
-    # workspace's maintenance loop (common/system_workspace.py).
+    # Starts a run of a loop (loops/launcher.py).
     loop = "loop"
     # Consolidates a memory pool's content and its recent sessions into a new
     # pool (memory/consolidation.py, "dreams"): merged duplicates, outdated

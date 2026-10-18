@@ -52,7 +52,7 @@ async def send_message(request: ChatRequest):
         return await send_chat_message(request)
     except ChatSendError as e:
         if e.refusal:
-            # Same shape as the assistant's 402: a message plus the structure.
+            # A message plus the structure.
             raise HTTPException(status_code=e.status, detail={
                 "code": e.refusal.get("code"), "message": e.detail, "refusal": e.refusal})
         raise HTTPException(status_code=e.status, detail=e.detail)

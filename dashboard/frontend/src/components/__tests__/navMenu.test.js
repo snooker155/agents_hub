@@ -19,16 +19,14 @@ describe('navMenu', () => {
   it('puts every page in exactly one place', () => {
     const all = paths(buildMenu({ t }));
     expect(new Set(all).size).toBe(all.length);
-    for (const p of ['/connectors', '/mcp']) {
-      expect(buildMenu({ t }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain(p);
-    }
+    expect(buildMenu({ t }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain('/connectors');
   });
 
   it('simple menu keeps a short list with workspaces, settings and docs', () => {
     const groups = buildMenu({ t });
     const shown = paths(visibleGroups(groups, SIMPLE));
     expect(shown.length).toBeLessThanOrEqual(16);
-    expect(shown).toEqual(expect.arrayContaining(['/assistant', '/chat', '/workspaces', '/agents', '/models', '/settings', '/docs']));
+    expect(shown).toEqual(expect.arrayContaining(['/chat', '/workspaces', '/agents', '/models', '/settings', '/docs']));
     expect(shown).not.toContain('/connectors');
     expect(shown).not.toContain('/dashboard');
     expect(visibleGroups(groups, SIMPLE).map((g) => g.key)).not.toContain('integrations');

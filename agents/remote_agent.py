@@ -394,8 +394,8 @@ class _StreamState:
         credited exactly like a local call's, and the run's cost stops reading
         as zero.
 
-        ``cost_usd`` is a further refinement some remotes can offer: a CLI such
-        as Claude Code prices its own call and reports the dollar figure
+        ``cost_usd`` is a further refinement some remotes can offer: a CLI
+        agent may price its own call and report the dollar figure
         directly, which is more accurate than pricing token counts against this
         hub's catalog. No model lookup is needed, and it is exact for whatever
         pricing the CLI's own provider actually charged. When present it is

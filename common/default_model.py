@@ -1,8 +1,8 @@
 """
 The model that switches on when a provider key is entered.
 
-A newcomer saves an API key (Settings, the welcome window, the assistant's
-connection card) and expects the first run to work. Without this step the
+A newcomer saves an API key (Settings, the first run) and expects the first
+chat to work. Without this step the
 Models page still needed a model enabled and priced. :func:`ensure_default`
 enables one sensible model of the provider from the catalog, with its
 catalog price, stars it as the provider's default and, when the hub has no

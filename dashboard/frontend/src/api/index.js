@@ -70,7 +70,7 @@ installAgentRevision(api);
 export * from './agentImport';
 export * from './agents';
 export * from './chat';
-export * from './mcpNotify';
+export * from './notify';
 export * from './containers';
 export * from './flows';
 export * from './hubInfo';

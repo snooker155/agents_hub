@@ -46,7 +46,6 @@ import { SKILL_TOOL } from '../components/processUtils';
 import { SlotData } from '../components/SlotValue';
 import { useI18n, LANGUAGES } from '../i18n';
 import { useConversationStore } from '../components/chatStore';
-import { ASSISTANT_AGENT_ID } from '../components/chat/send/assistantThread';
 import { useLiveChatTurn } from '../components/chatLiveTurn';
 import { liveHandoffBubbles } from '../components/chat/handoff';
 // The bubbles, the cards, the pickers and the panels this page is made of.
@@ -173,7 +172,7 @@ export default function Chat() {
   // `paused` for a conversation with a turn running here: a reload triggered by
   // someone else's save would drop the turn this tab is in the middle of writing.
   const {
-    conversations, setConversations, removeConversation, syncError, reloadChat,
+    conversations, setConversations, removeConversation, syncError,
   } = useConversationStore(currentConvId, { paused: isTurnRunning });
 
   const [input, setInput] = useState('');
@@ -259,8 +258,6 @@ export default function Chat() {
   const processInsightsRef = useRef(processInsights); // used inside loadProcessData to check if silent
 
   // ---- derived state ----
-  // A conversation with the Assistant stays in the workspace it started in,
-  // like any other (routes/chats.py lists them the same way).
   const visibleConversations = useMemo(() => {
     if (!selectedWorkspace || selectedWorkspace === 'default') return conversations;
     return conversations.filter((c) => c.workspace === selectedWorkspace);
@@ -286,9 +283,8 @@ export default function Chat() {
   }, [currentMessages]);
   const conversationRunIds = useMemo(() => {
     const ids = new Set();
-    // `assistant` is a reply in a conversation with the Assistant (routes/assistant.py).
     for (const m of (currentMessages || [])) {
-      if ((m?.role === 'agent' || m?.role === 'assistant') && m?.run_id) ids.add(String(m.run_id));
+      if (m?.role === 'agent' && m?.run_id) ids.add(String(m.run_id));
     }
     return ids;
   }, [currentMessages]);
@@ -522,20 +518,6 @@ export default function Chat() {
       });
   }, [selectedWorkspace]);
 
-  // ---- a conversation with the Assistant opens with the Assistant picked ----
-  // However it was opened (the list, a link, a reload), once per opening: the
-  // person may pick another agent after that, and the next message then
-  // starts a conversation with it (components/chat/send/assistantThread.js).
-  const pickedForConvRef = useRef(null);
-  useEffect(() => {
-    if (!currentConv || pickedForConvRef.current === currentConv.id) return;
-    pickedForConvRef.current = currentConv.id;
-    if (currentConv.origin !== 'assistant') return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the opened conversation, once per opening
-    setTargetMode('agent');
-    setSelectedAgent(ASSISTANT_AGENT_ID);
-  }, [currentConv]);
-
   // ---- ensure selected agent is valid for current workspace ----
   // Adjusted while rendering, so the page never draws an agent the workspace
   // does not offer.
@@ -736,7 +718,7 @@ export default function Chat() {
   const { sendMessage } = useChatSend({
     autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
-    pendingReferences, processOpen: runDataWanted, reloadChat, selectCommand, selectedAgent, selectedFlow,
+    pendingReferences, processOpen: runDataWanted, selectCommand, selectedAgent, selectedFlow,
     selectedProject, selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError,
     setConversations, setCurrentConvId, setGraphRun, setInput, setPendingAttachments,
     setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, stream, t,
@@ -758,12 +740,8 @@ export default function Chat() {
       return;
     }
     turn.ctrl.abort();
-    if (turn.stop) {
-      turn.stop();
-    } else {
-      const runId = turn.runId || activeRunId;
-      if (runId) stopMessage(runId).catch(() => {});
-    }
+    const runId = turn.runId || activeRunId;
+    if (runId) stopMessage(runId).catch(() => {});
     endTurn(currentConvId);
   }, [activeRunId, currentConvId, endTurn, getTurn, liveRunId]);
 
@@ -869,7 +847,6 @@ export default function Chat() {
             scrolls behind it (see ChatComposer). */}
         <div className="relative flex-1 min-h-0 flex flex-col">
           <ChatMessageList />
-          {/* A conversation with the Assistant is continued here too, through /api/assistant (useChatSend). */}
           <ChatComposer />
         </div>
       </div>

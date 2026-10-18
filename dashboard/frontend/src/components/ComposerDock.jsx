@@ -16,8 +16,8 @@ import { DOCK_HEIGHT_VAR, DOCK_RESIZE_EVENT } from './composerDockState';
  * Where it goes horizontally is measured, not assumed: the box is centred on
  * the page's scroller (the Layout's `<main>`, found from the spacer), inside
  * the page's gutters, a little under half of that width. Nothing that opens
- * beside or over the page moves it — not the chat column a page may show,
- * not the page chat's panel — because none of those change the scroller.
+ * beside or over the page moves it, not the chat column a page may show,
+ * because that does not change the scroller.
  * The chat column instead ends above the box: the box publishes its height
  * as `--composer-dock-height` on the document and announces a change with a
  * `composer-dock-resize` event, which `ChatColumn` measures against.

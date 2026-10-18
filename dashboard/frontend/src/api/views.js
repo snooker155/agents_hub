@@ -25,7 +25,7 @@ export const saveViewSnapshot = (viewId, dataUrl) => api.post(`/views/${viewId}/
 export const getViewClips = (viewId) => api.get(`/views/${viewId}/clips`);
 export const getViewClip = (viewId, name) => api.get(`/views/${viewId}/clips/${encodeURIComponent(name)}`);
 // The Studio build chat: the Visualizer pinned to one view, stored server-side
-// like every other entity chat so the floating page-chat panel can host it.
+// like every other entity chat.
 // The streaming turn goes through `streamEntityChat`.
 export const getViewChat = (viewId) => api.get(`/views/${viewId}/chat`);
 export const clearViewChat = (viewId) => api.delete(`/views/${viewId}/chat`);

@@ -27,13 +27,13 @@ function mountEl(selector) {
 describe('welcome tour steps', () => {
   it('visits the pages in the documented order', () => {
     expect(TOUR_STOPS.map((s) => s.id)).toEqual([
-      'assistant', 'chat', 'agents', 'tasks', 'flows', 'teams', 'artifacts', 'health', 'docs',
+      'chat', 'agents', 'tasks', 'flows', 'teams', 'artifacts', 'health', 'docs',
     ]);
     const steps = buildSteps(t, {});
     expect(steps.map((s) => s.path)).toEqual([
-      '/assistant', '/chat', '/agents', '/tasks', '/flows', '/teams', '/artifacts', '/health', '/docs',
+      '/chat', '/agents', '/tasks', '/flows', '/teams', '/artifacts', '/health', '/docs',
     ]);
-    expect(steps[0].title).toBe('tour.steps.assistant.title');
+    expect(steps[0].title).toBe('tour.steps.chat.title');
   });
 });
 
@@ -124,17 +124,17 @@ describe('useWelcomeTour', () => {
       const tour = useWelcomeTour();
       return (
         <main>
-          <button type="button" data-tour="assistant-talk">talk</button>
+          <textarea defaultValue="talk" />
           <button type="button" onClick={() => tour.start()}>go</button>
         </main>
       );
     }
-    window.history.replaceState(null, '', '/assistant');
-    const { getByText } = render(<I18nProvider><MemoryRouter initialEntries={['/assistant']}><Probe /></MemoryRouter></I18nProvider>);
+    window.history.replaceState(null, '', '/chat');
+    const { getByText } = render(<I18nProvider><MemoryRouter initialEntries={['/chat']}><Probe /></MemoryRouter></I18nProvider>);
     await act(async () => { fireEvent.click(getByText('go')); });
     expect(__spies.highlight).toHaveBeenCalled();
     const arg = __spies.highlight.mock.calls[0][0];
-    expect(arg.popover.title).toBe('Assistant');
-    expect(arg.element.textContent).toBe('talk');
+    expect(arg.popover.title).toBe('Chat');
+    expect(arg.element.tagName).toBe('TEXTAREA');
   });
 });

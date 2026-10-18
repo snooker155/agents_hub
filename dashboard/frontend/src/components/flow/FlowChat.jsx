@@ -3,7 +3,6 @@ import { Bot, Send, StopCircle, User, Workflow } from 'lucide-react';
 import { stopMessage, startChatOverSSE } from '../../api';
 import { useStream } from '../stream';
 import { useI18n } from '../../i18n';
-import { useInlineChatOpen } from '../pageChat/pageChat';
 import { autoGrowTextarea } from '../../lib/autoGrow';
 import { historyWindowStart } from '../chat/send/buildRequest';
 
@@ -114,9 +113,6 @@ export default function FlowChat({
   onActivity = null,
 }) {
   const { t } = useI18n();
-  // The flow's own chat, in the editor's right-hand panel: while it is mounted
-  // the floating launcher would sit on its composer, so it stands down.
-  useInlineChatOpen();
   const { on, acquireChannel, clientId } = useStream();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');

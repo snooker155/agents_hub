@@ -12,7 +12,6 @@ export default {
     more: '+{{count}}',
     hint: 'The simple menu keeps what you need to start; the full menu shows every page. Pages stay the same, only the map changes.',
   },
-  assistant: 'Assistant',
   chat: 'Chat',
   dashboard: 'Dashboard',
   workspaces: 'Workspaces',
@@ -47,5 +46,4 @@ export default {
   comingSoonItem: '{{name}} — coming soon',
   health: 'Status',
   connectors: 'Connectors',
-  mcp: 'MCP servers',
 };

@@ -12,7 +12,6 @@ export default {
     more: '+{{count}}',
     hint: 'Das einfache Menü zeigt, was Sie für den Einstieg brauchen; das vollständige zeigt jede Seite. Die Seiten bleiben gleich, nur die Übersicht ändert sich.',
   },
-  assistant: 'Assistent',
   chat: 'Chat',
   dashboard: 'Dashboard',
   workspaces: 'Workspaces',
@@ -47,5 +46,4 @@ export default {
   comingSoonItem: '{{name}} — demnächst',
   health: 'Status',
   connectors: 'Konnektoren',
-  mcp: 'MCP-Server',
 };

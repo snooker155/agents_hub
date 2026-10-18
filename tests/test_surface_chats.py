@@ -1,9 +1,8 @@
 """The chats added to the surfaces that had none.
 
-Five agents that shipped with the product had no way in, or no page of their own:
+Four agents that shipped with the product had no way in, or no page of their own:
 `team_creator` and `project_manager` had no caller at all, `agent_creator` could
-only be reached from the main chat, `service_agent` had nowhere
-to live, and `memory_extractor` could only write. Each now has a chat on its own
+only be reached from the main chat, and `memory_extractor` could only write. Each now has a chat on its own
 page, all built on the same entity-chat plumbing.
 
 The agent itself is not exercised here (`tests/test_entity_chat.py` covers the
@@ -50,13 +49,11 @@ def test_each_chat_names_a_system_agent(seeded_registry):
     of them are system agents, so every install has them."""
     from agents.registry import get_agent
     from routes.agents import DEFINITION_AGENT_ID
-    from routes.health import SERVICE_AGENT_ID
     from routes.memory import MEMORY_AGENT_ID
     from routes.projects import REGISTRY_AGENT_ID
     from routes.teams import TEAM_AGENT_ID
 
-    for agent_id in (TEAM_AGENT_ID, DEFINITION_AGENT_ID, REGISTRY_AGENT_ID,
-                     SERVICE_AGENT_ID, MEMORY_AGENT_ID):
+    for agent_id in (TEAM_AGENT_ID, DEFINITION_AGENT_ID, REGISTRY_AGENT_ID, MEMORY_AGENT_ID):
         spec = get_agent(agent_id)
         assert spec is not None, f"{agent_id} is not registered"
         assert spec.system is True, f"{agent_id} must be a system agent"
@@ -66,13 +63,11 @@ def test_the_chat_kinds_are_distinct():
     """The store keys on (kind, id). Two surfaces sharing a kind would share a
     transcript."""
     from routes.agents import DEFINITION_CHAT_KIND
-    from routes.health import SERVICE_CHAT_KIND
     from routes.memory import MEMORY_CHAT_KIND
     from routes.projects import REGISTRY_CHAT_KIND
     from routes.teams import TEAM_CHAT_KIND
 
-    kinds = [TEAM_CHAT_KIND, DEFINITION_CHAT_KIND, REGISTRY_CHAT_KIND,
-             SERVICE_CHAT_KIND, MEMORY_CHAT_KIND]
+    kinds = [TEAM_CHAT_KIND, DEFINITION_CHAT_KIND, REGISTRY_CHAT_KIND, MEMORY_CHAT_KIND]
     assert len(set(kinds)) == len(kinds)
     # And none may collide with the chats that already existed.
     assert not set(kinds) & {"loop"}
@@ -288,65 +283,6 @@ def test_the_registry_prompt_says_what_creating_a_project_does_not_do(seeded_reg
     assert "jobs" in prompt
     assert "Architect" in prompt and "Planner" in prompt
     assert "removes the record, not the folder" in prompt
-
-
-# ── the service chat ─────────────────────────────────────────────────────────
-
-@pytest.fixture
-def health_client():
-    from routes import health as health_routes
-    return _client(health_routes.router)
-
-
-def test_the_service_chat_exists_without_an_entity(health_client):
-    """The one chat with nothing to build: its subject is the running service,
-    so the id is fixed rather than a row in a store."""
-    body = health_client.get("/api/health/chat").json()
-    assert body["messages"] == [] and body["trace"] == []
-    assert body["chat_ref"] == {"kind": "service", "id": "service"}
-
-
-def test_an_empty_service_message_is_refused(health_client, seeded_registry):
-    assert health_client.post("/api/health/chat", json={"message": ""}).status_code == 400
-
-
-def test_stopping_an_idle_service_chat_is_not_an_error(health_client):
-    body = health_client.post("/api/health/chat/stop").json()
-    assert body == {"stopped": False, "cancelled": 0}
-
-
-def test_clearing_the_service_chat_starts_a_new_session(health_client):
-    from common.entity_chat_store import entity_chat_store
-    from routes.health import SERVICE_CHAT_ID, SERVICE_CHAT_KIND
-
-    entity_chat_store().append_message(SERVICE_CHAT_KIND, SERVICE_CHAT_ID, "user", "hi")
-    body = health_client.delete("/api/health/chat").json()
-    assert body["cleared"] is True and body["session_epoch"] == 1
-
-
-def test_the_service_prompt_inlines_the_snapshot_and_says_not_to_refetch():
-    """Every investigation starts with the snapshot, so paying a tool round-trip
-    for it on each turn is pure latency."""
-    from common.health import snapshot
-    from routes.health import _service_chat_prompt
-
-    health_now = snapshot()
-    prompt = _service_chat_prompt([{"role": "user", "content": "anything broken?"}],
-                                  "anything broken?", health_now)
-
-    assert "Health right now" in prompt
-    assert health_now["status"] in prompt
-    assert "Do not call service_health" in prompt
-    assert "clear yes" in prompt, "it must not stop anything on its own judgement"
-    assert "anything broken?" in prompt
-
-
-def test_the_service_prompt_pushes_back_on_manufactured_reports():
-    from common.health import snapshot
-    from routes.health import _service_chat_prompt
-
-    prompt = _service_chat_prompt([], "status?", snapshot())
-    assert "one line" in prompt
 
 
 # ── the memory chat ──────────────────────────────────────────────────────────
