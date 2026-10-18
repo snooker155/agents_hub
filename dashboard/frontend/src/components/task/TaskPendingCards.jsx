@@ -1,8 +1,7 @@
 /**
- * Cards shown while a task waits: an answer, a tool call approval or a budget decision.
+ * Cards shown while a task waits: an answer or a tool call approval.
  */
-import { DollarSign, HelpCircle, ShieldQuestion } from 'lucide-react';
-import { fmtUsd } from './taskUtils';
+import { HelpCircle, ShieldQuestion } from 'lucide-react';
 import { useI18n } from '../../i18n';
 
 export function AwaitingInputCard({ answerDraft, answerSubmitting, handleAnswerTask, setAnswerDraft, task }) {
@@ -52,53 +51,6 @@ export function AwaitingInputCard({ answerDraft, answerSubmitting, handleAnswerT
           className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
         >
           {answerSubmitting ? t('taskDetails.sending') : t('taskDetails.sendAndResume')}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export function BudgetPauseCard({ approvalSubmitting, budgetCapDraft, handleBudgetDecision, setBudgetCapDraft, task }) {
-  const { t } = useI18n();
-  return (
-    <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-      <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
-        <DollarSign className="w-4 h-4" /> {t('taskDetails.pausedAtMoneyCap')}
-      </p>
-      <p className="text-sm text-amber-900 mt-1">
-        {t('taskDetails.budgetPauseDetail', {
-          spent: fmtUsd(task.pending_approval?.spent_usd),
-          limit: fmtUsd(task.pending_approval?.limit_usd),
-        })}
-      </p>
-      {task.pending_approval?.reason && (
-        <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
-      )}
-      <div className="flex items-center gap-2 mt-3">
-        <label className="text-xs font-medium text-amber-700 uppercase tracking-wide">{t('taskDetails.newCapUsd')}</label>
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          value={budgetCapDraft}
-          onChange={(e) => setBudgetCapDraft(e.target.value)}
-          className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none"
-        />
-        <button
-          type="button"
-          disabled={approvalSubmitting || !budgetCapDraft || Number(budgetCapDraft) <= Number(task.pending_approval?.spent_usd || 0)}
-          onClick={() => handleBudgetDecision(true)}
-          className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
-        >
-          {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.continueTask')}
-        </button>
-        <button
-          type="button"
-          disabled={approvalSubmitting}
-          onClick={() => handleBudgetDecision(false)}
-          className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
-        >
-          {t('taskDetails.stopTask')}
         </button>
       </div>
     </div>

@@ -12,7 +12,7 @@ not grow with the dashboard.
 
 The kinds of chat/references.py (task, view, project, scenario, loop, flow,
 team, agent, scheduled job) are reused as they are; this module adds what
-the reference picker has no use for: runs, sessions, spend, budgets, models,
+the reference picker has no use for: runs, sessions, spend, models,
 notifications and the approvals waiting for someone (wave 1 of the assistant
 plan).
 
@@ -59,38 +59,20 @@ class LookupError_(Exception):
 # ── who is asking ────────────────────────────────────────────────────────────
 
 def principal_of(user_id: Optional[str]):
-    """The person behind a turn as a principal, or None outside ``multi``
-    mode (one operator, who sees everything)."""
-    from common import identity
-    from common.auth import MULTI, Principal
-    if identity.current_mode() != MULTI or not user_id:
-        return None
-    user = identity.get_user(str(user_id))
-    if user is None:
-        return None
-    return Principal(id=user["id"], username=user["username"], role=user["role"],
-                     kind="user", via="assistant")
+    """The person behind a turn as a principal: None, meaning the one
+    operator, who sees everything."""
+    return None
 
 
 def reachable_workspaces(principal: Any) -> List[str]:
-    """The workspaces this person can work in through the assistant: what
-    they can see, without other people's personal workspaces. Their own
-    personal workspace first, then ``default``, then the rest by name."""
-    from common import access, identity, personal_workspace
-    from common.auth import MULTI
+    """The workspaces the assistant can work in: every one but the personal
+    workspaces of accounts that no longer exist. ``default`` first, then the
+    rest by name."""
+    from common import personal_workspace
     from workspace import list_workspace_folders
-    own = None
-    if identity.current_mode() == MULTI and principal is not None and getattr(principal, "kind", "") == "user":
-        own = personal_workspace.name_for(principal.id)
-    out: List[str] = []
-    for folder in list_workspace_folders():
-        name = folder.name
-        if not access.can_see_workspace(principal, name):
-            continue
-        if personal_workspace.is_reserved_name(name) and name != own:
-            continue
-        out.append(name)
-    return sorted(out, key=lambda n: (n != own, n != "default", n))
+    out: List[str] = [folder.name for folder in list_workspace_folders()
+                      if not personal_workspace.is_reserved_name(folder.name)]
+    return sorted(out, key=lambda n: (n != "default", n))
 
 
 def context_for(user_id: Optional[str], workspace: Optional[str], current: Optional[str],
@@ -270,18 +252,6 @@ def _period_since(period: str, now: Optional[datetime] = None) -> str:
     return start.isoformat()
 
 
-def _person_limit(ctx: SimpleNamespace) -> Optional[Dict[str, Any]]:
-    from common import identity
-    from common.auth import MULTI
-    if identity.current_mode() != MULTI or not ctx.user_id or ctx.principal is None:
-        return None
-    from common.user_budget import user_budget_status
-    status = user_budget_status(str(ctx.user_id))
-    return {"spent_this_month_usd": round(status["spend"], 4),
-            "limit_usd": status["limit_usd"] or None, "limit_source": status["source"],
-            "used_up": status["exceeded"]}
-
-
 def _list_costs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
     out = []
     for period in PERIODS:
@@ -311,40 +281,9 @@ def _cost_card(ctx: SimpleNamespace, period: str) -> Optional[Dict[str, Any]]:
     if ctx.user_id and ctx.principal is not None:
         mine = costs_breakdown(since=since, workspaces=ctx.reachable, launched_by=str(ctx.user_id))
         fields["yours_usd"] = mine["totals"]["cost"]
-    person = _person_limit(ctx)
-    if person:
-        fields["your_monthly_limit"] = person
     return {"title": f"Spend this {period}" if period != "today" else "Spend today", "fields": fields,
             "note": "Estimates from the Models page prices, the same numbers as the Costs page.",
             "url": "/costs"}
-
-
-def _list_budgets(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    from common.budget import budget_status
-    rows = []
-    for ws in ctx.workspaces:
-        if not _matches(query, ws):
-            continue
-        b = budget_status(ws)
-        cap = b.get("hard_limit_usd") or 0
-        rows.append(_row(ws, ws, f"{_money(b.get('spend'))} of {_money(cap)} ({b.get('period')})"
-                         if cap else f"{_money(b.get('spend'))}, no cap", "/costs"))
-    return rows[:limit]
-
-
-def _budget_card(ctx: SimpleNamespace, workspace: str) -> Optional[Dict[str, Any]]:
-    from common.budget import budget_status
-    ws = workspace or ctx.workspace
-    if not ws or ws not in ctx.reachable:
-        return None
-    b = budget_status(ws)
-    fields = {k: b.get(k) for k in ("workspace", "period", "spend", "hard_limit_usd", "soft_limit_usd",
-                                     "run_limit_usd", "hard_exceeded", "soft_exceeded")}
-    person = _person_limit(ctx)
-    if person:
-        fields["your_monthly_limit"] = person
-    return {"title": f"Budget of {ws}", "fields": fields,
-            "note": "Caps are set by an administrator on the Costs page.", "url": "/costs"}
 
 
 # ── models ───────────────────────────────────────────────────────────────────
@@ -628,7 +567,7 @@ _REFERENCE_SUMMARIES = {
     "loop": ("loops", ("/loops",)),
     "flow": ("flows", ("/flows",)),
     "team": ("teams", ("/teams",)),
-    "job": ("scheduled jobs", ("/plan",)),
+    "job": ("scheduled jobs", ("/plan", "/deployments")),
 }
 
 KINDS: Dict[str, LookupKind] = {}
@@ -661,8 +600,6 @@ _register(LookupKind("session", "sessions: conversations and the runs in them",
                      _list_sessions, _session_card, ("/sessions", "/chat")))
 _register(LookupKind("cost", "spend for a period (id: today, week or month) and the person's limit",
                      _list_costs, _cost_card, ("/costs",)))
-_register(LookupKind("budget", "workspace budgets and the person's monthly limit",
-                     _list_budgets, _budget_card, ("/costs",)))
 _register(LookupKind("model", "enabled models with prices, the default here and the special models",
                      _list_models, _model_card, ("/models",)))
 _register(LookupKind("voice", "the models the assistant's voice uses here: transcription and speech, "
@@ -737,15 +674,9 @@ def lookup(kind: str, *, query: str = "", entity_id: str = "", workspace: str = 
 
 
 def _require_admin(user_id: Optional[str]) -> None:
-    """The service-wide kinds are an administrator's. The tool that reads them
-    is only built into a service thread; this is the second check."""
-    from common import identity
-    from common.auth import MULTI
-    if identity.current_mode() != MULTI:
-        return
-    principal = principal_of(user_id)
-    if principal is None or not principal.is_admin:
-        raise LookupError_("Service-wide records are for administrators.", code="forbidden")
+    """The service-wide kinds are the operator's, who is the administrator.
+    The tool that reads them is only built into a service thread."""
+    return None
 
 
 # The kinds of waves 2 and 3 live in their own modules, which register

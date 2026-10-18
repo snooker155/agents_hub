@@ -34,7 +34,7 @@ def _ensure_legacy_imported() -> None:
     """
     global _legacy_imported_for
     db.get_conn()  # the startup sequence must have run for the marker to mean anything
-    marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
+    marker = f"{db._generation}:{db.DB_FILE}"
     if _legacy_imported_for == marker:
         return
     _legacy_imported_for = marker

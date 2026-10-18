@@ -19,8 +19,8 @@ export const STATE_STYLES = {
 
 export const KIND_ICONS = {
   resident: Radio,
-  // A replica of a runner service: the same process bound to no agent, which
-  // answers any agent's chat turn (docs/services.md).
+  // A runner: the same process bound to no agent, which answers any agent's
+  // chat turn.
   runner: Cpu,
   // Legacy kinds: rows a migration turned an old node or container record
   // into (instances/store.py CARRIER_KINDS). Nodes are gone from the UI, but
@@ -64,9 +64,9 @@ export function relativeTime(iso, t) {
 }
 
 /**
- * The page of the copy a start returned (POST /api/instances). A runner
- * replica has no agent of its own, so the page is told whom the messages
- * typed there are for.
+ * The page of the copy a start returned (POST /api/instances). A runner has
+ * no agent of its own, so the page is told whom the messages typed there are
+ * for.
  */
 export function instancePath(instance, agentId) {
   const base = `/instances/${instance.instance_id}`;

@@ -129,11 +129,11 @@ ALLOW_SHELL=python,pytest,ruff,black
 # CORS origins for the frontend
 ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
-# Require a token on every /api request (unset means unauthenticated, fine on
-# localhost only). Restart the backend after setting it, and give the same
-# token to the browser under Settings → System → API access.
-# AGENTS_HUB_API_TOKEN=change-me
 ```
+
+---
+
+## Path A```
 
 ---
 
@@ -147,7 +147,7 @@ exec $SHELL                  # pick up the shell integration
 ah up                        # backend on :8000 and built dashboard on :5173
 ```
 
-On a first install from a terminal it finishes with `ah setup`, the guided configuration (database, accounts, providers and default models; [docs/installation.md](./docs/installation.md), "Guided setup"), which writes `.env` for you. Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--setup` / `--no-setup`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
+On a first install from a terminal it finishes with `ah setup`, the guided configuration (providers and default models; [docs/installation.md](./docs/installation.md), "Guided setup"), which writes `.env` for you. Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--setup` / `--no-setup`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
 
 ### A.1 Install Python dependencies
 
@@ -254,7 +254,7 @@ BACKEND_PORT=18000 WEB_PORT=18080 docker compose up
 ### B.2 The frontend service
 
 Compose runs one frontend, and it is the built bundle behind nginx: the same
-server also proxies `/api` and balances it across however many backends are up.
+server also proxies `/api` to the backend.
 There is no Vite service in compose. While editing frontend code, run the dev
 server on the host instead (Path A) and let it proxy `/api` to the backend on
 `:8000`; a change that has to be seen in the container needs
@@ -265,17 +265,11 @@ server on the host instead (Path A) and let it proxy `/api` to the backend on
   `no-cache` on `index.html`, so a redeploy is picked up on the next load
 - `/api` is proxied unbuffered, so SSE streams and long agent runs still work
 
-To put several backends behind it:
-
-```bash
-docker compose up --build --scale backend=3
-```
-
-Both knobs are environment variables on the `frontend` service:
+Two knobs are environment variables on the `frontend` service:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BACKEND_SERVERS` | `backend:8000` | Space-separated `host:port` list to balance over (`least_conn`) |
+| `BACKEND_SERVERS` | `backend:8000` | The `host:port` of the backend |
 | `API_ASSET_CACHE_SECONDS` | `30` | Shared cache TTL for generated view assets. `0` disables it |
 
 Nothing else under `/api` is cached: the dashboard reads live state, so a stale
@@ -354,7 +348,7 @@ After the first run, the repo root will contain a runtime directory:
 └── workspaces/<ws>/            # per-workspace files
 ```
 
-Every record the service keeps (the agent registry, the model catalog, flows, runs, tasks, sessions, memory pools, episodes, the knowledge graph, procedures, scheduled jobs, workspace settings, connector configuration) is in the database; only logs, workspace folders and generated assets are files. That is the SQLite file by default; set `AGENTS_HUB_DATABASE_URL` to a `postgresql://` URL to keep it in Postgres instead (see `docs/scaling.md`, and `ah db migrate` to move an existing one). Older JSON files the database replaced are left behind as `*.migrated` after the first start.
+Every record the service keeps (the agent registry, the model catalog, flows, runs, tasks, sessions, memory pools, episodes, the knowledge graph, procedures, scheduled jobs, workspace settings, connector configuration) is in the database; only logs, workspace folders and generated assets are files. That is one SQLite file. Older JSON files the database replaced are left behind as `*.migrated` after the first start.
 
 You can delete `.agents_hub/` to fully reset state — it will be regenerated on the next backend start. Back it up if you want to preserve memory or task history.
 

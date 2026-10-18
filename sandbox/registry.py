@@ -1,23 +1,18 @@
 """Picking a sandbox provider by name.
 
-Four providers, one instance each (stateless beyond a docker-availability
-cache and, for e2b/modal, nothing at all): ``docker``, ``local``, ``e2b``,
-``modal``. :func:`get_provider` returns the instance; :func:`available`
+Two providers, one instance each (stateless beyond a docker-availability
+cache): ``docker`` and ``local``. :func:`get_provider` returns the instance; :func:`available`
 reports whether each one can actually run something right now, and why not
-when it cannot (used by the doctor check and the Environments page's
-provider picker); :func:`resolve` is the precedence a run's provider comes
-from.
+when it cannot (used by the doctor check); :func:`resolve` is the precedence
+a run's provider comes from.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import Dict
 
 from sandbox.base import SandboxProvider
 
-if TYPE_CHECKING:
-    from environments.models import Environment
-
-PROVIDER_NAMES = ("docker", "local", "e2b", "modal")
+PROVIDER_NAMES = ("docker", "local")
 
 _INSTANCES: Dict[str, SandboxProvider] = {}
 
@@ -27,18 +22,6 @@ def get_provider(name: str) -> SandboxProvider:
     anything outside :data:`PROVIDER_NAMES` — callers resolve a name through
     :func:`resolve` first, which never returns anything else."""
     name = (name or "").strip().lower()
-    if name == "nodes":
-        # The pool of node sandboxes (sandbox/node.py): the hub picks a node.
-        if name not in _INSTANCES:
-            from sandbox.node import PoolProvider
-            _INSTANCES[name] = PoolProvider()
-        return _INSTANCES[name]
-    if name.startswith("node:"):
-        # A linked node's sandbox (sandbox/node.py): one instance per node id.
-        if name not in _INSTANCES:
-            from sandbox.node import NodeProvider
-            _INSTANCES[name] = NodeProvider(name[len("node:"):])
-        return _INSTANCES[name]
     if name not in _INSTANCES:
         if name == "docker":
             from sandbox.docker import DockerProvider
@@ -46,12 +29,6 @@ def get_provider(name: str) -> SandboxProvider:
         elif name == "local":
             from sandbox.local import LocalProvider
             _INSTANCES[name] = LocalProvider()
-        elif name == "e2b":
-            from sandbox.e2b import E2BProvider
-            _INSTANCES[name] = E2BProvider()
-        elif name == "modal":
-            from sandbox.modal import ModalProvider
-            _INSTANCES[name] = ModalProvider()
         else:
             raise KeyError(f"no sandbox provider named {name!r} (expected one of {PROVIDER_NAMES})")
     return _INSTANCES[name]
@@ -68,35 +45,21 @@ def available() -> Dict[str, Dict[str, object]]:
         except Exception as exc:  # noqa: BLE001 - a broken provider reads as unavailable
             ok, reason = False, f"{type(exc).__name__}: {exc}"
         out[name] = {"available": ok, "reason": "" if ok else reason}
-    try:
-        from hublink import nodes
-        out.update(nodes.sandbox_availability())
-    except Exception:  # noqa: BLE001 - no nodes, or no database: the four stay
-        import logging
-        logging.getLogger(__name__).debug("node sandboxes not listed", exc_info=True)
     return out
 
 
-def resolve(environment: Optional["Environment"], settings=None) -> str:
+def resolve(settings=None) -> str:
     """The provider name a request should use.
 
-    Precedence: the run's environment, when it names one explicitly (its
-    ``sandbox_provider`` is anything but ``inherit``); else
-    ``CODE_RUNNER_PROVIDER`` (default ``docker``); else, when that provider
-    cannot run right now and the operator has opted into the historical
-    local fallback (``CODE_RUNNER_FALLBACK=local``), ``local`` — the same
-    rule ``run_code`` always applied when docker was unavailable, now
-    expressed as a provider choice instead of a hardcoded branch.
+    Precedence: ``CODE_RUNNER_PROVIDER`` (default ``docker``); else, when that
+    provider cannot run right now and the operator has opted into the local
+    fallback (``CODE_RUNNER_FALLBACK=local``), ``local``.
 
     Availability is not otherwise considered here: a name this function
     returns may still fail ``is_available()`` (a key missing, docker down),
     and the caller surfaces that as the run's error, the same as calling any
     other unavailable provider by name.
     """
-    if environment is not None:
-        choice = str(getattr(environment, "sandbox_provider", "") or "inherit").strip().lower()
-        if choice and choice != "inherit":
-            return choice
     live_settings = settings
     if live_settings is None:
         from common.config import settings as live_settings

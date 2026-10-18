@@ -9,7 +9,7 @@ the ``request(method, path, params=None, json=None)`` callable ``ah`` passes
 process or one across the network, and never imports a service module.
 
 Field writes go through the routes the dashboard uses for the same edit
-(``/api/agents/{id}/tools``, ``/api/environments/{id}``, ``/api/plan/jobs/{id}``,
+(``/api/agents/{id}/tools``, ``/api/plan/jobs/{id}``,
 ``/api/shared-memory/{id}/blocks/{name}``), so every check those routes make
 (the capability guard, handoff targets, catalog models, cron syntax) applies
 to a file exactly as it does to a click.
@@ -353,7 +353,7 @@ def _q(value: str) -> str:
 MODEL_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens")
 REASONING_KEYS = ("think_enabled", "think_mode", "thinking_level", "plan_enabled", "plan_format")
 LOOP_KEYS = ("fallback_models", "advisor_model", "output_schema", "max_concurrent_delegates",
-             "tool_search", "compaction", "data_class")
+             "tool_search", "compaction")
 WEB_KEYS = ("allowed_domains", "blocked_domains")
 SKILL_KEYS = ("name", "description", "steps", "body", "tags")
 #: List fields a child agent (``extends:`` set) may give as ``+item`` / ``-item`` deltas instead
@@ -557,8 +557,7 @@ class AgentKind(Kind):
         "episodic_write": None, "response_format": "none", "clarify_gate": False,
         "allow_self_delegation": False, "web_domains": {"allowed_domains": [], "blocked_domains": []},
         "loop": {"fallback_models": [], "advisor_model": None, "output_schema": None,
-                 "max_concurrent_delegates": 6, "tool_search": None, "compaction": None,
-                 "data_class": ""},
+                 "max_concurrent_delegates": 6, "tool_search": None, "compaction": None},
         "tool_policy": {}, "guardrails": [], "secrets": [], "shared": False, "outcome": None,
     }
 
@@ -701,7 +700,6 @@ class AgentKind(Kind):
                 "max_concurrent_delegates": int(detail.get("max_concurrent_delegates") or 6),
                 "tool_search": detail.get("tool_search"),
                 "compaction": detail.get("compaction"),
-                "data_class": detail.get("data_class") or "",
             },
             "tool_policy": dict(detail.get("tool_policy") or {}),
             "guardrails": _sorted_list(detail.get("guardrails")),
@@ -883,98 +881,6 @@ class AgentKind(Kind):
 
 
 # ---------------------------------------------------------------------------
-# environment
-# ---------------------------------------------------------------------------
-
-NETWORK_KEYS = ("type", "allowed_hosts", "allow_package_managers")
-LIMIT_KEYS = ("memory", "cpus", "pids_limit")
-
-
-def _check_env_vars(v: Any) -> Optional[str]:
-    if not isinstance(v, dict) or not all(isinstance(k, str) for k in v):
-        return "must be a mapping of NAME: value"
-    return None
-
-
-class EnvironmentKind(Kind):
-    name = "environment"
-    key_defaults = ("name",)
-    fields = (
-        Field("name", want_str, _text),
-        Field("workspace", want_str, _str_or_none),
-        Field("description", want_text, _text),
-        Field("mode", want_str, _text),
-        Field("image", lambda v: None if v is None else want_str(v), _str_or_none),
-        Field("packages", want_list, _str_list),
-        Field("network", want_mapping(NETWORK_KEYS), dict, partial=True),
-        Field("limits", want_mapping(LIMIT_KEYS), dict, partial=True),
-        Field("size", lambda v: None if v is None else want_str(v), _str_or_none),
-        Field("env", _check_env_vars, lambda v: {str(k): str(x) for k, x in (v or {}).items()}),
-        Field("sandbox_provider", want_str, _text),
-        Field("is_default", want_bool, _bool),
-    )
-    DEFAULTS: Dict[str, Any] = {
-        "workspace": None, "description": "", "mode": "inherit", "image": None, "packages": [],
-        "network": {"type": "unrestricted", "allowed_hosts": [], "allow_package_managers": False},
-        "limits": {"memory": None, "cpus": None, "pids_limit": None}, "size": None, "env": {},
-        "sandbox_provider": "inherit", "is_default": False,
-    }
-
-    @staticmethod
-    def _canon(row: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "name": _text(row.get("name")),
-            "workspace": _str_or_none(row.get("workspace")),
-            "description": _text(row.get("description")),
-            "mode": row.get("mode") or "inherit",
-            "image": _str_or_none(row.get("image")),
-            "packages": list(row.get("packages") or []),
-            "network": dict(row.get("network") or {}),
-            "limits": dict(row.get("limits") or {}),
-            "size": _str_or_none(row.get("size")),
-            "env": dict(row.get("env") or {}),
-            "sandbox_provider": row.get("sandbox_provider") or "inherit",
-            "is_default": bool(row.get("is_default")),
-            "_version": row.get("updated_at"),
-            "_archived": bool(row.get("archived_at")),
-        }
-
-    def observe(self, ctx: Context, hub_id: str, res: Optional[Resource]) -> Optional[Dict[str, Any]]:
-        row = ctx.get(f"/api/environments/{_q(hub_id)}")
-        return self._canon(row) if row is not None else None
-
-    def find_existing(self, ctx: Context, res: Resource, desired: Dict[str, Any]) -> Optional[str]:
-        ws = desired.get("workspace", _str_or_none(ctx.default_workspace(res)))
-        rows = ctx.get("/api/environments", params={"workspace": ws, "include_archived": True}
-                       if ws else {"include_archived": True}) or []
-        for row in rows:
-            if _text(row.get("name")) == desired.get("name") and _str_or_none(row.get("workspace")) == ws:
-                return str(row.get("id"))
-        return None
-
-    def blocked(self, observed: Dict[str, Any], changed: List[str]) -> Optional[str]:
-        if observed.get("_archived") and changed:
-            return "the environment is archived in the hub and read only"
-        return None
-
-    def create(self, ctx: Context, res: Resource, desired: Dict[str, Any]) -> str:
-        body = {k: v for k, v in desired.items()}
-        body.setdefault("workspace", ctx.default_workspace(res))
-        row = ctx.call("POST", "/api/environments", json=body)
-        return str(row["id"])
-
-    def write_groups(self, names: List[str]) -> List[List[str]]:
-        return [names] if names else []
-
-    def write(self, ctx: Context, hub_id: str, res: Resource, values: Dict[str, Any],
-              observed: Dict[str, Any]) -> None:
-        ctx.call("PATCH", f"/api/environments/{_q(hub_id)}", json=dict(values))
-
-    def delete(self, ctx: Context, hub_id: str) -> None:
-        ctx.call("DELETE", f"/api/environments/{_q(hub_id)}")
-
-
-# ---------------------------------------------------------------------------
 # memory_pool
 # ---------------------------------------------------------------------------
 
@@ -1079,7 +985,7 @@ class MemoryPoolKind(Kind):
 JOB_KINDS = ("agent_task", "notification", "flow", "memory_consolidate")
 RECURRENCES = ("none", "hourly", "daily", "weekly", "cron")
 #: Declared name -> the job field it is stored as.
-HUB_NAMES = {"job": "kind", "agent": "agent_id", "environment": "environment_id",
+HUB_NAMES = {"job": "kind", "agent": "agent_id",
              "memory_pools": "memory_pool_ids", "consolidate_pool": "consolidate_pool_id"}
 FINAL_STATUSES = ("fired", "cancelled", "failed")
 
@@ -1103,8 +1009,6 @@ class DeploymentKind(Kind):
               _iso),
         Field("catch_up", want_bool, _bool),
         Field("channels", want_list, _str_list),
-        Field("environment", lambda v: None if v is None else want_str(v), _str_or_none, ref="environment"),
-        Field("budget_usd", want_num, _ident),
         Field("agent_version", lambda v: None if v is None else want_int(v), _ident),
         Field("auto_pause_after", want_int, int),
         Field("project_id", lambda v: None if v is None else want_str(v), _str_or_none),
@@ -1119,7 +1023,7 @@ class DeploymentKind(Kind):
     DEFAULTS: Dict[str, Any] = {
         "job": "agent_task", "workspace": None, "flow_id": "", "seed": {}, "max_concurrent": 1,
         "message": "", "recurrence": "none", "cron": "", "timezone": "UTC", "catch_up": False,
-        "channels": ["dashboard"], "environment": None, "budget_usd": None, "agent_version": None,
+        "channels": ["dashboard"], "agent_version": None,
         "auto_pause_after": 3, "project_id": None, "file_ids": [], "secrets": [], "memory_pools": [],
         "memory_access": None, "consolidate_pool": None, "consolidate_session_limit": None, "paused": False,
     }
@@ -1173,8 +1077,6 @@ class DeploymentKind(Kind):
             "run_at": _iso(row.get("run_at")),
             "catch_up": bool(row.get("catch_up")),
             "channels": list(row.get("channels") or []),
-            "environment": _str_or_none(row.get("environment_id")),
-            "budget_usd": row.get("budget_usd"),
             "agent_version": row.get("agent_version"),
             "auto_pause_after": int(row.get("auto_pause_after") if row.get("auto_pause_after") is not None else 3),
             "project_id": _str_or_none(row.get("project_id")),
@@ -1265,11 +1167,10 @@ class DeploymentKind(Kind):
         ctx.call("DELETE", f"/api/plan/jobs/{_q(hub_id)}")
 
 
-KINDS: Dict[str, Kind] = {k.name: k for k in (MemoryPoolKind(), EnvironmentKind(), AgentKind(),
-                                               DeploymentKind())}
+KINDS: Dict[str, Kind] = {k.name: k for k in (MemoryPoolKind(), AgentKind(), DeploymentKind())}
 #: Create and update order: what a later kind refers to exists by then.
 #: Deletes run in the reverse order.
-KIND_ORDER = ("memory_pool", "environment", "agent", "deployment")
+KIND_ORDER = ("memory_pool", "agent", "deployment")
 
 
 __all__ = ["KINDS", "KIND_ORDER", "Kind", "Field", "Context", "PENDING", "is_not_found", "narrow"]

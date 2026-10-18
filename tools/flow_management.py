@@ -543,10 +543,10 @@ def _validate_flow(
 # it) as a temporary flow, which no list shows and which is deleted a week after
 # its last change unless the person keeps it (flow.store.is_ephemeral).
 
-#: Nodes that start other runs (a team, a loop, a flow, an n8n workflow). Their
+#: Nodes that start other runs (a team, a loop, a flow). Their
 #: members are not checked against the caller's delegation allowlist, so an
 #: agent with an allowlist may not put one in a flow it builds.
-_NESTING_ENTITIES = frozenset({"run_flow", "run_team", "run_loop", "run_n8n"})
+_NESTING_ENTITIES = frozenset({"run_flow", "run_team", "run_loop"})
 
 _NODE_SHAPES = (
     "Each node is one of: an agent step {'id', 'agent_id', 'label', 'task'} where task is "

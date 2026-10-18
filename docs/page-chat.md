@@ -6,8 +6,7 @@ page you are on, and what it is about changes as you move around the product.
 ## Two kinds of page
 
 - **A page with a chat of its own** — a scenario, a loop, a team, an agent's
-  definition, a memory pool, the service health page, the eval sets, the project
-  registry, a world. That chat has its own agent, and that agent is the point of
+  definition, a memory pool, the service health page, the eval sets, a world. That chat has its own agent, and that agent is the point of
   it, so the panel shows *that* conversation rather than a general one. Nothing
   about it changes: same thread, same agent, same history. Only where it is
   drawn does, and the page's own column or tab steps aside while the panel holds

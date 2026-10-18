@@ -1,18 +1,12 @@
 """Lookup kinds: runtime (see chat/lookup_kinds/__init__.py).
 
-What is running, as the person sees it on the Instances, Services,
-Deployments and Browser pages, plus the read only Environments catalog:
+What is running, as the person sees it on the Instances and Browser pages:
 
 - ``instance``: a copy of an agent, resident or not (``/instances``,
   ``/nodes``: nodes are gone, the alias stays for what people still call it).
-- ``service``: a desired state kept running as replicas (``/services``).
-- ``deployment``: a project's app under ``/apps/<slug>/``, and the apps
-  section of the ``/deployments`` page (its scheduled-job rows are the
-  ``job`` kind of chat/lookup.py; this kind only answers for the apps).
-- ``environment``: an execution profile (``/environments``), read only.
 - ``browser``: a browser session the Browser page shows (``/browser``).
 
-A card never carries an instance's or a service's messages, inbox or logs,
+A card never carries an instance's messages, inbox or logs,
 and a browser session's card never carries the page's own title (rendered
 text a stranger's page could have written): see the module docstring of
 chat/lookup.py, "Metadata, not content".
@@ -58,12 +52,6 @@ def _instance_card(ctx: Any, instance_id: str) -> Optional[Dict[str, Any]]:
     inst = carrier.get(instance_id)
     if inst is None or not lookup.visible(ctx, inst.get("workspace")):
         return None
-    service_name = None
-    service_id = inst.get("service_id")
-    if service_id:
-        from services import store as service_store
-        svc = service_store.get(service_id)
-        service_name = (svc or {}).get("name")
     fields = {
         "instance_id": inst.get("instance_id"),
         "label": inst.get("label"),
@@ -75,8 +63,6 @@ def _instance_card(ctx: Any, instance_id: str) -> Optional[Dict[str, Any]]:
         "started": inst.get("started_at") or inst.get("created_at"),
         "last_seen": inst.get("last_activity_at"),
         "runs_count": inst.get("runs_count"),
-        "environment": inst.get("environment_name") or inst.get("environment_id"),
-        "service": service_name,
         "error": lookup.first_line(inst.get("error")),
     }
     return {"title": inst.get("label") or inst.get("agent_id") or instance_id, "fields": fields,
@@ -140,7 +126,7 @@ def _instance_restart(ctx: Any, instance_id: str, target: Dict[str, Any]) -> Dic
 
 
 lookup.register(LookupKind(
-    "instance", "resident and task copies of an agent: status, agent, workspace, runs, environment",
+    "instance", "resident and task copies of an agent: status, agent, workspace, runs",
     _list_instances, _instance_card, ("/instances", "/nodes"), aliases=("node",),
 ))
 register_action(HubAction(
@@ -152,240 +138,6 @@ register_action(HubAction(
     "instance", "restart", "replace a resident instance's process with a fresh one",
     _instance_target, _instance_restart,
     "Restart instance {label} in {workspace}: a fresh process replaces it; its conversations and runs stay.",
-))
-
-
-# ── service (/services) ──────────────────────────────────────────────────────
-
-def _list_services(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from services import store as service_store
-    rows: List[Dict[str, Any]] = []
-    for ws in ctx.workspaces:
-        for svc in service_store.list_services(workspace=ws, include_runners=True):
-            if not lookup.matches(query, svc.get("name"), svc.get("agent_id"), svc.get("service_id")):
-                continue
-            rows.append(lookup.row(
-                svc.get("service_id"), svc.get("name") or svc.get("agent_id") or "service",
-                " · ".join(x for x in [svc.get("status"), svc.get("kind"), svc.get("agent_id")] if x),
-                f"/services/{quote(str(svc.get('service_id')))}",
-                workspace=ws if ctx.workspace is None else None, at=svc.get("updated_at"),
-            ))
-    rows.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _service_card(ctx: Any, service_id: str) -> Optional[Dict[str, Any]]:
-    from services import replicas, store as service_store
-    svc = service_store.get(service_id)
-    if svc is None or not lookup.visible(ctx, svc.get("workspace")):
-        return None
-    fields = {
-        "name": svc.get("name"), "agent": svc.get("agent_id"), "workspace": svc.get("workspace") or "default",
-        "kind": svc.get("kind"), "status": svc.get("status"), "paused_reason": svc.get("paused_reason"),
-        "environment": svc.get("environment_name") or svc.get("environment_id"),
-        "replicas_min": svc.get("replicas_min"), "replicas_max": svc.get("replicas_max"),
-        "replicas_live": replicas.summary(service_id).get("live"),
-        "concurrency": svc.get("concurrency"), "take_tasks": svc.get("take_tasks"),
-        "idle_stop_seconds": svc.get("idle_stop_seconds"), "budget_usd": svc.get("budget_usd"),
-        "agent_version": svc.get("agent_version"), "is_exposed": bool(svc.get("is_exposed")),
-        "created_at": svc.get("created_at"), "updated_at": svc.get("updated_at"),
-    }
-    return {"title": svc.get("name") or service_id, "fields": fields,
-            "note": "A replica's own conversations are on the service's page, not here.",
-            "url": f"/services/{quote(service_id)}"}
-
-
-def _service_target(ctx: Any, service_id: str) -> Optional[Dict[str, Any]]:
-    from services import store as service_store
-    svc = service_store.get(service_id)
-    if svc is None or not lookup.visible(ctx, svc.get("workspace")):
-        return None
-    return {"workspace": svc.get("workspace") or "default", "label": svc.get("name") or service_id,
-            "url": f"/services/{quote(service_id)}", "status": svc.get("status")}
-
-
-def _service_pause(ctx: Any, service_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from services import replicas, store as service_store
-    svc = service_store.get(service_id)
-    if svc is None:
-        raise LookupError_(f"No service '{service_id}'.", code="not_found")
-    if svc.get("status") == service_store.STATUS_PAUSED:
-        raise LookupError_("This service is already paused.", code="conflict")
-    updated = service_store.pause(service_id, "paused by operator") or svc
-    for rep in replicas.live_replicas(updated):
-        replicas.stop_replica(updated, rep, reason="paused")
-    return {"status": updated.get("status")}
-
-
-def _service_resume(ctx: Any, service_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from services import replicas, store as service_store
-    svc = service_store.get(service_id)
-    if svc is None:
-        raise LookupError_(f"No service '{service_id}'.", code="not_found")
-    if svc.get("status") == service_store.STATUS_ACTIVE:
-        raise LookupError_("This service is already active.", code="conflict")
-    updated = service_store.resume(service_id) or svc
-    if int(updated.get("replicas_min") or 0) > 0:
-        try:
-            replicas.start_replica(updated, reason="resumed")
-        except Exception as exc:  # noqa: BLE001 - journaled; the supervisor retries on its tick
-            service_store.add_event(service_id, "replica_failed", str(exc))
-    return {"status": updated.get("status")}
-
-
-lookup.register(LookupKind(
-    "service", "an agent (or a runner) kept running as replicas: status, replicas, environment",
-    _list_services, _service_card, ("/services",),
-))
-register_action(HubAction(
-    "service", "pause", "stop every replica of a service and start none until resumed",
-    _service_target, _service_pause,
-    "Pause service {label} in {workspace}: every replica stops; nothing answers it until resumed.",
-))
-register_action(HubAction(
-    "service", "resume", "let a paused service start its replicas again",
-    _service_target, _service_resume,
-    "Resume service {label} in {workspace}: it starts replicas again, up to its minimum.",
-))
-
-
-# ── deployment: project apps under /apps, and the /deployments page's apps ──
-#
-# The scheduled-job rows of /deployments (agent_task / flow / loop / heartbeat
-# jobs) are chat/lookup.py's own "job" kind; this kind only answers for the
-# project apps section of that page and for /apps/<slug>/ itself. "restart" is
-# not registered: it runs the full deploy pipeline (build and start, with the
-# project's own commands), which is what the already approval-gated
-# deploy_project agent tool is for, not a plain one-step call.
-
-def _list_deployments(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from deployments import store as dstore
-    rows: List[Dict[str, Any]] = []
-    seen = set()
-    for ws in ctx.workspaces:
-        for dep in dstore.list_all(workspace=ws):
-            if dep.id in seen:
-                continue
-            seen.add(dep.id)
-            if not lookup.matches(query, dep.name, dep.slug, dep.project_id):
-                continue
-            rows.append(lookup.row(
-                dep.id, dep.name or dep.slug or dep.project_id,
-                " · ".join(x for x in [dep.status, dep.mode, f"{len(dep.services)} services"] if x),
-                f"/projects/{quote(dep.project_id)}",
-                workspace=ws if ctx.workspace is None else None, at=dep.updated_at,
-            ))
-    rows.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _deployment_card(ctx: Any, deployment_id: str) -> Optional[Dict[str, Any]]:
-    from deployments import store as dstore
-    dep = dstore.get(deployment_id)
-    if dep is None or not lookup.visible(ctx, dep.workspace):
-        return None
-    fields = {
-        "name": dep.name, "project_id": dep.project_id, "workspace": dep.workspace,
-        "mode": dep.mode, "status": dep.status, "desired": dep.desired,
-        "paused_reason": dep.paused_reason, "last_error": lookup.first_line(dep.last_error),
-        "services": [{"name": s.name, "kind": s.kind,
-                      "state": dep.runtime[s.name].state if s.name in dep.runtime else "stopped"}
-                     for s in dep.services],
-        "slug": dep.slug, "visibility": dep.visibility, "restart_count": dep.restart_count,
-        "created_at": dep.created_at, "updated_at": dep.updated_at, "deployed_at": dep.deployed_at,
-    }
-    return {"title": dep.name or dep.slug or dep.project_id, "fields": fields,
-            "note": "Logs and the build output are on the project's Deploy tab, not here.",
-            "url": f"/projects/{quote(dep.project_id)}"}
-
-
-def _deployment_target(ctx: Any, deployment_id: str) -> Optional[Dict[str, Any]]:
-    from deployments import store as dstore
-    dep = dstore.get(deployment_id)
-    if dep is None or not lookup.visible(ctx, dep.workspace):
-        return None
-    return {"workspace": dep.workspace, "label": dep.name or dep.slug or dep.project_id,
-            "url": f"/projects/{quote(dep.project_id)}"}
-
-
-def _deployment_stop(ctx: Any, deployment_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from deployments import service as deployments, store as dstore
-    dep = dstore.get(deployment_id)
-    if dep is None:
-        raise LookupError_(f"No deployment '{deployment_id}'.", code="not_found")
-    if dep.status == "stopped" and dep.desired == "stopped":
-        raise LookupError_("This deployment is already stopped.", code="conflict")
-    by = f"assistant (user {ctx.user_id})" if ctx.user_id else "assistant"
-    try:
-        dep = deployments.stop(dep, by=by)
-    except deployments.DeploymentError as exc:
-        raise LookupError_(str(exc), code="conflict")
-    return {"status": dep.status}
-
-
-lookup.register(LookupKind(
-    "deployment", "a project's app under /apps, and the apps section of /deployments",
-    _list_deployments, _deployment_card, ("/apps", "/deployments"),
-))
-register_action(HubAction(
-    "deployment", "stop", "stop every service of a project's deployed app",
-    _deployment_target, _deployment_stop,
-    "Stop the deployment {label} in {workspace}: every service of the app goes down; "
-    "its share link and configuration stay.",
-))
-
-
-# ── environment (/environments), read only ──────────────────────────────────
-
-def _list_environments(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from environments import service as env_service
-    rows: List[Dict[str, Any]] = []
-    seen = set()
-    for ws in ctx.workspaces:
-        for env in env_service.list_environments(ws, all_scopes=False):
-            if env.id in seen:
-                continue
-            seen.add(env.id)
-            if not lookup.matches(query, env.name, env.description, env.id):
-                continue
-            scope = env.workspace or "global"
-            rows.append(lookup.row(
-                env.id, env.name,
-                " · ".join(x for x in [scope, env.mode, "default" if env.is_default else None] if x),
-                "/environments",
-                workspace=(env.workspace if (env.workspace and ctx.workspace is None) else None),
-            ))
-    rows.sort(key=lambda r: str(r.get("label") or ""))
-    return rows[:limit]
-
-
-def _environment_card(ctx: Any, environment_id: str) -> Optional[Dict[str, Any]]:
-    from environments import service as env_service
-    env = env_service.get_environment(environment_id)
-    if env is None:
-        return None
-    if env.workspace and not lookup.visible(ctx, env.workspace):
-        return None
-    fields = {
-        "name": env.name, "description": env.description, "workspace": env.workspace or "global",
-        "mode": env.mode, "image": env.image, "size": env.size,
-        "packages": list(env.packages), "sandbox_provider": env.sandbox_provider,
-        "network_type": env.network.type, "allowed_hosts": list(env.network.allowed_hosts),
-        "allow_package_managers": env.network.allow_package_managers,
-        "memory": env.limits.memory, "cpus": env.limits.cpus, "pids_limit": env.limits.pids_limit,
-        # Variable names only: an environment's values are whatever an editor
-        # typed there, which can be a secret even though the field is called
-        # "plain variables" (environments/models.py).
-        "env_vars": sorted(env.env.keys()),
-        "is_default": env.is_default, "archived": env.archived,
-        "created_at": env.created_at, "updated_at": env.updated_at,
-    }
-    return {"title": env.name, "fields": fields, "url": "/environments"}
-
-
-lookup.register(LookupKind(
-    "environment", "execution profiles: mode, image, packages, network policy, limits",
-    _list_environments, _environment_card, ("/environments",),
 ))
 
 

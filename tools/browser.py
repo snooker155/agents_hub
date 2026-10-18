@@ -28,16 +28,6 @@ the page a run is on (docs/browser.md).
 
 A run can also continue in a session somebody else opened: a person hands
 their page to an agent from the Browser page. See :func:`_adopted_session`.
-
-In an isolated workspace (common/isolation.py) the browser only reads: the
-session is created ``read_only`` with the workspace's reading list as its
-allow list and nothing else (the service then refuses every request the page
-makes that is not a GET or HEAD without a body, every host off the list and
-its action endpoints, see deploy/browser/policy.py); the hub checks every
-address with ``tools.web.isolated_fetch_check`` instead of ``validate_url``,
-re-checks where the page is after every navigation and read, counts each
-open, read and screenshot against the run's reading budget, never adopts a
-session somebody else opened, and ``browser_act`` is refused.
 """
 from __future__ import annotations
 
@@ -58,9 +48,6 @@ from tools.web import (
     _workspace_web_settings,
     current_run_key,
     html_to_text,
-    isolated_fetch_check,
-    isolated_workspace,
-    spend_isolated_budget,
     validate_url,
     wrap_untrusted,
 )
@@ -70,13 +57,6 @@ log = logging.getLogger(__name__)
 NOT_CONFIGURED = (
     "browser service is not configured: set AGENTS_HUB_BROWSER_URL and "
     "AGENTS_HUB_BROWSER_TOKEN (see docs/tools-and-capabilities.md). No page was opened."
-)
-
-#: What ``browser_act`` answers in an isolated workspace.
-ISOLATED_ACT_REFUSED = (
-    "browser_act refused: this workspace is isolated and reads the internet only. Clicking, "
-    "typing, filling and submitting are writes, so they are not available here. Use "
-    "browser_open with the address of the page you want, then browser_read."
 )
 
 # run key -> browser service session id
@@ -132,24 +112,8 @@ def _run_key() -> str:
 
 
 def _session_key() -> str:
-    """The key this run's session is kept under. An isolated workspace's run
-    keeps its read only session apart, so a session opened before the switch
-    (one that may write) is never reused for it."""
-    key = _run_key()
-    return f"iso:{key}" if isolated_workspace() else key
-
-
-def isolated_session_policy(workspace: str) -> Dict[str, Any]:
-    """The policy of an isolated workspace's session: read only, the
-    workspace's reading list as the allow list (always on, an empty list
-    allows nothing), no other list and no hub app pages."""
-    from common.isolation import allow_domains
-    return {
-        "deny_domains": [],
-        "allow_domains": allow_domains(workspace),
-        "allowlist_enabled": True,
-        "read_only": True,
-    }
+    """The key this run's session is kept under."""
+    return _run_key()
 
 
 def session_policy() -> Dict[str, Any]:
@@ -159,34 +123,20 @@ def session_policy() -> Dict[str, Any]:
     workspace's own lists win over the global ones, and the allow list is on
     when either the global setting or the workspace turns it on.
     """
-    iso = isolated_workspace()
-    if iso:
-        return isolated_session_policy(iso)
     from common.config import settings
     ws = _workspace_web_settings()
     deny = tuple(ws.get("web_deny_domains") or ()) or tuple(settings.web_deny_domains or ())
     allow = tuple(ws.get("web_allow_domains") or ()) or tuple(settings.web_allow_domains or ())
     enabled = bool(settings.web_domain_policy_enabled) or bool(ws.get("web_domain_policy_enabled"))
-    # The run's environment fence (AGENTS_HUB_NETWORK / AGENTS_HUB_ALLOWED_HOSTS,
-    # tools.web.environment_network_policy) narrows what the page itself may
-    # load too, not only where browser_open may go: "none" allows nothing,
-    # "limited" replaces the allow list with the environment's hosts (still
-    # checked against the workspace lists hub-side by validate_url).
     # The agent's own lists (AgentSpec.blocked_domains / allowed_domains,
     # tools.web.agent_domain_lists): its blocked hosts join the deny list,
     # its allowed hosts narrow the allow list (or become it, when none is on).
-    from tools.web import agent_domain_lists, environment_network_policy, intersect_domains
+    from tools.web import agent_domain_lists, intersect_domains
     agent_allowed, agent_blocked = agent_domain_lists()
     if agent_blocked:
         deny = tuple(dict.fromkeys([*(str(d).lower() for d in deny), *agent_blocked]))
     if agent_allowed:
         allow = tuple(intersect_domains(agent_allowed, allow)) if enabled else agent_allowed
-        enabled = True
-    net, env_hosts = environment_network_policy()
-    if net == "none":
-        allow, enabled = (), True
-    elif net == "limited":
-        allow = tuple(intersect_domains(allow, env_hosts)) if agent_allowed else env_hosts
         enabled = True
     policy = {
         "deny_domains": [str(d) for d in deny],
@@ -281,9 +231,6 @@ def _adopted_session(key: str) -> Optional[str]:
     before the agent got to it is ignored and the run opens its own.
     """
     candidates = [adopted_session.get(), os.environ.get(ADOPT_ENV, "").strip() or None]
-    if isolated_workspace():
-        # A handed over session was opened without the read only policy.
-        return None
     for sid in candidates:
         if not sid or (key, sid) in _ADOPT_TRIED:
             continue
@@ -407,7 +354,7 @@ def _check_landing(url: str) -> Optional[str]:
     already refused anything its policy blocks; this is the independent check."""
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
-    ok, reason = _url_check(url)
+    ok, reason = validate_url(url)
     if ok:
         return None
     sid = _forget_session()
@@ -417,30 +364,6 @@ def _check_landing(url: str) -> Optional[str]:
         except BrowserError:
             log.debug("_check_landing: best-effort step failed", exc_info=True)
     return reason
-
-
-def _url_check(url: str) -> Tuple[bool, str]:
-    """``validate_url``, or in an isolated workspace its reading list check."""
-    iso = isolated_workspace()
-    if iso:
-        return isolated_fetch_check(url, iso)
-    return validate_url(url)
-
-
-def _isolated_refusal(tool: str) -> Optional[str]:
-    """In an isolated workspace, count one call against the run's reading
-    budget; the refusal text once it is spent, else None."""
-    iso = isolated_workspace()
-    if not iso:
-        return None
-    over = spend_isolated_budget(iso)
-    if not over:
-        return None
-    from tools import web_log
-    call = web_log.WebCall("fetch", provider="browser", workspace=iso, isolated=True)
-    call.set(status="refused", error=over)
-    call.add_flag("policy.refused", "medium", f"Refused {tool}: {over}")
-    return call.finish(f"{tool} refused: {over}")
 
 
 def _controlled_note(resp) -> str:
@@ -481,11 +404,8 @@ def browser_open(url: str) -> str:
         return call.set(status="error", error="url is empty").finish("browser_open error: url is empty")
     if not _configured():
         return call.set(status="not_configured", error="no browser service").finish(NOT_CONFIGURED)
-    refused = _isolated_refusal("browser_open")
-    if refused:
-        return refused
 
-    ok, reason = _url_check(url)
+    ok, reason = validate_url(url)
     if not ok:
         call.set(status="refused", error=reason)
         call.add_flag("policy.refused", "medium", f"Refused {url}: {reason}")
@@ -541,9 +461,6 @@ def browser_read(max_chars: Optional[int] = None) -> str:
     from tools import web_log
     if not _configured():
         return NOT_CONFIGURED
-    refused = _isolated_refusal("browser_read")
-    if refused:
-        return refused
     call = web_log.WebCall("fetch", provider="browser")
     try:
         resp = _call("GET", "read", create=False)
@@ -554,13 +471,6 @@ def browser_read(max_chars: Optional[int] = None) -> str:
         return call.set(status="error", error=detail).finish(f"browser_read error: {detail}")
 
     data = resp.json()
-    if isolated_workspace():
-        # The service holds the page to the list; this is the hub's own check.
-        page_url = str(data.get("url") or "")
-        landing = _check_landing(page_url)
-        if landing:
-            call.set(status="refused", url=page_url, final_url=page_url, error=landing)
-            return call.finish(f"browser_read refused the page ({page_url}): {landing}")
     url = str(data.get("url") or "")
     html = str(data.get("html") or "")
     call.set(url=url, final_url=url, content_type="text/html", response_bytes=len(html))
@@ -608,8 +518,6 @@ def browser_act(action: str, selector: str = "", text: str = "") -> str:
     changed. Whatever you type into a field is sent to that site, so never put
     private data into a page.
     """
-    if isolated_workspace():
-        return ISOLATED_ACT_REFUSED
     if not _configured():
         return NOT_CONFIGURED
     try:
@@ -653,9 +561,6 @@ def browser_screenshot(full_page: bool = False) -> str:
     """
     if not _configured():
         return NOT_CONFIGURED
-    refused = _isolated_refusal("browser_screenshot")
-    if refused:
-        return json.dumps({"ok": False, "error": refused})
     try:
         resp = _call("GET", "screenshot", create=False, params={"full_page": bool(full_page)})
     except BrowserError as exc:
@@ -696,5 +601,5 @@ BROWSER_TOOLS = [browser_open, browser_read, browser_act, browser_screenshot, br
 __all__ = [
     "BROWSER_TOOLS", "browser_open", "browser_read", "browser_act",
     "browser_screenshot", "browser_close", "session_policy", "NOT_CONFIGURED",
-    "adopt_session", "adopted_session", "ADOPT_ENV", "ISOLATED_ACT_REFUSED", "isolated_session_policy",
+    "adopt_session", "adopted_session", "ADOPT_ENV",
 ]

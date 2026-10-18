@@ -59,14 +59,6 @@ export default {
   consolidatePool: 'Gedächtnispool',
   selectAPool: 'Pool auswählen…',
   consolidateSessionLimit: 'Letzte Sitzungen',
-  alsoSendToTelegram: 'Auch an Telegram senden',
-  telegram: {
-    noToken: 'Kein Telegram-Bot-Token konfiguriert — fügen Sie eines unter Einstellungen → Telegram hinzu.',
-    disabled: 'Die Telegram-Integration ist deaktiviert — aktivieren Sie sie unter Einstellungen → Telegram.',
-    ready: 'Auch an die mit diesem Workspace verbundenen Chats senden.',
-    taskStartedHint: 'Die Benachrichtigung „Aufgabe gestartet“ wird auch an Telegram zugestellt. Posteingang/Glocke erhalten sie immer.',
-    bothHint: 'Wird sowohl an Posteingang/Glocke als auch an Telegram zugestellt.',
-  },
   kinds: {
     notification: 'Benachrichtigung',
     notificationHint: 'Zu einer Zeit erinnern',

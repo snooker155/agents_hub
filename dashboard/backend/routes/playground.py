@@ -717,16 +717,8 @@ async def generate_world(data: WorldGenerateIn):
             "create_world_tool and check it with validate_world_tool.\n\n"
             f"Request:\n{data.requirement}"
         )
-        from services import jobs as _jobs
-        if _jobs.enabled():
-            # On a runner replica (docs/services.md); the result reads like
-            # the agent's own, tool steps included.
-            result = _jobs.InvokeResult(await _jobs.invoke_async(ws_name, {
-                "agent_id": WORLD_AGENT_ID, "workspace": ws_path, "workspace_name": ws_name,
-                "overrides": overrides, "prompt": instruction}))
-        else:
-            agent = create_agent(WORLD_AGENT_ID, workspace=ws_path, **overrides)
-            result = await asyncio.to_thread(agent.run, instruction)
+        agent = create_agent(WORLD_AGENT_ID, workspace=ws_path, **overrides)
+        result = await asyncio.to_thread(agent.run, instruction)
     except Exception as e:  # noqa: BLE001
         raise _refuse(500, "generation_failed", f"World generation failed: {e}")
 
@@ -1577,16 +1569,8 @@ async def generate_scenario(data: ScenarioGenerateIn):
     try:
         ws_path = _scenario_generate_scope(data)
         instruction = _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement)
-        from services import jobs as _jobs
-        if _jobs.enabled():
-            # On a runner replica (docs/services.md).
-            result = _jobs.InvokeResult(await _jobs.invoke_async(data.workspace, {
-                "agent_id": SCENARIO_AGENT_ID, "workspace": ws_path,
-                "workspace_name": data.workspace, "overrides": _scenario_overrides(data),
-                "prompt": instruction}))
-        else:
-            agent = _scenario_generate_agent(data, ws_path)
-            result = await asyncio.to_thread(agent.run, instruction)
+        agent = _scenario_generate_agent(data, ws_path)
+        result = await asyncio.to_thread(agent.run, instruction)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Scenario generation failed: {e}")
 
@@ -1636,25 +1620,14 @@ async def generate_scenario_stream(data: ScenarioGenerateIn):
         ws_path = _scenario_generate_scope(data)
         instruction = _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement)
         try:
-            from chat import remote_agent as _remote_agent
-            if _remote_agent.enabled():
-                # On a runner replica (docs/services.md): its steps stream
-                # back through the same queue.
-                result = await _remote_agent.stream_agent_turn(
-                    queue, agent_id=SCENARIO_AGENT_ID, run_id=new_unique_run_id(),
-                    prompt=instruction, workspace=data.workspace, workspace_path=ws_path,
-                    log_file=str(log_file), build=_scenario_overrides(data))
-                if not result.ok and not result.steps and result.error:
-                    raise RuntimeError(result.error)
-            else:
-                # create_agent is typed as AgentBase; the scenario creator is a
-                # StandardAgent, which has arun.
-                agent = cast(Any, await asyncio.to_thread(
-                    _scenario_generate_agent, data, ws_path, streaming=True))
-                callback.bind_model(agent.provider or "", agent.model or "")
-                await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
-                                 "provider": agent.provider or "", "model": agent.model or ""})
-                result = await agent.arun(instruction, callbacks=[callback])
+            # create_agent is typed as AgentBase; the scenario creator is a
+            # StandardAgent, which has arun.
+            agent = cast(Any, await asyncio.to_thread(
+                _scenario_generate_agent, data, ws_path, streaming=True))
+            callback.bind_model(agent.provider or "", agent.model or "")
+            await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
+                             "provider": agent.provider or "", "model": agent.model or ""})
+            result = await agent.arun(instruction, callbacks=[callback])
         except Exception as e:  # noqa: BLE001
             await queue.put({"type": "result", "outcome": {
                 "type": "error", "error": f"Scenario generation failed: {e}"}})

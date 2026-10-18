@@ -11,7 +11,6 @@ export default {
   pickWorkspace: 'Pick a workspace to add a watcher.',
   columns: { name: 'Watcher', state: 'State', lastCheck: 'Last check', lastChange: 'Last change', agents: 'Wakes' },
   state: { active: 'Active', paused: 'Paused ({{reason}})', disabled: 'Off', error: 'Error' },
-  viaGoogle: 'Google account',
   every: 'every {{seconds}} s',
   fired: '{{count}} events',
   nobody: 'nobody yet',

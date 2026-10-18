@@ -170,7 +170,7 @@ def _resource(doc: Any, source: str, line_offset: int, problems: List[Problem],
     start = (getattr(doc, "line", 0) or 0) + line_offset or None
     kind = doc.get("kind", default_kind)
     if not kind:
-        problems.append(Problem(source, start, "no kind: (agent, environment, deployment or memory_pool)"))
+        problems.append(Problem(source, start, "no kind: (agent, deployment or memory_pool)"))
         return None
     raw_id = doc.get("id")
     if raw_id in (None, ""):

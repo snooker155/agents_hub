@@ -11,7 +11,6 @@ export default {
   pickWorkspace: 'Wählen Sie einen Arbeitsbereich, um einen Watcher anzulegen.',
   columns: { name: 'Watcher', state: 'Zustand', lastCheck: 'Letzte Prüfung', lastChange: 'Letzte Änderung', agents: 'Weckt' },
   state: { active: 'Aktiv', paused: 'Pausiert ({{reason}})', disabled: 'Aus', error: 'Fehler' },
-  viaGoogle: 'Google-Konto',
   every: 'alle {{seconds}} s',
   fired: '{{count}} Ereignisse',
   nobody: 'noch niemand',

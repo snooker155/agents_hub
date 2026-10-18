@@ -22,8 +22,7 @@ group of agents left to itself will happily converse forever:
 * parallel    — every member has written ``TEAM_DONE``, or nobody said anything
   this round.
 
-On top of that: round cap, wall clock, cost ceiling, the workspace budget and
-an explicit stop. A stop is *not* a between-rounds check — see
+On top of that: round cap, wall clock, cost ceiling and an explicit stop. A stop is *not* a between-rounds check — see
 :mod:`teams.control`: it interrupts the turns in flight, so pressing the button
 ends the model calls the user is paying for rather than the round after them.
 """
@@ -956,13 +955,6 @@ def _check_between_rounds(
         raise TeamStopped(
             "cost_ceiling", f"cost ceiling reached (${spend:.4f} of ${float(team.cost_ceiling):.2f})"
         )
-    try:
-        from common.budget import check_budget
-        check_budget(workspace)
-    except TeamStopped:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise TeamStopped("cost_ceiling", f"budget: {e}")
 
 
 # ── Task / session plumbing ──────────────────────────────────────────────────

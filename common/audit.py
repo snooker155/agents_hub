@@ -1,16 +1,14 @@
 """
-The audit log: who did what, when, to which object. Append-only.
+The action journal: what happened, when, to which object. Append-only.
 
-Two kinds of writer. The middleware in ``dashboard/backend/main.py`` records
-every write request under ``/api`` (method, path, status, the principal) when
-:func:`requests_enabled` says so: on in ``token`` and ``multi`` mode by
-default, off for the single operator, who has nobody to be audited for. The
-key points record themselves in every mode through :func:`record`: a login
-and a logout, a role or membership change, an agent launch, a tool approval,
-a workspace policy change, a budget change.
+The key points record themselves through :func:`record`: an agent launch, a
+tool approval, a guardrail trip, a workspace policy change, a secret set, a
+file uploaded. There is one operator, so the row says what the hub did on
+their behalf rather than who among several did it; the actor columns stay
+because the rows and the webhooks carry them.
 
-A row is never updated or deleted by the application; only
-:func:`prune` removes rows older than ``AUDIT_RETENTION_DAYS`` (0 keeps all).
+A row is never updated or deleted by the application; only :func:`prune`
+removes rows older than ``AUDIT_RETENTION_DAYS`` (0 keeps all).
 
 Every row is also offered to the webhook endpoints of its workspace that
 subscribe to the ``audit`` event (docs/notifications.md), so a SIEM can
@@ -33,56 +31,12 @@ from common import db
 
 log = logging.getLogger(__name__)
 
-#: The webhook event name a row is delivered as.
-EVENT_NAME = "audit"
-
-#: Paths the request logger skips: the relays a run's own subprocess makes
-#: (dozens per second, all as the service principal), the live stream, and
-#: the self-authenticating ingest. These describe machinery, not people. The
-#: chat widget's visitor routes are anonymous traffic from other sites: one
-#: row per message would bury the log; their turns are runs on the Messages
-#: page, and the widget's own changes are audited as ``widget.*``.
-SKIP_PREFIXES = (
-    "/api/run-state", "/api/stream", "/api/ingest", "/api/sessions/",
-    "/api/instances/", "/api/chat/message", "/api/page-chat", "/api/views/",
-    "/api/help-chat", "/api/audit", "/api/widgets/public/",
-)
-
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-
-def requests_enabled(mode: Optional[str] = None) -> bool:
-    """Whether the middleware records write requests in the current mode."""
-    from common.config import settings
-    value = str(getattr(settings, "audit_requests", "auto") or "auto").strip().lower()
-    if value in ("1", "true", "on", "yes"):
-        return True
-    if value in ("0", "false", "off", "no"):
-        return False
-    if mode is None:
-        from common.identity import current_mode
-        mode = current_mode()
-    return mode != "single"
-
-
-def should_log_request(method: str, path: str, principal: Any = None) -> bool:
-    """The request-logger's filter: writes under ``/api`` by people, not relays."""
-    method = (method or "").upper()
-    if method in _SAFE_METHODS:
-        return False
-    if not path.startswith("/api"):
-        return False
-    for prefix in SKIP_PREFIXES:
-        if path == prefix.rstrip("/") or path.startswith(prefix):
-            return False
-    if principal is not None and getattr(principal, "kind", "") in ("service", "run"):
-        return False
-    return True
-
+#: The webhook event name a row is delivered as.
+EVENT_NAME = "audit"
 
 def actor_fields(principal: Any) -> Dict[str, Optional[str]]:
     """The three actor columns from a principal (or None: the system itself)."""
@@ -122,9 +76,6 @@ def record(action: str, *, principal: Any = None, actor: Optional[Dict[str, Any]
                  method, path, str(result), payload),
             )
             row_id = getattr(cursor, "lastrowid", None)
-            if not row_id and db.is_postgres():
-                row = conn.execute("SELECT MAX(id) FROM audit_log").fetchone()
-                row_id = row[0] if row else None
     except Exception:  # noqa: BLE001 - an audit write must not break the action it is recording
         log.warning("audit: could not record %s", action, exc_info=True)
         return None
@@ -253,7 +204,4 @@ def prune(retention_days: Optional[int] = None) -> int:
     return int(cursor.rowcount or 0)
 
 
-__all__ = [
-    "EVENT_NAME", "SKIP_PREFIXES", "actions", "actor_fields", "prune", "query",
-    "record", "requests_enabled", "should_log_request",
-]
+__all__ = ["EVENT_NAME", "actions", "actor_fields", "prune", "query", "record"]

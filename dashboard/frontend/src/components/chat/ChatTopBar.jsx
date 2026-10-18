@@ -2,9 +2,6 @@ import { AgentDropdown, FlowDropdown, ProjectDropdown, TeamDropdown } from './ta
 import { Activity, AlertCircle, AlertTriangle, Bot, Code2, FileText, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 import { Link } from 'react-router-dom';
-import { useCallback, useEffect, useState } from 'react';
-import { getChatRoute } from '../../api';
-import { useLiveRefetch } from '../stream';
 
 /**
  * What this conversation is pointed at, and how it is shown.
@@ -81,19 +78,6 @@ export default function ChatTopBar() {
   const toggleArtifacts = () => { setArtifactsOpen((v) => !v); setCodeOpen(false); };
   const toggleCode = () => { setCodeOpen((v) => !v); setArtifactsOpen(false); };
 
-  // The service a turn would go to, when chat runs on replicas: a paused one
-  // is a chat that will not answer, said here before the message is typed.
-  const routeAgent = targetMode === 'agent' ? selectedAgent : '';
-  const [route, setRoute] = useState(null);
-  const probeRoute = useCallback(() => {
-    getChatRoute({ workspace: selectedWorkspace || undefined, agent_id: routeAgent || undefined })
-      .then((r) => setRoute(r.data || null))
-      .catch(() => setRoute(null));
-  }, [selectedWorkspace, routeAgent]);
-  useEffect(() => { probeRoute(); }, [probeRoute]);
-  useLiveRefetch(probeRoute, { type: 'services.changed' });
-  const routeDown = route && route.available === false && route.service;
-
   const pickTarget = (field, id, extra = {}) => {
     if (!currentConvId) return;
     setConversations((prev) =>
@@ -137,18 +121,6 @@ export default function ChatTopBar() {
           setSelectedTeam(id);
           pickTarget('team_id', id, { target_mode: 'team' });
         }} />
-      )}
-
-      {routeDown && (
-        <Link
-          to={`/services/${routeDown.service_id}`}
-          data-testid="chat-service-down"
-          className="h-8 flex items-center gap-1.5 px-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-medium hover:bg-amber-100"
-          title={t('chat.serviceDownHint')}
-        >
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          {t('chat.serviceDown', { name: routeDown.name })}
-        </Link>
       )}
 
       {projects.length > 0 && (

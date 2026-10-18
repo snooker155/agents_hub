@@ -7,11 +7,9 @@
  * the next one; `queue` waits and sends it when the turn ends; `system`
  * ("Instruction") is an operator's addition to the run's system prompt for
  * the rest of the run (only the run's owner or an admin; never for a team).
- * The last choice is remembered: in the signed-in person's preferences
- * (`steer_mode` on /api/auth/preferences) when that endpoint exists, and in
- * this browser's localStorage always, the rule lib/modelView.js follows. An
- * instruction is never remembered as the choice: it is picked on purpose
- * each time.
+ * The last choice is remembered in this browser's localStorage, the rule
+ * lib/modelView.js follows. An instruction is never remembered as the choice:
+ * it is picked on purpose each time.
  *
  * A steered message is a user bubble carrying `steer: {msg_id, mode, state,
  * after_step}`, placed just above the bubble the agent is still writing.
@@ -22,7 +20,6 @@
  *
  * Pure helpers only, so the rules can be checked without a page.
  */
-import { getMyPreferences, putMyPreferences } from '../../api/palette';
 import { genId } from './turnState';
 
 export const STEER_MODE_KEY = 'agents_hub_steer_mode';
@@ -41,26 +38,16 @@ export function readLocalSteerMode() {
   }
 }
 
-/** The account's choice when there is one, else this browser's. */
+/** This browser's choice. */
 export async function loadSteerMode() {
-  try {
-    const { data } = await getMyPreferences();
-    const fromAccount = valid(data?.steer_mode);
-    if (fromAccount) return fromAccount;
-  } catch {
-    // 404 outside multi mode, 401 signed out, or offline: the local copy.
-  }
   return readLocalSteerMode();
 }
 
-/** Write locally at once; tell the account in the background, ignoring a 404. */
+/** Remember the choice in this browser. */
 export function saveSteerMode(mode) {
   const v = valid(mode);
   if (!v) return;
   try { window.localStorage.setItem(STEER_MODE_KEY, v); } catch { /* storage blocked */ }
-  try {
-    Promise.resolve(putMyPreferences({ steer_mode: v })).catch(() => {});
-  } catch { /* no api in this context */ }
 }
 
 /**

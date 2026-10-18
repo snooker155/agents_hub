@@ -9,7 +9,7 @@ where it lives, or what to do next.
 - "What can I do here?" on any page.
 - "What should I set up next?": it reads what is configured and what is missing
   and answers with the step that unblocks the rest.
-- "How do I connect Slack?", "Where do I add an API key?", "What is a loop?"
+- "How do I connect Jira?", "Where do I add an API key?", "What is a loop?"
 
 Every answer ends with one to three next steps, each a link to the page where
 it is done. A link in the panel opens that page in place; the panel stays open.
@@ -21,13 +21,13 @@ agent can offer it as a link too.
 - **Where you are**: the page's title, its URL and the active workspace.
 - **The install as a newcomer sees it**: whether a model provider is
   configured, which models are enabled, how many agents there are and which are
-  your own, workspaces, chats and tasks so far, channels, connections, database
-  connections and watchers, and whether you took the tour. The server reads this
+  your own, workspaces, chats and tasks so far, Jira and GitLab connections and
+  watchers, and whether you took the tour. The server reads this
   at the moment you ask; only counts and names travel, never a key or a token.
 - **The documentation**: the same corpus as the Docs page, which it searches
   before it answers.
 - **Read only tools**: health and the doctor's checks, models, agents, tasks,
-  schedules, flows, teams, loops, scenarios, projects and database connections.
+  schedules, flows, teams, loops, scenarios and projects.
 
 The page and the snapshot are data, not instructions, and the prompt says so.
 
@@ -35,7 +35,7 @@ The page and the snapshot are data, not instructions, and the prompt says so.
 
 The [page chat](page-chat.md) is the round button in the bottom right corner. It
 is about the records the page is showing and keeps one thread per page. Help is
-about the product, and keeps **one thread per user**: it follows you from page
+about the product, and keeps **one thread**: it follows you from page
 to page. Clear starts a fresh session, as in every other chat.
 
 ## Gotchas
@@ -46,7 +46,5 @@ to page. Clear starts a fresh session, as in every other chat.
 - Never paste an API key into it. Keys go on the Settings page.
 - Every turn is an ordinary run. It appears in
   [Messages](sessions-and-runs.md) with its log and its cost.
-- In the public demo the panel answers with a fixed reply: there is no model
-  behind the demo.
 
 Related: [system-agents](system-agents.md), [overview](overview.md).

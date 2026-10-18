@@ -180,15 +180,9 @@ def provider_choices() -> List[Dict[str, Any]]:
     ]
     try:
         from providers.registry import list_backends
-        from providers.local_models import HUB_LOCAL_ID
         for b in list_backends():
             if str(b.get("adapter") or "openai") == "openai":
-                choice = {"id": b["id"], "label": b.get("label") or b["id"], "kind": OPENAI}
-                if b["id"] == HUB_LOCAL_ID:
-                    # The hub's own runtime: its models are what was downloaded
-                    # there, each with its own voices (:func:`model_voices`).
-                    choice["local_runtime"] = True
-                out.append(choice)
+                out.append({"id": b["id"], "label": b.get("label") or b["id"], "kind": OPENAI})
     except Exception:  # noqa: BLE001 - custom backends are optional here
         log.debug("special models: could not list custom backends", exc_info=True)
     return out
@@ -200,9 +194,6 @@ class Endpoint:
     base_url: str
     api_key: str = ""
     headers: Dict[str, str] = field(default_factory=dict)
-    #: The hub's own model runtime, which takes the sampling options
-    #: (temperature) a cloud API would refuse.
-    local: bool = False
 
 
 def _effective_settings(workspace: Optional[str]) -> Dict[str, Any]:
@@ -253,11 +244,8 @@ def endpoint(provider: str, workspace: Optional[str]) -> Endpoint:
         raise SpecialModelError(f"Provider '{provider}' does not speak the OpenAI API.")
     headers = backend.get("headers") if isinstance(backend.get("headers"), dict) else {}
     headers = {str(k): str(v) for k, v in headers.items()}
-    from providers.local_models import HUB_LOCAL_ID, source_headers
-    if pid == HUB_LOCAL_ID:
-        headers.update(source_headers())
     return Endpoint(OPENAI, str(backend.get("base_url") or "").rstrip("/"),
-                    str(backend.get("api_key") or ""), headers, local=pid == HUB_LOCAL_ID)
+                    str(backend.get("api_key") or ""), headers)
 
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -600,83 +588,12 @@ def model_fits(purpose_id: str, kind: str, model_id: str, methods: Optional[List
     return True
 
 
-def _runtime_models() -> List[Dict[str, Any]]:
-    """The hub runtime's model list, or nothing when it is not reachable."""
-    from providers import local_models as lm
-    if not lm.runtime_configured():
-        return []
-    try:
-        return lm.RuntimeClient(timeout=5.0).models()
-    except lm.LocalModelError:
-        return []
-
-
-def model_options(provider: str, model: str) -> List[str]:
-    """The request options one model takes beyond its voice, when its
-    server can say: the hub runtime lists each worker engine's (the cloning
-    models' ``temperature``); nothing for every other provider."""
-    from providers import local_models as lm
-    if str(provider or "").strip().lower() != lm.HUB_LOCAL_ID:
-        return []
-    for m in _runtime_models():
-        if m.get("name") == model:
-            return [str(o) for o in m.get("options") or []]
-    return []
-
-
-def model_voices(provider: str, model: str, viewer: Any = None) -> Optional[List[str]]:
-    """The voices one model has, when its server can say: the hub runtime
-    reads them from each speech model's files (a Piper voice with several
-    speakers, Kokoro's, Kitten's and Supertonic's voice sets; a
-    single-speaker voice has none), and a cloning model's are the voices
-    people recorded, of which ``viewer`` sees their own and the shared ones
-    (:func:`providers.local_models.voice_visible`). None for every other
-    provider, whose known voices per API shape (:attr:`Purpose.voices`)
-    apply."""
-    from providers import local_models as lm
-    if str(provider or "").strip().lower() != lm.HUB_LOCAL_ID:
-        return None
-    for m in _runtime_models():
-        if m.get("name") == model:
-            voices = [str(v) for v in m.get("voices") or []]
-            if m.get("engine") in lm.CLONING_ENGINES and viewer is not None:
-                try:
-                    records = lm.RuntimeClient(timeout=5.0).voices()
-                except lm.LocalModelError:
-                    records = []
-                hidden = {r.get("name") for r in records if not lm.voice_visible(r, viewer)}
-                voices = [v for v in voices if v not in hidden]
-            return voices
-    return []
-
-
-#: Kokoro's voice names start with their language: ``af_heart`` is American
-#: English, ``zf_xiaobei`` Mandarin.
-_KOKORO_VOICE_RE = re.compile(r"^([abefhijpz])[fm]_")
-_KOKORO_LANG = {"a": "en", "b": "en", "e": "es", "f": "fr", "h": "hi", "i": "it", "j": "ja", "p": "pt", "z": "zh"}
-#: A locale inside a model id, the way Piper names its voices (``ru_RU``).
-_LOCALE_IN_NAME_RE = re.compile(r"(?:^|[-_/.])([a-z]{2,3})_[A-Z]{2}(?=[-_.]|$)")
-
-
-def voice_language(model: str, voice: str = "") -> Optional[str]:
-    """The language a voice speaks, when its name or its model's says so:
-    Kokoro's voice prefix, Piper's locale in the model id, English for every
-    Kitten voice. None for a voice that speaks whatever it is given
-    (OpenAI's, Google's, Supertonic's)."""
-    m = _KOKORO_VOICE_RE.match(str(voice or ""))
-    if m and "kokoro" in str(model or "").lower():
-        return _KOKORO_LANG[m.group(1)]
-    if "kitten" in str(model or "").lower():
-        return "en"
-    m = _LOCALE_IN_NAME_RE.search(str(model or ""))
-    return m.group(1) if m else None
-
-
 def voices_for(purpose_id: str, provider: str, model: str, viewer: Any = None) -> Dict[str, Any]:
-    """The voices the form offers for one model: the model's own, when its
-    server can say (:func:`model_voices`), else the ones known for the
-    provider's API shape; with the language of each voice that has one, and
-    the model's, for a model whose voices all speak it."""
+    """The voices the form offers for one model: the ones known for the
+    provider's API shape. A cloud voice speaks whatever language it is
+    given, so no voice carries a language of its own; the keys stay so the
+    form reads one shape. ``viewer`` is accepted for the route's sake and
+    unused: no provider left serves per-person voices."""
     purpose = get_purpose(purpose_id)
     if purpose is None:
         raise SpecialModelError(f"unknown purpose '{purpose_id}'")
@@ -684,12 +601,9 @@ def voices_for(purpose_id: str, provider: str, model: str, viewer: Any = None) -
     kind = provider_kind(pid)
     if kind is None or kind not in purpose.kinds:
         raise SpecialModelError(f"provider '{provider}' cannot serve {purpose.id}")
-    own = model_voices(pid, model, viewer) if model else None
-    voices = own if own is not None else list(purpose.voices.get(kind, ()))
-    languages = {v: lang for v in voices if (lang := voice_language(model, v))}
+    voices = list(purpose.voices.get(kind, ()))
     return {"purpose": purpose.id, "provider": pid, "model": model, "voices": voices,
-            "own": own is not None, "language": voice_language(model), "languages": languages,
-            "options": [o for o in (model_options(pid, model) if model else []) if o in purpose.options]}
+            "own": False, "language": None, "languages": {}, "options": []}
 
 
 #: What a voice sample reads, per language: one short line, so a cloud model
@@ -715,9 +629,10 @@ VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
 
 def sample_text(model: str, voice: str, language: Optional[str]) -> Tuple[str, str]:
-    """``(language, text)`` of a voice sample: in the voice's own language
-    when it has one, else in ``language`` (the page's), else in English."""
-    lang = voice_language(model, voice) or str(language or "").strip().lower()[:2]
+    """``(language, text)`` of a voice sample: in ``language`` (the page's),
+    else in English. ``model`` and ``voice`` are accepted for the callers'
+    sake: a cloud voice speaks every language the same."""
+    lang = str(language or "").strip().lower()[:2]
     lang = lang if lang in SAMPLE_TEXTS else "en"
     return lang, SAMPLE_TEXTS[lang]
 
@@ -783,10 +698,6 @@ def discover(purpose_id: str, provider: str, workspace: Optional[str]) -> Dict[s
         "models": known + sorted(fit - set(known)),
         "total": len({m["id"] for m in listed}),
     }
-    from providers.local_models import HUB_LOCAL_ID
-    if pid == HUB_LOCAL_ID and purpose.id == "speech":
-        out["voices"] = {str(m.get("name")): [str(v) for v in m.get("voices") or []]
-                         for m in _runtime_models() if m.get("name") in fit}
     return out
 
 

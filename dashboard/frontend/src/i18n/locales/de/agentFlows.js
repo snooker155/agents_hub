@@ -55,5 +55,4 @@ export default {
   cannotFullyImplementWithAvailable: 'Mit den verfügbaren Agenten nicht vollständig umsetzbar',
   reasoning: 'Begründung',
   cancel: 'Abbrechen',
-  mirrorExternal: 'Externen Graphen spiegeln',
 };

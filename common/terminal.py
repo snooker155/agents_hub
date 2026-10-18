@@ -57,7 +57,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from common.auth import MULTI, WS_EDITOR, Principal, role_satisfies
+from common.auth import Principal
 
 log = logging.getLogger(__name__)
 
@@ -201,12 +201,12 @@ def _run_target(run_id: str) -> Target:
 
 
 def _replica_target(instance_id: str) -> Target:
+    from instances import carrier
     from instances import store as istore
-    from services import replicas
-    from services import store as sstore
-    replica = replicas.get_replica(instance_id)
+    replica = istore.get(str(instance_id))
     if replica is None:
         raise TerminalRefused(f"Replica {instance_id} not found.", 404)
+    replica = carrier.sync(replica) or replica
     container = str(replica.get("container_name") or "")
     if replica.get("carrier_mode") != "docker" or not container:
         raise TerminalRefused(
@@ -216,10 +216,9 @@ def _replica_target(instance_id: str) -> Target:
         raise TerminalRefused(
             f"This replica has {replica.get('state') or 'stopped'}; its container is gone.", 410)
     _check_container(container, str(replica.get("carrier_host") or ""), "replica")
-    service = sstore.get(replica.get("service_id")) or {}
     return Target(kind="replica", id=instance_id, container=container,
-                  workspace=replica.get("workspace") or service.get("workspace") or None,
-                  owner=str(service.get("created_by") or "") or None,
+                  workspace=replica.get("workspace") or None,
+                  owner=str(replica.get("started_by") or "") or None,
                   label=str(replica.get("label") or instance_id))
 
 
@@ -238,54 +237,20 @@ def resolve_target(kind: str, target_id: str) -> Target:
 def authorize(principal: Optional[Principal], target: Target) -> None:
     """Raise :class:`TerminalRefused` (401/403) unless ``principal`` may open a
     shell in ``target`` (see the module docstring, "Who may open one")."""
-    from common import access, identity
     if principal is None:
         raise TerminalRefused("Authentication required.", 401)
-    if principal.kind == "service":
+    if principal.kind in ("service", "run"):
         raise TerminalRefused(
             "A terminal is opened by a person, not by an agent's or a run's own credential.", 403)
-    if not principal.reaches(target.workspace):
-        raise TerminalRefused("This API key does not reach the target's workspace.", 403)
-    if identity.current_mode() != MULTI or principal.is_admin or principal.kind in ("local", "token"):
-        return
-    if not access.can_see_workspace(principal, target.workspace):
-        raise TerminalRefused("This target's workspace is not visible to this account.", 403)
-    if target.workspace:
-        role = identity.membership_role(str(target.workspace), principal.id)
-        if not role_satisfies(role, WS_EDITOR):
-            raise TerminalRefused(
-                "A terminal needs an editor's role in the target's workspace.", 403)
-    what = "run" if target.kind == "run" else "service"
-    if not target.owner:
-        raise TerminalRefused(
-            f"This {what} has no known owner, so only an admin may open a terminal in it.", 403)
-    if not access.owner_or_admin(principal, target.owner):
-        raise TerminalRefused(
-            f"Only the {what}'s owner or an admin may open a terminal in it.", 403)
+    # The operator opens a terminal in anything of theirs, which is everything.
 
 
 def principal_from_ticket(found: Dict[str, Any]) -> Optional[Principal]:
-    """The principal a verified terminal ticket stands for, re-read so a
-    demoted account does not keep the role it had when it minted it. The
-    same resolution ``common.identity`` gives an auth ticket, plus the local
-    operator (single mode mints terminal tickets too)."""
-    from common import identity
-    from common.auth import LOCAL_PRINCIPAL, TOKEN, TOKEN_PRINCIPAL
-    kind = found.get("kind")
-    mode = identity.current_mode()
-    if kind == "local":
-        return LOCAL_PRINCIPAL if mode == identity.SINGLE else None
-    if kind == "token":
-        return TOKEN_PRINCIPAL if mode == TOKEN else None
-    if kind != "user" or mode != MULTI:
-        return None
-    user = identity.get_user(str(found.get("user") or ""))
-    if user is None:
-        return None
-    scope = found.get("scope")
-    return Principal(id=user["id"], username=user["username"], role=user["role"],
-                     kind="user", via="ticket",
-                     scope=tuple(scope) if scope is not None else None)
+    """The principal a verified terminal ticket stands for: the local
+    operator, the only one that mints them. A ticket of any other kind
+    (one minted before accounts went away) resolves to nobody."""
+    from common.auth import LOCAL_PRINCIPAL
+    return LOCAL_PRINCIPAL if found.get("kind") == "local" else None
 
 
 # ── The shell process ────────────────────────────────────────────────────────

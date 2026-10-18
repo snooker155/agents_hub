@@ -1,10 +1,10 @@
 """
-Cost aggregation, pricing lookup and per-workspace budget enforcement.
+Cost aggregation and pricing lookup.
 """
 import pytest
 
 from managers import run_manager as rm
-from common import pricing, budget
+from common import pricing
 from providers import catalog as model_catalog
 
 
@@ -106,154 +106,6 @@ def test_run_cost_unknown_model_is_zero(monkeypatch, tmp_path):
     run = {"provider": "openai", "model": "mystery",
            "process": {"token_usage": {"inbound_tokens": 1_000_000, "outbound_tokens": 0}}}
     assert pricing.run_cost_usd(run, prices) == 0.0
-
-
-def test_workspace_period_spend_totals(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=500_000)  # $7.50
-    _make_run("r2", workspace="ws1", inbound=0, outbound=1_000_000)        # $10.00
-    _make_run("r3", workspace="ws2", inbound=1_000_000, outbound=0)        # other ws
-    assert budget.workspace_period_spend("ws1", "total") == pytest.approx(17.50)
-    assert budget.workspace_period_spend("ws2", "total") == pytest.approx(2.50)
-
-
-def test_period_filter_excludes_old_runs(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("old", workspace="ws1", inbound=1_000_000, outbound=0,
-              started_at="2000-01-01T00:00:00+00:00")
-    # "monthly" period start is this month, so the ancient run is excluded.
-    assert budget.workspace_period_spend("ws1", "monthly") == pytest.approx(0.0)
-    # "total" counts everything.
-    assert budget.workspace_period_spend("ws1", "total") == pytest.approx(2.50)
-
-
-def test_check_budget_raises_over_hard_cap(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=500_000)  # $7.50
-    monkeypatch.setattr(budget, "get_budget",
-                        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total"})
-    with pytest.raises(budget.BudgetExceededError):
-        budget.check_budget("ws1")
-
-
-def test_check_budget_no_cap_is_noop(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=500_000)
-    monkeypatch.setattr(budget, "get_budget",
-                        lambda ws: {"hard_limit_usd": 0.0, "soft_limit_usd": 0.0, "period": "total"})
-    # No hard cap → never raises regardless of spend.
-    budget.check_budget("ws1")
-
-
-def test_check_budget_under_cap_is_noop(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=0)  # $2.50
-    monkeypatch.setattr(budget, "get_budget",
-                        lambda ws: {"hard_limit_usd": 100.0, "soft_limit_usd": 0.0, "period": "total"})
-    budget.check_budget("ws1")
-
-
-def test_check_budget_fails_open_on_error(monkeypatch):
-    # get_budget blowing up must not raise out of check_budget (fail open).
-    def _boom(ws):
-        raise RuntimeError("catalog unreadable")
-    monkeypatch.setattr(budget, "get_budget", _boom)
-    budget.check_budget("ws1")  # no exception
-
-
-def test_normalize_budget_defaults():
-    b = budget.normalize_budget({"hard_limit_usd": "3.5", "period": "weekly"})
-    assert b["hard_limit_usd"] == 3.5
-    assert b["period"] == "monthly"  # invalid period falls back
-    assert b["soft_limit_usd"] == 0.0
-    # negatives clamp to zero
-    assert budget.normalize_budget({"hard_limit_usd": -5})["hard_limit_usd"] == 0.0
-
-
-# -------------------- fail_closed --------------------
-
-def test_normalize_budget_fail_closed_defaults_false():
-    assert budget.normalize_budget({})["fail_closed"] is False
-    assert budget.normalize_budget(None)["fail_closed"] is False
-
-
-def test_normalize_budget_fail_closed_coerces_truthy_values():
-    assert budget.normalize_budget({"fail_closed": True})["fail_closed"] is True
-    assert budget.normalize_budget({"fail_closed": "yes"})["fail_closed"] is True
-    assert budget.normalize_budget({"fail_closed": 1})["fail_closed"] is True
-    assert budget.normalize_budget({"fail_closed": False})["fail_closed"] is False
-    assert budget.normalize_budget({"fail_closed": 0})["fail_closed"] is False
-    assert budget.normalize_budget({"fail_closed": ""})["fail_closed"] is False
-
-
-def test_check_budget_fail_closed_raises_when_spend_cannot_be_computed(monkeypatch):
-    monkeypatch.setattr(
-        budget, "get_budget",
-        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
-                    "fail_closed": True},
-    )
-
-    def _boom(workspace, period):
-        raise RuntimeError("run manager unreachable")
-
-    monkeypatch.setattr(budget, "_workspace_period_spend_strict", _boom)
-    with pytest.raises(budget.BudgetUnavailableError):
-        budget.check_budget("ws1")
-
-
-def test_check_budget_without_fail_closed_still_fails_open_on_the_same_error(monkeypatch):
-    monkeypatch.setattr(
-        budget, "get_budget",
-        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
-                    "fail_closed": False},
-    )
-
-    def _boom(workspace, period):
-        raise RuntimeError("run manager unreachable")
-
-    monkeypatch.setattr(budget, "_workspace_period_spend_strict", _boom)
-    budget.check_budget("ws1")  # no exception: fail_closed is off
-
-
-def test_check_budget_fail_closed_raises_on_an_empty_price_catalog(monkeypatch, tmp_path):
-    # A hard cap with fail_closed set, but nothing in the catalog to price the
-    # workspace's runs against: the estimate can't be trusted even though the
-    # computation itself did not raise.
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=0)
-    monkeypatch.setattr(
-        budget, "get_budget",
-        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
-                    "fail_closed": True},
-    )
-    monkeypatch.setattr(budget, "_workspace_period_spend_strict", lambda ws, period: (0.0, 0))
-    with pytest.raises(budget.BudgetUnavailableError):
-        budget.check_budget("ws1")
-
-
-def test_check_budget_fail_closed_does_not_raise_when_spend_is_confidently_under_cap(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=0)  # $2.50
-    monkeypatch.setattr(
-        budget, "get_budget",
-        lambda ws: {"hard_limit_usd": 100.0, "soft_limit_usd": 0.0, "period": "total",
-                    "fail_closed": True},
-    )
-    budget.check_budget("ws1")  # priced, under cap: no exception
-
-
-def test_check_budget_fail_closed_still_raises_budget_exceeded_when_over_cap(monkeypatch, tmp_path):
-    _seed_prices(monkeypatch, tmp_path)
-    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=500_000)  # $7.50
-    monkeypatch.setattr(
-        budget, "get_budget",
-        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
-                    "fail_closed": True},
-    )
-    # A confident over-cap reading still raises the ordinary error, not the
-    # "could not be evaluated" one.
-    with pytest.raises(budget.BudgetExceededError) as exc:
-        budget.check_budget("ws1")
-    assert not isinstance(exc.value, budget.BudgetUnavailableError)
 
 
 # ── runs list (Costs page, Runs tab) ──────────────────────────────────────────

@@ -9,15 +9,11 @@ The same direction as [connectors](connectors.md): this hub reaches out to
 something you already run. The difference is what comes back. A connector is a
 fixed integration this product wrote; an MCP server is a set of tools this
 product has never seen, which is why attaching one asks you a security question
-that attaching a Telegram bot does not.
+that attaching a Jira site does not.
 
 Configured per [workspace](workspaces.md). A server attached to one workspace is
 invisible to agents built in another, because the configuration lives inside the
 workspace record rather than beside it.
-
-This page is about the hub as an MCP client. For the other direction, the hub
-serving its agents to Claude Code, Cursor and other clients, see
-[the hub as an MCP server](hub-as-mcp-server.md).
 
 ## In the dashboard
 
@@ -110,7 +106,7 @@ gate](hooks.md) the built-in tools use:
 
 Like the rest of the gate, it only does anything when the workspace has
 `require_tool_approval` turned on. In a task run a gated call parks the task
-until somebody answers; in chat it is refused with an explanation.
+until somebody answers; in chat it waits for your answer on a card.
 
 Hooks apply too. MCP tools are added to an agent's tool list before the hook
 wrapper goes on, so a `PreToolUse` hook sees a remote call exactly as it sees a
@@ -143,34 +139,6 @@ spawned for the call and reaped when it finishes. Nothing is left running
 between calls, so a server that hangs or crashes cannot outlive the call that
 started it. The cost is a process start per call, which is worth paying for a
 tool that runs a handful of times in a run.
-
-## The hub-wide allowlist
-
-By default any workspace may attach any server: the capability claim above is
-the only gate. A larger install may want one more: a short list of servers an
-admin has actually vetted, with nothing else attachable at all. That is the
-**MCP catalog**, on the **Agent registry** page (docs/registry.md), and it is
-off until you turn it on.
-
-An entry is the same identifying details as a workspace server (id, transport,
-command and args or url) plus a status: `requested`, `approved` or `blocked`.
-Anyone can ask for a server to be added (`requested`); an admin can also add
-one directly as `approved`. The hub toggle `AGENTS_HUB_MCP_ALLOWLIST_ONLY`
-(off by default) is what makes the catalog matter:
-
-- **On:** a workspace may only attach or edit a server that matches an
-  approved entry exactly, same id and the same command+args (stdio) or url
-  (everything else). A mismatch is refused with 403. A server that was
-  attached before the toggle went on, or that an admin later blocks, is kept
-  in the workspace's configuration but produces no tools and shows
-  "not approved" on the MCP page, the same way a server that will not connect
-  does. It is not deleted out from under whoever attached it.
-- **Off:** the catalog is purely informational. The MCP page still shows
-  whether a server matches an approved entry, nothing more.
-
-`ah mcp catalog list|request|approve|block` manages the catalog from the CLI;
-`GET/POST /api/registry/mcp` and `POST /api/registry/mcp/{id}/approve|block`
-from the API.
 
 ## Gotchas
 

@@ -11,7 +11,6 @@ export default {
   pickWorkspace: 'Выберите рабочее пространство, чтобы добавить вотчер.',
   columns: { name: 'Вотчер', state: 'Состояние', lastCheck: 'Последняя проверка', lastChange: 'Последнее изменение', agents: 'Будит' },
   state: { active: 'Активен', paused: 'На паузе ({{reason}})', disabled: 'Выключен', error: 'Ошибка' },
-  viaGoogle: 'Google-аккаунт',
   every: 'каждые {{seconds}} с',
   fired: 'событий: {{count}}',
   nobody: 'пока никого',

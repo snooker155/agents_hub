@@ -285,8 +285,6 @@ class TaskStore:
         external_source: Optional[dict] = None,
         depends: Optional[Sequence[UUID]] = None,
         due_at: Optional[datetime] = None,
-        budget_usd: Optional[float] = None,
-        environment_id: Optional[str] = None,
         agent_version: Optional[int] = None,
         outcome: Optional[dict] = None,
         file_ids: Optional[Sequence[str]] = None,
@@ -325,8 +323,6 @@ class TaskStore:
                 external_source=external_source,
                 depends=list(depends or []),
                 due_at=due_at,
-                budget_usd=budget_usd,
-                environment_id=environment_id,
                 agent_version=agent_version,
                 outcome=outcome,
                 file_ids=list(file_ids or []),
@@ -369,9 +365,6 @@ class TaskStore:
         JSON, before ``_sync_executor`` would backfill one from the other.
         """
         tid_str = str(task_id)
-        from hubsync import copies
-        if copies.is_copy(tid_str):
-            return None  # synced in from another hub: it runs there (hubsync/copies.py)
         with db.transaction() as conn:
             row = conn.execute("SELECT doc FROM tasks WHERE id = ?", (tid_str,)).fetchone()
             if row is None:

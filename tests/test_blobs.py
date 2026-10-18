@@ -112,72 +112,7 @@ def test_module_level_configured_is_false_without_a_blob_url():
 
 # ── S3 backend: round trip ───────────────────────────────────────────────────
 
-def test_s3_round_trip_mirror_ensure_local_read_list_delete():
-    client = FakeS3Client()
-    store = blobs.S3BlobStore("s3://test-bucket/prefix", client=client)
-
-    p = _write("run_logs/agent_run_s3case.log", "s3 body")
-    rel_path = blobs.rel(p)
-
-    assert store.configured() is True
-    assert store.mirror(rel_path) is True
-    assert client.objects.get(f"prefix/{rel_path}") == b"s3 body"
-
-    # Delete the local copy; ensure_local re-downloads it from the store.
-    p.unlink()
-    assert not p.exists()
-    fetched = store.ensure_local(rel_path)
-    assert fetched == p
-    assert p.read_text(encoding="utf-8") == "s3 body"
-
-    # Re-delete locally to prove read_text/read_bytes/exists also fetch.
-    p.unlink()
-    assert store.read_text(rel_path) == "s3 body"
-    p.unlink()
-    assert store.read_bytes(rel_path) == b"s3 body"
-    p.unlink()
-    assert store.exists(rel_path) is True
-
-    listed = store.list("run_logs")
-    assert rel_path in listed
-
-    store.delete(rel_path)
-    assert not p.exists()
-    assert f"prefix/{rel_path}" not in client.objects
-    assert store.exists(rel_path) is False
-
-
-def test_s3_mirror_is_noop_when_the_local_file_is_missing():
-    store = blobs.S3BlobStore("s3://bucket", client=FakeS3Client())
-    assert store.mirror("run_logs/never_written.log") is False
-
-
-def test_s3_without_a_prefix_uses_bare_keys():
-    client = FakeS3Client()
-    store = blobs.S3BlobStore("s3://bucket-only", client=client)
-    p = _write("run_logs/agent_run_bare.log", "x")
-    rel_path = blobs.rel(p)
-    store.mirror(rel_path)
-    assert rel_path in client.objects
-
-
 # ── failures are swallowed, never raised ─────────────────────────────────────
-
-def test_s3_failures_never_raise():
-    client = FakeS3Client(fail=True)
-    store = blobs.S3BlobStore("s3://bucket/prefix", client=client)
-    p = _write("run_logs/agent_run_failcase.log", "body")
-    rel_path = blobs.rel(p)
-
-    assert store.mirror(rel_path) is False
-    p.unlink()
-    assert store.ensure_local(rel_path) is None
-    assert store.read_text(rel_path, default="d") == "d"
-    assert store.read_bytes(rel_path) is None
-    assert store.exists(rel_path) is False
-    store.delete(rel_path)  # must not raise
-    assert store.list("run_logs") == []
-
 
 def test_module_functions_never_raise_even_with_a_broken_store(monkeypatch):
     class Boom(blobs.BlobStore):
@@ -240,35 +175,6 @@ def test_rel_round_trips_an_absolute_path_under_the_root():
 
 # ── reader fallbacks wired up in this step ───────────────────────────────────
 
-def test_stats_route_reads_a_run_log_mirrored_from_another_host(monkeypatch):
-    """A run whose process ran on a different worker/replica: its log was
-    mirrored there and never written on this host at all. The stats route's
-    reader function must still serve it, fetching it from the store."""
-    from managers import run_manager as rm
-    from dashboard.backend.routes import stats as stats_routes
-
-    client = FakeS3Client()
-    fake_store = blobs.S3BlobStore("s3://bucket/prefix", client=client)
-    monkeypatch.setattr(blobs, "store", lambda: fake_store)
-
-    run_id = "on-another-host"
-    log_rel = f"run_logs/agent_run_{run_id}.log"
-    log_path = AGENTS_HUB_ROOT / log_rel
-    # Simulate the other host: write, mirror, then remove the local copy so
-    # this host only ever sees it through the store.
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("remote log body", encoding="utf-8")
-    fake_store.mirror(log_rel)
-    log_path.unlink()
-    assert not log_path.exists()
-
-    rm.upsert_run({"run_id": run_id, "agent_id": "a", "status": "completed",
-                   "log_file": str(log_path)})
-
-    text = stats_routes._read_run_log_text(run_id)
-    assert text == "remote log body"
-
-
 def test_stats_route_returns_none_when_the_log_is_nowhere(monkeypatch):
     from dashboard.backend.routes import stats as stats_routes
 
@@ -276,31 +182,3 @@ def test_stats_route_returns_none_when_the_log_is_nowhere(monkeypatch):
     assert stats_routes._read_run_log_text("no-such-run-at-all") is None
 
 
-def test_view_asset_missing_locally_is_fetched_from_the_store(monkeypatch, tmp_path):
-    """A view asset copied in at create_view time is mirrored immediately
-    (views/store.py's _mirror_view_dir). If the local copy later disappears —
-    the view was created on another host, say — view_asset_path must still
-    serve it by fetching it from the store."""
-    from views.store import create_view, view_asset_path
-
-    client = FakeS3Client()
-    fake_store = blobs.S3BlobStore("s3://bucket/prefix", client=client)
-    monkeypatch.setattr(blobs, "store", lambda: fake_store)
-
-    src = tmp_path / "data.json"
-    src.write_text('{"values": [1, 2, 3]}', encoding="utf-8")
-    env = create_view(
-        "table", "T", {"columns": ["a"], "rows": [[1]]},
-        summary="t", asset_sources={"data.json": str(src)},
-    )
-
-    local_path = view_asset_path(env.view_id, "data.json")
-    assert local_path is not None and local_path.is_file()
-
-    # Remove only the local copy; create_view already mirrored it.
-    local_path.unlink()
-    assert not local_path.exists()
-
-    fetched = view_asset_path(env.view_id, "data.json")
-    assert fetched is not None
-    assert fetched.read_text(encoding="utf-8").startswith("{")

@@ -1,7 +1,12 @@
 """The planner (declarative/engine.py) against a small fake hub: what each
 plan row means, the hub's normal form of a value not counting as a change,
-drift, prune, and apply's bookkeeping. The fake answers only the environment
-routes, the way the real ones do (404 for an unknown id, lowercased hosts)."""
+drift, prune, and apply's bookkeeping.
+
+The engine is generic over kinds, so these tests drive it with a stand-in kind
+registered only here (:class:`BoxKind`, kind ``environment``): one flat record
+with a partial mapping field, served by a fake hub that answers like a real
+CRUD route (404 for an unknown id, lowercased hosts). The single-user edition
+ships no such kind; the stand-in keeps the engine covered without one."""
 from __future__ import annotations
 
 import copy
@@ -9,9 +14,85 @@ import uuid
 
 import pytest
 
+from typing import Any, Dict, List, Optional
+
 from declarative import Lock, PlanBlocked, apply, load_text, plan
+import importlib
+
+from declarative import engine, kinds as kinds_module
 from declarative.engine import _compare
-from declarative.kinds import KINDS
+from declarative.kinds import (
+    KINDS, Context, Field, Kind, Resource, _bool, _q, _str_or_none, _text, want_bool, want_mapping,
+    want_str, want_text,
+)
+
+NETWORK_KEYS = ("type", "allowed_hosts", "allow_package_managers")
+
+
+class BoxKind(Kind):
+    """A stand-in kind: a named record with a description, a mode and a
+    partial ``network`` mapping, behind ``/api/environments``."""
+    name = "environment"
+    key_defaults = ("name",)
+    fields = (
+        Field("name", want_str, _text),
+        Field("workspace", want_str, _str_or_none),
+        Field("description", want_text, _text),
+        Field("mode", want_str, _text),
+        Field("network", want_mapping(NETWORK_KEYS), dict, partial=True),
+        Field("is_default", want_bool, _bool),
+    )
+    DEFAULTS: Dict[str, Any] = {
+        "workspace": None, "description": "", "mode": "inherit",
+        "network": {"type": "unrestricted", "allowed_hosts": [], "allow_package_managers": False},
+        "is_default": False,
+    }
+
+    @staticmethod
+    def _canon(row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "name": _text(row.get("name")), "workspace": _str_or_none(row.get("workspace")),
+            "description": _text(row.get("description")), "mode": row.get("mode") or "inherit",
+            "network": dict(row.get("network") or {}), "is_default": bool(row.get("is_default")),
+            "_version": row.get("updated_at"),
+        }
+
+    def observe(self, ctx: Context, hub_id: str, res: Optional[Resource]) -> Optional[Dict[str, Any]]:
+        row = ctx.get(f"/api/environments/{_q(hub_id)}")
+        return self._canon(row) if row is not None else None
+
+    def find_existing(self, ctx: Context, res: Resource, desired: Dict[str, Any]) -> Optional[str]:
+        for row in ctx.get("/api/environments") or []:
+            if _text(row.get("name")) == desired.get("name"):
+                return str(row.get("id"))
+        return None
+
+    def create(self, ctx: Context, res: Resource, desired: Dict[str, Any]) -> str:
+        return str(ctx.call("POST", "/api/environments", json=dict(desired))["id"])
+
+    def write_groups(self, names: List[str]) -> List[List[str]]:
+        return [names] if names else []
+
+    def write(self, ctx: Context, hub_id: str, res: Resource, values: Dict[str, Any],
+              observed: Dict[str, Any]) -> None:
+        ctx.call("PATCH", f"/api/environments/{_q(hub_id)}", json=dict(values))
+
+    def delete(self, ctx: Context, hub_id: str) -> None:
+        ctx.call("DELETE", f"/api/environments/{_q(hub_id)}")
+
+
+@pytest.fixture(autouse=True)
+def box_kind(monkeypatch):
+    """Register the stand-in kind for one test, everywhere the engine looks."""
+    # The package exports a function named ``export`` too, so the module is
+    # taken by its full name.
+    export_module = importlib.import_module("declarative.export")
+    monkeypatch.setitem(KINDS, "environment", BoxKind())
+    order = ("memory_pool", "environment", "agent", "deployment")
+    monkeypatch.setattr(kinds_module, "KIND_ORDER", order)
+    monkeypatch.setattr(engine, "KIND_ORDER", order)
+    monkeypatch.setitem(export_module.FOLDERS, "environment", "environments")
+    monkeypatch.setitem(export_module.KIND_ALIASES, "environment", "environment")
 
 
 class Fake404(Exception):
@@ -157,18 +238,6 @@ def test_name_taken_in_the_hub_blocks_creation():
     hub("POST", "/api/environments", json={"name": "box"})
     p = plan(_bundle(), hub, lock)
     assert p.changes[0].action == "blocked" and "export" in p.changes[0].message
-
-
-def test_reference_to_an_undeclared_environment_is_checked_in_the_hub():
-    hub = FakeHub()
-    existing = hub("POST", "/api/environments", json={"name": "shared"})["id"]
-    text = ("kind: deployment\nid: d\nagent: a\nmessage: m\ncron: '0 9 * * *'\n"
-            "environment: {env}\n")
-    p = plan(load_text(text.format(env="no-such-env"), source="d.yaml"), _agents_ok(hub), Lock())
-    assert p.changes[0].action == "blocked"
-    assert p.explain().startswith("d.yaml:6: deployment/d: environment: environment 'no-such-env'")
-    p = plan(load_text(text.format(env=existing), source="d.yaml"), _agents_ok(hub), Lock())
-    assert p.changes[0].action == "create"
 
 
 def _agents_ok(hub):

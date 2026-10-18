@@ -31,9 +31,6 @@ vi.mock('../../api', () => ({
   getWorkspaceSpecialModels: (...a) => getWorkspaceSpecialModels(...a),
   updateWorkspaceSpecialModels: vi.fn(), discoverWorkspaceSpecialModels: vi.fn(),
 }));
-vi.mock('../../components/models/LocalTab', () => ({ default: () => null }));
-// The catalog asks whether the local model servers run; nothing does here.
-vi.mock('../../api/localModels', () => ({ getLocalServers: () => ok({ servers: {} }) }));
 
 import Models from '../Models';
 
@@ -44,6 +41,5 @@ describe('Models page, special models tab', () => {
     expect(await screen.findByText('generate_image')).toBeTruthy();
     expect(getWorkspaceSpecialModels).toHaveBeenCalledWith('studio');
     expect(screen.queryByRole('link', { name: /workspace settings/ })).toBeNull();
-    expect(screen.queryByRole('link', { name: /Local tab/ })).toBeNull();
   });
 });

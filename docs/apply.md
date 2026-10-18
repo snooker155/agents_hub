@@ -1,6 +1,6 @@
 # Declarative files: `ah apply`
 
-Agents, environments, deployments and memory pools can live as files in a
+Agents, deployments and memory pools can live as files in a
 repository instead of only in the hub. `ah apply <paths>` reads the files,
 prints a plan of what it would create, update, leave alone or delete, and then
 makes the hub match them. A lock file, `ah.lock`, records the hub id each
@@ -16,8 +16,8 @@ ah apply --export team_researcher team_writer --out hub/   # start from what the
 
 The command works the way every `ah` command does: in process by default, over
 REST when `AGENTS_HUB_URL` is set ([the CLI](cli.md)). The engine behind it only
-calls the public REST API, so a repository applies the same way to the hub on
-this machine and to one across the network.
+calls the public REST API, so a repository applies the same way in process
+and over REST.
 
 ## A repository
 
@@ -29,7 +29,6 @@ examples/apply/
     researcher.md                 # an agent: frontmatter + instructions
     researcher.capabilities.md    # its capabilities.md
     writer.md
-  environments.yaml
   memory.yaml
   deployments.yaml                # two documents separated by ---
 ```
@@ -41,8 +40,8 @@ README) and a YAML file with no `kind:` in it (a CI config or a compose file).
 A file named on the command line must be a declarative file.
 
 Every resource has an `id`: its key in the files and in the lock. For an agent
-the id is also its id in the hub. An environment, a memory pool and a
-deployment get a hub id when they are created; the lock maps one to the other,
+the id is also its id in the hub. A memory pool and a deployment get a hub
+id when they are created; the lock maps one to the other,
 and other files refer to them by the declared id.
 
 ## Agents
@@ -87,7 +86,7 @@ the hub.
 | `skills` | list of `{name, description, steps, body, tags}` | `POST /api/skills`, `PATCH /api/skills/{id}` |
 | `skills_enabled`, `clarify_gate`, `allow_self_delegation`, `shared` | `true` or `false` | the matching per field route |
 | `episodic_write` | `true`, `false` or `auto` | `POST .../episodic-config` |
-| `response_format` | `none`, `buttons` or `telegram` | `POST .../response-format` |
+| `response_format` | `none` or `buttons` | `POST .../response-format` |
 | `web_domains` | mapping: `allowed_domains`, `blocked_domains` | `PUT .../web-domains` |
 | `loop` | mapping: `fallback_models`, `advisor_model`, `output_schema`, `max_concurrent_delegates`, `tool_search`, `compaction` | `PUT .../loop-settings` |
 | `tool_policy` | mapping of tool id to mode ([tool policy](tool-policy.md)) | `PUT .../tool-policy` |
@@ -122,32 +121,6 @@ parent's values flattened in, so a file that only ever adds or removes a
 couple of items plans `unchanged` on every re-apply, parent changes included.
 `--export` on a child agent writes `extends` and only that agent's own
 fields and deltas.
-
-## Environments
-
-```yaml
-kind: environment
-id: research-sandbox
-name: Research sandbox        # defaults to the id
-description: Web access limited to documentation sites.
-workspace: team               # defaults to --workspace; none means every workspace
-mode: inherit                 # inherit, local or docker
-image: python:3.12-slim
-packages: [requests==2.32.3]
-network:
-  type: limited               # unrestricted, limited or none
-  allowed_hosts: [docs.python.org]
-  allow_package_managers: true
-size: small                   # a named preset; limits below override its values
-limits: {memory: 2g, cpus: "2", pids_limit: 256}
-env: {REPORT_STYLE: brief}
-sandbox_provider: inherit
-is_default: false
-```
-
-The fields are those of [environments](environments.md), written through
-`POST /api/environments` and `PATCH /api/environments/{id}`. `network` and
-`limits` manage only the keys they name.
 
 ## Memory pools
 
@@ -185,8 +158,6 @@ agent: team_researcher           # declared id, or an agent already in the hub
 message: Summarize yesterday's news about open source AI agents.
 cron: "0 9 * * 1-5"
 timezone: Europe/Berlin
-environment: research-sandbox    # declared id, or an environment id in the hub
-budget_usd: 1.5
 memory_pools: [team-notes]
 memory_access: read
 paused: false
@@ -197,8 +168,8 @@ paused: false
 | `job` | `agent_task` (the default), `notification`, `flow` (with `flow_id`) or `memory_consolidate` (with `consolidate_pool`) |
 | `recurrence` | `none`, `hourly`, `daily`, `weekly` or `cron`; `cron` when `cron:` is given, else `none` |
 | `run_at` | an ISO date and time. Required unless `cron:` sets the schedule. For a recurring job it is only where the job starts: the hub moves it on every firing, so it is never compared |
-| `catch_up`, `channels`, `budget_usd`, `agent_version`, `auto_pause_after`, `project_id`, `file_ids`, `secrets`, `memory_access`, `consolidate_session_limit` | as in `POST /api/plan/jobs` |
-| `environment`, `memory_pools`, `consolidate_pool` | references to declared resources, or hub ids |
+| `catch_up`, `channels`, `agent_version`, `auto_pause_after`, `project_id`, `file_ids`, `secrets`, `memory_access`, `consolidate_session_limit` | as in `POST /api/plan/jobs` |
+| `memory_pools`, `consolidate_pool` | references to declared resources, or hub ids |
 | `paused` | `true` keeps the job paused (`POST .../pause` and `.../resume`) |
 | `workspace`, `flow_id`, `seed`, `max_concurrent` | set when the job is created |
 
@@ -209,12 +180,12 @@ computes (`GET /api/plan/cron/preview`). Changing `cron`, `timezone` or
 ## References
 
 A field that names another resource (`memory`, `delegates`, `handoffs`,
-`agent`, `environment`, `memory_pools`, `consolidate_pool`) takes the
+`agent`, `memory_pools`, `consolidate_pool`) takes the
 declared id of a resource in the same files, and the apply puts in the hub id
 the lock has for it, or the one it just created. A value no file declares is
 taken as an id already in the hub; the plan checks that it exists and refuses
-when it does not. Resources are applied in the order memory pools,
-environments, agents, deployments, each kind created before any of its fields
+when it does not. Resources are applied in the order memory pools, agents,
+deployments, each kind created before any of its fields
 are written, so two agents that hand off to each other both exist by the time
 their handoffs are set.
 
@@ -292,7 +263,7 @@ Commit it with the files: it is what makes the second apply an update.
 
 Per resource: its kind and declared id, the hub id, a content hash of the
 declared spec, the hub's version where the API has one (an agent's version
-number, an environment's or job's last update time), and for every declared
+number, a job's last update time), and for every declared
 field two hashes: `d`, the value the file declared, and `o`, the value the hub
 held right after. The pair lets the hub keep its own normal form of a value (a
 host lowercased, blank lines trimmed from a prompt) without the next plan
@@ -308,13 +279,12 @@ creating the resource a second time.
 ## Export
 
 ```bash
-ah apply --export team_researcher team_writer environment:<id> pool:<id> deployment:<id> --out hub/
+ah apply --export team_researcher team_writer pool:<id> deployment:<id> --out hub/
 ```
 
 writes the same format from records already in the hub: agents into
 `hub/agents/<id>.md` (with `.capabilities.md` and `.usage.md` siblings),
-environments, memory pools and deployments into `hub/environments/`,
-`hub/memory/` and `hub/deployments/`. Values a fresh record has anyway are
+memory pools and deployments into `hub/memory/` and `hub/deployments/`. Values a fresh record has anyway are
 left out. A reference between two exported records is written by declared id,
 one to a record not exported keeps its hub id. The export also writes
 `hub/ah.lock` (or `--lock`) owning what it wrote, so `ah apply hub/` right

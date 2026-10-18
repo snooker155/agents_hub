@@ -10,10 +10,6 @@ Die Eingangstür. Sie sprechen direkt mit jedem Agenten im Workspace: kein Knote
 
 Die Auswahl steht standardmäßig auf dem Standard-Chat-Agenten des Workspace. Das ist der Hauptagent, solange Sie ihn nicht geändert haben.
 
-## Wo ein Turn läuft
-
-Das Backend führt den Agenten nicht selbst aus. Ein Turn wird an ein Replikat eines [Dienstes](services.md) übergeben: an den eigenen Dienst des Agenten im Workspace, falls er einen hat, sonst an den Runner des Workspace, einen Prozess, der genau dafür bereitgehalten wird. Das Replikat führt die ganze Pipeline aus (Prompt, Anhänge, Verdichtung, Werkzeuge, Handoffs, den Run-Datensatz) und streamt seine Events zurück. Die Seite sieht, was sie immer gesehen hat. Der erste Turn in einem Workspace ohne Runner wartet, bis einer gestartet ist, höchstens `AGENTS_HUB_TURN_START_TIMEOUT` Sekunden. Danach bleibt der Runner aktiv (`AGENTS_HUB_RUNNER_MIN`, Standard 1). Mit `AGENTS_HUB_CHAT_EXECUTION=inprocess` (Einstellungen, "Chat-Ausführung") laufen die Turns stattdessen im Backend.
-
 ## Was der Agent sieht
 
 Das bisherige Gespräch und seinen eigenen Systemprompt. Er sieht **nicht** andere Gespräche, andere Workspaces oder das, was Sie einem anderen Agenten gesagt haben.
@@ -26,7 +22,7 @@ Anhänge, referenzierte Entitäten und der Hinweis auf den Projektbereich gehör
 
 Ein langes Gespräch passt irgendwann nicht mehr in das Modell. Statt den Turn scheitern zu lassen, wird der ältere Teil zu einer einzigen Zusammenfassung verdichtet, und nur der jüngste Abschnitt wird wörtlich gesendet.
 
-- **Wann.** Sobald das Gespräch samt Systemprompt 60 Prozent des Kontextfensters des Modells überschreitet. Ist das Fenster unbekannt (ein lokales Modell, ein Gateway, das nichts meldet), liegt die Schwelle bei 60.000 Zeichen. Die Grenze von 60.000 Zeichen für den Verlauf selbst ist bei einem Modell mit großem Fenster zuerst erreicht. In der Praxis wird deshalb bei kleinem Fenster verdichtet, hinter einem langen Systemprompt oder wenn ein Anbieter den Turn ablehnt.
+- **Wann.** Sobald das Gespräch samt Systemprompt 60 Prozent des Kontextfensters des Modells überschreitet. Ist das Fenster unbekannt (ein Gateway, das nichts meldet), liegt die Schwelle bei 60.000 Zeichen. Die Grenze von 60.000 Zeichen für den Verlauf selbst ist bei einem Modell mit großem Fenster zuerst erreicht. In der Praxis wird deshalb bei kleinem Fenster verdichtet, hinter einem langen Systemprompt oder wenn ein Anbieter den Turn ablehnt.
 - **Was erhalten bleibt.** Die jüngsten Turns, immer mindestens vier, werden wörtlich gesendet. Alles davor wird zur Zusammenfassung.
 - **Wer sie schreibt.** Derselbe Anbieter und dasselbe Modell, auf dem der Agent läuft, in einem Aufruf ohne Werkzeuge und mit einer Antwort von höchstens etwa 800 Tokens. Schlägt dieser Aufruf fehl, tritt ein verlustbehafteter Ersatz an seine Stelle: die erste Anfrage, die letzten paar verdichteten Turns und eine Markierung, wie viele Nachrichten ohne Zusammenfassung entfallen sind. Der Agent kann dann nach der Lücke fragen, statt sie zu erfinden.
 - **Wo sie liegt.** In der Session, zusammen mit der Anzahl der Nachrichten, für die sie steht, und einem Fingerabdruck der letzten davon. So wird sie auch dann an der richtigen Stelle gefunden, wenn das Gesprächsfenster weitergerückt ist. Der nächste Turn liest sie zurück, statt dasselbe Material noch einmal bezahlt zusammenzufassen, und eine spätere Verdichtung erweitert dieselbe Zusammenfassung um alles, was seitdem aus dem jüngsten Abschnitt herausgefallen ist.
@@ -77,7 +73,7 @@ Ein Agent kann das Gespräch auch abgeben: Mit `handoff_to_agent` antwortet der 
 
 Alles, was echtes Geld kostet, hält an und fragt nach. Bietet ein Agent an, einen Flow, einen Loop, ein Szenario oder ein Team auszuführen, zeigt er die Schätzung und wartet auf ein klares Ja. "Klingt gut" ist keine Genehmigung, und die Agenten sind angewiesen, es als mehrdeutig zu behandeln.
 
-Der **Automodus** nimmt das Nachfragen für ein Gespräch weg: der Schalter **Auto** unter dem Eingabefeld oder Shift+Tab im Feld. Solange er an ist, steht ein Hinweis über dem Gespräch, und jede Bestätigung wird ohne Karte angenommen; die Karten erscheinen trotzdem, markiert als "automatisch freigegeben". Regeln, die einen Aufruf ablehnen, lehnen ihn weiter ab. Ein Administrator kann den Automodus für einen Workspace ausschalten. Siehe [auto mode](hooks.md#auto-mode).
+Der **Automodus** nimmt das Nachfragen für ein Gespräch weg: der Schalter **Auto** unter dem Eingabefeld oder Shift+Tab im Feld. Solange er an ist, steht ein Hinweis über dem Gespräch, und jede Bestätigung wird ohne Karte angenommen; die Karten erscheinen trotzdem, markiert als "automatisch freigegeben". Regeln, die einen Aufruf ablehnen, lehnen ihn weiter ab. Siehe [auto mode](hooks.md#auto-mode).
 
 ## Gespräche mit dem Assistenten
 
@@ -86,9 +82,5 @@ Die Gespräche des [Assistenten](assistant.md), per Stimme oder Text, werden auc
 ## Sprachnachrichten
 
 Solange das Eingabefeld leer ist, steht an Stelle des Senden-Knopfs ein Mikrofon. Halten Sie es gedrückt, oder die Leertaste im leeren Feld (oder außerhalb jedes Textfelds), sprechen Sie und lassen Sie los: das Gesagte wird als Nachricht gesendet und als *gesprochen* markiert. Sobald etwas getippt oder angehängt ist, kehrt der Senden-Knopf zurück. Die Aufnahme wandelt das Transkriptionsmodell des Workspace der Unterhaltung in Text um (über `/api/assistant/transcribe`), ohne eines die Spracherkennung des Browsers. Gibt es keins von beiden, erscheint kein Mikrofon.
-
-## Telegram
-
-Ein Chat lässt sich mit einem Telegram-Chat verbinden, sodass dasselbe Gespräch vom Telefon aus weitergeht. Siehe [telegram](telegram.md).
 
 Verwandt: [agents](agents.md), [flows](flows.md), [teams](teams.md).

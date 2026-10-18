@@ -26,7 +26,7 @@ import {
 import { TaskFilesTab } from '../components/task/TaskFilesTab';
 import { TaskMetaRow } from '../components/task/TaskMetaRow';
 import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
-import { AwaitingInputCard, BudgetPauseCard, ToolApprovalCard } from '../components/task/TaskPendingCards';
+import { AwaitingInputCard, ToolApprovalCard } from '../components/task/TaskPendingCards';
 import {
   ActivityTab, ExecutionTab, LogsTab, ResultsTab, SubtasksTab,
 } from '../components/task/TaskTabPanels';
@@ -72,18 +72,6 @@ const TaskDetails = () => {
   const [answerSubmitting, setAnswerSubmitting] = useState(false);
   const [approvalNote, setApprovalNote] = useState('');
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
-  // The new cap offered on a budget pause card, seeded once at twice the
-  // limit the run just hit (a plausible next stop, not a guess the operator
-  // has to type from scratch) and left alone after that so an edit sticks.
-  // `null` means the operator has not edited it, so the seed applies.
-  const [budgetCapEdit, setBudgetCapDraft] = useState(null);
-  const budgetPending = task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget';
-  const budgetLimit = Number(task?.pending_approval?.limit_usd) || 0;
-  const budgetCapDraft = budgetPending
-    ? (budgetCapEdit ?? String(budgetLimit > 0 ? budgetLimit * 2 : 10))
-    : '';
-  // Leaving the budget pause forgets an edit, so the next pause seeds again.
-  if (!budgetPending && budgetCapEdit !== null) setBudgetCapDraft(null);
   const [activeTab, setActiveTab] = useState('execution');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
@@ -479,25 +467,6 @@ const TaskDetails = () => {
     }
   };
 
-  // Decide on a run parked at its money cap (pending_approval.kind ===
-  // 'budget'). Approving raises the cap to the operator's new number and
-  // resumes from where it stopped; refusing stops the task instead of
-  // resuming it, since there is no tool call to deny here.
-  const handleBudgetDecision = async (approved) => {
-    setApprovalSubmitting(true);
-    try {
-      const resp = await approveTaskCall(id, approved, approvalNote.trim(), approved ? Number(budgetCapDraft) : undefined);
-      if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
-      setApprovalNote('');
-      setBudgetCapDraft(null);
-      fetchData();
-    } catch (err) {
-      alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));
-    } finally {
-      setApprovalSubmitting(false);
-    }
-  };
-
   const handleApproveAssignment = async () => {
     try { await approveAssignment(id); fetchData(); }
     catch (err) { alert(`${t('taskDetails.errors.approve')}: ` + (err.response?.data?.detail || err.message)); }
@@ -685,20 +654,8 @@ const TaskDetails = () => {
           />
         )}
 
-        {/* Awaiting approval — either a tool call that needs a human yes, or a
-            run parked at its own money cap (task.pending_approval.kind ===
-            'budget', set by RunBudgetGuard; see common/run_budget.py). The
-            two share one status but ask a different question, so they get
-            different cards rather than one trying to cover both. */}
-        {task.status === 'awaiting_approval' && task.pending_approval?.kind === 'budget' ? (
-          <BudgetPauseCard
-            approvalSubmitting={approvalSubmitting}
-            budgetCapDraft={budgetCapDraft}
-            handleBudgetDecision={handleBudgetDecision}
-            setBudgetCapDraft={setBudgetCapDraft}
-            task={task}
-          />
-        ) : task.status === 'awaiting_approval' && (
+        {/* Awaiting approval: a tool call that needs a human yes. */}
+        {task.status === 'awaiting_approval' && (
           <ToolApprovalCard
             approvalNote={approvalNote}
             approvalSubmitting={approvalSubmitting}

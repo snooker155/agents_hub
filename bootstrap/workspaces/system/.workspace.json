@@ -15,11 +15,6 @@
     "followup_mode": "single",
     "wait_for_completion": false
   },
-  "budget": {
-    "hard_limit_usd": 20.0,
-    "soft_limit_usd": 10.0,
-    "period": "monthly"
-  },
   "settings": {},
   "env_vars": {}
 }

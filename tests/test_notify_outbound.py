@@ -126,27 +126,6 @@ def test_deliver_never_raises_on_unknown_kind():
     outbound.deliver({"id": "e1", "kind": "carrier-pigeon", "url": "x"}, _event())
 
 
-def test_slack_payload_shape(monkeypatch):
-    calls = []
-
-    def _post(url, data=None, headers=None, timeout=None):
-        calls.append({"url": url, "body": json.loads(data), "headers": headers})
-        return _FakeResponse(200)
-
-    monkeypatch.setattr(outbound.requests, "post", _post)
-
-    endpoint = {"id": "e2", "kind": "slack", "url": "https://hooks.slack.com/services/x"}
-    outbound.deliver(endpoint, _event(title="Run failed", body="agent boom"))
-
-    assert len(calls) == 1
-    payload = calls[0]["body"]
-    assert "text" in payload and "Run failed" in payload["text"]
-    assert "blocks" in payload and isinstance(payload["blocks"], list)
-    assert any("agent boom" in json.dumps(b) for b in payload["blocks"])
-    # Slack never gets the webhook signature headers.
-    assert "X-AgentsHub-Signature" not in calls[0]["headers"]
-
-
 def test_worker_thread_delivers(monkeypatch):
     """dispatch() must not call deliver() synchronously; the worker thread does."""
     delivered = []

@@ -1,33 +1,19 @@
 """
-Personal workspaces: one per person in ``multi`` mode (docs/identity.md,
-"Personal workspace").
+The operator's home workspace.
 
-In ``multi`` a member sees only the workspaces they belong to, and neither
-``default`` nor ``system`` is one of them: those hold the service's own
-configuration. A person still needs a home for their assistant thread, their
-files and their memory, so each signed-in account gets a workspace of its own,
-made the first time it is needed and owned by them:
-
-* named ``personal-<user id>`` and marked ``personal_of: <user id>`` in its
-  metadata (the mark is what counts; the prefix is reserved so nobody else can
-  create a workspace that looks like one);
-* never deleted, renamed or shared: no other member can be added, no group
-  rule can name it, and SCIM deprovisioning leaves it in place;
-* falls back to ``default`` for what it does not configure itself: the
-  default chat model and its connection settings (:func:`model_source`), and
-  the special models (``providers.special.effective``). This is the one place
-  where a workspace borrows from another; every other workspace uses only
-  what it added itself.
-
-Outside ``multi`` there is one operator and ``default`` is their workspace:
-:func:`ensure_personal_workspace` returns ``"default"`` there, and nothing
-here creates anything.
+A person's assistant thread, files and memory live in their home workspace.
+With one operator that is ``default``: :func:`ensure_personal_workspace`
+answers it for every id and creates nothing. Personal workspaces used to be
+made per account (named ``personal-<user id>``, marked ``personal_of`` in
+their metadata, falling back to ``default`` for the model they did not set);
+the name prefix stays reserved and the mark is still read, so an installation
+that carries such a workspace from before keeps it listed, protected from
+deletion and running on ``default``'s model where it set none of its own.
 """
 from __future__ import annotations
 
 import logging
-import threading
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +21,8 @@ log = logging.getLogger(__name__)
 PREFIX = "personal-"
 #: Metadata key that marks a workspace as someone's personal one.
 META_KEY = "personal_of"
-#: Where a personal workspace falls back to.
+#: Where a personal workspace falls back to, and the operator's home.
 FALLBACK = "default"
-
-_lock = threading.Lock()
-#: Personal workspaces this process already made sure of, so the check on
-#: every ``/api/auth/me`` and workspace listing costs nothing after the first.
-_ensured: Set[str] = set()
 
 
 def name_for(user_id: str) -> str:
@@ -50,8 +31,8 @@ def name_for(user_id: str) -> str:
 
 
 def is_reserved_name(name: Optional[str]) -> bool:
-    """Whether ``name`` is in the personal namespace, which only
-    :func:`ensure_personal_workspace` may create in."""
+    """Whether ``name`` is in the personal namespace, which nothing creates in
+    any more."""
     return str(name or "").strip().startswith(PREFIX)
 
 
@@ -84,81 +65,15 @@ def is_personal_meta(meta: Any) -> bool:
     return isinstance(meta, dict) and bool(meta.get(META_KEY))
 
 
-def _is_person(user_id: str) -> bool:
-    from common.auth import LOCAL_OPERATOR_ID
-    from common.identity import SERVICE_PRINCIPAL
-    return bool(user_id) and user_id not in (LOCAL_OPERATOR_ID, SERVICE_PRINCIPAL.id)
-
-
 def ensure_personal_workspace(user_id: Optional[str]) -> str:
-    """The personal workspace of ``user_id``, created on first use.
-
-    Idempotent and safe to call on every request: after the first success the
-    answer comes from memory. Outside ``multi``, and for anything that is not
-    a person (the local operator, the service credential, an unknown id), the
-    answer is ``"default"`` and nothing is created.
-    """
-    from common import identity
-    from common.auth import MULTI, WS_OWNER
-    if identity.current_mode() != MULTI:
-        return FALLBACK
-    uid = str(user_id or "").strip()
-    if not _is_person(uid):
-        return FALLBACK
-    name = name_for(uid)
-    with _lock:
-        if name in _ensured:
-            return name
-        user = identity.get_user(uid)
-        if user is None:
-            return FALLBACK
-        from workspace import (create_workspace_folder, get_workspace_folder,
-                               get_workspace_metadata, update_workspace_metadata)
-        created = get_workspace_folder(name) is None
-        # The creator becomes the owner (workspace.storage claims it for the
-        # current user), so create it as the person whatever request this is.
-        token = identity.set_current_user(uid)
-        try:
-            create_workspace_folder(name)
-        finally:
-            identity.reset_current_user(token)
-        meta = get_workspace_metadata(name) or {}
-        if meta.get(META_KEY) != uid:
-            label = user.get("display_name") or user.get("username") or uid
-            update_workspace_metadata(name, {
-                META_KEY: uid,
-                "owner": uid,
-                "description": meta.get("description") or f"Personal workspace of {label}",
-            })
-        if identity.membership_role(name, uid) != WS_OWNER:
-            identity.set_member(name, uid, WS_OWNER)
-        _ensured.add(name)
-    if created:
-        log.info("personal workspace %s created for %s", name, uid)
-        try:
-            from common.session_broker import notify_change
-            notify_change("workspaces")
-        except Exception:  # noqa: BLE001 - a missed live refresh is not a failed create
-            log.debug("personal workspace: notify failed", exc_info=True)
-    return name
+    """The home workspace of ``user_id``: ``default``. Nothing is created."""
+    return FALLBACK
 
 
 def ensure_for_principal(principal: Any) -> Optional[str]:
-    """:func:`ensure_personal_workspace` for a request's principal: a person
-    signed in with a session or a personal key in ``multi``. None for anyone
-    else, and never raises (a failure here must not fail the request)."""
-    from common import identity
-    from common.auth import MULTI
-    if identity.current_mode() != MULTI or principal is None:
-        return None
-    if getattr(principal, "kind", "") != "user":
-        return None
-    try:
-        name = ensure_personal_workspace(principal.id)
-    except Exception:  # noqa: BLE001 - logged; the request goes on without it
-        log.warning("personal workspace for %s could not be ensured", principal.id, exc_info=True)
-        return None
-    return name if name != FALLBACK else None
+    """The personal workspace a request's principal should see first. None:
+    the operator's home is ``default``, which is listed anyway."""
+    return None
 
 
 def _has_own_model(meta: Dict[str, Any]) -> bool:
@@ -181,9 +96,8 @@ def model_source(workspace: Optional[str]) -> Optional[str]:
 
 
 def forget_cache() -> None:
-    """Drop what this process remembers (tests, and a workspace store reset)."""
-    with _lock:
-        _ensured.clear()
+    """Nothing is remembered any more; kept for the test fixture that calls it."""
+    return None
 
 
 __all__ = [

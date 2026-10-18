@@ -71,10 +71,4 @@ describe('FirstModelForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Ask your administrator to connect a model.');
   });
-
-  it('links to the Models page\'s Local tab for the hub\'s own runtime', () => {
-    renderForm();
-    const link = screen.getByRole('link', { name: 'Open the Local tab' });
-    expect(link).toHaveAttribute('href', '/models?tab=local');
-  });
 });

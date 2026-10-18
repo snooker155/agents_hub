@@ -84,28 +84,6 @@ export default {
     pruneDone_other: 'Deleted {{count}} branches.',
     pruneFailed: 'Prune failed',
   },
-  slo: {
-    title: 'SLO',
-    startP95: 'Run start time (p95)',
-    errorRate: 'Error rate',
-    statusOk: 'Ok',
-    statusBreach: 'Breach',
-    statusNoData: 'No data',
-    noValue: 'not enough data yet',
-    sample_one: '{{count}} sample',
-    sample_other: '{{count}} samples',
-    unreachable: 'SLO status did not answer.',
-  },
-  stack: {
-    title: 'Stack services',
-    openMap: 'Open the service map',
-    loading: 'Probing the shared services…',
-    none: 'The probes returned nothing.',
-  },
-  supportBundle: {
-    download: 'Download support bundle',
-    failed: 'Could not build the support bundle.',
-  },
   // Self check labels. Titles by check id, summaries by the message key
   // common/doctor.py's Msg carries; anything missing here falls back to the
   // English text the backend sent.
@@ -125,7 +103,6 @@ export default {
       oidc: 'Identity provider',
       disk: 'Free disk',
       browser: 'Browser service',
-      models_runtime: 'Model runtime',
       docker: 'Docker',
       sandbox: 'Sandbox providers',
       frontend_build: 'Frontend build',
@@ -149,8 +126,7 @@ export default {
       cors: {
         list: 'CORS allows a list of origins.',
         devOnly: 'CORS allows the local dev origins only.',
-        anyMulti: 'ALLOW_ORIGINS is *: any site can call the API with a stolen token; list the dashboard origins instead.',
-        anyOk: 'ALLOW_ORIGINS is * without credentials, acceptable in {{mode}} mode.',
+        anyOpen: 'ALLOW_ORIGINS is *: the API has no login, so any site open in your browser can call it; list the dashboard origins instead.',
       },
       security: {
         guard: 'CAPABILITY_GUARD is {{guard}}: an agent may hold all three capabilities; set it back to block',
@@ -160,7 +136,6 @@ export default {
         hostBoundNoProxy_other: '{{count}} secrets bound to hosts but AGENTS_HUB_EGRESS_PROXY is off, so runs that declare them refuse to start; set AGENTS_HUB_EGRESS_PROXY=1',
         hostBoundPlain_one: '{{count}} secret bound to hosts but AGENTS_HUB_EGRESS_PROXY is off and the plaintext fallback is on, so runs receive the real value; set AGENTS_HUB_EGRESS_PROXY=1',
         hostBoundPlain_other: '{{count}} secrets bound to hosts but AGENTS_HUB_EGRESS_PROXY is off and the plaintext fallback is on, so runs receive the real values; set AGENTS_HUB_EGRESS_PROXY=1',
-        localRuns: '{{mode}} mode with AGENT_EXECUTION_MODE=local: every run has this host\'s permissions; use docker',
         ok: '{{mode}} mode, {{execution}} runs, capability guard on block.',
       },
       staleRuns: {
@@ -213,15 +188,6 @@ export default {
         http: 'The browser service answered HTTP {{code}}.',
         noToken: 'The browser service answers but AGENTS_HUB_BROWSER_TOKEN is not set.',
         ok: 'The browser service answers.',
-      },
-      modelsRuntime: {
-        off: 'The model runtime is turned off (AGENTS_HUB_MODELS_MANAGED=false and no AGENTS_HUB_MODELS_URL).',
-        stopped: 'The hub\'s model runtime was stopped from the Models page.',
-        notRunning: 'The hub\'s model runtime is not running; the Models page, Local tab, shows why and can start it.',
-        unreachable: 'The model runtime at {{url}} is unreachable: {{error}}.',
-        http: 'The model runtime answered HTTP {{code}}.',
-        noToken: 'The model runtime answers but no token is set (AGENTS_HUB_MODELS_TOKEN or AGENTS_HUB_MODELS_TOKEN_FILE).',
-        ok: 'The model runtime answers.',
       },
       docker: {
         ok: 'Docker is available.',
@@ -308,7 +274,6 @@ export default {
       code_runner_fallback: 'Code runner fallback',
       providers: 'Providers',
       default_provider: 'Default provider',
-      egress_proxy: 'Egress proxy',
       built_at: 'Built',
       newest_source: 'Newest source',
       newest_source_at: 'Changed',

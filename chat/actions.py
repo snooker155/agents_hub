@@ -111,16 +111,8 @@ def _resolve(spec: HubAction, entity_id: str, *, workspace: str, user_id: Option
 
 
 def _require_role(ctx: SimpleNamespace, spec: HubAction, workspace: str) -> None:
-    from chat.lookup import LookupError_
-    from common import identity
-    from common.auth import MULTI, role_satisfies
-    if identity.current_mode() != MULTI or ctx.principal is None or ctx.principal.is_admin:
-        return
-    held = identity.membership_role(workspace, ctx.principal.id)
-    if not role_satisfies(held, spec.role):
-        raise LookupError_(
-            f"To {spec.action} a {spec.kind} in {workspace} the person needs the {spec.role} role there"
-            f" (they have {held or 'none'}).", code="forbidden")
+    """The operator holds every role in every workspace; kept where the check belongs."""
+    return None
 
 
 def describe(kind: str, action: str, entity_id: str, *, workspace: str = "",

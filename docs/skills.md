@@ -111,14 +111,13 @@ from pasted SKILL.md text is therefore reviewed on import and on every sync
 - **Scripts**: the files an agent could run, by extension or under `scripts/`
   and `bin/`. The hub only hands their text to the agent through
   `read_skill_file`; running them is the agent's `run_code` or shell, so give
-  such a skill only to agents in an [environment](environments.md) without
-  secrets or network access. An opaque binary (`.exe`, `.pyc`, `.so`, `.jar`)
+  such a skill only to agents that run in a container without secrets or
+  network access ([containers](containers.md)). An opaque binary (`.exe`, `.pyc`, `.so`, `.jar`)
   is a high flag of its own, since nobody can read it.
 - **License**: the `license` field of SKILL.md, or the LICENSE file next to
   it when the field is empty. A license that is not open (proprietary,
   source-available, all rights reserved) marks the skill **not open source**:
-  it can be used in the workspace that imported it but **Publish** and the
-  registry's submit refuse it, since publishing would redistribute it.
+  it can be used in the workspace that imported it but **Publish** refuses it, since publishing would redistribute it.
   Skills that name no license are publishable; most hand-written ones name
   none.
 
@@ -195,5 +194,5 @@ when nobody reviewed it). Publishing a skill whose `publishable` is false
 answers 409.
 
 Related: [memory](memory.md), [agents](agents.md), [marketplace](marketplace.md),
-[projects](projects.md), [environments](environments.md),
+[projects](projects.md), [containers](containers.md),
 [service health](service-health.md).

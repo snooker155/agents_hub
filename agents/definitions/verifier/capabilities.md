@@ -8,7 +8,6 @@ Task:
 Re-checking:
 - `read_file` / `list_files` / `search_text`: the workspace a claim should trace to.
 - `read_memory` / `search_memory`: what the system already held before this task.
-- `db_list_connections` / `db_query` / `db_schema`: find the connection a figure came from and re-run the query behind it rather than trust the count.
 - `calculator`: recompute, do not re-read, an arithmetic claim.
 
 The web, indirectly:

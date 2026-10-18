@@ -94,7 +94,7 @@ def test_verifier_has_code_reviewers_task_tools_plus_reads():
 
 def test_analyst_reads_data_sources_and_never_writes():
     tools = set(_seed_agents()["analyst"]["tools"])
-    assert {"db_list_connections", "db_schema", "db_query", "calculator"} <= tools
+    assert {"list_workspace_files", "read_workspace_file", "calculator"} <= tools
     write_tools = {"write_file", "create_file", "write_memory", "delete_file", "apply_unified_diff"}
     assert not (write_tools & tools), "the Analyst must never hold a write tool"
 
@@ -102,7 +102,7 @@ def test_analyst_reads_data_sources_and_never_writes():
 def test_writer_can_save_files_and_has_no_database_or_web_access():
     tools = set(_seed_agents()["writer"]["tools"])
     assert {"write_file", "create_file"} <= tools
-    assert not ({"db_query", "db_schema", "db_list_connections", "web_search", "fetch_url"} & tools)
+    assert not ({"web_search", "fetch_url"} & tools)
 
 
 def test_sourcer_holds_no_private_data_tool():

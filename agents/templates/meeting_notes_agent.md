@@ -11,7 +11,7 @@ domain: general
 tools: [list_workspace_files, read_workspace_file, save_workspace_file, create_task, list_tasks, search_memory, write_memory, create_view, document_set, ask_user, think]
 connectors:
   required: []
-  optional: [google, microsoft, notion, confluence]
+  optional: [jira]
 outcome:
   rubric: |
     - The summary is short and faithful: it says what the meeting was for and what was concluded, and adds nothing that was not said.

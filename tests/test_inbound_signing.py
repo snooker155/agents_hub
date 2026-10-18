@@ -1,9 +1,7 @@
 """Inbound signature verification, replay rejection, and the task webhook.
 
 Exercises :mod:`notify.inbound` directly, then the same checks wired into
-POST /api/external/{token}/run (a published resident instance with an
-inbound secret configured) and POST /api/webhooks/tasks (a workspace's
-inbound secret).
+POST /api/webhooks/tasks (a workspace's inbound secret).
 """
 from __future__ import annotations
 
@@ -74,108 +72,6 @@ def test_seen_delivery_flags_replay():
     delivery_id = str(uuid4())
     assert seen_delivery(delivery_id) is False  # first time: not a replay
     assert seen_delivery(delivery_id) is True   # second time: it is
-
-
-# ── POST /api/external/{token}/run ───────────────────────────────────────────
-
-@pytest.fixture
-def external_client(no_launch):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from routes import external as external_routes
-
-    app = FastAPI()
-    app.include_router(external_routes.router)
-    return TestClient(app)
-
-
-@pytest.fixture
-def exposed_node():
-    """A published resident instance, with an inbound secret configured."""
-    from instances import carrier, store
-
-    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
-    instance_id = instance["instance_id"]
-    carrier.publish_instance(instance_id)
-    carrier.set_inbound_secret(instance_id, SECRET)
-    return instance_id, store.get(instance_id)["expose_token"]
-
-
-@pytest.fixture
-def exposed_node_no_secret():
-    from instances import carrier, store
-
-    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
-    instance_id = instance["instance_id"]
-    carrier.publish_instance(instance_id)
-    return instance_id, store.get(instance_id)["expose_token"]
-
-
-def _post_run(client, token, payload, headers=None):
-    body = json.dumps(payload).encode("utf-8")
-    all_headers = {"Content-Type": "application/json", **(headers or {})}
-    return client.post(f"/api/external/{token}/run", content=body, headers=all_headers)
-
-
-def test_external_run_accepts_valid_signature(external_client, exposed_node):
-    _node_id, token = exposed_node
-    payload = {"prompt": "do the thing"}
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "X-AgentsHub-Signature": _sign(body),
-        "X-AgentsHub-Timestamp": str(int(time.time())),
-        "X-AgentsHub-Delivery": str(uuid4()),
-    }
-    resp = _post_run(external_client, token, payload, headers)
-    assert resp.status_code == 202
-
-
-def test_external_run_rejects_bad_signature(external_client, exposed_node):
-    _node_id, token = exposed_node
-    payload = {"prompt": "do the thing"}
-    headers = {
-        "X-AgentsHub-Signature": "sha256=" + "0" * 64,
-        "X-AgentsHub-Timestamp": str(int(time.time())),
-        "X-AgentsHub-Delivery": str(uuid4()),
-    }
-    resp = _post_run(external_client, token, payload, headers)
-    assert resp.status_code == 401
-
-
-def test_external_run_rejects_stale_timestamp(external_client, exposed_node):
-    _node_id, token = exposed_node
-    payload = {"prompt": "do the thing"}
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "X-AgentsHub-Signature": _sign(body),
-        "X-AgentsHub-Timestamp": str(int(time.time()) - 3600),
-        "X-AgentsHub-Delivery": str(uuid4()),
-    }
-    resp = _post_run(external_client, token, payload, headers)
-    assert resp.status_code == 401
-
-
-def test_external_run_rejects_replayed_delivery(external_client, exposed_node):
-    _node_id, token = exposed_node
-    payload = {"prompt": "do the thing"}
-    body = json.dumps(payload).encode("utf-8")
-    delivery_id = str(uuid4())
-    headers = {
-        "X-AgentsHub-Signature": _sign(body),
-        "X-AgentsHub-Timestamp": str(int(time.time())),
-        "X-AgentsHub-Delivery": delivery_id,
-    }
-    first = _post_run(external_client, token, payload, headers)
-    assert first.status_code == 202
-    second = _post_run(external_client, token, payload, headers)
-    assert second.status_code == 409
-
-
-def test_external_run_without_secret_keeps_old_behaviour(external_client, exposed_node_no_secret):
-    """A node with no inbound_secret configured needs no signature at all."""
-    _node_id, token = exposed_node_no_secret
-    resp = _post_run(external_client, token, {"prompt": "do the thing"})
-    assert resp.status_code == 202
 
 
 # ── POST /api/webhooks/tasks ─────────────────────────────────────────────────

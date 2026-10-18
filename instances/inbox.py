@@ -39,18 +39,9 @@ MAIN_CONVERSATION = "main"
 MAX_CONVERSATION_ID = 120
 
 #: Message kinds. A ``message`` is text the carrier answers with the
-#: conversation's history (runtime/instance_run.py answer_message); a ``turn``
-#: carries a whole chat request as JSON in ``payload`` and is executed by the
-#: carrier as the chat pipeline (chat/turns.py), which is how a chat, /v1,
-#: widget or Telegram turn reaches a service replica (chat/routing.py).
+#: conversation's history (runtime/instance_run.py answer_message). The
+#: column keeps room for other kinds; only this one is written today.
 KIND_MESSAGE = "message"
-KIND_TURN = "turn"
-#: A ``job`` carries ``{"job": <name>, "args": {...}}`` and is answered with a
-#: result document on the row (runtime/jobs.py executes it, services/jobs.py
-#: writes and waits for it): what the backend hands a runner beside chat
-#: turns, an eval case, a replay, a decomposition, a project graph, the agent
-#: part of an entity chat.
-KIND_JOB = "job"
 
 
 def normalize_conversation(conversation_id: Optional[str]) -> Optional[str]:
@@ -69,11 +60,7 @@ def public_conversation(conversation_id: Optional[str]) -> str:
 def enqueue(instance_id: str, body: str, *, origin: str = "web",
             conversation_id: Optional[str] = None, kind: str = KIND_MESSAGE,
             payload: Optional[Dict[str, Any]] = None) -> str:
-    """Queue a message for an instance and wake its carrier. Returns the message id.
-
-    ``kind`` ``turn`` carries ``payload`` (a JSON document, the chat request)
-    next to ``body`` (the user's text, for lists and previews).
-    """
+    """Queue a message for an instance and wake its carrier. Returns the message id."""
     msg_id = "msg_" + uuid.uuid4().hex[:16]
     with db.transaction() as conn:
         conn.execute(

@@ -25,26 +25,14 @@ from common import first_run, provider_env, setup_guide, setup_ops  # noqa: E402
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
 def no_keys(monkeypatch):
-    from providers import local_set
     for key in provider_env.PROVIDER_ENV_KEYS:
         monkeypatch.setenv(key, "")
     monkeypatch.setattr(setup_ops, "_listings", {})
-    # The runtime's job list outlives a test: a ready set another test ran is not this hub's.
-    monkeypatch.setattr(local_set, "latest_job", lambda: None)
 
 
 @pytest.fixture
@@ -81,14 +69,6 @@ def test_a_fresh_install_is_asked_from_the_first_screen(single, no_keys, ws):
     assert got["step"] == "hello" and got["language"] is None
 
 
-def test_multi_mode_has_its_own_way_in(multi, no_keys, ws):
-    got = first_run.status()
-    assert not got["applies"] and not got["required"]
-    with pytest.raises(ValueError):
-        first_run.act("progress", step="language")
-    assert _client().get("/api/first-run/context").status_code == 404
-
-
 def test_an_install_already_in_use_is_not_stopped_by_the_upgrade(single, no_keys, ws):
     from common import chat_store
     chat_store.save_chat({"id": "c-old", "workspace": "default", "title": "from before", "messages": []})
@@ -119,12 +99,6 @@ def test_step_language_and_look_survive_a_reload(single, no_keys, ws):
             first_run.act("progress", **bad)
     with pytest.raises(ValueError):
         first_run.act("skip_all")
-
-
-def test_the_local_voice_follows_the_chosen_language(single, no_keys, ws, monkeypatch):
-    monkeypatch.delenv("AGENTS_HUB_LANGUAGE", raising=False)
-    first_run.act("progress", language="de")
-    assert setup_ops._local_speech_default() == "piper-de"
 
 
 def test_it_cannot_be_finished_without_a_model(single, no_keys, ws, probe):
@@ -159,12 +133,6 @@ def test_a_not_now_in_the_first_run_is_skipped_in_the_guide(single, no_keys, ws,
     assert rows["demo"] == "todo"
 
 
-def test_the_ready_local_set_meets_the_model_step(single, no_keys, ws, monkeypatch):
-    from providers import local_set
-    monkeypatch.setattr(local_set, "latest_job", lambda: {"id": "j1", "status": "running"})
-    assert not first_run.act("finish")["required"]
-
-
 def test_the_routes_walk_a_whole_first_run(single, no_keys, ws, probe):
     client = _client()
     assert client.get("/api/first-run").json()["required"]
@@ -181,7 +149,6 @@ def test_the_routes_walk_a_whole_first_run(single, no_keys, ws, probe):
                                                     "args": {"provider": "openai", "model": "gpt-5.4-mini"}})
     assert chosen.status_code == 200 and chosen.json()["step"] == "default_model"
     assert setup_guide.default_model()["model"] == "gpt-5.4-mini"
-    assert client.post("/api/first-run/op", json={"operation": "local_set"}).status_code == 400
     voice = client.post("/api/first-run/op", json={"operation": "voice_cloud", "args": {"provider": "openai"}})
     assert voice.status_code == 200
     assert client.get("/api/first-run/context").json()["voice"]

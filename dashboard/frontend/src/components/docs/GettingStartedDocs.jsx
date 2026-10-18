@@ -118,7 +118,7 @@ AGENT_EXECUTION_MODE=local`}</CodeBlock>
         <FeatureCard icon={DollarSign} title={t('docs.nav.costs')} to="/costs">
           {t('docs.start.nextCosts')}
         </FeatureCard>
-        <FeatureCard icon={Send} title={t('docs.nav.connectors')} to="/settings/telegram">
+        <FeatureCard icon={Send} title={t('docs.nav.connectors')} to="/connectors">
           {t('docs.start.nextConnectors')}
         </FeatureCard>
       </div>
@@ -300,7 +300,7 @@ export function Tutorials() {
         title={t('docs.buildAndRunAFlow')}
         steps={[
           <>{t('docs.open')} <Link className="text-indigo-600 underline" to="/flows">{t('docs.agentFlows')}</Link> → <strong>{t('docs.newFlow')}</strong>.</>,
-          <>{t('docs.dragNodesFromThe')} <Link className="text-indigo-600 underline" to="/registry">{t('docs.registry')}</Link> {t('docs.paletteOntoTheCanvasAgents')}</>,
+          <>{t('docs.dragNodesFromThe')} <strong>{t('docs.registry')}</strong> {t('docs.paletteOntoTheCanvasAgents')}</>,
           <>{t('docs.configureEachNodesAgentAnd')}</>,
           <>{t('docs.runItFromChatIn')}</>,
         ]}
@@ -358,8 +358,8 @@ export function CliApi() {
       <div className="flex flex-wrap gap-1.5 my-3">
         {['agents', 'agent-import', 'marketplace', 'tasks', 'plan', 'flows', 'flow-entities', 'loops',
           'teams', 'stats', 'models', 'costs', 'evals', 'playground', 'shared-memory', 'skills',
-          'web-logs', 'workspaces', 'tools', 'sessions', 'messages', 'chat', 'instances', 'external',
-          'projects', 'containers', 'settings', 'telegram', 'git', 'views', 'stream', 'health'].map((r) => (
+          'web-logs', 'workspaces', 'tools', 'sessions', 'messages', 'chat', 'instances',
+          'projects', 'containers', 'settings', 'git', 'views', 'stream', 'health'].map((r) => (
           <span key={r} className="text-xs font-mono px-2 py-1 rounded-md bg-gray-100 text-gray-700">/{r}</span>
         ))}
       </div>

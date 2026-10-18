@@ -2,7 +2,7 @@ export default {
   models: 'Модели',
   theCatalogOfProvidersAnd: 'Каталог провайдеров и моделей, которые может вызывать этот хаб, и во что они обошлись.',
   loadingCatalog: 'Загрузка каталога…',
-  tabs: { catalog: 'Каталог', usage: 'Расход', special: 'Специальные модели', cache: 'Кэш промптов', endpoint: 'Endpoint /v1' },
+  tabs: { catalog: 'Каталог', usage: 'Расход', special: 'Специальные модели' },
   apply: 'Применить',
   discover: 'Найти модели',
   refresh: 'Обновить',

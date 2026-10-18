@@ -20,7 +20,6 @@ from managers import run_manager
 from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
-from flow import templates as flow_templates
 from flow.engine import ON_ERROR_POLICIES
 from flow.estimate import estimate_flow_cost
 from models import FlowListItem, FlowDetail, FlowPage
@@ -100,9 +99,6 @@ class FlowUpdate(BaseModel):
     # Write-only: the shared secret POST /{flow_id}/trigger requires a signature
     # against. Sending "" clears it; the flow is never read back with it.
     webhook_secret: Optional[str] = None
-    # Example requests shown in the flow's empty chat: {lang: [text, ...]},
-    # or a plain list for every language (flow.templates.normalize_examples).
-    examples: Optional[Union[List[str], Dict[str, List[str]]]] = None
     # False keeps a temporary flow an agent built for one run (run_new_flow_tool):
     # it joins the flow list and is no longer swept after a week.
     ephemeral: Optional[bool] = None
@@ -269,8 +265,6 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                     patch["webhook_secret"] = secret
                 else:
                     f = {k: v for k, v in f.items() if k != "webhook_secret"}
-            if "examples" in patch:
-                patch["examples"] = flow_templates.normalize_examples(patch["examples"])
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -280,50 +274,6 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                 _authorize_flow_in_workspace(ws_name, flow_id)
             return _public_flow(flows[i])
     raise HTTPException(status_code=404, detail="Flow not found")
-
-
-@router.get("/{flow_id}/examples")
-async def get_flow_examples(flow_id: str, lang: str = "en"):
-    """Example requests for the flow's empty chat, in UI language *lang*:
-    the flow's own ``examples`` (a template's, or set in the editor), else
-    those of the agent its first step runs, since that step is the one the
-    message goes to. ``source`` says which; empty when neither has any."""
-    flow = flow_store.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    own = flow_templates.examples_for(flow.get("examples"), lang)
-    if own:
-        return {"flow_id": flow_id, "source": "flow", "examples": own[:6]}
-    entry = _entry_agent(flow)
-    if entry:
-        from routes.agents.definition import get_agent_examples
-        try:
-            found = (await get_agent_examples(entry, lang)).get("examples") or []
-        except HTTPException:
-            found = []
-        if found:
-            return {"flow_id": flow_id, "source": "agent", "agent_id": entry, "examples": found[:6]}
-    return {"flow_id": flow_id, "source": None, "examples": []}
-
-
-def _entry_agent(flow: Dict[str, Any]) -> Optional[str]:
-    """The agent of the step the person's message reaches first: the entry
-    point when one is set, else the first agent step with no incoming edge."""
-    nodes = [n for n in flow.get("nodes") or [] if isinstance(n, dict)]
-    targets = {e.get("target") for e in flow.get("edges") or [] if isinstance(e, dict)}
-
-    def agent_of(node: Dict[str, Any]) -> Optional[str]:
-        data = node.get("data")
-        if not isinstance(data, dict):
-            data = {}
-        return data.get("agent_id") or node.get("agent_id") or None
-
-    entry = flow.get("entry_point")
-    ordered = [n for n in nodes if n.get("id") == entry] + [n for n in nodes if n.get("id") not in targets]
-    for node in ordered:
-        if agent_of(node):
-            return agent_of(node)
-    return None
 
 
 @router.delete("/{flow_id}")
@@ -434,106 +384,6 @@ async def import_flow(data: FlowImport):
     flow["updated_at"] = _now()
     flow_store.save_flow(flow)
     return flow
-
-
-# ── n8n ───────────────────────────────────────────────────────────────────────
-# The n8n connector (connectors/n8n) in effect for the workspace: list its
-# workflows, and turn one (from the instance, or a pasted export) into a hub
-# flow, either a single node that runs it in n8n or its steps as hub nodes
-# (flow/n8n_import.py).
-
-class N8nImport(BaseModel):
-    #: "run" keeps the workflow in n8n behind one run_n8n node; "convert"
-    #: makes its steps hub nodes.
-    mode: str = "convert"
-    #: A workflow on the connected instance...
-    workflow_id: Optional[str] = None
-    #: ...or an exported workflow, as JSON text or an object.
-    workflow: Optional[Union[str, Dict[str, Any]]] = None
-    name: Optional[str] = None
-    workspace: Optional[str] = None
-
-
-def _n8n_client(workspace: Optional[str]):
-    from connectors.n8n import n8n_client
-    from connectors.n8n.client import N8nError
-
-    try:
-        return n8n_client(workspace or None)
-    except N8nError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/n8n/workflows")
-async def list_n8n_workflows(workspace: Optional[str] = None):
-    """The connected n8n instance's workflows, with the trigger a run would use."""
-    from connectors.n8n.client import N8nError
-
-    client = _n8n_client(workspace)
-    try:
-        workflows = await asyncio.to_thread(client.list_workflows)
-    except N8nError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    # The list call carries nodes on current n8n versions; older ones leave
-    # them out, and then the trigger is unknown until the workflow is read.
-    from connectors.n8n.client import find_trigger
-
-    return [{
-        "id": str(w.get("id") or ""),
-        "name": w.get("name") or "",
-        "active": bool(w.get("active")),
-        "updated_at": w.get("updatedAt"),
-        "tags": [t.get("name") for t in (w.get("tags") or []) if isinstance(t, dict)],
-        "nodes": len(w.get("nodes") or []),
-        "trigger": find_trigger(w) if w.get("nodes") else None,
-    } for w in workflows]
-
-
-@router.post("/import/n8n")
-async def import_n8n_flow(data: N8nImport):
-    """Create a hub flow from an n8n workflow. Returns ``{flow, report}``; the
-    report says what each n8n step became and what did not carry over."""
-    from connectors.n8n.client import N8nError
-    from flow import n8n_import
-
-    mode = (data.mode or "convert").strip().lower()
-    if mode not in ("convert", "run"):
-        raise HTTPException(status_code=400, detail="mode must be convert or run")
-    workflow_id = (data.workflow_id or "").strip()
-    try:
-        if workflow_id:
-            client = _n8n_client(data.workspace)
-            workflow = await asyncio.to_thread(client.get_workflow, workflow_id)
-        elif data.workflow:
-            workflow = n8n_import.parse_workflow(data.workflow)
-        else:
-            raise HTTPException(status_code=400, detail="Send a workflow_id or the workflow JSON")
-        if mode == "run":
-            fields, report = n8n_import.run_node_flow(workflow, workflow_id=workflow_id)
-        else:
-            fields, report = n8n_import.convert(workflow)
-    except N8nError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except n8n_import.N8nImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    workspace = (data.workspace or "").strip() or None
-    flow = {
-        "id": str(uuid4()),
-        **fields,
-        "workspace": workspace,
-        "task_id": None,
-        "shared": False,
-        "source": {"kind": "n8n", "mode": mode, "workflow_id": workflow_id or str(workflow.get("id") or "")},
-        "created_at": _now(),
-        "updated_at": _now(),
-    }
-    if data.name and data.name.strip():
-        flow["name"] = data.name.strip()
-    flow_store.save_flow(flow)
-    if workspace:
-        _authorize_flow_in_workspace(workspace, flow["id"])
-    return {"flow": _public_flow(flow), "report": report}
 
 
 # ── execution ─────────────────────────────────────────────────────────────────

@@ -31,8 +31,8 @@ log = logging.getLogger(__name__)
 
 #: Seconds one HTTP request may take (a picture can take a minute).
 REQUEST_TIMEOUT = float(os.environ.get("AGENTS_HUB_MEDIA_TIMEOUT", "300") or 300)
-#: Seconds an image request may take: a local model (Qwen-Image in the hub
-#: runtime) draws for minutes on a laptop.
+#: Seconds an image request may take: a self-hosted image server behind a
+#: custom base URL can draw for minutes.
 IMAGE_TIMEOUT = max(REQUEST_TIMEOUT, float(os.environ.get("AGENTS_HUB_IMAGE_TIMEOUT", "1800") or 1800))
 #: Seconds between polls of a video job.
 VIDEO_POLL_SECONDS = 5.0
@@ -363,12 +363,6 @@ def synthesize_speech(ep: Endpoint, model: str, text: str, *, voice: Optional[st
                                "response_format": fmt}
     if instructions and instructions.strip() and not model.startswith("tts-1"):
         payload["instructions"] = instructions.strip()
-    if ep.local and str(options.get("temperature") or "").strip():
-        # The hub's runtime reads it (a cloning model's sampling); a cloud API would refuse the field.
-        try:
-            payload["temperature"] = float(str(options["temperature"]).replace(",", "."))
-        except ValueError:
-            pass
     with _client(timeout) as client:
         resp = _check(client.post(f"{ep.base_url}/audio/speech", headers=_headers(ep), json=payload),
                       "Speech synthesis")

@@ -63,7 +63,6 @@ def test_ensure_system_workspace_is_idempotent():
     assert meta["orchestrator"]["enabled"] is False
     for agent in ("service_agent", "swe_agent", "code_reviewer", "system_doctor", "system_engineer"):
         assert agent in meta["allowed_agents"]
-    assert meta["budget"]["hard_limit_usd"] > 0
 
     project = ProjectStore(path=PROJECTS_FILE).get(sw.PROJECT_ID)
     assert project.name == "Agents Hub (copy)" and project.repo.local_path == "repo"

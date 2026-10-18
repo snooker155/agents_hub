@@ -5,11 +5,9 @@ Es gibt vier Wege, den Dienst zum Laufen zu bringen. Der erste ist für eine Per
 | Weg | Sie brauchen | Sie erhalten |
 | --- | --- | --- |
 | [A. Docker, aus den veröffentlichten Images](#weg-a-docker-aus-den-veröffentlichten-images) | Docker | Das Dashboard auf `:8080`, den Zustand auf einem Volume, Agenten als Subprozesse. Nichts zu klonen oder zu bauen. |
-| [B. Docker Compose aus einem Checkout](#weg-b-docker-compose-aus-einem-checkout) | Docker, git | Dasselbe, aus dem Quellcode gebaut, dazu Container pro Agent, den Browser-Dienst und die Profile `postgres`, `scale` und `ha` |
+| [B. Docker Compose aus einem Checkout](#weg-b-docker-compose-aus-einem-checkout) | Docker, git | Dasselbe, aus dem Quellcode gebaut, dazu Container pro Agent und den Browser-Dienst |
 | [C. Das Installationsprogramm](#weg-c-das-installationsprogramm) | Python 3.11+, Node 22+ | Eine virtuelle Umgebung, den Befehl `ah` in Ihrem PATH, das Dashboard mit Hot Reload |
 | [D. Von Hand](#weg-d-von-hand) | Python 3.11+, Node 22+ | Weg C in seine Einzelteile zerlegt, für eine andere Form |
-
-Mehr als ein Backend zu betreiben, oder Backends und Worker auf verschiedenen Hosts, ist eher ein Deployment als eine Installation: [deployment](deployment.md) listet die Formen auf.
 
 Jeder der Wege A bis C lässt sich auch einrichten, indem Sie Fragen beantworten: siehe die [geführte Einrichtung](#geführte-einrichtung-ah-setup) weiter unten.
 
@@ -59,13 +57,7 @@ Die `.env` ist hier optional: Der Stack startet ohne Anbieterschlüssel, und Sie
 
 Auch Compose legt `ah` nicht auf den Host: `docker compose exec backend ah ...` führt ihn im Container aus, und ein Client auf dem Host ist derselbe eigene Schritt wie bei Weg A, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
-Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet und auf die dahinterliegenden Backends verteilt. Mehr Backends sind also nur ein Flag:
-
-```bash
-docker compose --profile scale up --build --scale backend=3
-```
-
-Dieselbe Datei bringt die optionalen Dienste als Profile mit: `postgres` (die Datenbank statt SQLite, [scaling](scaling.md)), `scale` (Redis, für mehr als ein Backend-Replikat), `browser` (headless Chromium für die Browser-Werkzeuge) und `ha` (Postgres, Redis, MinIO, Replikate von `api` und `worker`, die Hochverfügbarkeitsform in [deployment](deployment.md)).
+Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet. Dieselbe Datei bringt den Browser-Dienst als Profil mit: `browser` (headless Chromium für die Browser-Werkzeuge).
 
 Compose hat keinen Vite-Dienst: Für eine HMR-Schleife beim Bearbeiten von Frontend-Code starten Sie `npm run dev` auf dem Host wie bei Weg C. Das Image bauen Sie neu (`docker compose up --build frontend`), wenn die Änderung im Container ankommen soll.
 
@@ -98,9 +90,7 @@ cd dashboard/frontend && npm install && cd ../..
 
 `pip install -e .` allein installiert nur den Terminal-Client und seine drei Abhängigkeiten. Die Extras werden aus den Requirement-Dateien im Repository gelesen, sodass `[backend]`, `[agents]` und `[rag]` mit ihnen im Gleichschritt bleiben.
 
-`[connectors]` fügt die Treiber hinzu, die die Konnektoren brauchen (MySQL, ClickHouse, msal, google-auth; `requirements-connectors.txt`).
-
-`requirements.lock` legt die genaue Auflösung dieser Requirement-Dateien fest (ohne `rag`, `postgres` und `connectors`), für Python 3.11 und 3.12. Daraus installieren das Backend-Docker-Image und die CI, und mit `pip install -r requirements.lock` stellen Sie dieselbe Umgebung von Hand wieder her.
+`requirements.lock` legt die genaue Auflösung dieser Requirement-Dateien fest (ohne `rag`), für Python 3.11 und 3.12. Daraus installieren das Backend-Docker-Image und die CI, und mit `pip install -r requirements.lock` stellen Sie dieselbe Umgebung von Hand wieder her.
 
 Die editierbare Installation ist Absicht: Der Befehl folgt dem Checkout, `git pull` eingeschlossen, statt eine Kopie einzufrieren. In site-packages landet ein einziges Paket, `agents_hub`, dessen einzige Aufgabe es ist, den Checkout auf `sys.path` zu legen und an das Paket `cli` zu übergeben.
 
@@ -122,7 +112,7 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 | C. Installationsprogramm | Im PATH in einem neuen Terminal, direkt | |
 | D. Von Hand | In der aktivierten venv nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
 
-Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A liegt der Zustand auf einem benannten Volume, das der Host nicht öffnen kann. Bei Weg B gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Auf A und B spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`, `ah worker` und `ah deployment`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
+Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A liegt der Zustand auf einem benannten Volume, das der Host nicht öffnen kann. Bei Weg B gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Auf A und B spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
 
 ### `ah` zu einer Docker-Installation hinzufügen
 
@@ -146,7 +136,7 @@ ah config                      # nennt den Dienst, mit dem er spricht
 ah agent list
 ```
 
-Statt des `export` speichert `ah setup` mit **Connect to a hub that already runs** die Adresse und einen Schlüssel in `~/.config/agents-hub/cli.json`, und die Docker-Formen von `ah setup` bieten dasselbe am Ende an. Eine frische Installation läuft im Modus `single` und fragt nach keinen Zugangsdaten; mit `AUTH_MODE=token` setzen Sie `AGENTS_HUB_API_TOKEN`, mit `multi` einen persönlichen Schlüssel in `AGENTS_HUB_API_KEY` ([cli](cli.md), "Authenticating over `AGENTS_HUB_URL`"). Pfade über REST löst das Backend auf, daher muss ein Ordner des Hosts zuerst in den Container eingebunden werden ([cli](cli.md), "Against a containerized backend").
+Eine frische Installation fragt nach keinen Zugangsdaten. Pfade über REST löst das Backend auf, daher muss ein Ordner des Hosts zuerst in den Container eingebunden werden ([cli](cli.md), "Against a containerized backend").
 
 Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, der es hat, einen `ah` als einzelne Datei, nur für REST, die sich überallhin kopieren lässt ([cli](cli.md), "A binary, for REST mode without a venv").
 
@@ -154,16 +144,12 @@ Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, d
 
 `ah setup` fragt sich durch die ganze Installation, so wie der erste Start von OpenClaw, und schreibt nichts, bis Sie eine Übersicht über jeden Wert bestätigt haben:
 
-1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl), Compose aus diesem Checkout (Weg B), Kubernetes mit dem Helm-Chart oder ein Hub, der bereits anderswo läuft. Danach QuickStart (nur, was sich nicht erraten lässt: Den Rest richtet der Assistent mit Ihnen ein, siehe [nach der Installation](#nach-der-installation-der-assistent-übernimmt)) oder Advanced. Kubernetes fragt immer alles.
-2. **Skalierung** (die Docker-Wege und Kubernetes): ein Backend oder ein Team unter Last: die Topologie `ha` aus [deployment](deployment.md), mit Postgres, Redis und Objektspeicher (im Stack enthalten oder Ihre eigenen, per URL), mehreren API-Replikas hinter dem nginx des Dashboards und mehreren Workern, die die Startwarteschlange abarbeiten. Die Replikazahlen landen in `docker-compose.setup.yml`, einem Overlay, das die `.env` in `COMPOSE_FILE` nennt, sodass ein einfaches `docker compose up` sie liest und die Basisdateien bleiben, wie sie veröffentlicht wurden. In Advanced weitere **Worker-Hosts**: Rechner, die nur Worker gegen das Postgres, Redis und MinIO dieses Hosts laufen lassen (deren Ports werden dann veröffentlicht, hinter erzeugten Passwörtern). Workspaces und Lauf-Dateien sind weiterhin Dateien, daher bindet jeder Rechner ein gemeinsames Verzeichnis (NFS oder Ähnliches) am selben Pfad ein, und der Hub hält seinen Zustand dort; jeder Host bekommt unter `workers/` einen Ordner mit einer Compose-Datei und einer `.env` zum Hinüberkopieren (laufen Agenten dort in Containern, setzen Sie darin `DOCKER_GID` auf die Gruppe des Docker-Sockets jenes Rechners; ein späterer Lauf behält ihn und jeden anderen Schlüssel dieser `.env`, den das Setup nicht schreibt). Den Zustand kopiert das Setup nicht selbst: Zieht eine schon genutzte Installation in ein gemeinsames Verzeichnis oder verlässt sie es wieder (keine Worker-Hosts mehr oder zurück zu einem Backend), lässt es den Stack gestoppt und gibt die Befehle aus, die den Zustand zuerst an den neuen Ort kopieren. Ein späterer Lauf, auch QuickStart, behält Redis, Objektspeicher und Worker-Hosts bei, die gelten; zurück zu einem Backend nimmt alles zurück, was nur die Team-Topologie gesetzt hat. Für Kubernetes: Release, Namespace, Ingress-Host und TLS (cert-manager oder ein vorhandenes Secret), Replikas, Ihr Postgres, Redis und S3-Bucket (oder allein ein ReadWriteMany-Volume) und das Image-Tag; ein späterer Lauf liest `values.yaml` und `secrets.yaml` zurück, sodass jede Frage vorschlägt, was darin steht.
-3. **Datenbank**: SQLite, ein Postgres in einem Docker-Container, den das Setup für Sie startet (auf diesem Rechner) oder im selben Stack (die Docker-Wege, Profil `postgres`), oder ein Postgres, das Sie schon haben und das vor der Übernahme getestet wird. Ein vorhandener SQLite-Zustand lässt sich hinüberkopieren (`ah db migrate`). Die Team-Topologie braucht Postgres, Kubernetes Ihr eigenes.
-4. **Zugang**: keine Anmeldung, ein gemeinsames Token (wird erzeugt) oder Konten: der erste Administrator und weitere Personen. Single Sign-On in Advanced oder für ein Team: Keycloak im Stack (Profil `keycloak`; das Setup schreibt `keycloak/realm.json` aus dem Realm, gegen den CI sich anmeldet, ohne dessen Demo-Benutzer und mit erzeugtem Client-Secret, und ordnet die Gruppe `hub-admins` des Realms der Administratorrolle zu, sobald der Stack antwortet) oder ein Anbieter, den Sie schon haben. Über HTTPS stellt Caddy Keycloak auf der Domain des Hubs an Port 8443 bereit. Keycloak importiert den Realm nur beim ersten Start, daher aktualisiert das Setup, sobald der Stack antwortet, auch den Client dort (Weiterleitungs-URI, Web-Origins, Secret) über die Admin-API von Keycloak; ohne Start des Stacks gibt ein Lauf, der sie geändert hat, die Schritte für die Admin-Konsole aus. `AGENTS_HUB_SECRET_KEY` wird einmal erzeugt und von einem späteren Lauf nie rotiert, auch nicht von Start over und für Kubernetes; dasselbe gilt für die Passwörter des mitgelieferten Postgres und des Keycloak-Administrators, die deren Volumes vom ersten Start behalten.
-5. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
-6. **Stimme des Assistenten**: womit der [Assistent](assistant.md#voice) Sie hört und womit er seine Antworten vorliest, gespeichert als Transkriptions- und Sprachmodelle des Workspace `default` (jeder persönliche Workspace greift darauf zurück). Zur Wahl stehen ein Cloud-Anbieter, den Sie in Schritt 5 gewählt haben (OpenAI: `gpt-4o-mini-tts` und `gpt-4o-mini-transcribe` mit ihren Preisen; Google: Gemini TTS und Gemini Flash), mit einer seiner Stimmen; die eigene Modell-Runtime des Hubs (Whisper small oder large-v3 turbo zum Hören; Piper auf Russisch, Englisch oder Deutsch, Kokoro, Supertonic in 31 Sprachen oder Kitten auf Englisch zum Sprechen; kostenlos, 0,5 bis 2 GB zum Herunterladen); nur der Browser (seine eigene Erkennung und Stimme, nichts auf dem Server); oder vorerst nichts. QuickStart überlässt das dem Assistenten.
-7. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen, der Egress-Proxy (`egress_proxy`, vorgeschlagen an, wenn die Agenten in Docker laufen), Websuche, RAG, der Browser-Dienst (beide Docker-Wege) und Redis (Compose, ein Backend). HTTPS auf einer eigenen Domain für die veröffentlichten Images (Caddy und Let's Encrypt) und für ein Team ein Anfragelimit pro Person. QuickStart überlässt die Demo und die Websuche dem Assistenten und behält Browser, Redis, HTTPS und Keycloak bei, wo ein früherer Lauf sie eingeschaltet hat.
-8. **Verbundener Hub** (dieser Checkout und beide Docker-Wege): ein anderer Agents Hub, mit dem dieser verbunden wird ([Hub-Verbindung](hub-link.md), [Synchronisierung](hub-sync.md)), über seine URL und einen persönlichen API-Schlüssel Ihres Kontos dort (auf jenem Hub unter Einstellungen, API-Zugriff, Persönliche API-Schlüssel erstellt); beides wird dort geprüft, bevor es übernommen wird. Danach, was die Verbindung tut: **Nur Katalog** (seine Agenten, Skills, Flows, Teams und Schleifen durchsuchen und installieren; nichts von Ihnen wird gesendet), **Zwei-Wege-Synchronisierung** der Workspaces Ihrer Wahl, jeder einem Bereich dort zugeordnet, oder **nur seine Modelle und Agenten**, die Verbindung, wie sie vor den anderen Modi war. Die Synchronisierung fragt dann nach der **Verschlüsselung zum Start**: **jeden Workspace verschlüsseln**, also default und alle anderen Workspaces, auch später hinzugefügte, sodass der verbundene Hub nur Daten speichert, die er nicht lesen kann; oder **vorerst keine Verschlüsselung**, dann kann der verbundene Hub die Daten lesen und anzeigen, und jeder Workspace lässt sich später einzeln verschlüsseln (seine Zeile unter Einstellungen, Entfernter Hub, oder die Einstellungen des Workspace, Hub-Synchronisierung). Der Schritt sagt ausdrücklich, was gilt. Die Verschlüsselung erzeugt eine Passphrase, die am Ende einmal angezeigt wird, oder übernimmt die, die Sie auf einem anderen Gerät schon verwenden; gehen sie und jedes Gerät mit dem Schlüssel verloren, lassen sich die synchronisierten Daten nicht wiederherstellen. In beiden Synchronisierungsmodi ist der Einweg-Spiegel aus, da die Synchronisierung dieselben Daten trägt. In Advanced: der Name dieses Hubs dort, seine Modelle und Agenten hier unabhängig vom Modus und der Katalog neben der Synchronisierung. Für Kubernetes liegt die Verbindung in der Datenbank, daher wird sie in den Einstellungen unter Entfernter Hub gesetzt, sobald der Cluster läuft.
-9. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
-10. **Anwenden**: installiert fehlende Python-Extras, startet Postgres, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), legt die Konten an, füllt den Katalog, setzt die Stimme des Assistenten und den verbundenen Hub und bietet an, den Hub zu starten (`ah up`, oder `docker compose up -d` und anschließend die Konten anlegen und die Stimme und die Verbindung über die API setzen). Für eine Stimme auf der Runtime des Hubs startet es die Runtime, installiert die fehlenden Engines, lädt die fehlenden Modelle herunter und verfolgt jeden Job bis zum Ende. Unter Docker wartet das auf den Stack: Wird er nicht gestartet, bleiben die Stimme und die Verbindung einem späteren Lauf oder den Seiten Modelle und Einstellungen überlassen. In diesem Checkout wird die Verbindung direkt in die Datenbank geschrieben, unter Docker über die API des Stacks, sobald er antwortet. Nach einer Docker-Einrichtung kann es `ah` mit einem persönlichen API-Schlüssel des neuen Administrators auf den Stack richten.
+1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl) oder Compose aus diesem Checkout (Weg B). Danach QuickStart (nur, was sich nicht erraten lässt: Den Rest richtet der Assistent mit Ihnen ein, siehe [nach der Installation](#nach-der-installation-der-assistent-übernimmt)) oder Advanced.
+2. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
+3. **Stimme des Assistenten**: womit der [Assistent](assistant.md#voice) Sie hört und womit er seine Antworten vorliest, gespeichert als Transkriptions- und Sprachmodelle des Workspace `default` (jeder persönliche Workspace greift darauf zurück). Zur Wahl stehen ein Cloud-Anbieter, den Sie in Schritt 2 gewählt haben (OpenAI: `gpt-4o-mini-tts` und `gpt-4o-mini-transcribe` mit ihren Preisen; Google: Gemini TTS und Gemini Flash), mit einer seiner Stimmen; nur der Browser (seine eigene Erkennung und Stimme, nichts auf dem Server); oder vorerst nichts. QuickStart überlässt das dem Assistenten.
+4. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen, Websuche, RAG und der Browser-Dienst (beide Docker-Wege). HTTPS auf einer eigenen Domain für die veröffentlichten Images (Caddy und Let's Encrypt). QuickStart überlässt die Demo und die Websuche dem Assistenten und behält Browser und HTTPS bei, wo ein früherer Lauf sie eingeschaltet hat.
+5. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
+6. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog, setzt die Stimme des Assistenten und bietet an, den Hub zu starten (`ah up`, oder `docker compose up -d` und anschließend die Stimme über die API setzen). Unter Docker wartet das auf den Stack: Wird er nicht gestartet, bleibt die Stimme einem späteren Lauf oder der Seite Modelle überlassen. In diesem Checkout wird die Stimme direkt in die Datenbank geschrieben, unter Docker über die API des Stacks, sobald er antwortet.
 
 Eine Antwortdatei, die `voice.mode` oder `demo` nennt, wendet beides auch in QuickStart an.
 
@@ -178,12 +164,12 @@ docker run -it --rm --user 0:0 \
   ghcr.io/snooker155/agents-hub-backend:latest setup
 ```
 
-In einem Ordner, der schon eine `docker-compose.yml` enthält (ein Checkout oder die QuickStart-Dateien), erledigt `docker compose run --rm setup` dasselbe: Der Dienst `setup` liegt in einem eigenen Profil, daher startet ihn `docker compose up` nie. Der Ordner wird am selben Pfad eingebunden, sodass der Stack, den das Setup über den Socket startet, dieselben Host-Pfade einbindet. Es bietet die veröffentlichten Images (und Compose, wenn der Ordner ein Checkout ist) oder Kubernetes-Werte an, nie die lokale Form (das Chart wird daneben als `agents-hub-chart/` kopiert, und einen Ordner dieses Namens, den nicht das Setup geschrieben hat, ersetzt es nie), und was es schreibt, Sicherungskopien eingeschlossen, wird dem Besitzer des Ordners zurückgegeben, obwohl der Container als root lief, um den Socket zu nutzen.
+In einem Ordner, der schon eine `docker-compose.yml` enthält (ein Checkout oder die QuickStart-Dateien), erledigt `docker compose run --rm setup` dasselbe: Der Dienst `setup` liegt in einem eigenen Profil, daher startet ihn `docker compose up` nie. Der Ordner wird am selben Pfad eingebunden, sodass der Stack, den das Setup über den Socket startet, dieselben Host-Pfade einbindet. Es bietet die veröffentlichten Images (und Compose, wenn der Ordner ein Checkout ist) an, nie die lokale Form, und was es schreibt, Sicherungskopien eingeschlossen, wird dem Besitzer des Ordners zurückgegeben, obwohl der Container als root lief, um den Socket zu nutzen.
 
 ### Der erste Start im Browser
 
-Mit einer Person am Hub (`AUTH_MODE=single` oder `token`) öffnet eine neue
-Installation statt der App einen eigenen Einrichtungsbildschirm: ohne
+Eine neue
+Installation öffnet statt der App einen eigenen Einrichtungsbildschirm: ohne
 Seitenleiste und Kopfleiste, eine Entscheidung pro Bildschirm, wie bei einem
 neuen Telefon. Der Reihe nach: Begrüßung, Sprache, hell oder dunkel, ein
 Modell, das Standardmodell, die Stimme des Assistenten, Websuche,
@@ -201,9 +187,8 @@ Stimme, wenn er zu hören war.
 
 Nur das Modell ist Pflicht: ein Schlüssel von OpenAI, Anthropic oder Google
 (vor dem Speichern beim Anbieter geprüft), ein Modellserver, der auf diesem
-Rechner schon läuft (Ollama, LM Studio; seine Modelle stehen zur Wahl), oder,
-wenn der Hub eine eigene Modellumgebung hat, das fertige lokale Paket, das im
-Hintergrund lädt. Jeder spätere Bildschirm hat **Nicht jetzt**, und ein
+Rechner schon läuft (Ollama, LM Studio; seine Modelle stehen zur Wahl).
+Jeder spätere Bildschirm hat **Nicht jetzt**, und ein
 Bildschirm, dessen Antwort schon feststeht (ein Schlüssel aus `ah setup`,
 Websuche über den Schlüssel des Modells), sagt das nur. Als Ganzes
 überspringen lässt sich die Einrichtung nicht.
@@ -213,13 +198,11 @@ anderen Browser geht es an derselben Stelle weiter, und ein neuer Browser
 übernimmt Sprache und Darstellung. Abgeschlossen erscheint sie nicht wieder;
 **Einstellungen, Ersteinrichtung** startet sie bewusst erneut. Eine
 Installation, die vor dem Update schon genutzt wurde (ein Chat oder eine
-begonnene Einrichtung mit dem Assistenten), hält sie nicht an. Im Modus
-`multi` wird der erste Administrator auf dem Anmeldebildschirm angelegt, und
-jede Person bekommt das unten beschriebene Willkommensfenster.
+begonnene Einrichtung mit dem Assistenten), hält sie nicht an.
 
 ### Nach der Installation: Der Assistent übernimmt
 
-Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Konto und ein Modell, mit dem er denken kann. Mit einer Person am Hub erledigt das der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Im Modus `multi` fragt, wenn eine Person das Dashboard zum ersten Mal öffnet, das Willkommensfenster entweder nach diesem Modell (ein Schlüssel von OpenAI, Anthropic oder Google, oder ein Modellserver, der schon auf diesem Rechner läuft, vor dem Speichern beim Anbieter geprüft) oder bietet, sobald eines vorhanden ist, **Mit dem Assistenten sprechen** oder **Dem Assistenten schreiben** an. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, die Websuche, den Demo-Workspace, das Team, den Zustand des Hubs, dann einen ersten Chat, einen Kanal, Konten, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
+Die Konsole (oder der Browser) erledigt nur, was der Assistent nicht selbst tun kann: ein Modell, mit dem er denken kann. Das erledigt der erste Start oben, und sein **Mit dem Assistenten weitermachen** führt hierher. Von dort führt der [Assistent](assistant.md#guided-setup) Sie durch den Rest der Einrichtung, Schritt für Schritt, per Stimme oder Text: das Standardmodell, seine eigene Stimme, die Websuche, den Demo-Workspace, den Zustand des Hubs, dann einen ersten Chat, einen eigenen Agenten, eine Aufgabe und etwas, das von selbst läuft. Jede Änderung macht er erst nach Ihrem Ja auf einer Karte. Schlüssel geben Sie in eine Karte ein, sie werden nie im Gespräch gesagt oder getippt, und die Seite zu jedem Schritt öffnet sich neben dem Gespräch. Die Plakette **Einrichtung** in der Kopfzeile zeigt, wie weit er gekommen ist, und bringt Sie dorthin zurück.
 
 `./install.sh` startet sie bei einer Erstinstallation aus einem Terminal von selbst (`--no-setup` überspringt sie, `--setup` führt sie bei einer Neuinstallation aus). Führen Sie sie erneut aus, wann immer sich eine Einstellung ändern soll: Jede Frage hat dann den geltenden Wert als Vorgabe, und eine leere Antwort bei einem Schlüssel behält den aktuellen Schlüssel.
 
@@ -228,7 +211,6 @@ ah setup                       # fragen
 ah setup --shape docker --dir ~/agents-hub
 ah setup --dry-run             # nach der Übersicht anhalten
 ah setup --answers setup.json  # unbeaufsichtigt, siehe unten
-ah setup --disconnect          # einen Hub vergessen, den die Remote-Form gespeichert hat
 ```
 
 Für eine unbeaufsichtigte Installation hat jede Frage einen Schlüssel, und eine Antwortdatei gibt die Antworten unter diesem Schlüssel an. Was sie weglässt, bekommt die Vorgabe der Frage, und eine fehlende Pflichtantwort bricht mit ihrem Namen ab:
@@ -237,22 +219,14 @@ Für eine unbeaufsichtigte Installation hat jede Frage einen Schlüssel, und ein
 {
   "shape": "docker",
   "dir": "/srv/agents-hub",
-  "database": "postgres-bundled",
-  "auth": "multi",
-  "admin": {"username": "admin", "password": "change-me-now"},
-  "users": [{"username": "dana", "role": "member"}],
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
-  "voice": {"mode": "local", "speech": "piper-en", "transcription": "whisper-small"},
+  "voice": {"mode": "cloud", "provider": "openai", "voice": "alloy"},
   "demo": false,
-  "link": {"enabled": true, "url": "https://hub.example.com", "api_key": "ahk_...",
-           "mode": "sync", "sync": {"encryption": "all", "workspaces": ["default"], "generate": true}},
   "start": true
 }
 ```
 
-`voice.mode` ist `cloud` (mit `voice.provider`, wenn zwei passen, und `voice.voice`), `local` (`voice.speech`: `piper-ru`, `piper-en`, `piper-de`, `kokoro`, `supertonic` oder `kitten`; `voice.transcription`: `whisper-small` oder `whisper-turbo`), `browser` oder `skip`. Weggelassene Passwörter werden erzeugt und am Ende einmal ausgegeben. Die Remote-Form speichert die Adresse des Hubs und eine Zugangsberechtigung in der eigenen Zustandsdatei der CLI (`~/.config/agents-hub/cli.json`); `AGENTS_HUB_URL` in der Umgebung hat weiterhin Vorrang.
-
-`link.enabled` schaltet den verbundenen Hub ein (standardmäßig aus), mit `link.url`, `link.api_key` und optional `link.name`. `link.mode` ist `catalog`, `sync` oder `connect` (nur seine Modelle und Agenten); `sync-e2e` aus älteren Antwortdateien ist `sync` mit jedem Workspace verschlüsselt. `link.sync.encryption` ist `all` (default und alle anderen Workspaces, auch später hinzugefügte) oder `off` (Standard; einzelne Workspaces werden später in den Einstellungen verschlüsselt). `link.use_models` und `link.use_agents` überschreiben, was der Modus vorgibt (an bei `connect`, sonst aus), und `link.catalog` fügt einem Synchronisierungsmodus den Katalog hinzu. Für die Synchronisierungsmodi nennt `link.sync.workspaces` die Workspaces hier (standardmäßig `["default"]`; ein fehlender wird angelegt) und `link.sync.spaces.<workspace>` den Bereich dort, dem jeder zugeordnet wird (standardmäßig für den ersten Ihr persönlicher Workspace dort, für die übrigen derselbe Name). Mit Verschlüsselung `link.sync.generate` (standardmäßig true) oder `link.sync.passphrase`, die Passphrase eines zweiten Geräts. Nimmt der andere Hub den Schlüssel nicht an, ist das in einer Antwortdatei eine Warnung, kein Abbruch: Die Verbindung wird gespeichert und beim Anwenden erneut versucht.
+`voice.mode` ist `cloud` (mit `voice.provider`, wenn zwei passen, und `voice.voice`), `browser` oder `skip`.
 
 ## Konfiguration
 
@@ -279,7 +253,7 @@ Unter Docker (Wege A und B) liegt die API auch hinter dem nginx des Dashboards, 
 
 ## Wo der Zustand liegt
 
-Alles, was der Dienst schreibt, landet unter `.agents_hub/` im Checkout: `agents_hub.db` (SQLite, WAL: das Agentenregister, der Modellkatalog, Flows, Runs, Aufgaben, Sessions, Speicherpools und jeder andere Datensatz), die Workspace-Ordner, Run-Logs und erzeugte Ansichten. Löschen Sie diesen Ordner, wird die Installation zurückgesetzt. Es ist auch der Ordner, den Sie sichern ([backup](backup.md)). Bei Weg A liegt derselbe Baum auf dem Volume `agents_hub_data`, das unter `/data` eingebunden ist (`AGENTS_HUB_ROOT`). Ist `AGENTS_HUB_DATABASE_URL` gesetzt, liegt die Datenbank statt in der Datei in Postgres ([scaling](scaling.md), mit `ah db migrate` ziehen Sie eine vorhandene um). Der Rest des Ordners bleibt, wo er ist. Die Prompts der Agenten sind genauso getrennt: Der ausgelieferte Text der Systemagenten liegt in `agents/definitions/<id>/` im Repository, so wie git ihn verfolgt, und der Dienst schreibt dort nie. Die `instructions.md` (mit `capabilities.md` und `usage.md`) jedes eigenen Agenten und jede Änderung am Prompt eines Systemagenten landen in `.agents_hub/definitions/<id>/`. Eine Datei dort überdeckt die gleichnamige ausgelieferte Datei. Eine Änderung an einem Systemagenten übersteht so ein Update. **Ausgelieferten Text wiederherstellen** im Tab Config des Agenten (`DELETE /api/agents/<id>/definition/edits`) bringt den ausgelieferten Text zurück und behält den geänderten unter Versionen.
+Alles, was der Dienst schreibt, landet unter `.agents_hub/` im Checkout: `agents_hub.db` (SQLite, WAL: das Agentenregister, der Modellkatalog, Flows, Runs, Aufgaben, Sessions, Speicherpools und jeder andere Datensatz), die Workspace-Ordner, Run-Logs und erzeugte Ansichten. Löschen Sie diesen Ordner, wird die Installation zurückgesetzt. Es ist auch der Ordner, den Sie sichern ([backup](backup.md)). Bei Weg A liegt derselbe Baum auf dem Volume `agents_hub_data`, das unter `/data` eingebunden ist (`AGENTS_HUB_ROOT`). Die Prompts der Agenten sind genauso getrennt: Der ausgelieferte Text der Systemagenten liegt in `agents/definitions/<id>/` im Repository, so wie git ihn verfolgt, und der Dienst schreibt dort nie. Die `instructions.md` (mit `capabilities.md` und `usage.md`) jedes eigenen Agenten und jede Änderung am Prompt eines Systemagenten landen in `.agents_hub/definitions/<id>/`. Eine Datei dort überdeckt die gleichnamige ausgelieferte Datei. Eine Änderung an einem Systemagenten übersteht so ein Update. **Ausgelieferten Text wiederherstellen** im Tab Config des Agenten (`DELETE /api/agents/<id>/definition/edits`) bringt den ausgelieferten Text zurück und behält den geänderten unter Versionen.
 
 ## Aktualisieren
 

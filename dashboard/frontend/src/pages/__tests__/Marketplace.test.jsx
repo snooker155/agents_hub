@@ -1,58 +1,43 @@
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
 
-// The Kits tab: a kit card per manifest, with connector chips, and an
-// install dialog that shows the plan before anything is created.
+// The Agents and Flows tabs: a card per published agent or flow, and the
+// Add button that puts one into the selected workspace.
 
 const ok = (data) => Promise.resolve({ data });
 
-const getMarketplaceAgents = vi.fn(() => ok([]));
-const getMarketplaceFlows = vi.fn(() => ok([]));
-
-const KIT = {
-  id: 'support',
-  name: 'Customer support',
-  description: 'Triages inbound support messages.',
-  industry: 'Support operations',
-  icon: 'headset',
-  version: '1.0.0',
-  connectors: {
-    required: [{ name: 'mail', configured: false }],
-    optional: [{ name: 'slack', configured: true }],
-  },
-  rubrics: 'Graded on resolving from the knowledge pool first.',
-  next_steps: 'Connect a mailbox.',
+const AGENT = {
+  id: 'triage',
+  name: 'Triage',
+  description: 'Sorts inbound requests.',
+  domain: 'support',
+  tools: ['web_search'],
+  owner_workspace: 'ops',
+  in_workspace: false,
 };
 
-const listKits = vi.fn(() => ok([KIT]));
-const getKit = vi.fn(() => ok({
-  ...KIT,
-  resources: [{ kind: 'agent', key: 'triage' }, { kind: 'agent', key: 'resolver' }],
-  plan: { ok: true, changes: [
-    { address: 'agent/triage', kind: 'agent', key: 'triage', action: 'create', hub_id: 'triage' },
-    { address: 'agent/resolver', kind: 'agent', key: 'resolver', action: 'create', hub_id: 'resolver' },
-  ], counts: { create: 2 } },
-}));
-const installKit = vi.fn(() => ok({
-  plan: { ok: true, changes: [], counts: {} },
-  result: { ok: true, applied: [], failed: [] },
-  agents: ['triage', 'resolver'],
-}));
+const FLOW = {
+  id: 'flow-1',
+  name: 'Weekly digest',
+  description: 'Collects the week and writes it up.',
+  nodes_count: 2,
+  agents: [{ id: 'triage', name: 'Triage' }],
+  in_workspace: false,
+};
+
+const getMarketplaceAgents = vi.fn(() => ok([AGENT]));
+const getMarketplaceFlows = vi.fn(() => ok([FLOW]));
+const addAgentToWorkspace = vi.fn(() => ok({}));
+const addFlowToWorkspace = vi.fn(() => ok({ added_agents: ['triage'] }));
 
 vi.mock('../../api', () => ({
   getMarketplaceAgents: (...args) => getMarketplaceAgents(...args),
   getMarketplaceFlows: (...args) => getMarketplaceFlows(...args),
-  addAgentToWorkspace: vi.fn(() => ok({})),
-  addFlowToWorkspace: vi.fn(() => ok({})),
-}));
-
-vi.mock('../../api/kits', () => ({
-  listKits: (...args) => listKits(...args),
-  getKit: (...args) => getKit(...args),
-  installKit: (...args) => installKit(...args),
+  addAgentToWorkspace: (...args) => addAgentToWorkspace(...args),
+  addFlowToWorkspace: (...args) => addFlowToWorkspace(...args),
 }));
 
 vi.mock('../../components/workspace', () => ({
@@ -66,38 +51,30 @@ const show = () => render(
 );
 
 beforeEach(() => {
-  listKits.mockClear();
-  getKit.mockClear();
-  installKit.mockClear();
+  getMarketplaceAgents.mockClear();
+  getMarketplaceFlows.mockClear();
+  addAgentToWorkspace.mockClear();
+  addFlowToWorkspace.mockClear();
 });
 
-describe('Marketplace — Kits tab', () => {
-  it('lists a kit card with its connector chips', async () => {
+describe('Marketplace', () => {
+  it('lists published agents for the selected workspace and adds one', async () => {
     show();
-    await waitFor(() => expect(screen.getByText(/kits \(1\)/i)).toBeInTheDocument());
-    fireEvent.click(screen.getByText(/kits \(1\)/i));
+    await waitFor(() => expect(screen.getByText('Triage')).toBeInTheDocument());
+    expect(getMarketplaceAgents).toHaveBeenCalledWith('acme');
+    expect(screen.getByText(/agents \(1\)/i)).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText('Customer support')).toBeInTheDocument());
-    expect(screen.getByText('mail')).toBeInTheDocument();
-    expect(screen.getByText('slack')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+    await waitFor(() => expect(addAgentToWorkspace).toHaveBeenCalledWith('acme', 'triage'));
   });
 
-  it('opens the install dialog showing the plan, then installs', async () => {
+  it('switches to the Flows tab and adds a flow with its agents', async () => {
     show();
-    await waitFor(() => expect(screen.getByText(/kits \(1\)/i)).toBeInTheDocument());
-    fireEvent.click(screen.getByText(/kits \(1\)/i));
-    await waitFor(() => expect(screen.getByText('Customer support')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/flows \(1\)/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/flows \(1\)/i));
 
-    fireEvent.click(screen.getAllByText(/install/i)[0]);
-
-    const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(getKit).toHaveBeenCalledWith('support', 'acme'));
-    await waitFor(() => expect(within(dialog).getByText('agent/triage')).toBeInTheDocument());
-    expect(within(dialog).getAllByText('create').length).toBeGreaterThan(0);
-
-    fireEvent.click(within(dialog).getByRole('button', { name: /install/i }));
-
-    await waitFor(() => expect(installKit).toHaveBeenCalledWith('support', { workspace: 'acme' }));
-    await waitFor(() => expect(within(dialog).getByText(/installed into workspace/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Weekly digest')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /add with agents/i }));
+    await waitFor(() => expect(addFlowToWorkspace).toHaveBeenCalledWith('acme', 'flow-1'));
   });
 });

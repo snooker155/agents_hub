@@ -86,29 +86,6 @@ def test_start_scenario_run_validates_like_run_simulations_own_head(fake_launch)
         start_scenario_run("no-such-scenario")
 
 
-def test_api_role_enqueues_the_launch_with_kind_scenario(monkeypatch):
-    """In the ``api`` role, the database half still runs here; only the
-    process spawn moves to a worker (runtime/entity_launch.py, docs/workers.md).
-    The launch spec is put on ``run_queue`` instead of being executed."""
-    import common.config as config
-    from common import db
-    from playground.launcher import start_scenario_run
-
-    monkeypatch.setattr(config, "hub_role", lambda: "api")
-    s = make_scenario()
-    run = start_scenario_run(s.scenario_id)
-
-    row = db.get_conn().execute(
-        "SELECT kind, run_id, workspace FROM run_queue WHERE run_id = ?",
-        (run.sim_run_id,),
-    ).fetchone()
-    assert row is not None
-    assert row["kind"] == "scenario"
-    # Nothing was actually spawned — the run stays exactly where the database
-    # half left it, pending, until a worker claims the queued row.
-    assert store.get_sim_run(run.sim_run_id).status == "pending"
-
-
 # ── resume_scenario_run ──────────────────────────────────────────────────────
 
 def test_resume_refuses_a_completed_run(fake_launch):

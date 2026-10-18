@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getLoops, getTeams, listFlows, listN8nWorkflows } from '../../api';
+import { getLoops, getTeams, listFlows } from '../../api';
 import { useWorkspace } from '../workspace';
 import { InfoHint } from '../PageLayout';
 import { INPUT_CLS, fmtKeys, isUnchosenAgent, parseKeys } from './graphHelpers';
@@ -224,118 +224,6 @@ export function ContainerConfig({ node, onPatch }) {
   );
 }
 
-// The run_n8n node: which n8n workflow it starts and what it sends. The
-// workflow list needs an API key on the n8n connector; without one the path
-// of the Webhook or Chat trigger is typed in.
-export function N8nConfig({ node, onPatch }) {
-  const { t } = useI18n();
-  const { selectedWorkspace } = useWorkspace();
-  const d = node.data || {};
-  const config = d.config || {};
-  const [workflows, setWorkflows] = useState(null);
-  const [listError, setListError] = useState('');
-  const patchConfig = (patch) => onPatch({ config: { ...config, ...patch } });
-
-  useEffect(() => {
-    let alive = true;
-    listN8nWorkflows(selectedWorkspace || undefined)
-      .then((r) => { if (alive) setWorkflows(Array.isArray(r.data) ? r.data : []); })
-      .catch((e) => {
-        if (!alive) return;
-        setWorkflows([]);
-        setListError(e.response?.data?.detail || e.message || '');
-      });
-    return () => { alive = false; };
-  }, [selectedWorkspace]);
-
-  const current = config.workflow_id || '';
-  const known = (workflows || []).some((w) => w.id === current);
-  const label = (key) => (
-    <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t(key)}</label>
-  );
-
-  return (
-    <div className="space-y-3">
-      <div>
-        {label('flowEditor.n8n.workflow')}
-        <select
-          value={current}
-          onChange={(e) => patchConfig({ workflow_id: e.target.value })}
-          className={INPUT_CLS}
-        >
-          <option value="">{t('flowEditor.container.choose')}</option>
-          {current && !known ? <option value={current}>{current}</option> : null}
-          {(workflows || []).map((w) => (
-            <option key={w.id} value={w.id}>{w.name || w.id}{w.active ? '' : ` (${t('flowEditor.n8n.inactive')})`}</option>
-          ))}
-        </select>
-        {listError ? (
-          <p className="px-1 pt-1 text-[11px] text-amber-600">
-            {listError}{' '}
-            <Link to="/connectors?tab=n8n" className="font-semibold underline">{t('flowEditor.n8n.openConnector')}</Link>
-          </p>
-        ) : null}
-      </div>
-      <div>
-        {label('flowEditor.n8n.webhookPath')}
-        <input
-          value={config.webhook_path || ''}
-          onChange={(e) => patchConfig({ webhook_path: e.target.value.trim() })}
-          placeholder="my-hook  |  <webhookId>/chat"
-          className={INPUT_CLS}
-        />
-        <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.n8n.webhookPathHint')}</p>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          {label('flowEditor.n8n.trigger')}
-          <select
-            value={config.trigger || 'auto'}
-            onChange={(e) => patchConfig({ trigger: e.target.value })}
-            className={INPUT_CLS}
-          >
-            <option value="auto">auto</option>
-            <option value="webhook">webhook</option>
-            <option value="chat">chat</option>
-          </select>
-        </div>
-        <div>
-          {label('flowEditor.n8n.method')}
-          <select
-            value={config.method || 'POST'}
-            onChange={(e) => patchConfig({ method: e.target.value })}
-            className={INPUT_CLS}
-          >
-            {['POST', 'GET', 'PUT', 'PATCH'].map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
-      </div>
-      <div>
-        {label('flowEditor.container.goal')}
-        <textarea
-          value={config.goal || ''}
-          onChange={(e) => patchConfig({ goal: e.target.value })}
-          rows={3}
-          placeholder={t('flowEditor.interruptQuestionPlaceholder')}
-          className={INPUT_CLS}
-        />
-        <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.interruptQuestionHint')}</p>
-      </div>
-      <div>
-        {label('flowEditor.n8n.sendKeys')}
-        <input
-          value={fmtKeys(config.send_keys)}
-          onChange={(e) => patchConfig({ send_keys: parseKeys(e.target.value) })}
-          placeholder={t('flowEditor.commaSeparatedKeys')}
-          className={INPUT_CLS}
-        />
-      </div>
-      <p className="px-1 text-[11px] leading-5 text-slate-400">{t('flowEditor.n8n.hint')}</p>
-      <NodePolicy node={node} onPatch={onPatch} />
-    </div>
-  );
-}
-
 // Which agent runs in an agent node. The palette has one abstract agent node;
 // this is where it becomes a particular agent. The node's label follows the
 // agent unless it was renamed by hand.
@@ -484,8 +372,6 @@ export function NodeInspector({ node, isAgent, onPatch, agents = [], successors 
         <SwitchConfig node={node} successors={successors} onPatch={onPatch} />
       ) : d.entity_id === 'human_interrupt' ? (
         <InterruptConfig node={node} onPatch={onPatch} />
-      ) : d.entity_id === 'run_n8n' ? (
-        <N8nConfig node={node} onPatch={onPatch} />
       ) : category === 'container' && CONTAINER_FIELDS[d.entity_id] ? (
         <ContainerConfig node={node} onPatch={onPatch} />
       ) : (

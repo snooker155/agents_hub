@@ -30,11 +30,11 @@ def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# The turn a service replica is executing (chat/turns.py): which instance and
-# service the run belongs to, the mailbox message it answers, the service's
-# money cap and version pin. Set for the pipeline's task; ``create_chat_run``
-# writes it onto the run record and ``turn_overrides`` hands the pin to the
-# agent build. Empty in the backend and for an in-process turn.
+# A turn executed on behalf of an instance: which instance the run belongs
+# to, the mailbox message it answers, a money cap and a version pin. Set for
+# the pipeline's task; ``create_chat_run`` writes it onto the run record and
+# ``turn_overrides`` hands the pin to the agent build. Empty for a plain chat
+# turn, which is every turn today; the hook stays for carriers.
 _turn_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar("chat_turn_context", default=None)
 
 
@@ -325,10 +325,9 @@ def create_chat_run(request: ChatRequest, **run_extra):
 
     # One chat instance per conversation: the same live copy answers every
     # message in the thread, so its instance page carries the whole exchange.
-    # A turn executed by a service replica (chat/turns.py) belongs to that
-    # replica instead: the run is a carrier run of it, in the conversation the
-    # mailbox message named, and carries the service so the conversation has
-    # one history across replicas.
+    # A turn executed for an instance belongs to that instance instead: the
+    # run is a carrier run of it, in the conversation the mailbox message
+    # named.
     instance_id = None
     turn = _turn_context.get()
     if turn and turn.get("instance_id"):
@@ -338,7 +337,6 @@ def create_chat_run(request: ChatRequest, **run_extra):
             "conversation_id": turn.get("conversation_id"),
             "inbox_msg_id": turn.get("msg_id"),
             **({"service_id": turn["service_id"]} if turn.get("service_id") else {}),
-            **({"budget_usd": turn["budget_usd"]} if turn.get("budget_usd") is not None else {}),
             **({"agent_version_pin": int(turn["agent_version"])}
                if turn.get("agent_version") is not None
                and (not turn.get("pin_agent_id")

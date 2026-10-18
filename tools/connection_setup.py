@@ -146,14 +146,12 @@ def connection_options(kind: Optional[str] = None) -> str:
 # ── propose_connection ───────────────────────────────────────────────────────
 
 class ProposeInput(BaseModel):
-    kind: str = Field(..., description="connector (jira, linear, google, microsoft, notion, confluence), "
-                                       "channel (slack, discord, teams, mail), mcp_server, database, "
-                                       "watcher, secret, or provider (openai, anthropic, google: a model "
-                                       "key; brave, tavily, exa: a web search key, both for the whole hub)")
-    target: str = Field(default="", description="The connector or channel name; for mcp_server the "
-                                                "server id; for database and watcher the name; for "
-                                                "secret the secret name (UPPER_SNAKE_CASE); for "
-                                                "provider the provider")
+    kind: str = Field(..., description="connector (jira), mcp_server, watcher, secret, or provider "
+                                       "(openai, anthropic, google: a model key; brave, tavily, exa: "
+                                       "a web search key, both for the whole hub)")
+    target: str = Field(default="", description="The connector name; for mcp_server the server id; "
+                                                "for watcher the name; for secret the secret name "
+                                                "(UPPER_SNAKE_CASE); for provider the provider")
     # Not "config": LangChain hands a parameter of that name its own run config.
     fields: Dict[str, Any] = Field(
         default_factory=dict,
@@ -168,9 +166,9 @@ class ProposeInput(BaseModel):
 @tool("propose_connection", args_schema=ProposeInput)
 def propose_connection(kind: str, target: str = "", fields: Optional[Dict[str, Any]] = None,
                        reason: str = "") -> str:
-    """Prepare a connection for the person to finish: a connector, chat channel, MCP server,
-    read-only database connection, watcher, workspace secret, or a model or web search
-    provider's API key for the whole hub (an administrator's).
+    """Prepare a connection for the person to finish: a connector, MCP server, watcher,
+    workspace secret, or a model or web search provider's API key for the whole hub
+    (an administrator's).
 
     You fill the non-secret fields; the person sees a card in the chat, can edit them, types
     the secrets (you never see them) and presses Connect or Deny. In the chat this call waits

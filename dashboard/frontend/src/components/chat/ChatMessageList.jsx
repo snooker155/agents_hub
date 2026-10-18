@@ -1,8 +1,8 @@
-import AgentExamples, { FlowExamples } from './AgentExamples';
+import AgentExamples from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
+import { AudioLines, Bot, Radio, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -36,10 +36,10 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
+    agentName, agents, artifacts, currentConv, currentConvId, flows, jumpToArtifact,
     liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
-    targetMode, teams, telegramReplyAllowed, viewMode,
+    targetMode, teams, viewMode,
   } = useChatPage();
   const lastUserId = [...renderedMessages].reverse().find((m) => m.role === 'user')?.id ?? null;
   const { scrollerRef, contentRef, onScroll, onPromptClick } = useChatScroll({
@@ -117,33 +117,6 @@ export default function ChatMessageList() {
   const turns = groupTurns(renderedMessages);
   return (
     <>
-        {/* Fixed Telegram debug-mirror banner — sits above the scrolling messages area */}
-        {currentTelegramBinding && (
-          <div className="flex-shrink-0 px-4 py-2 border-b border-sky-200 bg-sky-50 text-xs text-sky-800 flex items-center gap-2">
-            <SendIcon className="w-3.5 h-3.5 shrink-0" />
-            <div className="flex-1 min-w-0 truncate">
-              <strong>{t('chat.telegram')}</strong> · {currentTelegramBinding.title || t('chat.telegramChat', { id: currentTelegramBinding.chat_id })}
-              {' '}· {t('chat.boundTo')} <strong>{currentTelegramBinding.agent_name || currentTelegramBinding.agent_id}</strong>
-              {currentTelegramBinding.workspace ? <> · {currentTelegramBinding.workspace}</> : null}
-            </div>
-            {!telegramReplyAllowed && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title={`Switch to "${currentTelegramBinding.workspace || 'default'}" to reply.`}>
-                {t('chat.readOnly')}
-              </span>
-            )}
-            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">{t('chat.debugMirror')}</span>
-          </div>
-        )}
-
-        {/* A copy of a conversation held on a linked hub (docs/hub-link.md): read here, written there. */}
-        {currentConv?.origin === 'mirror' && (
-          <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 bg-slate-50 text-xs text-slate-700 flex items-center gap-2"
-            data-testid="mirror-banner">
-            <Copy className="w-3.5 h-3.5 shrink-0" />
-            <span>{t('chat.mirror.banner', { node: currentConv.mirror?.node || '?' })}</span>
-          </div>
-        )}
-
         {/* A conversation with the Assistant, by voice or text, as its text; continued here too. */}
         {currentConv?.origin === 'assistant' && (
           <div className="flex-shrink-0 px-4 py-2 border-b border-indigo-200 bg-indigo-50 text-xs text-indigo-800 flex items-center gap-2"
@@ -195,7 +168,6 @@ export default function ChatMessageList() {
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
                       {t('chat.emptyFlow')}
                     </p>
-                    <FlowExamples />
                   </>
                 ) : (
                   <>

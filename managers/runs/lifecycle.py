@@ -337,8 +337,6 @@ def close_run(
         "error": error,
         **extra,
     })
-    from common import run_tokens
-    run_tokens.retire_for_run(run_id)
     return record
 
 

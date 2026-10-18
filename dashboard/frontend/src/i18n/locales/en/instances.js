@@ -57,7 +57,6 @@ export default {
   carrier: {
     local: 'local process',
     container: 'container',
-    published: 'Published',
   },
   time: {
     justNow: 'just now',

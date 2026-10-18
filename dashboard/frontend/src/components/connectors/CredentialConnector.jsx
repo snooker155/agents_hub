@@ -6,13 +6,12 @@ import { SectionCard } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import { useWorkspace } from '../workspace';
 import PageLoader from '../PageLoader';
-import { ConfigForm } from './ChannelConnector';
+import { ConfigForm } from './ConfigForm';
 import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from './ConnectorSource';
 
-// A connector that is only credentials and a Test button: Jira, Linear,
-// Google, Microsoft, Notion, Confluence. The backend describes its fields
-// (GET /api/connectors); `children` renders whatever extra the connector
-// has (an OAuth button, a project picker) and receives the loaded payload.
+// A connector that is only credentials and a Test button: Jira. The backend
+// describes its fields (GET /api/connectors); `children` renders whatever
+// extra the connector has (a project picker) and receives the loaded payload.
 //
 // Scoped per workspace like every other connector (connectors/channels/
 // store.py): the default workspace's definition works everywhere, another
@@ -166,7 +165,6 @@ export default function CredentialConnector({ name, children, title, intro }) {
         testResult={testResult}
         t={t}
         readOnly={readOnly}
-        workspace={workspace}
       />
       {typeof children === 'function'
         ? children({ payload, reload: load, workspace, isDefaultWorkspace, readOnly })

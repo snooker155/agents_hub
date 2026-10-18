@@ -1,21 +1,20 @@
 /**
- * The one step nobody passes without: a model to think with. Three ways in,
+ * The one step nobody passes without: a model to think with. Two ways in,
  * each its own screen inside the step: a cloud key (checked with the
- * provider before it is saved), a model server already running on this
- * machine (Ollama, LM Studio), or the hub's ready local set downloaded in the
- * background. Then which of the provider's models is the default.
+ * provider before it is saved) or a model server already running on this
+ * machine (Ollama, LM Studio). Then which of the provider's models is the
+ * default.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { Brain, Cloud, Cpu, Download, ExternalLink, Gauge, Server, Sparkles, Zap } from 'lucide-react';
+import { useState } from 'react';
+import { Brain, Cloud, Cpu, ExternalLink, Gauge, Server, Sparkles, Zap } from 'lucide-react';
 import { useI18n } from '../../../i18n';
 import { connectFirstModel } from '../../../api/setupGuide';
-import { getReadySet, startReadySet } from '../../../api/localModels';
 import { firstRunOp } from '../../../api/firstRun';
 import {
   ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';
 import {
-  ACTIVE_JOB as ACTIVE, CLOUD, PROVIDER_LABELS, SERVERS, TIERED, errorText, fieldCls, localSetStarted,
+  CLOUD, PROVIDER_LABELS, SERVERS, TIERED, errorText, fieldCls,
 } from '../firstRunModel';
 
 const KEY_PAGES = {
@@ -24,47 +23,17 @@ const KEY_PAGES = {
   google: 'https://aistudio.google.com/apikey',
 };
 const SERVER_URLS = { ollama: 'http://localhost:11434', lmstudio: 'http://localhost:1234' };
-const POLL_MS = 2000;
-
-function gb(bytes) {
-  return bytes ? `${(bytes / 1e9).toFixed(1)} GB` : '';
-}
-
-/** The ready local set: what it would download here, then how far it got. */
-function useReadySet(enabled, language) {
-  const [data, setData] = useState(null);
-  const load = useCallback(async () => {
-    try { const { data: d } = await getReadySet(language); setData(d); } catch { setData({ available: false }); }
-  }, [language]);
-  useEffect(() => {
-    if (!enabled) return undefined;
-    let live = true;
-    getReadySet(language)
-      .then(({ data: d }) => { if (live) setData(d); })
-      .catch(() => { if (live) setData({ available: false }); });
-    return () => { live = false; };
-  }, [enabled, language]);
-  const running = ACTIVE.has(data?.job?.status);
-  useEffect(() => {
-    if (!running) return undefined;
-    const id = setTimeout(load, POLL_MS);
-    return () => clearTimeout(id);
-  }, [running, data, load]);
-  return { data, reload: load, running };
-}
 
 export function ModelStep({ ctx, refreshCtx, next }) {
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const connected = (ctx?.providers || []).length > 0;
-  const [way, setWay] = useState(connected || localSetStarted(ctx) ? 'connected' : '');
+  const [way, setWay] = useState(connected ? 'connected' : '');
   const [provider, setProvider] = useState('openai');
   const [server, setServer] = useState('ollama');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const ready = useReadySet(Boolean(ctx?.runtime), language);
-  const setRunning = ready.running || localSetStarted(ctx);
 
   const connect = async () => {
     setBusy(true);
@@ -77,20 +46,6 @@ export function ModelStep({ ctx, refreshCtx, next }) {
       setApiKey('');
       await refreshCtx();
       next();
-    } catch (e) {
-      setError(errorText(e, t));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const download = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await startReadySet('default', language);
-      await ready.reload();
-      await refreshCtx();
     } catch (e) {
       setError(errorText(e, t));
     } finally {
@@ -117,15 +72,11 @@ export function ModelStep({ ctx, refreshCtx, next }) {
           </>
         )}
       >
-        {connected ? (
-          <DoneNote
-            testId="first-run-model-connected"
-            title={t('firstRun.model.connected', { providers: names })}
-            detail={dm.model ? t('firstRun.model.defaultIs', { model: `${PROVIDER_LABELS[dm.provider] || dm.provider} · ${dm.model}` }) : ''}
-          />
-        ) : (
-          <DownloadProgress ready={ready} t={t} />
-        )}
+        <DoneNote
+          testId="first-run-model-connected"
+          title={t('firstRun.model.connected', { providers: names })}
+          detail={dm.model ? t('firstRun.model.defaultIs', { model: `${PROVIDER_LABELS[dm.provider] || dm.provider} · ${dm.model}` }) : ''}
+        />
       </StepFrame>
     );
   }
@@ -141,17 +92,6 @@ export function ModelStep({ ctx, refreshCtx, next }) {
         {busy ? t('firstRun.model.checking') : t('firstRun.model.connect')}
       </PrimaryButton>
       <LaterButton onClick={() => pick('')}>{t('firstRun.model.otherWay')}</LaterButton>
-    </>
-  ) : way === 'download' ? (
-    <>
-      {setRunning ? (
-        <PrimaryButton onClick={() => next()} testId="first-run-continue">{t('firstRun.continue')}</PrimaryButton>
-      ) : (
-        <PrimaryButton onClick={download} busy={busy} disabled={!ready.data?.chat} testId="first-run-download">
-          {t('firstRun.model.download')}
-        </PrimaryButton>
-      )}
-      {!setRunning && <LaterButton onClick={() => pick('')}>{t('firstRun.model.otherWay')}</LaterButton>}
     </>
   ) : (
     <p className="text-sm text-gray-400 text-center max-w-sm">{t('firstRun.model.required')}</p>
@@ -171,13 +111,6 @@ export function ModelStep({ ctx, refreshCtx, next }) {
             onClick={() => pick('cloud')} testId="first-run-way-cloud" />
           <ChoiceCard icon={Server} title={t('firstRun.model.server')} detail={t('firstRun.model.serverDetail')}
             onClick={() => pick('server')} testId="first-run-way-server" />
-          {ctx?.runtime && (
-            <ChoiceCard icon={Cpu} title={t('firstRun.model.local')}
-              detail={ready.data?.chat
-                ? t('firstRun.model.localDetailSized', { model: ready.data.chat.label, size: gb(ready.data.chat.size_bytes) })
-                : t('firstRun.model.localDetail')}
-              onClick={() => pick('download')} testId="first-run-way-download" />
-          )}
         </div>
       )}
 
@@ -222,44 +155,8 @@ export function ModelStep({ ctx, refreshCtx, next }) {
         </div>
       )}
 
-      {way === 'download' && <DownloadProgress ready={ready} t={t} />}
-
       <ErrorLine>{error}</ErrorLine>
     </StepFrame>
-  );
-}
-
-function DownloadProgress({ ready, t }) {
-  const data = ready.data;
-  if (!data) return <p className="text-center text-sm text-gray-400">{t('firstRun.loading')}</p>;
-  const job = data.job;
-  const started = job && (ACTIVE.has(job.status) || job.status === 'done');
-  const pct = Math.round(job?.percent || 0);
-  return (
-    <div className="rounded-2xl border border-gray-200 bg-white px-5 py-5 space-y-3" data-testid="first-run-download-card">
-      <div className="flex items-center gap-3">
-        <span className="w-10 h-10 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center"><Download className="w-5 h-5" /></span>
-        <div className="min-w-0">
-          <p className="text-base font-semibold text-gray-900">{data.chat?.label || t('firstRun.model.local')}</p>
-          <p className="text-sm text-gray-500">
-            {[gb(data.chat?.size_bytes), data.hardware?.name].filter(Boolean).join(' · ')}
-          </p>
-        </div>
-      </div>
-      <p className="text-sm text-gray-600">{t('firstRun.model.localIncludes')}</p>
-      {started && (
-        <>
-          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-indigo-500 transition-all" style={{ width: `${job.status === 'done' ? 100 : pct}%` }} />
-          </div>
-          <p className="text-sm text-gray-500">
-            {job.status === 'done' ? t('firstRun.model.localDone') : `${pct}% · ${job.message || ''}`}
-          </p>
-          {job.status !== 'done' && <p className="text-sm text-gray-500">{t('firstRun.model.localGoOn')}</p>}
-        </>
-      )}
-      {job?.status === 'error' && <p className="text-sm text-red-600">{job.error || job.message}</p>}
-    </div>
   );
 }
 

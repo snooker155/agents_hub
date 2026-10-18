@@ -12,19 +12,6 @@ no setup.
 The picker defaults to the workspace's default chat agent, which is the Main
 Agent unless you changed it.
 
-## Where a turn runs
-
-The backend does not run the agent itself. A turn is handed to a replica of a
-[service](services.md): the agent's own service in the workspace when it has
-one, else the workspace's runner, a process kept warm for exactly this. The
-replica runs the whole pipeline (prompt, attachments, compaction, tools,
-handoffs, the run record) and streams its events back; the page sees what it
-always saw. The first turn in a workspace that has no runner yet waits for
-one to boot, up to `AGENTS_HUB_TURN_START_TIMEOUT` seconds; after that the
-runner stays up (`AGENTS_HUB_RUNNER_MIN`, default 1). Set
-`AGENTS_HUB_CHAT_EXECUTION=inprocess` (Settings, "Chat execution") to run
-turns inside the backend instead.
-
 ## What the agent sees
 
 The conversation so far, plus its own system prompt. It does **not** see other
@@ -48,8 +35,8 @@ turn fail, the older part is folded into a single summary and only the recent
 tail is sent verbatim.
 
 - **When.** Once the conversation plus the system prompt passes 60 percent of
-  the model's context window. When the window is unknown (a local model, a
-  gateway that reports nothing) the threshold is 60,000 characters. The 60,000
+  the model's context window. When the window is unknown (a gateway that
+  reports nothing) the threshold is 60,000 characters. The 60,000
   character bound on the history itself is reached first on a big-window model,
   so in practice folding happens on a small window, behind a long system prompt,
   or when a provider refuses the turn.
@@ -177,7 +164,7 @@ ambiguous.
 under the input box, or Shift+Tab in the box. While it is on, a banner above
 the conversation says so and every confirmation is accepted without a card;
 the cards still appear, marked "approved automatically". Rules that refuse a
-call still refuse it. An admin can turn auto mode off for a workspace. See
+call still refuse it. See
 [auto mode](hooks.md#auto-mode).
 
 ## Conversations with the Assistant
@@ -201,10 +188,5 @@ The recording is turned into text by the workspace's transcription model
 (the conversation's workspace, through `/api/assistant/transcribe`), or by
 the browser's own recognition where the workspace has none. With neither,
 the microphone is not shown.
-
-## Telegram
-
-A chat can be bridged to a Telegram chat, so the same conversation continues
-from a phone. See [telegram](telegram.md).
 
 Related: [agents](agents.md), [flows](flows.md), [teams](teams.md).

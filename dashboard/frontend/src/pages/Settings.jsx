@@ -2,11 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import { MULTI, TOKEN, useAuth } from '../components/auth';
-import { getApiToken, setApiToken, API_ORIGIN } from '../api';
 import { getDemo, setDemo } from '../api/demo';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -18,11 +16,8 @@ import {
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
-import HubLinkSection from '../components/settings/HubLinkSection';
 import PageLoader from '../components/PageLoader';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
-import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
-import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 
@@ -36,7 +31,7 @@ const api = axios.create({ baseURL: 'http://localhost:8000' });
 // components/settings/WorkspaceSettingsSections.jsx, which the Settings tab of
 // a workspace renders too.
 //
-// Telegram, Git and Blender used to be a group here. They are connectors —
+// Git used to be a group here. It is a connector —
 // things you attach — and they now live under Connect → Connectors, which is
 // where someone looks for them. A pointer at the foot of this page's sidebar
 // takes anyone who looks here first.
@@ -54,17 +49,11 @@ const GROUPS = [
     key: 'system',
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
-      // The selected workspace's perimeter and data class: the same two cards as
-      // the workspace's own Isolation tab, each saving itself (docs/isolation.md).
-      { id: 'isolation',     key: 'isolation',     icon: Shield },
       { id: 'webSearch',     key: 'webSearch',     icon: Globe },
       { id: 'browser',       key: 'browser',       icon: MonitorSmartphone },
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
-      { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
-      // This hub's link to another hub, and whether it serves it as a node (docs/hub-link.md).
-      { id: 'hubLink',       key: 'hubLink',       icon: Link2 },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
       // The first run is a single operator's (docs/installation.md, "The first run in the browser").
       { id: 'firstRun',      key: 'firstRun',      icon: RotateCcw,  singleOnly: true },
@@ -77,7 +66,7 @@ const SECTIONS = GROUPS.flatMap((group) => group.items);
 // Sections that used to live here and are now their own page. Links and
 // bookmarks to them are out in the world, and falling back to the first section
 // would answer them by quietly showing something else.
-const MOVED_TO_CONNECTORS = ['telegram', 'git', 'blender'];
+const MOVED_TO_CONNECTORS = ['git'];
 
 
 // ── Custom backends tab ───────────────────────────────────────────────────────
@@ -367,131 +356,13 @@ function CustomBackendsTab() {
   );
 }
 
-// ── API access tab ────────────────────────────────────────────────────────────
-// The browser's own token (see src/api/index.js getApiToken). It lives in
-// localStorage, not in a workspace override or the global .env: it belongs to
-// this browser, not to a workspace, and it is only ever read by this frontend
-// to attach an Authorization header to its own requests.
-
-function ApiAccessTab() {
-  const { t } = useI18n();
-  const { mode } = useAuth();
-  const [token, setToken] = useState(() => getApiToken());
-  const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState(null);
-
-  const handleSave = () => {
-    setApiToken(token);
-    setSaved(true);
-    setResult(null);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  const handleClear = () => {
-    setToken('');
-    setApiToken('');
-    setSaved(false);
-    setResult(null);
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setResult(null);
-    try {
-      const resp = await fetch(`${API_ORIGIN}/api/health`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      setResult({ ok: resp.ok, status: resp.status });
-    } catch (e) {
-      setResult({ ok: false, status: null, error: e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-5">
-      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-500">
-        {t('settings.apiAccess.intro')}
-      </div>
-      {/* The posture the backend is actually running in. Read-only on purpose:
-          the mode is a deployment decision, not a setting a signed-in user can
-          flip out from under everybody else. */}
-      <SectionCard title={t('settings.apiAccess.modeTitle')}>
-        <p className="text-sm text-gray-700">
-          <span className="font-semibold">{t(`settings.apiAccess.modes.${mode}.name`)}</span>
-          {': '}
-          {t(`settings.apiAccess.modes.${mode}.summary`)}
-        </p>
-        <p className="text-sm text-gray-600">{t('settings.apiAccess.modeExplainer')}</p>
-        <p className="text-sm text-gray-600">
-          {t('settings.apiAccess.modeWhereBefore')} <code className="bg-gray-100 rounded px-1">AUTH_MODE</code>{' '}
-          {t('settings.apiAccess.modeWhereAfter')}
-        </p>
-      </SectionCard>
-      {/* The browser's own copy of the shared token. Only `token` mode uses
-          one: `single` needs no credential and `multi` issues a session. */}
-      {mode === TOKEN && (
-      <SectionCard title={t('settings.apiAccess.title')}>
-        <div>
-          <label className="text-sm font-medium text-gray-700">{t('settings.apiAccess.tokenLabel')}</label>
-          <p className="text-xs text-gray-500 mb-1">{t('settings.apiAccess.tokenHint')}</p>
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)}
-            placeholder={t('settings.apiAccess.tokenPlaceholder')} autoComplete="new-password"
-            className={inputCls} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button type="button" onClick={handleSave}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium">
-            <Save className="w-3.5 h-3.5" /> {t('common.save')}
-          </button>
-          <button type="button" onClick={handleClear}
-            className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700">
-            <Trash2 className="w-3.5 h-3.5" /> {t('settings.apiAccess.clear')}
-          </button>
-          <button type="button" onClick={handleTest} disabled={testing}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-300 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            {testing ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wifi className="w-3 h-3" />} {t('settings.test')}
-          </button>
-          {saved && <span className="text-xs text-green-700">{t('settings.apiAccess.saved')}</span>}
-          {result && (result.ok
-            ? <span className="flex items-center gap-1 text-xs text-green-700"><CheckCircle className="w-3 h-3" /> {t('settings.apiAccess.ok')}</span>
-            : <span className="flex items-center gap-1 text-xs text-red-700"><AlertCircle className="w-3 h-3" /> {result.status === 401 ? t('settings.apiAccess.unauthorized') : t('settings.apiAccess.testFailed')}</span>
-          )}
-        </div>
-      </SectionCard>
-      )}
-      {/* multi mode issues a session instead of a browser token, so there is
-          nothing to paste here for that case — except a personal API key
-          (common/api_keys.py, docs/api-keys.md), which this same field
-          happens to double as: getAuthToken() falls back to it whenever
-          there is no session, so an `ahk_...` key pasted in as the "browser
-          token" authenticates every request exactly the way a session would. */}
-      {mode === MULTI && (
-      <SectionCard title={t('settings.apiAccess.personalKeysTitle')}>
-        <p className="text-sm text-gray-600">{t('settings.apiAccess.personalKeysHint')}</p>
-      </SectionCard>
-      )}
-      <SectionCard title={t('settings.apiAccess.serverTitle')}>
-        <p className="text-sm text-gray-600">
-          {t('settings.apiAccess.serverHintBefore')} <code className="bg-gray-100 rounded px-1">AGENTS_HUB_API_TOKEN</code>{' '}
-          {t('settings.apiAccess.serverHintAfter')} <code className="bg-gray-100 rounded px-1">.env</code>{t('settings.apiAccess.serverHintRestart')}
-        </p>
-      </SectionCard>
-    </div>
-  );
-}
-
-
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function Settings() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const activeWorkspace = selectedWorkspace || 'default';
-  const { mode } = useAuth();
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !(i.singleOnly && mode === MULTI)) }));
+  const groups = GROUPS;
 
   // The open section lives in the URL (/settings/:section) so a section can be
   // linked to and survives a reload, the same contract the Docs page uses.
@@ -564,7 +435,7 @@ export default function Settings() {
               </div>
             ))}
             {/* Where the connector tabs went. Someone who has configured
-                Telegram here before will come back here first, and a dead end
+                Git here before will come back here first, and a dead end
                 is a worse answer than a pointer. */}
             <Link
               to="/connectors"
@@ -607,20 +478,9 @@ export default function Settings() {
             {active.id === 'demo' && <DemoWorkspaceTab />}
             {active.id === 'firstRun' && <FirstRunSettings />}
             {active.id === 'logging' && <LoggingSection s={ws} />}
-            {active.id === 'apiAccess' && <ApiAccessTab />}
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
             {active.id === 'webSearch' && <WebSearchSection s={ws} />}
             {active.id === 'browser' && <BrowserServiceSection />}
-            {active.id === 'hubLink' && <HubLinkSection />}
-            {active.id === 'isolation' && (
-              <>
-                <p className="text-sm text-gray-500" data-testid="settings-isolation-workspace">
-                  {t('settings.isolationFor')} <span className="font-medium text-gray-700">{activeWorkspace}</span>. {t('settings.isolationSwitch')}
-                </p>
-                <WorkspaceIsolation key={`iso-${activeWorkspace}`} workspace={activeWorkspace} />
-                <WorkspaceDataClass key={`dc-${activeWorkspace}`} workspace={activeWorkspace} />
-              </>
-            )}
           </div>
         </div>
       </div>

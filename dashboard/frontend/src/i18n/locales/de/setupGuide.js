@@ -80,8 +80,6 @@ export default {
     connect: 'Verbinden',
     connecting: 'Verbinde…',
     adminOnly: 'Bitten Sie Ihren Administrator, ein Modell zu verbinden.',
-    runtimeHint: 'Die eigene Runtime des Hubs, ein auf diesen Rechner geladenes Modell, wird auf der Seite Models, Tab Local, eingestellt.',
-    runtimeLink: 'Tab Local öffnen',
     providers: {
       openai: 'OpenAI',
       anthropic: 'Anthropic',

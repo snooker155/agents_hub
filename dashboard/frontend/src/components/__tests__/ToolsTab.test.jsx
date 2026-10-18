@@ -21,11 +21,6 @@ vi.mock('../agent/SystemAgentWarning', () => ({ default: () => null }));
 const page = vi.hoisted(() => ({ current: null }));
 vi.mock('../agent/context', () => ({ useAgentPage: () => page.current }));
 
-// Not isolated by default (every existing test keeps seeing every tool
-// enabled); a gating test below overrides this with its own workspace state.
-const isolation = vi.hoisted(() => ({ current: { data: null, loading: false, error: '' } }));
-vi.mock('../workspace/useWorkspaceIsolation', () => ({ default: () => isolation.current }));
-
 import ToolsTab from '../agent/ToolsTab';
 
 const t = (k, vars) => (vars ? `${k} ${JSON.stringify(vars)}` : k);
@@ -87,7 +82,6 @@ const renderTab = (overrides) => {
 
 describe('ToolsTab', () => {
   beforeEach(() => {
-    isolation.current = { data: null, loading: false, error: '' };
     rolesApi.getWorkspaceRoles.mockReset();
     rolesApi.getWorkspaceRoles.mockResolvedValue({ data: { roles: [] } });
     api.getAgentToolPolicy.mockReset();
@@ -235,41 +229,5 @@ describe('ToolsTab', () => {
     });
     await screen.findByLabelText('toolPolicy.defaultMode');
     expect(await screen.findByText(/toolPolicy.fromGroup.*mcp:tickets/)).toBeTruthy();
-  });
-
-  describe('in an isolated workspace', () => {
-    beforeEach(() => {
-      isolation.current = { data: { isolated: true, allowed_tools: ['read_file'] }, loading: false, error: '' };
-    });
-
-    it('disables a tool outside the allowlist, with a hint, and does not toggle it', async () => {
-      renderTab();
-      await screen.findByLabelText('toolPolicy.defaultMode');
-      const blocked = screen.getByRole('checkbox', { name: 'Run shell' });
-      expect(blocked).toHaveAttribute('aria-disabled', 'true');
-      expect(blocked.className).toMatch(/cursor-not-allowed/);
-      expect(blocked).toHaveTextContent('isolation.toolHint');
-      fireEvent.click(blocked);
-      expect(page.current.toggleTool).not.toHaveBeenCalled();
-    });
-
-    it('leaves an allowed tool toggleable', async () => {
-      renderTab();
-      await screen.findByLabelText('toolPolicy.defaultMode');
-      const allowed = screen.getByRole('checkbox', { name: 'Read file' });
-      expect(allowed).not.toHaveAttribute('aria-disabled');
-      fireEvent.click(allowed);
-      expect(page.current.toggleTool).toHaveBeenCalledWith('read_file');
-    });
-
-    it('is a no-op when the workspace is not isolated', async () => {
-      isolation.current = { data: { isolated: false, allowed_tools: [] }, loading: false, error: '' };
-      renderTab();
-      await screen.findByLabelText('toolPolicy.defaultMode');
-      const card = screen.getByRole('checkbox', { name: 'Run shell' });
-      expect(card).not.toHaveAttribute('aria-disabled');
-      fireEvent.click(card);
-      expect(page.current.toggleTool).toHaveBeenCalledWith('run_shell');
-    });
   });
 });

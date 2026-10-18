@@ -3,12 +3,10 @@ somewhere isolated, and report what happened.
 
 ``base.py`` is the interface (``SandboxRequest``, ``SandboxResult``,
 ``SandboxProvider``); ``registry.py`` picks a provider by name;
-``docker.py``, ``local.py``, ``e2b.py`` and ``modal.py`` are the
-implementations. See docs/sandboxes.md.
+``docker.py`` and ``local.py`` are the implementations. See docs/sandboxes.md.
 
-Nothing is imported eagerly here beyond the interface: a provider's own SDK
-(``e2b``, ``modal``) is only imported when that provider is actually asked
-for, so their absence never breaks anything that does not use them.
+Nothing is imported eagerly here beyond the interface: a provider is only
+imported when it is actually asked for.
 """
 from __future__ import annotations
 

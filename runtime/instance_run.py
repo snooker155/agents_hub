@@ -6,24 +6,15 @@ Started by the carrier as::
     python -m runtime.instance_run \\
         --instance-id <id> --agent-id <agent> \\
         [--workspace <abs_path>] [--log-file <path>] \\
-        [--write-stdout-to-log] [--http-port <port>]
+        [--write-stdout-to-log]
 
 One process per instance, alive until stopped. What it listens to:
 
-- **its mailbox**, always: the instance page, the hub's public address
-  (``/api/external/{token}/messages``), a direct HTTP port when it has one.
+- **its mailbox**, always: the instance page and the chat write to it.
   Each message is answered in a run of its own, with the history of the
   conversation it belongs to. Up to ``concurrency`` runs go at once, but never
   two of one conversation; the rest wait in the mailbox. The carrier is woken
   the moment a message is written (instances/wake.py) instead of polling.
-  A ``turn`` message (instances/inbox.py KIND_TURN) is a whole chat request
-  routed here by the backend (chat/routing.py): it runs the chat pipeline in
-  this process (chat/turns.py), which is how a chat, /v1, widget or Telegram
-  turn reaches a service replica. A ``job`` message (KIND_JOB) is one agent
-  invocation the backend hands over, an eval case, a replay, a decomposition,
-  the agent part of an entity chat (runtime/jobs.py). A replica of a runner
-  service has no agent of its own (``--agent-id`` omitted) and takes turns
-  and jobs only.
 - **tasks**, when the instance's ``take_tasks`` input is on: tasks assigned to
   its agent in its workspace (the orchestrator agent routes new ones instead),
   one at a time, in the workspace's ``node`` execution mode. That is the
@@ -148,26 +139,6 @@ def _secrets_scope(instance: Dict[str, Any], agent_id: str, extra_names=()):
 _CHANNEL_BY_ORIGIN = {"external": "external", "http": "http"}
 
 
-def _service_pin(service_id: Optional[str], agent_id: str) -> Optional[int]:
-    """The agent version a service pins, when it names one that exists."""
-    if not service_id:
-        return None
-    try:
-        from services import store as service_store
-        raw = (service_store.get(str(service_id)) or {}).get("agent_version")
-        if raw is None:
-            return None
-        from agents import versions as agent_versions
-        if agent_versions.get_version_row(agent_id, int(raw)) is None:
-            _logger.warning("service %s pins version %s of %s, which is gone; answering with the live definition",
-                            service_id, raw, agent_id)
-            return None
-        return int(raw)
-    except Exception:  # noqa: BLE001 - an unreadable service answers with the live definition, logged
-        _logger.warning("could not read the version pin of service %s", service_id, exc_info=True)
-        return None
-
-
 def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                    message: Dict[str, Any]) -> Optional[str]:
     """Answer one claimed mailbox message in a run of its own. Returns the run id.
@@ -183,12 +154,6 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
     body = str(message.get("body") or "").strip()
     msg_id = str(message.get("msg_id") or "")
     conversation_id = message.get("conversation_id")
-    if str(message.get("kind") or "") == instance_inbox.KIND_TURN:
-        from chat import turns as chat_turns
-        return chat_turns.execute_turn(instance_id, workspace, message)
-    if str(message.get("kind") or "") == instance_inbox.KIND_JOB:
-        from runtime import jobs as runner_jobs
-        return runner_jobs.execute_job(instance_id, workspace, message)
     instance = instance_store.get(instance_id) or {}
     if not agent_id:
         log(f"Message {msg_id[:12]} dropped: this runner has no agent of its own")
@@ -197,10 +162,6 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
     if not body:
         return None
     service_id = instance.get("service_id") or None
-    # The service's version pin (services/store.py ``agent_version``): a
-    # plain message to a pinned service is answered by that version, the
-    # same as a chat turn routed to it (chat/turns.py).
-    pin = _service_pin(service_id, agent_id)
 
     from agents.agent_factory import create_agent
     from agents.agent_invoke import invoke_agent
@@ -228,7 +189,6 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
             input=body, instance_id=instance_id, message_origin=origin,
             conversation_id=conversation_id, carrier_run=True, inbox_msg_id=msg_id,
             **({"service_id": service_id} if service_id else {}),
-            agent_version_pin=pin,
         )
         instance_inbox.attach_run(msg_id, run_id)
         instance_registry.mark_active(instance_id, run_id, body[:200])
@@ -236,8 +196,7 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                                      {"msg_id": msg_id, "conversation_id": public_cid})
         stop_cb = RunStopCallback(run_id)
         with _secrets_scope(instance, agent_id):
-            agent = create_agent(agent_id, workspace=workspace,
-                                 **({"definition_version": pin} if pin is not None else {}))
+            agent = create_agent(agent_id, workspace=workspace)
             with open(log_file, "w", encoding="utf-8", buffering=1) as lf:
                 lf.write(f"[{_now()}] Instance message run\n")
                 lf.write(f"[{_now()}] instance_id={instance_id} msg_id={msg_id} "
@@ -341,14 +300,6 @@ def _task_build_pin(task: Any, run_id: str, agent_id: str) -> Dict[str, Any]:
     return out
 
 
-def _runnable_here(tasks):
-    """Leave out tasks another hub synced in (hubsync/copies.py): they run
-    where they were created, and their results come back by sync."""
-    from hubsync import copies
-    synced_in = copies.task_copies()
-    return [t for t in tasks if str(t.id) not in synced_in] if synced_in else tasks
-
-
 def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str],
                        scope: str) -> int:
     """Run every task assigned to this agent in the workspace, one at a time.
@@ -370,7 +321,7 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
         return 0
 
     assigned = [
-        t for t in _runnable_here(tasks_service.list_tasks())
+        t for t in tasks_service.list_tasks()
         if t.assigned_agent_type == agent_id
         and t.agent_state == AgentState.assigned
         and task_in_workspace(t, scope)
@@ -502,7 +453,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
     from agents.agent_factory import create_agent
     from managers.run_manager import _upsert_run, _update_run, _utc_now_iso, run_log_path
 
-    tasks = _runnable_here(tasks_service.list_tasks())
+    tasks = tasks_service.list_tasks()
     try:
         from workspace import get_workspace_metadata as _get_ws_meta
         orch_cfg = _get_ws_meta(scope).get("orchestrator", {})
@@ -540,7 +491,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
         except Exception as exc:  # noqa: BLE001 - one task's container handling does not stop the sweep
             log(f"[warn] container handling failed for {str(t.id)[:8]}: {exc}")
     if touched:
-        tasks = _runnable_here(tasks_service.list_tasks())
+        tasks = tasks_service.list_tasks()
 
     def _is_container(t) -> bool:
         return str(t.id) in container_ids
@@ -905,8 +856,6 @@ def main() -> None:
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--write-stdout-to-log", action="store_true",
                         help="Mirror stdout into --log-file (used in Docker)")
-    parser.add_argument("--http-port", type=int, default=None,
-                        help="Also answer on this port directly (runtime/http_server.py)")
     args = parser.parse_args()
 
     if args.write_stdout_to_log and args.log_file:
@@ -918,15 +867,6 @@ def main() -> None:
     os.environ.setdefault("AGENT_INSTANCE_ID", args.instance_id)
     log(f"=== Instance {args.instance_id} starting, agent={args.agent_id or 'runner'} ===")
     signal.signal(signal.SIGTERM, _on_sigterm(args.instance_id))
-
-    if args.http_port and args.agent_id:
-        try:
-            from runtime.http_server import start_http_server_thread
-            start_http_server_thread(args.instance_id, args.agent_id, args.http_port,
-                                     workspace=args.workspace, log_file=args.log_file)
-            log(f"Direct HTTP port {args.http_port} open")
-        except Exception as exc:  # noqa: BLE001 - the instance serves its inbox without the direct port
-            log(f"[warn] Could not start the HTTP server: {exc}")
 
     try:
         InstanceLoop(args.instance_id, args.agent_id, args.workspace).run()

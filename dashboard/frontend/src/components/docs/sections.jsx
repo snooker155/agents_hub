@@ -2,7 +2,7 @@
  * Registry of the Docs sections and the corpus id to section lookup.
  */
 import {
-  Activity, AudioLines, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck, Cpu,
+  Activity, AudioLines, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
   Database, DollarSign, Download, Factory, FileText, FlaskConical, Folder, FolderGit2, Gamepad2,
   Gauge, Globe, GraduationCap, HardDriveDownload, HelpCircle, History, Images, KeyRound, Layers,
   MessageCircle, MessageSquareCode, Navigation, Network, Plug, Radio, Repeat, Rocket,
@@ -47,7 +47,6 @@ export const GROUPS = [
       guide('assistant', 'assistant', AudioLines, ['assistant']),
       { id: 'workspaces', key: 'workspaces', icon: Folder, render: WorkspacesDoc },
       { id: 'projects', key: 'projects', icon: FolderGit2, render: ProjectsDoc },
-      guide('project-deployments', 'projectDeployments', Rocket, ['project-deployments']),
       guide('files', 'files', FileText, ['files']),
       { id: 'tasks', key: 'tasks', icon: CheckSquare, render: TasksDoc },
       { id: 'plan', key: 'plan', icon: CalendarClock, render: PlanDoc },
@@ -63,7 +62,6 @@ export const GROUPS = [
       { id: 'skills', key: 'skills', icon: GraduationCap, render: SkillsDoc },
       { id: 'orchestrator', key: 'orchestrator', icon: Network, render: OrchestratorDoc },
       { id: 'teams', key: 'teams', icon: UsersRound, render: TeamsDoc },
-      guide('registry', 'registry', ClipboardCheck, ['registry']),
       guide('agent-loop', 'agentLoop', Gauge, ['agent-loop', 'tool-policy', 'guardrails']),
       guide('steering', 'steering', Navigation, ['steering', 'handoffs', 'page-chat']),
     ],
@@ -89,24 +87,20 @@ export const GROUPS = [
     key: 'operations',
     items: [
       { id: 'instances', key: 'instances', icon: Radio, render: InstancesDoc },
-      guide('services', 'services', Server, ['services']),
-      guide('deployments', 'deployments', Layers, ['deployments', 'environments', 'sandboxes']),
+      guide('deployments', 'deployments', Layers, ['deployments', 'sandboxes']),
       { id: 'containers', key: 'containers', icon: Box, render: ContainersDoc },
       { id: 'models', key: 'models', icon: Brain, render: ModelsDoc },
-      guide('local-models', 'localModels', Cpu, ['local-models', 'hub-as-provider', 'model-structure']),
       { id: 'costs', key: 'costs', icon: DollarSign, render: CostsDoc },
       { id: 'providers', key: 'providers', icon: SettingsIcon, render: ProvidersDoc },
       { id: 'connectors', key: 'connectors', icon: Send, render: ConnectorsDoc },
-      guide('health', 'health', Activity, ['service-health', 'runbook', 'slo', 'system-workspace']),
+      guide('health', 'health', Activity, ['service-health', 'runbook', 'system-workspace']),
       guide('production', 'production', ServerCog, ['deployment', 'scaling', 'workers', 'storage', 'backup']),
     ],
   },
   {
     key: 'access',
     items: [
-      guide('accounts', 'accounts', KeyRound, ['identity', 'sso', 'scim', 'api-keys', 'secrets', 'audit']),
-      guide('widget', 'widget', MessageSquareCode, ['widget']),
-      guide('integrations', 'integrations', Share2, ['notifications', 'telegram', 'github-app', 'a2a', 'connections']),
+      guide('integrations', 'integrations', Share2, ['notifications', 'secrets']),
     ],
   },
   {

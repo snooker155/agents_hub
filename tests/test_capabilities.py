@@ -95,7 +95,7 @@ def test_explain_shape_for_the_editor():
 # ── Channel-level ingest ──────────────────────────────────────────────────────
 
 def test_untrusted_channels_grant_ingest():
-    assert caps.channel_capabilities("telegram") == {INGESTS_UNTRUSTED}
+    assert caps.channel_capabilities("tracker_sync") == {INGESTS_UNTRUSTED}
     assert caps.channel_capabilities("git_issue") == {INGESTS_UNTRUSTED}
     assert caps.channel_capabilities("chat") == set()
     assert caps.channel_capabilities(None) == set()

@@ -7,11 +7,10 @@ future scrape-adjacent tool) can call it directly, the same reason
 ``common/health.py`` sits apart from ``dashboard/backend/routes/health.py``.
 
 Kept cheap on purpose: every number below comes from a handful of aggregate
-SQL queries (``GROUP BY``, ``COUNT``, ``SUM``) or from the small in-memory
-structures ``common.leases``, ``common.run_queue`` and ``notify.outbound``
-already keep for the health page. Nothing here calls ``load_runs()`` — a
-scrape target that gets polled every fifteen seconds must never be the query
-that loads the whole run table.
+SQL queries (``GROUP BY``, ``COUNT``, ``SUM``) or from small in-memory
+counters. Nothing here calls ``load_runs()``: a scrape target that gets
+polled every fifteen seconds must never be the query that loads the whole
+run table.
 
 Never raises. One collector failing (a missing table on a fresh database, an
 unreadable price catalog) drops that metric rather than the whole page: an
@@ -203,51 +202,6 @@ def collect() -> List[Metric]:
     _emit(lines, "agents_hub_runs_running", "Runs currently in a running state.",
           "gauge", [({}, running)])
 
-    try:
-        from common import run_queue
-        qstats = run_queue.stats()
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("run_queue collector failed", exc_info=True)
-        qstats = {}
-    _emit(lines, "agents_hub_run_queue",
-          "Launch-queue rows by status (common/run_queue.py); empty everywhere "
-          "except AGENTS_HUB_ROLE=api/worker deployments.",
-          "gauge", [({"status": s}, qstats.get(s, 0))
-                    for s in ("queued", "leased", "running", "done", "failed")])
-    _emit(lines, "agents_hub_run_queue_oldest_seconds",
-          "Age in seconds of the oldest still-queued launch.", "gauge",
-          [({}, qstats.get("oldest_queued_seconds", 0.0))])
-
-    try:
-        from notify import outbound
-        obstats = outbound.stats()
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("outbox collector failed", exc_info=True)
-        obstats = {"pending": 0, "dead": 0}
-    _emit(lines, "agents_hub_outbox",
-          "Outbox rows waiting to be delivered, and rows given up on after "
-          "MAX_ATTEMPTS.", "gauge",
-          [({"state": "pending"}, obstats.get("pending", 0)),
-           ({"state": "dead"}, obstats.get("dead", 0))])
-
-    try:
-        from common import leases
-        lease_rows = leases.all_leases()
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("leases collector failed", exc_info=True)
-        lease_rows = []
-    age_samples = [({"role": r["role"]}, r["age_seconds"]) for r in lease_rows
-                   if r.get("age_seconds") is not None]
-    held_samples = [({"role": r["role"], "owner": r.get("owner") or ""},
-                      0 if r.get("expired") else 1) for r in lease_rows]
-    _emit(lines, "agents_hub_lease_age_seconds",
-          "Seconds since a singleton role's lease was last renewed.",
-          "gauge", age_samples)
-    _emit(lines, "agents_hub_lease_held",
-          "1 if the named owner currently holds this role's lease, 0 if it has "
-          "lapsed (the row is kept for one look back at who had it).",
-          "gauge", held_samples)
-
     tokens = _tokens_by_workspace()
     _emit(lines, "agents_hub_tokens_total",
           "Total tokens (input + output) recorded per workspace.", "gauge",
@@ -264,48 +218,14 @@ def collect() -> List[Metric]:
     # published as a false all-zero reading.
 
     try:
-        from common.config import hub_role
-        role = hub_role()
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("hub_role collector failed", exc_info=True)
-        role = "unknown"
-    try:
         from common.leases import owner_id
         instance = owner_id()
     except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
         log.debug("owner_id collector failed", exc_info=True)
         instance = "unknown"
     _emit(lines, "agents_hub_info",
-          "Constant 1, labeled with this process's role and instance id.",
-          "gauge", [({"role": role, "instance": instance}, 1)])
-
-    try:
-        from common.slo import evaluate as evaluate_slo
-        slo = evaluate_slo()
-        objectives = slo.get("objectives") or {}
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("slo collector failed", exc_info=True)
-        objectives = {}
-    start_p95 = objectives.get("start_p95") or {}
-    if start_p95.get("value_seconds") is not None:
-        # Summary convention: one quantile line per sample this window holds
-        # (just the one, p95 — a full histogram is common/slo.py's job to
-        # grow if a second quantile earns its place).
-        _emit(lines, "agents_hub_run_start_seconds",
-              "Seconds between a run's record being created and it actually "
-              "starting (common/slo.py), the p95 over the SLO window.",
-              "summary", [({"quantile": "0.95"}, start_p95["value_seconds"])])
-        _emit(lines, "agents_hub_run_start_seconds_count",
-              "Samples behind the p95 above.", "gauge", [({}, start_p95.get("sample", 0))])
-    breach_samples = []
-    for objective_key, objective in objectives.items():
-        status = objective.get("status")
-        if status in ("ok", "breach"):
-            breach_samples.append(({"objective": objective_key}, 1 if status == "breach" else 0))
-    _emit(lines, "agents_hub_slo_breach",
-          "1 when an SLO objective is in breach right now, 0 when it holds; "
-          "the label omitted while there is not yet enough data to judge it.",
-          "gauge", breach_samples)
+          "Constant 1, labeled with this process's instance id.",
+          "gauge", [({"instance": instance}, 1)])
 
     _collect_operator_metrics(lines)
     return lines

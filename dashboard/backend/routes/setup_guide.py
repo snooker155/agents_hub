@@ -2,8 +2,7 @@
 The guided setup's routes (common/setup_guide.py, docs/assistant.md "Guided setup").
 
 ``GET /api/setup-guide`` is the person's guide: every step with its status,
-what is next, whether the guide runs and how far a voice download has got
-(each read moves that download on, common/setup_ops.py ``advance_work``).
+what is next and whether the guide runs.
 ``POST /api/setup-guide`` starts, skips, marks or ends it. The browser says
 whether the welcome tour was taken (``tour_done``), since only it knows.
 
@@ -39,8 +38,7 @@ class FirstModel(BaseModel):
 
 
 def _read(principal, tour_done: Optional[bool]) -> dict:
-    from common import setup_guide, setup_ops
-    setup_ops.advance_work(principal)
+    from common import setup_guide
     return setup_guide.guide(principal, tour_done=tour_done)
 
 

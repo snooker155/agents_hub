@@ -1,7 +1,7 @@
 """The lock file: what an ``ah apply`` created, so the next one updates it.
 
 One entry per declared resource, keyed by its address (``agent/researcher``,
-``environment/sandbox``). An entry records the hub id the resource got, the
+``deployment/digest``). An entry records the hub id the resource got, the
 content hash of the declared spec, and for every field the file declares two
 hashes: ``d``, the declared value as it was applied, and ``o``, the value the
 hub held right after. The pair is what makes the plan honest about two
@@ -16,7 +16,7 @@ different things:
 The file is JSON with sorted keys and a fixed indent, so a second apply that
 changes nothing writes the same bytes and a diff of it in a repository shows
 exactly the resources that moved. ``Lock()`` is an in-memory lock, for a caller
-(the kits route) that keeps the entries somewhere other than a file.
+that keeps the entries somewhere other than a file.
 """
 from __future__ import annotations
 

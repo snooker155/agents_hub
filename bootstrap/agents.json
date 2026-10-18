@@ -328,7 +328,10 @@
         "run_agent_tool",
         "search_docs",
         "read_doc",
-        "generate_image"
+        "generate_image",
+        "scene_camera",
+        "scene_light",
+        "scene_environment"
       ],
       "commands": [],
       "capacity": 1,
@@ -339,66 +342,11 @@
       "temperature": 0.0,
       "skills_enabled": false,
       "delegates": [
-        "modeler_3d",
         "web_view_builder"
       ],
       "handoffs": [
-        "modeler_3d",
         "web_view_builder"
       ]
-    },
-    {
-      "id": "modeler_3d",
-      "name": "3D Modeler",
-      "type": "langchain",
-      "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Models 3D objects, parts and scenes with a real geometry engine (headless Blender), one operation at a time, in a scene3d view the user watches fill in: builds the mesh, previews and validates it, lights and frames the scene, adds controls, exports glb/obj/stl and reports the view_id back.",
-      "domain": "System",
-      "system": true,
-      "tools": [
-        "view_get",
-        "view_apply_ops",
-        "view_add_control",
-        "view_remove_control",
-        "view_revert",
-        "view_snapshot",
-        "view_add_asset",
-        "create_view",
-        "view_annotate",
-        "scene_camera",
-        "scene_light",
-        "scene_environment",
-        "mesh_new",
-        "mesh_select",
-        "mesh_group",
-        "mesh_extrude",
-        "mesh_inset",
-        "mesh_bevel",
-        "mesh_transform",
-        "mesh_subdivide",
-        "mesh_delete",
-        "mesh_merge",
-        "mesh_normals",
-        "mesh_validate",
-        "mesh_stats",
-        "mesh_preview",
-        "mesh_history",
-        "mesh_revert",
-        "mesh_export",
-        "list_files",
-        "read_file",
-        "search_text",
-        "search_docs",
-        "read_doc"
-      ],
-      "commands": [],
-      "capacity": 1,
-      "memory_type": "none",
-      "memory_data": null,
-      "default_workspace_only": false,
-      "shared": false,
-      "temperature": 0.0,
-      "skills_enabled": false
     },
     {
       "id": "web_view_builder",
@@ -1199,8 +1147,7 @@
         "list_teams_tool",
         "list_loops_tool",
         "list_scenarios_tool",
-        "list_projects_tool",
-        "db_list_connections"
+        "list_projects_tool"
       ],
       "commands": [],
       "capacity": 1,
@@ -1230,9 +1177,6 @@
         "search_memory",
         "read_memory",
         "calculator",
-        "db_list_connections",
-        "db_query",
-        "db_schema",
         "run_agent_tool",
         "search_docs",
         "read_doc"
@@ -1259,9 +1203,6 @@
       "domain": "data",
       "system": true,
       "tools": [
-        "db_list_connections",
-        "db_schema",
-        "db_query",
         "calculator",
         "list_files",
         "read_file",

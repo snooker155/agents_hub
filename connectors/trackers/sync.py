@@ -1,10 +1,9 @@
 """
-Import / refresh tracker issues (Jira, Linear) as project tasks.
+Import / refresh Jira issues as project tasks.
 
 The same idempotent mapping connectors/git/issue_sync.py uses for repo
 issues, keyed on one more field: a tracker issue carries both an opaque
-``number`` (for Jira, the same as its human key; for Linear, its
-identifier) and a ``status`` — the tracker's own workflow status name, kept
+``number`` (the same as its human key) and a ``status`` — the tracker's own workflow status name, kept
 alongside the plain open/closed ``state`` since the Projects page shows all
 three. Reuses the exact status rules a re-sync never breaks:
 
@@ -18,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from connectors.channels.store import in_workspace
+from connectors.store import in_workspace
 from projects.models import Project
 from tasks import service as tasks_service
 from tasks.models import CreatedBy, TaskStatus
@@ -43,18 +42,18 @@ def sync_tracker_issues(project: Project) -> dict[str, int]:
     Returns {"imported": n, "updated": n, "total": n}.
     Raises TrackerError / ValueError on configuration problems.
 
-    Uses the tracker connector of the project's workspace (its own Jira or
-    Linear when it defines one, else the default workspace's), whoever calls:
+    Uses the tracker connector of the project's workspace (its own Jira when
+    it defines one, else the default workspace's), whoever calls:
     a tool in a run, the Projects page's route, a scheduled sync.
     """
     tracker = project.tracker
     provider_name = str(tracker.provider or "none")
-    if provider_name not in ("jira", "linear"):
+    if provider_name != "jira":
         raise ValueError("Project has no tracker configured. Set one on the Projects page first")
     remote_id = tracker.remote_id
     if not remote_id:
         raise ValueError(
-            "Project tracker has no remote_id — pick a Jira project or Linear team first"
+            "Project tracker has no remote_id: pick a Jira project first"
         )
 
     workspace = getattr(project, "workspace", None) or None
@@ -66,7 +65,7 @@ def sync_tracker_issues(project: Project) -> dict[str, int]:
         if t.project_id != project.id:
             continue
         src = getattr(t, "external_source", None) or {}
-        if src.get("provider") in ("jira", "linear") and src.get("number") is not None:
+        if src.get("provider") == "jira" and src.get("number") is not None:
             existing[_source_key(src.get("provider"), src.get("remote_id"), src.get("number"))] = t
 
     folder = project_folder_name(project.name)

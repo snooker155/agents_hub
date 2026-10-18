@@ -16,14 +16,12 @@ some tools have always carried (see the end of this page).
 ## Hooks
 
 Hooks are configured per workspace, under a `hooks` key in the workspace
-metadata, which only the workspace's owner sets (Settings, tool policy, or
-`PUT /api/workspaces/{name}/policy`). A `<workspace>/.hooks.json` file is never
+metadata (Settings, tool policy, or `PUT /api/workspaces/{name}/policy`). A `<workspace>/.hooks.json` file is never
 run: agents write into the workspace folder, and a hook from there would run a
 command on the hub's host or post a call anywhere on an agent's say so. When
 such a file is there, the tool policy block says so (`ignored_hooks_file`) and
-the owner may import it with `POST /api/workspaces/{name}/policy/import-hooks-file`,
-which validates it like a PUT. An [isolated workspace](isolation.md) never runs
-an `http` hook either.
+you may import it with `POST /api/workspaces/{name}/policy/import-hooks-file`,
+which validates it like a PUT.
 
 ```json
 {
@@ -91,7 +89,7 @@ body of a POST for an HTTP one:
 ## Run hooks
 
 `before_run` and `after_run` see a whole run of an agent, in chat, in a task,
-in a delegated run and on a service replica alike. They take the same
+and in a delegated run alike. They take the same
 `command` and `http` hooks, the same `timeout` and `fail_closed`, and the same
 exit codes and answers as the tool events.
 
@@ -232,25 +230,16 @@ and steering work as usual).
   workspace, or `AGENTS_HUB_TOOL_APPROVAL_TIMEOUT`.
 - **Stop** ends the wait; the call does not run.
 
-Who may answer: the run's owner (the conversation's owner) or an admin; outside
-`multi` mode, the operator. An agent's own credential never can. Every answer
-is an audit row (`tool.approval`), and the call's policy trail and its
-`tool.policy` audit row carry `human_approved` or `human_denied`. A chat
-reopened while its turn waits shows the card again.
+Who may answer: you. An agent's own credential never can. The call's policy
+trail carries `human_approved` or `human_denied`. A chat reopened while its
+turn waits shows the card again.
 
-The same happens for an agent the turn delegates to, and when the turn runs on
-a service replica: the replica records and reads the waiting call through the
-run state transport, the way it takes steering messages.
+The same happens for an agent the turn delegates to.
 
 In the [assistant](assistant.md#voice)'s thread a card can also be answered
-by voice: a short spoken yes or no while the card waits settles it, and its
-audit row carries `"via": "voice"`. A connection card never is: its secret is
+by voice: a short spoken yes or no while the card waits settles it. A
+connection card never is: its secret is
 typed into the card.
-
-Telegram, the widget, channels and `/v1` have nobody in front of a card, so
-there the gate refuses the call and tells the agent to say exactly what it
-wanted to run and wait. That is advisory: it stops the call, but the
-conversation, not the system, carries the decision.
 
 API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
 `GET /api/tool-approvals/{id}`, and `POST /api/tool-approvals/{id}` with
@@ -267,8 +256,8 @@ conversation carries `auto_approve`:
 
 - A call the gate would hold for a card is approved at once. The card is still
   recorded and shown, already resolved, marked "approved automatically"; its
-  row is decided by `auto mode`, and the policy trail and the `tool.policy`
-  audit row carry `auto_mode_approved`.
+  row is decided by `auto mode`, and the policy trail carries
+  `auto_mode_approved`.
 - A tool gated by its own `user_approved` argument (`run_flow_tool`,
   `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`, `run_scenario_tool`,
   `run_eval_tool`, `stop_run`, `stop_instance`, `restart_instance`,
@@ -278,17 +267,15 @@ conversation carries `auto_approve`:
   ahead.
 
 What it does not change: a call a rule refuses (a hook that denies, a
-guardrail, the capability guard, a budget) is still refused, since a refusal is
+guardrail, the capability guard) is still refused, since a refusal is
 not a confirmation; and a connection card still waits, because its secret is
 yours to type.
 
-It is honoured only from the Chat page and the assistant's thread. Telegram,
-the widget, channels and `/v1` ignore it. An admin can turn it off for a
-workspace (Settings, Tool policy, **Allow auto mode in chat**, or
+It is honoured only from the Chat page and the assistant's thread. You can
+turn it off for a workspace (Settings, Tool policy, **Allow auto mode in chat**, or
 `PUT /api/workspaces/{name}/policy` with `{"allow_auto_approve": false}`); the
 toggle is then disabled and the server drops the flag. The flag is checked per
-turn on the server, and written on the run record (`auto_approve`) so a run on
-a service replica or a run container reads the same answer.
+turn on the server, and written on the run record (`auto_approve`).
 
 ## What stays advisory
 

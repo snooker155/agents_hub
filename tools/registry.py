@@ -118,7 +118,6 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "view_compute": {"name": "Compute (precise)"},
     "fetch_url": {"name": "Fetch URL"},
     "run_code": {"name": "Run Code (sandboxed)"},
-    "map_on_nodes": {"name": "Map on Nodes (parallel)"},
     "browser_open": {"name": "Browser: Open"},
     "browser_read": {"name": "Browser: Read"},
     "browser_act": {"name": "Browser: Act"},
@@ -130,25 +129,6 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "create_eval_tool": {"name": "Create Eval Set"},
     "modify_eval_tool": {"name": "Modify Eval Set"},
     "web_log_recent": {"name": "Recent Web Calls"},
-    # Mesh tools (Blender engine): "Mesh: <Verb>" reads better in the agent
-    # editor than the mechanical "Mesh <Verb>" a title-cased id would give.
-    "mesh_new": {"name": "Mesh: New"},
-    "mesh_select": {"name": "Mesh: Select"},
-    "mesh_extrude": {"name": "Mesh: Extrude"},
-    "mesh_inset": {"name": "Mesh: Inset"},
-    "mesh_bevel": {"name": "Mesh: Bevel"},
-    "mesh_transform": {"name": "Mesh: Transform"},
-    "mesh_delete": {"name": "Mesh: Delete"},
-    "mesh_subdivide": {"name": "Mesh: Subdivide"},
-    "mesh_merge": {"name": "Mesh: Merge"},
-    "mesh_normals": {"name": "Mesh: Normals"},
-    "mesh_group": {"name": "Mesh: Group"},
-    "mesh_validate": {"name": "Mesh: Validate"},
-    "mesh_stats": {"name": "Mesh: Stats"},
-    "mesh_preview": {"name": "Mesh: Preview"},
-    "mesh_history": {"name": "Mesh: History"},
-    "mesh_revert": {"name": "Mesh: Revert"},
-    "mesh_export": {"name": "Mesh: Export", "requires_workspace": True},
 }
 
 
@@ -343,13 +323,11 @@ def _reasoning_specs() -> List[ToolSpec]:
 def _execution_specs() -> List[ToolSpec]:
     from tools.shell import run_shell
     from tools.run_code import run_code
-    from tools.node_map import map_on_nodes
     # run_code needs no workspace: it runs in a throwaway container and only
     # mounts the workspace (read-only) when the agent asks for it.
     return [
         spec_from_tool(run_shell, category="execution", requires_workspace=True),
         spec_from_tool(run_code, category="execution"),
-        spec_from_tool(map_on_nodes, category="execution"),
     ]
 
 
@@ -469,13 +447,6 @@ def _git_publish_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="project_management") for t in GIT_PUBLISH_TOOLS]
 
 
-def _project_deploy_specs() -> List[ToolSpec]:
-    # A project's deployment is a project action like its repo actions, so
-    # these sit under project_management next to git_publish.
-    from tools.project_deploy import PROJECT_DEPLOY_TOOLS
-    return [spec_from_tool(t, category="project_management") for t in PROJECT_DEPLOY_TOOLS]
-
-
 def _visualization_specs() -> List[ToolSpec]:
     from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
     from tools.graph_builder import GRAPH_BUILDER_TOOLS
@@ -537,10 +508,9 @@ def _documentation_specs() -> List[ToolSpec]:
 
 
 def _connector_specs() -> List[ToolSpec]:
-    # Tools that act through a connector (tools/connector_tools.py): a chat
-    # channel, an issue tracker, Google Workspace, Microsoft Graph, Notion,
-    # Confluence, a read-only database. One category, "connectors", because
-    # each is only as available as the connector it sits on.
+    # Tools that act through a connector (tools/connector_tools.py): the
+    # issue tracker and the connection proposals. One category, "connectors",
+    # because each is only as available as the connector it sits on.
     from tools.connector_tools import connector_tools
     from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
     own = {t.name for t in WORKSPACE_MANAGEMENT_TOOLS}
@@ -556,12 +526,6 @@ def _workspace_management_specs() -> List[ToolSpec]:
     # time (common/workspace_scope.py).
     from tools.workspace_management import WORKSPACE_MANAGEMENT_TOOLS
     return [spec_from_tool(t, category="agent_management") for t in WORKSPACE_MANAGEMENT_TOOLS]
-
-
-def _geometry_specs() -> List[ToolSpec]:
-    from tools.geometry import GEOMETRY_TOOLS, create_geometry_tools
-    tools = [*GEOMETRY_TOOLS, *create_geometry_tools(None)]
-    return [spec_from_tool(t, category="geometry") for t in tools]
 
 
 # Order mirrors, as closely as reasonable, the order tool groups appeared in
@@ -588,7 +552,6 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _project_management_specs,
     _entity_run_specs,
     _git_publish_specs,
-    _project_deploy_specs,
     _visualization_specs,
     _web_specs,
     _browser_specs,
@@ -597,7 +560,6 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _system_ops_specs,
     _evals_specs,
     _documentation_specs,
-    _geometry_specs,
     _connector_specs,
 ]
 

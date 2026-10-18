@@ -11,7 +11,6 @@ namespace package (PEP 420), so importing it by name is not reliable.
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -145,17 +144,9 @@ def test_ensure_demo_workspace_seeds_everything():
     from instances import store as istore
     instances = istore.list_instances(limit=10, workspace="demo")["items"]
     assert {i["kind"] for i in instances} == {"resident", "task"}
-    assert {i["state"] for i in instances} == {"finished", "stopped"}
+    assert {i["state"] for i in instances} == {"finished"}
     writer = next(i for i in instances if i["label"] == "Demo Writer #1")
     assert writer["runs_count"] == 4  # the rename run + three writer chat turns
-
-    from services import store as sstore
-    services = sstore.list_services(workspace="demo")
-    assert len(services) == 1
-    assert services[0]["status"] == "paused"
-    replica = next(i for i in instances if i.get("service_id") == services[0]["service_id"])
-    assert replica["state"] == "stopped"
-    assert {e["kind"] for e in sstore.events(services[0]["service_id"])} >= {"created", "paused"}
 
     from files import service as files_service
     files = files_service.list_files("demo", limit=50)
@@ -235,8 +226,7 @@ def test_remove_demo_workspace_removes_everything_and_only_that():
     assert counts["tasks"] == 6
     assert counts["chats"] == 6
     assert counts["runs"] == 11
-    assert counts["instances"] == 3
-    assert counts["services"] == 1
+    assert counts["instances"] == 2
     assert counts["files"] == 6
     assert counts["workspace"] == 1
 
@@ -296,52 +286,3 @@ def test_install_sh_has_the_with_demo_flag():
 
 # ── fixture export ───────────────────────────────────────────────────────────
 
-def test_export_script_produces_both_files(tmp_path):
-    export_demo_fixtures = _load_export_script()
-
-    out_dir = tmp_path / "fixtures"
-    summary = export_demo_fixtures.build_fixtures(out_dir)
-
-    fixtures_path = out_dir / "fixtures.json"
-    streams_path = out_dir / "streams.json"
-    assert fixtures_path.is_file()
-    assert streams_path.is_file()
-
-    fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
-    assert fixtures["workspace"] == "demo"
-    assert "generated_at" in fixtures
-    responses = fixtures["responses"]
-    assert "GET /api/health" in responses
-    assert "GET /api/auth/mode" in responses
-    assert "GET /api/workspaces" in responses
-    assert "GET /api/agents" in responses
-    assert "GET /api/agents?workspace=demo" in responses
-    assert "GET /api/playground/environments" in responses
-    assert "GET /api/projects/demo_project_site/tasks" in responses
-    assert "GET /api/instances?workspace=demo" in responses
-    assert "GET /api/services?workspace=demo" in responses
-    assert "GET /api/files?limit=500&workspace=demo" in responses
-    assert "GET /api/marketplace/agents?workspace=demo" in responses
-    assert summary["request_keys"] == len(responses)
-    assert summary["request_keys"] > 15
-    assert summary["instances"] == 3
-    assert summary["services"] == 1
-    assert summary["files"] == 6
-
-    # The published demo hides the playground's quest designer from every
-    # agent list, and lists the one published demo agent on the marketplace.
-    for key in ("GET /api/agents", "GET /api/agents?workspace=demo",
-                "GET /api/marketplace/agents?workspace=demo"):
-        assert all(a["id"] != "plot-manager" for a in responses[key]), key
-    assert [a["id"] for a in responses["GET /api/marketplace/agents?workspace=demo"]] == ["demo_writer"]
-    assert any(a["id"] == "demo_support" for a in responses["GET /api/agents?workspace=demo"])
-
-    # Flat {run_id: [frames]}, no wrapper: the frontend's resolver
-    # (src/demo/resolver.js) reads this object's own keys as the set of
-    # recorded run ids, so a metadata key here would read as a bogus one.
-    streams = json.loads(streams_path.read_text(encoding="utf-8"))
-    assert len(streams) == summary["stream_runs"] == 11
-    for frames in streams.values():
-        events = [f["event"] for f in frames]
-        assert events[0] == "tool_start"
-        assert events[-1] == "done"

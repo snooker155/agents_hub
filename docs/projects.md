@@ -27,23 +27,8 @@ folder, a structure graph and a task tree.
 ## Preview
 
 The Preview tab shows the project's frontend (`project.frontend.url`, or
-`http://localhost:{port}` when only a port is configured). Two ways to look
-at it: **Direct**, the original same-origin iframe, and **Through the hub**
-(the default when a url or port is set), which loads the page through the
-same authenticated ticket proxy containers use, see docs/containers.md,
-"Preview through the hub", for how the ticket and the proxy work (a ticket
-lives ten minutes and is renewed while the preview is open). Through the
-hub is what makes a project preview usable from anywhere the dashboard itself
-is reachable, not only from a browser that can also reach the frontend's
-host directly.
-
-## Deploy
-
-The Deploy tab runs the project's frontend and backend from inside the hub:
-services proposed from the folder, one button to deploy, logs, a journal, a
-supervisor that restarts what dies, the app shown inside the hub, a share
-link that works from outside, and the same address for the agent's own
-browser. See [project deployments](project-deployments.md).
+`http://localhost:{port}` when only a port is configured) in an iframe next to
+the project.
 
 ## Gotchas
 
@@ -53,5 +38,4 @@ browser. See [project deployments](project-deployments.md).
   assigned and started.
 - Deleting a project does not delete its folder.
 
-Related: [workspaces](workspaces.md), [tasks](tasks.md), [agents](agents.md),
-[project deployments](project-deployments.md).
+Related: [workspaces](workspaces.md), [tasks](tasks.md), [agents](agents.md).

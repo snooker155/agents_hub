@@ -293,56 +293,6 @@ class DirectBackend:
         from dashboard.backend.routes.instances import get_instance_message as _get
         return _run_coroutine(_get(instance_id, msg_id))
 
-    # ---- services ----
-    # Agents kept running as replicas (docs/services.md); same direct-call
-    # shape as the instances above.
-
-    def list_services(self, workspace: Optional[str] = None) -> List[dict]:
-        from dashboard.backend.routes.services import list_services as _list
-        return _run_coroutine(_list(None, workspace=workspace))["items"]
-
-    def get_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import get_service as _get
-        return _run_coroutine(_get(service_id, None))
-
-    def create_service(self, body: dict) -> dict:
-        from dashboard.backend.routes.services import ServiceCreate
-        from dashboard.backend.routes.services import create_service as _create
-        return _run_coroutine(_create(ServiceCreate(**body), None))
-
-    def update_service(self, service_id: str, body: dict) -> dict:
-        from dashboard.backend.routes.services import ServiceUpdate
-        from dashboard.backend.routes.services import update_service as _update
-        return _run_coroutine(_update(service_id, ServiceUpdate(**body), None))
-
-    def pause_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import pause_service as _pause
-        return _run_coroutine(_pause(service_id, None))
-
-    def resume_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import resume_service as _resume
-        return _run_coroutine(_resume(service_id, None))
-
-    def delete_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import delete_service as _delete
-        return _run_coroutine(_delete(service_id))
-
-    def publish_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import publish_service as _publish
-        return _run_coroutine(_publish(service_id, None))
-
-    def unpublish_service(self, service_id: str) -> dict:
-        from dashboard.backend.routes.services import unpublish_service as _unpublish
-        return _run_coroutine(_unpublish(service_id, None))
-
-    def list_service_replicas(self, service_id: str) -> List[dict]:
-        from dashboard.backend.routes.services import list_replicas as _replicas
-        return _run_coroutine(_replicas(service_id))["items"]
-
-    def service_events(self, service_id: str) -> List[dict]:
-        from dashboard.backend.routes.services import service_events as _events
-        return _run_coroutine(_events(service_id))["items"]
-
     # ---- settings ----
 
     def version(self) -> dict:
@@ -360,21 +310,8 @@ class DirectBackend:
         dump = getattr(result, "model_dump", None)
         return dump(mode="json") if dump else dict(result)
 
-    # ---- auth: whoami and personal API keys ----
-    # Direct mode has no request and no session: it *is* the local operator
-    # (common.auth.LOCAL_OPERATOR_ID), whatever AUTH_MODE the configured
-    # database happens to be running under. Personal keys act as a named
-    # user, so they need one: either AGENTS_HUB_URL (a real request, a real
-    # principal, see HttpBackend below) or an explicit --user, which is an
-    # administrator operation run straight against the local database.
-
-    NO_USER_MESSAGE = (
-        "Personal keys act as a named user. Direct mode has none: it is the "
-        "local operator, the same in every AUTH_MODE. Either set AGENTS_HUB_URL "
-        "(and AGENTS_HUB_API_KEY or a session) to manage your own keys over "
-        "REST, or pass --user <username> to manage that account's keys "
-        "directly against the local database, as an administrator would."
-    )
+    # ---- auth: whoami ----
+    # Direct mode is the local operator, the one identity this hub has.
 
     def whoami(self) -> dict:
         from common.auth import LOCAL_OPERATOR_ID, ROLE_ADMIN
@@ -382,39 +319,6 @@ class DirectBackend:
         return {"id": LOCAL_OPERATOR_ID, "username": LOCAL_OPERATOR_ID,
                 "role": ROLE_ADMIN, "kind": "local", "via": "local",
                 "mode": identity.current_mode()}
-
-    def _resolve_user(self, username: Optional[str]) -> str:
-        if not username:
-            raise BackendError(self.NO_USER_MESSAGE)
-        from common import identity
-        user = identity.get_user_by_username(username)
-        if user is None:
-            raise BackendError(f"no such user: {username}")
-        return user["id"]
-
-    def list_api_keys(self, username: Optional[str] = None) -> List[dict]:
-        from common import api_keys
-        return api_keys.list_keys(self._resolve_user(username))
-
-    def create_api_key(self, username: Optional[str] = None, name: str = "",
-                       workspaces: Optional[List[str]] = None,
-                       expires_in_days: Optional[int] = None) -> dict:
-        from common import api_keys
-        user_id = self._resolve_user(username)
-        try:
-            key, record = api_keys.create_key(
-                user_id, name=name, workspaces=workspaces,
-                expires_in_days=expires_in_days)
-        except ValueError as e:
-            raise BackendError(str(e))
-        return {**record, "key": key}
-
-    def revoke_api_key(self, key_id: str, username: Optional[str] = None) -> dict:
-        from common import api_keys
-        user_id = self._resolve_user(username)
-        if not api_keys.revoke_key(key_id, user_id=user_id):
-            raise BackendError(f"no such key for {username}: {key_id}")
-        return {"revoked": True}
 
     # ---- generic transport (cli/openapi.py, the entity groups that reuse it) ----
     # Every command written against a hand-picked method above needs both
@@ -437,21 +341,14 @@ class DirectBackend:
         lifespan starts will not work through this path. None of the
         generated or hand-written entity commands do; see docs/cli.md.
 
-        Authenticates as the service credential
-        (``common.identity.service_token``), the same principal the hub's own
-        subprocess relays act as. In ``AUTH_MODE=single`` it is not read at
-        all (every request is the local operator regardless); in ``token`` and
-        ``multi`` it resolves to an admin principal, so a generic command run
-        locally acts as the operator running it rather than as nobody.
+        Every request is the local operator, so no credential is sent.
         """
         from fastapi.testclient import TestClient
         from dashboard.backend.main import app
-        from common import identity
 
         client = TestClient(app)
-        headers = {"Authorization": f"Bearer {identity.service_token()}"}
         try:
-            r = client.request(method, path, params=params, json=json, headers=headers)
+            r = client.request(method, path, params=params, json=json)
         except Exception as e:  # noqa: BLE001 - whatever the service raised is reported to the person as a BackendError
             raise _fail(e)
         if r.status_code >= 400:
@@ -647,56 +544,10 @@ class HttpBackend:
     def get_instance_message(self, instance_id, msg_id):
         return self._request("GET", f"/api/instances/{instance_id}/messages/{msg_id}")
 
-    # ---- services ----
-
-    def list_services(self, workspace=None):
-        params = {"workspace": workspace} if workspace else {}
-        result = self._request("GET", "/api/services", params=params)
-        return result.get("items", []) if isinstance(result, dict) else result
-
-    def get_service(self, service_id):
-        return self._request("GET", f"/api/services/{service_id}")
-
-    def create_service(self, body):
-        return self._request("POST", "/api/services", json=body)
-
-    def update_service(self, service_id, body):
-        return self._request("PATCH", f"/api/services/{service_id}", json=body)
-
-    def pause_service(self, service_id):
-        return self._request("POST", f"/api/services/{service_id}/pause", json={})
-
-    def resume_service(self, service_id):
-        return self._request("POST", f"/api/services/{service_id}/resume", json={})
-
-    def delete_service(self, service_id):
-        return self._request("DELETE", f"/api/services/{service_id}")
-
-    def publish_service(self, service_id):
-        return self._request("POST", f"/api/services/{service_id}/publish", json={})
-
-    def unpublish_service(self, service_id):
-        return self._request("DELETE", f"/api/services/{service_id}/publish")
-
-    def list_service_replicas(self, service_id):
-        result = self._request("GET", f"/api/services/{service_id}/replicas")
-        return result.get("items", []) if isinstance(result, dict) else result
-
-    def service_events(self, service_id):
-        result = self._request("GET", f"/api/services/{service_id}/events")
-        return result.get("items", []) if isinstance(result, dict) else result
-
     # ---- settings ----
 
     def get_settings(self):
         return self._request("GET", "/api/settings")
-
-    # ---- auth: whoami and personal API keys ----
-    # A request over REST carries whatever common.auth.auth_headers() finds
-    # in the environment (AGENTS_HUB_API_KEY first among the personal-key
-    # credentials); the key acts as its owner, so ``username`` here names
-    # nobody but the caller and is accepted only for symmetry with
-    # DirectBackend's signature — see cli/main.py, which warns when it is set.
 
     def version(self):
         return self._request("GET", "/api/system/version")
@@ -708,17 +559,6 @@ class HttpBackend:
 
     def whoami(self):
         return self._request("GET", "/api/auth/me")
-
-    def list_api_keys(self, username=None):
-        return self._request("GET", "/api/auth/keys")
-
-    def create_api_key(self, username=None, name="", workspaces=None, expires_in_days=None):
-        body = {"name": name, "workspaces": workspaces, "expires_in_days": expires_in_days}
-        return self._request("POST", "/api/auth/keys", json=body)
-
-    def revoke_api_key(self, key_id, username=None):
-        self._request("DELETE", f"/api/auth/keys/{key_id}")
-        return {"revoked": True}
 
     # ---- generic transport: see DirectBackend.request ----
 

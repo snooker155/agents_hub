@@ -12,7 +12,6 @@ The hub, read only:
 - `list_tasks` / `list_scheduled`: the work in the workspace and what is scheduled.
 - `list_flows_tool`, `list_teams_tool`, `list_loops_tool`, `list_scenarios_tool`,
   `list_projects_tool`: what has been built so far.
-- `db_list_connections`: the read only database connections in the workspace.
 
 What this agent does NOT do:
 - Create, edit, run, schedule or delete anything, in any workspace

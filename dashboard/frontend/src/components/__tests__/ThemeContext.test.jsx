@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '../ThemeContext';
 import { useTheme } from '../theme';
-import * as paletteApi from '../../api/palette';
 import * as summaryApi from '../../api/workspaceSummary';
 import { rampFromColor } from '../../lib/palette';
 
@@ -16,8 +15,6 @@ describe('ThemeProvider palette resolution', () => {
     localStorage.clear();
     document.documentElement.removeAttribute('style');
     document.documentElement.classList.remove('dark');
-    // 404: no account preference to ask for (mirrors AUTH_MODE outside multi).
-    vi.spyOn(paletteApi, 'getMyPreferences').mockRejectedValue({ response: { status: 404 } });
     vi.spyOn(summaryApi, 'loadWorkspaceSummary').mockRejectedValue({ response: { status: 404 } });
   });
 
@@ -64,7 +61,6 @@ describe('ThemeProvider palette resolution', () => {
 
     render(<ThemeProvider><Probe /></ThemeProvider>);
 
-    await waitFor(() => expect(paletteApi.getMyPreferences).toHaveBeenCalled());
     await waitFor(() => expect(summaryApi.loadWorkspaceSummary).not.toHaveBeenCalled());
     expect(document.documentElement.style.getPropertyValue('--brand-600')).toBe('');
   });

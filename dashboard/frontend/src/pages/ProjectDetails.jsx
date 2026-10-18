@@ -7,7 +7,6 @@ import {
   syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
-import DeployPanel from '../components/projects/DeployPanel';
 import TrackerCard from '../components/projects/TrackerCard';
 import ProjectGraph from '../components/flow/ProjectGraph';
 import PlannerChat from '../components/flow/PlannerChat';
@@ -607,7 +606,6 @@ export default function ProjectDetails() {
           {[
             ...TABS,
             ...(project.type === 'code' || (project.repo?.type && project.repo.type !== 'none') ? ['Repository'] : []),
-            'Deploy',
           ].map(tab => (
             <button
               key={tab}
@@ -1004,10 +1002,6 @@ export default function ProjectDetails() {
             </div>
           )}
         </div>
-      )}
-
-      {activeTab === 'Deploy' && (
-        <DeployPanel project={project} />
       )}
 
       {/* Publish branch modal */}

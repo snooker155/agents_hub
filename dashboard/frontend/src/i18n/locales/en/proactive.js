@@ -2,7 +2,7 @@
 // agent page's Pulse tab and the tick feed under it.
 export default {
   title: 'Pulse',
-  intro: 'An agent with a pulse wakes up on its own schedule, looks at its sources, acts within a budget, and writes to you only when it has something to say. Every tick is a task of this agent.',
+  intro: 'An agent with a pulse wakes up on its own schedule, looks at its sources, acts within its limits, and writes to you only when it has something to say. Every tick is a task of this agent.',
   save: 'Save',
   saved: 'Pulse saved.',
   saveFailed: 'Could not save the pulse.',
@@ -15,10 +15,7 @@ export default {
   wokeStarted: 'A tick was started.',
   wokeSkipped: 'The tick was skipped: {{outcome}}.',
   timezone: 'Timezone',
-  dailyBudget: 'Daily budget, USD',
   maxRuns: 'Ticks per day',
-  tickBudget: 'Budget per tick, USD',
-  tickBudgetHint: 'Copied onto each tick\'s task. Empty follows the workspace\'s run limit.',
   zeroMeansNone: '0 means no cap.',
   state: {
     on: 'On',
@@ -27,7 +24,7 @@ export default {
     schedule: 'Schedule: {{schedule}}',
     nextTick: 'Next tick: {{when}}',
     pending: "{{count}} events waiting",
-    today: 'Today: {{runs}} of {{maxRuns}} ticks, ${{spent}} of ${{budget}}',
+    today: 'Today: {{runs}} of {{maxRuns}} ticks, ${{spent}} spent',
   },
   brief: {
     title: 'Brief',
@@ -62,12 +59,7 @@ export default {
       file: "Workspace file changed",
       task: "Task status changed",
       eval: "Eval run failed",
-      telegram: "Unanswered Telegram message",
       agent: "Another agent",
-      slack: "Unanswered Slack message",
-      discord: "Unanswered Discord message",
-      teams: "Unanswered Teams message",
-      mail: "Unanswered email",
       watch: "Watcher noticed a change",
     },
     filters: {
@@ -83,12 +75,7 @@ export default {
     title: 'Deliver an acted tick to',
     hint: 'A quiet tick is never delivered. A blocked one is delivered once per reason.',
     dashboard: 'Inbox',
-    telegram: 'Telegram',
-    slack: 'Slack',
     webhook: 'Webhook',
-    discord: 'Discord',
-    teams: 'Teams',
-    mail: 'Email',
   },
   feed: {
     title: 'Ticks',
@@ -105,8 +92,6 @@ export default {
       busy_other: '{{count}} ticks skipped, the previous one was still running',
       rate_one: '{{count}} tick skipped, the day\'s tick limit was reached',
       rate_other: '{{count}} ticks skipped, the day\'s tick limit was reached',
-      budget_one: '{{count}} tick skipped, the day\'s budget was spent',
-      budget_other: '{{count}} ticks skipped, the day\'s budget was spent',
       disabled_one: '{{count}} tick skipped, the pulse was off',
       disabled_other: '{{count}} ticks skipped, the pulse was off',
     },
@@ -120,7 +105,6 @@ export default {
     quiet_hours: 'quiet hours',
     busy: 'busy',
     rate: 'tick limit',
-    budget: 'budget',
     disabled: 'off',
   },
 };

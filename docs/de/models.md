@@ -65,12 +65,8 @@ Die Tabelle wurde gegen die API gemessen (`providers/reasoning_profile.py`). Anb
 
 API-Schlüssel und Basis-URLs liegen in den [Einstellungen](settings.md), nicht hier. Diese Seite behandelt, welche Modelle es gibt und was sie kosten. Lokale Anbieter (Ollama, LM Studio) und eigene OpenAI-kompatible Backends werden auf dieselbe Weise konfiguriert.
 
-## Lokale Modelle
-
-Ein Ollama, das Sie betreiben, und die eigene llama.cpp-Runtime des Hubs werden ebenfalls von dieser Seite aus verwaltet: Ollama-Modelle laden und löschen, GGUF-Dateien von Hugging Face herunterladen, sie laden und entladen. Ein Modell, das die Runtime lädt, wird hier unter dem Anbieter `hub-local` hinzugefügt und aktiviert, und beim Entladen wieder deaktiviert. Siehe [local models](local-models.md).
-
 ## Spezialmodelle
 
 Bild-, Video-, Sprach- und Transkriptionsmodelle sowie die eigenen Modelle eines Workspace sind keine Chat-Modelle und stehen nicht im Katalog. Der Reiter **Spezialmodelle** wählt sie für den Workspace, der in der Kopfzeile gewählt ist, im selben Formular wie in den Einstellungen dieses Workspace. Siehe [special models](special-models.md).
 
-Verwandt: [settings](settings.md), [costs](costs.md), [local models](local-models.md), [special models](special-models.md).
+Verwandt: [settings](settings.md), [costs](costs.md), [special models](special-models.md).

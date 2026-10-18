@@ -1,5 +1,5 @@
 """
-Connectors per workspace (connectors/channels/store.py, routes/connectors.py):
+Connectors per workspace (connectors/store.py, routes/connectors.py):
 a connector lives in the workspace that defines it, and the default
 workspace's live everywhere.
 """
@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import pytest
 
-from connectors.channels.store import ChannelStore, in_workspace
+from connectors.store import ConnectorStore, in_workspace
 
 
 @pytest.fixture
 def store():
-    return ChannelStore("scope_probe", secret_fields=("api_token",))
+    return ConnectorStore("scope_probe", secret_fields=("api_token",))
 
 
 def test_the_default_definition_lives_everywhere(store):
@@ -85,36 +85,3 @@ def test_the_routes_work_per_workspace(monkeypatch):
     assert removed.status_code == 200 and removed.json()["source"] == "default"
     assert client.delete("/api/connectors/jira/config").status_code == 400
     assert client.get("/api/connectors/jira/config", params={"workspace": "nope"}).status_code == 404
-
-
-def test_default_database_connections_live_everywhere(monkeypatch):
-    from connectors.databases import store as db_store
-    shared = db_store.create_connection(workspace="default", name="warehouse", kind="sqlite", dsn="/tmp/w.db")
-    own = db_store.create_connection(workspace="team-a", name="warehouse", kind="sqlite", dsn="/tmp/a.db")
-    other = db_store.create_connection(workspace="team-b", name="crm", kind="sqlite", dsn="/tmp/b.db")
-    usable_a = {c["id"] for c in db_store.usable_connections("team-a")}
-    assert usable_a == {shared["id"], own["id"]}
-    # A name of the workspace's own wins over the default's; another
-    # workspace's connection is not found, by name or by id.
-    assert db_store.find_connection("team-a", "warehouse")["id"] == own["id"]
-    assert db_store.find_connection("team-c", "warehouse")["id"] == shared["id"]
-    assert db_store.find_connection("team-a", "crm") is None
-    assert db_store.find_connection("team-a", other["id"]) is None
-    assert db_store.find_connection("team-a", shared["id"])["id"] == shared["id"]
-
-
-def test_the_database_list_route_adds_the_defaults_on_request():
-    from fastapi.testclient import TestClient
-    from connectors.databases import store as db_store
-    from dashboard.backend.main import app
-    from workspace import create_workspace_folder
-    create_workspace_folder("team-a")
-    db_store.create_connection(workspace="default", name="warehouse", kind="sqlite", dsn="/tmp/w.db")
-    db_store.create_connection(workspace="team-a", name="crm", kind="sqlite", dsn="/tmp/a.db")
-    client = TestClient(app)
-    own = client.get("/api/databases/connections", params={"workspace": "team-a"}).json()
-    assert [c["name"] for c in own] == ["crm"]
-    both = client.get("/api/databases/connections",
-                      params={"workspace": "team-a", "include_default": "true"}).json()
-    assert {(c["name"], c["workspace"]) for c in both} == {("crm", "team-a"), ("warehouse", "default")}
-    assert all("dsn" not in c for c in both)

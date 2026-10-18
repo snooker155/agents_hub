@@ -3,8 +3,7 @@
  *
  * Choose: a cloud voice (OpenAI or Google; OpenAI's speech model picked
  * among the newest, the fastest and the HD one; a voice for each page
- * language), the hub's own runtime (a Piper voice per language, downloaded in
- * the background) or the browser's own voice.
+ * language) or the browser's own voice.
  *
  * Check: meet the assistant. It says hello out loud (a real turn: the model,
  * then the speech model, each sentence in its language's voice), the person
@@ -15,18 +14,17 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import {
-  Check, Cloud, Cpu, Loader2, Mic, MicOff, Play, RotateCcw, Square, Volume2, X,
+  Check, Cloud, Loader2, Mic, MicOff, Play, RotateCcw, Square, Volume2, X,
 } from 'lucide-react';
 import { LANGUAGES, useI18n } from '../../../i18n';
 import { firstRunOp } from '../../../api/firstRun';
 import { sampleAssistantVoice } from '../../../api/assistant';
 import LiveMark from '../../liveMark/LiveMark';
-import useSetupGuide from '../../setup/useSetupGuide';
 import { browserSpeechAvailable } from '../../assistant/useSpeaker';
 import {
   ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';
-import { PROVIDER_LABELS, errorText, localSetStarted, voiceLabel } from '../firstRunModel';
+import { PROVIDER_LABELS, errorText, voiceLabel } from '../firstRunModel';
 
 /** A distinct voice for each language by default; the person can change any. */
 const DEFAULT_VOICES = {
@@ -54,13 +52,12 @@ function defaultVoices(provider, spec) {
 
 // ── choose ───────────────────────────────────────────────────────────────────
 
-function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, language }) {
+function ChooseVoice({ options, optionsError, refreshCtx, onSaved, next, language }) {
   const { t } = useI18n();
   const cloud = Object.entries(options?.voice?.cloud || {}).filter(([, v]) => v.connected);
-  const local = options?.voice?.local;
   const [picked, setChoice] = useState('');
   // With nothing else on offer the browser's own voice is the choice.
-  const choice = picked || (options && !cloud.length && !local?.available ? 'browser' : '');
+  const choice = picked || (options && !cloud.length ? 'browser' : '');
   const [voices, setVoices] = useState({});
   // The speech model per provider; the first offered is the default.
   const [models, setModels] = useState({});
@@ -92,8 +89,6 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
         await firstRunOp('voice_cloud', {
           provider, voice: map[language] || namesOf(provider, spec)[0], voices: map, ...(model ? { model } : {}),
         });
-      } else if (choice === 'local') {
-        await firstRunOp('voice_local', {});
       }
       await refreshCtx();
       await onSaved(choice === 'browser' ? 'browser' : 'hub');
@@ -104,7 +99,6 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
     }
   };
 
-  const localSize = local ? (local.speech || []).find((s) => s.id === local.default_speech)?.size : '';
   const order = languageOrder(language);
 
   return (
@@ -174,28 +168,6 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
               )}
             </div>
           ))}
-          {local?.available && (
-            <div className="space-y-2">
-              <ChoiceCard
-                icon={Cpu}
-                title={t('firstRun.voice.local')}
-                detail={t('firstRun.voice.localDetail', { size: localSize || '' })}
-                selected={choice === 'local'}
-                onClick={() => setChoice('local')}
-                testId="first-run-voice-local"
-              />
-              {choice === 'local' && local.languages && (
-                <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 space-y-1.5" data-testid="first-run-voice-local-languages">
-                  <p className="text-xs text-gray-500">{t('firstRun.voice.perLanguageLocal')}</p>
-                  {order.filter((l) => local.languages[l.code]).map((l) => (
-                    <p key={l.code} className="text-sm text-gray-700">
-                      <span className="font-medium">{l.flag} {l.label}:</span> {local.languages[l.code]}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           <ChoiceCard
             icon={Volume2}
             title={t('firstRun.voice.browser')}
@@ -205,9 +177,6 @@ function ChooseVoice({ options, optionsError, ctx, refreshCtx, onSaved, next, la
             testId="first-run-voice-browser"
           />
         </div>
-      )}
-      {ctx?.local_set && localSetStarted(ctx) && (
-        <p className="mt-3 text-sm text-center text-gray-400">{t('firstRun.voice.setNote')}</p>
       )}
       <ErrorLine>{error}</ErrorLine>
     </StepFrame>
@@ -285,7 +254,7 @@ function LanguageVoices({ assistant, language }) {
   );
 }
 
-function VoiceCheck({ assistant, onResult, downloading }) {
+function VoiceCheck({ assistant, onResult }) {
   const { t } = useI18n();
   const [stage, setStage] = useState('idle');
   // The next thing to press comes into view as the check goes on.
@@ -371,7 +340,7 @@ function VoiceCheck({ assistant, onResult, downloading }) {
 
       <div className="flex flex-col items-center gap-3">
         {stage === 'idle' && (
-          <button type="button" onClick={greet} disabled={downloading}
+          <button type="button" onClick={greet}
             className="flex items-center gap-2 rounded-full bg-indigo-600 px-6 py-3 text-white font-semibold shadow-sm hover:bg-indigo-700 disabled:opacity-40"
             data-testid="first-run-greet">
             <Volume2 className="w-5 h-5" />{t('firstRun.voice.greet')}
@@ -428,15 +397,11 @@ export default function VoiceStep({
   ctx, options, optionsError, refreshCtx, next, assistant, onChecked, configured,
 }) {
   const { t, language } = useI18n();
-  const settled = Boolean(ctx?.voice) || localSetStarted(ctx);
+  const settled = Boolean(ctx?.voice);
   const was = configured?.voice;
   // Set before this run opened: say so first; Change goes to the normal choice.
   const [phase, setPhase] = useState(was ? 'configured' : settled ? 'check' : 'choose');
   const [result, setResult] = useState(null);
-  const { guide } = useSetupGuide();
-  const work = guide?.work;
-  const downloading = Boolean(work && (work.phase === 'starting' || work.phase === 'submitted'));
-  const setJob = ctx?.local_set && ['queued', 'running'].includes(ctx.local_set.status);
 
   const toCheck = async () => {
     await assistant.refreshVoice();
@@ -460,7 +425,7 @@ export default function VoiceStep({
 
   if (phase === 'choose') {
     return (
-      <ChooseVoice options={options} optionsError={optionsError} ctx={ctx} refreshCtx={refreshCtx}
+      <ChooseVoice options={options} optionsError={optionsError} refreshCtx={refreshCtx}
         onSaved={toCheck} next={next} language={language} />
     );
   }
@@ -487,14 +452,8 @@ export default function VoiceStep({
       )}
     >
       <div className="space-y-4">
-        {(downloading || setJob) && (
-          <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 flex items-start gap-2" data-testid="first-run-voice-downloading">
-            <Loader2 className="w-4 h-4 mt-0.5 animate-spin text-indigo-500 shrink-0" />
-            <span>{t('firstRun.voice.downloading')}{work?.jobs?.length ? ` ${work.jobs.filter((j) => j.status === 'done').length}/${work.jobs.length}` : ''}</span>
-          </div>
-        )}
         <LanguageVoices assistant={assistant} language={language} />
-        <VoiceCheck assistant={assistant} onResult={setResult} downloading={downloading || Boolean(setJob)} />
+        <VoiceCheck assistant={assistant} onResult={setResult} />
       </div>
     </StepFrame>
   );

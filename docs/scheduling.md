@@ -5,8 +5,7 @@ showing what fired.
 
 ## Job kinds
 
-- **notification** — a reminder. Lands in the inbox and the bell, and in
-  Telegram when asked.
+- **notification** — a reminder. Lands in the inbox and the bell.
 - **agent_task** — creates and starts a real task at the appointed time. With an
   agent named, that agent runs it; without, the orchestrator routes it.
 - **flow**: triggers a flow run, with an optional JSON seed merged into its
@@ -19,11 +18,9 @@ showing what fired.
   hours, daily budget and tick limit first, and the task's structured answer
   is written back onto the journal row as its outcome.
 
-`agent_task`, `flow` and `loop` jobs may also carry an `environment_id` (see
-[environments](environments.md)) and a `budget_usd`, both copied onto every
-task the job creates. These three kinds, shown as production deployments
-rather than reminders, get their own page: see
-[deployments](deployments.md).
+`agent_task`, `flow` and `loop` jobs, shown as production deployments rather
+than reminders, get their own page with the resources a job hands its runs
+and the firing journal: see [deployments](deployments.md).
 
 ## Recurrence
 
@@ -61,11 +58,11 @@ it is actually running — the health snapshot reports it directly. See
 
 ## Lease and idempotency
 
-Two backend replicas, or a tick that overlaps a slow previous fire, could
-otherwise fire the same job twice. Each job carries a lease (`lease_owner`,
+A tick that overlaps a slow previous fire could otherwise fire the same job
+twice. Each job carries a lease (`lease_owner`,
 `lease_until`): a tick claims due jobs atomically, under the store's file lock,
 and only a job whose lease is absent or expired can be claimed. The claim
-itself stamps the lease, so a second replica reading the same file a moment
+itself stamps the lease, so a second tick reading the same file a moment
 later sees it already held and skips the job.
 
 Firing also records `last_fired_slot`, the `run_at` a firing is for, before
@@ -76,7 +73,7 @@ already matches the slot and skips the side effect, only finishing the
 bookkeeping (clearing the lease, advancing `run_at`, counting the fire in
 `fire_count`). A job fires at most once per slot even across a crash.
 
-Calling `fire_job` directly on an unclaimed job (a tool, an admin action, a
+Calling `fire_job` directly on an unclaimed job (a tool or a
 run-now click) claims it first, so callers never need to do the two-step
 claim-then-fire dance by hand; a job whose lease is already held elsewhere
 comes back as locked instead of firing a second time.
@@ -87,7 +84,7 @@ Every firing attempt, including a skipped duplicate slot, writes one record:
 when, which slot, whether it was the automatic tick or a manual run-now
 (`trigger`), whether it succeeded, and on failure an error type and message.
 Error types are `agent_missing`, `flow_missing`, `loop_missing`, `loop_busy`,
-`budget_exceeded`, `capacity`, `workspace_missing` and `other`, classified
+`capacity`, `workspace_missing` and `other`, classified
 conservatively: an error matching nothing known lands in `other` rather than
 guessed at. `GET /api/plan/jobs/{id}/fires` reads one job's journal,
 `GET /api/plan/fires` reads across all of them; both take `only_errors` and
@@ -126,4 +123,4 @@ without resuming first. Full detail: [deployments](deployments.md).
   scheduler's own next run logic, so the hint and the job never disagree. A
   saved recurring job carries the same list as `upcoming_runs_at`.
 
-Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md), [proactive](proactive.md).
+Related: [tasks](tasks.md), [deployments](deployments.md), [proactive](proactive.md).

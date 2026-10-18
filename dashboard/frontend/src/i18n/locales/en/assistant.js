@@ -104,7 +104,6 @@ export default {
   },
   errors: {
     load: 'Could not load the conversation.',
-    budget: 'Your spending limit is used up, so I cannot do this. An administrator can raise it.',
     busy: 'I am still working on the last request. Wait for it or press Stop.',
     busyCard: 'Answer the card on the screen first.',
     turn: 'The request failed.',

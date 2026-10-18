@@ -53,8 +53,7 @@ The flow `system_maintenance` has two nodes, `triage` (System Doctor) then
 criterion: every finding of the diagnostics and the error search is either
 healthy again or has an open `[system]` task, and every code task has a
 branch with a passing test run attached. At most 2 iterations, a cost ceiling
-of $2, judged by a model. The workspace carries a monthly budget of $20 hard,
-$10 soft, which the Costs page can change.
+of $2, judged by a model.
 
 ## The schedule
 
@@ -144,8 +143,6 @@ its copy has been made.
 - `POST /api/system/schedule`: `{"enabled", "every_hours"}`
 - `POST /api/system/prune`: `{"older_than_days"}`
 - `GET /api/system/branches`: the branches, each with its fetch command
-
-Writes need an administrator under `AUTH_MODE=multi`.
 
 ## Deferred
 

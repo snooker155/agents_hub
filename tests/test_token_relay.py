@@ -31,11 +31,6 @@ def test_auth_headers_empty_without_token(monkeypatch):
     assert auth_headers() == {}
 
 
-def test_auth_headers_bearer_with_token(monkeypatch):
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    assert auth_headers() == {"Authorization": f"Bearer {TOKEN}"}
-
-
 # ---------------------------------------------------------------------------
 # SessionPublishCallback._send — the session-continuation relay
 # ---------------------------------------------------------------------------
@@ -46,19 +41,6 @@ def _capture_post(monkeypatch, captured):
         captured["url"] = url
         captured["headers"] = headers
     monkeypatch.setattr("requests.post", fake_post)
-
-
-def test_session_publish_callback_sends_bearer_header_when_token_set(monkeypatch):
-    from agents.callbacks.streaming import SessionPublishCallback
-
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    captured = {}
-    _capture_post(monkeypatch, captured)
-
-    cb = SessionPublishCallback("sess-1", "run-1", "agent-1", port=8000)
-    cb._send({"type": "token", "token": "hi"})
-
-    assert captured["headers"] == {"Authorization": f"Bearer {TOKEN}"}
 
 
 def test_session_publish_callback_sends_no_header_when_token_unset(monkeypatch):
@@ -88,16 +70,6 @@ import common.session_broker as sb  # noqa: E402
 _real_relay_notify = sb._relay_notify
 
 
-def test_relay_notify_sends_bearer_header_when_token_set(monkeypatch):
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    captured = {}
-    _capture_post(monkeypatch, captured)
-
-    _real_relay_notify("widgets", {"id": "1"})
-    assert sb.flush_relayed_notifications() == 1
-    assert captured["headers"] == {"Authorization": f"Bearer {TOKEN}"}
-
-
 def test_relay_notify_sends_no_header_when_token_unset(monkeypatch):
     monkeypatch.delenv("AGENTS_HUB_API_TOKEN", raising=False)
     captured = {}
@@ -111,33 +83,6 @@ def test_relay_notify_sends_no_header_when_token_unset(monkeypatch):
 # ---------------------------------------------------------------------------
 # cli.backend.HttpBackend._request — the CLI talking to a remote backend
 # ---------------------------------------------------------------------------
-
-
-def test_http_backend_sends_bearer_header_when_token_set(monkeypatch):
-    from cli.backend import HttpBackend
-
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    captured = {}
-
-    class FakeResponse:
-        content = b"{}"
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {}
-
-    def fake_request(method, url, params=None, json=None, headers=None, timeout=None):
-        captured["headers"] = headers
-        return FakeResponse()
-
-    monkeypatch.setattr("requests.request", fake_request)
-
-    backend = HttpBackend("http://example.invalid:9999")
-    backend._request("GET", "/api/health")
-
-    assert captured["headers"] == {"Authorization": f"Bearer {TOKEN}"}
 
 
 def test_http_backend_sends_no_header_when_token_unset(monkeypatch):
@@ -175,30 +120,10 @@ def test_http_backend_sends_no_header_when_token_unset(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_base_subprocess_env_carries_a_run_token_not_the_shared_one(monkeypatch):
-    # The shared token reaches the whole API; a run's process, where an
-    # agent's shell runs, gets a token of its own that reaches only the
-    # relay routes (common/run_tokens.py), even when the shared token sits in
-    # the backend's own environment.
-    from common import run_tokens
-    from common.config import settings
-    from common.subprocess_env import base_subprocess_env
-
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    monkeypatch.setattr(settings, "api_token", TOKEN)
-
-    env = base_subprocess_env("default", run_id="run-1", session_id="sess-1")
-    assert "AGENTS_HUB_API_TOKEN" not in env
-    assert "AGENTS_HUB_SERVICE_TOKEN" not in env
-    assert run_tokens.resolve(env[run_tokens.ENV])["run_id"] == "run-1"
-
-
 def test_base_subprocess_env_omits_token_when_unconfigured(monkeypatch):
-    from common.config import settings
     from common.subprocess_env import base_subprocess_env
 
     monkeypatch.delenv("AGENTS_HUB_API_TOKEN", raising=False)
-    monkeypatch.setattr(settings, "api_token", "")
 
     env = base_subprocess_env("default")
     assert "AGENTS_HUB_API_TOKEN" not in env

@@ -286,8 +286,6 @@ def start_batch_run(evalset: EvalSet, configs: List[RunConfig], workspace: Optio
             f"the projected batch cost ${projected['estimated_total_cost']:.4f} is over the "
             f"ceiling ${cost_ceiling:.2f}; a batch cannot stop half way, so raise the ceiling "
             "or run live")
-    from common.budget import check_budget
-    check_budget(workspace)
 
     run = EvalRun(eval_set_id=evalset.eval_set_id, workspace=workspace, configs=configs,
                   status=STATUS_PENDING, mode=MODE_BATCH)

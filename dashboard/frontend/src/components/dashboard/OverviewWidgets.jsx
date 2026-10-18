@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, AlertCircle, CheckCircle2, ChevronRight, CircleStop, Cpu, DollarSign, Globe, PauseCircle,
-  Server, TrendingUp, XCircle,
+  Activity, AlertCircle, CheckCircle2, ChevronRight, CircleStop, DollarSign,
+  TrendingUp, XCircle,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import {
-  fmtAgo, fmtBytes, fmtInt, fmtMs, fmtTokens, fmtUsd, runHref,
+  fmtAgo, fmtInt, fmtMs, fmtTokens, fmtUsd, runHref,
 } from './format';
 
 /*
@@ -195,9 +195,6 @@ export const CostsWidget = ({ costs }) => {
   const { t } = useI18n();
   const top = costs?.top_agents || [];
   const topMax = Math.max(...top.map((a) => a.cost), 0);
-  const budget = costs?.budget;
-  const cap = budget ? (budget.hard_limit_usd || budget.soft_limit_usd) : 0;
-  const used = cap ? Math.min(1, (budget.spend || 0) / cap) : 0;
   return (
     <Panel
       icon={DollarSign} iconColor="text-amber-500" testId="dash-costs"
@@ -214,20 +211,6 @@ export const CostsWidget = ({ costs }) => {
               hint={t('dashboard.overview.costs.tokens', { tokens: fmtTokens(costs?.tokens_30d) })}
             />
           </div>
-          {budget && (
-            <div className="mb-4" data-testid="dash-budget">
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>{t('dashboard.overview.costs.budget', { period: t(`dashboard.overview.costs.periods.${budget.period}`, { defaultValue: budget.period }) })}</span>
-                <span className="tabular-nums">{fmtUsd(budget.spend)} / {fmtUsd(cap)}</span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div
-                  className={`h-2 rounded-full ${budget.hard_exceeded ? 'bg-red-500' : budget.soft_exceeded ? 'bg-amber-400' : 'bg-indigo-400'}`}
-                  style={{ width: `${Math.max(2, used * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
           <DayBars
             testId="dash-costs-chart"
             days={costs?.per_day || []}
@@ -242,224 +225,6 @@ export const CostsWidget = ({ costs }) => {
                 <ShareRow key={a.key} label={a.key} value={fmtUsd(a.cost)} share={topMax ? a.cost / topMax : 0} />
               ))}
             </div>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-};
-
-const RUNTIME_SOURCES = ['hub', 'endpoint', 'voice', 'direct'];
-
-export const LocalModelsWidget = ({ local }) => {
-  const { t } = useI18n();
-  const usage = local?.usage;
-  const totals = usage?.totals || {};
-  const mem = local?.memory || {};
-  const ramUsed = mem.ram_total_bytes ? 1 - (mem.ram_available_bytes || 0) / mem.ram_total_bytes : null;
-  const top = usage?.top_models || [];
-  const topMax = Math.max(...top.map((m) => m.requests), 0);
-
-  let state;
-  if (!local || local.error) state = local?.error ? 'error' : 'unknown';
-  else if (!local.configured) state = 'off';
-  else if (local.ok) state = 'running';
-  else state = local.state || 'stopped';
-  const stateTone = {
-    running: 'bg-green-50 text-green-700 border-green-100',
-    error: 'bg-red-50 text-red-700 border-red-100',
-    failed: 'bg-red-50 text-red-700 border-red-100',
-  }[state] || 'bg-gray-50 text-gray-500 border-gray-200';
-
-  return (
-    <Panel
-      icon={Cpu} iconColor="text-violet-500" testId="dash-local-models"
-      title={t('dashboard.overview.local.heading')}
-      to="/models?tab=local" linkLabel={t('dashboard.overview.local.link')}
-      badge={(
-        <span className={`ml-2 text-[11px] px-2 py-0.5 rounded-full border font-medium ${stateTone}`}>
-          {t(`dashboard.overview.local.states.${state}`, { defaultValue: state })}
-        </span>
-      )}
-    >
-      {!local?.configured ? (
-        <p className="text-sm text-gray-400 italic">{t('dashboard.overview.local.notConfigured')}</p>
-      ) : !local.ok ? (
-        <p className="text-sm text-gray-400">
-          {local.error || (local.stopped_by_user ? t('dashboard.overview.local.stoppedByUser') : t('dashboard.overview.local.notRunning'))}
-        </p>
-      ) : (
-        <>
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <Tile label={t('dashboard.overview.local.loaded')} value={`${local.loaded.length}/${local.models}`} />
-            <Tile
-              label={t('dashboard.overview.local.calls')} value={fmtInt(totals.requests)}
-              hint={totals.errors ? t('dashboard.overview.local.errors', { count: totals.errors }) : undefined}
-              tone={totals.errors ? 'text-amber-700' : 'text-gray-800'}
-            />
-            <Tile label={t('dashboard.overview.local.avgTime')} value={totals.requests ? fmtMs(totals.duration_ms / totals.requests) : '—'} />
-          </div>
-          {ramUsed !== null && (
-            <div className="mb-3">
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>{t('dashboard.overview.local.ram')}</span>
-                <span className="tabular-nums">
-                  {fmtBytes(mem.ram_total_bytes - (mem.ram_available_bytes || 0))} / {fmtBytes(mem.ram_total_bytes)}
-                </span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div className={`h-2 rounded-full ${ramUsed > 0.9 ? 'bg-red-500' : ramUsed > 0.75 ? 'bg-amber-400' : 'bg-violet-400'}`} style={{ width: `${Math.max(2, ramUsed * 100)}%` }} />
-              </div>
-            </div>
-          )}
-          {local.usage_outdated && (
-            <p className="text-xs text-amber-700 mb-2">{t('dashboard.overview.local.restartNeeded')}</p>
-          )}
-          {usage && Object.keys(usage.by_source || {}).length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {RUNTIME_SOURCES.filter((s) => usage.by_source[s]).map((s) => (
-                <span key={s} className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600">
-                  {t(`localModels.runtimeUsage.sources.${s}`, { defaultValue: s })}
-                  <span className="font-semibold text-gray-800 tabular-nums">{fmtInt(usage.by_source[s])}</span>
-                </span>
-              ))}
-            </div>
-          )}
-          {top.length > 0 ? (
-            <div>
-              {top.slice(0, 4).map((m) => (
-                <ShareRow
-                  key={m.model} mono label={m.model} share={topMax ? m.requests / topMax : 0}
-                  value={[
-                    fmtInt(m.requests),
-                    m.tokens_per_second ? `${m.tokens_per_second} tok/s` : (m.avg_ms ? fmtMs(m.avg_ms) : null),
-                  ].filter(Boolean).join(' · ')}
-                />
-              ))}
-            </div>
-          ) : local.loaded.length > 0 ? (
-            <div className="space-y-1">
-              {local.loaded.map((m) => (
-                <div key={m.name} className="flex justify-between text-xs py-0.5">
-                  <span className="font-mono text-gray-600 truncate">{m.name}</span>
-                  <span className="text-gray-400 shrink-0">{m.kind}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400 italic">{t('dashboard.overview.local.nothingLoaded')}</p>
-          )}
-          {usage?.since && (
-            <p className="text-[11px] text-gray-400 mt-2">{t('dashboard.overview.local.since', { date: new Date(usage.since).toLocaleString() })}</p>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-};
-
-export const EndpointWidget = ({ endpoint, days }) => {
-  const { t } = useI18n();
-  const day = endpoint?.last_24h || {};
-  const win = endpoint?.window || {};
-  const top = endpoint?.top_models || [];
-  const topMax = Math.max(...top.map((m) => m.requests), 0);
-  return (
-    <Panel
-      icon={Globe} iconColor="text-sky-500" testId="dash-endpoint"
-      title={t('dashboard.overview.endpoint.heading')}
-      to="/models?tab=endpoint" linkLabel={t('dashboard.overview.endpoint.link')}
-    >
-      {endpoint?.error ? <SectionError message={endpoint.error} /> : (
-        <>
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <Tile
-              label={t('dashboard.overview.endpoint.calls24h')} value={fmtInt(day.requests)}
-              hint={day.errors ? t('dashboard.overview.endpoint.errors', { count: day.errors }) : undefined}
-              tone={day.errors ? 'text-amber-700' : 'text-gray-800'}
-            />
-            <Tile label={t('dashboard.overview.endpoint.tokens24h')} value={fmtTokens(day.total_tokens)} />
-            <Tile
-              label={t('dashboard.overview.endpoint.callsWindow', { days })} value={fmtInt(win.requests)}
-              hint={win.cost ? fmtUsd(win.cost) : undefined}
-            />
-          </div>
-          {win.requests > 0 ? (
-            <>
-              <DayBars
-                testId="dash-endpoint-chart"
-                days={endpoint?.per_day || []}
-                series={[{ key: 'requests', label: t('dashboard.overview.endpoint.calls'), color: 'bg-sky-400' }]}
-                height={56}
-              />
-              {top.length > 0 && (
-                <div className="mt-3">
-                  {top.slice(0, 4).map((m) => (
-                    <ShareRow key={m.key} mono label={m.key} value={fmtInt(m.requests)} share={topMax ? m.requests / topMax : 0} />
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-gray-400 italic">{t('dashboard.overview.endpoint.empty', { days })}</p>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-};
-
-export const ServicesWidget = ({ services }) => {
-  const { t } = useI18n();
-  const totals = services?.totals || {};
-  const items = services?.items || [];
-  return (
-    <Panel
-      icon={Server} iconColor="text-teal-500" testId="dash-services"
-      title={t('dashboard.overview.services.heading')}
-      to="/services" linkLabel={t('dashboard.overview.services.link')}
-    >
-      {services?.error ? <SectionError message={services.error} /> : (
-        <>
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <Tile
-              label={t('dashboard.overview.services.services')} value={fmtInt(totals.services)}
-              hint={totals.paused ? t('dashboard.overview.services.paused', { count: totals.paused }) : undefined}
-            />
-            <Tile label={t('dashboard.overview.services.replicas')} value={fmtInt(totals.replicas_live)} />
-            <Tile
-              label={t('dashboard.overview.services.turns24h')} value={fmtInt(totals.turns_24h)}
-              hint={totals.failed_24h ? t('dashboard.overview.services.failed', { count: totals.failed_24h }) : undefined}
-              tone={totals.failed_24h ? 'text-amber-700' : 'text-gray-800'}
-            />
-          </div>
-          {items.length > 0 ? (
-            <div className="space-y-1.5">
-              {items.map((s) => (
-                <Link
-                  key={s.service_id} to={`/services/${encodeURIComponent(s.service_id)}`}
-                  className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    {s.paused
-                      ? <PauseCircle className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                      : <span className={`w-2 h-2 rounded-full shrink-0 ${s.replicas_live > 0 ? 'bg-green-400' : 'bg-gray-300'}`} />}
-                    <span className="text-sm text-gray-700 truncate">{s.name}</span>
-                    {s.workspace && <span className="text-[11px] text-gray-400 truncate">{s.workspace}</span>}
-                  </span>
-                  <span className="flex items-center gap-3 text-xs text-gray-500 shrink-0 tabular-nums">
-                    <span title={t('dashboard.overview.services.replicasHint')}>
-                      {s.replicas_live}{s.replicas_max ? `/${s.replicas_max}` : ''}
-                    </span>
-                    <span title={t('dashboard.overview.services.turnsHint')}>
-                      {t('dashboard.overview.services.turns', { count: s.turns_24h })}
-                    </span>
-                  </span>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400 italic">{t('dashboard.overview.services.empty')}</p>
           )}
         </>
       )}

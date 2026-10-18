@@ -23,24 +23,15 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from cli.onboard import probe as P  # noqa: E402
-from common import identity, provider_env, setup_guide, setup_ops  # noqa: E402
-from common.auth import LOCAL_PRINCIPAL, Principal  # noqa: E402
+from common import provider_env, setup_guide, setup_ops  # noqa: E402
+from common.auth import LOCAL_PRINCIPAL  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -93,27 +84,6 @@ def _status(g, step):
 
 
 # ── provider settings in force ────────────────────────────────────────────────
-
-def test_a_saved_key_applies_at_once_and_marks_older_replicas_stale(no_keys):
-    from services import replicas
-    from common import code_version
-    before = provider_env.stamp()
-    replica = {"carrier_code": code_version.current(), "carrier_env": before}
-    assert not replicas.is_stale(replica)
-    provider_env.save({"ANTHROPIC_API_KEY": 'sk-"quoted"\\x', "DEFAULT_PROVIDER": "anthropic"})
-    assert os.environ["ANTHROPIC_API_KEY"] == 'sk-"quoted"\\x'
-    from common.config import settings
-    assert settings.anthropic_api_key == 'sk-"quoted"\\x'
-    assert provider_env.live()["DEFAULT_PROVIDER"] == "anthropic"
-    assert replicas.is_stale(replica)
-    # A replica from before replicas carried the stamp is judged by its code alone.
-    assert not replicas.is_stale({"carrier_code": code_version.current()})
-    child = provider_env.overlay({"ANTHROPIC_API_KEY": "old"})
-    assert child["ANTHROPIC_API_KEY"] == 'sk-"quoted"\\x'
-    # Saving again replaces the line instead of adding one.
-    provider_env.save({"ANTHROPIC_API_KEY": "sk-2"})
-    assert provider_env.env_file().read_text().count("ANTHROPIC_API_KEY") == 1
-
 
 def test_the_settings_page_key_reaches_the_process(no_keys, tmp_path, monkeypatch):
     from routes import settings as settings_routes
@@ -188,25 +158,11 @@ def test_the_demo_ticks_none_of_the_getting_started_steps(single, no_keys, ws, d
         assert _status(g, step) == "todo", step
 
 
-def test_each_person_has_a_guide_and_only_admins_see_the_setup(multi, no_keys, ws):
-    root = identity.create_user("root", PASSWORD, role="admin")
-    bob = identity.create_user("bob", PASSWORD, role="member")
-    admin = Principal(id=root["id"], username="root", role="admin")
-    member = Principal(id=bob["id"], username="bob", role="member")
-    assert {r["group"] for r in setup_guide.guide(member)["steps"]} == {"start"}
-    assert "people" in {r["id"] for r in setup_guide.guide(admin)["steps"]}
-    setup_guide.act(admin, "start")
-    assert setup_guide.guide(admin)["active"] and not setup_guide.guide(member)["active"]
-    with pytest.raises(setup_ops.SetupOpError) as refused:
-        setup_ops.perform("seed_demo", principal=member)
-    assert refused.value.code == "forbidden"
-
-
 def test_the_turn_sees_the_guide_only_while_it_runs(single, no_keys, ws):
     assert setup_guide.prompt_lines(LOCAL_PRINCIPAL) == []
     setup_guide.act(LOCAL_PRINCIPAL, "start")
     lines = setup_guide.prompt_lines(LOCAL_PRINCIPAL)
-    assert lines[0].startswith("Running: ") and "of 13 steps done" in lines[0]
+    assert lines[0].startswith("Running: ") and "of 12 steps done" in lines[0]
     assert any(line.startswith("Next: model.") for line in lines)
     assert any("propose_connection" in line for line in lines)
 
@@ -276,68 +232,6 @@ def test_a_cloud_voice_can_take_another_speech_model(single, no_keys, ws):
     assert (speech["model"], speech["options"]["voice"], speech["price_usd"]) == ("tts-1-hd", "coral", 0.03)
 
 
-class _Runtime:
-    """The hub's model runtime: answers, installs and downloads as jobs."""
-
-    def __init__(self, up=True):
-        self.up = up
-        self.jobs = {}
-
-    def __call__(self, timeout=None):
-        return self
-
-    def listing(self):
-        from providers.local_models import LocalModelError
-        if not self.up:
-            raise LocalModelError("unreachable")
-        return {"engines": {"whisper": True}, "models": []}
-
-    def install_engine(self, engine):
-        self.jobs[f"e-{engine}"] = {"status": "running", "percent": 10}
-        return {"job_id": f"e-{engine}"}
-
-    def download(self, repo, package=""):
-        self.jobs[f"d-{package}"] = {"status": "running", "percent": 40}
-        return {"job_id": f"d-{package}"}
-
-    def job(self, job_id):
-        return self.jobs[job_id]
-
-
-def test_a_local_voice_downloads_in_the_background(single, no_keys, ws, monkeypatch):
-    from providers import local_models as lm
-    from providers import special
-    runtime = _Runtime(up=False)
-    monkeypatch.setattr(lm, "RuntimeClient", runtime)
-    monkeypatch.setattr(lm, "runtime_configured", lambda: False)
-    with pytest.raises(setup_ops.SetupOpError) as none:
-        setup_ops.perform("voice_local", {})
-    assert none.value.code == "no_runtime"
-    monkeypatch.setattr(lm, "runtime_configured", lambda: True)
-    from providers import registry
-    monkeypatch.setattr(lm, "ensure_hub_local_backend", lambda: registry.upsert_backend(
-        {"id": "hub-local", "label": "This hub", "adapter": "openai", "base_url": "http://runtime/v1"}))
-    monkeypatch.setattr(setup_ops, "_in_backend", lambda: False)
-    setup_ops.perform("voice_local", {"speech": "piper-ru"})
-    speech = special.stored("default")["speech"]
-    assert speech["model"] == "piper-ru_RU-irina-medium"
-    # A Piper voice speaks one language: English and German get their own.
-    assert speech["languages"] == {"en": {"model": "piper-en_US-lessac-medium"},
-                                   "de": {"model": "piper-de_DE-thorsten-medium"}}
-    g = setup_guide.guide(LOCAL_PRINCIPAL)
-    assert _status(g, "voice") == "working" and "runtime" in g["steps"][2]["detail"]
-    runtime.up = True
-    setup_ops.advance_work(LOCAL_PRINCIPAL)
-    work = setup_guide.load_state(LOCAL_PRINCIPAL)["work"]
-    # whisper is installed already: one engine to install, four models to download.
-    assert [j["id"] for j in work["jobs"]] == ["e-piper", "d-faster-whisper-small", "d-piper-ru_RU-irina-medium",
-                                               "d-piper-en_US-lessac-medium", "d-piper-de_DE-thorsten-medium"]
-    for job in runtime.jobs.values():
-        job.update(status="done", percent=100)
-    setup_ops.advance_work(LOCAL_PRINCIPAL)
-    assert setup_guide.load_state(LOCAL_PRINCIPAL)["work"]["phase"] == "done"
-
-
 def test_the_first_model_from_the_welcome_window(single, no_keys, ws, probe):
     with pytest.raises(setup_ops.SetupOpError) as rejected:
         setup_ops.first_model("anthropic", "bad")
@@ -363,7 +257,6 @@ def test_setup_step_always_asks_and_the_card_says_what_changes():
     assert "setup_step" in ALWAYS_GATED
     sentence = describe_call("setup_step", {"operation": "choose_model", "provider": "openai", "model": "gpt-5.4"})
     assert sentence.startswith("Make openai/gpt-5.4 the hub's default model")
-    assert "piper" in describe_call("setup_step", '{"operation": "voice_local", "speech": "piper-en"}').lower()
     assert describe_call("setup_step", {"operation": "teleport"}) == ""
 
 

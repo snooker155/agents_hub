@@ -44,10 +44,8 @@ class _InlineThread:
 
 def test_the_decomposer_thread_runs_the_agent_with_the_run_id(monkeypatch, tmp_path):
     task_routes = _routes()
-    from services import jobs
 
     seen: dict = {}
-    monkeypatch.setattr(jobs, "enabled", lambda: False)
     monkeypatch.setattr(task_routes, "create_workspace_folder", lambda *a, **k: tmp_path)
     monkeypatch.setattr(task_routes, "create_agent", lambda *a, **k: _StrictAgent(seen))
     monkeypatch.setattr(task_routes.threading, "Thread", _InlineThread)

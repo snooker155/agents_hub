@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Activity, Box, Brain, Check, ChevronDown, Cpu, FileText, History, MessageSquare,
+  Activity, Brain, Check, ChevronDown, FileText, History, MessageSquare,
   Pencil, Plus, RefreshCw, RotateCw, Square, Trash2, Wrench, X,
 } from 'lucide-react';
 
@@ -18,7 +18,6 @@ import { StateBadge } from '../components/InstanceList';
 import { formatDuration, relativeTime } from '../components/instanceUtils';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import ProcessTab from '../components/instances/ProcessTab';
-import AccessTab from '../components/instances/AccessTab';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 
@@ -40,7 +39,6 @@ const CORE_TABS = [
 ];
 const RESIDENT_TABS = [
   { id: 'process', icon: Activity, key: 'process' },
-  { id: 'access', icon: Box, key: 'access' },
 ];
 
 function Stat({ label, value }) {
@@ -463,13 +461,6 @@ export default function InstanceDetail() {
           agent: instance.agent_id || t('instances.kinds.runner'),
           kind: t(`instances.kinds.${instance.kind}`, { defaultValue: instance.kind }),
         })}
-        badges={instance.service_id && (
-          <Link to={`/services/${instance.service_id}`}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100">
-            <Cpu className="w-3 h-3" />
-            {t('instances.replicaOf', { service: instance.service_name || instance.service_id })}
-          </Link>
-        )}
         actions={(
           <div className="flex items-center gap-2">
             <StateBadge state={instance.state} t={t} />
@@ -641,10 +632,6 @@ export default function InstanceDetail() {
 
       {activeTab === 'process' && resident && (
         <ProcessTab instance={instance} onInstanceUpdated={setInstance} />
-      )}
-
-      {activeTab === 'access' && resident && (
-        <AccessTab instance={instance} onInstanceUpdated={setInstance} />
       )}
 
       {streaming && (

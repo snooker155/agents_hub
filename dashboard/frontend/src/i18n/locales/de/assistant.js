@@ -99,7 +99,6 @@ export default {
   },
   errors: {
     load: 'Die Unterhaltung konnte nicht geladen werden.',
-    budget: 'Ihr Ausgabenlimit ist aufgebraucht, daher kann ich das nicht tun. Ein Administrator kann es erhöhen.',
     busy: 'Ich arbeite noch an der letzten Anfrage. Warten Sie oder drücken Sie Stopp.',
     busyCard: 'Beantworten Sie zuerst die Karte auf dem Bildschirm.',
     turn: 'Die Anfrage ist fehlgeschlagen.',

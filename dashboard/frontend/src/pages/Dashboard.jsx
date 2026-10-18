@@ -21,7 +21,6 @@ import {
   HardDrive,
   Gauge,
   LayoutDashboard,
-  Share2,
   KeyRound,
 } from 'lucide-react';
 import {
@@ -32,7 +31,6 @@ import {
   getInstancesSummary,
   listFlows,
   getSystemHealth,
-  listConnections,
 } from '../api';
 import { getProactiveSummary } from '../api/proactive';
 import { useWorkspace } from '../components/workspace';
@@ -41,9 +39,9 @@ import { poolName } from '../components/memoryManager/helpers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import {
-  Panel, LiveWidget, RunsWidget, CostsWidget, LocalModelsWidget, EndpointWidget, ServicesWidget,
+  Panel, LiveWidget, RunsWidget, CostsWidget,
 } from '../components/dashboard/OverviewWidgets';
-import { fmtBytes as formatBytes, fmtInt } from '../components/dashboard/format';
+import { fmtBytes as formatBytes } from '../components/dashboard/format';
 import BalancedColumns from '../components/dashboard/BalancedColumns';
 import PageLoader from '../components/PageLoader';
 const Dashboard = () => {
@@ -55,7 +53,6 @@ const Dashboard = () => {
   const [instanceCounts, setInstanceCounts] = useState({ live: 0, total: 0 });
   const [flows, setFlows] = useState([]);
   const [health, setHealth] = useState(null);
-  const [connections, setConnections] = useState([]);
   const [pulse, setPulse] = useState(null);
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,12 +64,11 @@ const Dashboard = () => {
       getInstancesSummary({ workspace: workspaceFilter }),
       listFlows(workspaceFilter),
       getSystemHealth(),
-      listConnections(workspaceFilter),
       getProactiveSummary(workspaceFilter),
       getStatsOverview(workspaceFilter),
     ])
       .then(([statsResp, agentsResp, memResp, instSummaryResp, flowsResp, healthResp,
-              connectionsResp, pulseResp, overviewResp]) => {
+              pulseResp, overviewResp]) => {
         // Each panel stands on its own: one failed endpoint must not blank the page.
         if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
         if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
@@ -82,9 +78,6 @@ const Dashboard = () => {
         }
         if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
         if (healthResp.status === 'fulfilled') setHealth(healthResp.value.data);
-        if (connectionsResp.status === 'fulfilled') {
-          setConnections(connectionsResp.value.data.connections || []);
-        }
         if (pulseResp.status === 'fulfilled') setPulse(pulseResp.value.data || null);
         if (overviewResp.status === 'fulfilled') setOverview(overviewResp.value.data || null);
       })
@@ -173,25 +166,9 @@ const Dashboard = () => {
           subtext={t('dashboard.stats.customPipelines')}
           to="/flows"
         />
-        {/* Only when something is attached. An install used purely to watch
-            external agents would otherwise have a front page about parts of the
-            product it does not use; one that has none should not be told about
-            a feature it has not asked for. */}
-        {connections.length > 0 && (
-          <StatCard
-            title={t('dashboard.stats.connections')}
-            value={connections.length}
-            icon={Share2}
-            color="bg-teal-500"
-            subtext={t('dashboard.stats.connectionsSub', {
-              runs: connections.reduce((acc, c) => acc + ((c.stats || {}).runs || 0), 0),
-            })}
-            to="/connections"
-            pulse={connections.some((c) => (c.stats || {}).running > 0)}
-          />
-        )}
-        {/* Proactive agents (docs/proactive.md): only once a pulse is on, for
-            the same reason as the connections card above. */}
+        {/* Proactive agents (docs/proactive.md): only once a pulse is on. An
+            install that has none should not be told about a feature it has
+            not asked for. */}
         {pulse?.totals?.agents > 0 && (
           <StatCard
             title={t('dashboard.stats.pulse')}
@@ -289,18 +266,15 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* What runs now, load and spend: runs, costs, local models, the /v1
-          endpoint and the agent services (GET /api/stats/overview), and the
-          memory pools, in two columns balanced by content. */}
+      {/* What runs now, load and spend: runs and costs
+          (GET /api/stats/overview), and the memory pools, in two columns
+          balanced by content. */}
       {overview && (
         <BalancedColumns
           items={[
             { key: 'live', node: <LiveWidget live={overview.live} generatedAt={overview.generated_at} /> },
             { key: 'runs', node: <RunsWidget runs={overview.runs} /> },
             { key: 'costs', node: <CostsWidget costs={overview.costs} /> },
-            { key: 'local', node: <LocalModelsWidget local={overview.local_models} /> },
-            { key: 'endpoint', node: <EndpointWidget endpoint={overview.endpoint} days={overview.days} /> },
-            { key: 'services', node: <ServicesWidget services={overview.services} /> },
             {
               key: 'memory',
               node: (
@@ -321,17 +295,12 @@ const Dashboard = () => {
 
 /* ── Sub-components ─────────────────────────────────────────── */
 
-// Background services and the singleton role each one runs under: a role's
-// lease held by any process (common/leases.py) means the service runs
-// somewhere, which this process's own flag cannot tell on a split deployment.
+// Background services of the backend process, as GET /api/health reports them.
 const BACKGROUND = [
-  { key: 'plan_scheduler', role: 'scheduler', label: 'serviceScheduler' },
-  { key: 'run_watchdog', role: 'watchdog', label: 'serviceWatchdog' },
-  { key: 'watchers', role: 'watchers', label: 'serviceWatchers' },
-  { role: 'services', label: 'serviceSupervisor' },
-  { role: 'outbox', label: 'serviceOutbox' },
+  { key: 'plan_scheduler', label: 'serviceScheduler' },
+  { key: 'run_watchdog', label: 'serviceWatchdog' },
+  { key: 'watchers', label: 'serviceWatchers' },
   { key: 'external_publisher', label: 'serviceLiveUpdates' },
-  { key: 'telegram_poller', role: 'telegram', label: 'serviceTelegram', optional: true },
 ];
 
 const SystemHealth = ({ health }) => {
@@ -341,20 +310,11 @@ const SystemHealth = ({ health }) => {
   const services = health.services || {};
   const storage = health.storage || {};
   const cache = health.agent_cache || {};
-  const cluster = health.cluster || {};
-  const queue = cluster.queue || {};
-  const outbox = cluster.outbox || {};
   const providers = health.providers || {};
   const activeKinds = Object.entries((health.entity_runs || {}).active_by_kind || {}).filter(([, n]) => n > 0);
   const cacheLookups = (cache.hits || 0) + (cache.misses || 0);
   const cacheHitRate = cacheLookups > 0 ? Math.round((cache.hits / cacheLookups) * 100) : null;
-  const held = new Set((cluster.leases || []).filter((l) => !l.expired).map((l) => l.role));
-
-  const background = BACKGROUND.map((b) => {
-    const own = b.key ? services[b.key] : undefined;
-    const state = own === true || (b.role && held.has(b.role)) ? true : (own ?? (b.role ? false : null));
-    return { ...b, state };
-  }).filter((b) => !b.optional || b.state === true);
+  const background = BACKGROUND.map((b) => ({ ...b, state: services[b.key] ?? null }));
 
   const keys = [
     ['openai_key_set', 'OpenAI'],
@@ -402,22 +362,14 @@ const SystemHealth = ({ health }) => {
 
         {/* Launch queue and delivery */}
         <div>
-          <HealthHeading icon={Layers} color="text-sky-500" label={t('dashboard.health.queue')} />
+          <HealthHeading icon={Layers} color="text-sky-500" label={t('dashboard.health.activeRuns')} />
           <div className="space-y-1.5">
-            <StorageRow label={t('dashboard.health.queueWaiting')} value={fmtInt(queue.queued)} warn={queue.queued > 0 && queue.oldest_queued_seconds > 60} />
-            <StorageRow label={t('dashboard.health.queueRunning')} value={fmtInt((queue.running || 0) + (queue.leased || 0))} />
             <StorageRow
-              label={t('dashboard.health.queueOldest')}
-              value={queue.queued > 0 ? t('dashboard.health.seconds', { count: Math.round(queue.oldest_queued_seconds || 0) }) : '—'}
+              label={t('dashboard.health.activeEntityRuns')}
+              value={activeKinds.length > 0
+                ? activeKinds.map(([k, n]) => `${t(`dashboard.health.kinds.${k}`, { defaultValue: k })}: ${n}`).join(' · ')
+                : '—'}
             />
-            <StorageRow label={t('dashboard.health.outboxPending')} value={fmtInt(outbox.pending)} />
-            <StorageRow label={t('dashboard.health.outboxDead')} value={fmtInt(outbox.dead)} warn={outbox.dead > 0} />
-            {activeKinds.length > 0 && (
-              <StorageRow
-                label={t('dashboard.health.activeEntityRuns')}
-                value={activeKinds.map(([k, n]) => `${t(`dashboard.health.kinds.${k}`, { defaultValue: k })}: ${n}`).join(' · ')}
-              />
-            )}
           </div>
         </div>
 
@@ -440,8 +392,6 @@ const SystemHealth = ({ health }) => {
                 </span>
               ))}
             </div>
-            <StorageRow label={t('dashboard.health.authMode')} value={t(`dashboard.health.authModes.${providers.auth_mode}`, { defaultValue: providers.auth_mode || '—' })} />
-            <StorageRow label={t('dashboard.health.role')} value={cluster.role || '—'} />
           </div>
         </div>
 

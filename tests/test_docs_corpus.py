@@ -73,7 +73,6 @@ def test_the_corpus_covers_every_system_agent_surface():
     ("why did my run fail", "sessions-and-runs"),
     ("how much does a scenario cost", "costs"),
     ("what is a workspace", "workspaces"),
-    ("telegram bot", "telegram"),
     ("is the service healthy", "service-health"),
     ("attach a skill to an agent", "skills"),
     ("import an agent from a git repository", "imported-agents"),

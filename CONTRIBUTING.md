@@ -44,16 +44,16 @@ ah up                           # or run commands directly: ah agent list
 
 ```bash
 pip install pytest pytest-xdist
-python -m pytest tests/ -q -n auto   # backend + CLI tests, one worker per core (about 2 minutes)
-python -m pytest tests/ -q           # the same in one process (about 8 minutes); this is what the Postgres job runs
+python -m pytest tests/ -q -n auto   # backend + CLI tests, one worker per core
+python -m pytest tests/ -q           # the same in one process, slower
 cd dashboard/frontend
 npx vitest run                       # frontend tests
 ```
 
-The suite is large (5600 tests) and safe to run in parallel: every test gets
+The suite is large and safe to run in parallel: every test gets
 its own SQLite file and `tmp_path` from `tests/conftest.py`. The long tail is
 the tests that start real processes (git in a throwaway repository, MCP
-servers, a worker, `python -X importtime`); `--durations=20` shows them. If
+servers, `python -X importtime`); `--durations=20` shows them. If
 pytest is slow to even start, check which plugins your interpreter autoloads
 (`opik`, `langsmith` and friends from an unrelated environment add seconds to
 every run): `-p no:opik`, or `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, or a `.venv`
@@ -322,10 +322,9 @@ git log --oneline -15   # see the house style
 Recent examples:
 
 ```
-f2894d6 Document external connections
-c7a5fb3 Add a Connect group to the sidebar
-5259c9c Connections in the UI: a list, a page, and where a run came from
-d4381c9 Connectors get their own page, out of Settings
+c165176 Chat auto mode: no banner, the toggle and an amber composer border say it is on
+935948a Flows: build and run one from chat, branch at run time
+76f947f Docs: the web search section back in one piece
 ```
 
 Rules:
@@ -358,7 +357,3 @@ the right to grant it. Forking to propose a contribution is allowed as long as
 the fork keeps the license.
 
 Security issues go through `SECURITY.md`, not a pull request.
-
-Single sign-on and SCIM sit apart in `ee/`, ready for a separate edition.
-Code outside `ee/` must not import from it, except behind
-`common.edition.enterprise_available()` (`tests/test_edition.py` checks this).

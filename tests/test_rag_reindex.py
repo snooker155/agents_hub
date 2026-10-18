@@ -37,9 +37,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture(autouse=True)

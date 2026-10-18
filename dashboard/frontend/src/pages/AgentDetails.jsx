@@ -6,7 +6,7 @@ import { useLiveRefetch } from '../components/stream';
 import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
-import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
+import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getInstancesSummary, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
@@ -32,7 +32,6 @@ import ToolsTab from '../components/agent/ToolsTab';
 import BehaviorTab from '../components/agent/BehaviorTab';
 import TasksTab from '../components/agent/TasksTab';
 import StartInstanceModal from '../components/instances/StartInstanceModal';
-import DeployServiceModal from '../components/services/DeployServiceModal';
 import CommandsTab from '../components/agent/CommandsTab';
 import ConfigTab from '../components/agent/ConfigTab';
 import VersionsTab from '../components/agent/VersionsTab';
@@ -73,10 +72,9 @@ const AgentDetails = () => {
   const [tasks, setTasks] = useState([]);
   // Live resident instances of this agent (started with Run), from the same
   // grouped count query the Agents grid uses (GET /instances/summary).
-  // The workspace's services: the agent's copies and their limits live there.
-  const [services, setServices] = useState([]);
+  // How many live copies (instances) the agent has.
+  const [liveInstanceCount, setLiveInstanceCount] = useState(0);
   const [showStartInstance, setShowStartInstance] = useState(false);
-  const [showDeploy, setShowDeploy] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -200,9 +198,6 @@ const AgentDetails = () => {
   const [sharingMessage, setSharingMessage] = useState('');
 
   // Workspace capacity overrides state
-  const [wsCapacities, setWsCapacities] = useState({});
-  const [wsCapacityEdits, setWsCapacityEdits] = useState({});
-  const [wsCapacitySaving, setWsCapacitySaving] = useState(null);
 
 
 
@@ -211,14 +206,13 @@ const AgentDetails = () => {
       const defaultChatWorkspace = selectedWorkspace || 'default';
       const page = { agent_id: id, limit: AGENT_PAGE_SIZE, ...(workspaceFilter ? { workspace: workspaceFilter } : {}) };
       const empty = { data: { items: [], total: 0 } };
-      const [agentResp, sessionsResp, runsResp, tasksResp, workspacesResp, wsCapResp, servicesResp, overrideResp, autoToolsResp, personalResp] = await Promise.all([
+      const [agentResp, sessionsResp, runsResp, tasksResp, workspacesResp, summaryResp, overrideResp, autoToolsResp, personalResp] = await Promise.all([
         getAgent(id, defaultChatWorkspace),
         getSessions(page).catch(() => empty),
         getMessages(page).catch(() => empty),
         getTasks(workspaceFilter),
         getWorkspaces(),
-        getAgentWorkspaceCapacities(id).catch(() => ({ data: {} })),
-        getServices({ workspace: workspaceFilter || undefined }).catch(() => ({ data: { items: [] } })),
+        getInstancesSummary({ workspace: workspaceFilter || undefined }).catch(() => ({ data: {} })),
         getAgentCapabilityOverride(id).catch(() => ({ data: null })),
         getAgentAutoTools(id, workspaceFilter || undefined).catch(() => ({ data: { tools: [] } })),
         getAgentPersonalMemory(id, selectedWorkspace || undefined).catch(() => ({ data: null })),
@@ -240,10 +234,9 @@ const AgentDetails = () => {
       setSelfDelegation(!!agentResp.data?.allow_self_delegation);
       setSessions({ items: sessionsResp.data?.items || [], total: sessionsResp.data?.total || 0 });
       setRuns({ items: runsResp.data?.items || [], total: runsResp.data?.total || 0 });
-      setServices(servicesResp.data?.items || []);
+      setLiveInstanceCount(summaryResp.data?.by_agent?.[id]?.live || 0);
       setTasks(tasksResp.data || []);
       setWorkspaces(workspacesResp.data || []);
-      setWsCapacities(wsCapResp.data || {});
       const savedTools = Array.isArray(agentResp.data?.tools) ? agentResp.data.tools : [];
       if (!toolsDraftDirty.current) {
         // Drop any plan-store ids a legacy config may still carry — they are
@@ -464,30 +457,6 @@ const AgentDetails = () => {
       console.error('Error erasing memory:', error);
     } finally {
       setIsUpdatingMemory(false);
-    }
-  };
-
-  const handleSaveWsCapacity = async (wsName) => {
-    const raw = wsCapacityEdits[wsName];
-    const val = raw === '' || raw === undefined ? null : parseInt(raw, 10);
-    if (val !== null && (isNaN(val) || val < 1)) return;
-    setWsCapacitySaving(wsName);
-    try {
-      if (val === null) {
-        await removeWorkspaceAgentCapacity(wsName, id);
-      } else {
-        await setWorkspaceAgentCapacity(wsName, id, val);
-      }
-      setWsCapacities(prev => {
-        const next = { ...prev };
-        if (val === null) delete next[wsName]; else next[wsName] = val;
-        return next;
-      });
-      setWsCapacityEdits(prev => { const n = { ...prev }; delete n[wsName]; return n; });
-    } catch {
-      alert(t('agentDetails.errors.saveCapacity'));
-    } finally {
-      setWsCapacitySaving(null);
     }
   };
 
@@ -763,25 +732,9 @@ const AgentDetails = () => {
       .sort((a, b) => a.category.localeCompare(b.category));
   })();
   const formatCategory = (c) => c.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-  // Where the agent's copies live: its own services, else the workspace's
-  // runner (created by the first Run). Copies and their limit come from
-  // there; the workspace's number for the agent is how many services of it
-  // the workspace allows.
-  const ownServices = services.filter((svc) => svc.kind === 'agent' && svc.agent_id === id);
-  const runnerService = services.find((svc) => svc.kind === 'runner' && svc.is_default)
-    || services.find((svc) => svc.kind === 'runner') || null;
-  const servingServices = ownServices.length ? ownServices : (runnerService ? [runnerService] : []);
-  const liveInstanceCount = servingServices.reduce((n, svc) => n + (svc.replicas?.live || 0), 0);
-  const instanceCap = servingServices.reduce((n, svc) => n + (svc.replicas_max || 0), 0);
-  const instancesAtCap = servingServices.length > 0 && liveInstanceCount >= instanceCap;
-  const servingPaused = servingServices.length > 0 && servingServices.every((svc) => svc.status !== 'active');
   const agentTasks = (tasks || []).filter((t) => t.assigned_agent_type === id);
   const runningTasks = agentTasks.filter((t) => t.agent_state === 'running');
   const agentSingleCapacity = agent?.capacity || 1;
-  const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
-  // How many services of this agent the workspace allows; none in the default workspace.
-  const wsServiceLimit = isDefaultWorkspace ? Infinity : (wsCapacities[selectedWorkspace] ?? 1);
-  const servicesAtLimit = wsServiceLimit !== Infinity && ownServices.length >= wsServiceLimit;
   // sessions = live copies × slots per copy
   const maxSessions = liveInstanceCount * agentSingleCapacity;
   const atCapacity = maxSessions > 0 && runningTasks.length >= maxSessions;
@@ -805,20 +758,19 @@ const AgentDetails = () => {
     handleDefinitionDraftChange, handleEraseMemory, handleResetDefinitionField,
     handleRestoreShippedDefinition, restoringShipped,
     handleSaveDefinitionField, handleSaveDelegates, handleSaveDescription, handleSaveTools,
-    handleSaveWsCapacity, handleToggleDefaultChat, handleToggleShared, handleUpdateMemory,
+    handleToggleDefaultChat, handleToggleShared, handleUpdateMemory,
     sessions, runs, id, isDefaultChat, isUpdatingMemory, liveUpdates, loadingPool, memoryData,
     personalMemory, setPersonalMemory,
-    memoryDraftDirty, memoryPools, memoryReadOnly, toggleReadOnly, memoryType, servicesAtLimit, ownServices, reasoningSettings,
+    memoryDraftDirty, memoryPools, memoryReadOnly, toggleReadOnly, memoryType, reasoningSettings,
     regularToolIds, removePool, responseFormat, responseFormatSaving, selectedTools,
     selectedWorkspace, selfDelegation, selfDelegationSaving, setActiveTab, setCategoryTools,
     setClarifyGate, setClarifyGateSaving, setConnectedPool, setDelegates, setDelegatesMessage,
     setDescDraft, setEpisodicEffective, setEpisodicMode, setEpisodicSaving, setMemoryData,
     setMemoryType, setPrimaryPool, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelectedTools, setSelfDelegation, setSelfDelegationSaving,
-    setToolsSaving, setWsCapacityEdits, shared, sharedMemories, sharingMessage, sharingSaving,
+    setToolsSaving, shared, sharedMemories, sharingMessage, sharingSaving,
     skills, t, tasks, toast, toggleDelegate, toggleTool, toolCategories, toolsDirty,
-    toolsMessage, toolsMeta, toolsSaving, workspaceFilter, workspaces, wsCapacities,
-    wsCapacityEdits, wsCapacitySaving, wsServiceLimit,
+    toolsMessage, toolsMeta, toolsSaving, workspaceFilter, workspaces,
   };
 
   return (
@@ -832,22 +784,10 @@ const AgentDetails = () => {
         backLabel={t('agentDetails.agents')}
         actions={(
           <div className="flex items-center gap-2">
-            {/* Deploy: keep the agent running as replicas of a service, which
-                is also where its chat turns go (docs/services.md). Run: one
-                copy of your own to talk to. */}
-            <button
-              type="button"
-              onClick={() => setShowDeploy(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-indigo-700 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50"
-            >
-              <Rocket className="w-4 h-4" />
-              {t('agentDetails.deploy')}
-            </button>
+            {/* Run: one copy of your own to talk to. */}
             <button
               type="button"
               onClick={() => setShowStartInstance(true)}
-              disabled={servingPaused}
-              title={servingPaused ? t('agentDetails.servicePausedHint') : undefined}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Play className="w-4 h-4" />
@@ -860,35 +800,12 @@ const AgentDetails = () => {
       <InheritanceHeaderLine agent={agent} onManage={() => setActiveTab('inheritance')} />
 
       <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-indigo-600 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Copies: the replicas of the services the agent runs in, against their limit */}
-          <div className={`border rounded-lg px-3 py-2 ${instancesAtCap ? 'bg-orange-50 border-orange-300' : liveInstanceCount > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
-            <div className={`text-[10px] uppercase tracking-wider font-semibold ${instancesAtCap ? 'text-orange-500' : liveInstanceCount > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentDetails.instances')}</div>
-            <div className={`text-sm font-semibold ${instancesAtCap ? 'text-orange-900' : liveInstanceCount > 0 ? 'text-indigo-900' : 'text-gray-600'}`}>
-              {liveInstanceCount} / {servingServices.length ? instanceCap : '—'} {t('agentDetails.live')}
-            </div>
-            <div className={`text-[10px] mt-0.5 ${instancesAtCap ? 'text-orange-600 font-medium' : 'text-gray-500'}`}>
-              {instancesAtCap ? t('agentDetails.replicaLimitReached') : t('agentDetails.replicasOfServices')}
-            </div>
-          </div>
-
-          {/* Services: the agent's own against the workspace's limit, or the runner it shares */}
-          <div className={`border rounded-lg px-3 py-2 min-w-0 ${servingPaused ? 'bg-amber-50 border-amber-200' : servicesAtLimit ? 'bg-orange-50 border-orange-300' : ownServices.length ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
-            <div className={`text-[10px] uppercase tracking-wider font-semibold ${servingPaused ? 'text-amber-500' : servicesAtLimit ? 'text-orange-500' : ownServices.length ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentDetails.services')}</div>
-            <div className={`text-sm font-semibold truncate ${servingPaused ? 'text-amber-900' : servicesAtLimit ? 'text-orange-900' : ownServices.length ? 'text-indigo-900' : 'text-gray-600'}`}>
-              {ownServices.length} / {wsServiceLimit === Infinity ? '∞' : wsServiceLimit}
-            </div>
-            <div className={`text-[10px] mt-0.5 truncate ${servingPaused ? 'text-amber-700' : 'text-gray-500'}`}
-                 title={servingServices.map((svc) => svc.name).join(', ')}>
-              {servingPaused
-                ? t('agentDetails.servicePaused')
-                : ownServices.length
-                  ? ownServices.map((svc) => (
-                    <Link key={svc.service_id} to={`/services/${svc.service_id}`} className="hover:text-indigo-600 hover:underline mr-1.5">{svc.name}</Link>
-                  ))
-                  : runnerService
-                    ? <Link to={`/services/${runnerService.service_id}`} className="hover:text-indigo-600 hover:underline">{t('agentDetails.runnerServing', { name: runnerService.name })}</Link>
-                    : t('agentDetails.noServiceYet')}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Copies: the live instances of the agent */}
+          <div className={`border rounded-lg px-3 py-2 ${liveInstanceCount > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
+            <div className={`text-[10px] uppercase tracking-wider font-semibold ${liveInstanceCount > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentDetails.instances')}</div>
+            <div className={`text-sm font-semibold ${liveInstanceCount > 0 ? 'text-indigo-900' : 'text-gray-600'}`}>
+              {liveInstanceCount} {t('agentDetails.live')}
             </div>
           </div>
 
@@ -896,14 +813,10 @@ const AgentDetails = () => {
           <div className={`border rounded-lg px-3 py-2 ${atCapacity ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-100'}`}>
             <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCapacity ? 'text-red-500' : 'text-green-500'}`}>{t('agentDetails.sessions')}</div>
             {noLiveInstance ? (
-              servingPaused ? (
-                <div className="text-xs text-amber-700 font-medium mt-0.5">{t('agentDetails.servicePausedHint')}</div>
-              ) : (
-                <button type="button" onClick={() => setShowStartInstance(true)}
-                        className="text-xs text-amber-700 font-medium mt-0.5 hover:underline text-left">
-                  {t('agentDetails.noInstanceRunningStartA')}
-                </button>
-              )
+              <button type="button" onClick={() => setShowStartInstance(true)}
+                      className="text-xs text-amber-700 font-medium mt-0.5 hover:underline text-left">
+                {t('agentDetails.noInstanceRunningStartA')}
+              </button>
             ) : (
               <>
                 <div className={`text-sm font-semibold mb-1 ${atCapacity ? 'text-red-900' : 'text-green-900'}`}>
@@ -1035,12 +948,6 @@ const AgentDetails = () => {
       <StartInstanceModal
         open={showStartInstance}
         onClose={() => setShowStartInstance(false)}
-        agentId={id}
-        defaultWorkspace={selectedWorkspace}
-      />
-      <DeployServiceModal
-        open={showDeploy}
-        onClose={() => setShowDeploy(false)}
         agentId={id}
         defaultWorkspace={selectedWorkspace}
       />

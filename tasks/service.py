@@ -101,8 +101,6 @@ def create_task(
     external_source: Optional[Dict[str, Any]] = None,
     depends: Optional[Sequence[UUID]] = None,
     due_at: Optional[datetime] = None,
-    budget_usd: Optional[float] = None,
-    environment_id: Optional[str] = None,
     agent_version: Optional[int] = None,
     outcome: Optional[Dict[str, Any]] = None,
     file_ids: Optional[Sequence[str]] = None,
@@ -151,8 +149,6 @@ def create_task(
         external_source=external_source,
         depends=dep_ids,
         due_at=due_at,
-        budget_usd=budget_usd,
-        environment_id=environment_id,
         agent_version=agent_version,
         outcome=outcome,
         file_ids=file_ids,
@@ -965,8 +961,6 @@ def add_subtask(
     *,
     depends: Optional[Sequence[UUID]] = None,
     created_by: CreatedBy = CreatedBy.orchestrator,
-    budget_usd: Optional[float] = None,
-    environment_id: Optional[str] = None,
     agent_version: Optional[int] = None,
     file_ids: Optional[Sequence[str]] = None,
     store: TaskStore = default_store,
@@ -974,15 +968,14 @@ def add_subtask(
     """Create a subtask under the given parent, by default with created_by=orchestrator.
 
     The subtask inherits workspace, project, project_id, and, unless given
-    here, the parent's money cap (``budget_usd``), environment and workspace
-    files (``file_ids``), so a piece of work an agent hands down runs under
-    the same limits, and from the same documents, as the task it came
+    here, the parent's workspace files (``file_ids``), so a piece of work an
+    agent hands down runs from the same documents as the task it came
     from. `depends` lets a decomposition express execution order between
     subtasks; a subtask with unfinished dependencies is created blocked and
     released automatically when they complete.
 
     ``agent_version`` is deliberately NOT inherited from the parent (unlike
-    ``budget_usd``/``environment_id``): a subtask commonly runs a different
+    ``file_ids``): a subtask commonly runs a different
     agent than its parent (delegate_task_tool picks its own delegate;
     add_subtask itself creates the task agent-less, assigned later), and a
     version pin only means something for the specific agent it names. A
@@ -993,10 +986,6 @@ def add_subtask(
     workspace = parent.workspace if parent else None
     project = parent.project if parent else None
     project_id = parent.project_id if parent else None
-    if budget_usd is None and parent is not None:
-        budget_usd = parent.budget_usd
-    if environment_id is None and parent is not None:
-        environment_id = parent.environment_id
     if file_ids is None and parent is not None:
         file_ids = list(getattr(parent, "file_ids", None) or [])
 
@@ -1030,8 +1019,6 @@ def add_subtask(
         status=status,
         blocked_reason=blocked_reason,
         depends=dep_ids,
-        budget_usd=budget_usd,
-        environment_id=environment_id,
         agent_version=agent_version,
         file_ids=file_ids,
     )
@@ -1097,17 +1084,6 @@ def park_task_awaiting_approval(
     for key in ("mode", "by"):
         if (pending or {}).get(key):
             record[key] = str(pending[key])
-    # A run that reached its money cap parks here too (common/run_budget.py):
-    # the decision is a new cap, not a call, so the record keeps what the
-    # dashboard and the approve route need to offer one.
-    is_budget = str((pending or {}).get("kind") or "") == "budget"
-    if is_budget:
-        record["kind"] = "budget"
-        for key in ("spent_usd", "limit_usd"):
-            try:
-                record[key] = float((pending or {}).get(key) or 0.0)
-            except (TypeError, ValueError):
-                record[key] = 0.0
     updated = update_task(
         tid, store=store,
         status=TaskStatus.awaiting_approval,
@@ -1115,16 +1091,11 @@ def park_task_awaiting_approval(
     )
     try:
         append_task_activity_log(
-            tid, "awaiting_approval",
-            (f"Run paused at its money cap (${record['spent_usd']:.2f} of ${record['limit_usd']:.2f})"
-             if is_budget else f"Agent wants to call {record['tool']}"),
+            tid, "awaiting_approval", f"Agent wants to call {record['tool']}",
             run_id=record["run_id"], agent_id=record["agent_id"],
         )
     except Exception:  # noqa: BLE001 - the activity log entry is a courtesy to the parked task
         log.debug("approval activity log failed", exc_info=True)
-    if is_budget:
-        _notify_budget_park(tid, record, store=store)
-        return updated
     # Surface it the same way a question is surfaced: a call nobody is told
     # about is a task that silently stops.
     try:
@@ -1141,65 +1112,6 @@ def park_task_awaiting_approval(
     except Exception:  # noqa: BLE001 - the notification is a courtesy to the parked task
         log.debug("approval notification failed", exc_info=True)
     return updated
-
-
-def _notify_budget_park(tid: UUID, record: Dict[str, Any], *, store: TaskStore) -> None:
-    """Tell the operator a run stopped at its money cap.
-
-    A paused run that nobody hears about is a task that silently never
-    finishes, and this one needs a decision only a person can make (spend more
-    or stop). Best effort: a notification failure never undoes the park.
-    """
-    try:
-        from plans import service as _plan_service
-        current = get_task(tid, store=store)
-        title = str(getattr(current, "title", "") or "") or str(tid)
-        _plan_service.create_notification(
-            title="Run paused at its money cap",
-            body=(f"Task \"{title}\" spent ${record.get('spent_usd', 0.0):.2f} of its "
-                  f"${record.get('limit_usd', 0.0):.2f} cap. Raise the cap to continue or stop the task."),
-            severity="warning",
-            source={"origin": "budget", "task_id": str(tid), "run_id": str(record.get("run_id") or "")},
-            workspace=str(getattr(current, "workspace", "") or "") or None,
-            channels=["dashboard"],
-        )
-    except Exception:  # noqa: BLE001 - best effort, the park stands either way
-        log.debug("budget park notification failed", exc_info=True)
-
-
-def resolve_budget_pause(
-    task_id: UUID,
-    *,
-    approved: bool,
-    budget_usd: Optional[float] = None,
-    store: TaskStore = default_store,
-) -> Optional[Task]:
-    """Apply the operator's answer to a run parked at its money cap.
-
-    ``approved`` stores the new cap on the task (the route re-launches it,
-    and the launcher hands the new cap to the run). A refusal ends the task:
-    it is blocked with the reason "stopped at budget cap", the assignment is
-    released and the pending record cleared, so nothing picks it up again
-    until someone reassigns it. The route checks the new cap first.
-    """
-    tid = _uuid_from_str(task_id)
-    task = get_task(tid, store=store)
-    if task is None:
-        return None
-    pending = dict(getattr(task, "pending_approval", None) or {})
-    if approved:
-        return update_task(tid, store=store, budget_usd=float(budget_usd or 0.0))
-    reason = (f"Stopped at budget cap: spent ${float(pending.get('spent_usd') or 0.0):.2f} "
-              f"of ${float(pending.get('limit_usd') or 0.0):.2f}.")
-    update_task(tid, store=store, status=TaskStatus.blocked, blocked_reason=reason,
-                pending_approval=None)
-    clear_agent(tid, store=store)
-    try:
-        append_task_activity_log(tid, "budget_stop", reason,
-                                 run_id=str(pending.get("run_id") or ""))
-    except Exception:  # noqa: BLE001 - the activity log entry is a courtesy to the stopped task
-        log.debug("budget stop activity log failed", exc_info=True)
-    return get_task(tid, store=store)
 
 
 def approve_tool_call(
@@ -1567,7 +1479,6 @@ __all__ = [
     "stop_task",
     "block_task",
     "park_task_awaiting_approval",
-    "resolve_budget_pause",
     "approve_tool_call",
     "consume_approved_call",
     "set_dependencies",

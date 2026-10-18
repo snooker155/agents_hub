@@ -187,7 +187,7 @@ async def get_message_live(run_id: str, request: Request):
         _require_run_visible(request, run)
     # Async on purpose: a run executing on another replica has its live tail
     # only in the Redis mirror (common/live_runs.py), which is read awaited.
-    return {"turn": await live_runs.by_run_async(run_id)}
+    return {"turn": live_runs.by_run(run_id)}
 
 
 @router.get("/{run_id}/insights")
@@ -434,7 +434,7 @@ async def get_message_insights(run_id: str, request: Request):
 
 
 def _run_cost(run: dict, model: str, provider: str, token_usage: dict) -> dict:
-    """The run's estimated cost, the same figure the Costs page and budgets
+    """The run's estimated cost, the same figure the Costs page
     count (common/costs_report.py ``_run_cost``). ``priced`` is False when the
     catalog has no price for the run's model and it is not a local one, so the
     page can say "no price" instead of a misleading $0. Chat runs parse their

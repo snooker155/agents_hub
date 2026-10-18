@@ -320,7 +320,6 @@ def test_child_env_reaches_the_spec_and_the_environment(monkeypatch):
     from runtime import entity_launch
 
     seen = {}
-    monkeypatch.setattr("common.config.hub_role", lambda: "all")
     with entity_launch.child_env({"AGENTS_HUB_RUN_DEPTH": 2}):
         entity_launch.dispatch({"kind": "team", "run_id": "r1"}, lambda spec: seen.update(spec))
     assert seen["env"] == {"AGENTS_HUB_RUN_DEPTH": "2"}

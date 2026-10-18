@@ -19,12 +19,9 @@ The fields:
     ``{"from": "HH:MM", "to": "HH:MM"}`` in the profile's timezone. A tick
     inside the window does not start, and the next one is moved to the
     window's end. The window may cross midnight. Empty strings mean none.
-``daily_budget_usd`` / ``max_runs_per_day``
-    Caps on one calendar day of the profile's timezone, summed over the
-    firing journal. ``0`` means no cap.
-``tick_budget_usd`` / ``environment_id``
-    Copied onto every tick's task: the per-run money cap (docs/costs.md) and
-    the environment (docs/environments.md). ``None`` means the task default.
+``max_runs_per_day``
+    Ticks that may start a run in one calendar day of the profile's
+    timezone, counted from the firing journal. ``0`` means no limit.
 ``brief``
     The standing instruction: what to watch, and when acting is warranted.
 ``triggers``
@@ -33,7 +30,7 @@ The fields:
     themselves are wired by the service as they land.
 ``notify``
     Where an *acted* tick's summary goes: ``dashboard`` (the inbox), plus
-    ``telegram``, ``slack`` or ``webhook`` (docs/notifications.md).
+    ``webhook`` (docs/notifications.md).
 ``workspace``
     The workspace the ticks run in. ``None`` means the agent's own.
 ``auto_pause_after``
@@ -53,18 +50,17 @@ from zoneinfo import ZoneInfo
 #: Outcomes a tick's *run* can end in, from the agent's structured answer.
 RUN_OUTCOMES = ("acted", "quiet", "blocked")
 #: Outcomes decided before a run starts (the tick was skipped).
-SKIP_OUTCOMES = ("quiet_hours", "budget", "rate", "busy", "disabled")
+SKIP_OUTCOMES = ("quiet_hours", "rate", "busy", "disabled")
 #: A run that failed, or an answer that never arrived.
 ERROR_OUTCOME = "error"
 ALL_OUTCOMES = RUN_OUTCOMES + SKIP_OUTCOMES + (ERROR_OUTCOME,)
 
 #: Channels an acted tick may be delivered on (``dashboard`` is the inbox).
-NOTIFY_CHANNELS = ("dashboard", "telegram", "slack", "webhook", "discord", "teams", "mail")
+NOTIFY_CHANNELS = ("dashboard", "webhook")
 
 #: Trigger kinds the profile accepts (the sources that wake the agent apart
 #: from the clock). Validated for shape here; see proactive.service.
-TRIGGER_KINDS = ("webhook", "file", "task", "eval", "telegram", "agent",
-                 "slack", "discord", "teams", "mail",
+TRIGGER_KINDS = ("webhook", "file", "task", "eval", "agent",
                  # a watcher (watchers/) noticed a change in what it observes
                  "watch")
 
@@ -103,10 +99,7 @@ DEFAULTS: Dict[str, Any] = {
     "cron": "",
     "timezone": "UTC",
     "quiet_hours": {"from": "", "to": ""},
-    "daily_budget_usd": 0.0,
     "max_runs_per_day": 0,
-    "tick_budget_usd": None,
-    "environment_id": None,
     "brief": "",
     "triggers": [],
     "notify": ["dashboard"],
@@ -158,10 +151,7 @@ def normalize_profile(raw: Any) -> Dict[str, Any]:
     out["timezone"] = _as_str(src.get("timezone")) or DEFAULTS["timezone"]
     quiet = src.get("quiet_hours") if isinstance(src.get("quiet_hours"), dict) else {}
     out["quiet_hours"] = {"from": _as_str(quiet.get("from")), "to": _as_str(quiet.get("to"))}
-    out["daily_budget_usd"] = _as_float(src.get("daily_budget_usd"), DEFAULTS["daily_budget_usd"]) or 0.0
     out["max_runs_per_day"] = _as_int(src.get("max_runs_per_day"), DEFAULTS["max_runs_per_day"])
-    out["tick_budget_usd"] = _as_float(src.get("tick_budget_usd"), None)
-    out["environment_id"] = _as_str(src.get("environment_id")) or None
     out["brief"] = str(src.get("brief") or "").strip()
     triggers = src.get("triggers")
     out["triggers"] = [dict(t) for t in triggers if isinstance(t, dict)] if isinstance(triggers, list) else []
@@ -185,7 +175,7 @@ def validate_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     """The normalized profile, or ``ValueError`` naming the first bad field.
 
     Checks the cron expression (croniter), the timezone (IANA), the quiet
-    hours (``HH:MM``, both or neither, distinct), the budgets (not
+    hours (``HH:MM``, both or neither, distinct), the limits (not
     negative), the interval (one of :data:`INTERVAL_MINUTES` unless a cron
     is given), the channels and the triggers' shape.
     """
@@ -210,12 +200,8 @@ def validate_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
         if q_from == q_to:
             raise ValueError("quiet_hours 'from' and 'to' must differ")
 
-    if p["daily_budget_usd"] < 0:
-        raise ValueError("daily_budget_usd must not be negative (0 means no cap)")
     if p["max_runs_per_day"] < 0:
         raise ValueError("max_runs_per_day must not be negative (0 means no limit)")
-    if p["tick_budget_usd"] is not None and p["tick_budget_usd"] < 0:
-        raise ValueError("tick_budget_usd must not be negative")
     if p["auto_pause_after"] < 0:
         raise ValueError("auto_pause_after must not be negative (0 turns it off)")
 

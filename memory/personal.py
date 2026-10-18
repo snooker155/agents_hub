@@ -191,13 +191,6 @@ def pool_id(user_id: str, workspace: str) -> str:
 
 
 def _display_name(user_id: str) -> str:
-    try:
-        from common import identity
-        user = identity.get_user(user_id)
-        if user:
-            return user.get("display_name") or user.get("username") or user_id
-    except Exception:  # noqa: BLE001 - single-user installs have no users table row
-        log.debug("could not look up user %s", user_id, exc_info=True)
     return "you" if user_id == "local" else user_id
 
 

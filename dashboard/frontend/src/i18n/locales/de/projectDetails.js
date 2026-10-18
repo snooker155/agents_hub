@@ -28,7 +28,6 @@ export default {
     repository: 'Repository',
     api: 'API',
     preview: 'Vorschau',
-    deploy: 'Deploy',
   },
   projects: 'Projekte',
   loading: 'Wird geladen…',

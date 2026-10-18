@@ -68,8 +68,8 @@ narrower filters would otherwise get the whole conversation back through it.
 ## Limits
 
 - A handoff happens only in a conversation: the web chat, the blocking
-  `/api/chat/message` endpoint, the terminal client, Telegram, an instance
-  inbox, the widget and agents on `/v1`. In a task run, a scheduled run or an
+  `/api/chat/message` endpoint, the terminal client and an instance
+  inbox. In a task run, a scheduled run or an
   evaluation the tool answers that a handoff needs a conversation and points at
   `delegate_task_tool`.
 - One turn hands over at most `AGENTS_HUB_HANDOFF_MAX_DEPTH` times (3 by
@@ -79,8 +79,6 @@ narrower filters would otherwise get the whole conversation back through it.
   ordinary tool answer: the agent answers itself or picks another target.
 - The target must exist and be available in the workspace, and it must be on the
   agent's list.
-- The workspace's hard budget cap is checked before the receiving agent starts,
-  as for any run.
 - An imported (remote) agent has no handoff tool, though it can receive one.
 
 ## What happens in a turn
@@ -131,7 +129,5 @@ agent's `from_response`) when the conversation changed hands.
   conversation shows the same.
 - **Terminal client.** `ah chat` prints each handing reply and who took
   over, and the session continues with the new agent.
-- **Telegram.** The handing agent's reply goes out first with a line naming
-  who took over, then the answer; the chat's binding follows the handoff.
 
 Related: [chat](chat.md), [agents](agents.md), [agent loop](agent-loop.md).

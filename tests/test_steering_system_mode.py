@@ -304,23 +304,6 @@ def multi(monkeypatch):
                         lambda cid: {"id": cid, "owner": "u-owner"} if cid.startswith("conv-") else None)
 
 
-def test_in_multi_mode_only_the_owner_or_an_admin_may(client, multi):
-    run_id = _rid()
-    _open(run_id, session_type="chat", task_id=f"conv-{uuid.uuid4().hex[:6]}")
-    assert _steer(client, run_id, principal="user:u-other:member").status_code == 403
-    assert _steer(client, run_id, principal="user:u-owner:member").status_code == 200
-    assert _steer(client, run_id, principal="user:u-admin:admin").status_code == 200
-    # Inject stays open to any editor.
-    assert _steer(client, run_id, principal="user:u-other:member", mode="inject").status_code == 200
-
-
-def test_a_run_with_no_known_owner_is_left_to_admins(client, multi):
-    run_id = _rid()
-    _open(run_id, session_type="delegation")
-    assert _steer(client, run_id, principal="user:u-owner:member").status_code == 403
-    assert _steer(client, run_id, principal="user:u-admin:admin").status_code == 200
-
-
 def test_a_team_run_takes_no_system_message(client, monkeypatch):
     from routes import steering as steering_routes
     team = SimpleNamespace(team_run_id="trun-1", workspace=None, status="running",

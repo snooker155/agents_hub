@@ -2,7 +2,7 @@
 // Puls-Tab der Agentenseite und der Tick-Verlauf darunter.
 export default {
   title: 'Puls',
-  intro: 'Ein Agent mit Puls wacht nach eigenem Zeitplan auf, sieht sich seine Quellen an, handelt innerhalb eines Budgets und schreibt Ihnen nur, wenn es etwas zu sagen gibt. Jeder Tick ist eine Aufgabe dieses Agenten.',
+  intro: 'Ein Agent mit Puls wacht nach eigenem Zeitplan auf, sieht sich seine Quellen an, handelt innerhalb seiner Grenzen und schreibt Ihnen nur, wenn es etwas zu sagen gibt. Jeder Tick ist eine Aufgabe dieses Agenten.',
   save: 'Speichern',
   saved: 'Puls gespeichert.',
   saveFailed: 'Der Puls konnte nicht gespeichert werden.',
@@ -15,10 +15,7 @@ export default {
   wokeStarted: 'Ein Tick wurde gestartet.',
   wokeSkipped: 'Der Tick wurde übersprungen: {{outcome}}.',
   timezone: 'Zeitzone',
-  dailyBudget: 'Tagesbudget, USD',
   maxRuns: 'Ticks pro Tag',
-  tickBudget: 'Budget pro Tick, USD',
-  tickBudgetHint: 'Wird auf die Aufgabe jedes Ticks kopiert. Leer folgt dem Lauflimit des Arbeitsbereichs.',
   zeroMeansNone: '0 bedeutet keine Grenze.',
   state: {
     on: 'An',
@@ -27,7 +24,7 @@ export default {
     schedule: 'Zeitplan: {{schedule}}',
     nextTick: 'Nächster Tick: {{when}}',
     pending: "{{count}} Ereignisse warten",
-    today: 'Heute: {{runs}} von {{maxRuns}} Ticks, ${{spent}} von ${{budget}}',
+    today: 'Heute: {{runs}} von {{maxRuns}} Ticks, ${{spent}} ausgegeben',
   },
   brief: {
     title: 'Auftrag',
@@ -62,12 +59,7 @@ export default {
       file: "Datei im Arbeitsbereich geändert",
       task: "Aufgabenstatus geändert",
       eval: "Eval-Lauf fehlgeschlagen",
-      telegram: "Unbeantwortete Telegram-Nachricht",
       agent: "Anderer Agent",
-      slack: "Unbeantwortete Slack-Nachricht",
-      discord: "Unbeantwortete Discord-Nachricht",
-      teams: "Unbeantwortete Teams-Nachricht",
-      mail: "Unbeantwortete E-Mail",
       watch: "Watcher hat eine Änderung bemerkt",
     },
     filters: {
@@ -83,12 +75,7 @@ export default {
     title: 'Einen handelnden Tick zustellen an',
     hint: 'Ein stiller Tick wird nie zugestellt. Ein blockierter einmal pro Grund.',
     dashboard: 'Posteingang',
-    telegram: 'Telegram',
-    slack: 'Slack',
     webhook: 'Webhook',
-    discord: 'Discord',
-    teams: 'Teams',
-    mail: 'E-Mail',
   },
   feed: {
     title: 'Ticks',
@@ -105,8 +92,6 @@ export default {
       busy_other: '{{count}} Ticks übersprungen, der vorige lief noch',
       rate_one: '{{count}} Tick übersprungen, Tageslimit erreicht',
       rate_other: '{{count}} Ticks übersprungen, Tageslimit erreicht',
-      budget_one: '{{count}} Tick übersprungen, Tagesbudget aufgebraucht',
-      budget_other: '{{count}} Ticks übersprungen, Tagesbudget aufgebraucht',
       disabled_one: '{{count}} Tick übersprungen, Puls war aus',
       disabled_other: '{{count}} Ticks übersprungen, Puls war aus',
     },
@@ -120,7 +105,6 @@ export default {
     quiet_hours: 'Ruhezeit',
     busy: 'beschäftigt',
     rate: 'Tageslimit',
-    budget: 'Budget',
     disabled: 'aus',
   },
 };

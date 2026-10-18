@@ -41,7 +41,7 @@ _store = DocStore("setup_guide")
 GROUP_SETUP = "setup"
 GROUP_START = "start"
 
-DONE, TODO, SKIPPED, WORKING = "done", "todo", "skipped", "working"
+DONE, TODO, SKIPPED = "done", "todo", "skipped"
 
 #: Workspaces whose records say nothing about what this person has tried.
 _NOT_THEIRS = frozenset({"demo", "system"})
@@ -114,7 +114,7 @@ class _Ctx:
 
 def usable_providers() -> List[str]:
     """Providers an agent can call right now: a key set, a local server named,
-    a custom backend registered (the hub's own runtime among them)."""
+    a custom backend registered."""
     from common import provider_env
     env = provider_env.live()
     out = [p for p, key in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"),
@@ -122,8 +122,7 @@ def usable_providers() -> List[str]:
     out += [p for p, key in (("ollama", "OLLAMA_MODEL"), ("lmstudio", "LMSTUDIO_MODEL")) if env.get(key)]
     try:
         # A custom backend counts once it has a model to call: its own default,
-        # or one enabled in the catalog (the hub's runtime is registered as a
-        # backend before any model is loaded into it).
+        # or one enabled in the catalog.
         from providers import list_backends
         from providers.catalog import load_catalog_raw
         catalog = load_catalog_raw() or {}
@@ -193,14 +192,6 @@ def _demo(ctx: _Ctx):
     return present, "the demo workspace is there" if present else ""
 
 
-def _people(ctx: _Ctx):
-    def read():
-        from common import identity
-        return len(identity.list_users())
-    n = ctx.get("people", read)
-    return (None if n is None else n > 1), (f"{n} accounts" if n else "")
-
-
 def _health(ctx: _Ctx):
     return None, ""
 
@@ -211,17 +202,6 @@ def _chats(ctx: _Ctx):
         return int(chat_store.list_chats(workspace=ws, limit=1)["total"])
     n = ctx.count("chats", one)
     return (None if n is None else n > 0), (f"{n} chats" if n else "")
-
-
-def _channel(ctx: _Ctx):
-    def read():
-        from common.onboarding import _channels
-        seen: List[str] = []
-        for ws in ctx.workspaces():
-            seen += [c for c in _channels(ws)["configured"] if c not in seen]
-        return seen
-    have = ctx.get("channels", read)
-    return (None if have is None else bool(have)), ", ".join(have or [])
 
 
 def _accounts(ctx: _Ctx):
@@ -280,8 +260,8 @@ STEPS: tuple[Step, ...] = (
     Step("model", GROUP_SETUP, "Connect a model",
          "Every agent, you included, thinks with a model, so nothing runs without one.",
          "Offer propose_connection with kind provider (openai, anthropic or google): the person types "
-         "the key into the card. A model already running on this machine (Ollama, LM Studio) or the hub's "
-         "own runtime is set on the Models page.",
+         "the key into the card. A model already running on this machine (Ollama, LM Studio) is set on "
+         "the Models page.",
          "/settings/providers", _model, required=True),
     Step("default_model", GROUP_SETUP, "Choose the default model",
          "Every workspace without a model of its own uses this one, and it decides speed and cost.",
@@ -291,8 +271,8 @@ STEPS: tuple[Step, ...] = (
     Step("voice", GROUP_SETUP, "Give the assistant a voice",
          "With a speech and a transcription model the assistant hears and speaks in every browser; "
          "without them it uses the browser's own, which Firefox lacks.",
-         "setup_step voice_cloud (a connected OpenAI or Google key, paid per use) or voice_local (the "
-         "hub's own runtime, free, downloads 0.5 to 2 GB); skipping keeps the browser's voice.",
+         "setup_step voice_cloud (a connected OpenAI or Google key, paid per use); skipping keeps the "
+         "browser's voice.",
          "/models?tab=special", _voice),
     Step("web_search", GROUP_SETUP, "Turn on web search",
          "Agents can then search the web, not only open pages they are given. An Anthropic or "
@@ -304,12 +284,8 @@ STEPS: tuple[Step, ...] = (
          "Four agents with chats, views and a pulse show what the hub does before anything is built.",
          "setup_step seed_demo, then show_on_screen /workspaces/demo.",
          "/workspaces", _demo),
-    Step("people", GROUP_SETUP, "Invite your team",
-         "Each person gets their own sign in, personal workspace and assistant.",
-         "Accounts and their passwords are made on the Users page: show_on_screen /users.",
-         "/users", _people, multi_only=True),
     Step("health", GROUP_SETUP, "Check the hub's health",
-         "The doctor checks the database, the model connection, the runtime and the rest, each with its fix.",
+         "The doctor checks the database, the model connection and the rest, each with its fix.",
          "run_diagnostics (an administrator's service thread holds it; in a personal thread "
          "show_on_screen /health instead), report what failed with its docs section, then setup_guide "
          "done health.",
@@ -318,15 +294,10 @@ STEPS: tuple[Step, ...] = (
          "Chat is where you work with any agent, with files, references and approvals.",
          "Explain Chat in two sentences and show_on_screen /chat.",
          "/chat", _chats),
-    Step("channel", GROUP_START, "Reach the hub from Telegram, Slack or mail",
-         "Then you can talk to your agents from your phone's messenger or by email.",
-         "connection_options for kind channel, then propose_connection with kind channel: the person "
-         "types the bot token into the card.",
-         "/connectors", _channel),
-    Step("accounts", GROUP_START, "Connect your accounts",
-         "Agents can then read and write your Google, Microsoft, Jira, Linear or Notion data.",
-         "propose_connection with kind connector; Google and Microsoft finish with a sign in on the "
-         "Connectors page.",
+    Step("accounts", GROUP_START, "Connect Jira and GitLab",
+         "Agents can then read and write your Jira issues and GitLab repositories.",
+         "propose_connection with kind connector for Jira, or show_on_screen /connectors for the "
+         "GitLab token.",
          "/connectors", _accounts),
     Step("first_agent", GROUP_START, "Make an agent of your own",
          "An agent with its own instructions, tools and model does one kind of job well.",
@@ -394,22 +365,6 @@ def save_state(principal: Any, state: Dict[str, Any]) -> None:
 
 # ── the guide ─────────────────────────────────────────────────────────────────
 
-def _work_line(work: Dict[str, Any]) -> str:
-    jobs = [j for j in work.get("jobs") or [] if isinstance(j, dict)]
-    running = [j for j in jobs if j.get("status") not in ("done", "error")]
-    if work.get("phase") == "starting":
-        return "starting the hub's model runtime"
-    if running:
-        j = running[0]
-        pct = j.get("percent")
-        return f"{j.get('label')}: {f'{pct:.0f}%' if isinstance(pct, (int, float)) and pct else 'running'}" + (
-            f", {len(running) - 1} more" if len(running) > 1 else "")
-    failed = [j for j in jobs if j.get("status") == "error"]
-    if failed:
-        return f"{failed[0].get('label')} failed: {failed[0].get('error') or 'see the Models page, Local tab'}"
-    return work.get("message") or ""
-
-
 def guide(principal: Any, *, tour_done: Optional[bool] = None) -> Dict[str, Any]:
     """The person's guide: every step with its status, what is next, and
     whether the guide is running. Never raises."""
@@ -418,7 +373,6 @@ def guide(principal: Any, *, tour_done: Optional[bool] = None) -> Dict[str, Any]
     ctx = _Ctx(principal, tour_done=tour_done, multi=multi)
     skipped = set(state.get("skipped") or [])
     marked = set(state.get("marked") or [])
-    work = state.get("work") if isinstance(state.get("work"), dict) else None
     rows: List[Dict[str, Any]] = []
     for step in steps_for(principal):
         try:
@@ -427,11 +381,6 @@ def guide(principal: Any, *, tour_done: Optional[bool] = None) -> Dict[str, Any]
             log.debug("setup guide: %s failed", step.id, exc_info=True)
             done, detail = None, ""
         status = DONE if (done or step.id in marked) else SKIPPED if step.id in skipped else TODO
-        if work and work.get("step") == step.id and work.get("phase") not in ("done", "error"):
-            # Saved, but not ready until the runtime has the models.
-            status, detail = WORKING, _work_line(work)
-        elif work and work.get("step") == step.id and work.get("phase") == "error":
-            detail = _work_line(work) or detail
         rows.append({"id": step.id, "group": step.group, "title": step.title, "why": step.why,
                      "status": status, "detail": detail or "", "page": step.page,
                      "required": step.required, "marked": step.id in marked})
@@ -455,8 +404,7 @@ def guide(principal: Any, *, tour_done: Optional[bool] = None) -> Dict[str, Any]
         "done": done_n,
         "total": len(rows),
         "next": open_rows[0]["id"] if open_rows else None,
-        "complete": not open_rows and not any(r["status"] == WORKING for r in rows),
-        "work": work,
+        "complete": not open_rows,
     }
 
 
@@ -483,7 +431,6 @@ def act(principal: Any, action: str, step: Optional[str] = None, *, mode: Option
     if action == "start" or action == "restart":
         if action == "restart":
             skipped, marked = [], []
-            state.pop("work", None)
         state.update({"started_at": state.get("started_at") if action == "start" and state.get("started_at")
                       else _now(), "finished_at": None, "dismissed_at": None})
         if mode in ("voice", "text"):
@@ -512,16 +459,6 @@ def skip_open(principal: Any, ids: List[str]) -> None:
     save_state(principal, state)
 
 
-def set_work(principal: Any, work: Optional[Dict[str, Any]]) -> None:
-    """The long piece of a step the hub carries on with (a voice download)."""
-    state = load_state(principal)
-    if work is None:
-        state.pop("work", None)
-    else:
-        state["work"] = work
-    save_state(principal, state)
-
-
 def prompt_lines(principal: Any) -> List[str]:
     """The guide as the assistant's turn sees it, while it runs; [] otherwise."""
     g = guide(principal)
@@ -544,5 +481,5 @@ def prompt_lines(principal: Any) -> List[str]:
 
 
 __all__ = ["ACTIONS", "STEPS", "Step", "act", "default_model", "guide", "is_admin", "load_state",
-           "person_key", "prompt_lines", "save_state", "set_work", "skip_open", "steps_for",
+           "person_key", "prompt_lines", "save_state", "skip_open", "steps_for",
            "usable_providers"]

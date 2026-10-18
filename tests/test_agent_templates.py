@@ -10,7 +10,7 @@ import pytest
 from agents import templates
 from agents.registry import get_agent, replace_all_raw
 
-SHIPPED = {"sre_agent", "ai_teammate", "github_issue_agent", "data_agent",
+SHIPPED = {"sre_agent", "ai_teammate", "gitlab_issue_agent",
            "invoice_agent", "contract_review_agent", "support_triage_agent",
            "research_agent", "meeting_notes_agent", "recruiting_screener_agent",
            "content_writer_agent", "lead_research_agent"}
@@ -36,9 +36,7 @@ def isolated_definitions(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def single_auth(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -76,9 +74,9 @@ def test_list_route_hides_prompts_and_shows_connector_status(client):
     assert r.status_code == 200, r.text
     rows = {row["id"]: row for row in r.json()}
     assert set(rows) == SHIPPED
-    assert "system_prompt" not in rows["data_agent"]
-    assert rows["data_agent"]["connectors"]["required"][0]["name"] == "databases"
-    assert rows["data_agent"]["suggested_id"] == "data_agent"
+    assert "system_prompt" not in rows["support_triage_agent"]
+    assert rows["support_triage_agent"]["connectors"]["optional"][0]["name"] == "jira"
+    assert rows["support_triage_agent"]["suggested_id"] == "support_triage_agent"
 
 
 def test_get_route_includes_the_prompt(client):
@@ -115,7 +113,7 @@ def test_create_twice_picks_a_free_id(client):
 
 
 def test_create_with_overrides_keeps_the_guard(client):
-    r = client.post("/api/agent-templates/data_agent/create",
-                    json={"tools": ["run_shell"], "id": "risky_data"})
+    r = client.post("/api/agent-templates/lead_research_agent/create",
+                    json={"tools": ["web_search", "read_workspace_file", "run_shell"], "id": "risky_research"})
     assert r.status_code == 409, r.text
-    assert get_agent("risky_data") is None
+    assert get_agent("risky_research") is None

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 // and Code with their counts, the view switch, and the Process button that
 // exists in the chat view only. The columns open independently.
 
-vi.mock('../../../api', () => ({ getChatRoute: vi.fn(() => Promise.resolve({ data: null })), listViews: vi.fn() }));
+vi.mock('../../../api', () => ({ listViews: vi.fn() }));
 vi.mock('../../stream', () => ({ useLiveRefetch: vi.fn() }));
 vi.mock('../targetPickers', () => ({
   AgentDropdown: () => null, FlowDropdown: () => null, ProjectDropdown: () => null, TeamDropdown: () => null,

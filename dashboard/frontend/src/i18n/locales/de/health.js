@@ -84,28 +84,6 @@ export default {
     pruneDone_other: '{{count}} Branches gelöscht.',
     pruneFailed: 'Bereinigung fehlgeschlagen',
   },
-  slo: {
-    title: 'SLO',
-    startP95: 'Startzeit (p95)',
-    errorRate: 'Fehlerquote',
-    statusOk: 'Ok',
-    statusBreach: 'Verletzt',
-    statusNoData: 'Keine Daten',
-    noValue: 'noch nicht genug Daten',
-    sample_one: '{{count}} Stichprobe',
-    sample_other: '{{count}} Stichproben',
-    unreachable: 'SLO-Status hat nicht geantwortet.',
-  },
-  stack: {
-    title: 'Stack-Dienste',
-    openMap: 'Dienstkarte öffnen',
-    loading: 'Die gemeinsamen Dienste werden abgefragt…',
-    none: 'Die Prüfungen haben nichts geliefert.',
-  },
-  supportBundle: {
-    download: 'Support-Paket herunterladen',
-    failed: 'Support-Paket konnte nicht erstellt werden.',
-  },
   doctor: {
     yes: 'ja',
     no: 'nein',
@@ -122,7 +100,6 @@ export default {
       oidc: 'Identitätsanbieter',
       disk: 'Freier Speicher',
       browser: 'Browser-Dienst',
-      models_runtime: 'Modellumgebung',
       docker: 'Docker',
       sandbox: 'Sandbox-Anbieter',
       frontend_build: 'Frontend-Build',
@@ -146,8 +123,7 @@ export default {
       cors: {
         list: 'CORS erlaubt eine Liste von Ursprüngen.',
         devOnly: 'CORS erlaubt nur die lokalen Entwicklungsursprünge.',
-        anyMulti: 'ALLOW_ORIGINS ist *: jede Website kann die API mit einem gestohlenen Token aufrufen; tragen Sie stattdessen die Adressen des Dashboards ein.',
-        anyOk: 'ALLOW_ORIGINS ist * ohne Anmeldedaten, im Modus {{mode}} vertretbar.',
+        anyOpen: 'ALLOW_ORIGINS ist *: die API hat keine Anmeldung, daher kann jede im Browser geöffnete Website sie aufrufen; tragen Sie stattdessen die Adressen des Dashboards ein.',
       },
       security: {
         guard: 'CAPABILITY_GUARD steht auf {{guard}}: ein Agent kann alle drei Fähigkeiten halten; zurück auf block stellen',
@@ -157,7 +133,6 @@ export default {
         hostBoundNoProxy_other: '{{count}} Geheimnisse an Hosts gebunden, aber AGENTS_HUB_EGRESS_PROXY ist aus, daher starten Läufe, die sie deklarieren, nicht; AGENTS_HUB_EGRESS_PROXY=1 setzen',
         hostBoundPlain_one: '{{count}} Geheimnis an Hosts gebunden, aber AGENTS_HUB_EGRESS_PROXY ist aus und der Klartext-Fallback an, daher erhalten Läufe den echten Wert; AGENTS_HUB_EGRESS_PROXY=1 setzen',
         hostBoundPlain_other: '{{count}} Geheimnisse an Hosts gebunden, aber AGENTS_HUB_EGRESS_PROXY ist aus und der Klartext-Fallback an, daher erhalten Läufe die echten Werte; AGENTS_HUB_EGRESS_PROXY=1 setzen',
-        localRuns: 'Modus {{mode}} mit AGENT_EXECUTION_MODE=local: jeder Lauf hat die Rechte dieses Hosts; docker verwenden',
         ok: 'Modus {{mode}}, Läufe über {{execution}}, Fähigkeitswächter auf block.',
       },
       staleRuns: {
@@ -210,15 +185,6 @@ export default {
         http: 'Der Browser-Dienst hat mit HTTP {{code}} geantwortet.',
         noToken: 'Der Browser-Dienst antwortet, aber AGENTS_HUB_BROWSER_TOKEN ist nicht gesetzt.',
         ok: 'Der Browser-Dienst antwortet.',
-      },
-      modelsRuntime: {
-        off: 'Die Modellumgebung ist ausgeschaltet (AGENTS_HUB_MODELS_MANAGED=false und kein AGENTS_HUB_MODELS_URL).',
-        stopped: 'Die Modellumgebung des Hubs wurde auf der Seite Modelle gestoppt.',
-        notRunning: 'Die Modellumgebung des Hubs läuft nicht; die Seite Modelle, Reiter Lokal, zeigt den Grund und kann sie starten.',
-        unreachable: 'Die Modellumgebung unter {{url}} ist nicht erreichbar: {{error}}.',
-        http: 'Die Modellumgebung hat mit HTTP {{code}} geantwortet.',
-        noToken: 'Die Modellumgebung antwortet, aber kein Token ist gesetzt (AGENTS_HUB_MODELS_TOKEN oder AGENTS_HUB_MODELS_TOKEN_FILE).',
-        ok: 'Die Modellumgebung antwortet.',
       },
       docker: {
         ok: 'Docker ist verfügbar.',
@@ -305,7 +271,6 @@ export default {
       code_runner_fallback: 'Ausweich-Codeausführung',
       providers: 'Anbieter',
       default_provider: 'Standardanbieter',
-      egress_proxy: 'Egress-Proxy',
       built_at: 'Gebaut',
       newest_source: 'Neueste Quelle',
       newest_source_at: 'Geändert',

@@ -231,15 +231,6 @@ def test_eval_failure_wakes_only_on_failures(store):
     assert ev.eval_finished(Run()) == []
 
 
-def test_unanswered_telegram_message_wakes_listeners(store):
-    _agent("ws_agent", workspace="default")
-    _agent("other_ws", workspace="other")
-    _enable("ws_agent", triggers=[{"kind": "telegram"}])
-    _enable("other_ws", triggers=[{"kind": "telegram"}])
-    assert ev.telegram_unanswered(42, "default", "hello?") == ["ws_agent"]
-    assert set(ev.telegram_unanswered(42, None, "anyone?")) == {"ws_agent", "other_ws"}
-
-
 def test_agent_wake_respects_the_from_list(store):
     _agent("target")
     _enable("target", triggers=[{"kind": "agent", "from": ["friend"]}])
@@ -335,11 +326,11 @@ def test_untrusted_trigger_closes_the_trifecta(store, monkeypatch):
     from agents import capability_guard
     monkeypatch.setattr(capability_guard, "guard_mode", lambda: "block")
     # read_file reads private data; a webhook brings untrusted text in; a
-    # Telegram delivery carries the summary out: the trifecta, by profile.
+    # webhook delivery carries the summary out: the trifecta, by profile.
     _agent(tools=["read_file"])
     with pytest.raises(ValueError, match="capability guard"):
         svc.save_profile("watcher", {"enabled": True, "triggers": [{"kind": "webhook"}],
-                                     "notify": ["dashboard", "telegram"]})
+                                     "notify": ["dashboard", "webhook"]})
     # The inbox alone is not an outbound channel.
     profile = svc.save_profile("watcher", {"enabled": True, "triggers": [{"kind": "webhook"}],
                                            "notify": ["dashboard"]})
@@ -350,8 +341,8 @@ def test_override_and_warn_mode_let_the_profile_through(store, monkeypatch):
     from agents import capability_guard
     monkeypatch.setattr(capability_guard, "guard_mode", lambda: "warn")
     _agent(tools=["read_file"])
-    profile = svc.save_profile("watcher", {"enabled": True, "triggers": [{"kind": "telegram"}],
-                                           "notify": ["telegram"]})
+    profile = svc.save_profile("watcher", {"enabled": True, "triggers": [{"kind": "webhook"}],
+                                           "notify": ["webhook"]})
     assert profile["enabled"] is True
 
 
@@ -389,8 +380,8 @@ def test_compaction_folds_old_quiet_ticks_and_keeps_acted_ones(store):
     for _ in range(5):
         _row(job.id, 10, "quiet", cost_usd=0.01)
     _row(job.id, 10, "acted", summary="did a thing")
-    _row(job.id, 10, "budget", task_id=None)
-    _row(job.id, 10, "budget", task_id=None)
+    _row(job.id, 10, "rate", task_id=None)
+    _row(job.id, 10, "rate", task_id=None)
     for _ in range(3):
         _row(job.id, 1, "quiet")  # recent: untouched
 
@@ -401,7 +392,7 @@ def test_compaction_folds_old_quiet_ticks_and_keeps_acted_ones(store):
     assert len(old_quiet) == 1 and old_quiet[0].count == 5 and old_quiet[0].cost_usd == 0.05
     assert old_quiet[0].task_id is None
     assert len([r for r in rows if r.outcome == "acted"]) == 1
-    assert [r.count for r in rows if r.outcome == "budget"] == [2]
+    assert [r.count for r in rows if r.outcome == "rate"] == [2]
     assert len([r for r in rows if r.outcome == "quiet" and r.count == 1]) == 3
     assert svc.compact_journal(0) == 0
 
@@ -414,7 +405,7 @@ def test_summary_counts_the_last_day(store):
     _row(job_a.id, 0.1, "acted")
     _row(job_a.id, 0.2, "quiet")
     _row(job_a.id, 0.3, "quiet", count=4)
-    _row(job_a.id, 0.4, "budget", task_id=None)
+    _row(job_a.id, 0.4, "rate", task_id=None)
     _row(job_a.id, 2, "acted")  # too old
     _row(job_a.id, 0.05, None)  # still running
     _row(job_b.id, 0.1, "blocked")
@@ -422,7 +413,7 @@ def test_summary_counts_the_last_day(store):
 
     body = svc.summary()
     assert body["totals"] == {"agents": 2, "acted": 1, "quiet": 5, "blocked": 1, "error": 0,
-                              "skipped": 1, "budget": 1, "running": 1, "paused": 1}
+                              "skipped": 1, "running": 1, "paused": 1}
     by_id = {a["agent_id"]: a for a in body["agents"]}
     assert by_id["a"]["status"] == "scheduled" and by_id["a"]["next_run_at"]
     assert by_id["b"]["status"] == "paused" and by_id["b"]["next_run_at"] is None

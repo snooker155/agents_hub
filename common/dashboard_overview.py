@@ -9,11 +9,6 @@ page does not fan out to five endpoints on every live refresh:
 - ``costs``: spend today, over 7 and 30 days, per day, and the agents and
   models that cost the most over 30 days, priced exactly as the Costs page
   prices them (common/costs_report.py ``_run_cost``);
-- ``endpoint``: calls through the hub's ``/v1`` endpoint (common/serving.py);
-- ``local_models``: the model runtime's loaded models and its gateway counts
-  (the Models page's Runtime load card). Reading it here never starts the
-  runtime, unlike ``GET /api/models/local/runtime``: a front page that boots
-  a runtime somebody left off would be a surprise;
 - ``services``: the agent services, their replicas and the turns they
   answered in the last 24 hours;
 - ``live``: what runs right now, of every kind (agent runs, flows, loops,
@@ -29,10 +24,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger(__name__)
-
-#: How long the dashboard waits for the model runtime before saying it did
-#: not answer: the page polls, so a slow runtime must not hold it up.
-RUNTIME_TIMEOUT = 2.0
 
 _DONE = {"completed"}
 _FAILED = {"failed", "error", "timeout"}
@@ -203,158 +194,6 @@ def _runs_and_costs(runs: List[Dict[str, Any]], now: datetime, days: int) -> Dic
     }
 
 
-def _budget(workspace: Optional[str]) -> Optional[Dict[str, Any]]:
-    from common import budget as budget_mod
-    status = budget_mod.budget_status(workspace or "default")
-    if not (status.get("hard_limit_usd") or status.get("soft_limit_usd")):
-        return None
-    return {k: status.get(k) for k in ("period", "spend", "hard_limit_usd", "soft_limit_usd",
-                                       "hard_exceeded", "soft_exceeded")}
-
-
-def _endpoint(now: datetime, days: int, user_id: Optional[str]) -> Dict[str, Any]:
-    """Calls through ``/v1``: last 24 hours, last ``days`` days and per day."""
-    from common import db, serving
-
-    since_days = (now - timedelta(days=days - 1)).date().isoformat()
-    week = serving.usage(since=since_days, limit_recent=0, user_id=user_id)
-    day = serving.usage(since=(now - timedelta(hours=24)).isoformat(), limit_recent=0, user_id=user_id)
-
-    clause, args = serving._where(since_days, None, user_id)
-    keys = _day_keys(now, days)
-    counts = {k: 0 for k in keys}
-    for row in db.get_conn().execute(f"SELECT at FROM serving_usage{clause}", tuple(args)).fetchall():
-        at = _parse(row["at"])
-        if at is not None and at.date().isoformat() in counts:
-            counts[at.date().isoformat()] += 1
-
-    def _sum(usage: Dict[str, Any]) -> Dict[str, Any]:
-        totals = dict(usage.get("totals") or {})
-        totals["errors"] = sum(int(r.get("errors") or 0) for r in usage.get("rows") or [])
-        return totals
-
-    return {
-        "last_24h": _sum(day),
-        "window": _sum(week),
-        "per_day": [{"date": k, "requests": counts[k]} for k in keys],
-        "top_models": [{"key": f"{r['provider']}/{r['model']}", "requests": r["requests"],
-                        "total_tokens": r["total_tokens"], "errors": r["errors"]}
-                       for r in (week.get("rows") or [])[:5]],
-    }
-
-
-def _local_models() -> Dict[str, Any]:
-    from providers import local_models as lm
-
-    cfg = lm.runtime_settings()
-    out: Dict[str, Any] = {"configured": bool(cfg["url"]), "managed": bool(cfg.get("managed")),
-                           "state": None, "ok": False, "models": 0, "loaded": [],
-                           "memory": None, "usage": None, "usage_outdated": False, "error": None}
-    if not cfg["url"]:
-        return out
-    if cfg.get("managed"):
-        from providers import model_runtime_host as host
-        state = host.status()
-        out["state"] = state.get("state")
-        out["stopped_by_user"] = state.get("stopped_by_user")
-        # The state is this process's: another process (a worker, or the
-        # backend before a reload) may have started the runtime, so a
-        # runtime answering on its port counts as running.
-        if out["state"] != "running":
-            if out["state"] in ("preparing", "starting") or host.probe(timeout=1.0) is None:
-                return out
-            out["state"] = "running"
-    client = lm.RuntimeClient(timeout=RUNTIME_TIMEOUT)
-    try:
-        listing = client.listing()
-    except lm.LocalModelError as exc:
-        out["error"] = str(exc)
-        return out
-    out["ok"] = True
-    models = list(listing.get("models") or [])
-    out["models"] = len(models)
-    out["loaded"] = [{"name": m.get("name") or m.get("file"), "kind": m.get("kind"),
-                      "engine": m.get("engine"), "size_bytes": m.get("size_bytes")}
-                     for m in models if m.get("loaded")]
-    try:
-        out["memory"] = client.memory()
-    except lm.LocalModelError:
-        out["memory"] = None
-    try:
-        usage = client.usage()
-    except lm.LocalModelError as exc:
-        out["usage_outdated"] = exc.status_code == 404
-        return out
-    rows = usage.get("rows") or []
-    by_source: Dict[str, int] = {}
-    by_model: Dict[str, Dict[str, Any]] = {}
-    for r in rows:
-        by_source[r.get("source") or "direct"] = by_source.get(r.get("source") or "direct", 0) + int(r.get("requests") or 0)
-        m = by_model.setdefault(r.get("model") or "?", {"model": r.get("model") or "?", "requests": 0,
-                                                       "errors": 0, "gen_tokens": 0, "gen_ms": 0.0,
-                                                       "duration_ms": 0})
-        m["requests"] += int(r.get("requests") or 0)
-        m["errors"] += int(r.get("errors") or 0)
-        m["gen_tokens"] += int(r.get("gen_tokens") or 0)
-        m["gen_ms"] += float(r.get("gen_ms") or 0.0)
-        m["duration_ms"] += int(r.get("duration_ms") or 0)
-    top = sorted(by_model.values(), key=lambda m: -m["requests"])[:5]
-    for m in top:
-        m["tokens_per_second"] = (round(m["gen_tokens"] * 1000 / m["gen_ms"], 1)
-                                  if m["gen_ms"] > 0 and m["gen_tokens"] > 0 else None)
-        m["avg_ms"] = int(m["duration_ms"] / m["requests"]) if m["requests"] else None
-    out["usage"] = {"since": usage.get("since"), "totals": usage.get("totals") or {},
-                    "by_source": by_source, "top_models": top}
-    return out
-
-
-def _services(workspace: Optional[str], runs: List[Dict[str, Any]], now: datetime,
-              principal: Any) -> Dict[str, Any]:
-    from common import access
-    from services import replicas, store
-
-    items = store.list_services(workspace=workspace, include_runners=True)
-    if principal is not None:
-        items = access.filter_by_workspace(principal, items)
-    since = now - timedelta(hours=24)
-    turns: Dict[str, Dict[str, int]] = {}
-    for r in runs:
-        sid = r.get("service_id")
-        if not sid:
-            continue
-        started = _parse(r.get("started_at") or r.get("created_at"))
-        if started is None or started < since:
-            continue
-        t = turns.setdefault(str(sid), {"turns": 0, "failed": 0})
-        t["turns"] += 1
-        if str(r.get("status") or "") in _FAILED:
-            t["failed"] += 1
-
-    rows = []
-    totals = {"services": 0, "active": 0, "paused": 0, "replicas_live": 0, "replicas_total": 0,
-              "turns_24h": 0, "failed_24h": 0}
-    for s in items:
-        sid = str(s["service_id"])
-        counts = replicas.summary(sid)
-        paused = s.get("status") == store.STATUS_PAUSED
-        t = turns.get(sid, {"turns": 0, "failed": 0})
-        rows.append({
-            "service_id": sid, "name": s.get("name") or sid, "agent_id": s.get("agent_id"),
-            "kind": s.get("kind"), "workspace": s.get("workspace"), "paused": paused,
-            "replicas_live": counts.get("live", 0), "replicas_total": counts.get("total", 0),
-            "replicas_max": s.get("replicas_max"),
-            "turns_24h": t["turns"], "failed_24h": t["failed"],
-        })
-        totals["services"] += 1
-        totals["paused" if paused else "active"] += 1
-        totals["replicas_live"] += counts.get("live", 0)
-        totals["replicas_total"] += counts.get("total", 0)
-        totals["turns_24h"] += t["turns"]
-        totals["failed_24h"] += t["failed"]
-    rows.sort(key=lambda r: (-r["turns_24h"], -r["replicas_live"], r["name"]))
-    return {"totals": totals, "items": rows[:6]}
-
-
 #: An active record with no sign of life for this long is listed apart as
 #: stale: its process most likely died without closing it.
 STALE_AFTER = timedelta(minutes=10)
@@ -428,26 +267,14 @@ def _live(workspace: Optional[str], runs: List[Dict[str, Any]], now: datetime,
         if e["status"] == "stop":
             e["status"] = "stopped"
 
-    queue: Dict[str, Any] = {}
-    try:
-        from common import run_queue
-        stats = run_queue.stats()
-        queue = {"queued": stats.get("queued", 0),
-                 "oldest_queued_seconds": stats.get("oldest_queued_seconds", 0.0)}
-    except Exception:  # noqa: BLE001 - the queue is then left out
-        log.debug("dashboard overview: run queue unavailable", exc_info=True)
-
     return {"total": len(live), "by_kind": by_kind, "items": live[:limit],
             "stale_total": len(stale), "stale": stale[:3],
-            "recent": ended[:recent], "queue": queue}
+            "recent": ended[:recent]}
 
 
-def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any = None,
-             serving_user_id: Optional[str] = None) -> Dict[str, Any]:
+def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any = None) -> Dict[str, Any]:
     """Everything the Dashboard's load and spend widgets show. ``workspace``
-    narrows runs, spend and services; the endpoint and the model runtime are
-    the whole hub's. ``serving_user_id`` narrows ``/v1`` calls to one
-    person's (a non-administrator in ``multi`` mode)."""
+    narrows runs, spend and services."""
     from managers import run_manager
 
     days = max(1, min(int(days or 14), 90))
@@ -464,10 +291,5 @@ def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any 
     rc = _section("runs", lambda: _runs_and_costs(runs, now, days))
     out["runs"] = rc.get("runs", rc)
     out["costs"] = rc.get("costs", rc)
-    if "error" not in out["costs"]:
-        out["costs"]["budget"] = _section("budget", lambda: {"value": _budget(workspace)}).get("value")
-    out["endpoint"] = _section("endpoint", lambda: _endpoint(now, days, serving_user_id))
-    out["local_models"] = _section("local_models", _local_models)
-    out["services"] = _section("services", lambda: _services(workspace, runs, now, principal))
     out["live"] = _section("live", lambda: _live(workspace, runs, now))
     return out

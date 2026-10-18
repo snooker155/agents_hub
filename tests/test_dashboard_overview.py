@@ -35,7 +35,6 @@ def _seed_prices():
 
 def test_runs_and_costs_by_day(monkeypatch):
     _seed_prices()
-    monkeypatch.setattr(dashboard_overview, "_local_models", lambda: {"configured": False})
     _run("r1", status="completed", ago=timedelta(hours=1))
     _run("r2", status="failed", ago=timedelta(hours=2), agent_id="a2", inbound=500_000)
     _run("r3", status="completed", ago=timedelta(days=3))
@@ -63,53 +62,19 @@ def test_runs_and_costs_by_day(monkeypatch):
     assert costs["runs_30d"] == 3
     assert round(sum(d["cost"] for d in costs["per_day"]), 2) == 5.00
     assert costs["top_agents"][0]["key"] == "a1"
-    assert costs["budget"] is None
 
 
 def test_a_failing_section_does_not_blank_the_others(monkeypatch):
-    def boom():
-        raise RuntimeError("runtime down")
-    monkeypatch.setattr(dashboard_overview, "_local_models", boom)
+    def boom(*args, **kwargs):
+        raise RuntimeError("store down")
+    monkeypatch.setattr(dashboard_overview, "_live", boom)
     out = dashboard_overview.overview(None)
-    assert out["local_models"] == {"error": "runtime down"}
+    assert out["live"] == {"error": "store down"}
     assert "per_day" in out["runs"]
-    assert "last_24h" in out["endpoint"]
-
-
-def test_service_turns_in_the_last_day(monkeypatch):
-    from services import store
-    monkeypatch.setattr(dashboard_overview, "_local_models", lambda: {"configured": False})
-    svc = store.create(name="Support", agent_id="a1", workspace="ws")
-    sid = svc["service_id"]
-    _run("s1", status="completed", ago=timedelta(hours=1), service_id=sid)
-    _run("s2", status="failed", ago=timedelta(hours=3), service_id=sid)
-    _run("s3", status="completed", ago=timedelta(days=2), service_id=sid)
-
-    out = dashboard_overview.overview("ws")["services"]
-    row = next(r for r in out["items"] if r["service_id"] == sid)
-    assert (row["turns_24h"], row["failed_24h"]) == (2, 1)
-    assert out["totals"]["turns_24h"] == 2
-
-
-def test_local_runtime_is_never_started(monkeypatch):
-    """The page reads the runtime the hub runs only when it already runs."""
-    from providers import local_models as lm
-    from providers import model_runtime_host as host
-
-    monkeypatch.setattr(lm, "runtime_settings", lambda: {"url": "http://127.0.0.1:1", "token": "",
-                                                        "timeout": 1.0, "managed": True})
-    monkeypatch.setattr(host, "status", lambda: {"state": "stopped", "stopped_by_user": True})
-    monkeypatch.setattr(host, "probe", lambda timeout=1.5: None)
-    monkeypatch.setattr(host, "ensure", lambda **kw: (_ for _ in ()).throw(AssertionError("started")))
-
-    out = dashboard_overview._local_models()
-    assert out["configured"] and not out["ok"]
-    assert out["state"] == "stopped" and out["stopped_by_user"]
 
 
 def test_live_lists_what_runs_and_sets_aside_the_silent(monkeypatch):
     from common import entity_runs
-    monkeypatch.setattr(dashboard_overview, "_local_models", lambda: {"configured": False})
     rm.upsert_run({"run_id": "now", "workspace": "ws", "agent_id": "a1", "status": "running",
                    "started_at": _iso(timedelta(minutes=2))})
     # A stop request never honoured, months ago: no sign of life.
@@ -131,7 +96,6 @@ def test_live_lists_what_runs_and_sets_aside_the_silent(monkeypatch):
 
 
 def test_recent_leaves_out_runs_the_watchdog_closed_late(monkeypatch):
-    monkeypatch.setattr(dashboard_overview, "_local_models", lambda: {"configured": False})
     rm.upsert_run({"run_id": "late", "workspace": "ws", "agent_id": "a1", "status": "stopped",
                    "started_at": _iso(timedelta(days=90)), "finished_at": _iso(timedelta(minutes=1)),
                    "settled_by": "watchdog"})

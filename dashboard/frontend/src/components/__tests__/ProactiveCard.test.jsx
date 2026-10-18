@@ -25,8 +25,8 @@ import { collapseTicks } from '../../api/proactive';
 
 const profile = (overrides = {}) => ({
   enabled: false, interval_minutes: 60, cron: '', timezone: 'UTC',
-  quiet_hours: { from: '', to: '' }, daily_budget_usd: 0, max_runs_per_day: 0,
-  tick_budget_usd: null, environment_id: null, brief: '', triggers: [], notify: ['dashboard'],
+  quiet_hours: { from: '', to: '' }, max_runs_per_day: 0,
+  brief: '', triggers: [], notify: ['dashboard'],
   workspace: null, auto_pause_after: 3, job_id: null, ...overrides,
 });
 
@@ -62,22 +62,22 @@ describe('ProactiveCard', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'proactive.schedule.interval' }), { target: { value: '15' } });
     fireEvent.change(screen.getByLabelText('proactive.quietHours.from'), { target: { value: '22:00' } });
     fireEvent.change(screen.getByLabelText('proactive.quietHours.to'), { target: { value: '07:00' } });
-    fireEvent.click(screen.getByLabelText('proactive.notify.telegram'));
+    fireEvent.click(screen.getByLabelText('proactive.notify.webhook'));
     fireEvent.click(screen.getByText('proactive.save'));
 
     await waitFor(() => expect(api.updateAgentProactive).toHaveBeenCalledTimes(1));
     const [, patch] = api.updateAgentProactive.mock.calls[0];
     expect(patch).toMatchObject({
       enabled: true, interval_minutes: 15, cron: '', brief: 'watch the inbox',
-      quiet_hours: { from: '22:00', to: '07:00' }, notify: ['dashboard', 'telegram'],
+      quiet_hours: { from: '22:00', to: '07:00' }, notify: ['dashboard', 'webhook'],
     });
   });
 
   it('shows the live state with usage, and pause, resume and wake act on it', async () => {
     api.getAgentProactive.mockResolvedValue({ data: body({
-      profile: profile({ enabled: true, job_id: 'j1', daily_budget_usd: 2 }),
+      profile: profile({ enabled: true, job_id: 'j1' }),
       job: job(),
-      usage: { runs: 3, spent_usd: 0.42, max_runs_per_day: 0, daily_budget_usd: 2 },
+      usage: { runs: 3, spent_usd: 0.42, max_runs_per_day: 0 },
     }) });
     api.pauseAgentProactive.mockResolvedValue({ data: body({ job: job({ status: 'paused', paused_reason: 'manual' }) }) });
     api.resumeAgentProactive.mockResolvedValue({ data: body({ job: job() }) });
@@ -104,7 +104,7 @@ describe('ProactiveCard', () => {
     api.getAgentProactive.mockResolvedValue({ data: body({
       profile: profile({ enabled: true, job_id: 'j1' }),
       job: job(),
-      usage: { runs: 4, spent_usd: 0, max_runs_per_day: 0, daily_budget_usd: 0 },
+      usage: { runs: 4, spent_usd: 0, max_runs_per_day: 0 },
       ticks: [
         { id: 'f4', at: '2026-10-02T11:00:00Z', outcome: 'acted', summary: 'Drafted two answers', next_check: 'row 14', cost_usd: 0.0123, task_id: 't4', trigger: 'schedule' },
         { id: 'f3', at: '2026-10-02T10:00:00Z', outcome: 'quiet', summary: 'nothing', task_id: 't3' },
@@ -129,12 +129,12 @@ describe('collapseTicks', () => {
     const out = collapseTicks([
       { id: 'a', outcome: 'quiet', at: '3' },
       { id: 'b', outcome: 'quiet', at: '2' },
-      { id: 'c', outcome: 'budget', at: '1b' },
+      { id: 'c', outcome: 'rate', at: '1b' },
       { id: 'd', outcome: 'acted', at: '1' },
       { id: 'e', outcome: 'quiet', at: '0' },
     ]);
     expect(out.map((r) => [r.group, r.outcome, r.count])).toEqual([
-      [true, 'quiet', 2], [true, 'budget', 1], [false, 'acted', undefined], [true, 'quiet', 1],
+      [true, 'quiet', 2], [true, 'rate', 1], [false, 'acted', undefined], [true, 'quiet', 1],
     ]);
     expect(out[0].until).toBe('2');
   });

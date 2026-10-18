@@ -221,17 +221,16 @@ def _accounting_callbacks() -> List[Any]:
 
     The summary is written inside the loop's model step, so a plain
     ``invoke`` would inherit every callback of the run, including the one that
-    streams tokens into a chat bubble. It gets only the money guard and the
-    token statistics: the call is paid for like any other.
+    streams tokens into a chat bubble. It gets only the token statistics:
+    the call is counted like any other.
     """
     try:
         from langchain_core.runnables.config import var_child_runnable_config
-        from agents.callbacks.guards import RunBudgetGuard
         from agents.callbacks.run_statistics import StatsCollectorCallback
         config = var_child_runnable_config.get() or {}
         callbacks = config.get("callbacks")
         handlers = callbacks if isinstance(callbacks, list) else getattr(callbacks, "handlers", None)
-        return [h for h in handlers or [] if isinstance(h, (RunBudgetGuard, StatsCollectorCallback))]
+        return [h for h in handlers or [] if isinstance(h, StatsCollectorCallback)]
     except Exception:  # noqa: BLE001 - no accounting is better than no summary
         return []
 

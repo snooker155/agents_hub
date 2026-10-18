@@ -174,11 +174,6 @@ export function useConversationStore(currentConvId, { paused = false } = {}) {
     if (!ready || !currentConvId) return undefined;
     const conv = conversations.find((c) => c.id === currentConvId);
     if (!conv || conv._hydrated !== false) return undefined;
-    // A Telegram thread's transcript is not this store's to serve: the page
-    // rebuilds it from the runs recorded against the binding, workspace slice
-    // and all. Leaving it unhydrated keeps that rebuild from being written back
-    // over itself and keeps the two copies from racing on open.
-    if (conv.origin === 'telegram') return undefined;
     const hydrating = hydratingRef.current;
     if (hydrating.has(currentConvId)) return undefined;
     hydrating.add(currentConvId);

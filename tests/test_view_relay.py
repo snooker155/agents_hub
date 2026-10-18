@@ -38,20 +38,6 @@ def _capture_post(monkeypatch, captured):
 
 # ── the relay itself ─────────────────────────────────────────────────────────
 
-def test_relay_publish_posts_channel_and_event_with_bearer(monkeypatch):
-    monkeypatch.setenv("AGENTS_HUB_API_TOKEN", TOKEN)
-    monkeypatch.setenv("DASHBOARD_PORT", "8123")
-    captured = {}
-    _capture_post(monkeypatch, captured)
-
-    _real_relay_publish("view:vw_1", {"type": "view_op", "op": {"seq": 1}})
-
-    [call] = captured["calls"]
-    assert call["url"] == "http://localhost:8123/api/stream/publish"
-    assert call["json"] == {"channel": "view:vw_1", "event": {"type": "view_op", "op": {"seq": 1}}}
-    assert call["headers"] == {"Authorization": f"Bearer {TOKEN}"}
-
-
 def test_relay_publish_survives_an_unreachable_backend(monkeypatch):
     def boom(*a, **k):
         raise ConnectionError("down")

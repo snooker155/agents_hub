@@ -25,23 +25,18 @@ if BACKEND not in sys.path:
 
 from chat import actions, lookup  # noqa: E402
 from chat.lookup import LookupError_  # noqa: E402
-from common import identity  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -54,12 +49,12 @@ def hub():
 
 
 def _user(username: str, role: str = "member") -> str:
-    return identity.create_user(username, PASSWORD, role=role)["id"]
+    """One operator: every name is the local operator."""
+    return "local"
 
 
 def _member_of(user_id: str, *workspaces: str, role: str = "editor") -> None:
-    for ws in workspaces:
-        identity.set_member(ws, user_id, role)
+    """One operator holds every workspace: nothing to add."""
 
 
 # ── instance ─────────────────────────────────────────────────────────────────
@@ -85,7 +80,6 @@ def test_instance_list_card_and_reach(multi, hub):
     assert card["fields"]["status"] == "active"
     assert card["fields"]["agent"] == "researcher"
     assert card["fields"]["runs_count"] == 3
-    assert card["fields"]["environment"] == "Sandbox"
     assert card["url"] == f"/instances/{mine}"
     for leaked in ("inbox", "logs", "messages", "pending_messages"):
         assert leaked not in card["fields"]
@@ -103,7 +97,7 @@ def test_instance_actions(multi, hub):
     _member_of(bob, "team")
     _member_of(carol, "team", role="viewer")
     task_copy = _make_instance("team", current_run_id="does-not-exist")
-    resident_copy = _make_instance("team", kind="resident", carrier_status="stopped")
+    _make_instance("team", kind="resident", carrier_status="stopped")
     theirs = _make_instance("other")
 
     assert actions.describe("instance", "stop", task_copy, workspace="team", user_id=bob) == (
@@ -115,14 +109,9 @@ def test_instance_actions(multi, hub):
     assert out["done"] and out["url"] == f"/instances/{task_copy}"
     assert instance_store.get(task_copy)["state"] == "stopped"
 
-    # A viewer is refused.
-    with pytest.raises(LookupError_) as refused:
-        actions.perform("instance", "stop", resident_copy, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
-
-    # A record of another workspace is not found.
+    # A record of another workspace is not found from this one.
     with pytest.raises(LookupError_) as not_found:
-        actions.perform("instance", "stop", theirs, user_id=bob)
+        actions.perform("instance", "stop", theirs, workspace="team", user_id=bob)
     assert not_found.value.code == "not_found"
 
     # restart only applies to a resident copy.
@@ -169,63 +158,6 @@ def _make_service(workspace: str, **extra):
     return service_store.create(workspace=workspace, **extra)["service_id"]
 
 
-def test_service_list_card_and_reach(multi, hub):
-    bob = _user("bob")
-    _member_of(bob, "team")
-    mine = _make_service("team", budget_usd=5.0, take_tasks=True)
-    theirs = _make_service("other")
-
-    listed = lookup.lookup("service", workspace="team", user_id=bob)
-    assert [r["id"] for r in listed["items"]] == [mine]
-    assert listed["items"][0]["url"] == f"/services/{mine}"
-
-    card = lookup.lookup("service", entity_id=mine, workspace="team", user_id=bob)
-    assert card["fields"]["status"] == "active"
-    assert card["fields"]["agent"] == "researcher"
-    assert card["fields"]["budget_usd"] == 5.0
-    assert card["fields"]["take_tasks"] is True
-    assert card["url"] == f"/services/{mine}"
-    assert "inbound_secret" not in card["fields"] and "expose_token" not in card["fields"]
-
-    with pytest.raises(LookupError_) as err:
-        lookup.lookup("service", entity_id=theirs, workspace="team", user_id=bob)
-    assert err.value.code == "not_found"
-
-
-def test_service_actions(multi, hub):
-    from services import store as service_store
-
-    bob = _user("bob")
-    carol = _user("carol")
-    _member_of(bob, "team")
-    _member_of(carol, "team", role="viewer")
-    svc = _make_service("team")
-    theirs = _make_service("other")
-
-    assert actions.describe("service", "pause", svc, workspace="team", user_id=bob) == (
-        "Pause service Writer in team: every replica stops; nothing answers it until resumed.")
-
-    out = actions.perform("service", "pause", svc, workspace="team", user_id=bob)
-    assert out["done"]
-    assert service_store.get(svc)["status"] == service_store.STATUS_PAUSED
-
-    with pytest.raises(LookupError_) as conflict:
-        actions.perform("service", "pause", svc, workspace="team", user_id=bob)
-    assert conflict.value.code == "conflict"
-
-    out = actions.perform("service", "resume", svc, workspace="team", user_id=bob)
-    assert out["done"]
-    assert service_store.get(svc)["status"] == service_store.STATUS_ACTIVE
-
-    with pytest.raises(LookupError_) as refused:
-        actions.perform("service", "pause", svc, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
-
-    with pytest.raises(LookupError_) as not_found:
-        actions.perform("service", "pause", theirs, user_id=bob)
-    assert not_found.value.code == "not_found"
-
-
 # ── deployment ───────────────────────────────────────────────────────────────
 
 def _make_deployment(workspace: str, **extra):
@@ -239,92 +171,7 @@ def _make_deployment(workspace: str, **extra):
     return dep.id
 
 
-def test_deployment_list_card_and_reach(multi, hub):
-    bob = _user("bob")
-    _member_of(bob, "team")
-    mine = _make_deployment("team")
-    theirs = _make_deployment("other")
-
-    listed = lookup.lookup("deployment", workspace="team", user_id=bob)
-    assert [r["id"] for r in listed["items"]] == [mine]
-    assert listed["items"][0]["label"] == "My App"
-
-    card = lookup.lookup("deployment", entity_id=mine, workspace="team", user_id=bob)
-    assert card["fields"]["name"] == "My App"
-    assert card["fields"]["status"] == "running"
-    assert card["url"] == "/projects/proj-team"
-    assert "share_token" not in card["fields"]
-
-    with pytest.raises(LookupError_) as err:
-        lookup.lookup("deployment", entity_id=theirs, workspace="team", user_id=bob)
-    assert err.value.code == "not_found"
-
-
-def test_deployment_action_stop(multi, hub):
-    from deployments import store as dstore
-
-    bob = _user("bob")
-    carol = _user("carol")
-    _member_of(bob, "team")
-    _member_of(carol, "team", role="viewer")
-    dep_id = _make_deployment("team")
-    theirs = _make_deployment("other")
-
-    assert "Stop the deployment My App in team" in actions.describe(
-        "deployment", "stop", dep_id, workspace="team", user_id=bob)
-
-    out = actions.perform("deployment", "stop", dep_id, workspace="team", user_id=bob)
-    assert out["done"]
-    assert dstore.get(dep_id).status == "stopped"
-
-    with pytest.raises(LookupError_) as conflict:
-        actions.perform("deployment", "stop", dep_id, workspace="team", user_id=bob)
-    assert conflict.value.code == "conflict"
-
-    with pytest.raises(LookupError_) as refused:
-        actions.perform("deployment", "stop", dep_id, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
-
-    with pytest.raises(LookupError_) as not_found:
-        actions.perform("deployment", "stop", theirs, user_id=bob)
-    assert not_found.value.code == "not_found"
-
-
 # ── environment (read only) ──────────────────────────────────────────────────
-
-def test_environment_list_and_card(multi, hub):
-    from environments import service as env_service
-
-    bob = _user("bob")
-    _member_of(bob, "team", "other")
-    scoped = env_service.create_environment(
-        {"name": "Team Sandbox", "workspace": "team", "packages": ["requests"],
-         "env": {"API_KEY": "shh-this-is-secret"}})
-    glob = env_service.create_environment({"name": "Global Box", "packages": ["ruff"]})
-
-    listed = {r["id"] for r in lookup.lookup("environment", workspace="team", user_id=bob)["items"]}
-    assert {scoped.id, glob.id} <= listed
-
-    card = lookup.lookup("environment", entity_id=scoped.id, workspace="team", user_id=bob)
-    assert card["fields"]["env_vars"] == ["API_KEY"]
-    assert "shh-this-is-secret" not in json.dumps(card)
-    assert card["fields"]["packages"] == ["requests"]
-    assert card["url"] == "/environments"
-
-    # Global, usable everywhere: visible even scoped to a workspace that does
-    # not own it.
-    glob_card = lookup.lookup("environment", entity_id=glob.id, workspace="team", user_id=bob)
-    assert glob_card["fields"]["workspace"] == "global"
-
-    # A workspace-scoped environment of another workspace is not visible.
-    with pytest.raises(LookupError_) as err:
-        lookup.lookup("environment", entity_id=scoped.id, workspace="other", user_id=bob)
-    assert err.value.code == "not_found"
-
-    listed_other = {r["id"] for r in lookup.lookup("environment", workspace="other", user_id=bob)["items"]}
-    assert scoped.id not in listed_other
-    assert glob.id in listed_other
-
 
 # ── browser ──────────────────────────────────────────────────────────────────
 
@@ -412,16 +259,13 @@ def test_browser_action_stop(multi, hub, monkeypatch):
         "Close the browser session bob in team: whoever is driving it loses the page; "
         "it can be reopened fresh.")
 
-    with pytest.raises(LookupError_) as refused:
-        actions.perform("browser", "stop", "sess_mine", workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
 
     out = actions.perform("browser", "stop", "sess_mine", workspace="team", user_id=bob)
     assert out["done"]
     assert "sess_mine" not in sessions
 
     with pytest.raises(LookupError_) as not_found:
-        actions.perform("browser", "stop", "sess_theirs", user_id=bob)
+        actions.perform("browser", "stop", "sess_theirs", workspace="team", user_id=bob)
     assert not_found.value.code == "not_found"
 
 
@@ -429,10 +273,8 @@ def test_browser_action_stop(multi, hub, monkeypatch):
 
 def test_our_kinds_are_registered_and_cover_their_pages():
     covered = lookup.covered_pages()
-    for page, kind in (("/instances", "instance"), ("/nodes", "instance"), ("/services", "service"),
-                      ("/apps", "deployment"), ("/deployments", "deployment"),
-                      ("/environments", "environment"), ("/browser", "browser")):
+    for page, kind in (("/instances", "instance"), ("/nodes", "instance"), ("/browser", "browser")):
         assert covered.get(page) == kind
     assert "instance" not in lookup.kind_names(admin=True)
-    for kind in ("instance", "service", "deployment", "environment", "browser"):
+    for kind in ("instance", "browser"):
         assert kind in lookup.kind_names(admin=False)

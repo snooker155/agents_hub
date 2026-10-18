@@ -6,9 +6,9 @@ the scheduled jobs that produce real work: `agent_task`, `flow`, `loop` and
 does not sit in the same list as a recurring pipeline. A `heartbeat` job is a
 [proactive agent](proactive.md)'s pulse: it is listed and journaled here, but
 owned and edited from the agent's own Pulse card. It adds the two things a
-production-shaped schedule needs and the Plan page keeps out of its way: a
-per-run money cap and an environment, and a firing journal that answers "did
-this actually run, and what happened".
+production-shaped schedule needs and the Plan page keeps out of its way: the
+resources a job hands to every run it starts, and a firing journal that
+answers "did this actually run, and what happened".
 
 ## What a deployment is
 
@@ -16,28 +16,20 @@ A `ScheduledJob` of kind `agent_task`, `flow` or `loop`, the same records the
 Plan page manages, listed here through `GET /api/plan/jobs?kinds=agent_task,flow,loop,heartbeat`.
 Each row shows its target (the agent, flow or loop it fires), its schedule
 (cron and timezone, or a recurrence interval, plus the next occurrence and a
-tooltip with the following few), its environment, its per-run budget, status
-with a paused-reason badge, consecutive error count, and the outcome of its
-last firing.
+tooltip with the following few), status with a paused-reason badge,
+consecutive error count, and the outcome of its last firing.
 
 Creating or editing one sets, on top of the usual schedule fields:
 
-- **environment_id**: the [environment](environments.md) every task this job
-  creates runs in. `None` leaves it to the task's own default resolution.
-- **budget_usd**: the money cap copied onto every task the job creates (see
-  [costs](costs.md)). `None` leaves the task uncapped by the job and subject
-  only to the workspace's own default.
 - **auto_pause_after**: how many consecutive firing failures pause the job
   automatically; `0` turns auto-pause off. Defaults to `3`.
 - **agent_version** (agent_task jobs only): pin the job to a stored agent
   version. Requires `agent_id` and is copied onto the task at fire time. See
   [agents](agents.md).
 
-For an `agent_task` job the environment and budget are passed straight into
+For an `agent_task` job these are passed straight into
 `tasks_service.create_task` when the job fires. A `flow` or `loop` job creates
-its task through that launcher's own path, so the two fields are applied to
-the resulting task afterward, best-effort: a failure there never turns an
-otherwise successful firing into a failed one.
+its task through that launcher's own path.
 
 ## Resources
 
@@ -54,9 +46,9 @@ agent sees none of it.
   directory (docs/files.md).
 - **Extra secrets** (`secrets`): names handed to the run on top of the
   agent's own allowlist (docs/secrets.md), through the run's environment or,
-  for a run inside a runner, the in-process secret scope. Whether a value
-  exists is decided at run time as for the agent's own names. Because a
-  secret is a private-data grant, the capability guard checks the agent's
+  for a run inside a resident instance, the in-process secret scope. Whether
+  a value exists is decided at run time as for the agent's own names. Because
+  a secret is a private-data grant, the capability guard checks the agent's
   tools with these names added when the deployment is saved, and refuses the
   combination it would refuse on the agent page.
 - **Memory pools** (`memory_pool_ids`) with an access mode
@@ -89,11 +81,11 @@ after a crash) is recorded too, as a no-op skip, so the journal shows every
 attempt rather than only the ones that did something.
 
 Error types: `agent_missing`, `flow_missing`, `loop_missing`, `loop_busy`,
-`budget_exceeded`, `capacity`, `workspace_missing`, `other`, plus
-`skipped_slot` for the already-fired case. Classification is string based and
-deliberately conservative: an error that matches nothing known lands in
-`other` rather than a guess, since a wrong bucket could pause a job that would
-have recovered, or fail to pause one that never will.
+`capacity`, `workspace_missing`, `other`, plus `skipped_slot` for the
+already-fired case. Classification is string based and deliberately
+conservative: an error that matches nothing known lands in `other` rather
+than a guess, since a wrong bucket could pause a job that would have
+recovered, or fail to pause one that never will.
 
 The detail drawer on a deployment shows its journal with an only-failures
 filter (`GET /api/plan/jobs/{id}/fires?only_errors=`); each row links to the
@@ -141,4 +133,4 @@ auto-paused), so a fix can be retested without resuming the job first.
   `fired`) after its single firing, so the error counter and auto-pause never
   apply to it.
 
-Related: [scheduling](scheduling.md), [environments](environments.md), [costs](costs.md), [tasks](tasks.md).
+Related: [scheduling](scheduling.md), [tasks](tasks.md), [files](files.md), [secrets](secrets.md), [memory](memory.md).

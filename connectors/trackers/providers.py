@@ -1,5 +1,5 @@
 """
-Provider abstraction over the Jira Cloud REST v3 and Linear GraphQL APIs.
+Provider abstraction over the Jira Cloud REST v3 API.
 
 Mirrors connectors/git/providers.py's shape (one small class per backend, a
 ``TrackerError`` with UI-safe messages, a ``get_provider(name)`` factory that
@@ -11,16 +11,15 @@ git host does not.
 Normalized issue shape, the same fields connectors/git/providers.py uses for
 a repo issue plus a human key:
 
-    {key ("PROJ-12" / "ENG-123"), number, title, body,
+    {key ("PROJ-12"), number, title, body,
      state ("open"|"closed"), status (the tracker's own status name),
      labels, url, updated_at, author, assignee, priority}
 
 Jira stores descriptions and comments as Atlassian Document Format (ADF), a
 small rich-text JSON tree; ``_adf_to_text``/``_text_to_adf`` convert between
 that and the plain text every other part of the hub expects. ``remote_id``
-is the Jira project key for Jira, the team key for Linear — whatever
-``connectors.trackers.sync`` and the ``tracker_*`` tools pass through as
-"the project/team this issue belongs to".
+is the Jira project key, whatever ``connectors.trackers.sync`` and the
+``tracker_*`` tools pass through as "the project this issue belongs to".
 """
 from __future__ import annotations
 
@@ -33,14 +32,6 @@ import httpx
 from common.ssrf import resolve_and_check
 
 _API_TIMEOUT = 30.0
-
-_LINEAR_API = "https://api.linear.app/graphql"
-
-_ISSUE_FIELDS = (
-    "id identifier title description state { name type } "
-    "labels { nodes { name } } url updatedAt creator { name } "
-    "assignee { name } priority"
-)
 
 
 class TrackerError(Exception):
@@ -113,8 +104,8 @@ class TrackerProvider:
         raise NotImplementedError
 
     def list_remotes(self) -> list[dict[str, Any]]:
-        """Projects (Jira) / teams (Linear) the credentials can see, for a
-        picker on the project's tracker-link form."""
+        """Projects the credentials can see, for a picker on the project's
+        tracker-link form."""
         raise NotImplementedError
 
 
@@ -270,176 +261,20 @@ class JiraProvider(TrackerProvider):
         return [{"key": p.get("key"), "name": p.get("name")} for p in (data.get("values") or [])]
 
 
-class LinearProvider(TrackerProvider):
-    name = "Linear"
-
-    def __init__(self, api_key: str):
-        self.api_key = (api_key or "").strip()
-        if not self.api_key:
-            raise TrackerError("Linear is not configured. Add an API key on the Connectors page.")
-
-    @classmethod
-    def from_store(cls) -> "LinearProvider":
-        from . import LINEAR_STORE
-        cfg = LINEAR_STORE.get_config()
-        return cls(cfg.get("api_key", ""))
-
-    def _headers(self) -> dict[str, str]:
-        # Linear expects the raw API key here, no "Bearer " prefix.
-        return {"Authorization": self.api_key, "Content-Type": "application/json"}
-
-    def _query(self, query: str, variables: Optional[dict] = None) -> dict[str, Any]:
-        try:
-            resp = httpx.post(
-                _LINEAR_API, headers=self._headers(),
-                json={"query": query, "variables": variables or {}}, timeout=_API_TIMEOUT,
-            )
-        except httpx.HTTPError as e:
-            raise TrackerError(f"Linear API request failed: {e.__class__.__name__}") from e
-        if resp.status_code == 401:
-            raise TrackerError("Linear API key is invalid or expired")
-        if resp.status_code >= 400:
-            raise TrackerError(f"Linear API error {resp.status_code}")
-        data = resp.json()
-        errors = data.get("errors")
-        if errors:
-            msg = "; ".join(str(e.get("message") or e) for e in errors)
-            raise TrackerError(f"Linear API error: {msg}")
-        return data.get("data") or {}
-
-    def test_connection(self) -> dict[str, Any]:
-        data = self._query("query { viewer { id name email } }")
-        viewer = data.get("viewer") or {}
-        return {"ok": True, "identity": viewer.get("name"), "error": None}
-
-    def _normalize(self, node: dict) -> dict[str, Any]:
-        state = node.get("state") or {}
-        state_type = state.get("type")
-        identifier = node.get("identifier")
-        return {
-            "key": identifier,
-            "number": identifier,
-            "title": node.get("title") or "",
-            "body": node.get("description") or "",
-            "state": "closed" if state_type in ("completed", "canceled") else "open",
-            "status": state.get("name"),
-            "labels": [l.get("name") for l in ((node.get("labels") or {}).get("nodes") or [])],
-            "url": node.get("url"),
-            "updated_at": node.get("updatedAt"),
-            "author": (node.get("creator") or {}).get("name"),
-            "assignee": (node.get("assignee") or {}).get("name"),
-            "priority": node.get("priority"),
-        }
-
-    def list_issues(self, remote_id: str, state: str = "all", limit: int = 200) -> list[dict[str, Any]]:
-        query = (
-            "query($key: String!, $first: Int!) { "
-            "issues(filter: { team: { key: { eq: $key } } }, first: $first, orderBy: updatedAt) "
-            f"{{ nodes {{ {_ISSUE_FIELDS} }} }} }}"
-        )
-        data = self._query(query, {"key": remote_id, "first": limit})
-        nodes = ((data.get("issues") or {}).get("nodes")) or []
-        issues = [self._normalize(n) for n in nodes]
-        if state in ("open", "closed"):
-            issues = [i for i in issues if i["state"] == state]
-        return issues[:limit]
-
-    def get_issue(self, key: str) -> dict[str, Any]:
-        query = f"query($id: String!) {{ issue(id: $id) {{ {_ISSUE_FIELDS} }} }}"
-        data = self._query(query, {"id": key})
-        node = data.get("issue")
-        if not node:
-            raise TrackerError(f"Linear issue {key!r} not found")
-        return self._normalize(node)
-
-    def _resolve_team_id(self, team_key: str) -> str:
-        data = self._query(
-            "query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id } } }",
-            {"key": team_key},
-        )
-        nodes = ((data.get("teams") or {}).get("nodes")) or []
-        if not nodes:
-            raise TrackerError(f"Linear team {team_key!r} not found")
-        return nodes[0]["id"]
-
-    def _resolve_issue_id(self, key: str) -> str:
-        data = self._query("query($id: String!) { issue(id: $id) { id } }", {"id": key})
-        issue = data.get("issue")
-        if not issue:
-            raise TrackerError(f"Linear issue {key!r} not found")
-        return issue["id"]
-
-    def create_issue(self, remote_id: str, title: str, body: str = "",
-                      labels: Optional[list[str]] = None) -> dict[str, Any]:
-        # Linear's issueCreate input takes {teamId, title, description} —
-        # label ids would need a separate lookup the contract does not ask
-        # for, so `labels` is accepted for call-shape parity with Jira and
-        # left unused here.
-        team_id = self._resolve_team_id(remote_id)
-        data = self._query(
-            "mutation($input: IssueCreateInput!) { issueCreate(input: $input) "
-            "{ success issue { id identifier url } } }",
-            {"input": {"teamId": team_id, "title": title, "description": body or ""}},
-        )
-        issue = (data.get("issueCreate") or {}).get("issue") or {}
-        return {"key": issue.get("identifier"), "url": issue.get("url")}
-
-    def add_comment(self, key: str, text: str) -> dict[str, Any]:
-        issue_id = self._resolve_issue_id(key)
-        data = self._query(
-            "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
-            {"input": {"issueId": issue_id, "body": text}},
-        )
-        return {"ok": bool((data.get("commentCreate") or {}).get("success"))}
-
-    def list_transitions(self, key: str) -> list[dict[str, Any]]:
-        data = self._query(
-            "query($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }",
-            {"id": key},
-        )
-        issue = data.get("issue") or {}
-        states = ((issue.get("team") or {}).get("states") or {}).get("nodes") or []
-        return [{"id": s.get("id"), "name": s.get("name")} for s in states]
-
-    def transition(self, key: str, status_name: str) -> dict[str, Any]:
-        issue_id = self._resolve_issue_id(key)
-        transitions = self.list_transitions(key)
-        target = status_name.strip().lower()
-        match = next((t for t in transitions if (t.get("name") or "").strip().lower() == target), None)
-        if match is None:
-            available = ", ".join(t.get("name") or "" for t in transitions)
-            raise TrackerError(
-                f"No status named {status_name!r} for this issue's team. Available: {available}"
-            )
-        data = self._query(
-            "mutation($id: String!, $input: IssueUpdateInput!) "
-            "{ issueUpdate(id: $id, input: $input) { success } }",
-            {"id": issue_id, "input": {"stateId": match["id"]}},
-        )
-        return {"ok": bool((data.get("issueUpdate") or {}).get("success")), "status": status_name}
-
-    def list_remotes(self) -> list[dict[str, Any]]:
-        data = self._query("query { teams { nodes { key name } } }")
-        nodes = ((data.get("teams") or {}).get("nodes")) or []
-        return [{"key": n.get("key"), "name": n.get("name")} for n in nodes]
-
-
 def get_provider(provider: str, workspace: Optional[str] = None) -> TrackerProvider:
     """Build a provider client from the stored credentials of the connector
     in effect in ``workspace``: its own when it defines one, else the default
-    workspace's (connectors/channels/store.py). ``None`` means the running
+    workspace's (connectors/store.py). ``None`` means the running
     code's workspace (a run's context var); code acting for a workspace
     outside a run (a route, a background sync) names it."""
     if workspace is not None:
-        from connectors.channels.store import in_workspace
+        from connectors.store import in_workspace
         return in_workspace(workspace, get_provider, provider)
     if provider == "jira":
         return JiraProvider.from_store()
-    if provider == "linear":
-        return LinearProvider.from_store()
     raise TrackerError(f"Unknown tracker provider: {provider!r}")
 
 
 __all__ = [
-    "TrackerError", "TrackerProvider", "JiraProvider", "LinearProvider", "get_provider",
+    "TrackerError", "TrackerProvider", "JiraProvider", "get_provider",
 ]

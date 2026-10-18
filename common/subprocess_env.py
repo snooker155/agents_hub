@@ -17,6 +17,18 @@ import os
 from typing import Dict, Optional, Iterable
 
 
+#: Hub credentials an older install may still carry in its environment.
+HUB_CREDENTIAL_ENV = ("AGENTS_HUB_API_TOKEN", "AGENTS_HUB_SERVICE_TOKEN", "AGENTS_HUB_API_KEY",
+                      "AGENTS_HUB_RUN_TOKEN")
+
+
+def strip_hub_credentials(env: Dict[str, str]) -> Dict[str, str]:
+    """Drop every hub credential from a child's ``env``; returns it."""
+    for name in HUB_CREDENTIAL_ENV:
+        env.pop(name, None)
+    return env
+
+
 def base_subprocess_env(
     workspace_name: str,
     *,
@@ -41,8 +53,6 @@ def base_subprocess_env(
     names, most specific scope first, nothing at all on any error. A docker
     run inherits the same dict through ``container_env``.
 
-    ``run_id`` and ``session_id`` name the launch the run token is minted for;
-    closing that run retires the token (``common.run_tokens.retire_for_run``).
     """
     from common.config import settings
     env = os.environ.copy()
@@ -52,20 +62,13 @@ def base_subprocess_env(
     # A provider key saved since the backend started (common/provider_env.py).
     from common import provider_env
     provider_env.overlay(env)
-    # The credential the child calls back with (its relays and, from a
-    # container, its run state): a run token of its own that reaches only those
-    # routes (common/run_tokens.py, common/auth.py RELAY_ROUTES). The shared API
-    # token and the admin service credential used to ride here, and either one
-    # reaches the whole API from a process an agent's shell runs in; both are
-    # taken out of the copied environment too. Nothing is minted in single
-    # mode, where the API asks for no credential.
-    from common import run_tokens
-    run_tokens.mint_for_env(env, kind="run", run_id=run_id, session_id=session_id,
-                            workspace=workspace_name or None)
+    # No hub credential belongs in a process an agent's shell runs in: the API
+    # asks for none, and whatever an older .env still carries is dropped.
+    strip_hub_credentials(env)
     # Who the run is charged to, so the runs the child creates in turn are
-    # charged to the same user and personal key (common/attribution.py).
+    # charged to the same user (common/attribution.py).
     from common.attribution import child_env
-    env.update(child_env(user_id, key_id))
+    env.update(child_env(user_id))
     # Last, so a declared secret wins over the same name inherited from the
     # host environment: an agent-scoped GITHUB_TOKEN is the whole point of
     # giving an agent its own identity.
@@ -76,29 +79,7 @@ def base_subprocess_env(
                                             extra_names=extra_secret_names))
         else:
             env.update(_secrets.env_for_flow(workspace_name, flow_id, user_id))
-        route_secrets(env, workspace=workspace_name)
     return env
-
-
-def route_secrets(env: Dict[str, str], *, execution_mode: Optional[str] = None,
-                  workspace: Optional[str] = None) -> Dict[str, str]:
-    """Send a run that holds host-bound secret placeholders through the egress
-    proxy, with the hub CA in its trust store (environments/secret_egress.py).
-
-    A no-op for a run without placeholders. Launchers call it once more after
-    layering an environment's own proxy URL on top, so the secret hosts land
-    on the token the run actually uses. A routing failure is logged, never
-    raised: the run then holds placeholders nobody swaps, which fails its
-    requests but leaks nothing.
-    """
-    try:
-        from environments.secret_egress import route_env
-        return route_env(env, execution_mode=execution_mode, workspace=workspace)
-    except Exception:  # noqa: BLE001 - see docstring
-        import logging
-        logging.getLogger(__name__).error("secret placeholders could not be routed through the "
-                                          "egress proxy", exc_info=True)
-        return env
 
 
 def add_run_env(

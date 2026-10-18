@@ -22,13 +22,11 @@ the part that does to the person:
   claim in the card. A stdio server's command is shown as a warning, since
   connecting it runs that command on the hub's host.
 
-Kinds: ``connector`` (the credential connectors of connectors/credentials.py:
-Jira, Linear, Google, Microsoft, Notion, Confluence), ``channel`` (Slack,
-Discord, Teams, mail), ``mcp_server``, ``database`` (a read-only connection),
-``watcher`` (an IMAP or HTTP observer), ``secret`` (a workspace secret) and
-``provider`` (a model provider's or a web search API key for the whole hub,
-the Settings page's keys: checked against the provider before it is saved,
-an administrator's to apply).
+Kinds: ``connector`` (the credential connectors of connectors/credentials.py,
+Jira today), ``mcp_server``, ``watcher`` (an IMAP or HTTP observer),
+``secret`` (a workspace secret) and ``provider`` (a model provider's or a web
+search API key for the whole hub, the Settings page's keys: checked against
+the provider before it is saved, an administrator's to apply).
 
 A proposal is plain JSON (:func:`build`), shaped for the card: a flat list of
 fields, nested keys spelled with a dot (``headers.Authorization``), workspace
@@ -47,19 +45,14 @@ log = logging.getLogger("connectors.proposals")
 
 TOOL = "propose_connection"
 
-KINDS: Tuple[str, ...] = ("connector", "channel", "mcp_server", "database", "watcher", "secret", "provider")
-HUB_KINDS = frozenset({"connector", "channel"})
+KINDS: Tuple[str, ...] = ("connector", "mcp_server", "watcher", "secret", "provider")
+#: Kinds whose target lives in the workspace that defines it and, from the
+#: default workspace, everywhere (connectors/store.py).
+HUB_KINDS = frozenset({"connector"})
 
 #: The capability claim of an MCP server an agent proposes, before the person
 #: narrows it (see tools/capabilities.py for what each one means).
 MCP_CAPABILITIES = ("ingests_untrusted", "reads_private", "can_exfiltrate")
-
-#: Connectors handled by another kind: the databases connector has no config
-#: of its own, its connections are the ``database`` kind.
-_NOT_A_CONNECTOR = frozenset({"databases"})
-
-#: Where the person finishes a connector that needs a browser sign in.
-_SIGN_IN_HREF = {"google": "/connectors?tab=google", "microsoft": "/connectors?tab=microsoft"}
 
 _SECRET_PREFIX = "secret:"
 
@@ -139,10 +132,8 @@ def _connector(target: str, config: Dict[str, Any], workspace: str, *, from_agen
     from connectors import credentials
 
     spec = credentials.get(target)
-    if spec is None or spec.name in _NOT_A_CONNECTOR:
-        names = [n for n in credentials.names() if n not in _NOT_A_CONNECTOR]
-        hint = " (a database connection is the 'database' kind)" if target == "databases" else ""
-        raise ProposalError(f"unknown connector '{target}'{hint}; one of: {', '.join(names)}",
+    if spec is None:
+        raise ProposalError(f"unknown connector '{target}'; one of: {', '.join(credentials.names())}",
                             code="unknown_target")
     visible = [f for f in spec.fields if f.kind != "hidden"]
     known = {f.key for f in visible}
@@ -150,8 +141,8 @@ def _connector(target: str, config: Dict[str, Any], workspace: str, *, from_agen
     if unknown:
         raise ProposalError(f"unknown fields for {spec.name}: {', '.join(unknown)}; "
                             f"fields are {', '.join(sorted(known))}", code="unknown_field")
-    # The workspace's own connector (connectors/channels/store.py): what is
-    # stored there, never the default's it would otherwise inherit.
+    # The workspace's own connector (connectors/store.py): what is stored
+    # there, never the default's it would otherwise inherit.
     store = spec.store.for_workspace(workspace)
     current = _safe(store.public_config, {})
     fields = []
@@ -170,57 +161,9 @@ def _connector(target: str, config: Dict[str, Any], workspace: str, *, from_agen
                                  else "text", required=f.required or f.key in spec.required,
                                  value=value if value is not None else "", placeholder=f.placeholder,
                                  options=f.options))
-    out = {"title": spec.name.capitalize(), "scope": _scope_of(workspace), "fields": fields,
-           "replaces": bool(_safe(lambda: store.is_configured(*spec.required), False)),
-           "warnings": []}
-    if spec.name in _SIGN_IN_HREF:
-        out["warnings"].append(f"After Connect, finish with the {spec.name.capitalize()} sign in "
-                               "on the Connectors page.")
-    return out
-
-
-def _channel(target: str, config: Dict[str, Any], workspace: str, *, from_agent: bool) -> Dict[str, Any]:
-    from connectors.channels import registry as channels
-
-    spec = channels.get(target)
-    if spec is None:
-        raise ProposalError(f"unknown channel '{target}'; one of: "
-                            f"{', '.join(c.name for c in channels.all_channels())}",
-                            code="unknown_target")
-    visible = [f for f in spec.fields if f.kind != "hidden"]
-    known = {f.key for f in visible} | {"enabled", "allowed"}
-    unknown = sorted(k for k in config if k not in known)
-    if unknown:
-        raise ProposalError(f"unknown fields for {spec.name}: {', '.join(unknown)}; "
-                            f"fields are {', '.join(sorted(known))}", code="unknown_field")
-    store = spec.store.for_workspace(workspace)
-    current = _safe(store.public_config, {})
-    required = set(getattr(spec.service, "required_fields", ()) or ())
-    fields = []
-    for f in visible:
-        value = config.get(f.key)
-        if f.secret:
-            if from_agent and not _blank(value):
-                _refuse_secret(f.key)
-            fields.append(_field(f.key, secret=True, required=f.required or f.key in required,
-                                 placeholder=f.placeholder,
-                                 has_value=bool(current.get(f"has_{f.key}"))))
-        else:
-            if _blank(value):
-                value = current.get(f.key, "")
-            fields.append(_field(f.key, kind=f.kind if f.kind in ("text", "number", "textarea", "select")
-                                 else "text", required=f.required or f.key in required,
-                                 value=value if value is not None else "", placeholder=f.placeholder,
-                                 options=f.options))
-    allowed = config.get("allowed")
-    if allowed is None:
-        allowed = _safe(store.get_allowed, [])
-    fields.append(_field("enabled", kind="bool", value=_as_bool(config.get("enabled"), True)))
-    fields.append(_field("allowed", kind="list", value=_as_list(allowed)))
     return {"title": spec.name.capitalize(), "scope": _scope_of(workspace), "fields": fields,
-            "replaces": bool(_safe(lambda: store.is_configured(*required), False)),
-            "warnings": [] if _as_list(allowed) else
-            ["The allowlist is empty: the channel will answer nobody until chats are added."]}
+            "replaces": bool(_safe(lambda: store.is_configured(*spec.required), False)),
+            "warnings": []}
 
 
 def _mcp_server(target: str, config: Dict[str, Any], workspace: str, *, from_agent: bool) -> Dict[str, Any]:
@@ -255,10 +198,6 @@ def _mcp_server(target: str, config: Dict[str, Any], workspace: str, *, from_age
             mcp_store.validate_url(transport, url)
         except ValueError as exc:
             raise ProposalError(str(exc), code="bad_url") from exc
-    from common import isolation
-    if isolation.is_isolated(workspace):
-        raise ProposalError(f"workspace '{workspace}' is isolated: an MCP server would be a way "
-                            "around its perimeter", code="isolated_workspace", status=409)
     if _safe(lambda: mcp_store.get_server(workspace, server_id), None) is not None:
         raise ProposalError(f"MCP server '{server_id}' already exists in workspace '{workspace}'; "
                             "edit it on the MCP page", code="exists", status=409)
@@ -309,40 +248,6 @@ def _mcp_server(target: str, config: Dict[str, Any], workspace: str, *, from_age
                             status=403)
     return {"title": str(config.get("name") or server_id), "scope": "workspace", "fields": fields,
             "replaces": False, "warnings": warnings}
-
-
-def _database(target: str, config: Dict[str, Any], workspace: str, *, from_agent: bool) -> Dict[str, Any]:
-    from connectors.databases import store as db_store
-
-    known = {"name", "kind", "dsn", "allowed_schemas", "row_limit", "timeout_seconds"}
-    unknown = sorted(k for k in config if k not in known)
-    if unknown:
-        raise ProposalError(f"unknown fields for a database connection: {', '.join(unknown)}; "
-                            f"fields are {', '.join(sorted(known))}", code="unknown_field")
-    if from_agent and not _blank(config.get("dsn")):
-        _refuse_secret("dsn")
-    name = str(config.get("name") or target or "").strip()
-    if not name:
-        raise ProposalError("a database connection needs 'name'", code="missing_field")
-    kind = str(config.get("kind") or "").strip().lower()
-    if kind not in db_store.KINDS:
-        raise ProposalError(f"'kind' must be one of {', '.join(db_store.KINDS)}", code="bad_kind")
-    existing = _safe(lambda: db_store.list_connections(workspace), [])
-    if any(str(c.get("name")) == name for c in existing):
-        raise ProposalError(f"a database connection named '{name}' already exists in '{workspace}'",
-                            code="exists", status=409)
-    fields = [
-        _field("name", required=True, value=name),
-        _field("kind", kind="select", required=True, value=kind, options=db_store.KINDS),
-        _field("dsn", secret=True, required=True,
-               placeholder=f"{kind}://user:password@host:port/database" if kind != "sqlite" else "/path/to.db"),
-        _field("allowed_schemas", kind="list", value=_as_list(config.get("allowed_schemas"))),
-        _field("row_limit", kind="number", value=config.get("row_limit") or db_store.DEFAULT_ROW_LIMIT),
-    ]
-    if config.get("timeout_seconds") not in (None, ""):
-        fields.append(_field("timeout_seconds", kind="number", value=config.get("timeout_seconds")))
-    return {"title": name, "scope": "workspace", "fields": fields, "replaces": False,
-            "warnings": ["Queries stay read only: the hub refuses anything but reads."]}
 
 
 def _workspace_secret_names(workspace: str) -> set:
@@ -404,11 +309,8 @@ def _watcher(target: str, config: Dict[str, Any], workspace: str, *, from_agent:
             if from_agent and not _blank(config.get(key)):
                 _refuse_secret(key)
             fields.append(_field(key, secret=True, required=True))
-    warnings = []
-    if validated.get("use_google"):
-        warnings.append("Reads the hub's Google account mailbox; only an administrator may connect it.")
     return {"title": name, "scope": "workspace", "fields": fields, "replaces": False,
-            "warnings": warnings}
+            "warnings": []}
 
 
 def _secret(target: str, config: Dict[str, Any], workspace: str, *, from_agent: bool) -> Dict[str, Any]:
@@ -515,22 +417,20 @@ def build(kind: str, target: str = "", config: Optional[Dict[str, Any]] = None, 
         body = _provider(target, cfg, workspace, from_agent=from_agent)
     elif kind in HUB_KINDS:
         # A connector lives in the workspace that defines it; the default
-        # workspace's live everywhere (connectors/channels/store.py).
+        # workspace's live everywhere (connectors/store.py).
         ws = str(workspace or "").strip() or "default"
         workspace = ws
-        body = (_connector if kind == "connector" else _channel)(target.lower(), cfg, ws,
-                                                                 from_agent=from_agent)
+        body = _connector(target.lower(), cfg, ws, from_agent=from_agent)
     else:
         ws = str(workspace or "").strip()
         if not ws:
             raise ProposalError(f"a {kind} belongs to a workspace, and this run has none",
                                 code="no_workspace")
-        builder = {"mcp_server": _mcp_server, "database": _database, "watcher": _watcher,
-                   "secret": _secret}[kind]
+        builder = {"mcp_server": _mcp_server, "watcher": _watcher, "secret": _secret}[kind]
         body = builder(target, cfg, ws, from_agent=from_agent)
     if kind == "mcp_server":
         target = next(f["value"] for f in body["fields"] if f["key"] == "id")
-    elif kind in ("database", "watcher"):
+    elif kind == "watcher":
         target = next(f["value"] for f in body["fields"] if f["key"] == "name")
     return {"kind": kind, "target": target, "workspace": workspace, **body}
 
@@ -544,11 +444,9 @@ def required_role(proposal: Dict[str, Any]) -> Dict[str, Any]:
     """What applying needs from the person, as ``identity.require_role`` kwargs.
 
     The same bar the page for that thing sets: everything needs an editor of
-    the workspace it lands in (a connector or a channel of the default
-    workspace, which every workspace inherits, an editor of the default), and
-    a secret, or a watcher that brings
-    new secrets, needs the workspace owner. A watcher on the hub's Google
-    mailbox needs an administrator, as on the Watchers page.
+    the workspace it lands in (a connector of the default workspace, which
+    every workspace inherits, an editor of the default), and a secret, or a
+    watcher that brings new secrets, needs the workspace owner.
     """
     from common.auth import WS_EDITOR, WS_OWNER
 
@@ -559,8 +457,6 @@ def required_role(proposal: Dict[str, Any]) -> Dict[str, Any]:
     if kind in HUB_KINDS:
         return {"workspace": proposal.get("workspace") or "default", "role": WS_EDITOR}
     values = {f["key"]: f.get("value") for f in proposal.get("fields") or []}
-    if kind == "watcher" and _as_bool(values.get("use_google")):
-        return {"admin": True}
     owner = kind == "secret" or any(str(k).startswith(_SECRET_PREFIX) for k in values)
     return {"workspace": proposal.get("workspace"), "role": WS_OWNER if owner else WS_EDITOR}
 
@@ -620,8 +516,7 @@ async def perform(prepared: Dict[str, Any], *, principal: Any = None) -> Dict[st
     ``summary`` the one line the agent reads back.
     """
     fresh = prepared["proposal"]
-    performer = {"connector": _apply_connector, "channel": _apply_channel,
-                 "mcp_server": _apply_mcp, "database": _apply_database,
+    performer = {"connector": _apply_connector, "mcp_server": _apply_mcp,
                  "watcher": _apply_watcher, "secret": _apply_secret,
                  "provider": _apply_provider}[fresh["kind"]]
     outcome = await performer(fresh, dict(prepared["values"]), dict(prepared["secrets"]), principal)
@@ -656,45 +551,17 @@ async def _apply_connector(p, values, secrets, principal) -> Dict[str, Any]:
     changes.update(secrets)
     await asyncio.to_thread(spec.store.for_workspace(ws).set_config, changes)
     notify_change(f"connector_{spec.name}", workspace=ws)
-    from connectors.channels.store import in_workspace
+    from connectors.store import in_workspace
     test = None
+    # The test runs as code in that workspace would, so it reads the document
+    # just written (or the default's when the workspace defines none).
     if spec.test is not None and in_workspace(ws, spec.is_configured):
         try:
             test = await asyncio.to_thread(in_workspace, ws, spec.test)
         except Exception as exc:  # noqa: BLE001 - reported back, the config is saved
             test = {"ok": False, "error": str(exc)[:300]}
-    href = _SIGN_IN_HREF.get(spec.name)
     where = "for every workspace" if ws == "default" else f"for workspace {ws}"
     summary = f"Connector {spec.name} saved {where}." + _test_line(test)
-    if href:
-        summary += f" The person still has to sign in at {href}."
-    return {"ok": bool(test.get("ok")) if test else True, "summary": summary, "test": test, "href": href}
-
-
-async def _apply_channel(p, values, secrets, principal) -> Dict[str, Any]:
-    from common.session_broker import notify_change
-    from connectors.channels import registry as channels
-
-    spec = channels.get(p["target"])
-    ws = p.get("workspace") or "default"
-    store = spec.store.for_workspace(ws)
-    enabled = _as_bool(values.pop("enabled", True), True)
-    allowed = _as_list(values.pop("allowed", []))
-    changes = {k: v for k, v in values.items() if v is not None}
-    changes.update(secrets)
-    await asyncio.to_thread(store.set_config, changes)
-    await asyncio.to_thread(store.set_enabled, enabled)
-    await asyncio.to_thread(store.set_allowed, allowed)
-    # The loop serving this workspace's bot picks the change up now
-    # (connectors/channels/registry.py ``resync``).
-    service = await channels.resync(spec.name, ws)
-    notify_change(f"channel_{spec.name}", workspace=ws)
-    test = None
-    if service is not None and store.is_configured(*spec.service.required_fields):
-        test = await service.test()
-    state = "enabled" if enabled else "saved, not enabled"
-    summary = (f"Channel {spec.name} {state}, {len(allowed)} chat(s) on the allowlist."
-               + _test_line(test))
     return {"ok": bool(test.get("ok")) if test else True, "summary": summary, "test": test,
             "href": f"/connectors?tab={spec.name}"}
 
@@ -735,30 +602,6 @@ async def _apply_mcp(p, values, secrets, principal) -> Dict[str, Any]:
                 f" Agents get them once their tool list names them."
                 if test.get("ok") else _test_line(test))
     return {"ok": bool(test.get("ok")), "summary": summary, "test": test, "href": "/mcp"}
-
-
-async def _apply_database(p, values, secrets, principal) -> Dict[str, Any]:
-    from common.session_broker import notify_change
-    from connectors.databases import drivers, store as db_store
-
-    dsn = secrets["dsn"]
-    if not db_store.kind_matches_dsn(values["kind"], dsn):
-        raise ProposalError(f"the connection string does not look like a {values['kind']} one",
-                            code="bad_dsn")
-    record = await asyncio.to_thread(
-        db_store.create_connection, workspace=p["workspace"], name=values["name"], kind=values["kind"],
-        dsn=dsn, allowed_schemas=_as_list(values.get("allowed_schemas")),
-        row_limit=int(values["row_limit"]) if values.get("row_limit") not in (None, "") else None,
-        timeout_seconds=int(values["timeout_seconds"]) if values.get("timeout_seconds") not in (None, "") else None)
-    notify_change("databases")
-    try:
-        test = await asyncio.to_thread(drivers.test_connection, record)
-    except Exception as exc:  # noqa: BLE001 - the connection is saved; the failure is the test's answer
-        test = {"ok": False, "error": str(exc)[:300]}
-    summary = (f"Database connection '{record['name']}' ({record['kind']}) added to workspace "
-               f"{p['workspace']}." + _test_line(test))
-    return {"ok": bool(test.get("ok")), "summary": summary, "test": test,
-            "href": "/connectors?tab=databases"}
 
 
 def _set_secret(workspace: str, name: str, value: str, principal: Any, *,
@@ -882,7 +725,7 @@ def options(kind: Optional[str] = None, *, workspace: Optional[str] = None) -> D
     """The kinds, their targets and fields, and what exists already.
 
     Names and flags only: whether a connector is configured, which MCP
-    servers, database connections, watchers and secrets a workspace has.
+    servers, watchers and secrets a workspace has.
     Never a value, and no URL or command of an existing item either.
     """
     wanted = [str(kind).strip().lower()] if kind else list(KINDS)
@@ -912,18 +755,7 @@ def _options_of(kind: str, workspace: Optional[str]) -> Dict[str, Any]:
             {"target": s.name, "configured": bool(_safe(s.is_configured, False)),
              "defined_here": bool(_safe(lambda s=s: s.store.defines(workspace), False)),
              "fields": [_field_brief(f) for f in s.fields if f.kind != "hidden"]}
-            for s in credentials.all_specs() if s.name not in _NOT_A_CONNECTOR]}
-    if kind == "channel":
-        from connectors.channels import registry as channels
-        return {"scope": _scope_of(workspace), "targets": [
-            {"target": c.name,
-             "defined_here": bool(_safe(lambda c=c: c.store.defines(workspace), False)),
-             "configured": bool(_safe(lambda c=c: c.store.is_configured(*c.service.required_fields), False)),
-             "enabled": bool(_safe(c.store.is_enabled, False)),
-             "fields": [_field_brief(f) for f in c.fields if f.kind != "hidden"]
-             + [{"key": "enabled", "secret": False, "required": False},
-                {"key": "allowed", "secret": False, "required": False}]}
-            for c in channels.all_channels()]}
+            for s in credentials.all_specs()]}
     ws = str(workspace or "").strip()
     if kind == "mcp_server":
         from mcp_client import store as mcp_store
@@ -934,12 +766,6 @@ def _options_of(kind: str, workspace: Optional[str]) -> Dict[str, Any]:
                 "secret_rule": "header and env names containing TOKEN, KEY, SECRET, PASSWORD or "
                                "AUTHORIZATION are secrets: give the name with an empty value",
                 "existing": [r.get("id") for r in _safe(lambda: mcp_store.list_servers(ws), [])] if ws else []}
-    if kind == "database":
-        from connectors.databases import store as db_store
-        return {"scope": "workspace", "workspace": ws or None, "kinds": list(db_store.KINDS),
-                "fields": ["name", "kind", "allowed_schemas", "row_limit", "timeout_seconds"],
-                "secret_fields": ["dsn"],
-                "existing": [c.get("name") for c in _safe(lambda: db_store.list_connections(ws), [])] if ws else []}
     if kind == "watcher":
         from watchers import kinds as watcher_kinds
         from watchers import service as watcher_service

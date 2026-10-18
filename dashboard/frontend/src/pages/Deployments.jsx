@@ -14,7 +14,6 @@ import {
   getAgents,
   listFlows,
   getLoops,
-  getEnvironments,
   getProjects,
   getSharedMemories,
   getWorkspaceSecrets,
@@ -24,51 +23,9 @@ import { listWorkspaceFiles, uploadWorkspaceFileObject } from '../api/files';
 import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Upload, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import { DeployStatusPill } from '../components/projects/DeployPanel';
-import { listDeployedApps } from '../api';
 import { useI18n } from '../i18n';
 import CronHint from '../components/CronHint';
 
-// Project deployments (docs/project-deployments.md): the apps the hub runs
-// for projects of this workspace, each opening on its project's Deploy tab.
-function DeployedApps({ workspace, t }) {
-  const [apps, setApps] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    listDeployedApps(workspace).then(({ data }) => { if (!cancelled) setApps(data.items || []); }).catch(() => {});
-    const timer = setInterval(() => {
-      listDeployedApps(workspace).then(({ data }) => { if (!cancelled) setApps(data.items || []); }).catch(() => {});
-    }, 10000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [workspace]);
-  if (!apps.length) return null;
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-4 py-2 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        {t('projectDeploy.appsTitle')}
-      </div>
-      <table className="w-full text-sm">
-        <tbody className="divide-y divide-gray-100">
-          {apps.map((app) => (
-            <tr key={app.id}>
-              <td className="px-4 py-2 font-medium text-gray-800">
-                <Link to={`/projects/${app.project_id}`} className="hover:text-indigo-600">{app.name || app.project_id}</Link>
-              </td>
-              <td className="px-4 py-2"><DeployStatusPill status={app.status} t={t} /></td>
-              <td className="px-4 py-2 text-xs text-gray-500">{t(`projectDeploy.modes.${app.mode}`)} · {(app.services || []).length} {t('projectDeploy.servicesCount')}</td>
-              <td className="px-4 py-2 text-xs text-gray-500">{app.workspace}</td>
-              <td className="px-4 py-2 text-right text-xs">
-                {app.status === 'running' && app.links?.path ? (
-                  <a href={app.links.path} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800">{t('projectDeploy.open')}</a>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
 
@@ -162,7 +119,7 @@ function targetLabel(job, agents, flows, loops) {
 const NO_VERSIONS = [];
 
 
-function DeploymentModal({ job, agents, flows, loops, environments, resources, workspace, onClose, onSaved }) {
+function DeploymentModal({ job, agents, flows, loops, resources, workspace, onClose, onSaved }) {
   const { t } = useI18n();
   const isEdit = !!job;
   const [kind, setKind] = useState(job?.kind || 'agent_task');
@@ -176,8 +133,6 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   const [agentId, setAgentId] = useState(job?.agent_id || '');
   const [flowId, setFlowId] = useState(job?.flow_id || '');
   const [loopId, setLoopId] = useState(job?.loop_id || '');
-  const [environmentId, setEnvironmentId] = useState(job?.environment_id || '');
-  const [budgetUsd, setBudgetUsd] = useState(job?.budget_usd ?? '');
   const [agentVersion, setAgentVersion] = useState(job?.agent_version ?? '');
   // The versions of one agent: kept with the id they were fetched for, so a
   // change of agent never shows the last agent's list.
@@ -240,8 +195,6 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
         cron: recurrence === 'cron' ? cron.trim() : null,
         timezone: recurrence !== 'none' ? (tz.trim() || null) : null,
         catch_up: catchUp,
-        environment_id: environmentId || null,
-        budget_usd: budgetUsd === '' ? null : Number(budgetUsd),
         // Only meaningful together with an agent_id, on an agent_task job.
         agent_version: kind === 'agent_task' && agentVersion !== '' ? Number(agentVersion) : null,
         auto_pause_after: Number(autoPauseAfter) || 0,
@@ -431,30 +384,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           </label>
         )}
 
-        {/* items-end keeps the three inputs on one baseline when a label
-            wraps to two lines, instead of the wrapped one dropping lower. */}
-        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_9rem_9rem] gap-3 items-end">
-          <div className="min-w-0">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.environment')}</label>
-            <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
-              value={environmentId}
-              onChange={(e) => setEnvironmentId(e.target.value)}
-            >
-              <option value="">{t('deployments.workspaceDefault')}</option>
-              {(environments || []).map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.budgetUsd')}</label>
-            <input
-              type="number" min="0" step="0.01"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
-              value={budgetUsd}
-              onChange={(e) => setBudgetUsd(e.target.value)}
-              placeholder={t('deployments.uncapped')}
-            />
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-[9rem] gap-3 items-end">
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.autoPauseAfter')}</label>
             <input
@@ -730,7 +660,6 @@ export default function Deployments() {
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
   const [loops, setLoops] = useState([]);
-  const [environments, setEnvironments] = useState([]);
   // What a deployment may attach: the workspace's projects, files, secret
   // names and memory pools. Any list that cannot be loaded (no access, no
   // store) is simply empty; the form still saves ids typed elsewhere.
@@ -757,7 +686,6 @@ export default function Deployments() {
     getAgents(workspaceFilter).then((r) => setAgents(r.data || [])).catch(() => {});
     listFlows(workspaceFilter).then((r) => setFlows(r.data || [])).catch(() => {});
     getLoops(workspaceFilter).then((r) => setLoops(r.data || [])).catch(() => {});
-    getEnvironments(workspaceFilter).then((r) => setEnvironments(r.data || [])).catch(() => {});
     const ws = workspaceFilter || 'default';
     const quiet = (p) => Promise.resolve().then(() => p).catch(() => ({ data: null }));
     Promise.all([
@@ -819,7 +747,6 @@ export default function Deployments() {
           </button>
         </>}
       />
-      <DeployedApps workspace={workspaceFilter || undefined} t={t} />
 
       {loading ? (
         <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
@@ -836,8 +763,6 @@ export default function Deployments() {
                 <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.name')}</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.target')}</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.schedule')}</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.environment')}</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.budget')}</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.status')}</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.lastFire')}</th>
                 <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('deployments.actions')}</th>
@@ -847,7 +772,6 @@ export default function Deployments() {
               {visibleJobs.map((job) => {
                 const pending = ['scheduled', 'paused'].includes(job.status);
                 const busy = acting[job.id];
-                const env = environments.find((e) => e.id === job.environment_id);
                 const upcoming = job.upcoming_runs_at || [];
                 return (
                   <tr key={job.id} className="hover:bg-gray-50 transition-colors">
@@ -874,10 +798,6 @@ export default function Deployments() {
                           {job.timezone ? ` · ${job.timezone}` : ''}
                         </div>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-600">{env?.name || <span className="text-gray-400">—</span>}</td>
-                    <td className="px-4 py-3 text-xs text-gray-600">
-                      {job.budget_usd ? `$${job.budget_usd}` : <span className="text-gray-400">{t('deployments.uncapped')}</span>}
                     </td>
                     <td className="px-4 py-3"><StatusBadge status={job.status} pausedReason={job.paused_reason} t={t} /></td>
                     <td className="px-4 py-3 text-xs">
@@ -956,7 +876,6 @@ export default function Deployments() {
           agents={agents}
           flows={flows}
           loops={loops}
-          environments={environments}
           resources={resources}
           workspace={workspaceFilter}
           onClose={() => setModalJob(undefined)}

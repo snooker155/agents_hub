@@ -3,6 +3,7 @@ file, and whole runs of the wizard that write files without starting anything.""
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 from rich.console import Console
@@ -20,10 +21,11 @@ def _asker(answers: dict) -> AnswersAsker:
 
 
 def test_set_env_text_replaces_live_then_commented_then_appends():
-    text = "# head\nAUTH_MODE=\"single\"\n#OPENAI_API_KEY=sk-...\nexport X=1\n"
-    out = W.set_env_text(text, {"AUTH_MODE": "multi", "OPENAI_API_KEY": "sk-a", "X": "2", "NEW": 'say "hi"'})
+    text = "# head\nDEFAULT_PROVIDER=\"openai\"\n#OPENAI_API_KEY=sk-...\nexport X=1\n"
+    out = W.set_env_text(text, {"DEFAULT_PROVIDER": "anthropic", "OPENAI_API_KEY": "sk-a", "X": "2",
+                                "NEW": 'say "hi"'})
     lines = out.splitlines()
-    assert lines[1] == 'AUTH_MODE="multi"'
+    assert lines[1] == 'DEFAULT_PROVIDER="anthropic"'
     assert lines[2] == 'OPENAI_API_KEY="sk-a"'      # the template's commented line, in place
     assert lines[3] == 'X="2"'
     assert lines[-1] == 'NEW="say \\"hi\\""'
@@ -75,12 +77,18 @@ def test_presets_without_a_list_are_unverified_first_choices():
 
 
 def test_answers_reach_into_lists_and_validate_choices():
-    a = _asker({"users": [{"username": "bob"}], "auth": "nobody"})
-    assert a.text("users.0.username", "Username") == "bob"
+    a = _asker({"providers": {"openai": {"model": "gpt-5.4"}}, "shape": "cloud"})
+    assert a.text("providers.openai.model", "Model") == "gpt-5.4"
     with pytest.raises(SetupError, match="expected one of"):
-        a.choose("auth", "Who", [("single", "", ""), ("multi", "", "")])
-    with pytest.raises(SetupError, match="needs 'shape'"):
-        a.choose("shape", "How", [("local", "", "")])
+        a.choose("shape", "How", [("local", "", ""), ("docker", "", "")])
+    with pytest.raises(SetupError, match="needs 'flow'"):
+        a.choose("flow", "How many", [("quick", "", "")])
+
+
+def test_only_the_local_shape_remains():
+    assert [s[0] for s in W.SHAPES] == ["local"]
+    with pytest.raises(SetupError, match="--shape must be one of local"):
+        W.step_install(_asker({}), W.Plan(), "kubernetes", None, False)
 
 
 # ---- whole runs ------------------------------------------------------------
@@ -91,16 +99,28 @@ def fake_probe(monkeypatch):
     def _probe(provider, api_key="", base_url="", timeout=10.0):
         if provider == "openai":
             return P.ProbeResult(True, ["gpt-4o", "gpt-5.4", "gpt-5.4-mini"])
+        if provider == "ollama":
+            return P.ProbeResult(True, ["qwen3:8b"])
         return P.ProbeResult(False, error="could not connect")
     monkeypatch.setattr(P, "probe", _probe)
-    monkeypatch.setattr(W, "_has_docker", lambda: False)
 
 
-def test_docker_run_writes_compose_and_env_without_starting(tmp_path, fake_probe):
-    target = tmp_path / "hub"
+@pytest.fixture
+def target(tmp_path, monkeypatch):
+    """The checkout the local shape writes into, moved to a throwaway folder
+    so a test never touches the real .env."""
+    root = tmp_path / "hub"
+    root.mkdir()
+    real = pathlib.Path(__file__).resolve().parents[1] / ".env.example"
+    (root / ".env.example").write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(W, "PROJECT_ROOT", root)
+    monkeypatch.setattr(W, "_has_module", lambda name: True)
+    return root
+
+
+def test_local_run_writes_the_env(target, fake_probe):
     a = _asker({
-        "shape": "docker", "flow": "quick", "dir": str(target), "database": "postgres-bundled",
-        "auth": "multi", "admin": {"username": "Anton", "password": "long-enough-1"},
+        "shape": "local", "flow": "quick",
         "providers": {"openai": {"api_key": "sk-test"}}, "demo": True,
     })
     assert W.run(a, no_start=True) == 0
@@ -108,27 +128,22 @@ def test_docker_run_writes_compose_and_env_without_starting(tmp_path, fake_probe
     assert env["OPENAI_API_KEY"] == "sk-test"
     assert env["OPENAI_MODEL"] == "gpt-5.4"           # the balanced preset the provider listed
     assert env["DEFAULT_PROVIDER"] == "openai"
-    assert env["AUTH_MODE"] == "multi"
-    assert env["COMPOSE_PROFILES"] == "postgres"
-    assert env["AGENTS_HUB_DATABASE_URL"] == (
-        f"postgresql://agents_hub:{env['POSTGRES_PASSWORD']}@postgres:5432/agents_hub")
     assert env["AGENTS_HUB_SECRET_KEY"]
     assert env["DEMO_WORKSPACE"] == "1"
-    assert (target / "docker-compose.yml").read_text() == (W.QUICKSTART / "docker-compose.yml").read_text()
+    # Single user, SQLite: nothing about sign-in or a database server is written.
+    for key in ("AUTH_MODE", "AGENTS_HUB_API_TOKEN", "AGENTS_HUB_DATABASE_URL", "POSTGRES_PASSWORD",
+                "COMPOSE_PROFILES"):
+        assert key not in env, key
 
 
-def test_dry_run_writes_nothing(tmp_path, fake_probe):
-    target = tmp_path / "hub"
-    a = _asker({"shape": "docker", "dir": str(target), "database": "sqlite", "auth": "single",
-                "providers": []})
+def test_dry_run_writes_nothing(target, fake_probe):
+    a = _asker({"shape": "local", "providers": []})
     assert W.run(a, dry_run=True) == 0
-    assert not target.exists()
+    assert not (target / ".env").exists()
 
 
-def test_rerun_updates_in_place_and_keeps_the_secret_key(tmp_path, fake_probe):
-    target = tmp_path / "hub"
-    base = {"shape": "docker", "dir": str(target), "database": "sqlite", "auth": "token",
-            "providers": {"openai": {"api_key": "sk-1"}}}
+def test_rerun_updates_in_place_and_keeps_the_secret_key(target, fake_probe):
+    base = {"shape": "local", "providers": {"openai": {"api_key": "sk-1"}}}
     W.run(_asker(base), no_start=True)
     first = W.read_env(target / ".env")
     W.run(_asker({**base, "existing": "update", "providers": {"openai": {"model": "gpt-4o"}}}), no_start=True)
@@ -136,35 +151,46 @@ def test_rerun_updates_in_place_and_keeps_the_secret_key(tmp_path, fake_probe):
     assert second["OPENAI_API_KEY"] == "sk-1"         # an empty answer keeps the key in force
     assert second["OPENAI_MODEL"] == "gpt-4o"
     assert second["AGENTS_HUB_SECRET_KEY"] == first["AGENTS_HUB_SECRET_KEY"]
-    assert second["AGENTS_HUB_API_TOKEN"] == first["AGENTS_HUB_API_TOKEN"]
     assert list(target.glob(".env.bak-*"))
 
 
-def test_answers_file_drives_the_command(tmp_path, fake_probe):
+def test_start_over_keeps_the_secret_key(target, fake_probe):
+    base = {"shape": "local", "providers": []}
+    W.run(_asker(base), no_start=True)
+    first = W.read_env(target / ".env")
+    W.run(_asker({**base, "existing": "fresh"}), no_start=True)
+    assert W.read_env(target / ".env")["AGENTS_HUB_SECRET_KEY"] == first["AGENTS_HUB_SECRET_KEY"]
+
+
+def test_answers_file_drives_the_command(tmp_path, target, fake_probe):
     from typer.testing import CliRunner
     from cli.main import app
     answers = tmp_path / "setup.json"
-    answers.write_text(json.dumps({"shape": "docker", "dir": str(tmp_path / "hub"), "database": "sqlite",
-                                   "auth": "single", "providers": []}))
+    answers.write_text(json.dumps({"shape": "local", "providers": []}))
     result = CliRunner().invoke(app, ["setup", "--answers", str(answers), "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "Dry run" in result.output
 
 
-def test_written_env_is_accepted_by_the_service_settings(tmp_path, fake_probe, monkeypatch):
+def test_written_env_is_accepted_by_the_service_settings(target, fake_probe, monkeypatch):
     """Every value the wizard writes must parse: an empty string for a boolean
     (DEMO_WORKSPACE="") stops the backend at import."""
     from common.config import Settings
-    target = tmp_path / "hub"
-    W.run(_asker({"shape": "docker", "flow": "advanced", "dir": str(target), "database": "sqlite",
-                  "auth": "multi", "admin": {"username": "a", "password": "long-enough-1"},
-                  "providers": {"openai": {"api_key": "sk-1"}}, "demo": False, "rag": False}), no_start=True)
+    W.run(_asker({"shape": "local", "flow": "advanced",
+                  "providers": {"openai": {"api_key": "sk-1"}}, "demo": False, "rag": False,
+                  "execution": "local", "web_search": "auto"}), no_start=True)
     env = W.read_env(target / ".env")
     for key in env:
         monkeypatch.delenv(key, raising=False)
     s = Settings(_env_file=str(target / ".env"))
     assert s.demo_workspace is False
-    assert s.auth_mode == "multi"
+
+
+def test_a_local_server_is_written_as_typed(fake_probe):
+    plan = W.Plan(shape="local")
+    W._configure_provider(_asker({"providers": {"ollama": {"base_url": "http://127.0.0.1:11434"}}}), plan, "ollama")
+    assert plan.env["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
+    assert plan.env["OLLAMA_MODEL"] == "qwen3:8b"
 
 
 # ---- the assistant's voice -------------------------------------------------
@@ -179,24 +205,22 @@ def test_voice_from_a_cloud_provider_picks_its_models_and_voice():
     assert any("speech model to openai/gpt-4o-mini-tts" in line for line in W.actions(plan))
 
 
+def test_a_voice_without_a_known_price_carries_none():
+    plan = W.Plan(current={"GOOGLE_API_KEY": "g-1"})
+    W.step_voice(_asker({"voice": {"mode": "cloud", "voice": "Puck"}}), plan)
+    assert plan.voice["speech"] == {"provider": "google", "model": "gemini-2.5-flash-preview-tts",
+                                    "options": {"voice": "Puck"}}
+    assert "price_usd" not in plan.voice["transcription"]
+
+
 def test_without_a_cloud_provider_the_voice_defaults_to_the_browser():
     plan = W.Plan(fresh=True, quick=False)
     W.step_voice(_asker({}), plan)
     assert plan.voice == {"mode": "browser"}
     with pytest.raises(SetupError, match="expected one of"):
         W.step_voice(_asker({"voice": {"mode": "cloud"}}), W.Plan(fresh=True))
-
-
-def test_egress_proxy_is_offered_on_for_docker_runs_and_kept_when_set():
-    plan = W.Plan(quick=False)
-    W.step_features(_asker({"execution": "docker", "rag": False}), plan)
-    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "1"
-    plan = W.Plan(quick=False)
-    W.step_features(_asker({"execution": "local", "rag": False}), plan)
-    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "0"
-    plan = W.Plan(quick=False, current={"AGENTS_HUB_EGRESS_PROXY": "1"})
-    W.step_features(_asker({"execution": "local", "rag": False}), plan)
-    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "1"
+    with pytest.raises(SetupError, match="expected one of"):
+        W.step_voice(_asker({"voice": {"mode": "local"}}), W.Plan(fresh=True))
 
 
 def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
@@ -209,15 +233,6 @@ def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
     W.step_voice(_asker({"voice": {"mode": "browser"}}), answered)
     W.step_features(_asker({"demo": True}), answered)
     assert answered.voice == {"mode": "browser"} and answered.env["DEMO_WORKSPACE"] == "1"
-
-
-def test_voice_on_the_hub_runtime_lists_engines_and_downloads():
-    plan = W.Plan(fresh=True)
-    W.step_voice(_asker({"voice": {"mode": "local", "speech": "kokoro", "transcription": "whisper-small"}}), plan)
-    assert plan.voice["speech"] == {"provider": "hub-local", "model": "kokoro-v1.0", "options": {}}
-    assert plan.voice["engines"] == ["whisper", "kokoro"]
-    assert [p for _, p, _ in plan.voice["packages"]] == ["faster-whisper-small", "kokoro-v1.0"]
-    assert any(line.startswith("install the whisper and kokoro engines") for line in W.actions(plan))
 
 
 def test_voice_is_saved_in_the_default_workspace_keeping_its_other_models():
@@ -234,122 +249,18 @@ def test_voice_is_saved_in_the_default_workspace_keeping_its_other_models():
     assert stored["speech"]["options"] == {"voice": "onyx"} and stored["transcription"]["price_usd"] == 0.003
 
 
-def test_a_stack_in_docker_gets_the_runtime_work_and_the_models_over_its_api(monkeypatch):
-    import requests
-    calls = []
-    jobs = {"j1": [{"status": "running", "percent": 40}, {"status": "done"}], "j2": [{"status": "done"}]}
-
-    class _R:
-        def __init__(self, body):
-            self.ok, self.status_code, self.text = True, 200, ""
-            self._body = body
-            self.content = b"{}"
-
-        def json(self):
-            return self._body
-
-    def fake(method, url, headers=None, timeout=None, json=None):
-        path = url.split("8080", 1)[1]
-        calls.append((method, path, json, headers))
-        if path == "/api/models/local/runtime":
-            return _R({"ok": True, "engines": {"whisper": True, "kokoro": False},
-                       "models": [{"name": "faster-whisper-small"}]})
-        if path.endswith("/engines/kokoro/install"):
-            return _R({"job_id": "j1"})
-        if path.endswith("/download"):
-            return _R({"job_id": "j2"})
-        if "/jobs/" in path:
-            return _R(jobs[path.rsplit("/", 1)[1]].pop(0))
-        if method == "GET":
-            return _R({"own": {"image": {"provider": "openai", "model": "gpt-image-1"}}})
-        return _R({})
-
-    monkeypatch.setattr(requests, "request", fake)
-    monkeypatch.setattr(W.time, "sleep", lambda s: None)
-    plan = W.Plan(shape="docker", auth="token", env={"AGENTS_HUB_API_TOKEN": "tok"})
-    a = _asker({"voice": {"mode": "local", "speech": "kokoro", "transcription": "whisper-small"}})
-    W.step_voice(a, plan)
-    W._apply_voice_http(a, plan, None)
-
-    sent = [(m, p) for m, p, _, _ in calls]
-    assert ("POST", "/api/models/local/runtime/engines/whisper/install") not in sent  # already there
-    assert ("POST", "/api/models/local/runtime/engines/kokoro/install") in sent
-    downloads = [j for m, p, j, _ in calls if p.endswith("/download")]
-    assert downloads == [{"repo": "fastrtc/kokoro-onnx", "package": "kokoro-v1.0"}]  # whisper was there
-    [put] = [j for m, p, j, _ in calls if m == "PUT"]
-    assert put["image"]["model"] == "gpt-image-1"
-    assert put["speech"]["model"] == "kokoro-v1.0" and put["transcription"]["provider"] == "hub-local"
-    assert all(h == {"Authorization": "Bearer tok"} for *_, h in calls)
-
-
-# ---- review and apply ------------------------------------------------------
-
 
 def test_review_masks_a_password_in_any_url():
-    assert W._shown("AGENTS_HUB_BROKER_URL", "redis://:secretpw@redis:6379/0") == "redis://:****@redis:6379/0"
-    assert W._shown("AGENTS_HUB_DATABASE_URL", "postgresql://hub:pw@pg:5432/hub") == "postgresql://hub:****@pg:5432/hub"
-    assert W._shown("AUTH_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
+    assert W._shown("SOME_URL", "https://user:pw@host/") == "https://user:****@host/"
+    assert W._shown("OPENAI_API_KEY", "sk-abcdefghijklmnop") != "sk-abcdefghijklmnop"
+    assert W._shown("HUB_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
 
 
-def test_redis_for_one_backend_uses_the_password_the_redis_service_asks_for():
-    plan = W.Plan(shape="compose", quick=False, current={"REDIS_PASSWORD": "pw"})
-    W.step_features(_asker({"execution": "local", "rag": False, "services": ["scale"]}), plan)
-    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://:pw@redis:6379/0"
-    plan = W.Plan(shape="compose", quick=False, fresh=True)
-    W.step_features(_asker({"execution": "local", "rag": False, "services": ["scale"]}), plan)
-    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://redis:6379/0"
+def test_rag_on_the_local_shape_sets_the_store_and_may_add_the_extra(monkeypatch):
+    monkeypatch.setattr(W, "_has_module", lambda name: False)
+    plan = W.Plan(quick=False, fresh=True)
+    W.step_features(_asker({"demo": False, "execution": "local", "web_search": "auto", "rag": True}), plan)
+    assert plan.env["RAG_VECTOR_DB"] == "chroma" and plan.pip_extras == ["rag"]
+    assert "AGENTS_HUB_EGRESS_PROXY" not in plan.env
 
 
-def test_compose_up_runs_with_pwd_at_the_target(tmp_path, monkeypatch):
-    """docker-compose.yml takes HOST_PROJECT_ROOT from $PWD, which the setup
-    container's launcher leaves at /app."""
-    runs = []
-    monkeypatch.setenv("PWD", "/app")
-    monkeypatch.setattr(W, "_run", lambda a, cmd, cwd=None, env=None: runs.append((cmd, cwd, env)))
-    monkeypatch.setattr(W, "_wait_healthy", lambda a, base, seconds=300: True)
-    plan = W.Plan(shape="compose", target=tmp_path, env_file=tmp_path / ".env", template=None)
-    assert W.apply_docker(_asker({}), plan, start=True) is True
-    [(cmd, cwd, env)] = runs
-    assert cmd[:3] == ["docker", "compose", "up"] and cwd == tmp_path
-    assert env["PWD"] == str(tmp_path)
-
-
-def test_start_over_keeps_the_secret_key(tmp_path, fake_probe):
-    target = tmp_path / "hub"
-    base = {"shape": "docker", "dir": str(target), "database": "sqlite", "auth": "single", "providers": []}
-    W.run(_asker(base), no_start=True)
-    first = W.read_env(target / ".env")
-    W.run(_asker({**base, "existing": "fresh"}), no_start=True)
-    assert W.read_env(target / ".env")["AGENTS_HUB_SECRET_KEY"] == first["AGENTS_HUB_SECRET_KEY"]
-
-
-def test_a_quickstart_rerun_keeps_the_extra_services_in_force(tmp_path, fake_probe):
-    """QuickStart returns from the Features step before the services
-    question, and the review writes COMPOSE_PROFILES whole: the browser and
-    HTTPS a first Advanced run turned on dropped out of it."""
-    target = tmp_path / "hub"
-    base = {"shape": "docker", "dir": str(target), "database": "postgres-bundled", "auth": "single",
-            "providers": [], "voice": {"mode": "skip"}}
-    W.run(_asker({**base, "flow": "advanced", "demo": False, "https": True, "domain": "hub.example.com",
-                  "rag": False, "services": ["browser"], "egress_proxy": False}), no_start=True)
-    first = W.read_env(target / ".env")
-    assert set(first["COMPOSE_PROFILES"].split(",")) == {"postgres", "https", "browser"}
-    W.run(_asker({**base, "existing": "update", "flow": "quick"}), no_start=True)
-    env = W.read_env(target / ".env")
-    assert set(env["COMPOSE_PROFILES"].split(",")) == {"postgres", "https", "browser"}
-    for key in ("AGENTS_HUB_BROWSER_URL", "AGENTS_HUB_BROWSER_TOKEN", "HUB_DOMAIN"):
-        assert env[key] == first[key], key
-
-
-def test_a_quickstart_compose_rerun_keeps_redis_and_its_url():
-    plan = W.Plan(shape="compose", quick=True, current={
-        "COMPOSE_PROFILES": "scale,browser", "AGENTS_HUB_BROKER_URL": "redis://:own@redis:6379/0",
-        "AGENTS_HUB_BROWSER_TOKEN": "tok"})
-    W.step_features(_asker({}), plan)
-    assert plan.profiles == ["browser", "scale"]
-    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://:own@redis:6379/0"
-    assert plan.env["AGENTS_HUB_BROWSER_TOKEN"] == "tok"
-    # Start over keeps nothing of the file, services included.
-    fresh = W.Plan(shape="compose", quick=True, fresh=True, current=dict(plan.current))
-    W.step_features(_asker({}), fresh)
-    assert fresh.profiles == []

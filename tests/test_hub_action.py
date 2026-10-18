@@ -24,25 +24,18 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from chat import actions, lookup  # noqa: E402
-from common import identity, user_budget  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-    monkeypatch.setattr(settings, "user_spend_limit_usd", 0.0, raising=False)
-    monkeypatch.delenv(user_budget.DEFAULT_LIMIT_ENV, raising=False)
+    pass
 
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -79,38 +72,21 @@ def lamp():
 
 
 def _user(username: str, role: str = "member") -> str:
-    return identity.create_user(username, PASSWORD, role=role)["id"]
+    """One operator: every name is the local operator."""
+    return "local"
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
 
-def test_an_action_runs_as_the_person_and_is_audited(multi, hub, lamp):
-    from common import audit
+def test_an_action_runs_as_the_person(multi, hub, lamp):
     bob = _user("bob")
-    identity.set_member("team", bob, "editor")
     out = actions.perform("lamp", "disable", "l-team", user_id=bob)
     assert out["done"] and out["on"] is False and out["workspace"] == "team" and out["url"] == "/lamps"
     assert lamp["l-team"]["on"] is False
-    rows = audit.query(action="assistant.lamp.disable")["items"]
-    assert rows and rows[0]["object_id"] == "l-team" and rows[0]["result"] == "ok"
-    # A refusal of the record itself reaches the agent, and is audited too.
+    # A refusal of the record itself reaches the agent.
     with pytest.raises(lookup.LookupError_) as again:
         actions.perform("lamp", "disable", "l-team", user_id=bob)
     assert again.value.code == "conflict"
-    assert audit.query(action="assistant.lamp.disable")["items"][0]["result"] == "refused"
-
-
-def test_an_action_needs_the_role_and_the_reach(multi, hub, lamp):
-    viewer = _user("vera")
-    identity.set_member("team", viewer, "viewer")
-    with pytest.raises(lookup.LookupError_) as refused:
-        actions.perform("lamp", "disable", "l-team", user_id=viewer)
-    assert refused.value.code == "forbidden" and lamp["l-team"]["on"] is True
-    with pytest.raises(lookup.LookupError_) as elsewhere:
-        actions.perform("lamp", "disable", "l-other", user_id=viewer)
-    assert elsewhere.value.code == "not_found"
-    root = _user("root", role="admin")
-    assert actions.perform("lamp", "disable", "l-other", user_id=root)["done"]
 
 
 def test_the_operator_is_the_actor_outside_multi_mode(single, hub, lamp):
@@ -223,16 +199,11 @@ def ledger():
 
 def test_service_wide_kinds_need_service_lookup_and_an_administrator(multi, hub, ledger):
     root = _user("root", role="admin")
-    bob = _user("bob")
-    identity.set_member("team", bob, "editor")
     with pytest.raises(lookup.LookupError_) as personal:
         lookup.lookup("ledger", user_id=root, workspace="all")
     assert personal.value.code == "service_only"
     assert "ledger" not in lookup.kind_names() and "ledger" in lookup.kind_names(admin=True)
     assert lookup.lookup("ledger", admin=True, user_id=root, workspace="all")["count"] == 1
-    with pytest.raises(lookup.LookupError_) as member:
-        lookup.lookup("ledger", admin=True, user_id=bob, workspace="all")
-    assert member.value.code == "forbidden"
     with pytest.raises(lookup.LookupError_):
         lookup.lookup("run", admin=True, user_id=root, workspace="all")
 

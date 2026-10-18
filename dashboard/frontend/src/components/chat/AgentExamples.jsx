@@ -1,4 +1,4 @@
-import { getAgentExamples, getFlowExamples } from '../../api';
+import { getAgentExamples } from '../../api';
 import { useI18n } from '../../i18n';
 import { useChatPage } from './context';
 import ExampleRequests from './ExampleRequests';
@@ -24,20 +24,3 @@ export default function AgentExamples() {
   );
 }
 
-/**
- * The same for a flow picked on the Chat page: the flow's own examples (a
- * template's, or written in the editor), else its first agent's
- * (GET /api/flows/{id}/examples). No general fallback: a flow with neither
- * keeps just its explanation.
- */
-export function FlowExamples() {
-  const { selectedFlow, setInput, textareaRef } = useChatPage();
-  const { language } = useI18n();
-  return (
-    <ExampleRequests
-      load={() => getFlowExamples(selectedFlow, language)}
-      loadKey={selectedFlow ? `${selectedFlow}:${language}` : null}
-      onPick={(text) => fillComposer(text, setInput, textareaRef)}
-    />
-  );
-}

@@ -1,13 +1,12 @@
 import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Pencil, Plus, RefreshCw, Share2, Sparkles, Trash2, Upload, Workflow, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { createFlow, deleteFlow, exportFlow, generateFlow, importFlow, listFlows, testLocalModel, updateFlowSharing } from '../api';
 import { useWorkspace } from '../components/workspace';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
-import N8nImportModal from '../components/flow/N8nImportModal';
 import CreateFlowDialog from '../components/flow/CreateFlowDialog';
 const PROVIDERS = [
   { value: '', labelKey: 'agentFlows.providers.inherit' },
@@ -80,7 +79,6 @@ const AgentFlows = () => {
   const [importFileName, setImportFileName] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
-  const [n8nOpen, setN8nOpen] = useState(false);
 
   // A promise chain, not an async function: the React Compiler lint treats an
   // async function called from an effect as a synchronous setState.
@@ -320,25 +318,6 @@ const AgentFlows = () => {
             onChange={handleFilePicked}
             className="hidden"
           />
-          {/* The phrase a LangGraph user searches for. It leads out of flows on
-              purpose: a graph that runs elsewhere is mirrored, not executed
-              here, and offering it as a flow would come with a Run button that
-              cannot work. */}
-          <Link
-            to="/connections"
-            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-          >
-            <Share2 className="w-4 h-4" />
-            {t('agentFlows.mirrorExternal')}
-          </Link>
-          <button
-            onClick={() => setN8nOpen(true)}
-            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
-            data-testid="flows-import-n8n"
-          >
-            <Workflow className="w-4 h-4" />
-            {t('n8nImport.button')}
-          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
@@ -463,7 +442,7 @@ const AgentFlows = () => {
         </div>
       </section>
 
-      {/* Create flow: template, then name and description */}
+      {/* Create flow: name and description */}
       {createOpen && <CreateFlowDialog onClose={() => setCreateOpen(false)} />}
 
       {/* Import Modal — review parsed YAML before validating + storing it */}
@@ -541,18 +520,6 @@ const AgentFlows = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {n8nOpen && (
-        <N8nImportModal
-          workspace={workspaceFilter}
-          onClose={() => setN8nOpen(false)}
-          onOpen={(flow, mode) => {
-            setN8nOpen(false);
-            // A run-in-n8n flow runs as it is; a converted one has agents to pick.
-            navigate(mode === 'run' ? `/flows/${flow.id}` : `/flows/${flow.id}/edit`);
-          }}
-        />
       )}
 
       {/* AI Wizard Modal */}

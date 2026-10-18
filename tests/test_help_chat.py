@@ -215,12 +215,12 @@ def test_snapshot_names_accounts_mcp_and_skills_without_secrets(monkeypatch):
     def spec(name, ok):
         return SimpleNamespace(name=name, is_configured=lambda: ok)
     monkeypatch.setattr(credentials, "all_specs", lambda: [
-        spec("google", True), spec("microsoft", False), spec("databases", True)])
+        spec("jira", True), spec("other", False)])
     snap = onboarding.hub_snapshot("default")
-    assert snap["accounts"] == ["google"]
+    assert snap["accounts"] == ["jira"]
     assert isinstance(snap["mcp_servers"], int) and isinstance(snap["skills"], int)
     rendered = "\n".join(onboarding.render_snapshot(snap))
-    assert "- Connected accounts and services: google" in rendered
+    assert "- Connected accounts and services: jira" in rendered
     assert "- MCP servers in this workspace: " in rendered
     assert "- Skills in this workspace: " in rendered
 

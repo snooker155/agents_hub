@@ -10,8 +10,7 @@
  * - agents: who does it and what they know (agents and their live copies,
  *   models, skills, memory, the shelves agents come from).
  * - integrations: what the hub is attached to, in both directions.
- * - records: what happened, what it cost, and the administration (the
- *   agent registry among it).
+ * - records: what happened, what it cost, and the administration.
  *
  * The simple menu shows the items marked `simple` (the first three groups
  * and the two pages nobody can do without, Settings and Docs); the full menu
@@ -26,26 +25,20 @@
  * one place to ask.
  */
 import {
-  Waypoints, LayoutDashboard, CheckSquare, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users,
-  Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
+  LayoutDashboard, CheckSquare, Folder, Database, Factory, Wrench, Users,
+  Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, FolderGit2, Box, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
-  GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck,
-  MessageSquareCode, Eye, AudioLines, Send, Laptop, LockKeyhole, Library,
+  GraduationCap, Globe, Link2, Plug, Layers, Rocket, ShieldCheck,
+  Eye, AudioLines,
 } from 'lucide-react';
-import { MULTI, isAdmin } from './auth';
 
 export const MENU_MODE_KEY = 'agents_hub_menu_mode';
 export const SIMPLE = 'simple';
 export const FULL = 'full';
 
-/**
- * The mode a viewer starts in before choosing one: the full menu for the
- * administrator of a multi-user hub (the person who runs it for others), the
- * simple one for everybody else, including the single operator of a home
- * install.
- */
-export function defaultMenuMode(auth) {
-  return auth?.mode === MULTI && isAdmin(auth) ? FULL : SIMPLE;
+/** The mode a viewer starts in before choosing one: the simple menu. */
+export function defaultMenuMode() {
+  return SIMPLE;
 }
 
 /** The viewer's own choice, when there is a valid one in storage. */
@@ -65,19 +58,11 @@ export function writeMenuMode(mode) {
 }
 
 /**
- * Who runs this hub, for the rows only an operator needs (Status, Cluster):
- * the one operator of a single or token install, or an administrator of a
- * multi-user one.
- */
-const isOperator = (auth) => auth?.mode !== MULTI || isAdmin(auth);
-
-/**
  * The groups, every item in them, with `simple` on the items the simple menu
- * keeps. Items a viewer may not see at all (Accounts without the admin role,
- * Audit outside the modes that keep one, the playground switched off) are
+ * keeps. Items a viewer may not see at all (the playground switched off) are
  * left out here rather than hidden later, so both modes agree on them.
  */
-export function buildMenu({ t, auth, features = {} }) {
+export function buildMenu({ t, features = {} }) {
   const groups = [
     {
       key: 'conversation',
@@ -98,9 +83,6 @@ export function buildMenu({ t, auth, features = {} }) {
         // files the workspace keeps by id, two tabs of one page. The Studio and
         // a view's page are reached from here, so they light this item up.
         { name: t('nav.artifacts'), path: '/artifacts', icon: Images, also: ['/studio', '/views'], simple: true },
-        // What people synced into this hub from their own (hubsync/): plain or
-        // end-to-end encrypted, opened in the browser with their passphrase.
-        { name: t('nav.vault'), path: '/vault', icon: LockKeyhole, home: '/artifacts' },
         // The forms of joined work, side by side: a flow is a graph, a loop a
         // repeated agent, a team agents talking, the orchestrator one agent
         // handing out work.
@@ -124,33 +106,20 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.skills'), path: '/skills', icon: GraduationCap, simple: true },
         { name: t('nav.memory'), path: '/memory', icon: Database, simple: true },
         { name: t('nav.marketplace'), path: '/marketplace', icon: Store, simple: true },
-        // The linked hub's agents, skills, flows, teams and loops, to install here.
-        { name: t('nav.catalog'), path: '/catalog', icon: Library, home: '/marketplace' },
         { name: t('nav.toolbox'), path: '/tools', icon: Wrench, home: '/agents' },
-        // Live copies of agents, across every carrier, and the agents kept
-        // running as replicas (docs/instances.md, docs/services.md).
+        // Live copies of agents, across every carrier (docs/instances.md).
         { name: t('nav.instances'), path: '/instances', icon: Activity, home: '/agents' },
-        { name: t('nav.services'), path: '/services', icon: Cpu, home: '/agents' },
-        { name: t('nav.registry'), path: '/registry', icon: Boxes, home: '/marketplace' },
       ],
     },
     {
-      // Attaching something that is not defined in here. Two directions, one
-      // question: something of yours runs elsewhere and reports in
-      // (Connections), or this service reaches out to a system you use
-      // (Connectors); watchers observe outside state, MCP servers hand over
-      // tools nobody here has seen, a widget puts an agent on another site.
+      // Attaching something that is not defined in here: this service reaches
+      // out to a system you use (Connectors); watchers observe outside state,
+      // MCP servers hand over tools nobody here has seen.
       key: 'integrations',
       items: [
         { name: t('nav.connectors'), path: '/connectors', icon: Link2, home: '/settings' },
-        { name: t('nav.connections'), path: '/connections', icon: Share2, home: '/settings' },
         { name: t('nav.watchers'), path: '/watchers', icon: Eye, home: '/settings' },
-        // Other hubs that dial in and lend this one their models and sandbox (docs/hub-link.md).
-        { name: t('nav.nodes'), path: '/nodes', icon: Laptop, home: '/settings' },
         { name: t('nav.mcp'), path: '/mcp', icon: Plug, home: '/settings' },
-        { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode, home: '/settings' },
-        // The hub where people already work: IDE, notes, Slack, Teams.
-        { name: t('nav.distribution'), path: '/distribution', icon: Send, home: '/settings' },
         // The agent's browser on screen, and free browsing on the same service.
         { name: t('nav.browser'), path: '/browser', icon: Globe, home: '/agents' },
       ],
@@ -166,25 +135,11 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.costs'), path: '/costs', icon: DollarSign, home: '/settings' },
         { name: t('nav.evals'), path: '/evals', icon: FlaskConical, home: '/agents' },
         { name: t('nav.webLogs'), path: '/web-logs', icon: Globe, home: '/settings' },
-        // Who did what: outside single mode there is somebody to answer to.
-        auth?.features?.audit && { name: t('nav.audit'), path: '/audit', icon: ScrollText, home: '/settings' },
         // Administration lives under Settings.
-        // Who owns each agent and MCP server, and whether it is approved.
-        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck, home: '/settings' },
         { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck, home: '/settings' },
-        { name: t('nav.environments'), path: '/environments', icon: Container, home: '/settings' },
         { name: t('nav.containers'), path: '/containers', icon: Box, home: '/settings' },
-        // The service looking at itself, for whoever runs it.
-        isOperator(auth) && { name: t('nav.health'), path: '/health', icon: Activity, home: '/settings' },
-        // The service map: every process and every shared service it uses. A
-        // single process has a map too (database, model runtime, ...), so the
-        // item no longer waits for AGENTS_HUB_ROLE api and worker.
-        isOperator(auth) && { name: t('nav.cluster'), path: '/cluster', icon: Waypoints, simple: true },
-        // Accounts exist only under AUTH_MODE=multi, and only an administrator
-        // manages them.
-        isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog, home: '/settings' },
-        // The viewer's own sessions and API keys.
-        auth?.mode === MULTI && auth?.user && { name: t('nav.account'), path: '/account', icon: KeyRound, simple: true },
+        // The service looking at itself.
+        { name: t('nav.health'), path: '/health', icon: Activity, home: '/settings' },
         { name: t('nav.settings'), path: '/settings', icon: Settings, simple: true },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen, simple: true },
       ],

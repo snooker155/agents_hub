@@ -187,11 +187,6 @@ class AgentSpec:
     # `overrides.max_concurrent_delegates` (agents/run_overrides.py) replaces
     # this for that run alone.
     max_concurrent_delegates: int = 6
-    # The agent's data class (common/data_class.py): "public", "internal" or
-    # "confidential", or "" to take the workspace's. Only ever makes the
-    # workspace's class stricter: it decides which linked nodes may see the
-    # agent's model calls and snippets.
-    data_class: str = ""
     # Reasoning capability settings — keyed by tool id (e.g. "think", "plan")
     reasoning: Dict[str, Any] = field(default_factory=dict)
     # Structured response format this agent may emit (rendered as buttons / a
@@ -306,7 +301,7 @@ class AgentSpec:
     review_note: Optional[str] = None
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[str] = None
-    # ── Default outcome (fifth cycle, stage 4 "kits") ───────────────────────
+    # ── Default outcome ──────────────────────────────────────────────────────
     # What "done" looks like for this agent, in the absence of a task of its
     # own outcome (tasks/outcome.py): same shape as ``Task.outcome``, a
     # mapping {"rubric": markdown, "max_iterations": int, "grader":
@@ -458,8 +453,6 @@ class AgentSpec:
             d["delegates"] = list(self.delegates)
         if self.max_concurrent_delegates != 6:
             d["max_concurrent_delegates"] = self.max_concurrent_delegates
-        if self.data_class:
-            d["data_class"] = self.data_class
         # Only write the approval overrides when set, to keep default records clean.
         if self.approval_tools:
             d["approval_tools"] = list(self.approval_tools)
@@ -833,9 +826,6 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         max_concurrent_delegates = 6
     max_concurrent_delegates = min(32, max(1, max_concurrent_delegates))
 
-    from common.data_class import normalize_class
-    data_class = normalize_class(ad.get("data_class")) or ""
-
     def _id_list(raw: Any) -> List[str]:
         """A clean, de-duplicated list of tool ids from whatever JSON holds."""
         out: List[str] = []
@@ -967,7 +957,6 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         capability_override=capability_override,
         delegates=delegates,
         max_concurrent_delegates=max_concurrent_delegates,
-        data_class=data_class,
         approval_tools=approval_tools,
         approval_exempt=approval_exempt,
         secrets=secrets,
@@ -1330,16 +1319,6 @@ def _save_record(
     # to the main agent.
     from common import workspace_scope
     workspace_scope.check_agent_tools(stored.id, list(effective.tools or []))
-    # An agent an isolated workspace owns holds only the tools that stay
-    # inside its perimeter, and is never an imported (remote) agent
-    # (common/isolation.py). Never softened by mode or override.
-    from common import isolation
-    _owner = getattr(stored, "owner_workspace", None)
-    isolation.check_agent_tools(_owner, list(effective.tools or []))
-    if _owner and effective.is_remote() and isolation.is_isolated(_owner):
-        raise isolation.IsolationError(
-            f"Workspace '{_owner}' is isolated: an imported agent runs outside the hub and "
-            "cannot belong to it.", status=400)
 
     # A parent's change reaches every child that follows it: each one is
     # checked with its new effective tool set and the save is refused, naming

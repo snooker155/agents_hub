@@ -270,13 +270,6 @@ def test_add_subtask_does_not_inherit_the_parents_agent_version():
     assert child.agent_version is None
 
 
-def test_add_subtask_still_inherits_budget_and_environment_for_contrast():
-    parent = tasks_service.create_task("parent2", budget_usd=3.0, environment_id="env-x")
-    child = tasks_service.add_subtask(parent.id, "child2")
-    assert child.budget_usd == 3.0
-    assert child.environment_id == "env-x"
-
-
 def test_add_subtask_accepts_an_explicit_agent_version():
     parent = tasks_service.create_task("parent3")
     child = tasks_service.add_subtask(parent.id, "child3", agent_version=2)
@@ -378,8 +371,7 @@ def test_update_job_validates_against_the_existing_agent_id(plan_store, two_vers
 
 
 def test_fire_agent_task_passes_agent_version_when_agent_is_set(plan_store, monkeypatch):
-    """Mirrors tests/test_plan_fires.py's own budget/environment coverage of
-    the same function: create_task is stubbed so this stays a unit test of
+    """create_task is stubbed so this stays a unit test of
     what _fire_agent_task copies, not of task creation itself."""
     captured = {}
 

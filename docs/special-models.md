@@ -12,7 +12,7 @@ and `tools/special_models.py` (the tools).
 
 | Purpose | Tool | Providers | Price unit |
 |---------|------|-----------|------------|
-| Images | `generate_image` | OpenAI (gpt-image-1, dall-e-3), Google (Gemini image, Imagen), the hub runtime (Qwen-Image on a Mac), any OpenAI compatible server | per image |
+| Images | `generate_image` | OpenAI (gpt-image-1, dall-e-3), Google (Gemini image, Imagen), any OpenAI compatible server | per image |
 | Video | `generate_video` | OpenAI (Sora), Google (Veo) | per second |
 | Speech | `synthesize_speech` | OpenAI (gpt-4o-mini-tts, tts-1), Google (Gemini TTS) | per 1000 characters |
 | Transcription | `transcribe_audio` | OpenAI (gpt-4o-transcribe, whisper-1), Google (Gemini), any OpenAI compatible server | per call |
@@ -20,28 +20,17 @@ and `tools/special_models.py` (the tools).
 
 "OpenAI compatible" covers Ollama, LM Studio and a custom backend with the
 openai adapter (Settings, custom providers): a local Stable Diffusion behind
-LocalAI or a whisper server answers the same calls. The hub's own runtime
-(provider "Hub runtime", `hub-local`) runs open speech and transcription
-models downloaded from Hugging Face: Whisper, Piper, Kokoro, Kitten and Supertonic; see
-[local models](local-models.md#speech-models). On Apple silicon it draws
-too: Qwen-Image through mflux ([image models](local-models.md#image-models)),
-picked here for the Images purpose like any other model; `size` and
-`quality` reach it, a picture takes minutes. For it the form suggests no
-cloud model names, and the voice field offers the chosen model's own voices. Anthropic has no image,
+LocalAI or a whisper server answers the same calls. Anthropic has no image,
 video or audio models, so it is not offered for these purposes.
 
 **Voices.** Picking or typing a speech model asks for its voices at once, no
-search needed: the runtime reads a model's own from its files (Kokoro's,
-Kitten's and Supertonic's sets, a Piper model's speakers; a single-speaker Piper model has one voice and the
-field says so), any other provider gets the voices known for its API shape.
-The field is then a list, with the language of each voice that speaks one
-(Kokoro's name prefix, Piper's locale in the model id, English for Kitten;
-Supertonic's voices read every language it knows), and "model default"
-first. **Listen**, next to it, plays a short line with the chosen voice, saved
-or not: in the voice's own language, else in the page's (OpenAI's and
-Google's voices speak any); 13 languages have a line, others hear English. A
-cloud model charges a fraction of a cent for it, not counted on a run.
-Writers only. API: `GET /api/workspaces/{name}/special-models/voices?provider=&model=`
+search needed: each provider gets the voices known for its API shape. The
+field is then a list, with "model default" first. **Listen**, next to it,
+plays a short line with the chosen voice, saved or not, in the page's
+language (OpenAI's and Google's voices speak any); 13 languages have a line,
+others hear English. A cloud model charges a fraction of a cent for it, not
+counted on a run.
+API: `GET /api/workspaces/{name}/special-models/voices?provider=&model=`
 answers `{voices, own, language, languages}`; `POST
 /api/workspaces/{name}/special-models/sample` with `{provider, model, voice,
 options, language}` (no provider: the workspace's own model) answers the
@@ -81,12 +70,7 @@ field suggests known ids and accepts any), a price and the purpose's options
 (size and quality for images, default length for video, voice and format for
 speech, language for transcription). A workspace uses only the models it
 added itself: nothing comes from `default` or any other workspace, and a
-purpose left empty is shown as not added. The one exception is a
-[personal workspace](identity.md#personal-workspace): for a purpose it left
-empty it uses `default`'s model, called with `default`'s connection settings,
-and the form shows that purpose as "From default". Custom models are never
-inherited. The price of an inherited call is charged to the run, so to the
-personal workspace and the person, not to `default`. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
+purpose left empty is shown as not added. API: `GET` and `PUT /api/workspaces/{name}/special-models`.
 
 **Find at provider**, next to the model field, asks the chosen provider for
 its model list (with the workspace's own key where it sets one) and keeps
@@ -94,8 +78,8 @@ only the models that fit the purpose: speech models for speech, image models
 for images and so on. Gemini lists say which methods a model supports
 (`predict` for Imagen, `predictLongRunning` for Veo); the OpenAI shape, local
 servers and custom backends list bare ids, so there the id decides
-(`gpt-image`, `dall-e`, `sora`, `tts`, `whisper`, `transcribe`, `flux`,
-`kokoro` and the like), and embeddings, realtime and live models are left out.
+(`gpt-image`, `dall-e`, `sora`, `tts`, `whisper`, `transcribe`, `flux` and
+the like), and embeddings, realtime and live models are left out.
 A model the filter misses can still be typed in. Nothing is stored by a search.
 API: `GET /api/workspaces/{name}/special-models/discover?purpose=&provider=`.
 
@@ -108,8 +92,7 @@ purpose's, say a chat model for speech, is a warning). A custom chat model is
 looked up the same way, Anthropic included. An HTTP model is sent a `GET`
 with its headers (the stored token where the form holds the mask): any answer
 proves the address, 401 or 403 means the token was refused, 404 means a
-wrong path. Each request waits at most 15 seconds. Writers only, since it
-sends requests to the address typed in. API:
+wrong path. Each request waits at most 15 seconds. API:
 `POST /api/workspaces/{name}/special-models/check` with
 `{"purpose", "provider", "model"}` or `{"custom": {...}}`; the answer is
 `{"status": "ok" | "warn" | "error", "message", "elapsed_ms"}`.
@@ -142,13 +125,10 @@ second call carrying only the `job_id`, without starting it again.
 Each call is priced at the workspace's price for the purpose (per image, per
 second of video, per 1000 characters of speech, per call), recorded on the run
 as an auxiliary call with `cost_usd` and counted on the Costs page. A chat
-model of your own is also priced by its tokens from the catalog. The run's
-money cap is charged at once, and a call it cannot pay for is refused before
-it is made. In a workspace whose budget is fail closed, a purpose with no
-price is refused too, the same rule as an unpriced chat model.
+model of your own is also priced by its tokens from the catalog.
 
 The [assistant](assistant.md#voice) uses the speech and transcription models
-of the person's home workspace without a tool: it transcribes what the person
+of the workspace without a tool: it transcribes what the person
 says and reads its answers aloud, at the same prices. Transcription is recorded
 as a `voice` run of its own, speech on the turn's run (`voice_calls`).
 
@@ -159,7 +139,7 @@ turn text the agent already holds into a file. `transcribe_audio` and
 `ask_special_model` grant `reads_private`, since they bring a workspace file's
 content into the context. The model behind a tool is the operator's chosen
 provider, the same trust as the agent's own model, so a prompt sent there is
-not counted as data leaving. An isolated workspace keeps none of these tools.
+not counted as data leaving.
 
 ## Gotchas
 
@@ -172,4 +152,4 @@ not counted as data leaving. An isolated workspace keeps none of these tools.
   rest; when a provider answers with an error, the agent gets its message as
   it is.
 
-Related: [workspace-roles](workspace-roles.md), [models](models.md), [files](files.md), [costs](costs.md), [tools-and-capabilities](tools-and-capabilities.md), [isolation](isolation.md), [settings](settings.md).
+Related: [workspace-roles](workspace-roles.md), [models](models.md), [files](files.md), [costs](costs.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md).

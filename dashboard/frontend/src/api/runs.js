@@ -21,10 +21,3 @@ export const stopRunGroup = (kind, id) => api.post(`/runs/groups/${kind}/${id}/s
 // and diff outputs. Long-running (a real LLM call).
 export const replayRun = (runId, data) => api.post(`/runs/${runId}/replay`, data || {}, { timeout: 300000 });
 
-// Legacy Factory API
-export const getFactoryGraph = () => api.get('/factory/graph');
-export const getActiveNode = (workspace) => api.get(`/factory/graph/active-node?workspace=${encodeURIComponent(workspace)}`);
-export const checkWaiting = (workspace) => api.get(`/factory/waiting-for-input?workspace=${encodeURIComponent(workspace)}`);
-export const provideInput = (data) => api.post('/factory/user-input', data);
-export const runFactoryAgent = (data) => api.post('/factory/run-agent', data);
-export const getFactoryLogs = (workspace) => api.get(`/factory/logs?workspace=${encodeURIComponent(workspace)}`);

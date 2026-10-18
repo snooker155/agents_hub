@@ -261,8 +261,6 @@ def deliver(endpoint: Dict[str, Any], event: Dict[str, Any]) -> bool:
         kind = endpoint.get("kind")
         if kind == "webhook":
             return _deliver_webhook(endpoint, event)
-        if kind == "slack":
-            return _deliver_slack(endpoint, event)
         return False
     except Exception:  # noqa: BLE001 - never raises (see docstring)
         log.debug("notify.outbound: delivery failed for endpoint %s", endpoint.get("id"), exc_info=True)
@@ -281,36 +279,6 @@ def _deliver_webhook(endpoint: Dict[str, Any], event: Dict[str, Any]) -> bool:
     if secret:
         headers["X-AgentsHub-Signature"] = sign_payload(secret, body)
     return _post_with_retry(endpoint.get("url") or "", body, headers)
-
-
-def _deliver_slack(endpoint: Dict[str, Any], event: Dict[str, Any]) -> bool:
-    payload = _slack_payload(event)
-    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    return _post_with_retry(endpoint.get("url") or "", body, headers)
-
-
-def _slack_payload(event: Dict[str, Any]) -> Dict[str, Any]:
-    """A Slack incoming-webhook payload summarizing one event."""
-    data = event.get("data") if isinstance(event.get("data"), dict) else {}
-    title = str(data.get("title") or event.get("type") or "Notification")
-    body_text = str(data.get("body") or "")
-    severity = str(data.get("severity") or "info")
-    workspace = str(event.get("workspace") or "default")
-
-    lines = [f"*{title}*"]
-    if body_text:
-        lines.append(body_text)
-    text = "\n".join(lines)
-
-    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}}]
-    if body_text:
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": body_text}})
-    blocks.append({
-        "type": "context",
-        "elements": [{"type": "mrkdwn", "text": f"{severity}, {workspace}"}],
-    })
-    return {"text": text, "blocks": blocks}
 
 
 def _post_with_retry(url: str, body: bytes, headers: Dict[str, str]) -> bool:

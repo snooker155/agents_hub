@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
-import { addPersonalMemoryNote, getAgents, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
+import { addPersonalMemoryNote, getAgents, getProjects, getAgentDefinition, stopMessage, listFlows, getTeams } from '../api';
 import { loadWorkspaceSummary } from '../api/workspaceSummary';
 import ContextMeter from '../components/ContextMeter';
 import {
@@ -65,7 +65,6 @@ import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatMessageList from '../components/chat/ChatMessageList';
 import ChatComposer from '../components/chat/ChatComposer';
 import ChatSidePanel from '../components/chat/ChatSidePanel';
-import useChatTelegram from '../components/chat/useChatTelegram';
 import useChatSessionStream from '../components/chat/useChatSessionStream';
 import useChatProcess from '../components/chat/useChatProcess';
 import { useConversationCode } from '../components/chat/useConversationCode';
@@ -176,9 +175,6 @@ export default function Chat() {
   const {
     conversations, setConversations, removeConversation, syncError, reloadChat,
   } = useConversationStore(currentConvId, { paused: isTurnRunning });
-  const [telegramBindings, setTelegramBindings] = useState([]);
-  const [telegramSending, setTelegramSending] = useState(false);
-  const [telegramError, setTelegramError] = useState('');
 
   const [input, setInput] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -263,29 +259,12 @@ export default function Chat() {
   const processInsightsRef = useRef(processInsights); // used inside loadProcessData to check if silent
 
   // ---- derived state ----
-  // Top (normal) chat list: never show telegram-origin convs here — they live
-  // in the dedicated Telegram panel below.
   // A conversation with the Assistant stays in the workspace it started in,
   // like any other (routes/chats.py lists them the same way).
   const visibleConversations = useMemo(() => {
-    const noTelegram = conversations.filter((c) => c.origin !== 'telegram');
-    if (!selectedWorkspace || selectedWorkspace === 'default') return noTelegram;
-    return noTelegram.filter((c) => c.workspace === selectedWorkspace);
+    if (!selectedWorkspace || selectedWorkspace === 'default') return conversations;
+    return conversations.filter((c) => c.workspace === selectedWorkspace);
   }, [conversations, selectedWorkspace]);
-
-  // Strict workspace isolation: a Telegram binding is shown only when its
-  // workspace exactly matches the active workspace. The `default` selection
-  // matches only bindings that explicitly point at `default` (no fallback to
-  // "show everything"), so each workspace owns its slice of the Telegram thread.
-  const visibleTelegramBindings = useMemo(() => {
-    if (!selectedWorkspace) return [];
-    return telegramBindings.filter((b) => (b.workspace || null) === selectedWorkspace);
-  }, [telegramBindings, selectedWorkspace]);
-
-  const currentTelegramBinding = useMemo(() => {
-    if (!currentConvId) return null;
-    return telegramBindings.find((b) => b.conversation_id === currentConvId) || null;
-  }, [telegramBindings, currentConvId]);
 
   const currentConv = conversations.find((c) => c.id === currentConvId) || null;
   // A stable fallback (EMPTY_MESSAGES): a fresh `[]` per render would re-run
@@ -457,9 +436,8 @@ export default function Chat() {
   // A chat turn running in the open conversation that this page is not
   // sending: another tab's, another device's, or this tab's own from before
   // the Chat page was left. The composer can still talk to it (useChatSteering).
-  // A Telegram thread's turns are the bot's, and its composer replies as the bot.
   const liveRunId = (
-    !loading && !currentTelegramBinding && targetMode === 'agent'
+    !loading && targetMode === 'agent'
     && liveTurnSeen?.status === 'running' && ['chat', 'steer'].includes(liveTurnSeen.source)
   ) ? (liveTurnSeen.runId || null) : null;
 
@@ -478,24 +456,14 @@ export default function Chat() {
   useEffect(() => {
     if (!currentConvId) return;
     if (!selectedWorkspace) return;
-    // The Telegram binding takes priority — it carries the authoritative workspace
-    // for any conv promoted from a binding (the local conv may not exist yet).
-    const tgBinding = telegramBindings.find((b) => b.conversation_id === currentConvId);
-    if (tgBinding) {
-      if ((tgBinding.workspace || null) !== selectedWorkspace) {
-        navigate('/chat');
-      }
-      return;
-    }
     const conv = conversations.find((c) => c.id === currentConvId);
     if (!conv) return;
-    // For non-Telegram conversations, the `default` selection means "no filter",
-    // matching the current visibleConversations behaviour.
+    // The `default` selection means "no filter", matching the current visibleConversations behaviour.
     if (selectedWorkspace === 'default') return;
     if ((conv.workspace || null) !== selectedWorkspace) {
       navigate('/chat');
     }
-  }, [selectedWorkspace, currentConvId, telegramBindings, conversations, navigate]);
+  }, [selectedWorkspace, currentConvId, conversations, navigate]);
 
   // Persistence lives in useConversationStore: changes to `conversations` are
   // debounced into `PUT /api/chats/{id}` rather than rewritten into localStorage.
@@ -521,10 +489,6 @@ export default function Chat() {
       .catch(() => setTeams([]));
   }, [selectedWorkspace]);
 
-  useChatTelegram({
-    currentTelegramBinding, messages, setConversations, setSessionId,
-    setTelegramBindings,
-  });
   // ---- load projects for selected workspace ----
   // Leaving every workspace clears what was loaded for the last one (adjusted
   // while rendering); the allowed agents below reset with it.
@@ -803,46 +767,6 @@ export default function Chat() {
     endTurn(currentConvId);
   }, [activeRunId, currentConvId, endTurn, getTurn, liveRunId]);
 
-  // True only when the conversation's binding workspace matches the active workspace.
-  // Reply-as-bot is forbidden across workspaces to keep the Telegram surface
-  // anchored to whichever workspace the operator is actually working in.
-  const telegramReplyAllowed = Boolean(
-    currentTelegramBinding
-    && selectedWorkspace
-    && (currentTelegramBinding.workspace || null) === selectedWorkspace
-  );
-
-  // Send the composer text back to a Telegram chat as the bot (debug surface).
-  const sendAsBot = useCallback(async () => {
-    if (!currentTelegramBinding) return;
-    if (!telegramReplyAllowed) return;
-    const text = input.trim();
-    if (!text) return;
-    setTelegramSending(true);
-    setTelegramError('');
-    try {
-      await sendTelegramMessage(currentTelegramBinding.chat_id, text);
-      const convId = currentTelegramBinding.conversation_id;
-      setConversations((prev) =>
-        prev.map((c) => c.id !== convId ? c : {
-          ...c,
-          messages: [...(c.messages || []), {
-            id: genId(),
-            role: 'user',
-            content: text,
-            origin: 'telegram-bot',
-            createdAt: new Date().toISOString(),
-          }],
-        })
-      );
-      setInput('');
-    } catch (e) {
-      setTelegramError(e.response?.data?.detail || e.message || t('chat.sendFailed'));
-    } finally {
-      setTelegramSending(false);
-    }
-  }, [currentTelegramBinding, telegramReplyAllowed, input, setConversations, t]);
-
   const handleKeyDown = (e) => {
     if (commandMenuOpen && commandSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -868,11 +792,7 @@ export default function Chat() {
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (currentTelegramBinding) {
-        sendAsBot();
-      } else {
-        sendMessage();
-      }
+      sendMessage();
     }
   };
 
@@ -924,18 +844,18 @@ export default function Chat() {
     codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
     markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
-    conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
+    conversations, currentConv, currentConvId, deleteConversation,
     fileInputRef, flows, graphRun, handleKeyDown, hasTarget, input, jumpToArtifact, liveMessages,
     liveTurn, loadProcessData, loading, messages, navigate, newConversation,
     onPickFiles, openInCodePanel, pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
     processLoading, processOpen, projects, removeAttachment, removeReference, renderedMessages,
     resizeTextarea, runTimelineByRunId, selectCommand, selectableAgents, selectedAgent,
-    selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
+    selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendMessage,
     setAttachMenuOpen, setCodeOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
     setInput, setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
     setSelectedTeam, setTargetMode, setViewMode, steering, stopGeneration, syncError, t, targetMode,
-    teams, telegramError, turns, runningChats, telegramReplyAllowed, telegramSending, textareaRef,
-    toggleAttachmentStore, viewMode, visibleConversations, visibleTelegramBindings
+    teams, turns, runningChats, textareaRef,
+    toggleAttachmentStore, viewMode, visibleConversations
   };
 
   return (

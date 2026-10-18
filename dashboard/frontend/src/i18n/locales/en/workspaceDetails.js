@@ -23,10 +23,8 @@ export default {
       toolPolicy: 'Tool policy',
       webPolicy: 'Web access',
       personalMemory: 'Personal memory',
-      isolation: 'Isolation',
       tasks: 'Task assignment',
       secrets: 'Secrets',
-      remoteSync: 'Remote hub sync',
       palette: 'Palette',
     },
   },
@@ -184,7 +182,7 @@ export default {
   specialModels: {
     languages: {
       title: 'A voice per language',
-      hint: 'A line is read with the voice of its own language. A voice that speaks one language only (Piper) needs another model for each; a cloud voice speaks all, so there another voice is enough. Empty rows keep the model and voice above.',
+      hint: 'A line is read with the voice of its own language. A voice tuned for one language can be given another model for each; a cloud voice speaks all, so there another voice is enough. Empty rows keep the model and voice above.',
       model: 'model',
       voice: 'voice',
       modelFor: 'Model for {{language}}',
@@ -213,7 +211,7 @@ export default {
     },
     options: {
       size: 'Size', quality: 'Quality', aspect_ratio: 'Aspect ratio', seconds: 'Default length, s',
-      voice: 'Voice', format: 'Format', language: 'Language', temperature: 'Temperature',
+      voice: 'Voice', format: 'Format', language: 'Language',
     },
     customTitle: 'Your own models',
     customHint: 'Any other model, for example one your team runs for a narrow job. Agents call it with ask_special_model by its id, and the description is how they know when to.',
@@ -228,8 +226,6 @@ export default {
     remove: 'Remove',
     addCustom: 'Add a model',
     discover: 'Find at provider',
-    localRuntimeHint: 'The hub runtime has what you downloaded into it:',
-    localRuntimeLink: 'download a model on the Local tab',
     discoverHint: 'Ask the provider which models it has and show only those that fit this purpose',
     discoverFound: '{{count}} of the provider\'s {{total}} models fit. Click one to pick it.',
     discoverNone: 'None of the provider\'s {{total}} models fit. You can still type a model in.',

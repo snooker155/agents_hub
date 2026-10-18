@@ -5,14 +5,14 @@ Modelled on the starter agents Anthropic offers for Claude Managed Agents
 request agent, a data analyst, invoice processing, contract review): each is
 a careful prompt, a tool set that passes the capability guard, the
 connectors it works best with, a default outcome rubric and a short "what to
-do next" note. A kit (``kits/``) is a team of agents installed as a bundle;
-a template is a single agent the person names and adjusts before creating.
+do next" note. A template is a single agent the person names and adjusts
+before creating.
 
 One file per template, ``agents/templates/<id>.md``: YAML frontmatter, then
 the system prompt as the body. Frontmatter fields: ``id`` (must match the
 file name), ``name``, ``description``, ``category``, ``icon`` (one plain
 word), ``tools``, ``connectors: {required: [...], optional: [...]}`` naming
-connectors and channels the way kits do, ``outcome`` (``rubric``,
+connectors from ``GET /api/connectors``, ``outcome`` (``rubric``,
 ``max_iterations``, ``threshold``: an agent default outcome,
 docs/outcomes.md), ``starters`` (example first messages) and
 ``next_steps``. Creating an agent from one is ``POST
@@ -159,23 +159,58 @@ def free_agent_id(base: str, taken) -> str:
     return f"{base}_{n}"
 
 
+def known_tool_ids() -> set:
+    """Ids of every tool the hub has, for checking a template's ``tools``."""
+    from tools.registry import get_all_tools
+    return {t.id for t in get_all_tools()}
+
+
+def known_connector_names() -> set:
+    """Names of every connector with credentials (``GET /api/connectors``)."""
+    from connectors import credentials
+    return {spec.name for spec in credentials.all_specs()}
+
+
+def connector_status(name: str, workspace: Optional[str] = None) -> Optional[bool]:
+    """Whether the connector a template names is configured in ``workspace``
+    (its own definition, else the default workspace's, the way a run there
+    would see it), or None when the name is not a connector at all."""
+    from common.workspace_context import _workspace_ctx
+    from connectors.store import DEFAULT_WORKSPACE
+    try:
+        from connectors import credentials
+        spec = credentials.get(name)
+    except Exception:  # noqa: BLE001 - a connector's own probe must not break the template listing
+        log.debug("agent templates: could not read connector %r", name, exc_info=True)
+        return None
+    if spec is None:
+        return None
+    token = _workspace_ctx.set(str(workspace or DEFAULT_WORKSPACE))
+    try:
+        return bool(spec.is_configured())
+    except Exception:  # noqa: BLE001 - same reason
+        log.debug("agent templates: could not read connector status for %r", name, exc_info=True)
+        return False
+    finally:
+        _workspace_ctx.reset(token)
+
+
 def validate_template(template: AgentTemplate) -> List[str]:
     """Problems beyond what reading checks: an unknown tool, an unknown
     connector, a tool set the capability guard would refuse, or an outcome
     the task outcome rules reject. Empty means the template is sound."""
     problems: List[str] = []
-    import kits
     from tools.capabilities import check_combination
     from tasks.outcome import OutcomeError, normalize_outcome
 
-    tool_ids = kits.known_tool_ids()
+    tool_ids = known_tool_ids()
     for tool in template.tools:
         if tool not in tool_ids:
             problems.append(f"{template.id}: unknown tool '{tool}'")
-    names = kits.known_connector_names()
+    names = known_connector_names()
     for name in template.connectors_required + template.connectors_optional:
         if name not in names:
-            problems.append(f"{template.id}: unknown connector or channel '{name}'")
+            problems.append(f"{template.id}: unknown connector '{name}'")
     violation = check_combination(template.tools)
     if violation is not None and violation.blocking:
         problems.append(f"{template.id}: tool set forms '{violation.rule_id}'")
@@ -189,5 +224,6 @@ def validate_template(template: AgentTemplate) -> List[str]:
 
 __all__ = [
     "AgentTemplate", "TemplateError", "TEMPLATES_ROOT", "list_templates",
-    "get_template", "free_agent_id", "validate_template",
+    "get_template", "free_agent_id", "validate_template", "known_tool_ids",
+    "known_connector_names", "connector_status",
 ]

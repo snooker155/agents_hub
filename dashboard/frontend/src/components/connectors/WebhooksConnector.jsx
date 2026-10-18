@@ -12,22 +12,18 @@ import PageLoader from '../PageLoader';
 
 // ── Webhooks tab: outbound endpoints + alert rules ───────────────────────────
 //
-// The third connector direction, alongside Telegram and Git: this hub POSTs
-// out to a URL the operator owns, instead of using an SDK for a service it
+// The outbound direction next to Git and the trackers: this hub POSTs out
+// to a URL the operator owns, instead of using an SDK for a service it
 // already knows the shape of. Two lists, both scoped to the active workspace:
-// where an event can be delivered (a webhook or a Slack incoming-webhook),
-// and when the workspace should raise one on its own (a failed run, spend
+// where an event can be delivered (a webhook), and when the workspace should raise one on its own (a failed run, spend
 // past a threshold) without an agent or a person asking for it.
 
 const RULE_KINDS = [
   'run_failed', 'spend_daily_over', 'spend_run_over', 'online_eval',
-  'slo_start_latency', 'slo_error_rate',
 ];
 // Kinds with no dollar threshold of their own: run_failed reacts to any
-// failure, online_eval has its own sample/score fields, and the two SLO
-// kinds watch a hub-wide objective (common/slo.py) rather than a per-run or
-// per-workspace number.
-const NO_THRESHOLD_KINDS = ['run_failed', 'online_eval', 'slo_start_latency', 'slo_error_rate'];
+// failure, and online_eval has its own sample/score fields.
+const NO_THRESHOLD_KINDS = ['run_failed', 'online_eval'];
 // Graders the one-grader form here offers; the agent's Live quality card
 // (components/agent/LiveQualityCard.jsx) edits several at once.
 const GRADER_KINDS = Object.keys(GRADER_FIELDS);
@@ -43,7 +39,7 @@ function ruleThreshold(rule, t) {
   if (NO_THRESHOLD_KINDS.includes(rule.kind)) return '—';
   return `$${Number(rule.threshold_usd || 0).toFixed(2)}`;
 }
-const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
+const CHANNELS = ['dashboard', 'webhook'];
 // What an endpoint can subscribe to: the notifications the inbox already
 // raises (create_notification, alert rules), and the audit trail
 // (common/audit.py, docs/audit.md), for a SIEM that wants every recorded
@@ -87,7 +83,6 @@ function EndpointForm({ workspace, onCreated }) {
         <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.kind')}</label>
         <select value={kind} onChange={(e) => setKind(e.target.value)} className={`${inputCls} w-28`}>
           <option value="webhook">{t('connectors.webhooks.kindWebhook')}</option>
-          <option value="slack">{t('connectors.webhooks.kindSlack')}</option>
         </select>
       </div>
       <div className="flex-1 min-w-[200px]">

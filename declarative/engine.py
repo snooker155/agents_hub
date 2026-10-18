@@ -19,7 +19,7 @@ decides:
 
 :func:`apply` refuses a plan with ``drift`` or ``blocked`` rows, so a file
 with a problem writes nothing. It then creates and updates kind by kind
-(memory pools, environments, agents, deployments: each refers only to kinds
+(memory pools, agents, deployments: each refers only to kinds
 before it), every create of a kind before the field writes of that kind, so
 two agents that hand off to each other both exist when their handoffs are
 set. Deletes run last, in the reverse order. The lock is updated after every

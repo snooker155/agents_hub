@@ -59,14 +59,6 @@ export default {
   consolidatePool: 'Memory pool',
   selectAPool: 'Select a pool…',
   consolidateSessionLimit: 'Recent sessions',
-  alsoSendToTelegram: 'Also send to Telegram',
-  telegram: {
-    noToken: 'No Telegram bot token configured — add one in Settings → Telegram.',
-    disabled: 'Telegram integration is turned off — enable it in Settings → Telegram.',
-    ready: 'Also send to the chat(s) bound to this workspace.',
-    taskStartedHint: 'The "task started" notification is also delivered to Telegram. The inbox/bell always receives it.',
-    bothHint: 'Delivered to both the inbox/bell and Telegram.',
-  },
   kinds: {
     notification: 'Notification',
     notificationHint: 'Remind me at a time',

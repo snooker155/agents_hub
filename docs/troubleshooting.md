@@ -2,9 +2,7 @@
 
 Symptoms, in the order people hit them. For the liveness of the moving parts see
 [service-health](service-health.md); for a stack that never came up at all, the
-last section of [installation](installation.md); for a symptom-confirm-fix
-writeup of the dozen most common failures (plus how to build a support bundle
-to attach to a ticket), see the [runbook](runbook.md).
+last section of [installation](installation.md).
 
 ## Nothing runs
 
@@ -14,19 +12,9 @@ a missing provider key, a model that is not enabled on the
 Docker daemon. An agent whose folder has an empty `instructions.md` fails the
 same way.
 
-**A run refuses to start, citing the budget.** The workspace has a hard limit
-and the period's spend reached it. Raise or clear it on the Costs page (`0` is
-unlimited) or wait for the daily or monthly period to roll over. Hard limits are
-checked at launch, so nothing was half-run. See [costs](costs.md).
-
 **A task was assigned but never started.** The run watchdog auto-starts those on
 its next tick. If it does not, `GET /api/health` says whether the watchdog is
 running at all.
-
-**A flow, loop, team or scenario run stays in pending status.** In the `api` role, the
-launch is queued for a worker. With no worker running (`ah worker`), the launch
-waits in `pending` until one appears. Start a worker on the same or another host,
-or use the `all` role (default) to launch runs in-process.
 
 ## It runs, but nothing appears
 

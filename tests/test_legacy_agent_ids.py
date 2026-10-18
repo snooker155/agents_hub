@@ -69,7 +69,7 @@ def _seed_everything():
     DocStore("flows").put("f1", {"id": "f1", "nodes": [
         {"id": "n1", "agent_id": OLD, "data": {"entity_id": f"agent:{OLD}"}}]})
     DocStore("plans").put("j1", {"id": "j1", "kind": "agent_task", "agent_id": OLD})
-    DocStore("channel_slack").put("c1", {"id": "c1", "agent_id": OLD})
+    DocStore("watchers").put("c1", {"id": "c1", "agent_id": OLD})
     DocStore("web_log").put("l1", {"agent_id": OLD})  # history
 
     with db.transaction() as conn:
@@ -168,8 +168,6 @@ def test_old_id_is_a_v1_model_and_a_delegation_target(monkeypatch):
         current_agent_id.reset(token)
     assert isinstance(lt.reg_get_agent(OLD), AgentSpec)
 
-    from routes import openai_compat
-    assert openai_compat._agent_spec(f"agent:{OLD}").id == NEW
 
 
 # ── the migration ────────────────────────────────────────────────────────────
@@ -205,7 +203,7 @@ def test_migration_renames_every_stored_reference(legacy_registry):
     assert flow["nodes"][0]["agent_id"] == NEW
     assert flow["nodes"][0]["data"]["entity_id"] == f"agent:{NEW}"
     assert DocStore("plans").get("j1")["agent_id"] == NEW
-    assert DocStore("channel_slack").get("c1")["agent_id"] == NEW
+    assert DocStore("watchers").get("c1")["agent_id"] == NEW
 
     assert _value("SELECT leader_agent_id FROM teams WHERE team_id = ?", "t1") == NEW
     assert json.loads(_value("SELECT members FROM teams WHERE team_id = ?", "t1"))[0]["agent_id"] == NEW

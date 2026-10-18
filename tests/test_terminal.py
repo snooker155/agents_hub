@@ -106,13 +106,6 @@ def client():
     return TestClient(app)
 
 
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
 def _container_run(**fields) -> str:
     from managers import run_manager as rm
     from tasks import service as ts
@@ -152,38 +145,6 @@ def test_a_terminal_ticket_opens_only_its_own_target_and_only_once():
     found = preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r1")
     assert found["user"] == "u1" and found["session"] is None
     assert preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r1") is None
-
-
-def test_terminal_and_auth_tickets_do_not_cross(monkeypatch):
-    auth = preview_tickets.mint_auth(_user())
-    assert preview_tickets.verify_terminal(auth, target_kind="run", target_id="r1") is None
-    ticket = preview_tickets.mint_terminal(_user(), target_kind="run", target_id="r1",
-                                           session_id="s1")
-    assert preview_tickets.verify_auth(ticket) is None
-    assert preview_tickets.verify_terminal(ticket, target_kind="run", target_id="r1")["session"] == "s1"
-    late = preview_tickets.mint_terminal(_user(), target_kind="run", target_id="r1", ttl_seconds=1)
-    later = time.time() + 120
-    monkeypatch.setattr(preview_tickets.time, "time", lambda: later)
-    assert preview_tickets.verify_terminal(late, target_kind="run", target_id="r1") is None
-
-
-def test_the_socket_refuses_a_missing_or_foreign_ticket(procs, client):
-    from starlette.websockets import WebSocketDisconnect
-    rid = _container_run()
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(f"/api/terminal/run/{rid}/ws"):
-            pass
-    assert exc.value.code == 4401
-    auth = preview_tickets.mint_auth(_user())
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={auth}"):
-            pass
-    other = _container_run()
-    ticket = _ticket(client, other)
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={ticket}"):
-            pass
-    assert procs == []
 
 
 # ── refusals ─────────────────────────────────────────────────────────────────
@@ -358,91 +319,33 @@ def test_the_buffer_keeps_only_the_newest_bytes(procs, monkeypatch):
 
 # ── who may open one ─────────────────────────────────────────────────────────
 
-def test_authorize_in_multi_mode(multi):
-    from common import identity
-    from common.auth import Principal
-    from common.identity import SERVICE_PRINCIPAL
-    owner = identity.create_user("owner", PASSWORD)
-    other = identity.create_user("other", PASSWORD)
-    viewer = identity.create_user("viewer", PASSWORD)
-    identity.set_member("ws1", owner["id"], "editor")
-    identity.set_member("ws1", other["id"], "editor")
-    identity.set_member("ws1", viewer["id"], "viewer")
-
-    def p(user, role="member", scope=None):
-        return Principal(id=user["id"], username=user["username"], role=role, kind="user",
-                         scope=scope)
-
-    target = term.Target(kind="run", id="r1", container="c", workspace="ws1", owner=owner["id"])
-    term.authorize(p(owner), target)
-    term.authorize(p(other, role="admin"), target)
-    for who, code in ((p(other), 403), (p(viewer), 403), (SERVICE_PRINCIPAL, 403), (None, 401)):
-        with pytest.raises(term.TerminalRefused) as exc:
-            term.authorize(who, target)
-        assert exc.value.status == code
-    with pytest.raises(term.TerminalRefused):
-        term.authorize(p(owner, scope=("ws2",)), target)
-    # Owner unknown: admins only.
-    orphan = term.Target(kind="run", id="r2", container="c", workspace="ws1", owner=None)
-    with pytest.raises(term.TerminalRefused) as exc:
-        term.authorize(p(owner), orphan)
-    assert "only an admin" in exc.value.detail
-
-
-def test_the_ticket_route_applies_the_rule_in_multi_mode(procs, client, multi, monkeypatch):
-    from common import identity
-    response = client.post("/api/auth/bootstrap", json={"username": "root", "password": PASSWORD})
-    admin = {"Authorization": f"Bearer {response.json()['token']}"}
-    member = identity.create_user("member", PASSWORD)
-    identity.set_member("default", member["id"], "editor")
-    member_auth = {"Authorization": f"Bearer {identity.open_session(member['id'])['token']}"}
-    rid = _container_run(workspace="default")
-    monkeypatch.setattr(term, "_chat_or_task_owner", lambda run: "someone-else")
-    refused = client.post(f"/api/terminal/run/{rid}/ticket", json={}, headers=member_auth)
-    assert refused.status_code == 403 and "owner" in refused.json()["detail"]
-    ticket = _ticket(client, rid, headers=admin)
-    with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={ticket}") as ws:
-        assert ws.receive_json()["type"] == "session"
-    assert _audit("terminal.open")[0]["actor_name"] == "root"
-
-    monkeypatch.setattr(term, "_chat_or_task_owner", lambda run: member["id"])
-    assert client.post(f"/api/terminal/run/{rid}/ticket", json={},
-                       headers=member_auth).status_code == 200
-
-
 # ── replicas ─────────────────────────────────────────────────────────────────
 
 def test_a_replica_target_and_its_refusals(procs, monkeypatch):
     from instances import carrier
     from instances import store as istore
-    from services import store as sstore
     monkeypatch.setattr(carrier, "sync", lambda inst: inst)
-    service = sstore.create(name="svc", agent_id="main-agent", workspace="default",
-                            created_by="u-owner")
     docker = istore.create("main-agent", kind="resident", workspace="default", state="active",
-                           service_id=service["service_id"], container_name="agents-hub-node-1",
+                           started_by="u-owner", container_name="agents-hub-node-1",
                            carrier_mode="docker", carrier_host=socket.gethostname(), label="svc #1")
     target = term.resolve_target("replica", docker["instance_id"])
     assert target.container == "agents-hub-node-1" and target.owner == "u-owner"
     assert target.workspace == "default" and target.label == "svc #1"
 
     local = istore.create("main-agent", kind="resident", workspace="default", state="active",
-                          service_id=service["service_id"], carrier_mode="local", pid=123)
+                          carrier_mode="local", pid=123)
     with pytest.raises(term.TerminalRefused) as exc:
         term.resolve_target("replica", local["instance_id"])
     assert "process on the hub's host" in exc.value.detail
 
     stopped = istore.create("main-agent", kind="resident", workspace="default", state="stopped",
-                            service_id=service["service_id"], container_name="agents-hub-node-2",
-                            carrier_mode="docker")
+                            container_name="agents-hub-node-2", carrier_mode="docker")
     with pytest.raises(term.TerminalRefused) as exc:
         term.resolve_target("replica", stopped["instance_id"])
     assert exc.value.status == 410
 
-    loose = istore.create("main-agent", kind="resident", state="active",
-                          container_name="agents-hub-node-3", carrier_mode="docker")
     with pytest.raises(term.TerminalRefused) as exc:
-        term.resolve_target("replica", loose["instance_id"])
+        term.resolve_target("replica", "no-such-instance")
     assert exc.value.status == 404
 
 

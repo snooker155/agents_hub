@@ -202,20 +202,4 @@ def online_evals_service() -> LeasedService:
 supervisor = SingletonSupervisor([online_evals_service()])
 
 
-def telegram_service(tg: Any = None) -> LeasedService:
-    """A Telegram poller as a leased service: the default workspace's bot
-    (role ``telegram``), or a workspace's own (``telegram@<workspace>``)."""
-    if tg is None:
-        from connectors.telegram.telegram_runner import service as tg
-
-    return LeasedService(
-        role=tg.lease_role,
-        start=tg.start,
-        stop=tg.stop,
-        is_running=tg.is_running,
-        wanted=tg.wanted,
-    )
-
-
-__all__ = ["LeasedService", "SingletonSupervisor", "online_evals_service", "supervisor",
-           "telegram_service"]
+__all__ = ["LeasedService", "SingletonSupervisor", "online_evals_service", "supervisor"]

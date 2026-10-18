@@ -20,10 +20,10 @@ account, changing a workspace needs an editor of it and deleting it its owner, o
 administrator. With one operator (``single``, ``token``) that operator does
 everything.
 
-What a tool never touches: isolation, secrets, hooks and the tool policy,
-members, environment variables, the web domain policy and connectors. Those
-are fences (isolation, approval) or grants of access, and an agent able to
-change them could switch off the fence it runs behind or hand itself access.
+What a tool never touches: secrets, hooks and the tool policy, members,
+environment variables, the web domain policy and connectors. Those are
+fences (approval) or grants of access, and an agent able to change them
+could switch off the fence it runs behind or hand itself access.
 A person changes them on the workspace's settings page.
 """
 from __future__ import annotations
@@ -93,24 +93,13 @@ def _acting_user() -> str:
 
 
 def _multi() -> bool:
-    from common import identity
-    from common.auth import MULTI
-    return identity.current_mode() == MULTI
+    """Whether several people share this hub. Never: there is one operator."""
+    return False
 
 
 def _named_user(user: str) -> Optional[Dict[str, Any]]:
-    from common import identity
-    from common.auth import LOCAL_OPERATOR_ID
-    if not user or user == LOCAL_OPERATOR_ID:
-        return None
-    try:
-        account = identity.get_user(user)
-    except Exception:  # noqa: BLE001 - an unreadable account is no account
-        log.debug("workspace tools: user %s unreadable", user, exc_info=True)
-        return None
-    if not account or account.get("disabled"):
-        return None
-    return account
+    """The account behind ``user``. There are no accounts, only the operator."""
+    return None
 
 
 def _is_admin(user: str) -> bool:
@@ -119,12 +108,8 @@ def _is_admin(user: str) -> bool:
 
 
 def _role(name: str, user: str) -> Optional[str]:
-    from common import identity
-    try:
-        return identity.membership_role(name, user)
-    except Exception:  # noqa: BLE001 - an unreadable membership is none
-        log.debug("workspace tools: membership of %s in %s unreadable", user, name, exc_info=True)
-        return None
+    """``user``'s membership role in ``name``: none, there are no memberships."""
+    return None
 
 
 def _may_see(name: str, user: str) -> bool:
@@ -202,11 +187,6 @@ def _tasks_by_workspace() -> Dict[str, int]:
     return counts
 
 
-def _is_isolated(name: str) -> bool:
-    from common import isolation
-    return isolation.is_isolated(name)
-
-
 def _model_id(meta: Dict[str, Any]) -> Optional[str]:
     from workspace import get_workspace_default_model_config
     chosen = get_workspace_default_model_config(meta)
@@ -249,15 +229,6 @@ def _agent_refusal(name: str, agent_id: str) -> Optional[str]:
     if owner and not spec.shared and owner != name and not is_system_agent(agent_id):
         return (f"agent '{agent_id}' belongs to workspace '{owner}' and is not shared; a person "
                 "can expose it from the agent's details page")
-    # An isolated workspace refuses an agent of its own that holds tools
-    # reaching outside (common/isolation.py check_agent_tools). Any other
-    # agent runs there with those tools filtered off at build time.
-    if owner == name and _is_isolated(name):
-        from common import isolation
-        bad = isolation.offenders(list(getattr(spec, "tools", None) or []))
-        if bad:
-            return (f"workspace '{name}' is isolated and agent '{agent_id}' holds tools that reach "
-                    f"outside its containers: {', '.join(bad)}")
     return None
 
 
@@ -302,7 +273,7 @@ class _AgentArgs(BaseModel):
 @tool("list_workspaces", args_schema=_NoArgs)
 def list_workspaces() -> str:
     """List the workspaces the user can see: name, description, how many
-    agents and tasks each has, and whether it is isolated."""
+    agents and tasks each has."""
     refused = _out_of_scope()
     if refused:
         return refused
@@ -321,7 +292,6 @@ def list_workspaces() -> str:
             "agents_count": len(allowed),
             "custom_agents_count": len([a for a in allowed if not is_system_agent(a)]),
             "tasks_count": counts.get(name, 0),
-            "isolated": _is_isolated(name),
         }
         if meta.get("description"):
             item["description"] = meta["description"]
@@ -336,8 +306,8 @@ def list_workspaces() -> str:
 @tool("get_workspace", args_schema=_NameArgs)
 def get_workspace(name: str) -> str:
     """Describe one workspace: description, instructions (the start of them),
-    default model, the agents it allows, whether it is isolated and from which
-    sites it may read, and whether its folder is an attached directory."""
+    default model, the agents it allows, and whether its folder is an attached
+    directory."""
     refused = _out_of_scope()
     if refused:
         return refused
@@ -346,7 +316,6 @@ def get_workspace(name: str) -> str:
     missing = _find(name, user)
     if missing:
         return missing
-    from common import isolation
     from workspace import (get_workspace_instructions, get_workspace_metadata, is_attached_workspace,
                            is_system_agent, workspace_target)
     meta = get_workspace_metadata(name)
@@ -360,8 +329,6 @@ def get_workspace(name: str) -> str:
         "instructions_truncated": len(instructions) > INSTRUCTIONS_PREVIEW_CHARS,
         "default_model": _model_id(meta),
         "agents": [{"agent_id": a, "system": is_system_agent(a)} for a in allowed],
-        "isolation": {"isolated": isolation.is_isolated(name),
-                      "allow_domains": isolation.allow_domains(name)},
         "attached": attached,
         "attached_target": str(workspace_target(name)) if attached else None,
         "tasks_count": _tasks_by_workspace().get(name, 0),
@@ -444,9 +411,9 @@ def update_workspace(name: str, description: Optional[str] = None,
                      instructions: Optional[str] = None,
                      default_model: Optional[str] = None) -> str:
     """Change a workspace's description, instructions or default model. Only
-    these. Isolation, secrets, hooks and the tool policy, members, environment
-    variables, the web domain policy and connectors are never changed here:
-    an agent changing them could switch off a fence (isolation, approval) or
+    these. Secrets, hooks and the tool policy, members, environment variables,
+    the web domain policy and connectors are never changed here: an agent
+    changing them could switch off a fence (approval) or
     grant itself access, so a person changes them on the workspace's settings
     page."""
     refused = _out_of_scope()
@@ -497,9 +464,8 @@ def update_workspace(name: str, description: Optional[str] = None,
 @tool("add_workspace_agent", args_schema=_AgentArgs)
 def add_workspace_agent(name: str, agent_id: str) -> str:
     """Make an agent available in a workspace. Refused for an agent kept to
-    the default workspace, for another workspace's own agent that is not
-    shared, and, in an isolated workspace, for its own agent holding tools
-    that reach outside."""
+    the default workspace and for another workspace's own agent that is not
+    shared."""
     refused = _out_of_scope()
     if refused:
         return refused

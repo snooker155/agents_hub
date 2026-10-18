@@ -205,7 +205,7 @@ class DocStore:
         if self.legacy_file is None:
             return
         db.get_conn()  # the startup sequence must have run for the marker to mean anything
-        marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
+        marker = f"{db._generation}:{db.DB_FILE}"
         if self._imported_for == marker:
             return
         self._imported_for = marker

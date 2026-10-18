@@ -1,12 +1,10 @@
-"""Short-lived, signed tickets: the preview proxy's and the streams'.
+"""Short-lived, signed tickets: the preview proxy's and the terminal's.
 
 Two kinds of ticket share one signing key and one format here. A *preview*
 ticket (kind ``container`` or ``project``) is the credential of an iframe
-that loads a proxied page. An *auth* ticket (kind ``auth``, see
-:func:`mint_auth`) is the one-time credential an ``EventSource`` or a
-``WebSocket`` carries in its query string, since neither can set a header,
-so the long-lived session token never has to appear in a URL (and in the
-access logs a URL ends up in).
+that loads a proxied page. A *terminal* ticket (see :func:`mint_terminal`)
+is the one-time credential the terminal WebSocket carries in its query
+string, since a socket cannot set a header.
 
 Preview tickets
 ---------------
@@ -77,16 +75,12 @@ log = logging.getLogger(__name__)
 #: short and renewed while the preview is open (see :func:`renew`).
 DEFAULT_TTL_SECONDS = 600
 
-#: An auth ticket only has to survive the round trip between minting it and
-#: opening the stream it is for.
-AUTH_TTL_SECONDS = 60
-
 _PREVIEW_KINDS = ("container", "project", "deployment")
 _AUTH_KIND = "auth"
 _TERMINAL_KIND = "terminal"
 
-#: A terminal ticket, like an auth ticket, only bridges the call that mints
-#: it and the socket that spends it.
+#: A terminal ticket only bridges the call that mints it and the socket that
+#: spends it.
 TERMINAL_TTL_SECONDS = 60
 
 _SECRET_FILE = AGENTS_HUB_ROOT / "preview_secret"
@@ -195,12 +189,9 @@ def _decode(ticket: str) -> Optional[Dict[str, Any]]:
 
 
 def _user_gone(user: Optional[str]) -> bool:
-    """True when ``user`` names an account that no longer exists. Only
-    ``multi`` has accounts; the other modes' constant ids always stand."""
-    if not user:
-        return False
-    from common import identity
-    return identity.current_mode() == identity.MULTI and identity.get_user(user) is None
+    """True when ``user`` names an account that no longer exists. There are
+    no accounts: the operator's constant id always stands."""
+    return False
 
 
 # ── preview tickets ──────────────────────────────────────────────────────────
@@ -274,31 +265,11 @@ def renew(ticket: str, *, force: bool = False) -> Optional[str]:
                 principal_id=payload.get("user") or "", ttl_seconds=ttl)
 
 
-# ── auth tickets ─────────────────────────────────────────────────────────────
+# ── one-time tickets ─────────────────────────────────────────────────────────
 
-#: nonce -> expiry of every auth ticket this process has accepted.
+#: nonce -> expiry of every one-time ticket this process has accepted.
 _consumed: Dict[str, float] = {}
 _consumed_lock = threading.Lock()
-
-
-def mint_auth(principal: Any, ttl_seconds: int = AUTH_TTL_SECONDS) -> str:
-    """A one-time ticket standing for ``principal`` (a ``common.auth.Principal``).
-
-    Carries the principal's id, its kind (``user``, ``token``, ``service``,
-    ``local``), how it originally authenticated and, for a scoped API key,
-    the workspaces it may reach, so a ticket never acts wider than the
-    credential that minted it.
-    """
-    scope = getattr(principal, "scope", None)
-    return _sign({
-        "kind": _AUTH_KIND,
-        "user": principal.id,
-        "pkind": getattr(principal, "kind", "user") or "user",
-        "via": getattr(principal, "via", "") or "",
-        "scope": list(scope) if scope is not None else None,
-        "nonce": secrets.token_urlsafe(12),
-        "exp": time.time() + max(1, int(ttl_seconds)),
-    })
 
 
 def _consume(nonce: str, expiry: float) -> bool:
@@ -313,31 +284,14 @@ def _consume(nonce: str, expiry: float) -> bool:
         return True
 
 
-def verify_auth(ticket: str) -> Optional[Dict[str, Any]]:
-    """``{user, kind, via, scope, exp}`` for a valid, unused auth ticket, or
-    ``None``. Verifying consumes it: a second presentation (to this process)
-    fails."""
-    payload = _decode(ticket)
-    if payload is None or payload.get("kind") != _AUTH_KIND:
-        return None
-    user, nonce = payload.get("user"), payload.get("nonce")
-    if not user or not nonce:
-        return None
-    if not _consume(str(nonce), payload["exp"]):
-        return None
-    scope = payload.get("scope")
-    return {"user": user, "kind": payload.get("pkind") or "user",
-            "via": payload.get("via") or "", "scope": scope, "exp": payload["exp"]}
-
-
 # ── terminal tickets ─────────────────────────────────────────────────────────
 
 def mint_terminal(principal: Any, *, target_kind: str, target_id: str,
                   session_id: Optional[str] = None,
                   ttl_seconds: int = TERMINAL_TTL_SECONDS) -> str:
     """A one-time ticket that opens (or, with ``session_id``, resumes) a
-    terminal on one target for ``principal``. Carries the same principal
-    fields as :func:`mint_auth`, so the socket resolves to who minted it."""
+    terminal on one target for ``principal``. Carries the principal's fields,
+    so the socket resolves to who minted it."""
     scope = getattr(principal, "scope", None)
     return _sign({
         "kind": _TERMINAL_KIND,
@@ -373,6 +327,6 @@ def verify_terminal(ticket: str, *, target_kind: str, target_id: str) -> Optiona
             "session": payload.get("session") or None, "exp": payload["exp"]}
 
 
-__all__ = ["AUTH_TTL_SECONDS", "DEFAULT_TTL_SECONDS", "TERMINAL_TTL_SECONDS", "expires_at",
-           "mint", "mint_auth", "mint_terminal", "renew", "verify", "verify_auth",
+__all__ = ["DEFAULT_TTL_SECONDS", "TERMINAL_TTL_SECONDS", "expires_at",
+           "mint", "mint_terminal", "renew", "verify",
            "verify_terminal"]

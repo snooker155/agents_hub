@@ -19,9 +19,8 @@ tab groups by ``flow_run_id``, so each iteration shows up as its own separately
 inspectable execution instead of one smeared timeline, and the loop's iteration
 row links straight to it.
 
-Nothing here runs unbounded. Iteration cap, wall clock, cost ceiling, the
-workspace budget, a no-improvement patience counter and an explicit stop are
-all checked between iterations, and the caps in ``loops.models`` are hard.
+Nothing here runs unbounded. Iteration cap, wall clock, cost ceiling, a
+no-improvement patience counter and an explicit stop are all checked between iterations, and the caps in ``loops.models`` are hard.
 """
 from __future__ import annotations
 
@@ -636,13 +635,6 @@ def _check_between_iterations(
         raise LoopStopped(
             "cost_ceiling", f"cost ceiling reached (${spend:.4f} of ${float(loop.cost_ceiling):.2f})"
         )
-    try:
-        from common.budget import check_budget
-        check_budget(workspace)
-    except LoopStopped:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise LoopStopped("cost_ceiling", f"budget: {e}")
 
 
 # ── Task / session plumbing ──────────────────────────────────────────────────

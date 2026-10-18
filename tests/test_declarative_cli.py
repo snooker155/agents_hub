@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from test_declarative_planner import ENV, FakeHub
+from test_declarative_planner import ENV, FakeHub, box_kind  # noqa: F401 - the fixture registers the stand-in kind
 
 
 @pytest.fixture

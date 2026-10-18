@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain, HardDrive, Waypoints, Sparkles, Plug, Database,
+  Brain, Sparkles,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -14,13 +14,8 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
-import LocalTab from '../components/models/LocalTab';
-import CacheTab from '../components/models/CacheTab';
-import ServingSection from '../components/models/ServingSection';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import PageLoader from '../components/PageLoader';
-import ServerStatus from '../components/models/ServerStatus';
-import useLocalServers from '../components/models/useLocalServers';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -114,8 +109,6 @@ function CatalogTab() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const [catalog, setCatalog] = useState(null);
-  // Whether Ollama, LM Studio and the hub runtime answer, for a marker by their names.
-  const servers = useLocalServers();
   // Read-only global default (provider + model) sourced from .env.
   const [globalDefault, setGlobalDefault] = useState({ provider: '', model: '' });
   // Global temperature (LLM_TEMPERATURE), shown where a model has none of its own.
@@ -392,7 +385,6 @@ function CatalogTab() {
               >
                 <Chevron className="w-4 h-4 text-gray-400 shrink-0" />
                 <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
-                <ServerStatus status={servers[provider]} />
                 <span className="text-xs text-gray-400 shrink-0">{t('models.enabledOfTotal', { enabled: enabledCount, total: entry.models.length })}</span>
                 {entry.default && (
                   <span className="text-xs text-gray-400 truncate hidden sm:inline">{t('models.default')} <span className="font-mono text-gray-500">{entry.default}</span></span>
@@ -557,18 +549,9 @@ function CatalogTab() {
                                 <ReasoningDefaults profile={m.reasoning} />
                               </td>
                               <td className="px-2 py-1.5">
-                                <div className="flex items-center gap-2">
-                                  <Link
-                                    to={`/models/${provider}/${encodeURIComponent(m.id)}`}
-                                    title={t('localModels.structure')}
-                                    className="text-gray-300 hover:text-indigo-500"
-                                  >
-                                    <Waypoints className="w-4 h-4" />
-                                  </Link>
-                                  <button onClick={() => removeModel(provider, m.id)} className="text-gray-300 hover:text-red-500">
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
+                                <button onClick={() => removeModel(provider, m.id)} className="text-gray-300 hover:text-red-500">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                               </td>
                             </tr>
                           ))}
@@ -751,14 +734,11 @@ function SpecialModelsTab() {
 
 export default function Models() {
   const { t } = useI18n();
-  // The tab lives in the address (?tab=local), so other pages can link to it.
+  // The tab lives in the address (?tab=special), so other pages can link to it.
   const [params, setParams] = useSearchParams();
   const TABS = [
     { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
-    { id: 'local', label: t('localModels.tab'), icon: HardDrive },
     { id: 'special', label: t('models.tabs.special'), icon: Sparkles },
-    { id: 'cache', label: t('models.tabs.cache'), icon: Database },
-    { id: 'endpoint', label: t('models.tabs.endpoint'), icon: Plug },
     { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
   const tab = TABS.some((d) => d.id === params.get('tab')) ? params.get('tab') : 'catalog';
@@ -788,10 +768,7 @@ export default function Models() {
         })}
       </div>
       {tab === 'catalog' && <CatalogTab />}
-      {tab === 'local' && <LocalTab />}
       {tab === 'special' && <SpecialModelsTab />}
-      {tab === 'cache' && <CacheTab />}
-      {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>
   );

@@ -17,7 +17,6 @@
  */
 import { createContext, useContext } from 'react';
 import { applyPalette, clearPalette } from '../lib/palette';
-import { getMyPreferences } from '../api/palette';
 import { checkStoredWorkspace, loadWorkspaceSummary } from '../api/workspaceSummary';
 
 // A default value so a component that reads the theme outside the provider
@@ -75,13 +74,6 @@ function readSelectedWorkspace() {
 }
 
 async function personalPalette() {
-  try {
-    const { data } = await getMyPreferences();
-    if (hasAnyColor(data?.palette)) return data.palette;
-    if (data && 'palette' in data) return null; // an account with no preference set
-  } catch {
-    // 404 outside multi mode, 401 signed out, or offline: fall through.
-  }
   return readLocalPalette();
 }
 

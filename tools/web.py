@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import socket  # noqa: F401  (kept so tests can monkeypatch web.socket.getaddrinfo)
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -97,32 +96,6 @@ def _host_matches(host: str, pattern: str) -> bool:
     if not host or not pattern:
         return False
     return host == pattern or host.endswith("." + pattern)
-
-
-def environment_network_policy() -> Tuple[Optional[str], Tuple[str, ...]]:
-    """The network fence of the environment this process runs in, if any.
-
-    environments/launch.py puts it in the run's (or node's) environment:
-    ``AGENTS_HUB_NETWORK`` ("none" or "limited") and, for limited,
-    ``AGENTS_HUB_ALLOWED_HOSTS`` (comma list). Returns ``(type, hosts)``,
-    ``(None, ())`` outside an environment. Read per call: the variables are
-    set per process and tests set them.
-    """
-    net = os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower() or None
-    raw = os.environ.get("AGENTS_HUB_ALLOWED_HOSTS", "")
-    hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
-    if net is None and raw.strip():
-        net = "limited"
-    return (net if net in ("none", "limited") else None), hosts
-
-
-def _environment_check(host: str) -> Tuple[bool, str]:
-    net, hosts = environment_network_policy()
-    if net == "none":
-        return False, "this run's environment has no network access"
-    if net == "limited" and not any(_host_matches(host, h) for h in hosts):
-        return False, f"host {host!r} is not on this run's environment allowlist"
-    return True, ""
 
 
 def _current_agent_spec() -> Any:
@@ -230,19 +203,13 @@ def intersect_domains(a: Any, b: Any) -> List[str]:
 
 
 def check_domain_policy(url: str) -> Tuple[bool, str]:
-    """Apply the environment's fence, the deny lists, then the allow lists.
+    """Apply the deny lists, then the allow lists.
 
-    The run's environment (``AGENTS_HUB_NETWORK`` / ``AGENTS_HUB_ALLOWED_HOSTS``,
-    see :func:`environment_network_policy`) is checked first and cannot be
-    widened by the workspace lists. The deny list always applies. The allow
-    list is opt-in per workspace (or globally), mirroring
-    ``shell_allowlist_enabled``: off by default so web access works out of
-    the box, on in environments that want it fenced.
+    The deny list always applies. The allow list is opt-in per workspace (or
+    globally), mirroring ``shell_allowlist_enabled``: off by default so web
+    access works out of the box, on where web access should be fenced.
     """
     host = (urlparse(url).hostname or "").lower()
-    ok, reason = _environment_check(host)
-    if not ok:
-        return False, reason
 
     # Global values are read live (the Settings page writes them to .env); a
     # workspace's own list, when set, replaces the global one as before. The
@@ -903,16 +870,13 @@ def web_search(query: str, count: Optional[int] = None) -> str:
     from tools import web_log
 
     query = (query or "").strip()
-    iso = isolated_workspace()
-    if iso:
-        return _isolated_search(iso, query, count)
     call = web_log.WebCall("search", query=query)
     return run_search(query, count, call)
 
 
 def run_search(query: str, count: Optional[int], call: Any, *,
                filters: Any = None, result_check: Any = None) -> str:
-    """The body of ``web_search``, shared with the isolated workspace path.
+    """The body of ``web_search``.
 
     ``filters`` returns ``(include, exclude)`` for the backend's own site
     filters (:func:`search_domain_filters` by default) and ``result_check``
@@ -1021,9 +985,6 @@ def fetch_url(url: str, max_chars: Optional[int] = None) -> str:
     from tools import web_log
 
     url = (url or "").strip()
-    iso = isolated_workspace()
-    if iso:
-        return _isolated_fetch(iso, url, max_chars)
     call = web_log.WebCall("fetch", url=url)
     return fetch_and_extract(url, max_chars, call)
 
@@ -1035,19 +996,15 @@ def _fetch_client(timeout: float):
     return httpx.Client(follow_redirects=False, timeout=timeout)
 
 
-def fetch_and_extract(url: str, max_chars: Optional[int], call: Any, *,
-                      validate: Any = None, no_cookies: bool = False) -> str:
-    """The body of ``fetch_url``, shared with the isolated workspace path.
+def fetch_and_extract(url: str, max_chars: Optional[int], call: Any) -> str:
+    """The body of ``fetch_url``.
 
-    ``validate`` judges every hop, ``(ok, reason)`` (:func:`validate_url` by
-    default). ``no_cookies`` drops what a response set before the next hop, so
-    nothing a server hands out comes back to it. ``call`` is the
+    Every hop is judged by :func:`validate_url`. ``call`` is the
     :class:`tools.web_log.WebCall` the fetch is logged through. Returns the
     tool's text: the wrapped page, or a refusal or error line.
     """
     import httpx
 
-    validate = validate or validate_url
     if not url:
         return call.set(status="error", error="url is empty").finish("fetch_url error: url is empty")
 
@@ -1062,15 +1019,13 @@ def fetch_and_extract(url: str, max_chars: Optional[int], call: Any, *,
         # 169.254.169.254 with nothing checking the destination.
         with _fetch_client(timeout) as client:
             for _ in range(hops + 1):
-                ok, reason = validate(current)
+                ok, reason = validate_url(current)
                 if not ok:
                     call.set(status="refused", final_url=current, redirects=redirects,
                              error=reason)
                     call.add_flag("policy.refused", "medium",
                                   f"Refused {current}: {reason}")
                     return call.finish(f"fetch_url refused {current!r}: {reason}")
-                if no_cookies:
-                    client.cookies.clear()
                 resp = client.get(current, headers={
                     "User-Agent": "agents-hub/1.0 (+web tool)",
                     "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
@@ -1163,96 +1118,13 @@ def fetch_and_extract(url: str, max_chars: Optional[int], call: Any, *,
         wrap_untrusted(f"fetch:{source}", body or "(page had no readable text)"))
 
 
-# ── Isolated workspaces ──────────────────────────────────────────────────────
-#
-# In a workspace switched to isolated (common/isolation.py, docs/isolation.md)
-# the agent reads the internet only, and only from the workspace's own list
-# (``isolation.allow_domains``). That list replaces every other domain list
-# (the hub's, the workspace's web policy, the agent's own): a host on it is
-# readable, any other host is not, and an empty list reads nothing. On top:
-#
-# * GET only, no body, a fixed User-Agent, no cookies (dropped before every
-#   hop), no URL carrying a user name or password, nothing from the agent but
-#   the URL; every redirect hop re-checked against the list and the private
-#   network block (``common.ssrf``).
-# * A budget of :data:`MAX_REQUESTS_ENV` reading calls per run, counted in
-#   this process; every call, allowed or refused, in the web call log.
-# * The browser opens read only sessions (tools/browser.py,
-#   deploy/browser/policy.py) and ``browser_act`` is refused.
-
-#: Reading calls (fetches, searches, browser opens, reads and screenshots)
-#: one run of an isolated workspace may make, unless the environment says.
-MAX_REQUESTS_ENV = "AGENTS_HUB_GATEWAY_MAX_REQUESTS"
-DEFAULT_MAX_REQUESTS = 300
-
-_budget: Dict[str, int] = {}
-_budget_lock = threading.Lock()
-
-
-def isolated_workspace(workspace: Optional[str] = None) -> Optional[str]:
-    """The workspace this call runs in when that workspace is isolated, else
-    None. Resolved the way the web domain policy resolves it (the explicit
-    one, then the run's context, then ``AGENT_WORKSPACE``). Never raises: an
-    unreadable workspace is not known to be isolated."""
-    try:
-        from common.workspace_context import resolve_active_workspace
-        ws = resolve_active_workspace(workspace)
-        if not ws:
-            return None
-        from common.isolation import is_isolated
-        return ws if is_isolated(ws) else None
-    except Exception:  # noqa: BLE001 - see the docstring
-        log.debug("web: isolation of the current workspace unreadable", exc_info=True)
-        return None
-
-
-def isolated_fetch_check(url: str, workspace: Optional[str] = None, *,
-                         resolve: bool = True) -> Tuple[bool, str]:
-    """Whether a run of the isolated ``workspace`` (the current one by
-    default) may read ``url``: ``(ok, reason)``.
-
-    http or https; no user name or password in the URL (it would become an
-    Authorization header); the host on the workspace's list
-    (``isolation.host_allowed``: the host itself or a subdomain of a listed
-    one); then, unless ``resolve`` is off, every address the host resolves to
-    public. Every redirect hop goes through this same check.
-    """
-    from common import isolation
-    ws = workspace
-    if ws is None:
-        try:
-            from common.workspace_context import resolve_active_workspace
-            ws = resolve_active_workspace()
-        except Exception:  # noqa: BLE001 - no workspace: no list, nothing readable
-            ws = None
-    try:
-        parsed = urlparse(str(url).strip())
-        host = (parsed.hostname or "").lower().rstrip(".")
-        has_userinfo = bool(parsed.username or parsed.password)
-    except Exception:  # noqa: BLE001 - urlparse raises on a malformed port or bracket
-        return False, "malformed URL"
-    if parsed.scheme not in ("http", "https"):
-        return False, _BLOCKED_SCHEMES_MSG
-    if not host:
-        return False, "URL has no host"
-    if has_userinfo:
-        return False, "a URL with a user name or password is not read in an isolated workspace"
-    if not isolation.allow_domains(ws):
-        return False, ("this workspace is isolated and its reading list is empty, so no host may be "
-                       "read; an administrator adds hosts to it on the workspace's Isolation settings")
-    if not isolation.host_allowed(ws, host):
-        return False, (f"host {host!r} is not on this isolated workspace's reading list; an "
-                       "administrator adds hosts to it on the workspace's Isolation settings")
-    if not resolve:
-        return True, ""
-    return resolve_and_check(host)
-
+# ── Run identity ─────────────────────────────────────────────────────────────
 
 def current_run_key() -> str:
     """Which run this call belongs to: the delegated run in this context, the
     run id a subprocess launcher sets (``AGENT_RUN_ID``), the tracked task,
     the chat session, else one shared key. The browser keys its sessions by
-    it and an isolated workspace's reading budget is counted per it."""
+    it."""
     try:
         from common.stream_sink import current_run_id
         rid = current_run_id()
@@ -1276,73 +1148,6 @@ def current_run_key() -> str:
     return "default"
 
 
-def _max_requests() -> int:
-    try:
-        return max(0, int(os.environ.get(MAX_REQUESTS_ENV, "") or DEFAULT_MAX_REQUESTS))
-    except ValueError:
-        return DEFAULT_MAX_REQUESTS
-
-
-def spend_isolated_budget(workspace: str) -> Optional[str]:
-    """Count one reading call of an isolated workspace's run. None while there
-    is budget left, else the refusal to give."""
-    key = f"{workspace}|{current_run_key()}"
-    limit = _max_requests()
-    with _budget_lock:
-        used = _budget.get(key, 0)
-        if used >= limit:
-            return (f"this run has used its {limit} reading requests in an isolated workspace "
-                    f"({MAX_REQUESTS_ENV})")
-        _budget[key] = used + 1
-        if len(_budget) > 10_000:
-            for old, _n in sorted(_budget.items(), key=lambda kv: kv[1])[:5_000]:
-                if old != key:
-                    _budget.pop(old, None)
-    return None
-
-
-def reset_isolated_budget() -> None:
-    """Forget every run's count (tests)."""
-    with _budget_lock:
-        _budget.clear()
-
-
-def _refused(call: Any, tool: str, reason: str, target: str = "") -> str:
-    call.set(status="refused", error=reason)
-    call.add_flag("policy.refused", "medium", f"Refused {target or tool}: {reason}")
-    where = f" {target!r}" if target else ""
-    return call.finish(f"{tool} refused{where}: {reason}")
-
-
-def _isolated_fetch(workspace: str, url: str, max_chars: Optional[int]) -> str:
-    from tools import web_log
-    call = web_log.WebCall("fetch", url=url, workspace=workspace, isolated=True)
-    over = spend_isolated_budget(workspace)
-    if over:
-        return _refused(call, "fetch_url", over)
-    return fetch_and_extract(url, max_chars, call,
-                             validate=lambda u: isolated_fetch_check(u, workspace), no_cookies=True)
-
-
-def _isolated_search(workspace: str, query: str, count: Optional[int]) -> str:
-    """``web_search`` in an isolated workspace: the query goes to the hub's
-    search provider as usual, narrowed to the workspace's list, and results
-    off the list are withheld (the run could not read them anyway)."""
-    from common import isolation
-    from tools import web_log
-    call = web_log.WebCall("search", query=query, workspace=workspace, isolated=True)
-    over = spend_isolated_budget(workspace)
-    if over:
-        return _refused(call, "web_search", over)
-    allow = isolation.allow_domains(workspace)
-    if not allow:
-        return _refused(call, "web_search",
-                        "this workspace is isolated and its reading list is empty, so there is nothing "
-                        "a search could point to; an administrator adds hosts to it on the workspace's "
-                        "Isolation settings")
-    return run_search(query, count, call, filters=lambda: (list(allow), []),
-                      result_check=lambda u: isolated_fetch_check(u, workspace, resolve=False))
-
 
 WEB_TOOLS = [web_search, fetch_url]
 
@@ -1350,7 +1155,5 @@ __all__ = [
     "web_search", "fetch_url", "WEB_TOOLS",
     "wrap_untrusted", "validate_url", "check_domain_policy",
     "effective_domain_lists", "search_domain_filters", "agent_domain_lists", "intersect_domains",
-    "resolve_and_check", "html_to_text", "fetch_and_extract", "run_search",
-    "isolated_workspace", "isolated_fetch_check", "current_run_key", "spend_isolated_budget",
-    "reset_isolated_budget", "MAX_REQUESTS_ENV",
+    "resolve_and_check", "html_to_text", "fetch_and_extract", "run_search", "current_run_key",
 ]

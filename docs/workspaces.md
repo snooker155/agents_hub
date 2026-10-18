@@ -12,16 +12,14 @@ bar changes what you see everywhere.
   plus reserved subfolders: `.logs/`, `.plans/`, `.views/`, `knowledge/`, and one
   folder per project. The workspace's own metadata is not in there: it lives in
   a central store keyed by workspace name.
-- **`allowed_agents`** — which agents are available here. Every system agent is
+- **`allowed_agents`**: which agents are available here. Every system agent is
   in this list automatically and cannot be removed. Custom agents are added by
   you, from the Agents page.
-- **`default_chat_agent`** — which agent the Chat page pre-selects. New
+- **`default_chat_agent`**: which agent the Chat page pre-selects. New
   workspaces get the Main Agent.
-- **Settings overrides** — model defaults, environment variables, execution mode
+- **Settings overrides**: model defaults, environment variables, execution mode
   (in-process or Docker), log level, the shell and web policies, and per-agent
   memory assignments.
-- **A budget** — an optional spend cap for this workspace, enforced at run
-  launch. See [costs](costs.md).
 
 ## Per-workspace memory
 
@@ -72,8 +70,8 @@ user asks for it in the chat (`tools/workspace_management.py`):
 
 | Tool | What it does |
 |---|---|
-| `list_workspaces` | The workspaces the user can see: description, agents and tasks counts, isolated or not. |
-| `get_workspace` | One workspace: description, the start of its instructions, default model, agents, isolation and its reading list, attached folder. |
+| `list_workspaces` | Each workspace: description, agents and tasks counts. |
+| `get_workspace` | One workspace: description, the start of its instructions, default model, agents, attached folder. |
 | `create_workspace` | A new workspace with a description, instructions and extra agents. The system agents are in it from the start. |
 | `update_workspace` | Its description, instructions or default model (`provider/model`). Nothing else. |
 | `add_workspace_agent`, `remove_workspace_agent` | Its agents, under the same rules as the Agents tab. |
@@ -81,17 +79,12 @@ user asks for it in the chat (`tools/workspace_management.py`):
 
 The rules are the dashboard's. A name is one word without slashes and must be
 new. System agents cannot be removed, an agent marked `default_workspace_only`
-stays in `default`, another workspace's own agent needs to be shared first,
-and an isolated workspace refuses an agent of its own that holds tools
-reaching outside. `default` and `system` cannot be deleted, and deleting an
-attached workspace only detaches it: the directory stays. Under
-`AUTH_MODE=multi` the agent acts for the person who started the chat: creating
-needs a signed in account (who becomes the owner), and changing or deleting
-needs the workspace's owner or an administrator. A workspace that person
-cannot see is "not found".
+stays in `default`, and another workspace's own agent needs to be shared
+first. `default` and `system` cannot be deleted, and deleting an
+attached workspace only detaches it: the directory stays.
 
-Isolation, secrets, hooks and the tool policy, members, environment variables,
-the web domain policy and connectors are not reachable from these tools. An
+Secrets, hooks and the tool policy, environment variables, the web domain
+policy and connectors are not reachable from these tools. An
 agent able to change them could switch off the fence it runs behind or grant
 itself access, so a person changes them on the workspace's Settings tab.
 

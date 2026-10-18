@@ -60,17 +60,13 @@ app = typer.Typer(
 server_app = typer.Typer(help="Backend server commands.", no_args_is_help=True)
 db_app = typer.Typer(help="Database commands: which backend is in use, moving state between backends.",
                      no_args_is_help=True)
-auth_app = typer.Typer(help="Who this CLI is acting as, and personal API keys.",
-                       no_args_is_help=True)
-auth_keys_app = typer.Typer(help="Personal API keys: list, create, revoke (docs/api-keys.md).",
-                            no_args_is_help=True)
-auth_app.add_typer(auth_keys_app, name="keys")
+auth_app = typer.Typer(help="Who this CLI is acting as.", no_args_is_help=True)
 
 app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
 
-# agent/task/workspace/project/instance (cli/commands/), flow/loop/team/eval/mcp/user
+# agent/task/workspace/project/instance (cli/commands/), flow/loop/team/eval/mcp
 # (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
 # (cli/openapi.py) are registered at the bottom of this file, once every helper
 # they import from here (hub, call, console, the selection functions) exists.
@@ -411,90 +407,6 @@ def server_start(
 
 
 # ---------------------------------------------------------------------------
-# worker
-# ---------------------------------------------------------------------------
-
-
-@app.command("worker")
-def worker(
-    concurrency: Optional[int] = typer.Option(None, help="Launches kept alive at once."),
-    modes: Optional[str] = typer.Option(None, help="What this host can run: local, docker, or both (comma-separated)."),
-    once: bool = typer.Option(False, "--once", help="One tick, then exit."),
-):
-    """Claim launches from the run queue and spawn them on this host.
-
-    The other half of a backend running with AGENTS_HUB_ROLE=api (docs/workers.md).
-    Needs the same database and the same .env as the backend; serves no HTTP."""
-    _require_direct_mode("ah worker")
-    from runtime.worker import main as _worker_main
-    argv = []
-    if concurrency is not None:
-        argv += ["--concurrency", str(concurrency)]
-    if modes:
-        argv += ["--modes", modes]
-    if once:
-        argv.append("--once")
-    raise typer.Exit(code=_worker_main(argv))
-
-
-@app.command("deployment")
-def deployment(
-    logs: Optional[str] = typer.Option(None, "--logs", help="Print the last lines of this member's log instead of the map."),
-    tail: int = typer.Option(200, help="Lines to print with --logs."),
-):
-    """The cluster map: members (replicas and workers), the roles each
-    holds, the launch queue, and where runs, resident instances and
-    containers live (docs/deployment.md)."""
-    _require_direct_mode("ah deployment")
-    from dashboard.backend.routes.deployment import build_map
-    from common import members as _members
-
-    if logs:
-        text = _members.read_log(logs, tail=tail)
-        if text is None:
-            console.print(f"[red]no log for member {logs}[/red]")
-            raise typer.Exit(code=1)
-        console.print(text, markup=False, highlight=False)
-        return
-
-    m = build_map()
-    console.print(f"[bold]this process[/bold]: {m['self']['member_id']} ({m['self']['role']})")
-    table = Table(box=box.SIMPLE, show_header=True, title="members")
-    for col in ("member", "role", "host", "status", "beat", "uptime", "leases", "load", "version"):
-        table.add_column(col)
-    for mem in m["members"]:
-        age = mem.get("heartbeat_age_seconds")
-        up = mem.get("uptime_seconds")
-        table.add_row(
-            mem["member_id"], mem.get("role") or "", mem.get("host") or "",
-            mem.get("status") or "", f"{int(age)}s ago" if age is not None else "",
-            f"{int(up // 60)}m" if up is not None else "",
-            ",".join(mem.get("leases") or []),
-            ", ".join(f"{k}={v}" for k, v in (mem.get("load") or {}).items()),
-            mem.get("version") or "")
-    console.print(table)
-    q = m.get("queue") or {}
-    console.print(f"queue: queued {q.get('queued', 0)}, leased {q.get('leased', 0)}, running "
-                  f"{q.get('running', 0)}, failed {q.get('failed', 0)}; outbox pending "
-                  f"{(m.get('outbox') or {}).get('pending', 0)}")
-    hosts = Table(box=box.SIMPLE, show_header=True, title="by host")
-    for col in ("host", "members", "runs", "flow runs", "instances", "containers"):
-        hosts.add_column(col)
-    for h in m["hosts"]:
-        hosts.add_row(h["host"], str(len(h["members"])), str(h["runs"]), str(h["flow_runs"]),
-                      str(h["instances"]), str(h["containers"]))
-    console.print(hosts)
-    for run in m["runs"]:
-        age = run.get("heartbeat_age_seconds")
-        console.print(f"  run {str(run['run_id'])[:8]} {run.get('agent_id')} {run.get('status')} "
-                      f"on {run.get('host') or '?'}"
-                      + (f", beat {int(age)}s ago" if age is not None else ""))
-    for loop in m["loops"]:
-        console.print(f"  loop {str(loop['loop_run_id'])[:8]} iteration {loop.get('iterations_done')} "
-                      f"on {loop.get('owner') or '?'}")
-
-
-# ---------------------------------------------------------------------------
 # db commands
 # ---------------------------------------------------------------------------
 # Direct mode only: these open the database this process is configured with
@@ -634,14 +546,10 @@ def db_verify_cmd(archive: str = typer.Argument(..., help="An archive written by
 
 
 # ---------------------------------------------------------------------------
-# auth commands: whoami, personal API keys
+# auth commands: whoami
 # ---------------------------------------------------------------------------
-# Over AGENTS_HUB_URL these speak to /api/auth/me and /api/auth/keys as
-# whoever AGENTS_HUB_API_KEY (or a session) authenticates — see
-# common.auth.auth_headers and docs/api-keys.md. In direct mode there is no
-# request and so no named user: DirectBackend answers as the local operator
-# for whoami, and keys need an explicit --user naming the account to act on,
-# an administrator operation against the local database.
+# Over AGENTS_HUB_URL this reads /api/auth/me; in direct mode DirectBackend
+# answers as the local operator. Both say the same thing: there is one.
 
 
 @auth_app.command("whoami")
@@ -658,82 +566,6 @@ def auth_whoami():
     if info.get("mode"):
         lines.append(f"[bold]mode:[/bold] {info['mode']}")
     console.print(Panel("\n".join(lines), title="whoami", border_style="cyan"))
-
-
-@auth_keys_app.command("list")
-def auth_keys_list(
-    user: Optional[str] = typer.Option(
-        None, "--user", help="Direct mode only: manage this account's keys, as an admin."),
-):
-    """List personal API keys."""
-    if hub().kind == "http" and user:
-        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
-                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
-    keys = call(hub().list_api_keys, user)
-
-    table = Table(title="API keys", box=box.ROUNDED, show_lines=False)
-    table.add_column("ID", style="bold cyan", no_wrap=True)
-    table.add_column("Name")
-    table.add_column("Hint")
-    table.add_column("Workspaces")
-    table.add_column("Expires")
-    table.add_column("Last used")
-
-    for k in keys:
-        workspaces = k.get("workspaces")
-        table.add_row(
-            k.get("id", ""),
-            k.get("name", "") or "-",
-            f"…{k.get('hint', '')}",
-            ", ".join(workspaces) if workspaces else "full reach",
-            k.get("expires_at") or "never",
-            k.get("last_used_at") or "never",
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(keys)} key(s)[/dim]")
-
-
-@auth_keys_app.command("create")
-def auth_keys_create(
-    name: str = typer.Option("", "--name", help="A label for the key, e.g. 'laptop CLI'."),
-    workspace: List[str] = typer.Option(
-        [], "--workspace", "-w",
-        help="Repeatable; narrows the key to these workspaces. Omit for the owner's full reach."),
-    expires_days: Optional[int] = typer.Option(
-        None, "--expires-days", help="Days until expiry. Omit for a key that never expires."),
-    user: Optional[str] = typer.Option(
-        None, "--user", help="Direct mode only: cut a key for this account, as an admin."),
-):
-    """Cut a new personal API key. Shown once: store it now."""
-    if hub().kind == "http" and user:
-        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
-                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
-    workspaces = list(workspace) or None
-    record = call(hub().create_api_key, user, name, workspaces, expires_days)
-
-    console.print(Panel(
-        f"[bold]{record['key']}[/bold]\n\n"
-        "Shown once. Store it now; it cannot be shown again.",
-        title="New API key", border_style="green",
-    ))
-    scope = ", ".join(record.get("workspaces") or []) or "full reach"
-    console.print(f"id {record.get('id')}, name {record.get('name') or '-'}, scope {scope}, "
-                  f"expires {record.get('expires_at') or 'never'}")
-
-
-@auth_keys_app.command("revoke")
-def auth_keys_revoke(
-    key_id: str = typer.Argument(..., help="The key's id, from `ah auth keys list`."),
-    user: Optional[str] = typer.Option(
-        None, "--user", help="Direct mode only: revoke this account's key, as an admin."),
-):
-    """Revoke a personal API key. Immediate: anything using it stops working at once."""
-    if hub().kind == "http" and user:
-        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
-                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
-    call(hub().revoke_api_key, key_id, user)
-    console.print(f"[green]revoked[/green] {key_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -1426,20 +1258,14 @@ from cli.commands.task import task_app  # noqa: E402
 from cli.commands.workspace import workspace_app  # noqa: E402
 from cli.commands.project import project_app  # noqa: E402
 from cli.commands.instance import instance_app  # noqa: E402
-from cli.commands.service import service_app  # noqa: E402
 from cli.commands.flow import flow_app  # noqa: E402
 from cli.commands.loop import loop_app  # noqa: E402
 from cli.commands.team import team_app  # noqa: E402
 from cli.commands.eval import eval_app  # noqa: E402
-from cli.commands.hub import hub_app  # noqa: E402
 from cli.commands.mcp import mcp_app  # noqa: E402
-from cli.commands.user import user_app  # noqa: E402
 from cli.commands.api import api_command  # noqa: E402
-from cli.commands.costs import costs_app  # noqa: E402
 from cli.commands.files import files_app  # noqa: E402
-from cli.commands.support import support_bundle  # noqa: E402
 from cli.commands.apply import apply_command  # noqa: E402
-from cli.commands.kit import kit_app  # noqa: E402
 from cli.onboard import setup_command  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
@@ -1447,23 +1273,17 @@ app.add_typer(task_app, name="task")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(project_app, name="project")
 app.add_typer(instance_app, name="instance")
-app.add_typer(service_app, name="service")
 app.add_typer(flow_app, name="flow")
 app.add_typer(loop_app, name="loop")
 app.add_typer(team_app, name="team")
 app.add_typer(eval_app, name="eval")
-app.add_typer(hub_app, name="hub")
 app.add_typer(mcp_app, name="mcp")
-app.add_typer(user_app, name="user")
-app.add_typer(costs_app, name="costs")
 app.add_typer(files_app, name="files")
-app.command("support-bundle")(support_bundle)
 app.command("setup")(setup_command)
 # OpenClaw's name for the same first-run flow, for hands that type it.
 app.command("onboard", hidden=True)(setup_command)
 app.command("api")(api_command)
 app.command("apply")(apply_command)
-app.add_typer(kit_app, name="kit")
 
 # Every name `ah` already answers to without touching the OpenAPI schema: the
 # groups above, the ones defined earlier in this file, and the bare commands.
@@ -1471,9 +1291,9 @@ app.add_typer(kit_app, name="kit")
 # below: not a permission list, just a fast "have we already got this one".
 _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
-    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "files", "costs",
-    "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
-    "setup", "onboard", "support-bundle", "version", "doctor", "apply", "kit",
+    "eval", "mcp", "api", "server", "auth", "db", "secrets", "files",
+    "up", "chat", "config", "shell-init", "shell-export",
+    "setup", "onboard", "version", "doctor", "apply",
 }
 
 

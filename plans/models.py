@@ -102,20 +102,14 @@ class ScheduledJob(BaseModel):
     # loop only: the loop to start. A firing is skipped, with an error on the
     # job, while a run of the same loop is still active.
     loop_id: Optional[str] = None
-    # Delivery channels for notifications ("dashboard"; "telegram" later).
+    # Delivery channels for notifications ("dashboard", "webhook").
     channels: List[str] = Field(default_factory=lambda: ["dashboard"])
 
-    # agent_task/flow/loop: the environment (environments/), money cap
-    # (common/run_budget.py) and agent version pin (agents/versions.py)
-    # copied onto every task this job creates. For a flow or loop firing the
-    # task is created by that launcher, not here, so plans.service applies
-    # these after the fact by updating the task it returns; None means "the
-    # task's own default" for all three.
-    environment_id: Optional[str] = None
-    budget_usd: Optional[float] = None
-    # Only meaningful for an agent_task job with a preassigned agent_id — a
-    # flow/loop job's task has no single agent to pin at fire time. Validated
-    # against agent_id at create/update time (plans.service).
+    # agent_task: the agent version pin (agents/versions.py) copied onto
+    # every task this job creates. Only meaningful for an agent_task job with
+    # a preassigned agent_id — a flow/loop job's task has no single agent to
+    # pin at fire time. Validated against agent_id at create/update time
+    # (plans.service).
     agent_version: Optional[int] = None
 
     # agent_task only: the resources of a deployment, copied onto every task
@@ -222,7 +216,8 @@ class FireRecord(BaseModel):
 
     # -------------------- heartbeat ticks (proactive/service.py) --------------------
     # What the tick came to. Set at fire time for a tick that never started a
-    # task (``quiet_hours``, ``budget``, ``rate``, ``busy``, ``disabled``), and
+    # task (``quiet_hours``, ``budget`` for the day's allowance, ``rate``,
+    # ``busy``, ``disabled``), and
     # when the task's run finishes for one that did: ``acted``, ``quiet`` or
     # ``blocked`` from the agent's structured answer, ``error`` for a failed
     # run. None until then (a tick still running) and for every other kind.

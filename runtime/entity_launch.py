@@ -1,20 +1,18 @@
 """
 The one launch envelope for the runs of flows, loops, teams and scenarios.
 
-An agent's task run has had this shape since stage 2 of the scaling plan
-(agents/agent_launcher.py): a *database half* prepares the run (its record,
-session, log path) and builds a plain JSON spec; a *process half* turns the
-spec into a process on whichever host does the spawning, here in the default
-role or on a worker in the ``api`` role (docs/workers.md). Flows had their
+An agent's task run has this shape (agents/agent_launcher.py): a *database
+half* prepares the run (its record, session, log path) and builds a plain
+JSON spec; a *process half* turns the spec into a process. Flows had their
 own copy of that shape; teams and scenarios ran on daemon threads of the API
-process with no sandbox, no heartbeat, no place in the queue, and stayed
-``running`` forever after a restart.
+process with no sandbox, no heartbeat, and stayed ``running`` forever after a
+restart.
 
 This module is the process half for every entity kind. A launcher
 (flow/launcher.py, loops/launcher.py, teams/launcher.py, playground/launcher.py) prepares its
 record in ``entity_runs`` (common/entity_runs.py) and calls :func:`dispatch`
-with a spec; from there the run is queued or spawned, locally or in a
-container, exactly the way a task run is.
+with a spec; from there the run is spawned, locally or in a container,
+exactly the way a task run is.
 
 The spec, plain JSON and nothing secret::
 
@@ -35,8 +33,7 @@ The spec, plain JSON and nothing secret::
     }
 
 The environment is rebuilt here from this process's own configuration
-(provider keys, the API token, declared secrets) and never travels through
-the queue. A launched process records its pid (or container) and host on the
+(provider keys, the API token, declared secrets). A launched process records its pid (or container) and host on the
 run and beats its heartbeat from then on; the watchdog judges it by that beat
 and never by a pid on another host.
 
@@ -71,17 +68,6 @@ ENTRYPOINTS: Dict[str, str] = {
     "scenario": "scenario_run",
 }
 
-#: Kind -> the launcher module whose ``launch_prepared`` the worker calls. A
-#: launcher wraps :func:`launch_prepared` here with its kind's own after-spawn
-#: bookkeeping (a flow flips its definition's running marker, say).
-LAUNCHERS: Dict[str, str] = {
-    "flow": "flow.launcher",
-    "loop": "loops.launcher",
-    "team": "teams.launcher",
-    "scenario": "playground.launcher",
-}
-
-
 def utc_now_iso() -> str:
     from common.entity_runs import utc_now_iso as _now
     return _now()
@@ -99,7 +85,7 @@ def child_env(extra: Mapping[str, Any]) -> Iterator[None]:
     variables. A caller that launches through another kind's launcher (a flow
     node starting a team) cannot reach the spec that launcher builds, so the
     values ride on a context variable and :func:`dispatch` copies them into the
-    spec's ``env`` key, which travels through the queue to a worker as well."""
+    spec's ``env`` key."""
     merged = {**(_CHILD_ENV.get() or {}), **{str(k): str(v) for k, v in extra.items()}}
     token = _CHILD_ENV.set(merged)
     try:
@@ -109,55 +95,21 @@ def child_env(extra: Mapping[str, Any]) -> Iterator[None]:
 
 
 def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
-    """Spawn here, or hand the spec to a worker, by this process's role.
-
-    ``launch`` is the kind's own ``launch_prepared`` (defaults to the generic
-    one here); in the ``api`` role it is not called at all, the worker calls
-    the launcher named in :data:`LAUNCHERS` for the spec's kind.
-    """
-    from common.config import hub_role
-    from common.attribution import check_launch_budget, launching_key, launching_user
+    """Spawn the run here. ``launch`` is the kind's own ``launch_prepared``
+    (defaults to the generic one here)."""
+    from common.attribution import launching_user
 
     kind = str(spec.get("kind") or "")
     if kind not in ENTRYPOINTS:
         raise ValueError(f"unknown entity launch kind {kind!r}")
-    # Who asked for this run, so the process that spawns it (maybe a worker
-    # with no request in flight) can resolve user-scoped secrets.
+    # Who asked for this run, so a spawn with no request in flight can still
+    # resolve user-scoped secrets.
     spec.setdefault("launched_by", launching_user())
-    # A personal key's own money cap (common/api_keys.py
-    # budget_usd_per_month): a flow/loop/team/scenario run launched with a
-    # key that already spent its month refuses to start, the same gate
-    # agents.agent_launcher.prepare_run applies to a task run.
-    check_launch_budget()
-    # And the person's own monthly limit (common/user_budget.py).
-    from common.user_budget import check_user_budget
-    check_user_budget(spec.get("launched_by"))
-    spec.setdefault("key_id", launching_key())
     spec.setdefault("execution_mode", "local")
-    # An isolated workspace's agent loop runs on the hub, where the state it
-    # needs is (common/isolation.py): a container would need write access to
-    # the hub's database. Its shell and code go to the no-network sandbox.
-    from common import isolation
-    if isolation.is_isolated(spec.get("workspace")):
-        spec["execution_mode"] = "local"
     extra_env = _CHILD_ENV.get()
     if extra_env:
         spec["env"] = {**extra_env, **(spec.get("env") or {})}
-    if hub_role() == "api":
-        from common import run_queue
-        run_queue.enqueue(str(spec["run_id"]), kind, spec, workspace=spec.get("workspace"),
-                          execution_mode=str(spec.get("execution_mode") or "local"))
-        return
     (launch or launch_prepared)(spec)
-
-
-def launcher_for(kind: str) -> Callable[[Dict[str, Any]], None]:
-    """The ``launch_prepared`` of a kind's launcher module, for the worker."""
-    import importlib
-    module_name = LAUNCHERS.get(str(kind))
-    if not module_name:
-        raise ValueError(f"unknown launch kind {kind!r}")
-    return getattr(importlib.import_module(module_name), "launch_prepared")
 
 
 # ── The process half ─────────────────────────────────────────────────────────
@@ -204,11 +156,6 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
     if isinstance(extra, dict):
         for key, value in extra.items():
             env[str(key)] = str(value)
-        # An extra layer may carry an environment's own proxy URL: the run's
-        # host-bound secrets move onto that token (environments/secret_egress.py).
-        from common.subprocess_env import route_secrets
-        route_secrets(env, execution_mode=str(spec.get("execution_mode") or "") or None,
-                      workspace=ws_name)
     return env
 
 
@@ -290,8 +237,7 @@ def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns the fields written on the run (``pid`` or ``container_name``,
     ``host``, ``execution_mode``). A container that fails to start closes
-    the run as failed and raises, so the worker hands the launch back to the
-    queue; the operator chose Docker, so this never falls back to a local
+    the run as failed and raises; the operator chose Docker, so this never falls back to a local
     subprocess.
     """
     from common import entity_runs
@@ -299,9 +245,6 @@ def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(spec["run_id"])
     env = build_env(spec)
     mode = str(spec.get("execution_mode") or "local")
-    from common import isolation
-    if isolation.is_isolated(spec.get("workspace")):
-        mode = "local"
     host = socket.gethostname()
 
     if mode == "docker":
@@ -342,6 +285,6 @@ def child_alive(rec: Dict[str, Any]) -> Optional[bool]:
 
 
 __all__ = [
-    "ENTRYPOINTS", "LAUNCHERS", "dispatch", "launcher_for", "execution_mode_for",
+    "ENTRYPOINTS", "dispatch", "execution_mode_for",
     "build_env", "child_env", "spawn_local", "spawn_docker", "launch_prepared", "child_alive",
 ]

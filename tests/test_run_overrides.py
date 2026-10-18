@@ -459,12 +459,9 @@ def test_chat_validates_and_records_overrides(agent):
 @pytest.fixture
 def v1_client(monkeypatch):
     from fastapi.testclient import TestClient
-    from common.config import settings
     from chat import pipelines
     from dashboard.backend.main import app
 
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
     seen = []
 
     async def fake(request):
@@ -477,24 +474,3 @@ def v1_client(monkeypatch):
     return TestClient(app), seen
 
 
-def test_v1_agent_completion_takes_overrides(agent, v1_client):
-    client, seen = v1_client
-    ok = client.post("/v1/chat/completions", json={
-        "model": f"agent:{agent}", "messages": [{"role": "user", "content": "hi"}],
-        "overrides": {"model": "small", "system_append": "Be brief."}})
-    assert ok.status_code == 200, ok.text
-    assert seen[0].overrides == {"model": "small", "system_append": "Be brief."}
-    assert ok.json()["agents_hub"]["overrides"]["model"] == "small"
-
-    bad = client.post("/v1/chat/completions", json={
-        "model": f"agent:{agent}", "messages": [{"role": "user", "content": "hi"}],
-        "overrides": {"colour": "red"}})
-    assert bad.status_code == 400
-    assert bad.json()["error"]["code"] == "invalid_overrides"
-
-    refused = client.post("/v1/chat/completions", json={
-        "model": f"agent:{agent}", "messages": [{"role": "user", "content": "hi"}],
-        "overrides": {"tools": {"add": ["run_shell"]}}})
-    assert refused.status_code == 409
-    assert refused.json()["error"]["code"] == "capability_violation"
-    assert len(seen) == 1

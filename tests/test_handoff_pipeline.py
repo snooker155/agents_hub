@@ -259,25 +259,6 @@ def test_a_stop_before_the_receiving_run_starts(agents, monkeypatch):
     assert done["handoff"]["to_agent_id"] == "billing"
 
 
-def test_the_workspace_budget_is_checked_before_the_receiving_run(agents, monkeypatch):
-    import common.budget as budget
-    _install(monkeypatch, {
-        "front": lambda p, h: ("To billing.", _hand("billing")),
-        "billing": lambda p, h: pytest.fail("over budget: must not start"),
-    })
-    calls = []
-
-    def _check(ws):
-        calls.append(ws)
-        raise budget.BudgetExceededError(ws or "default", 12.0, 10.0, "monthly")
-
-    monkeypatch.setattr(budget, "check_budget", _check)
-    events = asyncio.run(_collect(_request()))
-    done = events[-1]
-    assert calls and done["ok"] is False and "budget" in done["error"].lower()
-    assert get_run_by_id(done["run_id"])["status"] == "failed"
-
-
 def test_each_run_keeps_its_own_usage(agents, monkeypatch):
     _install(monkeypatch, {
         "front": lambda p, h: ("To billing.", _hand("billing")),
@@ -328,40 +309,6 @@ def test_a_rebuilt_transcript_skips_the_receiving_runs_prompt(agents, monkeypatc
     history = build_conversation_history("conv-rebuild")
     assert [(m.role, m.content) for m in history] == [
         ("user", "my invoice 42 is wrong"), ("agent", "To billing."), ("agent", "Done.")]
-
-
-def test_telegram_sends_both_replies_and_follows_the_handoff(agents, monkeypatch):
-    from connectors.telegram import telegram_runner, telegram_store
-
-    class _Api:
-        def __init__(self):
-            self.sent = []
-
-        async def send_message(self, chat_id, text, **kwargs):
-            self.sent.append(text)
-            return {}
-
-        async def send_chat_action(self, chat_id, action="typing"):
-            return None
-
-    _install(monkeypatch, {
-        "front": lambda p, h: ("Let me pass you to Billing.", _hand("billing", reason="invoice question")),
-        "billing": lambda p, h: ("Invoice 42 is corrected.", None),
-    })
-    # A workspace's allowed agents gate the targets too (the tool refuses one
-    # the workspace does not allow), so this one allows all of them.
-    from workspace import create_workspace_folder, update_workspace_metadata
-    create_workspace_folder("tg-ws")
-    update_workspace_metadata("tg-ws", {"allowed_agents": ["front", "billing", "refunds"]})
-    telegram_store.upsert_binding(chat_id=77, agent_id="front", workspace="tg-ws",
-                                  conversation_id="tg-conv")
-    api = _Api()
-    binding = telegram_store.get_binding(77)
-    asyncio.run(telegram_runner._run_agent_for_telegram(api, 77, binding, "my invoice 42 is wrong", []))
-
-    assert api.sent[0] == "Let me pass you to Billing.\n\n(handed over to Billing: invoice question)"
-    assert api.sent[-1] == "Invoice 42 is corrected."
-    assert telegram_store.get_binding(77)["agent_id"] == "billing"
 
 
 # ── the blocking path ────────────────────────────────────────────────────────

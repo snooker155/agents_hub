@@ -13,11 +13,8 @@ tasks/outcome.py ``_record_grading_run``.)
 
 :func:`record` is the one place they are counted. Each call becomes an entry
 ``{purpose, provider, model, input_tokens, output_tokens, cached_tokens}`` on
-the running loop's ``aux_calls`` (stored on the run as ``loop.aux_calls``),
-and its price is added to the process's spend that
-``agents.callbacks.guards.RunBudgetGuard`` checks, so a classifier that runs
-often is stopped by the same cap as the agent. ``common.pricing.run_cost_usd``
-prices every entry at its own model.
+the running loop's ``aux_calls`` (stored on the run as ``loop.aux_calls``).
+``common.pricing.run_cost_usd`` prices every entry at its own model.
 
 Every function here is best-effort: accounting must never fail the call it
 accounts for.
@@ -89,17 +86,6 @@ def entry(purpose: str, *, provider: Optional[str] = None, model: Optional[str] 
     }
 
 
-def _charge_budget(item: Dict[str, Any]) -> None:
-    """Add the call to the spend the run's money cap checks (only a launched
-    run with a cap has one; otherwise nothing to do)."""
-    try:
-        from agents.callbacks.guards import charge_aux_spend
-        charge_aux_spend(item["provider"], item["model"], item["input_tokens"],
-                         item["output_tokens"], item["cached_tokens"])
-    except Exception:  # noqa: BLE001 - the cap is checked again on the agent's next call
-        log.debug("aux usage: budget charge failed", exc_info=True)
-
-
 def record(purpose: str, *, provider: Optional[str] = None, model: Optional[str] = None,
            llm: Any = None, response: Any = None,
            tokens: Optional[Dict[str, int]] = None) -> Optional[Dict[str, Any]]:
@@ -119,7 +105,6 @@ def record(purpose: str, *, provider: Optional[str] = None, model: Optional[str]
     if state is None:
         return None
     state.aux_calls.append(item)
-    _charge_budget(item)
     return item
 
 
@@ -129,7 +114,7 @@ def record_flat(purpose: str, *, provider: str, model: str, cost_usd: Optional[f
     video, a stretch of speech (tools/special_models.py). ``cost_usd`` None
     means the workspace set no price; the call is still listed, at zero.
     The entry carries ``cost_usd``, which ``common.pricing`` adds to the run's
-    cost, and the amount is charged to the run's money cap at once."""
+    cost."""
     item: Dict[str, Any] = {
         "purpose": str(purpose), "provider": str(provider or ""), "model": str(model or ""),
         "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0,
@@ -137,11 +122,6 @@ def record_flat(purpose: str, *, provider: str, model: str, cost_usd: Optional[f
     }
     if units is not None:
         item["units"] = units
-    try:
-        from agents.callbacks.guards import charge_flat_spend
-        charge_flat_spend(item["cost_usd"])
-    except Exception:  # noqa: BLE001 - the cap is checked again on the agent's next call
-        log.debug("aux usage: flat budget charge failed", exc_info=True)
     try:
         from agents.agent_loop import current_state
         state = current_state()

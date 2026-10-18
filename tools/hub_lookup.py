@@ -44,17 +44,16 @@ def _calling_agent() -> str:
 
 class HubLookupInput(BaseModel):
     kind: str = Field(..., description=(
-        "What to look up: run (alias message), session, cost, budget, model, voice (the transcription "
+        "What to look up: run (alias message), session, cost, model, voice (the transcription "
         "and speech models and the voice), agent, notification, "
         "approval, task, view, project, scenario, loop, flow, team, job, instance, service, deployment, "
         "environment, browser, watcher, pulse (proactive agents), eval, guardrail, tool, connection, "
         "skill, mcp, widget, distribution_install (Slack and Teams app installations), "
-        "catalog_install (items installed from the linked hub's catalog), synced (the person's sync spaces "
-        "and this hub's own sync status), registry, account"))
+        "registry, account"))
     query: Optional[str] = Field(None, description="Text to filter the list by (a name, a status, an agent id)")
     id: Optional[str] = Field(None, description=(
         "Describe one record instead of listing: a run id, a session id, an agent id, 'provider/model', "
-        "a workspace name for budget, today, week or month for cost, or transcription or speech for voice"))
+        "today, week or month for cost, or transcription or speech for voice"))
     workspace: Optional[str] = Field(None, description=(
         "A workspace the person can reach, or 'all'; empty for the one this turn runs in"))
     limit: int = Field(10, ge=1, le=30, description="Most rows to list")
@@ -82,7 +81,7 @@ def _run_lookup(admin: bool, kind: str, query: Optional[str], id: Optional[str],
 def hub_lookup(kind: str, query: Optional[str] = None, id: Optional[str] = None,
                workspace: Optional[str] = None, limit: int = 10) -> str:
     """Look up the hub's records as the person you act for sees them: runs and
-    their cost, sessions, spend this month and their limit, budgets, models,
+    their cost, sessions, spend this month, models,
     agents and their tools, unread notifications, approvals waiting, tasks,
     flows, teams, instances, services, deployments, watchers, proactive agents,
     evals, guardrails, tools, connections, MCP servers, their own account and

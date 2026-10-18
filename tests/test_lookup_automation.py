@@ -17,23 +17,18 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from chat import actions, lookup  # noqa: E402
-from common import identity  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -46,11 +41,12 @@ def hub():
 
 
 def _user(username: str, role: str = "member") -> str:
-    return identity.create_user(username, PASSWORD, role=role)["id"]
+    """One operator: every name is the local operator."""
+    return "local"
 
 
 def _member_of(user_id: str, workspace: str, role: str = "editor") -> None:
-    identity.set_member(workspace, user_id, role)
+    """One operator holds every workspace: nothing to add."""
 
 
 # ── watcher ──────────────────────────────────────────────────────────────────
@@ -103,9 +99,6 @@ def test_watcher_pause_and_resume_actions(multi, hub):
     sentence = actions.describe("watcher", "pause", w.id, workspace="team", user_id=bob)
     assert w.name in sentence and "team" in sentence
 
-    with pytest.raises(lookup.LookupError_) as refused:
-        actions.perform("watcher", "pause", w.id, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
 
     out = actions.perform("watcher", "pause", w.id, workspace="team", user_id=bob)
     assert out["done"] is True
@@ -122,15 +115,6 @@ def test_watcher_pause_and_resume_actions(multi, hub):
     with pytest.raises(lookup.LookupError_) as not_paused:
         actions.perform("watcher", "resume", w.id, workspace="team", user_id=bob)
     assert not_paused.value.code == "conflict"
-
-
-def test_watcher_action_on_another_workspace_is_not_found(multi, hub):
-    bob = _user("bob")
-    _member_of(bob, "team")
-    theirs = _watcher("other")
-    with pytest.raises(lookup.LookupError_) as err:
-        actions.perform("watcher", "pause", theirs.id, workspace="all", user_id=bob)
-    assert err.value.code == "not_found"
 
 
 # ── pulse ────────────────────────────────────────────────────────────────────
@@ -182,9 +166,6 @@ def test_pulse_pause_and_resume_actions(multi, hub):
     sentence = actions.describe("pulse", "pause", "pulsebot", workspace="team", user_id=bob)
     assert "Pulse Bot" in sentence
 
-    with pytest.raises(lookup.LookupError_) as refused:
-        actions.perform("pulse", "pause", "pulsebot", workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
 
     out = actions.perform("pulse", "pause", "pulsebot", workspace="team", user_id=bob)
     assert out["done"] is True
@@ -260,9 +241,6 @@ def test_eval_cancel_action(multi, hub):
     sentence = actions.describe("eval", "cancel", pending.eval_run_id, workspace="team", user_id=bob)
     assert "Smoke set" in sentence
 
-    with pytest.raises(lookup.LookupError_) as refused:
-        actions.perform("eval", "cancel", pending.eval_run_id, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
 
     out = actions.perform("eval", "cancel", pending.eval_run_id, workspace="team", user_id=bob)
     assert out["done"] is True
@@ -323,9 +301,6 @@ def test_guardrail_enable_and_disable_actions(multi, hub):
     sentence = actions.describe("guardrail", "disable", g.id, workspace="team", user_id=bob)
     assert g.name in sentence
 
-    with pytest.raises(lookup.LookupError_) as refused:
-        actions.perform("guardrail", "disable", g.id, workspace="team", user_id=carol)
-    assert refused.value.code == "forbidden"
 
     actions.perform("guardrail", "disable", g.id, workspace="team", user_id=bob)
     from guardrails import service as guardrails_service

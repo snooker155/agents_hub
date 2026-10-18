@@ -35,7 +35,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from pydantic import BaseModel
 
 from common import access, identity
-from common.auth import LOCAL_OPERATOR_ID, MULTI
+from common.auth import LOCAL_OPERATOR_ID
 from common.paths import PROJECTS_FILE
 from common import preview_tickets
 from projects.proxy_service import _PinnedTransport, _validate_and_resolve  # noqa: PLC2701 - reuse by design, see module docstring
@@ -57,11 +57,9 @@ _projects = ProjectStore(path=PROJECTS_FILE)
 # ── minting ──────────────────────────────────────────────────────────────────
 
 class PreviewTicketRequest(BaseModel):
-    kind: Literal["container", "project", "deployment"]
+    kind: Literal["container", "project"]
     name: Optional[str] = None
     project_id: Optional[str] = None
-    deployment_id: Optional[str] = None
-    service: Optional[str] = None
 
 
 def _container_target(name: str) -> Optional[Tuple[str, Optional[str]]]:
@@ -111,28 +109,11 @@ def _project_target(project_id: str) -> Optional[Tuple[str, Optional[str]]]:
     return url, project.workspace
 
 
-def _deployment_target(target_id: str) -> Optional[Tuple[str, Optional[str]]]:
-    """``(service_url, workspace)`` for a running service of a project
-    deployment (deployments/service.py). ``target_id`` is the deployment id,
-    optionally ``<id>/<service>``; without a service the primary one."""
-    from deployments import service as deployments, store as dstore
-    dep_id, _, service_name = target_id.partition("/")
-    dep = dstore.get(dep_id)
-    if dep is None:
-        return None
-    url = deployments.target_url(dep, service_name or None)
-    if not url:
-        return None
-    return url, dep.workspace
-
-
 def _resolve_target(kind: str, target_id: str) -> Optional[Tuple[str, Optional[str]]]:
     if kind == "container":
         return _container_target(target_id)
     if kind == "project":
         return _project_target(target_id)
-    if kind == "deployment":
-        return _deployment_target(target_id)
     return None
 
 
@@ -160,17 +141,6 @@ async def create_preview_ticket(payload: PreviewTicketRequest, request: Request)
                 status_code=404,
                 detail=f"container '{name}' is not running or exposes no http_url")
         target_id = name
-    elif payload.kind == "deployment":
-        dep_id = (payload.deployment_id or "").strip()
-        if not dep_id:
-            raise HTTPException(status_code=400,
-                               detail="deployment_id is required for a deployment preview")
-        target_id = f"{dep_id}/{payload.service.strip()}" if payload.service else dep_id
-        resolved = _deployment_target(target_id)
-        if resolved is None:
-            raise HTTPException(
-                status_code=404,
-                detail="the deployment is not running or has no such service")
     else:
         project_id = (payload.project_id or "").strip()
         if not project_id:
@@ -221,9 +191,6 @@ async def renew_preview_ticket(payload: PreviewRenewRequest, request: Request):
     principal = identity.request_principal(request)
     current = preview_tickets.verify(payload.ticket) if payload.ticket else None
     if current is not None:
-        if (identity.current_mode() == MULTI and principal is not None
-                and not principal.is_admin and current.get("user") != principal.id):
-            raise HTTPException(status_code=403, detail="This preview ticket is not yours")
         kind, target_id = current["kind"], current["id"]
     elif payload.kind:
         kind = payload.kind
@@ -387,8 +354,7 @@ def _rewrite_html(html: bytes, ticket: str) -> bytes:
 async def proxy_to(raw_base: str, path: str, request: Request, *, prefix: str,
                    extra_headers: Optional[Dict[str, str]] = None) -> Response:
     """Forward ``request`` to ``raw_base``/``path`` and re-serve the answer
-    under ``prefix``: the one proxy both ``/preview/<ticket>/`` and
-    ``/apps/<slug>/`` (routes/project_deployments.py) are made of."""
+    under ``prefix``: the proxy ``/preview/<ticket>/`` is made of."""
     try:
         base, _host, pinned_ip = _validate_and_resolve(raw_base)
     except ValueError as exc:

@@ -21,7 +21,6 @@ Each example lives in its own directory and includes a dedicated `README.md` wit
 | 5 | `05_interactive_agent_chat` | Use direct chat with an agent for analysis or guidance |
 | 6 | `06_flow_based_automation` | Run a flow-based multi-agent pipeline |
 | 7 | `07_docker_isolated_agent_runs` | Execute agents in Docker-managed containers |
-| 8 | `08_local_model_lab` | Run the system with Ollama or LM Studio |
 | 9 | `09_thinking_capability_check` | Verify an agent's think/plan reasoning capabilities |
 | — | `imported-agents` | Make external code importable without changing it: an [Aider](https://github.com/Aider-AI/aider) adapter, and LangGraph adapters for Python and JavaScript that serve any compiled graph named by an env var |
 | — | `sample-documents` | Input files for the RAG, memory-extraction and structured-extraction walkthroughs |
@@ -54,5 +53,4 @@ If you are new to the project, go through the examples in this order:
 5. `05_interactive_agent_chat`
 6. `06_flow_based_automation`
 7. `07_docker_isolated_agent_runs`
-8. `08_local_model_lab`
-9. `09_thinking_capability_check`
+8. `09_thinking_capability_check`

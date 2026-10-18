@@ -185,7 +185,7 @@ Restore puts an item back to a past version's value, or deletes it again when th
 
 History keeps the newest `AGENTS_HUB_MEMORY_VERSIONS_KEEP` versions per item (default 50).
 
-API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{id}/versions/{version_id}`, `POST .../restore`, `POST .../redact` with `{also_current}`; audited as `memory.restore`, `memory.redact`.
+API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{id}/versions/{version_id}`, `POST .../restore`, `POST .../redact` with `{also_current}`.
 
 UI: Memory page, Pools tab, a "Pool history" button and a history icon next to each block, note and slot, with a diff against the previous version, Restore and Redact.
 

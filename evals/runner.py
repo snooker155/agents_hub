@@ -7,14 +7,14 @@ in ``evals.targets``). For an agent the runner reuses the existing machinery rat
 by ``agent_factory.create_agent`` with the config's provider/model override,
 invoked through ``agents.agent_invoke.invoke_agent``, and recorded as real runs
 tagged ``channel="eval"``. That tag is what keeps evaluation spend out of the
-workspace's production cost and budget aggregation (``routes/costs.py``,
-``common/budget.py``), exactly as replays already are — while leaving every
-eval cell fully inspectable in the normal run views.
+workspace's production cost aggregation (``routes/costs.py``), exactly as
+replays already are — while leaving every eval cell fully inspectable in the
+normal run views.
 
 Cost is the live risk here: a sweep is ``len(cases) x len(configs)`` LLM calls
 before you learn anything. :func:`project_cost` reports the projected spend
-before a sweep starts, and the loop re-checks the workspace budget every cell so
-a runaway sweep stops the *eval*, not just one run.
+before a sweep starts, and the loop checks the cost ceiling every cell so a
+runaway sweep stops the *eval*, not just one run.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 
 class EvalStopped(Exception):
-    """The sweep was halted (budget cap, cost ceiling, or an explicit stop)."""
+    """The sweep was halted (cost ceiling, or an explicit stop)."""
 
 
 def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
@@ -235,13 +235,6 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     if attempt > 1:
         title += f" (attempt {attempt})"
 
-    from services import jobs
-    if jobs.enabled():
-        # The agent runs on a runner replica (docs/services.md), recorded as
-        # the same eval run; only the invocation leaves this process.
-        return _run_agent_target_remote(agent_id, workspace, overrides, prompt=prompt,
-                                        work_dir=work_dir, title=title)
-
     try:
         from agents.agent_factory import create_agent
         agent = create_agent(agent_id, work_dir or workspace, **overrides)
@@ -289,35 +282,6 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     outcome.outbound_tokens = int(tu.get("outbound_tokens") or 0)
     outcome.cost = _run_cost(provider, model, outcome.inbound_tokens, outcome.outbound_tokens)
     outcome.trajectory = [{"run_id": run_id, "kind": "run", "summary": agent_id}]
-    return outcome
-
-
-def _run_agent_target_remote(agent_id: str, workspace: Optional[str], overrides: Dict[str, Any],
-                             *, prompt: str, work_dir: Optional[str], title: str) -> Outcome:
-    """One agent run on the case, executed by a runner replica as an
-    ``invoke`` job (services/jobs.py) and recorded as the eval run there."""
-    from services import jobs
-
-    try:
-        data = jobs.invoke_sync(workspace, {
-            "agent_id": agent_id, "workspace": work_dir or workspace,
-            "workspace_name": workspace, "overrides": overrides, "prompt": prompt,
-            "run": {"workspace": workspace, "title": title, "channel": EVAL_CHANNEL,
-                    "execution_mode": EVAL_CHANNEL, "session_type": EVAL_CHANNEL,
-                    "message_origin": EVAL_CHANNEL, "link_to_session": False},
-        })
-    except jobs.JobError as e:
-        return Outcome(ok=False, error=f"runner: {e}")
-    res = jobs.InvokeResult(data)
-    outcome = Outcome(run_id=res.run_id)
-    outcome.ok = res.ok
-    outcome.output = res.agent_output if res.ok else ""
-    outcome.error = None if res.ok else str(res.error or "agent error")
-    outcome.duration_ms = res.duration_ms
-    outcome.inbound_tokens = int(res.token_usage.get("inbound_tokens") or 0)
-    outcome.outbound_tokens = int(res.token_usage.get("outbound_tokens") or 0)
-    outcome.cost = _run_cost(res.provider, res.model, outcome.inbound_tokens, outcome.outbound_tokens)
-    outcome.trajectory = [{"run_id": res.run_id, "kind": "run", "summary": agent_id}]
     return outcome
 
 
@@ -421,9 +385,8 @@ def run_eval(
 ) -> EvalRun:
     """Run every case against every config, grade, aggregate, persist.
 
-    ``cost_ceiling`` (USD) stops the sweep when accumulated spend crosses it.
-    The workspace budget is re-checked per cell as well, so a sweep cannot walk
-    past a hard cap one run at a time.
+    ``cost_ceiling`` (USD) stops the sweep when accumulated spend crosses it,
+    checked per cell, so a sweep cannot walk past it one run at a time.
 
     ``mode="batch"`` hands the sweep to evals/batch.py: agent cells and judge
     calls go through the provider batch APIs at half price and the run is
@@ -466,16 +429,6 @@ def run_eval(
                         stopped_reason = (
                             f"cost ceiling reached (${spend:.4f} of ${cost_ceiling:.2f})"
                         )
-                        raise EvalStopped(stopped_reason)
-                    try:
-                        from common.budget import check_budget
-                        check_budget(ws)
-                    except EvalStopped:
-                        raise
-                    except Exception as e:  # noqa: BLE001 - a budget failure halts the sweep with its reason
-                        # BudgetExceededError (or anything else the budget layer
-                        # raises) halts the whole sweep, not just this cell.
-                        stopped_reason = f"budget: {e}"
                         raise EvalStopped(stopped_reason)
 
                     result = run_case(case, cfg, evalset, run.eval_run_id, ws, attempt=attempt)

@@ -34,25 +34,3 @@ def speech_models(provider: str) -> list:
     spec = VOICE_CLOUD.get(provider) or {}
     return spec.get("speech_models") or ([{"id": spec["speech"], "price": spec.get("speech_price"),
                                            "voices": spec.get("voices") or []}] if spec else [])
-
-#: Speech models the hub's own runtime can download, as on the Models page's
-#: Local tab (speechPresets.js): (id, label, size, repo, package, engine).
-VOICE_LOCAL_SPEECH = [
-    ("piper-ru", "Piper, Russian (Irina)", "about 60 MB", "rhasspy/piper-voices", "piper-ru_RU-irina-medium", "piper"),
-    ("piper-en", "Piper, English (Lessac)", "about 60 MB", "rhasspy/piper-voices", "piper-en_US-lessac-medium", "piper"),
-    ("piper-de", "Piper, German (Thorsten)", "about 60 MB", "rhasspy/piper-voices", "piper-de_DE-thorsten-medium", "piper"),
-    ("kokoro", "Kokoro 82M, many voices (English, French, Spanish, Italian, Japanese, Chinese)",
-     "about 330 MB", "fastrtc/kokoro-onnx", "kokoro-v1.0", "kokoro"),
-    ("supertonic", "Supertonic 3, ten voices in 31 languages (Russian, German, English among them)",
-     "about 400 MB", "Supertone/supertonic-3", "supertonic-3", "supertonic"),
-    ("kitten", "Kitten TTS nano, eight English voices", "about 28 MB",
-     "KittenML/kitten-tts-nano-0.8-int8", "kitten-tts-nano-0.8-int8", "kitten"),
-]
-#: The same for hearing: (id, label, size, repo, package).
-VOICE_LOCAL_TRANSCRIPTION = [
-    ("whisper-small", "Whisper small", "about 480 MB, fast on a CPU",
-     "Systran/faster-whisper-small", "faster-whisper-small"),
-    ("whisper-turbo", "Whisper large-v3 turbo", "about 1.6 GB, more accurate",
-     "deepdml/faster-whisper-large-v3-turbo-ct2", "faster-whisper-large-v3-turbo-ct2"),
-]
-HUB_LOCAL = "hub-local"

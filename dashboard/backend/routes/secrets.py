@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from common import audit, identity
 from common import secrets as secret_store
-from common.auth import MULTI, WS_OWNER
+from common.auth import WS_OWNER
 
 router = APIRouter(tags=["secrets"])
 
@@ -73,8 +73,6 @@ def _check_scope(agent_id: Optional[str], user_id: Optional[str]) -> None:
         from agents.registry import get_agent
         if get_agent(agent_id) is None:
             raise HTTPException(status_code=400, detail=f"Unknown agent '{agent_id}'")
-    if user_id and identity.current_mode() == MULTI and identity.get_user(user_id) is None:
-        raise HTTPException(status_code=400, detail=f"Unknown user '{user_id}'")
 
 
 def _scope_details(name: str, agent_id: Optional[str], user_id: Optional[str],
@@ -160,17 +158,9 @@ def _agent_or_404(agent_id: str):
 
 
 def _require_agent_admin(principal, spec) -> None:
-    """Administrator, or owner of the workspace the agent belongs to."""
-    if identity.current_mode() != MULTI:
-        return
-    if principal is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    if principal.is_admin:
-        return
-    workspace = getattr(spec, "owner_workspace", None)
-    if not workspace:
-        raise HTTPException(status_code=403, detail="Administrator access required")
-    identity.require_role(principal, workspace=workspace, role=WS_OWNER)
+    """Administrator, or owner of the workspace the agent belongs to: the
+    operator is both."""
+    return None
 
 
 @router.get("/api/agents/{agent_id}/secrets")

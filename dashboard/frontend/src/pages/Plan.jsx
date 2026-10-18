@@ -16,11 +16,10 @@ import {
   markAllNotificationsRead,
   deleteNotification,
   getAgents,
-  getTelegramConfig,
   listFlows,
   getSharedMemories,
 } from '../api';
-import { Activity, AlertCircle, Bell, BellRing, Bot, Brain, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, Send, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
+import { Activity, AlertCircle, Bell, BellRing, Bot, Brain, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -152,7 +151,7 @@ function browserTimezone() {
 
 // ---- create / edit modal ----------------------------------------------------
 
-function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, telegram }) {
+function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
   const { t } = useI18n();
   const isEdit = !!job;
   const [kind, setKind] = useState(job?.kind || 'notification');
@@ -168,18 +167,10 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
   const [flowId, setFlowId] = useState(job?.flow_id || '');
   const [seedText, setSeedText] = useState(job?.seed ? JSON.stringify(job.seed, null, 2) : '');
   const [maxConcurrent, setMaxConcurrent] = useState(job?.max_concurrent ?? 1);
-  const [toTelegram, setToTelegram] = useState((job?.channels || []).includes('telegram'));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Delivery to Telegram needs the integration enabled with a bot token.
-  const tgReady = !!(telegram?.has_token && telegram?.enabled);
-  const tgHint = !telegram?.has_token
-    ? t('plan.telegram.noToken')
-    : !telegram?.enabled
-      ? t('plan.telegram.disabled')
-      : t('plan.telegram.ready');
-  const channels = tgReady && toTelegram ? ['dashboard', 'telegram'] : ['dashboard'];
+  const channels = ['dashboard'];
 
   const handleSave = async () => {
     if (!title.trim()) { setError(t('plan.errors.titleRequired')); return; }
@@ -433,27 +424,6 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace, tele
           </div>
         )}
 
-        <div className={`rounded-lg border px-3 py-2.5 ${tgReady ? 'border-gray-200' : 'border-gray-100 bg-gray-50'}`}>
-          <label className={`flex items-center gap-2 text-sm ${tgReady ? 'cursor-pointer text-gray-700' : 'cursor-not-allowed text-gray-400'}`}>
-            <input
-              type="checkbox"
-              checked={tgReady && toTelegram}
-              disabled={!tgReady}
-              onChange={e => setToTelegram(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 disabled:opacity-50"
-            />
-            <Send className="w-4 h-4" />
-            <span className="font-medium">{t('plan.alsoSendToTelegram')}</span>
-          </label>
-          <p className={`text-[11px] mt-1 ml-6 ${tgReady ? 'text-gray-400' : 'text-amber-600'}`}>
-            {tgReady
-              ? (kind === 'agent_task'
-                  ? t('plan.telegram.taskStartedHint')
-                  : t('plan.telegram.bothHint'))
-              : tgHint}
-          </p>
-        </div>
-
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
@@ -497,7 +467,6 @@ export default function Plan() {
   const [finishedPicked, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
   const [acting, setActing] = useState({});
-  const [telegram, setTelegram] = useState({ enabled: false, has_token: false });
 
   const fetchData = useCallback(async () => {
     try {
@@ -553,12 +522,6 @@ export default function Plan() {
     getSharedMemories(workspaceFilter).then(r => setPools(r.data || [])).catch(() => {});
   }, [workspaceFilter]);
 
-  useEffect(() => {
-    getTelegramConfig()
-      .then(r => setTelegram({ enabled: !!r.data?.enabled, has_token: !!r.data?.has_token }))
-      .catch(() => setTelegram({ enabled: false, has_token: false }));
-  }, []);
-
   const setTab = (t) => setSearchParams(t === 'notifications' ? { tab: 'notifications' } : {});
 
   const act = async (id, fn) => {
@@ -585,10 +548,9 @@ export default function Plan() {
         title={t('plan.plan')}
         description={t('plan.scheduledJobsFutureRemindersAnd')}
         actions={<>
-          {/* Scheduled agent tasks, flows and loops now have a page of their
-              own with a firing journal, an environment and a per-run budget
-              (see Deployments.jsx); this page keeps one-off reminders and
-              notifications. */}
+          {/* Scheduled agent tasks, flows and loops have a page of their own
+              with a firing journal and a resources view (see Deployments.jsx);
+              this page keeps one-off reminders and notifications. */}
           <Link
             to="/deployments"
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -827,7 +789,6 @@ export default function Plan() {
           flows={flows}
           pools={pools}
           workspace={workspaceFilter}
-          telegram={telegram}
           onClose={() => setModalJob(undefined)}
           onSaved={() => { setModalJob(undefined); fetchData(); }}
         />

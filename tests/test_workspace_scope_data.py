@@ -177,17 +177,13 @@ def test_create_project_in_another_workspace_is_refused(run_as, projects):
 
 
 def test_deploy_and_publish_tools_do_not_find_another_workspaces_project(run_as, projects, monkeypatch):
-    from tools import project_deploy, git_publish, trackers
+    from tools import git_publish, trackers
     other = projects[OTHER]
     called = []
     monkeypatch.setattr(git_publish, "run_git_publish", lambda *a, **k: called.append(a) or {"ok": True})
     run_as()
 
     for ref in (other.id, other.name):
-        out = _call(project_deploy.project_deployment_status, {"project": ref})
-        assert out["ok"] is False and out["code"] == "not_found"
-        out = _call(project_deploy.stop_project_deployment, {"project": ref})
-        assert out["ok"] is False and out["code"] == "not_found"
         out = _call(git_publish.git_publish, {"project": ref, "title": "t"})
         assert out["ok"] is False and out["code"] == "not_found"
         out = _call(trackers.tracker_sync, {"project": ref})
@@ -195,12 +191,12 @@ def test_deploy_and_publish_tools_do_not_find_another_workspaces_project(run_as,
     assert called == []
 
     # The run's own project is found by the same tools, by id and by name.
-    assert project_deploy._resolve_project(projects[HOME].name).id == projects[HOME].id
+    assert git_publish._resolve_project(projects[HOME].name).id == projects[HOME].id
     assert _call(git_publish.git_publish, {"project": projects[HOME].id, "title": "t"})["ok"] is True
     assert called == [(projects[HOME].id,)]
 
     run_as("service_agent")
-    assert project_deploy._resolve_project(other.id).id == other.id
+    assert git_publish._resolve_project(other.id).id == other.id
     assert trackers._resolve_project(other.name).id == other.id
 
 
@@ -209,7 +205,7 @@ def test_a_same_named_project_elsewhere_does_not_make_a_name_ambiguous(run_as, p
     from projects.models import Project
     from projects.storage import ProjectStore
     ProjectStore(path=PROJECTS_FILE).add(Project(name=f"site-{HOME}", workspace=OTHER))
-    from tools.project_deploy import _resolve_project
+    from tools.trackers import _resolve_project
     run_as()
     assert _resolve_project(f"site-{HOME}").id == projects[HOME].id
 
@@ -227,30 +223,6 @@ def test_project_graph_of_another_workspaces_project_is_not_found(run_as, projec
 
 
 # ── database connections ─────────────────────────────────────────────────────
-
-def test_database_connection_of_another_workspace_is_not_found(run_as, tmp_path):
-    import sqlite3
-    from connectors.databases import store
-    from tools.databases import db_list_connections, db_query
-    paths = {}
-    for ws in (HOME, OTHER):
-        paths[ws] = tmp_path / f"{ws}.db"
-        with sqlite3.connect(paths[ws]) as conn:
-            conn.execute("CREATE TABLE t (v TEXT)")
-            conn.execute("INSERT INTO t VALUES (?)", (ws,))
-    own = store.create_connection(workspace=HOME, name="db", kind="sqlite", dsn=str(paths[HOME]))
-    other = store.create_connection(workspace=OTHER, name="db2", kind="sqlite", dsn=str(paths[OTHER]))
-    run_as()
-
-    assert _call(db_query, {"connection": own["id"], "sql": "SELECT v FROM t"})["rows"] == [[HOME]]
-    for ref in (other["id"], "db2"):
-        out = _call(db_query, {"connection": ref, "sql": "SELECT v FROM t"})
-        assert out["ok"] is False and "no database connection" in out["error"]
-    assert [c["id"] for c in _call(db_list_connections)["connections"]] == [own["id"]]
-
-    run_as("service_agent")
-    assert _call(db_query, {"connection": other["id"], "sql": "SELECT v FROM t"})["rows"] == [[OTHER]]
-
 
 # ── chat channels ────────────────────────────────────────────────────────────
 
@@ -289,43 +261,6 @@ def channel(monkeypatch):
     store.upsert_binding(chat_key="C-other", agent_id="a", workspace=OTHER)
     store.upsert_binding(chat_key="C-shared", agent_id="a")
     return spec
-
-
-def test_channel_send_to_a_chat_bound_to_another_workspace_is_refused(run_as, channel):
-    from tools.channel_send import channel_send
-    run_as()
-    out = _call(channel_send, {"channel": "fake", "chat_key": "C-other", "text": "leak"})
-    assert out["ok"] is False and "not bound" in out["error"]
-    assert channel.service.sent == []
-    assert _call(channel_send, {"channel": "fake", "chat_key": "C-own", "text": "hi"})["sent"] == 1
-    assert _call(channel_send, {"channel": "fake", "chat_key": "C-shared", "text": "hi"})["sent"] == 1
-    # The workspace broadcast reaches the run's chats and the shared one only.
-    assert _call(channel_send, {"channel": "fake", "text": "all"})["sent"] == 2
-    assert "C-other" not in {k for k, _ in channel.service.sent}
-
-    run_as("service_agent")
-    assert _call(channel_send, {"channel": "fake", "chat_key": "C-other", "text": "ops"})["sent"] == 1
-
-
-def test_telegram_send_to_a_chat_of_another_workspace_is_refused(run_as, monkeypatch):
-    from connectors.telegram import telegram_store
-    import connectors.telegram.notify as tg_notify
-    from tools.channel_send import channel_send
-    sent = []
-    monkeypatch.setattr(tg_notify, "_send_text", lambda token, cid, text: sent.append(cid) or True)
-    telegram_store.set_token("tok")
-    telegram_store.upsert_binding(chat_id=111, agent_id="a", workspace=HOME)
-    telegram_store.upsert_binding(chat_id=222, agent_id="a", workspace=OTHER)
-    run_as()
-
-    for key in ("222", "333"):  # another workspace's chat, a chat nobody bound
-        out = _call(channel_send, {"channel": "telegram", "chat_key": key, "text": "leak"})
-        assert out["ok"] is False and "not bound" in out["error"]
-    assert _call(channel_send, {"channel": "telegram", "chat_key": "111", "text": "hi"})["sent"] == 1
-    assert sent == [111]
-
-    run_as("service_agent")
-    assert _call(channel_send, {"channel": "telegram", "chat_key": "222", "text": "ops"})["sent"] == 1
 
 
 # ── memory pools named by id ─────────────────────────────────────────────────

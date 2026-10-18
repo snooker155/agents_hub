@@ -52,12 +52,6 @@ describe('FirstRunGate', () => {
     expect(await screen.findByTestId('app')).toBeTruthy();
   });
 
-  it('is not asked at all in multi mode', () => {
-    renderGate({ mode: 'multi', user: { id: 'u1' } });
-    expect(screen.getByTestId('app')).toBeTruthy();
-    expect(firstRunApi.getFirstRun).not.toHaveBeenCalled();
-  });
-
   it('hands a new browser the language chosen in the first run', async () => {
     firstRunApi.getFirstRun.mockResolvedValue({ data: { applies: true, required: false, language: 'de' } });
     renderGate();

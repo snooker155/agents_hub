@@ -6,7 +6,6 @@
  * this step.
  */
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Loader2, Plug } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { inputCls } from '../settingsUi';
@@ -122,12 +121,6 @@ export default function FirstModelForm({ admin = true, onDone }) {
         {connecting ? t('setupGuide.firstModel.connecting') : t('setupGuide.firstModel.connect')}
       </button>
       {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
-      <p className="text-xs text-gray-500">
-        {t('setupGuide.firstModel.runtimeHint')}{' '}
-        <Link to="/models?tab=local" className="text-indigo-600 hover:text-indigo-800 underline">
-          {t('setupGuide.firstModel.runtimeLink')}
-        </Link>
-      </p>
     </div>
   );
 }

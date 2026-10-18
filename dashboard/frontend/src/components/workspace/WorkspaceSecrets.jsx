@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Loader, Plus, Trash2 } from 'lucide-react';
 import {
-  deleteWorkspaceSecret, getUsers, getWorkspaceSecrets, setWorkspaceSecret, setWorkspaceSecretHosts,
+  deleteWorkspaceSecret, getWorkspaceSecrets, setWorkspaceSecret, setWorkspaceSecretHosts,
 } from '../../api';
-import { MULTI, useAuth } from '../auth';
 import { useI18n } from '../../i18n';
 
 const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-xs '
@@ -20,21 +19,14 @@ const splitHosts = (text) => String(text || '').split(/[\s,]+/).map((h) => h.tri
 /**
  * The workspace's secrets: names, scopes and a hint, never a value.
  *
- * Unlike the members card this renders in every mode, because one operator
- * has keys to keep out of `.env` too. In `multi` mode the backend answers only
- * the workspace's owner or an admin, so a 403 or 404 on the first load hides
- * the card rather than showing an error where a card should be.
+ * The operator keeps keys out of `.env` here. A 403 or 404 on the first load
+ * hides the card rather than showing an error where a card should be.
  *
  * `agents` is the workspace's allowed agent ids, for the optional agent scope.
- * The user scope is offered only in `multi` mode, from the accounts list an
- * admin may read; anyone else can still type an id.
  */
 export default function WorkspaceSecrets({ workspace, agents = [] }) {
   const { t } = useI18n();
-  const { mode } = useAuth();
-  const multi = mode === MULTI;
   const [rows, setRows] = useState([]);
-  const [users, setUsers] = useState([]);
   const [visible, setVisible] = useState(true);
   // The workspace the list was fetched for: loading is derived from it, and a
   // refresh after a save swaps the rows in place.
@@ -66,15 +58,9 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (!multi || !visible) return;
-    getUsers().then(({ data }) => setUsers(Array.isArray(data) ? data : []))
-      .catch(() => setUsers([]));
-  }, [multi, visible]);
-
   if (!visible) return null;
 
-  const userName = (id) => users.find((u) => u.id === id)?.username || id;
+  const userName = (id) => id;
 
   const scopeLabel = (row) => {
     if (row.agent_id && row.user_id) {
@@ -237,18 +223,6 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
           <option value="">{t('secrets.fields.anyAgent')}</option>
           {agents.map((id) => <option key={id} value={id}>{id}</option>)}
         </select>
-        {multi && (users.length > 0 ? (
-          <select value={draft.user_id} className={inputCls} aria-label={t('secrets.fields.anyUser')}
-            onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
-            <option value="">{t('secrets.fields.anyUser')}</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.username}</option>)}
-          </select>
-        ) : (
-          <input value={draft.user_id} placeholder={t('secrets.fields.anyUser')}
-            aria-label={t('secrets.fields.anyUser')}
-            onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}
-            className={inputCls} />
-        ))}
         <input value={draft.hosts} placeholder={t('secrets.hostsField')}
           aria-label={t('secrets.hostsField')} title={t('secrets.hostsHint')}
           onChange={(e) => setDraft({ ...draft, hosts: e.target.value })}

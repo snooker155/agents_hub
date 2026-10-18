@@ -21,27 +21,17 @@ connection resumes on the same id and channel set and replays what it missed
 as a burst of ``id:``-numbered frames before going live again; the ``_meta
 ready`` event says so with ``resumed: true`` and how many were replayed.
 
-When it is not known — a restart, or (with the cross-replica broker bridge
-on, see common/broker_bridge.py) a reconnect that landed on a different
-replica than the one that issued the client id — a fresh client is opened.
-If the bridge is on and ``since``/``Last-Event-ID`` looks like a Redis
-stream id, that fresh client still gets a real resume: the id is looked up
-in the shared stream (``BrokerBridge.replay``) instead of the now-useless
-per-process ring buffer, filtered to the channels this client asked for (the
-defaults plus a comma-separated ``channels`` query parameter). Only when
-neither path can resume it — no bridge, or ``since`` predates what the
-stream still holds — does ``resumed`` come back false, telling the frontend
-to refetch rather than trust a stream that may have skipped a beat.
+When it is not known (a restart) a fresh client is opened and ``resumed``
+comes back false, telling the frontend to refetch rather than trust a stream
+that may have skipped a beat.
 """
 import json
-import re
 from typing import List, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from common.broker_bridge import get_bridge, MAX_REPLAY
 from common.session_broker import broker, APP_CHANNEL, notify_change, notify_delta
 from plans.service import NOTIFICATIONS_CHANNEL
 
@@ -73,27 +63,15 @@ class NotifyChange(BaseModel):
     delta: bool = False
 
 
-#: A Redis stream id ("<ms>-<seq>"), as opposed to the plain per-client
-#: integers SessionBroker hands out when the bridge is off.
-_STREAM_ID_RE = re.compile(r"^\d+-\d+$")
-
-
-def _parse_last_event_id(raw: Optional[str]):
+def _parse_last_event_id(raw: Optional[str]) -> Optional[int]:
     """``Last-Event-ID`` as EventSource sends it back automatically (or the
-    ``since`` query param standing in for it — see ``stream()`` below).
-
-    Returns an int for the plain counter the broker uses with the bridge
-    off, the raw string unchanged when it looks like a Redis stream id (the
-    shape the bridge's global ids and ``BrokerBridge.replay`` both use), or
-    None when absent or neither — never fails the request over it.
-    """
+    ``since`` query param standing in for it, see ``stream()`` below): the
+    broker's per-client counter, or None when absent or not a number. Never
+    fails the request over it."""
     if not raw:
         return None
-    raw = raw.strip()
-    if _STREAM_ID_RE.match(raw):
-        return raw
     try:
-        return int(raw)
+        return int(raw.strip())
     except ValueError:
         return None
 
@@ -109,9 +87,8 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
     ``Last-Event-ID`` header on a freshly created connection, only on the
     browser's own silent retry of an existing one, so the frontend (which
     replaces the connection itself on error) sends it this way instead.
-    ``channels``, comma-separated, is the frontend's current channel set —
-    only used for the cross-replica stream catch-up path below, since a
-    same-process resume already has the client's channels on file.
+    ``channels``, comma-separated, is the frontend's current channel set,
+    added to the defaults when a fresh client has to be opened.
     """
     last_event_id = _parse_last_event_id(request.headers.get("last-event-id") or since)
     replayed: List[dict] = []
@@ -132,21 +109,7 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
             extra = extra.strip()
             if extra and extra not in default_channels:
                 default_channels.append(extra)
-
-        # A stream catch-up only makes sense for a client id the browser
-        # already had (nothing to "resume" for a brand-new tab) that this
-        # replica just does not recognise, with a bridge actually running
-        # and a since value shaped like the stream ids it hands out.
-        stream_replay = None
-        bridge = get_bridge() if client else None
-        if bridge is not None and isinstance(last_event_id, str):
-            stream_replay = await bridge.replay(last_event_id, default_channels, limit=MAX_REPLAY)
-
         client_id, _ = broker.open_client(default_channels)
-        if stream_replay is not None:
-            resumed = True
-            replayed = stream_replay
-            source = "stream"
 
     async def _generate():
         # Hand the client its id first so it can manage dynamic channels.

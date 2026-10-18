@@ -43,13 +43,13 @@ def test_the_language_of_a_line_is_told_from_its_text(text, fallback, expected):
 
 
 def test_a_language_with_its_own_voice_swaps_model_and_voice():
-    entry = {"provider": "hub-local", "model": "kokoro-v1.0", "options": {"voice": "af_heart"},
-             "languages": {"ru": {"model": "piper-ru_RU-irina-medium"}}}
-    picked, chosen = sl.pick(entry, "ru", "af_bella")
+    entry = {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "alloy"},
+             "languages": {"ru": {"model": "tts-1-hd"}}}
+    picked, chosen = sl.pick(entry, "ru", "nova")
     # Another model: the old model's voice goes with it, the page's too.
-    assert picked["model"] == "piper-ru_RU-irina-medium" and "voice" not in picked["options"] and chosen is None
-    same, chosen = sl.pick(entry, "en", "af_bella")
-    assert same is entry and chosen == "af_bella"
+    assert picked["model"] == "tts-1-hd" and "voice" not in picked["options"] and chosen is None
+    same, chosen = sl.pick(entry, "en", "nova")
+    assert same is entry and chosen == "nova"
 
 
 def test_a_cloud_language_names_another_voice_of_the_same_model():
@@ -125,15 +125,6 @@ def test_a_cloud_voice_takes_a_voice_per_language(monkeypatch):
     assert speech["languages"] == {"ru": {"voice": "alloy"}, "de": {"voice": "sage"}}
     with pytest.raises(setup_ops.SetupOpError):
         setup_ops.perform("voice_cloud", {"provider": "openai", "voices": {"ru": "nobody"}})
-
-
-def test_the_local_voice_names_a_voice_for_each_page_language():
-    labels = setup_ops._local_language_labels("kokoro")
-    assert labels["en"].startswith("Kokoro") and "Russian" in labels["ru"] and "German" in labels["de"]
-    # A voice that speaks them all needs no other.
-    assert set(setup_ops._local_language_labels("supertonic").values()) == {"Supertonic 3, ten voices in 31 languages "
-                                                                             "(Russian, German, English among them)"}
-
 
 def test_a_turns_language_is_told_once_from_what_it_said():
     sl.turns.clear()

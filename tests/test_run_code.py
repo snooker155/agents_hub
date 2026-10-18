@@ -38,15 +38,6 @@ def local(settings, no_docker, monkeypatch):
     return settings
 
 
-@pytest.fixture(autouse=True)
-def _no_environment(monkeypatch):
-    """None of these tests run inside an agent's environment fence unless a
-    test says otherwise."""
-    monkeypatch.delenv("AGENTS_HUB_ENVIRONMENT_ID", raising=False)
-    monkeypatch.delenv("AGENTS_HUB_NETWORK", raising=False)
-    monkeypatch.delenv("AGENTS_HUB_ALLOWED_HOSTS", raising=False)
-
-
 def _run(**kw):
     return rc.run_code.invoke(kw)
 
@@ -105,83 +96,6 @@ def test_mount_with_a_workspace_passes_it(settings, monkeypatch, tmp_path):
     monkeypatch.setattr(docker_mod.subprocess, "run", fake_run)
     _run(language="python", code="print(1)", mount_workspace=True)
     assert f"{tmp_path.resolve()}:/work:ro" in seen["cmd"]
-
-
-def test_a_limited_environment_relaxes_the_network(settings, monkeypatch):
-    """AGENTS_HUB_NETWORK=limited (set by environments/launch.py for the run
-    this tool executes inside) reaches the docker sandbox as a real
-    allowlisted network instead of the blanket "none" default."""
-    from environments import egress
-    from managers import container_manager as cm
-
-    monkeypatch.setenv("AGENTS_HUB_NETWORK", "limited")
-    monkeypatch.setenv("AGENTS_HUB_ALLOWED_HOSTS", "pypi.org, github.com")
-    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(egress, "enabled", lambda: True)
-    monkeypatch.setattr(egress, "port", lambda: 8099)
-    monkeypatch.setattr(egress, "register", lambda hosts, **kw: "tok-xyz")
-    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
-    seen = {}
-
-    def fake_run(cmd, **kw):
-        seen["cmd"] = cmd
-        return subprocess.CompletedProcess(cmd, 0, "ok\n", "")
-
-    monkeypatch.setattr(docker_mod.subprocess, "run", fake_run)
-    out = _run(language="python", code="print(1)")
-    assert "exit_code: 0" in out
-    joined = " ".join(seen["cmd"])
-    assert "--network agents-hub-egress" in joined
-    assert "HTTP_PROXY=http://tok-xyz@agents-hub-egress-gateway:8099" in joined
-
-
-def test_no_environment_keeps_network_none(settings, monkeypatch):
-    """Unchanged default: no environment (or one that never set
-    AGENTS_HUB_NETWORK) still gets the historical no-network sandbox."""
-    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    seen = {}
-
-    def fake_run(cmd, **kw):
-        seen["cmd"] = cmd
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    monkeypatch.setattr(docker_mod.subprocess, "run", fake_run)
-    _run(language="python", code="print(1)")
-    assert "--network none" in " ".join(seen["cmd"])
-
-
-def test_an_environments_sandbox_provider_is_honoured(settings, monkeypatch):
-    from environments.models import Environment
-
-    monkeypatch.setenv("AGENTS_HUB_ENVIRONMENT_ID", "env-1")
-    env = Environment(name="e2b-env", sandbox_provider="e2b")
-    monkeypatch.setattr("environments.service.get_environment", lambda eid: env)
-
-    class _Fake:
-        name = "e2b"
-
-        def is_available(self):
-            return True, ""
-
-        def run(self, request):
-            from sandbox.base import SandboxResult
-            return SandboxResult(exit_code=0, stdout="from e2b\n", provider="e2b")
-
-    from sandbox import registry
-    monkeypatch.setattr(registry, "get_provider", lambda name: _Fake() if name == "e2b" else pytest.fail(name))
-    out = _run(language="python", code="print(1)")
-    assert "runtime: e2b" in out and "from e2b" in out
-
-
-def test_an_unknown_environment_id_fails_open_to_the_default(settings, monkeypatch):
-    monkeypatch.setenv("AGENTS_HUB_ENVIRONMENT_ID", "gone")
-    monkeypatch.setattr("environments.service.get_environment",
-                        lambda eid: (_ for _ in ()).throw(RuntimeError("db down")))
-    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(docker_mod.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "ok\n", ""))
-    out = _run(language="python", code="print(1)")
-    assert "runtime: docker" in out and "exit_code: 0" in out
 
 
 # ── Images, parsing (re-exported from sandbox.docker) ───────────────────────
@@ -302,30 +216,6 @@ def test_run_code_with_the_local_fallback_is_run_shell(settings, monkeypatch):
     monkeypatch.setattr(settings, "code_runner_fallback", "local")
     assert grants_of("run_code") == grants_of("run_shell")
     assert check_combination(["run_code"]).rule_id == "lethal_trifecta"
-
-
-def test_run_code_with_a_limited_network_ingests_and_sends_but_reads_nothing(settings, monkeypatch):
-    """Inside a run whose environment has a limited network the snippet can
-    reach that environment's hosts, so it is classified like the web tools;
-    it loses the workspace mount, so it no longer reads private files, and
-    the tool set's own check catches an agent that also does."""
-    from tools.capabilities import CAN_EXFILTRATE, INGESTS_UNTRUSTED
-    monkeypatch.setenv("AGENTS_HUB_NETWORK", "limited")
-    assert grants_of("run_code") == frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE})
-    # Text in and data out with no private reads: a warning, not a block.
-    alone = check_combination(["run_code"])
-    assert alone.rule_id == "exfiltration_path" and alone.severity == "warn"
-    assert check_combination(["run_code", "read_file"]).rule_id == "lethal_trifecta"
-
-
-def test_a_limited_network_refuses_the_workspace_mount(settings, monkeypatch, tmp_path):
-    monkeypatch.setenv("AGENTS_HUB_NETWORK", "limited")
-    monkeypatch.setenv("AGENTS_HUB_ALLOWED_HOSTS", "pypi.org")
-    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(docker_mod.subprocess, "run",
-                        lambda cmd, **kw: pytest.fail("nothing may run with both"))
-    out = _run(language="python", code="print(1)", mount_workspace=True)
-    assert "either the workspace or the network" in out
 
 
 def test_run_code_grant_fails_closed(monkeypatch):

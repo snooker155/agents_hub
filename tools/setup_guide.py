@@ -47,7 +47,7 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
     """The person's guided setup of the hub: which steps are done, skipped or open,
     what comes next, why it matters and how you do it. `options` gives the choices
     for the next step (each connected provider's strongest, balanced and fastest
-    model, the cloud and local voices, the web search providers). Mark a step
+    model, the cloud voices, the web search providers). Mark a step
     skipped when the person does not want it, done when it is done in a way the hub
     cannot see, and finish when every step is done or skipped; dismiss when the
     person wants to stop. Neither works before the required steps (a model, the
@@ -61,7 +61,6 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
         if action == "options":
             return json_ok(setup_ops.options(), default=str)
         if action == "status":
-            setup_ops.advance_work(principal)
             g = guide.guide(principal)
             by_id = {s.id: s for s in guide.STEPS}
             if g["next"]:
@@ -76,36 +75,29 @@ def setup_guide(action: str = "status", step: Optional[str] = None) -> str:
 
 
 class SetupStepInput(BaseModel):
-    operation: str = Field(..., description="choose_model, voice_cloud, voice_local, local_set or seed_demo")
+    operation: str = Field(..., description="choose_model, voice_cloud or seed_demo")
     provider: Optional[str] = Field(None, description="choose_model, voice_cloud: the provider")
     model: Optional[str] = Field(None, description="choose_model: the model id from setup_guide options")
     voice: Optional[str] = Field(None, description="voice_cloud: one of the provider's voices")
-    speech: Optional[str] = Field(None, description="voice_local: a speech preset id from setup_guide options")
-    transcription: Optional[str] = Field(None, description="voice_local: whisper-small or whisper-turbo")
 
 
-def _call_args(provider=None, model=None, voice=None, speech=None, transcription=None) -> dict:
-    return {k: v for k, v in (("provider", provider), ("model", model), ("voice", voice), ("speech", speech),
-                              ("transcription", transcription)) if v}
+def _call_args(provider=None, model=None, voice=None) -> dict:
+    return {k: v for k, v in (("provider", provider), ("model", model), ("voice", voice)) if v}
 
 
 @tool("setup_step", args_schema=SetupStepInput)
 def setup_step(operation: str, provider: Optional[str] = None, model: Optional[str] = None,
-               voice: Optional[str] = None, speech: Optional[str] = None,
-               transcription: Optional[str] = None) -> str:
+               voice: Optional[str] = None) -> str:
     """Make one change of the hub's setup: choose_model (the default model for every
     workspace without its own), voice_cloud (the assistant hears and speaks with a
-    connected OpenAI or Google key), voice_local (it does so with the hub's own
-    runtime, downloaded in the background), local_set (the whole local setup in one go:
-    engine, a chat model sized to this machine, Whisper and Kokoro, as a background
-    job) or seed_demo (the demo workspace). Say in
+    connected OpenAI or Google key) or seed_demo (the demo workspace). Say in
     one sentence what will change, then call it: the person answers a card (or says
     yes) and only then it runs. Keys are never set here: use propose_connection with
     kind provider.
     """
     from common import setup_ops
     try:
-        return json_ok(setup_ops.perform(operation, _call_args(provider, model, voice, speech, transcription),
+        return json_ok(setup_ops.perform(operation, _call_args(provider, model, voice),
                                          principal=_principal()), default=str)
     except setup_ops.SetupOpError as exc:
         return json_err(str(exc), code=exc.code)

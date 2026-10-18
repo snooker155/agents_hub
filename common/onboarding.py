@@ -11,7 +11,7 @@ renders it as a compact block for the prompt.
 It mirrors what the first-run checklist in the dashboard ticks
 (``components/docs/OnboardingChecklist.jsx``: providers, workspaces, agents, a
 first chat) and adds what a newcomer reaches next: models enabled on the Models
-page, custom agents, tasks, channels, connections and watchers.
+page, custom agents, tasks and watchers.
 
 Two properties:
 
@@ -104,36 +104,6 @@ def _tasks(workspace: Optional[str]) -> int:
     return int(total)
 
 
-def _channels(workspace: Optional[str] = None) -> Dict[str, List[str]]:
-    """The chat channels in effect in ``workspace``: its own bot, else the
-    default workspace's (connectors/channels/store.py)."""
-    from connectors.channels import registry as channels
-    from connectors.channels.store import in_workspace
-
-    configured, enabled = [], []
-    for spec in channels.all_channels():
-        try:
-            if in_workspace(workspace, spec.store.is_configured, *spec.service.required_fields):
-                configured.append(spec.name)
-            if in_workspace(workspace, spec.store.is_enabled):
-                enabled.append(spec.name)
-        except Exception:  # noqa: BLE001 - one broken channel store must not hide the rest
-            log.debug("channel %s unreadable", spec.name, exc_info=True)
-    return {"configured": configured, "enabled": enabled}
-
-
-def _connections(workspace: Optional[str]) -> int:
-    from connections import store
-
-    return len(store.list_connections(_scope(workspace)))
-
-
-def _databases(workspace: Optional[str]) -> int:
-    from connectors.databases.store import list_connections
-
-    return len(list_connections(_scope(workspace)))
-
-
 def _watchers(workspace: Optional[str]) -> int:
     from watchers.service import list_watchers
 
@@ -147,13 +117,10 @@ def _mcp_servers(workspace: Optional[str]) -> int:
 
 
 def _accounts() -> List[str]:
-    """Credential connectors with saved credentials (Google, Microsoft, Jira,
-    Notion...). Databases are counted separately and always read configured
-    on their own, so they are left out here."""
+    """Credential connectors with saved credentials (Jira)."""
     from connectors import credentials
 
-    return [spec.name for spec in credentials.all_specs()
-            if spec.name != "databases" and spec.is_configured()]
+    return [spec.name for spec in credentials.all_specs() if spec.is_configured()]
 
 
 def _skills(workspace: Optional[str]) -> int:
@@ -177,9 +144,6 @@ def hub_snapshot(workspace: Optional[str] = None, *, tour_done: Optional[bool] =
         "workspaces": _safe(_workspaces),
         "chats": _safe(lambda: _chats(workspace)),
         "tasks": _safe(lambda: _tasks(workspace)),
-        "channels": _safe(lambda: _channels(workspace)),
-        "connections": _safe(lambda: _connections(workspace)),
-        "databases": _safe(lambda: _databases(workspace)),
         "watchers": _safe(lambda: _watchers(workspace)),
         "mcp_servers": _safe(lambda: _mcp_servers(workspace)),
         "accounts": _safe(_accounts),
@@ -203,9 +167,6 @@ def missing_steps(snap: Dict[str, Any]) -> List[str]:
         out.append("no custom agent yet: only the shipped system agents exist")
     if snap.get("tasks") == 0:
         out.append("no task yet in this workspace")
-    channels = snap.get("channels")
-    if channels is not None and not channels.get("configured"):
-        out.append("no channel connected (Slack, Telegram, Discord, Teams, mail)")
     if snap.get("tour_done") is False:
         out.append("the welcome tour has not been taken")
     return out
@@ -219,7 +180,6 @@ def render_snapshot(snap: Dict[str, Any]) -> List[str]:
     """The snapshot as prompt lines: what is configured, then what is missing."""
     providers = snap.get("providers")
     agents = snap.get("agents")
-    channels = snap.get("channels")
     models = snap.get("enabled_models")
 
     lines: List[str] = []
@@ -248,14 +208,6 @@ def render_snapshot(snap: Dict[str, Any]) -> List[str]:
     lines.append(f"- Workspaces: {_fmt(snap.get('workspaces'))}")
     lines.append(f"- Chats in this workspace: {_fmt(snap.get('chats'))}")
     lines.append(f"- Tasks in this workspace: {_fmt(snap.get('tasks'))}")
-    if channels is None:
-        lines.append("- Channels: unknown")
-    else:
-        lines.append(
-            f"- Channels configured: {', '.join(channels.get('configured') or []) or 'none'}; "
-            f"enabled: {', '.join(channels.get('enabled') or []) or 'none'}")
-    lines.append(f"- Connections (inbound data feeds): {_fmt(snap.get('connections'))}")
-    lines.append(f"- Database connections: {_fmt(snap.get('databases'))}")
     lines.append(f"- Watchers: {_fmt(snap.get('watchers'))}")
     lines.append(f"- MCP servers in this workspace: {_fmt(snap.get('mcp_servers'))}")
     accounts = snap.get("accounts")

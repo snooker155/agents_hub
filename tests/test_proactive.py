@@ -2,7 +2,7 @@
 
 Profile validation and the schedule it amounts to; the heartbeat job the
 profile owns in plans/; the gates a tick passes (quiet hours, busy, tick
-limit, daily budget); the structured outcome written back onto the journal
+limit); the structured outcome written back onto the journal
 when the tick's run finishes, with its notification rules and the run-error
 counter; and the routes of the Pulse tab. plans.service's singletons are
 pointed at throwaway stores as in test_plan_fires.py, and the task launch is
@@ -90,10 +90,10 @@ def _enable(agent_id="watcher", **extra):
 # -------------------- profile --------------------
 
 def test_defaults_and_normalization():
-    p = pp.normalize_profile({"enabled": "yes", "interval_minutes": "30", "notify": ["Telegram", "dashboard"]})
+    p = pp.normalize_profile({"enabled": "yes", "interval_minutes": "30", "notify": ["Webhook", "dashboard"]})
     assert p["enabled"] is True
     assert p["interval_minutes"] == 30
-    assert p["notify"] == ["telegram", "dashboard"]
+    assert p["notify"] == ["webhook", "dashboard"]
     assert p["quiet_hours"] == {"from": "", "to": ""}
     assert p["job_id"] is None
 
@@ -118,7 +118,6 @@ def test_explicit_cron_wins_and_is_validated():
     ({"quiet_hours": {"from": "22:00", "to": ""}}, "both"),
     ({"quiet_hours": {"from": "25:00", "to": "07:00"}}, "HH:MM"),
     ({"quiet_hours": {"from": "07:00", "to": "07:00"}}, "differ"),
-    ({"daily_budget_usd": -1}, "daily_budget_usd"),
     ({"max_runs_per_day": -3}, "max_runs_per_day"),
     ({"notify": ["pigeon"]}, "notify"),
     ({"triggers": [{"kind": "carrier"}]}, "triggers"),
@@ -274,19 +273,6 @@ def test_tick_limit_per_day(store, agent, launched, monkeypatch):
     third = ps.fire_job(_due(job.id))
     assert third["skipped"] == "rate"
     assert len(launched) == 2
-
-
-def test_daily_budget_from_the_journal(store, agent, launched, monkeypatch):
-    job = _due(_enable(daily_budget_usd=1.0)["job_id"])
-    monkeypatch.setattr(svc, "_task_status", lambda tid: "resolved")
-    ps.fire_job(job)
-    row = ps.fire_store.list_for_job(job.id)[0]
-    ps.fire_store.update(row.id, outcome="acted", cost_usd=1.25)
-
-    result = ps.fire_job(_due(job.id))
-    assert result["skipped"] == "budget"
-    usage = svc.daily_usage(ps.get_job(job.id), svc.get_profile("watcher"))
-    assert usage["runs"] == 1 and usage["spent_usd"] == 1.25
 
 
 def test_missing_agent_pauses_the_pulse(store, launched, notifications):
@@ -475,7 +461,7 @@ def test_route_put_enables_and_lists_the_job(client, agent):
     resp = client.put("/api/agents/watcher/proactive", json={
         "enabled": True, "interval_minutes": 30, "brief": "check mail",
         "quiet_hours": {"from": "22:00", "to": "07:00"}, "timezone": "Europe/Berlin",
-        "daily_budget_usd": 2, "notify": ["dashboard", "telegram"],
+        "notify": ["dashboard", "webhook"],
     })
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -485,7 +471,6 @@ def test_route_put_enables_and_lists_the_job(client, agent):
     assert body["job"]["cron"] == "*/30 * * * *"
     assert body["job"]["timezone"] == "Europe/Berlin"
     assert body["schedule"] == "every 30 minutes"
-    assert body["usage"]["daily_budget_usd"] == 2.0
 
 
 def test_route_put_rejects_bad_values(client, agent):

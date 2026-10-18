@@ -86,8 +86,6 @@ export default {
     connect: 'Connect',
     connecting: 'Connecting…',
     adminOnly: 'Ask your administrator to connect a model.',
-    runtimeHint: "The hub's own runtime, a model downloaded onto this machine, is set on the Models page, Local tab.",
-    runtimeLink: 'Open the Local tab',
     providers: {
       openai: 'OpenAI',
       anthropic: 'Anthropic',

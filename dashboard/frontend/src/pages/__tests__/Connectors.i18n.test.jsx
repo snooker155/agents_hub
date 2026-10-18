@@ -7,74 +7,29 @@ import { I18nProvider } from '../../i18n';
 import { StreamContext } from '../../components/stream';
 import { WorkspaceContext } from '../../components/workspace';
 
-// Telegram and Blender follow live `X.changed` events instead of polling
-// (see useLiveRefetch), which needs a stream context above them; this test
-// only renders their static shape, so a stream that never delivers anything
-// is enough.
 const silentStream = { connected: true, on: () => () => {}, acquireChannel: () => () => {}, onRefetch: () => () => {} };
 
-// Telegram, Git and Blender used to be tabs on the Settings page, and this is
-// the coverage that came with them: every tab, in every language, rendering its
-// real body rather than a spinner, with no unresolved i18n key leaking through.
-//
-// It is also what proves the move itself: these components were cut out of a
-// 1800-line page, so a lost import shows up here as a tab that will not render.
+// The connector tabs, in every language, each rendering its real body rather
+// than a spinner, with no unresolved i18n key leaking through.
 
 const ok = (data) => Promise.resolve({ data });
 
 vi.mock('../../api', () => ({
-  getTelegramConfig: () => ok({ enabled: false, has_token: false, allowed_users: [], source: 'here' }),
-  updateTelegramConfig: () => ok({}),
-  deleteTelegramConfig: () => ok({}),
-  testTelegramToken: () => ok({ ok: true }),
-  getTelegramStatus: () => ok({ running: false }),
-  getTelegramBindings: () => ok([]),
-  deleteTelegramBinding: () => ok({}),
   getGitConfig: () => ok({
-    github: { has_token: false }, gitlab: { has_token: false, base_url: '' },
-    sources: { github: 'here', gitlab: 'here', bitbucket: 'here', gitea: 'here' },
+    gitlab: { has_token: false, base_url: '' },
+    sources: { gitlab: 'here' },
   }),
   updateGitConfig: () => ok({}),
   deleteGitConfig: () => ok({}),
   testGitConnection: () => ok({ ok: true }),
-  getBlenderConfig: () => ok({ enabled: false, binary_path: '', max_daemons: 2 }),
-  updateBlenderConfig: () => ok({}),
-  testBlenderBinary: () => ok({ ok: true, version: '4.2' }),
-  getBlenderDaemons: () => ok({ daemons: [], running: 0, max_daemons: 2 }),
-  stopBlenderDaemon: () => ok({}),
-  stopAllBlenderDaemons: () => ok({}),
-  // The GitHub App card (components/connectors/GitHubAppCard.jsx).
-  getGitHubApp: () => ok({ configured: false, installations: [] }),
-  syncGitHubApp: () => ok({ installations: [] }),
-  setWorkspaceGitHubInstallation: () => ok({}),
-  getWorkspaceGithubInstallation: () => ok({ own: null, effective: null, source: 'default' }),
   getWorkspaces: () => ok([]),
   getAgents: () => ok([]),
   listFlows: () => ok([]),
-  // The generic chat channels and credential connectors.
-  listChannels: () => ok([{ name: 'slack', fields: [{ key: 'bot_token', secret: true, kind: 'password', required: true, options: [] }], has_loop: true }]),
-  getChannelConfig: () => ok({ config: { has_bot_token: false }, enabled: false, configured: false, allowed: [], running: false, has_loop: true, source: 'here' }),
-  updateChannelConfig: () => ok({}),
-  deleteChannelConfig: () => ok({}),
-  testChannel: () => ok({ ok: true }),
-  getChannelStatus: () => ok({ running: false }),
-  getChannelBindings: () => ok([]),
-  createChannelBinding: () => ok({}),
-  deleteChannelBinding: () => ok({}),
   listConnectors: () => ok([{ name: 'jira', fields: [{ key: 'base_url', secret: false, kind: 'text', required: true, options: [] }] }]),
   getConnectorConfig: () => ok({ config: {}, configured: false, source: 'here' }),
   updateConnectorConfig: () => ok({}),
   deleteConnectorConfig: () => ok({}),
   testConnector: () => ok({ ok: true }),
-  googleOAuthStartUrl: () => '/api/google/oauth/start',
-  disconnectGoogle: () => ok({}),
-  getGmailStatus: () => ok({ connected: false }),
-}));
-vi.mock('../../api/databases', () => ({
-  listDbConnections: () => ok([]),
-  createDbConnection: () => ok({}),
-  deleteDbConnection: () => ok({}),
-  testDbConnection: () => ok({ ok: true }),
 }));
 // The "Proposed by agents" panel (connection-proposals-contract.md): no
 // proposals here, so the panel renders nothing and every tab's text stays
@@ -89,9 +44,8 @@ const EVIDENCE = {
   de: /\b(der|die|das|und|ein|eine|mit|für)\b/,
 };
 
-// [label, index in the tab strip]: Telegram, the four chat channels, git, the
-// trackers, Microsoft, Blender, webhooks.
-const TABS = [['Telegram', 0], ['Slack', 1], ['Discord', 2], ['Teams', 3], ['Mail', 4], ['GitHub', 5], ['Trackers', 6], ['Google', 7], ['Microsoft', 8], ['Knowledge', 9], ['Databases', 10], ['Blender', 11]];
+// [label, index in the tab strip]: git, trackers, webhooks.
+const TABS = [['GitLab', 0], ['Trackers', 1], ['Webhooks', 2]];
 
 function show() {
   return render(
@@ -131,10 +85,10 @@ describe('Connectors', () => {
     });
   }
 
-  it('opens on Telegram, which is the one most installs configure', async () => {
+  it('opens on Git', async () => {
     const { container, unmount } = show();
     await waitFor(() => expect(container.querySelector('section')).toBeTruthy());
-    expect(container.textContent).toMatch(/Telegram/);
+    expect(container.textContent).toMatch(/Git/);
     unmount();
   });
 

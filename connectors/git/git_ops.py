@@ -41,7 +41,7 @@ class GitOpsError(Exception):
 
 def _auth_args(provider: Optional[str], workspace: Optional[str] = None) -> list[str]:
     if workspace is not None:
-        from connectors.channels.store import in_workspace
+        from connectors.store import in_workspace
         return in_workspace(workspace, _auth_args, provider)
     if provider in store.PROVIDERS and store.has_token(provider):
         try:

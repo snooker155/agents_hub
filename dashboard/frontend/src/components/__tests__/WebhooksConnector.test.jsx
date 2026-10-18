@@ -56,27 +56,27 @@ describe('WebhooksConnector alert rules', () => {
     });
   });
 
-  it('shows the two SLO rule kinds with no dollar threshold, on the table and in the form', async () => {
+  it('shows a run_failed rule with no dollar threshold, on the table and in the form', async () => {
     api.listNotifyRules.mockResolvedValue({ data: { rules: [
-      { id: 'r4', kind: 'slo_start_latency', channels: ['dashboard'], enabled: true, threshold_usd: 0, state: null },
+      { id: 'r4', kind: 'run_failed', channels: ['dashboard'], enabled: true, threshold_usd: 0, state: null },
     ] } });
-    api.createNotifyRule.mockResolvedValue({ data: { rule: { id: 'r5', kind: 'slo_error_rate' } } });
+    api.createNotifyRule.mockResolvedValue({ data: { rule: { id: 'r5', kind: 'run_failed' } } });
     render(<WebhooksConnector />);
-    await screen.findAllByText('connectors.webhooks.ruleKinds.slo_start_latency');
-    // The existing slo_start_latency row reads "—", not a dollar amount. The
-    // same text also appears as an <option> in the kind picker below, so the
-    // match with a <tr> ancestor is the table row.
-    const row = screen.getAllByText('connectors.webhooks.ruleKinds.slo_start_latency')
+    await screen.findAllByText('connectors.webhooks.ruleKinds.run_failed');
+    // The existing row reads "—", not a dollar amount. The same text also
+    // appears as an <option> in the kind picker below, so the match with a
+    // <tr> ancestor is the table row.
+    const row = screen.getAllByText('connectors.webhooks.ruleKinds.run_failed')
       .map((el) => el.closest('tr')).find(Boolean);
     expect(row).toHaveTextContent('—');
 
     const kindSelect = screen.getAllByRole('combobox').find((el) =>
-      [...el.options].some((o) => o.value === 'slo_error_rate'));
-    fireEvent.change(kindSelect, { target: { value: 'slo_error_rate' } });
+      [...el.options].some((o) => o.value === 'run_failed'));
+    fireEvent.change(kindSelect, { target: { value: 'run_failed' } });
 
     fireEvent.click(screen.getByRole('button', { name: /connectors.webhooks.addRule/ }));
     await waitFor(() => expect(api.createNotifyRule).toHaveBeenCalled());
     const [payload] = api.createNotifyRule.mock.calls[0];
-    expect(payload).toMatchObject({ kind: 'slo_error_rate', threshold_usd: 0 });
+    expect(payload).toMatchObject({ kind: 'run_failed', threshold_usd: 0 });
   });
 });

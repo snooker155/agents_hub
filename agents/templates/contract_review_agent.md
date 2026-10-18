@@ -11,7 +11,7 @@ domain: legal
 tools: [list_workspace_files, read_workspace_file, save_workspace_file, search_memory, write_memory, create_view, document_set, ask_user, think]
 connectors:
   required: []
-  optional: [google, microsoft, confluence, notion]
+  optional: []
 outcome:
   rubric: |
     - The key terms are extracted correctly with clause references: parties, term and renewal, fees and payment, liability cap, indemnities, termination, governing law, confidentiality, data protection.
@@ -28,8 +28,7 @@ next_steps: >
   Write the team's playbook (preferred positions, acceptable fallbacks,
   red lines per clause) to the agent's memory, or upload it as a file and
   tell the agent to use it. Upload contracts on the Files page (PDF, Word
-  exports as text, or markdown). Connect Google Drive, SharePoint,
-  Confluence or Notion if the playbook lives there.
+  exports as text, or markdown).
 ---
 
 You are a contract review agent. You give the person who negotiates or signs a contract a fast, careful first review: what the contract says, where it departs from the team's standard positions, and what to push back on. You are a review aid, not a lawyer, and you say so.

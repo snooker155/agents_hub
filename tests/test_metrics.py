@@ -6,9 +6,8 @@ that backs ``GET /metrics``. Tested directly against the store modules
 """
 from __future__ import annotations
 
-from common import leases, metrics, run_queue
+from common import metrics
 from managers import run_manager as rm
-from notify import outbound
 from providers import catalog as model_catalog
 
 
@@ -67,64 +66,19 @@ def test_render_reports_tokens_and_cost_per_workspace():
     assert 'agents_hub_cost_usd_total{workspace="acme"} 10.0' in text
 
 
-def test_render_reports_queue_rows_by_status():
-    run_queue.enqueue("q1", "task", {})
-    run_queue.enqueue("q2", "task", {}, priority=1)
-    text = metrics.render()
-    assert 'agents_hub_run_queue{status="queued"} 2' in text
-    assert 'agents_hub_run_queue{status="done"} 0' in text
-
-
-def test_render_reports_outbox_pending_and_dead_counts():
-    outbound.enqueue({"kind": "webhook", "url": "http://example.test"}, {"type": "t"})
-    text = metrics.render()
-    assert 'agents_hub_outbox{state="pending"} 1' in text
-    assert 'agents_hub_outbox{state="dead"} 0' in text
-
-
-def test_render_reports_lease_rows():
-    leases.set_owner_id("replica-a")
-    try:
-        leases.acquire("scheduler", "replica-a", 60)
-        text = metrics.render()
-        assert 'agents_hub_lease_held{role="scheduler",owner="replica-a"} 1' in text
-        assert 'agents_hub_lease_age_seconds{role="scheduler"}' in text
-    finally:
-        leases.set_owner_id(None)
-
-
-def test_render_reports_an_expired_lease_as_not_held():
-    from datetime import datetime, timedelta, timezone
-    from common import db
-
-    leases.set_owner_id("replica-a")
-    try:
-        leases.acquire("scheduler", "replica-a", 60)
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with db.transaction() as conn:
-            conn.execute("UPDATE service_leases SET until = ? WHERE role = ?",
-                        (past, "scheduler"))
-        text = metrics.render()
-        assert 'agents_hub_lease_held{role="scheduler",owner="replica-a"} 0' in text
-    finally:
-        leases.set_owner_id(None)
-
-
 def test_render_includes_help_and_type_for_every_documented_metric():
     text = metrics.render()
     for name in (
-        "agents_hub_runs_total", "agents_hub_runs_running", "agents_hub_run_queue",
-        "agents_hub_run_queue_oldest_seconds", "agents_hub_outbox",
-        "agents_hub_lease_age_seconds", "agents_hub_lease_held",
+        "agents_hub_runs_total", "agents_hub_runs_running",
         "agents_hub_tokens_total", "agents_hub_database_up", "agents_hub_info",
     ):
         assert f"# HELP {name} " in text
         assert f"# TYPE {name} gauge" in text
 
 
-def test_render_labels_info_with_role_and_instance():
+def test_render_labels_info_with_the_instance():
     text = metrics.render()
-    assert 'agents_hub_info{role="all",instance="' in text
+    assert 'agents_hub_info{instance="' in text
 
 
 # ── the operator metrics: finished runs, models, durations, tools ───────────

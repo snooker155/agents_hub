@@ -1,11 +1,9 @@
 """
 Periodic state maintenance: run retention and orphan-file pruning.
 
-`.agents_hub` grows without bound — run records, per-run structured payloads,
+`.agents_hub` grows without bound: run records, per-run structured payloads,
 run logs and process sidecars accumulate forever. This module trims terminal
-run records older than ``run_retention_days``, trims each external connection
-back to its own run cap (``connections.retention``, a count rather than an age,
-because a reporting graph outgrows an age limit), deletes the on-disk log/
+run records older than ``run_retention_days``, deletes the on-disk log/
 sidecar files left behind by any deleted or long-gone run, and prunes the
 scheduler's firing journal (``plans.storage.FireStore``) past
 ``AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS`` (default 90 days, 0 disables it).
@@ -75,9 +73,6 @@ def prune_old_runs(retention_days: int) -> int:
             lf = r["log_file"]
             if lf:
                 try:
-                    # Local file and any mirrored copy (common/blobs.py): a
-                    # pruned run's log must not linger in the object store
-                    # either.
                     from common import blobs
                     blobs.delete(blobs.rel(lf))
                 except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
@@ -176,30 +171,6 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     pruned_runs = prune_old_runs(settings.run_retention_days)
     pruned_files = prune_orphan_files()
     summary = {"pruned_runs": pruned_runs, "pruned_files": pruned_files}
-    # Members that stopped beating a day ago are history, not the map.
-    try:
-        from common import members
-        summary["pruned_members"] = members.prune()
-    except Exception:
-        log.exception("member pruning failed")
-        summary["pruned_members"] = 0
-    # Connections are capped by run *count*, not by age: a graph reporting a few
-    # hundred runs an hour outgrows a day-based limit long before the limit
-    # notices. Isolated like the views pass below, so a connection store that
-    # cannot be read never blocks run and file pruning.
-    try:
-        from connections.retention import prune_all
-        summary.update(prune_all())
-    except Exception:
-        log.exception("connection retention failed")
-    # OTLP traces whose root never arrived, on a connection that has since gone
-    # quiet. A connection still exporting clears its own on its next request;
-    # this is the backstop for the one that stopped exporting altogether.
-    try:
-        from connections.otel import flush_idle
-        summary.update(flush_idle())
-    except Exception:
-        log.exception("otel trace flush failed")
     # Views retention: bound long op logs and drop orphan view dirs. Isolated so
     # a views failure never blocks run/file pruning.
     try:
@@ -231,14 +202,6 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("fire journal pruning failed")
         summary["pruned_fires"] = 0
-    # Run tokens (common/run_tokens.py) a week past their expiry: they already
-    # authenticate nothing, the rows only grow the table.
-    try:
-        from common import run_tokens
-        summary["pruned_run_tokens"] = run_tokens.prune(7)
-    except Exception:
-        log.exception("run token pruning failed")
-        summary["pruned_run_tokens"] = 0
     # A proactive agent's quiet ticks (proactive/service.py): rows older than
     # AGENTS_HUB_HEARTBEAT_COMPACT_DAYS fold into one counted row per day and
     # outcome, so a five-minute pulse does not keep 288 identical rows a day
@@ -269,12 +232,9 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("tool policy decision pruning failed")
         summary["pruned_tool_decisions"] = 0
-    if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
-            or summary.get("pruned_connection_runs"):
-        log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "
-                 "%d view dir(s)",
-                 pruned_runs, summary.get("pruned_connection_runs", 0), pruned_files,
-                 summary.get("pruned_view_dirs", 0))
+    if pruned_runs or pruned_files or summary.get("pruned_view_dirs"):
+        log.info("maintenance: pruned %d run(s), %d orphan file(s), %d view dir(s)",
+                 pruned_runs, pruned_files, summary.get("pruned_view_dirs", 0))
     return summary
 
 

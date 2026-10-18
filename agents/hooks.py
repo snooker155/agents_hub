@@ -128,9 +128,8 @@ def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
     before is reported (:func:`ignored_hooks_file`) and can be imported by the
     owner (``POST /api/workspaces/{name}/policy/import-hooks-file``).
 
-    In an isolated workspace (common/isolation.py) an ``http`` hook never
-    runs either: it sends the call out. Returns ``{}`` for anything unreadable
-    or malformed: a broken config must not stop every agent in the workspace.
+    Returns ``{}`` for anything unreadable or malformed: a broken config must
+    not stop every agent in the workspace.
     """
     from tools.approval import workspace_name
     ws = workspace_name(workspace)
@@ -151,17 +150,7 @@ def load_hooks(workspace: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
             _warn_ignored_file(ws)
         return {}
 
-    events = normalize_events(raw)
-    try:
-        from common import isolation
-        isolated = isolation.is_isolated(ws)
-    except Exception:  # noqa: BLE001 - an unreadable workspace is treated as isolated
-        isolated = True
-    if isolated:
-        return {event: [h for h in entries
-                        if str(h.get("type") or "command").strip().lower() != "http"]
-                for event, entries in events.items()}
-    return events
+    return normalize_events(raw)
 
 
 _WARNED_FILES: set = set()

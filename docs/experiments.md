@@ -45,8 +45,7 @@ deterministic pick on a routing key:
   arm;
 - every other run uses its run id.
 
-The same key always lands on the same arm for a given experiment, on every
-replica. Eval and replay runs are never routed, and neither is any run while
+The same key always lands on the same arm for a given experiment. Eval and replay runs are never routed, and neither is any run while
 the experiment is paused.
 
 The factory then builds the agent from the arm's snapshot: its instructions,

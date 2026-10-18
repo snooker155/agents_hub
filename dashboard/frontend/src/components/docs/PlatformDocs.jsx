@@ -1,7 +1,7 @@
 /**
  * Docs sections for planning, teams, evals, models, memory and platform services.
  */
-import { GitBranch, Send } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { CorpusRefs } from './CorpusDocs';
 import { Callout, CodeBlock, H2, H3, P, Rich } from './DocsPrimitives';
@@ -179,8 +179,6 @@ export function ConnectorsDoc() {
     <div>
       <H2>{t('docs.connectors')}</H2>
       <P><Rich>{t('docs.connectorsDoc.lead')}</Rich></P>
-      <H3><Send className="inline w-4 h-4 text-sky-500 mr-1" /> {t('docs.telegram')}</H3>
-      <P><Rich>{t('docs.connectorsDoc.telegram')}</Rich></P>
       <H3><GitBranch className="inline w-4 h-4 text-orange-500 mr-1" /> {t('docs.git')}</H3>
       <P><Rich>{t('docs.connectorsDoc.git')}</Rich></P>
       <H3>{t('docs.otherThingsConfiguredInSettings')}</H3>

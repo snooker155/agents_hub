@@ -1,5 +1,5 @@
 """
-tracker_* tools: read and write Jira/Linear issues from an agent run.
+tracker_* tools: read and write Jira issues from an agent run.
 
 Mirrors tools/git_publish.py's shape (one JSON-returning @tool per action,
 project resolution by id or unique name) over connectors/trackers instead of
@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-_PROVIDERS = ("jira", "linear")
+_PROVIDERS = ("jira",)
 
 
 def _ok(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -32,20 +32,19 @@ def _err(message: str) -> Dict[str, Any]:
 
 
 def _not_configured(provider: str) -> Dict[str, Any]:
-    label = "Jira" if provider == "jira" else "Linear" if provider == "linear" else provider
+    label = "Jira" if provider == "jira" else provider
     return _err(f"{label} is not configured on the Connectors page")
 
 
 def _check_provider(provider: str) -> Optional[str]:
     if (provider or "").strip().lower() not in _PROVIDERS:
-        return f"Unknown tracker provider: {provider!r}. Use 'jira' or 'linear'."
+        return f"Unknown tracker provider: {provider!r}. Use 'jira'."
     return None
 
 
 def _is_configured(provider: str) -> bool:
-    from connectors.trackers import JIRA, LINEAR
-    spec = JIRA if provider == "jira" else LINEAR
-    return spec.is_configured()
+    from connectors.trackers import JIRA
+    return JIRA.is_configured()
 
 
 def _resolve_project(ref: str):
@@ -60,15 +59,15 @@ def _resolve_project(ref: str):
 # ── tracker_list_issues ──────────────────────────────────────────────────
 
 class TrackerListIssuesInput(BaseModel):
-    provider: str = Field(..., description="Tracker provider: jira or linear")
-    remote_id: str = Field(..., description="Jira project key or Linear team key")
+    provider: str = Field(..., description="Tracker provider: jira")
+    remote_id: str = Field(..., description="Jira project key")
     state: str = Field("open", description="open, closed or all")
     limit: int = Field(50, description="Maximum number of issues to return")
 
 
 @tool("tracker_list_issues", args_schema=TrackerListIssuesInput)
 def tracker_list_issues(provider: str, remote_id: str, state: str = "open", limit: int = 50) -> str:
-    """List issues from a Jira project or a Linear team."""
+    """List issues from a Jira project."""
     from connectors.trackers.providers import TrackerError, get_provider
 
     bad = _check_provider(provider)
@@ -87,7 +86,7 @@ def tracker_list_issues(provider: str, remote_id: str, state: str = "open", limi
 # ── tracker_get_issue ────────────────────────────────────────────────────
 
 class TrackerGetIssueInput(BaseModel):
-    provider: str = Field(..., description="Tracker provider: jira or linear")
+    provider: str = Field(..., description="Tracker provider: jira")
     key: str = Field(..., description="Issue key, e.g. PROJ-12 or ENG-123")
 
 
@@ -131,7 +130,7 @@ def tracker_sync(project: str) -> str:
         return json.dumps(_err(f"Project {proj.name!r} has no tracker configured"))
     # The sync uses the project's workspace's tracker connector (its own, else
     # the default's), so that is the one that must be configured.
-    from connectors.channels.store import in_workspace
+    from connectors.store import in_workspace
     if not in_workspace(getattr(proj, "workspace", None) or None, _is_configured, provider):
         return json.dumps(_not_configured(provider))
     try:
@@ -144,7 +143,7 @@ def tracker_sync(project: str) -> str:
 # ── tracker_comment ──────────────────────────────────────────────────────
 
 class TrackerCommentInput(BaseModel):
-    provider: str = Field(..., description="Tracker provider: jira or linear")
+    provider: str = Field(..., description="Tracker provider: jira")
     key: str = Field(..., description="Issue key, e.g. PROJ-12 or ENG-123")
     text: str = Field(..., description="Comment text")
 
@@ -170,7 +169,7 @@ def tracker_comment(provider: str, key: str, text: str) -> str:
 # ── tracker_transition ───────────────────────────────────────────────────
 
 class TrackerTransitionInput(BaseModel):
-    provider: str = Field(..., description="Tracker provider: jira or linear")
+    provider: str = Field(..., description="Tracker provider: jira")
     key: str = Field(..., description="Issue key, e.g. PROJ-12 or ENG-123")
     status: str = Field(..., description="Target status name, e.g. 'In Progress' or 'Done'")
 
@@ -196,8 +195,8 @@ def tracker_transition(provider: str, key: str, status: str) -> str:
 # ── tracker_create_issue ─────────────────────────────────────────────────
 
 class TrackerCreateIssueInput(BaseModel):
-    provider: str = Field(..., description="Tracker provider: jira or linear")
-    remote_id: str = Field(..., description="Jira project key or Linear team key")
+    provider: str = Field(..., description="Tracker provider: jira")
+    remote_id: str = Field(..., description="Jira project key")
     title: str = Field(..., description="Issue title / summary")
     body: str = Field("", description="Issue description")
     labels: Optional[List[str]] = Field(None, description="Labels to attach")
@@ -206,7 +205,7 @@ class TrackerCreateIssueInput(BaseModel):
 @tool("tracker_create_issue", args_schema=TrackerCreateIssueInput)
 def tracker_create_issue(provider: str, remote_id: str, title: str, body: str = "",
                           labels: Optional[List[str]] = None) -> str:
-    """Create a new issue in a Jira project or a Linear team."""
+    """Create a new issue in a Jira project."""
     from connectors.trackers.providers import TrackerError, get_provider
 
     bad = _check_provider(provider)

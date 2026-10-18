@@ -7,7 +7,7 @@ lookup working; this module rewrites what an install has stored, so the old id
 stops spreading: the registry record itself, other agents' ``delegates`` and
 ``handoffs``, workspace metadata (``allowed_agents``, ``default_chat_agent``,
 per agent overrides and memory switches keyed by agent id), flows, scheduled
-jobs, watchers, channels, teams, loops, scenarios, eval sets, live instances,
+jobs, watchers, teams, loops, scenarios, eval sets, live instances,
 services, widgets and their open threads, open experiments, consent settings
 and the agent's version history.
 
@@ -36,11 +36,12 @@ log = logging.getLogger(__name__)
 #: history and keeps the id it was written with.
 CONFIG_STORES: Tuple[str, ...] = (
     "agents", "workspaces", "flows", "flow_entities", "plans", "watchers",
-    "guardrails", "telegram", "environments", "project_deployments", "connections",
+    "guardrails", "environments",
     "git_connectors", "tool_policy_decisions", "procedures", "user_context",
 )
-#: Collections named by prefix: one per chat channel (connectors/channels/store.py).
-CONFIG_STORE_PREFIXES: Tuple[str, ...] = ("channel_",)
+#: Collections named by prefix. None today: the connector documents
+#: (``channel_<name>``, connectors/store.py) hold tokens, never an agent id.
+CONFIG_STORE_PREFIXES: Tuple[str, ...] = ()
 
 
 class _Table:

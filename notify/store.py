@@ -10,17 +10,16 @@ Two lists live here, under separate metadata keys.
 ``notify_endpoints``
     Where an outbound event can be delivered::
 
-        {"id", "kind": "webhook"|"slack", "url", "secret" (webhook only),
+        {"id", "kind": "webhook", "url", "secret",
          "events": [...], "enabled"}
 
 ``alert_rules``
     When a run or the workspace's spend should raise a notification on its
     own, without an agent or a person asking for it::
 
-        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over"|"online_eval"
-               |"slo_start_latency"|"slo_error_rate",
+        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over"|"online_eval",
          "threshold_usd", "agent_id" (optional filter),
-         "channels": ["dashboard", "telegram", "slack", "webhook"], "enabled",
+         "channels": ["dashboard", "webhook"], "enabled",
          "last_fired_date", "state"}
 
     An ``online_eval`` rule also carries ``sample_rate`` (0..1), ``graders``
@@ -30,16 +29,6 @@ Two lists live here, under separate metadata keys.
     ``rubric`` for the graders that read them; see ``evals/online.py``, whose
     ``normalize_rule_fields`` validates every one of them on create and
     update.
-
-    ``slo_start_latency`` and ``slo_error_rate`` watch the hub-wide SLO
-    objectives (``common/slo.py``) rather than one run or one workspace's
-    spend; a rule of either kind just says "tell this workspace's channels
-    when that objective breaches or recovers". They carry no threshold of
-    their own (the SLO thresholds are hub-wide settings,
-    ``AGENTS_HUB_SLO_START_P95_SECONDS`` / ``AGENTS_HUB_SLO_ERROR_RATE``).
-    ``state`` is where ``notify/rules.py`` remembers the objective's status
-    as of the last tick (``{"status": "ok"|"breach"}``), so a breach fires
-    once and a recovery fires once instead of every scheduler tick.
 
 **Secrets.** A webhook's secret is stored as the operator typed it and never
 sent back in a GET: :func:`masked_endpoint` replaces it with its last four
@@ -69,10 +58,9 @@ RULES_KEY = "alert_rules"
 # verifies what an external system sends *in*), so it gets its own key.
 INBOUND_SECRET_KEY = "notify_inbound_secret"
 
-ENDPOINT_KINDS = ("webhook", "slack")
-RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval",
-              "slo_start_latency", "slo_error_rate")
-CHANNELS = ("dashboard", "telegram", "slack", "webhook", "discord", "teams", "mail")
+ENDPOINT_KINDS = ("webhook",)
+RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval")
+CHANNELS = ("dashboard", "webhook")
 
 _MASK = "••••"
 
@@ -185,14 +173,7 @@ def endpoints_for_event(workspace: str, event_name: str) -> List[Dict[str, Any]]
 
     For internal use only (outbound delivery reads the real secret); anything
     that reaches a browser must go through :func:`masked_endpoint` first.
-
-    None for an isolated workspace (common/isolation.py): its notifications
-    and audit rows carry what its agents did, and a webhook or a Slack post
-    would carry that out. They stay in the hub's inbox and audit log.
     """
-    from common import isolation
-    if isolation.is_isolated(workspace):
-        return []
     out = []
     for item in list_endpoints(workspace):
         if not item.get("enabled", True):

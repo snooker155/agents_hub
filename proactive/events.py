@@ -27,14 +27,11 @@ plus a filter the kind understands:
 ``eval``
     An eval run finished with at least one failing cell. Optional
     ``eval_set_id``.
-``telegram``
-    A Telegram message arrived in a chat with no agent or flow bound, so
-    nobody is going to answer it.
 ``agent``
     Another agent called the ``wake_agent`` tool. Optional ``from``: the
     agent ids allowed to; empty means any.
 
-``webhook``, ``telegram`` and ``file`` carry text nobody here wrote, so a
+``webhook``, ``file`` and ``watch`` carry text nobody here wrote, so a
 profile with one of them counts as ingesting untrusted input for the
 capability guard (:data:`UNTRUSTED_TRIGGER_KINDS`, proactive.service).
 """
@@ -49,13 +46,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 log = logging.getLogger(__name__)
 
 #: Trigger kinds whose events carry text from outside the hub.
-#: ``slack``, ``discord``, ``teams`` and ``mail`` are the chat channels of
-#: connectors/channels: an unanswered message there wakes the agents
-#: listening for that channel, the same way a Telegram one does.
-UNTRUSTED_TRIGGER_KINDS = ("webhook", "telegram", "file", "slack", "discord", "teams", "mail",
-                           # a watcher relays what it observed: mail bodies, HTTP responses
+UNTRUSTED_TRIGGER_KINDS = ("webhook", "file",
+                           # a watcher relays what it observed: HTTP responses
                            "watch")
-CHANNEL_TRIGGER_KINDS = ("slack", "discord", "teams", "mail")
 
 #: How much of an event's free text the prompt gets.
 SUMMARY_LIMIT = 600
@@ -215,38 +208,6 @@ def eval_finished(run: Any) -> List[str]:
         return []
 
 
-def telegram_unanswered(chat_id: int, workspace: Optional[str], text: str) -> List[str]:
-    """A Telegram message arrived in a chat nobody answers (no agent or flow
-    bound). With a workspace on the binding only its agents wake; a chat
-    with none wakes every agent listening for Telegram."""
-    event = make_event(
-        "telegram", f"unanswered Telegram message in chat {chat_id}: {text}",
-        chat_id=chat_id, text=text,
-    )
-    try:
-        return dispatch("telegram", event, workspace=workspace or None)
-    except Exception:  # noqa: BLE001
-        log.debug("proactive events: telegram dispatch failed", exc_info=True)
-        return []
-
-
-def channel_unanswered(channel: str, chat_key: str, workspace: Optional[str], text: str) -> List[str]:
-    """A message arrived on a chat channel (Slack, Discord, Teams, mail) in a
-    chat nobody answers (no agent or flow bound). The connector already told
-    the chat what to do; this wakes every agent listening for that channel."""
-    if channel not in CHANNEL_TRIGGER_KINDS:
-        return []
-    event = make_event(
-        channel, f"unanswered {channel} message in chat {chat_key}: {text}",
-        chat_key=chat_key, text=text, workspace=workspace,
-    )
-    try:
-        return dispatch(channel, event, workspace=workspace or None)
-    except Exception:  # noqa: BLE001 - best-effort
-        log.debug("proactive events: %s wake failed", channel, exc_info=True)
-        return []
-
-
 def webhook_wake(agent_id: str, *, workspace: str, name: Optional[str], summary: str,
                  data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """A signed request on ``/api/webhooks/agents/{id}/wake``.
@@ -295,7 +256,7 @@ def agent_wake(caller_id: Optional[str], target_id: str, message: str) -> Dict[s
 
 
 __all__ = [
-    "UNTRUSTED_TRIGGER_KINDS", "CHANNEL_TRIGGER_KINDS", "channel_unanswered", "make_event", "triggers_of", "dispatch",
-    "file_changed", "task_status_changed", "eval_finished", "telegram_unanswered",
+    "UNTRUSTED_TRIGGER_KINDS", "make_event", "triggers_of", "dispatch",
+    "file_changed", "task_status_changed", "eval_finished",
     "webhook_wake", "agent_wake",
 ]

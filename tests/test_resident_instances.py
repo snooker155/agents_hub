@@ -75,14 +75,6 @@ def test_start_spawns_instance_run_and_records_the_carrier(fake_agent, fake_pope
     assert len(history) == 1 and history[0]["reason"] == "start" and history[0]["pid"] == 424242
 
 
-def test_start_with_publish_gives_a_token(fake_agent, fake_popen):
-    inst = carrier.start("swe_agent", publish=True)
-    assert inst["is_exposed"] is True
-    assert len(inst["expose_token"]) == 64
-    assert carrier.get_by_token(inst["expose_token"])["instance_id"] == inst["instance_id"]
-    assert carrier.get_by_token(inst["expose_token"] + "x") is None
-
-
 def test_start_rejects_an_unknown_agent(fake_agent, fake_popen):
     with pytest.raises(ValueError):
         carrier.start("nobody")
@@ -103,10 +95,9 @@ def test_start_respects_the_workspace_capacity(fake_agent, fake_popen, monkeypat
 
 
 def test_public_view_never_carries_the_inbound_secret():
-    inst = _resident(inbound_secret="s3cret")
+    inst = _resident(inbound_secret="s3cret", expose_token="t")
     view = carrier.public_view(inst)
-    assert "inbound_secret" not in view
-    assert view["inbound_secret_configured"] is True
+    assert "inbound_secret" not in view and "expose_token" not in view
 
 
 # ── Status reported by the process ───────────────────────────────────────────
@@ -332,19 +323,15 @@ def test_message_to_a_resident_instance_goes_to_its_mailbox(monkeypatch, instanc
     assert [m["body"] for m in inbox.pending(iid, "c9", any_conversation=False)] == ["hi"]
 
 
-def test_start_route_starts_the_agent_in_a_service(monkeypatch, instances_client, fake_agent):
-    """Run starts the agent in a service, never on its own: a plain start
-    takes a replica of the workspace's runner (created on first use), and a
-    start that asks for the agent's tasks or a public address gets the agent
-    a service of its own with those settings, whose first replica comes back."""
-    from services import store as service_store
-
+def test_start_route_starts_a_resident_copy(monkeypatch, instances_client, fake_agent):
+    """Run starts a resident copy of the agent through the carrier and answers
+    with the copy while it boots; an unknown agent is a 404 and a workspace
+    at its capacity a 409."""
     captured = []
 
     def _start(agent_id, **kwargs):
         captured.append(dict(kwargs, agent_id=agent_id))
-        inst = registry.ensure_instance(agent_id or "", kind="resident" if agent_id else "runner",
-                                        state="standby", service_id=kwargs.get("service_id"))
+        inst = registry.ensure_instance(agent_id, kind="resident", state="standby")
         return store.update(inst["instance_id"], inbound_secret="x")
 
     monkeypatch.setattr(carrier, "start", _start)
@@ -352,158 +339,29 @@ def test_start_route_starts_the_agent_in_a_service(monkeypatch, instances_client
     resp = instances_client.post("/api/instances", json={"agent_id": "swe_agent", "workspace": "ws"})
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["service"]["kind"] == "runner" and body["for_agent"] == "swe_agent"
-    assert body["service_id"] == service_store.find_runner("ws", None)["service_id"]
-    assert captured[-1]["agent_id"] is None and "inbound_secret" not in body
+    assert body["for_agent"] == "swe_agent" and body["agent_id"] == "swe_agent"
+    assert captured[-1]["workspace"] == "ws" and "inbound_secret" not in body
 
     resp = instances_client.post("/api/instances", json={
-        "agent_id": "swe_agent", "workspace": "ws", "take_tasks": True, "publish": True})
+        "agent_id": "swe_agent", "workspace": "ws", "take_tasks": True})
     assert resp.status_code == 201, resp.text
-    body = resp.json()
-    own = service_store.find_agent_service("ws", "swe_agent", None)
-    assert own is not None and own["take_tasks"] is True and own["is_exposed"] is True
-    assert body["service"]["service_id"] == own["service_id"] and body["agent_id"] == "swe_agent"
-    assert captured[-1]["take_tasks"] is True and captured[-1]["service_id"] == own["service_id"]
+    assert captured[-1]["take_tasks"] is True
 
-    # The service's own limit is the only one: a second start reuses the replica.
-    resp = instances_client.post("/api/instances", json={"agent_id": "swe_agent", "workspace": "ws"})
-    assert resp.status_code == 201 and resp.json()["instance_id"] == body["instance_id"]
+    def _full(agent_id, **kwargs):
+        raise carrier.CapacityReached("ws already runs enough copies of swe_agent")
 
-    service_store.pause(own["service_id"], "by hand")
+    monkeypatch.setattr(carrier, "start", _full)
     assert instances_client.post("/api/instances", json={"agent_id": "swe_agent", "workspace": "ws"}).status_code == 409
     assert instances_client.post("/api/instances", json={"agent_id": "nobody"}).status_code == 404
 
 
-def test_inputs_and_publication_routes(instances_client):
+def test_inputs_route(instances_client):
     iid = _resident()["instance_id"]
 
     resp = instances_client.patch(f"/api/instances/{iid}/inputs",
                                   json={"take_tasks": True, "concurrency": 99})
     assert resp.json()["take_tasks"] is True and resp.json()["concurrency"] == carrier.MAX_CONCURRENCY
 
-    published = instances_client.post(f"/api/instances/{iid}/publish").json()
-    assert published["is_exposed"] is True
-    assert published["external_url"].endswith(f"/api/external/{published['expose_token']}/messages")
-
-    secret = instances_client.put(f"/api/instances/{iid}/inbound-secret", json={"secret": "abc"}).json()
-    assert secret["inbound_secret_configured"] is True and "inbound_secret" not in secret
-    assert instances_client.delete(f"/api/instances/{iid}/inbound-secret").json()[
-        "inbound_secret_configured"] is False
-
-    withdrawn = instances_client.delete(f"/api/instances/{iid}/publish").json()
-    assert withdrawn["is_exposed"] is False and withdrawn["external_url"] is None
-
-
-def test_carrier_routes_refuse_a_non_resident_instance(instances_client):
-    inst = registry.ensure_instance("swe_agent", kind="chat")
-    assert instances_client.post(f"/api/instances/{inst['instance_id']}/publish").status_code == 400
-
-
-# ── The public address ───────────────────────────────────────────────────────
-
-@pytest.fixture
-def external_client(monkeypatch):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from common import rate_limit
-    from instances import delivery
-    from routes import external as external_routes
-
-    rate_limit.reset()
-    monkeypatch.setattr(delivery, "wake_resident", lambda inst: False)
-    app = FastAPI()
-    app.include_router(external_routes.router)
-    yield TestClient(app)
-    rate_limit.reset()
-
-
-def _published():
-    inst = _resident()
-    return carrier.publish_instance(inst["instance_id"])
-
-
-def _answer_in_background(iid, output="the answer"):
-    """Play the carrier: claim the next message and close a run for it."""
-    def _work():
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            msg = inbox.claim_next(iid)
-            if msg:
-                run_id = rm.new_unique_run_id()
-                rm.open_run(run_id, "swe_agent", instance_id=iid, carrier_run=True,
-                            conversation_id=msg.get("conversation_id"), link_to_session=False)
-                inbox.attach_run(msg["msg_id"], run_id)
-                rm.close_run(run_id, status="completed", exit_code=0, output=output,
-                             process={"token_usage": {"inbound_tokens": 7, "outbound_tokens": 3,
-                                                      "total_tokens": 10}, "duration_ms": 12})
-                return
-            time.sleep(0.05)
-    thread = threading.Thread(target=_work, daemon=True)
-    thread.start()
-    return thread
-
-
-def test_public_message_waits_for_the_answer(external_client):
-    inst = _published()
-    worker = _answer_in_background(inst["instance_id"])
-
-    resp = external_client.post(f"/api/external/{inst['expose_token']}/messages",
-                                json={"message": "what is up", "conversation_id": "caller-1",
-                                      "wait_seconds": 5})
-    worker.join(5)
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "completed" and body["output"] == "the answer"
-    assert body["conversation_id"] == "caller-1"
-    assert body["usage"]["total_tokens"] == 10
-    log = carrier.get_connections(inst["instance_id"])
-    assert log[0]["response_status"] == 200
-
-
-def test_public_message_without_waiting_returns_a_poll_url(external_client):
-    inst = _published()
-    token = inst["expose_token"]
-
-    resp = external_client.post(f"/api/external/{token}/messages",
-                                json={"message": "later", "wait_seconds": 0})
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["status"] == "queued"
-    assert body["poll_url"].endswith(f"/api/external/{token}/messages/{body['msg_id']}")
-
-    _answer_in_background(inst["instance_id"], output="now").join(5)
-    polled = external_client.get(f"/api/external/{token}/messages/{body['msg_id']}").json()
-    assert polled["status"] == "completed" and polled["output"] == "now"
-
-
-def test_public_address_refuses_unpublished_and_unsigned_calls(external_client):
-    inst = _published()
-    token = inst["expose_token"]
-    carrier.set_inbound_secret(inst["instance_id"], "shh")
-    unsigned = external_client.post(f"/api/external/{token}/messages",
-                                    json={"message": "x", "wait_seconds": 0})
-    assert unsigned.status_code == 401
-
-    carrier.set_inbound_secret(inst["instance_id"], None)
-    store.update(inst["instance_id"], is_exposed=False)
-    assert external_client.post(f"/api/external/{token}/messages",
-                                json={"message": "x", "wait_seconds": 0}).status_code == 404
-    assert external_client.post("/api/external/nope/messages",
-                                json={"message": "x"}).status_code == 404
-
-
-def test_public_stream_ends_with_the_reply(external_client):
-    inst = _published()
-    _answer_in_background(inst["instance_id"], output="streamed")
-
-    with external_client.stream("POST", f"/api/external/{inst['expose_token']}/messages",
-                                json={"message": "go", "stream": True}) as resp:
-        assert resp.status_code == 200
-        frames = [json.loads(line[6:]) for line in resp.iter_lines() if line.startswith("data: ")]
-
-    assert frames[0]["type"] == "accepted"
-    assert frames[-1]["type"] == "reply" and frames[-1]["output"] == "streamed"
 
 
 # ── Migration 0029 ───────────────────────────────────────────────────────────
@@ -548,7 +406,6 @@ def test_migration_moves_nodes_into_instances():
     assert b["kind"] == "resident" and b["state"] == "stopped" and b["label"] == "svc"
     assert b["carrier_mode"] == "docker" and b["take_tasks"] is False
     assert rm.get_run_by_id(run_id)["instance_id"] == b["instance_id"]
-    assert carrier.get_connections(a["instance_id"]) == [{"id": "x", "response_status": 202}]
     assert len(carrier.carriers(b["instance_id"])) == 1
     assert not table_exists(conn, db.dialect(), "nodes")
 
@@ -565,18 +422,6 @@ def test_wait_returns_as_soon_as_mail_arrives(monkeypatch):
     started = time.monotonic()
     assert wake.wait(iid, 5) is True
     assert time.monotonic() - started < 2
-
-
-def test_legacy_run_address_puts_the_task_in_a_workspace(external_client, monkeypatch):
-    from tasks import service as tasks_service
-
-    monkeypatch.setattr(carrier, "_pid_exists", lambda pid: True)
-    inst = _published()
-    resp = external_client.post(f"/api/external/{inst['expose_token']}/run", json={"prompt": "do it"})
-    assert resp.status_code == 202
-    task = tasks_service.get_task(__import__("uuid").UUID(resp.json()["task_id"]))
-    assert task.workspace == "default"
-    assert task.assigned_agent_type == "swe_agent"
 
 
 def test_legacy_nodes_json_imports_as_resident_instances(tmp_path, monkeypatch):

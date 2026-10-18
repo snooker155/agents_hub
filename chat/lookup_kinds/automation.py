@@ -206,7 +206,6 @@ def _pulse_card(ctx: SimpleNamespace, agent_id: str) -> Optional[Dict[str, Any]]
         "trigger_kinds": sorted({str(t.get("kind")) for t in (profile.get("triggers") or [])
                                  if isinstance(t, dict) and t.get("kind")}),
         "notify": profile.get("notify"),
-        "daily_budget_usd": profile.get("daily_budget_usd") or None,
         "tick_budget_usd": profile.get("tick_budget_usd"),
         "max_runs_per_day": profile.get("max_runs_per_day") or None,
         "job_status": job.status.value if job else None,

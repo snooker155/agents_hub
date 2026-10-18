@@ -81,17 +81,13 @@ def _require_answerer(request: Request, approval: Dict[str, Any], run: Dict[str,
 
 def require_answerer(principal: Any, approval: Dict[str, Any], run: Dict[str, Any]):
     """:func:`_require_answerer` for a principal already in hand."""
-    from common.auth import MULTI
-
     access.require_visible(principal, _workspace(approval, run))
-    if principal is not None and getattr(principal, "kind", "") == "service":
+    if principal is not None and getattr(principal, "kind", "") in ("service", "run"):
         raise HTTPException(status_code=403,
                             detail="a tool call is approved by a person, not by an agent or a run")
     if principal is None:
-        if identity.current_mode() == MULTI:
-            raise HTTPException(status_code=403, detail="sign in to answer this call")
         return None
-    if principal.is_admin or identity.current_mode() != MULTI:
+    if principal.is_admin:
         return principal
     owner = _owner(approval, run)
     # owner_or_admin reads a "local" owner (filed before identity existed) as

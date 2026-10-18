@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   AlertTriangle, AudioLines, CheckCircle2, Film, Image as ImageIcon, Loader, Mic, Play, Plug, Plus, RefreshCw, Save,
   Sparkles, Square, Trash2, XCircle,
@@ -73,8 +72,7 @@ function ConnectionCheck({ id, sig, state, onCheck }) {
  * reads it with, null while there is no model to read it.
  */
 // Options only some models take: shown when the model's own answer
-// (voices_for, `options`) lists them, the hub runtime's cloning models for
-// temperature; a cloud API would refuse the field.
+// (voices_for, `options`) lists them; a cloud API would refuse the field.
 const GATED_OPTIONS = ['temperature'];
 
 function VoicePicker({ id, workspace, value, onChange, hint, info, fallbackNames, sample }) {
@@ -254,7 +252,7 @@ export default function WorkspaceSpecialModels({ workspace }) {
         setFound((f) => ({
           ...f, [purposeId]: { provider, models: data.models || [], total: data.total || 0, voices: data.voices },
         }));
-        // What was downloaded since may have voices the last answer lacked.
+        // The provider may know voices the last answer lacked.
         voicesAsked.current = new Set([...voicesAsked.current].filter((k) => !k.startsWith(`${provider}|`)));
         setVoicesEpoch((n) => n + 1);
       })
@@ -358,18 +356,13 @@ export default function WorkspaceSpecialModels({ workspace }) {
         const allowed = providers.filter((pr) => p.kinds.includes(pr.kind));
         const chosen = providers.find((pr) => pr.id === entry.provider);
         const kind = chosen?.kind;
-        // The hub's own runtime has what was downloaded into it, nothing a
-        // cloud provider's suggestions or voice names would match.
-        const localRuntime = !!chosen?.local_runtime;
-        const suggestions = kind && !localRuntime ? (p.suggestions[kind] || []) : [];
+        const suggestions = kind ? (p.suggestions[kind] || []) : [];
         // A search made for another provider says nothing about this one.
         const search = found[p.id]?.provider === entry.provider ? found[p.id] : null;
         const listed = search?.models || suggestions;
-        // Until the model's own answer comes: what a search at the provider
-        // said about it, or the voices known for the provider's API shape.
-        const voiceNames = localRuntime
-          ? (search?.voices?.[entry.model.trim()] || [])
-          : (kind ? (p.voices?.[kind] || []) : []);
+        // Until the model's own answer comes: the voices known for the
+        // provider's API shape.
+        const voiceNames = kind ? (p.voices?.[kind] || []) : [];
         const voiceInfo = entry.model.trim() ? voices[`${entry.provider}|${entry.model.trim()}`] : null;
         return (
           <SectionCard
@@ -449,14 +442,6 @@ export default function WorkspaceSpecialModels({ workspace }) {
                 />
               </label>
             </div>
-            {localRuntime && (!search || (!search.loading && !search.error && search.models.length === 0)) && (
-              <p className="text-xs text-gray-500" data-testid={`special-${p.id}-local-hint`}>
-                {t('workspaceDetails.specialModels.localRuntimeHint')}{' '}
-                <Link to="/models?tab=local" className="text-indigo-600 hover:text-indigo-800">
-                  {t('workspaceDetails.specialModels.localRuntimeLink')}
-                </Link>
-              </p>
-            )}
             {search && !search.loading && (
               <div className="space-y-1.5" data-testid={`special-${p.id}-found`}>
                 {search.error ? (
@@ -527,7 +512,6 @@ export default function WorkspaceSpecialModels({ workspace }) {
                     <input
                       value={entry.options[key] || ''}
                       placeholder={hint}
-                      inputMode={key === 'temperature' ? 'decimal' : undefined}
                       data-testid={`special-${p.id}-${key}`}
                       onChange={(e) => setPurpose(p.id, { options: { ...entry.options, [key]: e.target.value } })}
                       className={`${inputCls} mt-1`}

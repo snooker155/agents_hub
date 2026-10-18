@@ -12,8 +12,6 @@ const TAG_STYLES = {
   testing: 'bg-rose-50 text-rose-700',
   operations: 'bg-orange-50 text-orange-700',
   automation: 'bg-slate-100 text-slate-600',
-  // Steps imported from an n8n workflow.
-  n8n: 'bg-rose-50 text-rose-700',
   // A node that runs a team, a loop or a flow as a nested run.
   container: 'bg-indigo-50 text-indigo-700',
   general: 'bg-slate-100 text-slate-600',

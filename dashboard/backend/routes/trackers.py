@@ -1,21 +1,21 @@
 """
-Tracker connector API: a project's Jira/Linear link, sync, and a
-project/team picker for the Projects page.
+Tracker connector API: a project's Jira link, sync, and a project picker
+for the Projects page.
 
-Credential config (base_url/email/api_token for Jira, api_key for Linear)
-and the connection test already go through the generic credential routes in
-dashboard/backend/routes/connectors.py (/api/connectors/jira,
-/api/connectors/linear) — this module only covers the per-project link and
-the two calls that need a resolved provider client.
+Credential config (base_url/email/api_token) and the connection test already
+go through the generic credential routes in
+dashboard/backend/routes/connectors.py (/api/connectors/jira); this module
+only covers the per-project link and the two calls that need a resolved
+provider client.
 
 Endpoints:
 - GET  /api/trackers/projects/{project_id}        — the project's tracker config
 - PUT  /api/trackers/projects/{project_id}        — set provider/remote_id/url
 - POST /api/trackers/projects/{project_id}/sync   — import/refresh tracker issues as tasks
-- GET  /api/trackers/{provider}/projects          — Jira projects / Linear teams, for a picker
+- GET  /api/trackers/{provider}/projects          — Jira projects, for a picker
 
 A sync uses the tracker connector of the project's workspace (its own, else
-the default workspace's; connectors/channels/store.py). The picker lists what
+the default workspace's; connectors/store.py). The picker lists what
 the connector in effect in ``?workspace=`` reaches (the default's when
 omitted), so pass the project's workspace.
 """
@@ -41,7 +41,7 @@ from projects.storage import ProjectStore
 
 router = APIRouter(prefix="/api/trackers", tags=["trackers"])
 
-_PROVIDERS = ("none", "jira", "linear")
+_PROVIDERS = ("none", "jira")
 
 _store = ProjectStore(path=PROJECTS_FILE)
 
@@ -82,7 +82,7 @@ async def update_project_tracker(project_id: str, payload: TrackerConfigUpdate):
 async def sync_project_tracker(project_id: str):
     project = _get_project(project_id)
     provider = str(project.tracker.provider or "none")
-    if provider not in ("jira", "linear"):
+    if provider != "jira":
         raise HTTPException(status_code=400, detail="Project has no tracker configured")
     try:
         return await asyncio.to_thread(sync_tracker_issues, project)
@@ -93,7 +93,7 @@ async def sync_project_tracker(project_id: str):
 @router.get("/{provider}/projects")
 async def list_tracker_projects(provider: str, workspace: Optional[str] = None):
     provider = provider.strip().lower()
-    if provider not in ("jira", "linear"):
+    if provider != "jira":
         raise HTTPException(status_code=400, detail=f"Unknown tracker provider: {provider!r}")
     from common.workspace_context import normalize_workspace_name
     try:

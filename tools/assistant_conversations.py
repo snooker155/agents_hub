@@ -85,11 +85,7 @@ def thread_home(key: str, user_id: str) -> str:
     (routes/assistant.py ``resolve_thread``): where a turn that names no
     workspace runs, so where a conversation from before turns were stamped
     belongs."""
-    from common import identity, personal_workspace
-    from common.auth import MULTI
-    if identity.current_mode() != MULTI or key.startswith("service-"):
-        return "default"
-    return personal_workspace.name_for(user_id)
+    return "default"
 
 
 def _row(thread: Dict[str, Any]) -> Dict[str, Any]:

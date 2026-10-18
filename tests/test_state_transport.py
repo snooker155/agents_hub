@@ -61,19 +61,6 @@ def test_default_transport_follows_the_database(dot_env):
     assert isinstance(get_state_transport(), _default_kind())
 
 
-def test_default_is_direct_on_sqlite_and_http_on_postgres(dot_env, monkeypatch):
-    from common import db
-    from common.state_transport import DirectStateTransport, HttpStateTransport, get_state_transport
-
-    monkeypatch.setattr(db, "is_postgres", lambda: False)
-    assert isinstance(get_state_transport(), DirectStateTransport)
-    monkeypatch.setattr(db, "is_postgres", lambda: True)
-    assert isinstance(get_state_transport(), HttpStateTransport)
-    # An explicit value wins over the database rule either way.
-    dot_env["AGENT_RUN_STATE_TRANSPORT"] = "db"
-    assert isinstance(get_state_transport(), DirectStateTransport)
-
-
 def test_unrecognised_transport_falls_back_to_the_default(dot_env):
     from common.state_transport import get_state_transport
 

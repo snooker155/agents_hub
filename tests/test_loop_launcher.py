@@ -82,29 +82,6 @@ def test_start_loop_run_refuses_an_unknown_loop_or_a_missing_flow(no_real_spawn)
     assert no_real_spawn == []
 
 
-def test_the_api_role_enqueues_the_launch_instead_of_spawning(monkeypatch):
-    from common import run_queue
-
-    monkeypatch.setattr("common.config.hub_role", lambda: "api")
-    loop = _loop()
-    run = start_loop_run(loop.loop_id, "write it")
-
-    queued = run_queue.get(run.loop_run_id)
-    assert queued is not None
-    assert queued["kind"] == "loop"
-    assert queued["payload"]["entrypoint"] == "loop_run"
-    assert store.get_run(run.loop_run_id).status == "pending"
-
-
-def test_the_worker_dispatches_a_loop_launch_to_the_loop_launcher(monkeypatch):
-    from runtime.entity_launch import launcher_for
-    import loops.launcher as launcher
-    seen = []
-    monkeypatch.setattr(launcher, "launch_prepared", lambda spec: seen.append(spec))
-    launcher_for("loop")({"kind": "loop", "run_id": "x"})
-    assert seen == [{"kind": "loop", "run_id": "x"}]
-
-
 # ── Resume ───────────────────────────────────────────────────────────────────
 
 def _finished(run_id: str, status: str, iterations_done: int) -> None:

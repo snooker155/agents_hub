@@ -80,8 +80,6 @@ export default {
     connect: 'Подключить',
     connecting: 'Подключаем…',
     adminOnly: 'Попросите администратора подключить модель.',
-    runtimeHint: 'Собственный рантайм хаба, модель, скачанная на эту машину, настраивается на странице Models, вкладка Local.',
-    runtimeLink: 'Открыть вкладку Local',
     providers: {
       openai: 'OpenAI',
       anthropic: 'Anthropic',

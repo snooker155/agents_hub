@@ -1,6 +1,6 @@
 """Declarative files for the hub: ``ah apply``.
 
-Resources (agents, environments, deployments, memory pools) are declared in
+Resources (agents, deployments, memory pools) are declared in
 files kept in a repository; :func:`plan` compares them with a hub and
 :func:`apply` makes the hub match, recording what it created in a
 :class:`Lock` so the next apply updates instead of creating again. The file

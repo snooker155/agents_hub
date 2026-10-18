@@ -181,21 +181,6 @@ def test_flow_run_main_single_node_flow_completes(monkeypatch, tmp_path):
 
 # ── runtime/http_server.py ───────────────────────────────────────────────────
 
-def test_make_logger_reaches_stdout_through_the_marker_logger(capsys):
-    """_make_logger()'s returned _log(), like node_run.log(), builds its own
-    "[timestamp] msg" line and used to print() it directly; it now goes
-    through common.logging_config.marker_logger the same way."""
-    import re
-
-    import runtime.http_server as hs
-
-    _log = hs._make_logger(None)
-    _log("agent HTTP service ready")
-
-    out = capsys.readouterr().out
-    assert re.fullmatch(r"\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\] agent HTTP service ready\n", out)
-
-
 # ── runtime/agent_run.py ─────────────────────────────────────────────────────
 
 def test_agent_run_main_success(monkeypatch, tmp_path):

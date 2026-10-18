@@ -3,7 +3,7 @@
 The output is the format :mod:`declarative.parser` reads, so a user starts a
 repository from what the hub already holds: an agent becomes
 ``agents/<id>.md`` (plus ``<id>.capabilities.md`` / ``<id>.usage.md`` when it
-has them), an environment, a memory pool and a deployment a YAML file each.
+has them), a memory pool and a deployment a YAML file each.
 Values a fresh record has anyway are left out, so a file says what is
 particular about its resource. A reference between two exported records is
 written by declared key; one to a record not exported keeps its hub id.
@@ -15,22 +15,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from declarative.kinds import KINDS, AgentKind, Context, DeploymentKind, EnvironmentKind
+from declarative.kinds import KINDS, AgentKind, Context, DeploymentKind
 
 #: Spellings ``--export`` accepts in front of a hub id.
 KIND_ALIASES = {
-    "agent": "agent", "environment": "environment", "env": "environment",
+    "agent": "agent",
     "memory_pool": "memory_pool", "pool": "memory_pool", "memory": "memory_pool",
     "deployment": "deployment", "job": "deployment",
 }
 #: Folder each kind is written into.
-FOLDERS = {"agent": "agents", "environment": "environments", "memory_pool": "memory",
-           "deployment": "deployments"}
+FOLDERS = {"agent": "agents", "memory_pool": "memory", "deployment": "deployments"}
 #: The proactive profile of an agent nobody configured (proactive/profile.py).
 PROACTIVE_DEFAULTS: Dict[str, Any] = {
     "enabled": False, "interval_minutes": 60, "cron": "", "timezone": "UTC",
-    "quiet_hours": {"from": "", "to": ""}, "daily_budget_usd": 0.0, "max_runs_per_day": 0,
-    "tick_budget_usd": None, "environment_id": None, "brief": "", "triggers": [],
+    "quiet_hours": {"from": "", "to": ""}, "max_runs_per_day": 0,
+    "brief": "", "triggers": [],
     "notify": ["dashboard"], "workspace": None, "auto_pause_after": 3,
 }
 
@@ -44,8 +43,8 @@ class Exported:
 
 
 def parse_ref(raw: str) -> Tuple[str, str]:
-    """``"researcher"`` is an agent; ``"environment:<id>"`` (or ``env:``,
-    ``pool:``, ``memory_pool:``, ``deployment:``, ``job:``) names another kind."""
+    """``"researcher"`` is an agent; ``"pool:<id>"`` (or ``memory_pool:``,
+    ``deployment:``, ``job:``) names another kind."""
     text = str(raw).strip()
     if ":" in text:
         head, _, rest = text.partition(":")
@@ -91,7 +90,7 @@ _INHERITANCE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
     "model": ("provider", "model", "base_url", "temperature", "max_tokens"),
     "reasoning": ("reasoning",),
     "loop": ("fallback_models", "advisor_model", "output_schema",
-             "max_concurrent_delegates", "tool_search", "compaction", "data_class"),
+             "max_concurrent_delegates", "tool_search", "compaction"),
     "web_domains": ("allowed_domains", "blocked_domains"),
     "response_format": ("response_format",),
     "clarify_gate": ("clarify_gate",),
@@ -153,14 +152,18 @@ def _agent_file(ctx: Context, observed: Dict[str, Any], hub_id: str,
     return data
 
 
-def _environment_file(observed: Dict[str, Any], key: str) -> Dict[str, Any]:
-    data: Dict[str, Any] = {"kind": "environment", "id": key}
+def _plain_file(kind: str, observed: Dict[str, Any], key: str) -> Dict[str, Any]:
+    """A kind whose fields need no translation: every field that differs from
+    the kind's default, named as declared."""
+    handler = KINDS[kind]
+    data: Dict[str, Any] = {"kind": kind, "id": key}
     if observed.get("name") != key:
         data["name"] = observed.get("name")
-    for f in EnvironmentKind.fields:
+    defaults = getattr(handler, "DEFAULTS", {})
+    for f in handler.fields:
         if f.name == "name":
             continue
-        value = _trim(observed.get(f.name), EnvironmentKind.DEFAULTS.get(f.name))
+        value = _trim(observed.get(f.name), defaults.get(f.name))
         if value not in (None, [], {}, ""):
             data[f.name] = value
     return data
@@ -196,7 +199,7 @@ def _deployment_file(observed: Dict[str, Any], key: str, key_of: Callable[[str, 
                 continue
             data[name] = value
             continue
-        if name in ("agent", "environment", "consolidate_pool") and value:
+        if name in ("agent", "consolidate_pool") and value:
             value = key_of(f.ref or "", value)
         elif name == "memory_pools":
             value = [key_of("memory_pool", v) for v in value or []]
@@ -262,12 +265,12 @@ def export(request: Callable[..., Any], refs: List[str], out_dir: Path, *,
                 elif part_path.exists():
                     part_path.unlink()
         else:
-            if kind == "environment":
-                data = _environment_file(observed, key)
-            elif kind == "memory_pool":
+            if kind == "memory_pool":
                 data = _pool_file(observed, key)
-            else:
+            elif kind == "deployment":
                 data = _deployment_file(observed, key, key_of)
+            else:
+                data = _plain_file(kind, observed, key)
             path = folder / f"{key}.yaml"
             path.write_text(_dump_yaml(data), encoding="utf-8")
         out.files.append(path)

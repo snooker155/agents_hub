@@ -21,7 +21,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agents import agent_loop
 from agents.agent_loop import LoopState
-from agents.callbacks import guards
 from common.pricing import run_cost_usd
 from tools import advisor
 
@@ -97,19 +96,6 @@ def test_the_call_is_counted_on_the_run_at_the_advisors_price(fake, state):
            "process": {"token_usage": {"inbound_tokens": 1_000_000, "outbound_tokens": 0}},
            "loop": state.summary()}
     assert run_cost_usd(run, prices) == pytest.approx(1.0 + 15.0 + 7.5)
-
-
-def test_the_call_counts_against_the_run_budget(fake, state, monkeypatch):
-    monkeypatch.setenv(guards.RUN_BUDGET_ENV_LIMIT, "50")
-    monkeypatch.setenv(guards.RUN_BUDGET_ENV_PRICES, json.dumps([
-        ["openai", "small", 1.0, 2.0, 0.1], ["anthropic", "big-thinker", 15.0, 75.0, 1.5]]))
-    guards.reset_run_budget_spend()
-    try:
-        _tool().invoke({"question": "Is this safe?"})
-        guard = guards.RunBudgetGuard.from_env(provider="openai", model="small")
-        assert guard.spent_usd == pytest.approx(15.0 + 7.5)
-    finally:
-        guards.reset_run_budget_spend()
 
 
 def test_calls_per_run_are_limited(fake, state, monkeypatch):

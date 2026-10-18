@@ -78,28 +78,14 @@ def _notify_channels(raw: Any, workspace: str) -> List[str]:
         if name not in NOTIFY_CHANNELS:
             raise PulsePlanError(f"'{name}' is not a delivery channel. Use {', '.join(NOTIFY_CHANNELS)}; "
                                  f"the inbox and the assistant's notifications are 'dashboard'.")
-        if name == "telegram":
-            from connectors.telegram.notify import chat_ids_for_workspace
-            if not chat_ids_for_workspace(workspace):
-                raise PulsePlanError("Telegram is not connected in this workspace yet: no chat is bound to the "
-                                     "bot. Offer propose_connection with kind telegram, or deliver to the inbox.",
-                                     code="channel_not_connected")
         if name not in out:
             out.append(name)
     return out
 
 
 def _require_editor(user_id: Optional[str], workspace: str) -> None:
-    from chat.lookup import principal_of
-    from common import identity
-    from common.auth import MULTI, WS_EDITOR, role_satisfies
-    principal = principal_of(user_id)
-    if identity.current_mode() != MULTI or principal is None or principal.is_admin:
-        return
-    held = identity.membership_role(workspace, principal.id)
-    if not role_satisfies(held, WS_EDITOR):
-        raise PulsePlanError(f"To set up a pulse in {workspace} the person needs the editor role there "
-                             f"(they have {held or 'none'}).", code="forbidden")
+    """The operator edits every workspace; kept where the check belongs."""
+    return None
 
 
 def _resolve_schedule(when: str, cron: str) -> Schedule:
@@ -189,7 +175,7 @@ def describe(p: Dict[str, Any]) -> str:
     if instruction[-1:] not in ".!?":
         instruction += "."
     text = (f"{p['schedule_text']}: {instruction} Results go to {where}; {who} runs it. "
-            f"It stays within the pulse's budgets and the hub's guard.")
+            f"It stays within the pulse's limits and the hub's guard.")
     if p.get("replaces"):
         text += f" This replaces the schedule it has now ({p['replaces']})."
     return text

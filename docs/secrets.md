@@ -1,13 +1,13 @@
 # Secrets
 
-Encrypted values that belong to a workspace, and optionally to one agent or
-one user in it, handed to an agent run as environment variables, and only
-under the names that agent declares.
+Encrypted values that belong to a workspace, and optionally to one agent in
+it, handed to an agent run as environment variables, and only under the names
+that agent declares.
 
 ## Why this exists
 
 Before secrets, a key lived in one of two places. `.env` holds one value for
-the whole hub, so every workspace and every agent gets the same GitHub token.
+the whole hub, so every workspace and every agent gets the same GitLab token.
 A workspace's `env_vars` (Settings, per workspace) are stored in plain text in
 the workspace metadata, so anyone holding a database backup holds the keys.
 Neither can say "this token belongs to this agent", and both hand everything
@@ -49,63 +49,46 @@ Every secret has a name and a scope inside its workspace:
 
 | scope | set with | used by |
 |---|---|---|
-| workspace-wide | neither agent nor user | any agent that declares the name |
+| workspace-wide | no agent | any agent that declares the name |
 | agent | `--agent` / agent select | that agent only |
-| user | `--user` / user select | runs launched by that user |
-| agent and user | both | that agent, in runs that user launched |
 
-The same name may exist at several scopes. For one run, the most specific
-wins: agent and user, then agent, then user, then workspace-wide. A run's user
-is whoever started it (the signed-in account in `multi` mode, `local`
-otherwise); a run started by a schedule or the system has no user, so only
-agent and workspace-wide values apply.
-
-Personal grants from end users are secrets too: `CONSENT_GOOGLE` and
-`CONSENT_MICROSOFT` at agent and user scope, where the user is a widget
-visitor or a channel chat (`widget:…`, `channel:…`) rather than a hub
-account. The consent portal writes and reads them; no run receives them in
-its environment, and they show in the list with that principal as the user
-(docs/consent.md).
+The same name may exist at both scopes. For one run, the agent's own value
+wins over the workspace-wide one.
 
 ## The agent's allowlist
 
 An agent receives a secret only if its record lists the name in `secrets`:
 
 ```json
-{ "id": "release_bot", "tools": ["git_publish"], "secrets": ["GITHUB_TOKEN"] }
+{ "id": "release_bot", "tools": ["git_publish"], "secrets": ["GITLAB_TOKEN"] }
 ```
 
 An empty list, which is the default, means none. A workspace can hold many
 secrets and an agent sees exactly the ones it asked for.
 
 The list is edited with `PUT /api/agents/{id}/secrets` (body
-`{"secrets": ["GITHUB_TOKEN"]}`); in `multi` mode only an administrator, or the
-owner of the workspace the agent belongs to, may change it.
+`{"secrets": ["GITLAB_TOKEN"]}`).
 
 **The capability guard counts a declared secret as reading private data.** An
 agent that ingests untrusted input (a web fetch, an issue body) and can send
 data out already forms a warning; add a secret and it forms the full trifecta,
 which is refused at save time. The violation names the source as
-`secrets:GITHUB_TOKEN`, next to the tools that supply the other two
+`secrets:GITLAB_TOKEN`, next to the tools that supply the other two
 capabilities. A delegate's declared secrets count for whoever can delegate to
 it, the same way its tools do. See [tools and capabilities](tools-and-capabilities.md).
 
 ## How a run receives them
 
-A task may carry extra names of its own (`Task.secrets`), set by a
-deployment (docs/deployments.md, "Resources"): they are handed to that
-task's runs on top of the agent's allowlist and nowhere else.
-
 The launcher builds the run's environment (`common/subprocess_env.py`) and,
-last, merges in the declared names resolved for this agent and this user. A
+last, merges in the declared names resolved for this agent. A
 declared secret therefore wins over a variable of the same name inherited
 from the host. A docker run gets the same environment through the container
 launcher, so it too sees only the allowed names.
 
 A flow runs every node in one process, so it cannot keep one agent's value
 from another. A flow run receives the union of the names its agent nodes
-declare, resolved at workspace and user scope only; agent-scoped values stay
-with single-agent runs.
+declare, resolved at workspace scope only; agent-scoped values stay with
+single-agent runs.
 
 A lookup failure (no key, Vault unreachable, a value that no longer decrypts)
 is logged by name and hands out nothing. It never stops the launch and never
@@ -116,17 +99,16 @@ delegated worker run inside the backend process, where there is no
 environment to build. They enter the agent's *secret scope* instead
 (`common.secrets.activate`): for the duration of the turn, a tool that asks
 `common.secrets.get(name)` receives the declared names resolved for the
-person who sent the message, and nothing else. The git connector reads the
-run's `GITHUB_TOKEN` this way, so a pull request opened from chat carries the
-same identity as one opened from a task run. A delegate gets a scope of its
-own, with its own allowlist, in the same workspace and for the same person.
+agent, and nothing else. The git connector reads the run's `GITLAB_TOKEN` this
+way, so a merge request opened from chat carries the same identity as one
+opened from a task run. A delegate gets a scope of its own, with its own
+allowlist, in the same workspace.
 
 ## Managing them
 
-In the dashboard: a workspace's Agents tab has a Secrets card, in every mode.
-It lists name, scope, the last four characters of the value (only for values
-longer than eight characters), and when it was set. In `multi` mode only the
-workspace owner or an administrator sees it. The agent side is on the agent's
+In the dashboard: a workspace's Agents tab has a Secrets card. It lists name,
+scope, the last four characters of the value (only for values longer than
+eight characters), and when it was set. The agent side is on the agent's
 Behavior tab: a Secrets card with the names this agent may receive, offering the
 names the current workspace holds as one-click suggestions. Saving it goes
 through the capability guard like the tools list does.
@@ -135,16 +117,14 @@ From the terminal:
 
 ```
 ah secrets list   --workspace acme
-ah secrets set    GITHUB_TOKEN --workspace acme --agent release_bot   # prompts, hidden
+ah secrets set    GITLAB_TOKEN --workspace acme --agent release_bot   # prompts, hidden
 ah secrets set    OPENAI_API_KEY --workspace acme --value - < key.txt
-ah secrets delete GITHUB_TOKEN --workspace acme --agent release_bot
+ah secrets delete GITLAB_TOKEN --workspace acme --agent release_bot
 ```
 
 Over REST: `GET /api/workspaces/{name}/secrets`,
-`PUT /api/workspaces/{name}/secrets/{secret}` with `{value, agent_id?, user_id?}`,
-`DELETE /api/workspaces/{name}/secrets/{secret}?agent_id=&user_id=`. Setting
-and deleting are written to the audit trail as `secret.set` and
-`secret.delete`, with the name and the scope, never the value.
+`PUT /api/workspaces/{name}/secrets/{secret}` with `{value, agent_id?}`,
+`DELETE /api/workspaces/{name}/secrets/{secret}?agent_id=`.
 
 ## Vault
 
@@ -157,75 +137,18 @@ version 2) instead of the database:
 | `AGENTS_HUB_VAULT_TOKEN` | a token with read, write and delete on the path below |
 | `AGENTS_HUB_VAULT_MOUNT` | the KV v2 mount, `secret` by default |
 
-Each value is stored at `agents-hub/<workspace>/<agent or _>/<user or _>/<name>`
+Each value is stored at `agents-hub/<workspace>/<agent or _>/<name>`
 under the mount. The `secrets` table keeps a metadata row (name, scope, hint)
 with an empty ciphertext, so listing and precedence never need Vault; only
 reading a value does. `AGENTS_HUB_SECRET_KEY` is not used with this backend.
 
 ## Agent identity in external systems
 
-A token is an identity. Stored as an agent-scoped `GITHUB_TOKEN` (or
-`GITLAB_TOKEN`), a GitHub fine-grained personal access token for a machine
-account, or a GitHub App installation token, makes that agent's pushes and
-pull requests come from its own account, with only that account's access.
-Stored as a user-scoped one, the same agent acts on behalf of whoever launched
-the run. The git tools read the token the run holds before falling back to
-the one configured under Settings, Connectors.
-
-With a GitHub App configured, the hub issues these tokens itself: an agent
-that declares `GITHUB_TOKEN` and has no explicit secret of that name receives
-the installation token of the app installation bound to its workspace (pull
-requests come from the app's bot), or, with `github_identity: "user"`, the
-token of the person who launched it, when they connected their GitHub account
-on the Account page. An explicit secret always wins. See
-[github-app](github-app.md).
-
-## Secrets bound to hosts
-
-A secret may name the hosts it is for: `allowed_hosts` on the Secrets card
-(the Hosts column, editable in place), `ah secrets set NAME --host api.github.com`
-(repeatable, `--any-host` clears it), or
-`PUT /api/workspaces/{name}/secrets/{secret}/hosts` with `{"allowed_hosts": [...]}`.
-A host covers its subdomains, as in the egress allowlist.
-
-Such a secret never reaches the run in plain text. The run's environment holds
-a placeholder (`ahsec_` and 32 random characters) under the secret's name, and
-the run is routed through the [egress proxy](environments.md#the-egress-proxy)
-with a token that knows its placeholders. For the secret's hosts the proxy
-terminates TLS with a certificate it mints under a hub CA, swaps each
-placeholder in the request headers (inside `Authorization: Basic` too) and the
-request target for the real value, and opens its own TLS connection to the
-real server, verified the usual way. Every other host keeps the plain
-`CONNECT` tunnel. A placeholder the proxy can see on its way to any other host,
-or one this run does not hold, is refused with 403 and logged, with an
-`egress.secret_refused` audit row: that is what exfiltration looks like.
-Request bodies are not rewritten.
-
-The run trusts the hub CA through `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
-`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` (a bundle of the system CAs, `certifi`
-and the hub CA, at `<AGENTS_HUB_ROOT>/egress/ca-bundle.pem`) and
-`NODE_EXTRA_CA_CERTS` (the hub CA alone). The CA key is generated on first use
-under `<AGENTS_HUB_ROOT>/egress_ca/` with mode 0600, encrypted with the hub's
-secret key, so a docker run that mounts the state directory cannot sign with
-it; `AGENTS_HUB_EGRESS_CA_DIR` moves it elsewhere. A docker run that holds
-placeholders also loses `AGENTS_HUB_SECRET_KEY` from its environment, since
-with the key and the mounted database it could decrypt the real values. A
-local run shares the hub's filesystem and its `.env`, so the substitution
-there keeps values out of the model's view and off foreign hosts, but it is
-not a boundary against code that reads the hub's own files: use docker mode
-when that matters.
-
-The proxy has to be on (`AGENTS_HUB_EGRESS_PROXY=1`). With it off, a launch
-whose agent would receive a host-bound secret is refused with a message that
-says so, rather than handing the value out unbound or silently leaving it out.
-`AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1` hands such secrets over in plain text
-instead, with a warning in the log.
-
-In a chat turn, which runs inside the backend with no proxy in between, the
-hub's own code asks for a secret with the host it is about to call
-(`common.secrets.get(name, host=...)`); a host-bound secret is withheld from a
-call that names no host or another host. The git connector does this for its
-provider's API.
+A token is an identity. Stored as an agent-scoped `GITLAB_TOKEN`, a personal
+access token for a machine account makes that agent's pushes and merge
+requests come from its own account, with only that account's access. The git
+tools read the token the run holds before falling back to the one configured
+under Settings, Connectors.
 
 ## Gotchas
 
@@ -234,28 +157,21 @@ provider's API.
   each one again after changing `AGENTS_HUB_SECRET_KEY`:
   `ah secrets list` shows what there is, `ah secrets set` replaces it.
 - **A name must be an environment variable name.** Upper case letters, digits
-  and underscores, starting with a letter, at most 64 characters. `github_token`
+  and underscores, starting with a letter, at most 64 characters. `gitlab_token`
   is refused; the dashboard upper-cases what you type.
 - **`env_vars` still work.** A workspace's plain `env_vars` remain as a
   fallback and are not migrated. Move anything sensitive out of them.
 - **A value cannot be read back.** Not from the dashboard, the CLI or the API.
   Keep the original somewhere if you will need it again.
 - **The host environment still leaks into runs.** A run's environment starts
-  as a copy of the backend's. A `GITHUB_TOKEN` exported in the shell that
+  as a copy of the backend's. A `GITLAB_TOKEN` exported in the shell that
   started the backend reaches every run, declared or not; a declared secret
   replaces it, an undeclared one does not remove it.
-- **Chat turns do not receive secrets yet.** A chat runs its agent inside the
-  backend process, where environment variables would be shared by every
-  request. Code there reads a secret through `common.secrets.get(name)` inside
-  `common.secrets.activate(...)`, which the chat paths do not set up yet.
 
 ## Related
 
-- [identity](identity.md): who may manage secrets in each mode
 - [tools and capabilities](tools-and-capabilities.md): the trifecta rule a declared secret takes part in
 - [workspaces](workspaces.md): per-workspace `env_vars`, the plain fallback
 - [settings](settings.md): where `.env` values and the git connector token live
 - [containers](containers.md): how a docker run gets its environment
 - [cli](cli.md): the `ah` command
-- [github-app](github-app.md): GitHub tokens the hub issues itself
-- [consent](consent.md): end users' own Google and Microsoft grants, kept as personal secrets

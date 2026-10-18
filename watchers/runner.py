@@ -2,11 +2,8 @@
 The watcher loop: polls the due watchers every few seconds (docs/watchers.md).
 
 Started with the backend next to the plan scheduler (dashboard/backend/
-main.py). Only the replica holding the ``watchers`` service lease
-(common/leases.py) polls, so two backends never read the same mailbox at
-once and report the same message twice; the others wait and take over when
-the lease lapses. Each pass runs in a worker thread: an IMAP round trip must
-never block the event loop.
+main.py). Each pass runs in a worker thread: an HTTP round trip must never
+block the event loop.
 """
 from __future__ import annotations
 

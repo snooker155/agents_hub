@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-import kits
 from agents import registry
 from agents import templates
 from common import access, identity
@@ -64,7 +63,7 @@ def _payload(template: templates.AgentTemplate, workspace: Optional[str], *, wit
     out = template.to_dict(with_prompt=with_prompt)
     ws = workspace or "default"
     out["connectors"] = {
-        kind: [{"name": n, "configured": kits.connector_status(n, ws)} for n in names]
+        kind: [{"name": n, "configured": templates.connector_status(n, ws)} for n in names]
         for kind, names in (("required", template.connectors_required),
                             ("optional", template.connectors_optional))
     }

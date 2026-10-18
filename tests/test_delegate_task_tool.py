@@ -15,7 +15,7 @@ import pytest
 
 from agents.registry import AgentSpec
 from common.agent_context import current_agent_id, current_task_id
-from tasks.service import add_subtask, create_task, get_task, set_task_result
+from tasks.service import create_task, get_task, set_task_result
 from tools import delegation
 
 
@@ -64,8 +64,7 @@ def registry(monkeypatch):
 
 @pytest.fixture
 def parent(monkeypatch):
-    task = create_task("Parent work", "the whole job", workspace="default",
-                       budget_usd=2.5, environment_id="env-1")
+    task = create_task("Parent work", "the whole job", workspace="default")
     token_task = current_task_id.set(str(task.id))
     token_agent = current_agent_id.set("lead")
     monkeypatch.setenv("AGENT_WORKSPACE", "default")
@@ -249,7 +248,6 @@ def test_delegation_creates_a_subtask_launches_on_the_model_and_returns_the_outp
     assert child.parent_id == parent.id
     assert child.title == "Count the files"
     assert child.description == "Count the files\nand report"
-    assert child.budget_usd == 2.5 and child.environment_id == "env-1"
     assert child.assigned_agent_type == "worker"
     assert child.assigned_agent_run_id == data["run_id"]
     assert "delegated by" in (child.routing_reason or "")
@@ -318,27 +316,7 @@ def test_a_stopped_parent_stops_the_child(registry, parent, monkeypatch):
     assert stopped == [data["run_id"]]
 
 
-def test_a_budget_refusal_blocks_the_subtask(registry, parent, monkeypatch):
-    from common.budget import BudgetExceededError
-
-    def refuse(task_id, agent_id, params=None, run_id=None):
-        raise BudgetExceededError("default", 12.0, 10.0, "monthly")
-
-    monkeypatch.setattr("agents.agent_launcher.start_run", refuse)
-    data = _call(agent_id="worker", input="do it")
-    assert data["code"] == "budget"
-    child = get_task(_uuid(data["task_id"]))
-    assert child.status.value == "blocked" and "budget cap" in (child.blocked_reason or "")
-
-
 # ── the pieces underneath ────────────────────────────────────────────────────
-
-def test_add_subtask_inherits_the_parents_cap_and_environment(parent):
-    child = add_subtask(parent.id, "part")
-    assert child.budget_usd == 2.5 and child.environment_id == "env-1"
-    own = add_subtask(parent.id, "part", budget_usd=0.5, environment_id="env-2")
-    assert own.budget_usd == 0.5 and own.environment_id == "env-2"
-
 
 def test_model_overrides_only_carry_what_was_given():
     from runtime.agent_run import model_overrides
@@ -533,24 +511,18 @@ def test_delegation_status_reads_the_run_the_task_and_the_result(registry, paren
     assert snap["output"] == "the answer"
 
 
-@pytest.mark.parametrize("role,path", [("all", "spawned"), ("api", "queued")])
-def test_a_container_delegation_reaches_a_launcher_in_either_role(registry, parent, monkeypatch, role, path):
-    """What the backend does with a delegation a run container posted: in the
-    ``all`` role it spawns the delegate itself (no queue, so nothing needs to
-    drain one), in the ``api`` role it puts it on the launch queue."""
+def test_a_container_delegation_spawns_the_delegate(registry, parent, monkeypatch):
+    """What the backend does with a delegation a run container posted: it
+    spawns the delegate itself, there is no launch queue to drain."""
     from agents import agent_launcher
-    from common.config import settings
     from tasks.delegate import launch_delegation
 
-    monkeypatch.delenv("AGENTS_HUB_ROLE", raising=False)
-    monkeypatch.setattr(settings, "role", role, raising=False)
     seen = []
     monkeypatch.setattr(agent_launcher, "prepare_run",
                         lambda task_id, agent_id, params=None, run_id=None: {"run_id": run_id, "session_id": None})
     monkeypatch.setattr(agent_launcher, "launch_prepared", lambda spec: seen.append(("spawned", spec["run_id"])))
-    monkeypatch.setattr(agent_launcher, "enqueue_prepared", lambda spec: seen.append(("queued", spec["run_id"])))
 
     out = launch_delegation(str(parent.id), {"agent_id": "worker", "input": "part", "depth": 0, "env": {}})
 
     assert out["ok"] is True, out
-    assert seen == [(path, out["run"]["run_id"])]
+    assert seen == [("spawned", out["run"]["run_id"])]

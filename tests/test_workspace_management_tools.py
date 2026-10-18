@@ -74,11 +74,10 @@ def test_list_and_get(made):
     assert listed["ok"]
     item = next(w for w in listed["workspaces"] if w["name"] == made)
     assert item["description"] == "Notes"
-    assert item["isolated"] is False and item["tasks_count"] == 0 and item["agents_count"] > 0
+    assert item["tasks_count"] == 0 and item["agents_count"] > 0
     got = _call(wm.get_workspace, name=made)
     assert got["ok"] and got["description"] == "Notes"
     assert len(got["instructions"]) == wm.INSTRUCTIONS_PREVIEW_CHARS and got["instructions_truncated"]
-    assert got["isolation"] == {"isolated": False, "allow_domains": []}
     assert got["attached"] is False and got["default_model"] is None
     assert any(a["system"] for a in got["agents"])
 
@@ -259,20 +258,6 @@ def test_a_default_only_agent_stays_in_default(made):
     assert out["ok"] is False and "default workspace" in out["error"]
 
 
-def test_an_isolated_workspace_refuses_only_its_own_agent_with_outside_tools(made):
-    from agents.registry import add_agent
-    from common import isolation
-    from workspace import update_workspace_metadata
-    assert isolation.offenders(["notify_user"]) == ["notify_user"]
-    add_agent(_spec("ws_owned_out", ["notify_user"], owner_workspace=made), user_edit=False)
-    add_agent(_spec("ws_global_out", ["notify_user"], shared=True), user_edit=False)
-    update_workspace_metadata(made, {"settings": {"isolated": True}})
-    out = _call(wm.add_workspace_agent, name=made, agent_id="ws_owned_out")
-    assert out["ok"] is False and "isolated" in out["error"] and "notify_user" in out["error"]
-    # A shared agent runs there with those tools filtered off at build time.
-    assert _call(wm.add_workspace_agent, name=made, agent_id="ws_global_out")["ok"]
-
-
 def test_an_unknown_workspace_is_not_found(main_run):
     for tool, kw in ((wm.get_workspace, {}), (wm.update_workspace, {"description": "x"}),
                      (wm.add_workspace_agent, {"agent_id": "a"}),
@@ -301,41 +286,6 @@ def multi(monkeypatch):
     def act_as(user):
         monkeypatch.setenv(USER_ENV, user)
     return act_as, roles
-
-
-def test_multi_mode_creator_becomes_owner_and_others_cannot_change(main_run, multi):
-    act_as, roles = multi
-    act_as("alice")
-    name = _name()
-    out = _call(wm.create_workspace, name=name)
-    assert out["ok"] and out["owner"] == "alice" and roles[(name, "alice")] == "owner"
-
-    act_as("bob")
-    assert _call(wm.get_workspace, name=name)["code"] == "not_found"
-    assert name not in [w["name"] for w in _call(wm.list_workspaces)["workspaces"]]
-    roles[(name, "bob")] = "viewer"
-    assert _call(wm.get_workspace, name=name)["ok"]
-    for tool, kw in ((wm.update_workspace, {"description": "x"}), (wm.delete_workspace, {}),
-                     (wm.add_workspace_agent, {"agent_id": "orchestrator"})):
-        out = _call(tool, name=name, **kw)
-        assert out["ok"] is False and out["code"] == "forbidden", tool.name
-    # An editor changes it, as on the dashboard, but only the owner deletes it.
-    roles[(name, "bob")] = "editor"
-    assert _call(wm.update_workspace, name=name, description="by an editor")["ok"]
-    out = _call(wm.delete_workspace, name=name)
-    assert out["ok"] is False and out["code"] == "forbidden"
-
-    act_as("root")
-    assert _call(wm.update_workspace, name=name, description="by admin")["ok"]
-    act_as("alice")
-    assert _call(wm.delete_workspace, name=name)["ok"]
-
-
-def test_multi_mode_creating_needs_a_signed_in_account(main_run, multi, monkeypatch):
-    from common.attribution import USER_ENV
-    monkeypatch.delenv(USER_ENV, raising=False)
-    out = _call(wm.create_workspace, name=_name())
-    assert out["ok"] is False and out["code"] == "forbidden"
 
 
 # ── approval ─────────────────────────────────────────────────────────────────

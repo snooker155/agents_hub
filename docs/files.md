@@ -40,23 +40,21 @@ so over it the field says so and the drop does nothing.
 | `mime_type` | the type the upload declared, or a guess from the name |
 | `size`, `sha256` | bytes and their hash |
 | `source` | where it came from: `upload`, `chat`, `agent`, `memory`, `task`, `eval`, `api` |
-| `created_by` | the user (or, for `agent`, the agent) that added it |
+| `created_by` | who added it (for `agent`, the agent) |
 | `created_at` | when |
 | `meta` | free-form details: for `agent`, the run and agent that saved it; for `chat`, the conversation |
 
 The content lives under the state root at `files/<workspace>/<file_id>/<safe
-name>` and is mirrored to the object store when one is configured
-(`AGENTS_HUB_BLOB_URL`, see [storage](storage.md)), so a worker or a replica
-on another host reads it back. The catalogue is the `workspace_files` table
+name>` on local disk. The catalogue is the `workspace_files` table
 (migration 0021).
 
 Uploading the same bytes into the same workspace returns the file that already
 exists, whatever the new name: a document attached to ten chat turns is one
 file. The same bytes in another workspace are a separate file.
 
-Deleting a file removes its content, locally and in the object store, and
-keeps the row as a tombstone (`deleted_at`), so an old chat turn, a citation
-or an audit row can still name what it was. A deleted file cannot be read,
+Deleting a file removes its content, and
+keeps the row as a tombstone (`deleted_at`), so an old chat turn or a citation
+can still name what it was. A deleted file cannot be read,
 attached or added again; uploading the same bytes creates a new file.
 
 ## Files in the workspace folder
@@ -93,8 +91,7 @@ same way (a file under `knowledge/` gets source `memory`, under
 `chat_uploads/` `chat`, under `task_files/` `task`, the rest `agent`), leaves
 an unchanged file alone, updates a changed one in place and tombstones the
 records of folder files that are gone. A file past the per-file limit or the
-workspace quota is reported as skipped. The index needs the `editor` role in
-the workspace and leaves an audit row (`file.index`).
+workspace quota is reported as skipped.
 
 ## Limits
 
@@ -213,9 +210,7 @@ carry their citations too.
 | `GET /api/projects/{id}/file-id?path=`, `file-content?file_id=`, `file-raw?file_id=` | the same for a project's folder |
 | `POST /api/shared-memory/{pool}/files/{file_id}/index`, `DELETE …/{file_id}/index`, `DELETE …/{file_id}` | index, de-index or delete a knowledge file by id (a file name still accepted) |
 
-Reading needs the file's workspace to be visible to the caller; upload and
-delete need the `editor` role there. Upload and delete leave audit rows
-(`file.upload`, `file.delete`). A download goes out with
+A download goes out with
 `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and a
 sandboxing Content-Security-Policy, and a type a browser would run as a page
 (HTML, SVG, XML, script) is served as plain text.

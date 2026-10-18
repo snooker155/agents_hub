@@ -67,7 +67,6 @@ from tools.loop_management import LOOP_MANAGEMENT_TOOLS
 from tools.project_management import PROJECT_MANAGEMENT_TOOLS
 from tools.entity_runs import ENTITY_RUN_TOOLS
 from tools.git_publish import GIT_PUBLISH_TOOLS
-from tools.project_deploy import PROJECT_DEPLOY_TOOLS
 from tools.service_ops import SERVICE_OPS_TOOLS
 from tools.docs_tool import DOCS_TOOLS
 from tools.eval_ops import EVAL_TOOLS
@@ -216,14 +215,13 @@ PROJECT_GRAPH_PROMPT = (
 # Providers served locally, where smaller models tend to misfire on the episodic
 # write tool (record_episode). Episodic write defaults OFF for these unless the
 # agent explicitly opts in (episodic_write_enabled=True).
-LOCAL_PROVIDERS = {"ollama", "lmstudio", "hub-local"}
+LOCAL_PROVIDERS = {"ollama", "lmstudio"}
 
 
 def resolve_episodic_write(episodic_flag: Optional[bool], provider: Optional[str]) -> bool:
     """Effective episodic-write decision: explicit flag wins; None = auto.
 
-    Auto means on for cloud providers and off for local ones (LM Studio, Ollama,
-    the hub's own runtime).
+    Auto means on for cloud providers and off for local ones (LM Studio, Ollama).
     """
     if episodic_flag is not None:
         return bool(episodic_flag)
@@ -432,9 +430,7 @@ class AgentFactory:
         fs_tools = create_filesystem_tools(workspace=workspace)
 
         from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
-        from tools.geometry import create_geometry_tools, GEOMETRY_TOOLS
-        view_tools = [*create_view_tools(workspace=workspace), *VIEW_MUTATION_TOOLS,
-                      *create_geometry_tools(workspace=workspace), *GEOMETRY_TOOLS]
+        view_tools = [*create_view_tools(workspace=workspace), *VIEW_MUTATION_TOOLS]
 
         task_tools = [
             create_task,
@@ -539,8 +535,6 @@ class AgentFactory:
             "schedule_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in schedule_tools],
             "service_ops": [getattr(t, "name", getattr(t, "__name__", "")) for t in service_ops_tools],
             "docs": [getattr(t, "name", getattr(t, "__name__", "")) for t in docs_tools],
-            "geometry": [getattr(t, "name", getattr(t, "__name__", ""))
-                         for t in [*GEOMETRY_TOOLS, *create_geometry_tools(workspace=workspace)]],
             "evals": [getattr(t, "name", getattr(t, "__name__", "")) for t in eval_tools],
         }
 
@@ -614,12 +608,11 @@ class AgentFactory:
         # like the web tools. See tools/browser.py and tools/run_code.py.
         from tools.browser import BROWSER_TOOLS
         from tools.run_code import run_code
-        from tools.node_map import map_on_nodes
 
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code, map_on_nodes]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
         # The workspace file objects (tools/workspace_files.py): plain per-tool
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
@@ -886,15 +879,6 @@ class AgentFactory:
         # three belong to the remote service. Branch before any of that work so
         # a remote record never touches the LangChain assembly path.
         if _spec is not None and _spec.is_remote():
-            # An imported agent (Claude Code, Codex, any remote service) gets
-            # the conversation sent to its own endpoint: a way out of an
-            # isolated workspace (common/isolation.py), so it does not run there.
-            from common import isolation as _iso
-            from common.workspace_context import workspace_name_from_path as _ws_of
-            if workspace and _iso.is_isolated(_ws_of(workspace)):
-                raise _iso.IsolationError(
-                    f"'{_spec.id}' is an imported agent that runs outside the hub; workspace "
-                    f"'{_ws_of(workspace)}' is isolated, so it cannot run there.")
             from agents.remote_agent import RemoteAgent
             return RemoteAgent(
                 agent_id=_spec.id,
@@ -1146,14 +1130,9 @@ class AgentFactory:
         # the last one that should run outside the workspace's hooks and the
         # approval gate. A server that will not connect is skipped with its
         # error recorded on its own entry, never failing the build.
-        from common import isolation as _isolation
         from common.workspace_context import workspace_name_from_path as _ws_name_of
-        _isolated_ws = _isolation.is_isolated(_ws_name_of(workspace)) if workspace else False
-        if not _isolated_ws:
-            # An isolated workspace never connects an MCP server: a stdio one
-            # runs a command on the hub's host, a remote one is a way out.
-            from mcp_client import append_mcp_tools
-            tools = append_mcp_tools(tools, tool_list, workspace)
+        from mcp_client import append_mcp_tools
+        tools = append_mcp_tools(tools, tool_list, workspace)
 
         # A tool result past the workspace's spill size goes to a file under
         # tool-outputs/ and the model sees its head, its tail and the path
@@ -1232,23 +1211,6 @@ class AgentFactory:
                                      int(workspace_loop_setting(workspace, "advisor_max_calls") or 0))
                 )
 
-        # Consent portal (connectors/consent/, docs/consent.md), only for an
-        # agent whose consent settings name a provider. Appended after the
-        # guard like the handoff tool: one hands the end user a link, the
-        # other drops their own grant, and neither reaches anything else.
-        if _spec is not None:
-            try:
-                from connectors.consent.tools import consent_tools_for
-                _consent_tools, _consent_prompt = consent_tools_for(_spec)
-            except Exception:  # noqa: BLE001 - no consent tables yet: build without the tools
-                log.debug("consent tools unavailable for %s", agent_id, exc_info=True)
-                _consent_tools, _consent_prompt = [], ""
-            if _consent_tools:
-                tools = [*tools, *_consent_tools]
-                config["system_prompt"] = (
-                    config.get("system_prompt", "") + "\n\n---\n\n" + _consent_prompt
-                )
-
         # Special models (providers/special.py): the agent is told which of
         # its special model tools have a model in this workspace and which do
         # not. A tool without one stays and answers that the model is not
@@ -1287,27 +1249,6 @@ class AgentFactory:
                     "have saved anything."
                 )
 
-        # An isolated workspace (common/isolation.py): whatever the record and
-        # the automatic additions above hold, only the allowlist reaches the
-        # model. A shared agent (the main agent) keeps working here with less;
-        # the prompt says what was taken off so it does not promise it.
-        if _isolated_ws:
-            _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
-            _kept_names, _removed = _isolation.filter_tools(_names)
-            if _removed:
-                tools = [t for t, n in zip(tools, _names) if _isolation.tool_allowed(n)]
-                log.info("isolated workspace: %s runs without %s", agent_id, ", ".join(sorted(set(_removed))))
-            config["system_prompt"] = (
-                config.get("system_prompt", "")
-                + "\n\n---\n\n## This workspace is isolated\n"
-                "Shell commands and code run in a sandbox container with no network at all. "
-                "You can read web pages only from the sites this workspace allows, with "
-                "fetch_url, web_search and the read only browser tools; nothing can be sent "
-                "out. Tools that would reach outside are not available here"
-                + (f" ({', '.join(sorted(set(_removed)))})" if _removed else "")
-                + ". Do not offer to send, post, publish or connect anything."
-            )
-
         # One workspace per run (common/workspace_scope.py), in every
         # workspace: tools that see the whole service stay with the service's
         # own agents, workspace management with the main agent in "default",
@@ -1339,7 +1280,6 @@ class AgentFactory:
             + secret_grant_ids(list(getattr(_spec, "secrets", None) or []) + _extra_secrets if _spec else _extra_secrets),
             override=bool(_spec.capability_override) if _spec else False,
             delegates=list(_spec.delegates or []) if _spec else [],
-            isolated=_isolated_ws,
         )
 
         # Create agent

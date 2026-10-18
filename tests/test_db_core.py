@@ -20,37 +20,11 @@ from common import db_transfer
 
 # ── SQL adaptation for Postgres (pure) ───────────────────────────────────────
 
-def test_placeholders_become_percent_s_outside_string_literals():
-    out = db._adapt_sql_for_pg("SELECT * FROM t WHERE a = ? AND b = 'x?y' AND c LIKE ?", True)
-    assert out == "SELECT * FROM t WHERE a = %s AND b = 'x?y' AND c LIKE %s"
-
-
-def test_percent_is_escaped_only_when_parameters_are_passed():
-    sql = "SELECT * FROM t WHERE a LIKE 'x%' AND b = ?"
-    assert db._adapt_sql_for_pg(sql, True) == "SELECT * FROM t WHERE a LIKE 'x%%' AND b = %s"
-    sql_no_params = "SELECT * FROM t WHERE a LIKE 'x%'"
-    assert db._adapt_sql_for_pg(sql_no_params, False) == sql_no_params
-
-
-def test_boolean_parameters_become_integers():
-    assert db._adapt_params_for_pg((True, False, 3, "s", None)) == [1, 0, 3, "s", None]
-    assert db._adapt_params_for_pg({"a": True}) == {"a": 1}
-
-
 def test_upsert_sql_updates_every_non_key_column():
     sql = db.upsert_sql("meta", ("key", "value"), ("key",))
     assert sql == ("INSERT INTO meta (key, value) VALUES (?, ?) "
                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value")
     assert db.upsert_sql("t", ("a", "b"), ("a", "b")).endswith("DO NOTHING")
-
-
-def test_ddl_rewrite_for_postgres_touches_only_the_type_names():
-    ddl = ("CREATE TABLE x (id INTEGER PRIMARY KEY AUTOINCREMENT, n INTEGER, "
-           "score REAL, blob BLOB, integer_ish TEXT)")
-    out = migrations.sql_for_dialect(ddl, "postgres")
-    assert out == ("CREATE TABLE x (id BIGSERIAL PRIMARY KEY, n BIGINT, "
-                   "score DOUBLE PRECISION, blob BYTEA, integer_ish TEXT)")
-    assert migrations.sql_for_dialect(ddl, "sqlite") == ddl
 
 
 # ── Rows ─────────────────────────────────────────────────────────────────────
@@ -135,18 +109,6 @@ def test_a_database_from_a_newer_build_is_refused(reopen_db, tmp_path):
         conn.execute(f"DELETE FROM {migrations.LEDGER_TABLE} WHERE version = ?", (9999,))
 
 
-def test_dialect_specific_files_win_over_shared_ones(tmp_path, monkeypatch):
-    (tmp_path / "0007_thing.sql").write_text("CREATE TABLE a (x TEXT);", encoding="utf-8")
-    (tmp_path / "0007_thing.postgres.sql").write_text("CREATE TABLE a (x TEXT);", encoding="utf-8")
-    (tmp_path / "0006_other.py").write_text("def upgrade(conn, dialect):\n    pass\n", encoding="utf-8")
-    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", tmp_path)
-    pg = migrations.select_for("postgres")
-    lite = migrations.select_for("sqlite")
-    assert [m.version for m in pg] == [6, 7] and pg[1].dialect == "postgres"
-    assert [m.version for m in lite] == [6, 7] and lite[1].dialect is None
-    assert lite[0].kind == "py" and lite[1].kind == "sql"
-
-
 @pytest.mark.sqlite_only
 def test_a_pre_ledger_sqlite_database_is_upgraded_in_place(reopen_db, tmp_path):
     """A state directory written before numbered migrations existed: tables
@@ -214,11 +176,6 @@ def test_the_whole_database_moves_to_another_sqlite_file_and_counts_match(tmp_pa
     with pytest.raises(RuntimeError, match="force"):
         db_transfer.transfer(str(target))
     assert db_transfer.transfer(str(target), force=True)["tables"]["runs"]["target"] == 1
-
-
-def test_describe_hides_the_password():
-    assert db_transfer.describe("postgresql://ah:secret@db:5432/x") == "postgresql://ah:***@db:5432/x"
-    assert db_transfer.describe("state/agents_hub.db").endswith("agents_hub.db")
 
 
 def test_status_reports_the_backend_and_counts():

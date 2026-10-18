@@ -135,7 +135,7 @@ def status() -> Dict[str, Any]:
 
 def language() -> Optional[str]:
     """The language chosen in the first run, if any (for defaults such as the
-    local voice)."""
+    voice's language)."""
     try:
         doc = _store.get(_KEY)
     except Exception:  # noqa: BLE001
@@ -164,7 +164,7 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
         return status()
     if action == "finish":
         from common import setup_guide
-        if not setup_guide.usable_providers() and not _local_set_started():
+        if not setup_guide.usable_providers():
             raise ValueError("connect a model first: nothing runs without one")
         doc.update(completed_at=_now(), step="done", via="first_run")
         try:
@@ -187,9 +187,8 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
 #: What each screen from the voice on is about, for the assistant's turn: from
 #: the voice screen on the assistant can talk, and it answers questions there.
 SCREEN_ABOUT = {
-    "voice": "the assistant's voice: a cloud voice (OpenAI or Google key), one on this computer "
-             "(the hub's own runtime, Piper voices per language) or the browser's own, then a short "
-             "spoken check that the assistant hears and answers",
+    "voice": "the assistant's voice: a cloud voice (OpenAI or Google key) or the browser's own, "
+             "then a short spoken check that the assistant hears and answers",
     "search": "web search: a Brave, Tavily or Exa key, or nothing when an Anthropic or OpenAI key "
               "already searches",
     "memory": "personal memory: whether agents keep what the person tells them about themselves "
@@ -224,18 +223,6 @@ def prompt_lines(screen: str) -> List[str]:
                  "anything (setup_step, propose_connection) and no show_on_screen, and never ask for a key "
                  "in the conversation. After the setup you can lead the rest of it.")
     return lines
-
-
-def _local_set_started() -> bool:
-    """The model step is also met by the ready local set running or done: its
-    chat model is still downloading, the hub thinks with it once it loads."""
-    try:
-        from providers import local_set
-        job = local_set.latest_job()
-        return bool(job) and job.get("status") in ("queued", "running", "done")
-    except Exception:  # noqa: BLE001
-        log.debug("first run: local set unreadable", exc_info=True)
-        return False
 
 
 def _configured_model() -> Optional[Dict[str, Any]]:
@@ -308,20 +295,13 @@ def context() -> Dict[str, Any]:
     tiers only)."""
     from common import setup_guide
     from tools.web import effective_search_provider
-    out: Dict[str, Any] = {"providers": [], "default_model": {}, "runtime": False, "local_set": None,
+    out: Dict[str, Any] = {"providers": [], "default_model": {},
                            "search": {"provider": "", "source": "none"}, "demo": False, "voice": False}
     try:
         out["providers"] = setup_guide.usable_providers()
         out["default_model"] = setup_guide.default_model()
     except Exception:  # noqa: BLE001
         log.debug("first run: providers unreadable", exc_info=True)
-    try:
-        from providers import local_models as lm
-        from providers import local_set
-        out["runtime"] = bool(lm.runtime_configured())
-        out["local_set"] = local_set.latest_job()
-    except Exception:  # noqa: BLE001
-        log.debug("first run: runtime unreadable", exc_info=True)
     try:
         eff = effective_search_provider()
         out["search"] = {"provider": str(eff["provider"]), "source": str(eff["source"]),

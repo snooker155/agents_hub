@@ -2,8 +2,8 @@
 
 `ah` drives the service from a terminal. Every entity that has a page in the
 dashboard has a command here, and the command is the application rather than
-a client of it: agents, tasks, workspaces, projects and nodes by hand, flows,
-loops, teams, evals, MCP servers and users with a group of their own, and
+a client of it: agents, tasks, workspaces and projects by hand, flows,
+loops, teams, evals and MCP servers with a group of their own, and
 everything else through commands generated from the API's own schema. See
 [the commands](#the-commands) below, and [OpenAPI-driven commands](#openapi-driven-commands)
 for how the last part works.
@@ -25,40 +25,19 @@ second and a half of import and bootstrap before anything happens.
 
 ## Authenticating over `AGENTS_HUB_URL`
 
-Direct mode needs no credential: it is the service. Over REST, whatever
-`common.auth.auth_headers()` finds in the environment goes on every request,
-tried in this order: `AGENTS_HUB_RUN_TOKEN` (a run's own relay token, only
-inside a run), `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
-`AGENTS_HUB_SERVICE_TOKEN` (minted for a hub's own subprocesses, not meant to
-be set by hand), `AGENTS_HUB_API_KEY` — a personal key
-([api-keys](api-keys.md)), cut with `ah auth keys create` or from the Account
-page, and the ordinary way to authenticate a CLI against a `multi`-mode hub
-running somewhere else:
+Direct mode needs no credential: it is the service. Over REST there is none
+either, since the hub has no login: `AGENTS_HUB_URL` is all it takes.
 
 ```bash
-export AGENTS_HUB_URL=https://hub.example.com
-export AGENTS_HUB_API_KEY=ahk_...
-ah auth whoami            # who this key acts as
+export AGENTS_HUB_URL=http://localhost:8080
 ah task list
 ```
 
-`ah auth whoami` answers from `GET /api/auth/me` over HTTP, or names the local
-operator in direct mode — there is no session or key to ask about, direct mode
-*is* the account. `ah auth keys list|create|revoke` manage personal keys the
-same way: over `AGENTS_HUB_URL` they act on the caller the presented
-credential names; in direct mode there is no such caller, so they need an
-explicit `--user <name>`, which is an administrator operation against the
-local database rather than someone managing their own key.
+`ah auth whoami` names the local person the CLI acts as.
 
 A write from the CLI reaches an open dashboard the way a write from an agent
 subprocess does: the change goes to the shared database and a `<resource>.changed`
 event is relayed, so open tabs refetch instead of showing stale rows.
-
-`ah setup` (its remote shape, or "point this ah at it" after a Docker setup)
-saves the address and a personal key in the CLI's state file, and every
-command that reaches the service then uses them as if `AGENTS_HUB_URL` and
-`AGENTS_HUB_API_KEY` were set; variables in the environment still win, and
-`ah setup --disconnect` forgets the saved hub.
 
 ## Getting the command
 
@@ -79,15 +58,10 @@ ah chat main-agent                      # interactive REPL, /exit to leave
 ah task create "Build a REST API" --decompose
 ah task list --status todo
 ah workspace list
-ah node list
 ah doctor                               # judge the service: each check ok, warn, fail or skip (--json; exits 1 on fail)
 ah db status                            # which database backend, schema version, row counts
-ah db migrate --to postgresql://...     # copy the database into Postgres (or back to a file)
-ah worker                               # claim launches from the run queue and spawn them here (see workers.md)
-ah auth whoami                          # who this CLI is acting as (see api-keys.md)
-ah auth keys create --name laptop --expires-days 90
-ah auth keys list
-ah auth keys revoke <id>
+ah db backup --to ./backups             # archive the database
+ah auth whoami                          # who this CLI is acting as
 ah config
 ```
 
@@ -95,9 +69,9 @@ Listings print an 8-character ID prefix, and every command that takes an ID
 accepts that prefix back. A call that runs an agent waits as long as the model
 takes, up to `AGENTS_HUB_AGENT_TIMEOUT` seconds (default 900, `0` for no limit).
 
-### Flows, loops, teams, evals, MCP, users
+### Flows, loops, teams, evals, MCP
 
-The six entities with a daily-use shape of their own, each a group of
+The five entities with a daily-use shape of their own, each a group of
 commands rather than one:
 
 ```bash
@@ -130,15 +104,6 @@ ah mcp add <server-id> --command "..." [--arg a --arg b] [--transport stdio|http
 ah mcp remove <server-id>
 ah mcp test <server-id>                             # connect now, report what is there
 ah mcp tools <server-id> [--refresh]
-ah mcp connect <client> [--key k] [-w ws] [--write] [--project]   # connect claude-code, cursor, vscode, windsurf, claude-desktop, codex, gemini or other to the hub (hub-as-mcp-server.md)
-ah hub link <url> --key <personal key> [--name n] [--no-models] [--no-agents] [--mirror runs,chats,memory] [--node-token t]   # attach this hub to another (hub-link.md)
-ah hub status | sync | unlink
-ah hub nodes list | add <name> [-w ws] | set <id> [--trust ...] | pool [-w ws] | remove <id> | rotate <id>   # the nodes attached to this hub and their pool
-
-ah user list                                        # AUTH_MODE=multi only; 404 otherwise
-ah user create <username> [--role member|admin] [--no-password]
-ah user disable <user-id> [--enable]
-ah user set-role <user-id> <member|admin>
 ```
 
 Every one of these calls the same generic transport as the generated commands
@@ -152,17 +117,14 @@ session; `ah agent list` and the rest of the commands in [The
 commands](#the-commands) above import only what they individually need and
 stay at their existing speed. `ah mcp` and `ah flow`/`ah loop`/`ah team` need
 a workspace the same way the dashboard does: `--workspace`, or one already
-selected (see [Selecting a workspace](#selecting-a-workspace)). `ah user`
-mirrors `/api/auth/users`: those routes exist only under `AUTH_MODE=multi`
-(there is nobody to administer in `single` or `token` mode), and the CLI
-surfaces the API's own 404 rather than inventing a different message.
+selected (see [Selecting a workspace](#selecting-a-workspace)).
 
 ### OpenAPI-driven commands
 
 Beyond the hand-written groups, `ah` reads the backend's own OpenAPI schema
 and builds one command group per tag (`ah <tag> <verb>`) that has no
 hand-written group already: `ah sessions list`, `ah instances get <id>`,
-`ah costs list`, `ah audit list`, and everything else with a route but no
+`ah costs list`, and everything else with a route but no
 page shaped enough to deserve bespoke commands. The mapping from a route to a
 command:
 
@@ -221,8 +183,8 @@ written for it at all.
 
 ### `ah apply`: entities from files in a repository
 
-Agents, environments, scheduled deployments and memory pools can live as
-files next to your code and be made real in the hub with one command:
+Agents, scheduled deployments and memory pools can live as files next to
+your code and be made real in the hub with one command:
 
 ```bash
 ah apply hub/ --workspace team --dry-run   # print the plan only
@@ -252,9 +214,7 @@ both is interleaved, `Ctrl-C` stops both, and if one exits on its own the other
 is stopped too.
 
 There is no `--workers`: the backend starts singletons of its own (plan
-scheduler, run watchdog, Telegram poller) and a second worker would run a second
-copy of each. Scaling out is compose's job: `docker compose up --scale backend=3`,
-where nginx balances `/api` across the replicas.
+scheduler, run watchdog) and a second worker would run a second copy of each.
 
 ## Working in your own directories
 
@@ -366,13 +326,12 @@ dist/ah --help                       # works with nothing configured
 dist/ah agent list                   # AGENTS_HUB_URL is not set. ...
 
 export AGENTS_HUB_URL=https://hub.example.com
-export AGENTS_HUB_API_KEY=ahk_...
 dist/ah agent list                   # now a normal REST call
 ```
 
 **Limits of this build:**
 
-- Direct mode does not exist in it. `ah worker`, `ah db ...`, `ah up`, and
+- Direct mode does not exist in it. `ah db ...`, `ah up`, and
   anything else that only makes sense against the local database or state
   directory either refuse the same way they do today when `AGENTS_HUB_URL` is
   set (`ah db status`'s existing message), or, for the ones with no such
@@ -382,8 +341,6 @@ dist/ah agent list                   # now a normal REST call
   /openapi.json` over REST either way), but the first one run in a session
   pays the schema-fetch cost described above, same as the venv-installed
   `ah`.
-- `ah worker` cannot run at all: there is no runtime here to claim a launch
-  and execute it.
 
 Entry point: `cli/rest_main.py`, not `cli/main.py`/`agents_hub/__init__.py`,
 which the venv-installed `ah` uses and which default to direct mode. Spec
@@ -399,15 +356,15 @@ The `cli` package in the repository:
 
 - `cli/main.py`: the Typer application. Core infrastructure (workspace/project
   selection, the `hub()`/`call()` helpers, id resolution), and the commands not
-  broken out below (`server`, `db`, `auth`, `secrets`, `up`, `worker`,
-  `deployment`, `chat`, `config`, the shell integration).
+  broken out below (`server`, `db`, `auth`, `secrets`, `up`, `doctor`,
+  `chat`, `config`, the shell integration).
 - `cli/backend.py`: `DirectBackend` and `HttpBackend`, including the generic
   transport (`request(method, path, ...)`) every entity command and generated
   command goes through.
 - `cli/openapi.py`: the OpenAPI schema cache, the generated command groups,
   and `ah api`.
 - `cli/commands/`: one module per entity: `agent.py`, `task.py`,
-  `workspace.py`, `project.py`, `node.py`, `flow.py`, `loop.py`, `team.py`,
-  `eval.py`, `mcp.py`, `user.py`, and `api.py` (wires up `cli/openapi.py`).
+  `workspace.py`, `project.py`, `instance.py`, `flow.py`, `loop.py`,
+  `team.py`, `eval.py`, `mcp.py`, `costs.py`, `files.py`, and `api.py` (wires up `cli/openapi.py`).
   Each registers a `typer.Typer()` that `cli/main.py` adds to the app.
 - `cli/rest_main.py`: the entry point for the REST-only binary above.

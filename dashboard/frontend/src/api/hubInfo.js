@@ -19,6 +19,10 @@ export const getSystemHealth = () => api.get('/health');
 export const getDoc = (id, lang = '') => api.get(`/docs/${id}`, { params: { ...(lang ? { lang } : {}) } });
 // Service health, and the Service Agent's chat about it.
 export const getHealth = () => api.get('/health');
+export const getServiceChat = () => api.get('/health/chat');
+export const clearServiceChat = () => api.delete('/health/chat');
+export const stopServiceChat = () => api.post('/health/chat/stop');
+export const serviceChatUrl = () => '/health/chat';
 export const getLogs = (runId) => api.get(`/logs/${runId}`);
 
 // Marketplace — catalog of agents published across workspaces
@@ -50,9 +54,7 @@ export const getOrchestratorRoutingLog = (workspace) =>
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
 export const getStatsOverview = (workspace, days = 14) => api.get('/stats/overview', { params: { workspace, days } });
 
-// Costs API — spend breakdowns + per-workspace budget caps
+// Costs API: spend breakdowns
 export const getCosts = (params) => api.get('/costs', { params });
 // One row per counted run with its tokens and cost, sorted and windowed.
 export const getCostRuns = (params) => api.get('/costs/runs', { params });
-export const getBudget = (workspace) => api.get('/costs/budget', { params: { workspace } });
-export const setBudget = (workspace, data) => api.post('/costs/budget', data, { params: { workspace } });

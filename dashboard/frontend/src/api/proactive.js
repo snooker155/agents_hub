@@ -1,6 +1,6 @@
 /**
  * The agent's proactive profile and its pulse (proactive/, docs/proactive.md):
- * the schedule, quiet hours, budgets and brief that make an agent wake up on
+ * the schedule, quiet hours, run limit and brief that make an agent wake up on
  * its own, plus the job the profile owns, today's usage and the tick feed.
  * Every call answers with the same body: { agent_id, profile, schedule, job,
  * usage, ticks } (routes/agent_proactive.py).
@@ -17,7 +17,7 @@ export const updateAgentProactive = (agentId, patch) => api.put(base(agentId), p
 
 export const pauseAgentProactive = (agentId) => api.post(`${base(agentId)}/pause`);
 export const resumeAgentProactive = (agentId) => api.post(`${base(agentId)}/resume`);
-// A tick now, through the quiet hours but not past the budget or a running tick.
+// A tick now, through the quiet hours but not past the run limit or a running tick.
 export const wakeAgentProactive = (agentId) => api.post(`${base(agentId)}/wake`);
 
 // The Dashboard widget: every pulse that is on and what its ticks of the
@@ -25,17 +25,16 @@ export const wakeAgentProactive = (agentId) => api.post(`${base(agentId)}/wake`)
 export const getProactiveSummary = (workspace, hours) =>
   api.get('/proactive/summary', { params: { ...(workspace ? { workspace } : {}), ...(hours ? { hours } : {}) } });
 
-export const TRIGGER_KINDS = ['webhook', 'file', 'task', 'eval', 'telegram', 'agent', 'slack', 'discord', 'teams', 'mail', 'watch'];
+export const TRIGGER_KINDS = ['webhook', 'file', 'task', 'eval', 'agent', 'watch'];
 // The one filter field each trigger kind understands (proactive/events.py).
 export const TRIGGER_FILTERS = {
-  webhook: 'name', file: 'pattern', task: 'statuses', eval: 'eval_set_id', telegram: null, agent: 'from',
-  slack: null, discord: null, teams: null, mail: null,
+  webhook: 'name', file: 'pattern', task: 'statuses', eval: 'eval_set_id', agent: 'from',
   // a watcher (docs/watchers.md): the card offers the workspace's watchers in a select
   watch: 'watcher_id',
 };
 
 export const INTERVAL_MINUTES = [5, 10, 15, 20, 30, 60, 120, 180, 240, 360, 480, 720, 1440];
-export const NOTIFY_CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook', 'discord', 'teams', 'mail'];
+export const NOTIFY_CHANNELS = ['dashboard', 'webhook'];
 
 /**
  * The tick feed with runs of quiet (and skipped) ticks folded into one row,
@@ -47,7 +46,7 @@ export const NOTIFY_CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook', 'di
 export const collapseTicks = (ticks) => {
   const out = [];
   const quietLike = (t) => t.outcome === 'quiet' || t.outcome === 'quiet_hours'
-    || t.outcome === 'busy' || t.outcome === 'rate' || t.outcome === 'budget' || t.outcome === 'disabled';
+    || t.outcome === 'busy' || t.outcome === 'rate' || t.outcome === 'disabled';
   (ticks || []).forEach((tick) => {
     const last = out[out.length - 1];
     // A compacted row (proactive.service.compact_journal) already stands

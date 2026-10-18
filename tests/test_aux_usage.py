@@ -6,7 +6,6 @@ outcome grader is a run of its own: tests/test_task_outcome.py.)
 """
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -14,7 +13,6 @@ from langchain_core.messages import AIMessage
 
 from agents import agent_loop
 from agents.agent_loop import LoopState
-from agents.callbacks import guards
 from common import aux_usage
 from common.pricing import run_cost_usd
 
@@ -58,18 +56,6 @@ def test_the_run_cost_adds_each_call_at_its_own_model():
            "loop": {"aux_calls": [{"purpose": "tool_policy", "provider": "openai", "model": "small",
                                    "input_tokens": 1_000_000, "output_tokens": 500_000}]}}
     assert run_cost_usd(run, prices) == pytest.approx(10.0 + 1.0 + 1.0)
-
-
-def test_a_call_counts_against_the_run_cap(state, monkeypatch):
-    monkeypatch.setenv(guards.RUN_BUDGET_ENV_LIMIT, "5")
-    monkeypatch.setenv(guards.RUN_BUDGET_ENV_PRICES, json.dumps([["openai", "small", 1.0, 2.0, 0.1]]))
-    guards.reset_run_budget_spend()
-    try:
-        aux_usage.record("structured_repair", provider="openai", model="small", response=_reply())
-        guard = guards.RunBudgetGuard.from_env(provider="openai", model="big")
-        assert guard.spent_usd == pytest.approx(1.0 + 0.2)
-    finally:
-        guards.reset_run_budget_spend()
 
 
 def test_the_policy_classifier_is_counted(state, monkeypatch):

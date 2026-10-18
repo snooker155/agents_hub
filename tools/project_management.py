@@ -71,8 +71,7 @@ def visible_project(project_id: str):
 
 def resolve_visible_project(ref: str):
     """A project by id, or by an unambiguous name/folder match, among the
-    projects the running agent may see (tools/git_publish.py, project_deploy,
-    trackers). A project of another workspace is neither found by its id nor
+    projects the running agent may see (tools/git_publish.py, trackers). A project of another workspace is neither found by its id nor
     makes a name of this workspace ambiguous."""
     from workspace import project_folder_name
 

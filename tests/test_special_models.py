@@ -186,36 +186,6 @@ def test_a_provider_error_reaches_the_agent(ws, http):
 
 # ── money ────────────────────────────────────────────────────────────────────
 
-def test_each_call_is_charged_and_the_cap_refuses_one_it_cannot_pay(ws, http):
-    from agents.callbacks.guards import reset_turn_cap, set_turn_cap, turn_spend_usd
-    from tools.special_models import generate_image
-    special.save(WS, {"image": {"provider": "openai", "model": "gpt-image-1", "price_usd": 0.04}})
-    calls = http(lambda req: httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(PNG).decode()}]}))
-
-    token = set_turn_cap(0.07)
-    try:
-        assert _call(generate_image, prompt="one")["ok"]
-        assert turn_spend_usd() == pytest.approx(0.04)
-        refused = _call(generate_image, prompt="two")
-    finally:
-        reset_turn_cap(token)
-    assert refused["ok"] is False and refused["code"] == "budget"
-    assert len(calls) == 1
-
-
-def test_fail_closed_refuses_an_unpriced_call(ws, http):
-    from agents.callbacks.guards import reset_turn_cap, set_turn_cap
-    from tools.special_models import generate_image
-    special.save(WS, {"image": {"provider": "openai", "model": "gpt-image-1"}})
-    calls = http(lambda req: httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(PNG).decode()}]}))
-    token = set_turn_cap(5.0, fail_closed=True)
-    try:
-        out = _call(generate_image, prompt="one")
-    finally:
-        reset_turn_cap(token)
-    assert out["code"] == "budget" and calls == []
-
-
 def test_a_flat_priced_call_counts_in_the_run_cost():
     from common.pricing import run_cost_usd
     run = {"provider": "openai", "model": "gpt-x", "loop": {"aux_calls": [
@@ -276,24 +246,6 @@ def test_a_slow_video_hands_back_its_job_and_is_collected_later(ws, http, monkey
 
 
 # ── speech and transcription ─────────────────────────────────────────────────
-
-def test_the_temperature_goes_only_to_the_hubs_own_runtime(ws, http):
-    calls = http(lambda req: httpx.Response(200, content=b"MP3", headers={"content-type": "audio/mpeg"}))
-    options = {"voice": "anna", "temperature": "0,5"}
-    media.synthesize_speech(special.Endpoint(special.OPENAI, "http://rt/v1", local=True), "chatterbox-4bit-mlx",
-                            "hi", voice=None, instructions=None, options=options)
-    assert json.loads(calls[-1].content)["temperature"] == 0.5
-    media.synthesize_speech(special.Endpoint(special.OPENAI, "https://api.openai.com/v1", "sk"), "tts-1",
-                            "hi", voice=None, instructions=None, options=options)
-    assert "temperature" not in json.loads(calls[-1].content)
-    # Saved as a number in its range, or not at all.
-    saved = special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "0,5"}}})
-    assert saved["speech"]["options"]["temperature"] == "0.5"
-    with pytest.raises(special.SpecialModelError):
-        special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "2"}}})
-    with pytest.raises(special.SpecialModelError):
-        special.normalize({"speech": {"provider": "openai", "model": "tts-1", "options": {"temperature": "warm"}}})
-
 
 def test_google_speech_comes_back_as_wav(ws, http):
     from files import service
@@ -625,18 +577,7 @@ def test_the_build_keeps_the_tools_and_says_which_have_no_model(ws):
 
 # ── voices and their samples ─────────────────────────────────────────────────
 
-@pytest.mark.parametrize("model,voice,expected", [
-    ("kokoro-v1.0", "af_heart", "en"), ("kokoro-v1.0", "zf_xiaobei", "zh"), ("kokoro-v1.0", "ef_dora", "es"),
-    ("piper-ru_RU-irina-medium", "", "ru"), ("piper-de_DE-thorsten-medium", "0", "de"),
-    ("gpt-4o-mini-tts", "alloy", None), ("tts-1", "af_heart", None),
-    ("kitten-tts-nano-0.8-int8", "Bella", "en"), ("supertonic-3", "F1", None),
-])
-def test_a_voice_knows_its_language_from_its_name(model, voice, expected):
-    assert special.voice_language(model, voice) == expected
-
-
-def test_a_sample_speaks_the_voices_language_else_the_pages():
-    assert special.sample_text("kokoro-v1.0", "ff_siwis", "ru")[0] == "fr"
+def test_a_sample_speaks_the_pages_language():
     assert special.sample_text("gpt-4o-mini-tts", "nova", "de-DE")[0] == "de"
     lang, text = special.sample_text("gpt-4o-mini-tts", "", "xx")
     assert lang == "en" and text == special.SAMPLE_TEXTS["en"]

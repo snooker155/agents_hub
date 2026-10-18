@@ -2,8 +2,8 @@
 Watchers: cheap background observers that wake an agent when something
 outside the hub changes (docs/watchers.md).
 
-A watcher polls one source on its own interval (a mailbox over IMAP, an HTTP
-resource), remembers the last state it saw, and only when the state changes
+A watcher polls one source on its own interval (an HTTP resource),
+remembers the last state it saw, and only when the state changes
 hands an event to the proactive agents whose profile lists the watcher as a
 trigger (``{"kind": "watch", "watcher_id": ...}``, proactive/events.py). No
 model runs for a poll; the agent still only runs on a tick, so the cost of

@@ -55,9 +55,7 @@ def fresh_registry():
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -202,70 +200,9 @@ def _v1_pipeline(monkeypatch):
     return seen
 
 
-def test_v1_agent_completion_pins_the_version(two_versions, client, monkeypatch):
-    seen = _v1_pipeline(monkeypatch)
-    resp = client.post("/v1/chat/completions", json={
-        "model": "agent:pin_agent", "agent_version": 1,
-        "messages": [{"role": "user", "content": "hi"}]})
-    assert resp.status_code == 200, resp.text
-    assert seen[0].agent_version == 1
-    assert resp.json()["agents_hub"]["agent_version"] == 1
-
-
-def test_v1_agent_completion_refuses_an_unknown_version(two_versions, client, monkeypatch):
-    seen = _v1_pipeline(monkeypatch)
-    resp = client.post("/v1/chat/completions", json={
-        "model": "agent:pin_agent", "agent_version": 9,
-        "messages": [{"role": "user", "content": "hi"}]})
-    assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == "agent_version_not_found"
-    bad = client.post("/v1/chat/completions", json={
-        "model": "agent:pin_agent", "agent_version": "two",
-        "messages": [{"role": "user", "content": "hi"}]})
-    assert bad.status_code == 400 and bad.json()["error"]["param"] == "agent_version"
-    assert seen == []
-
-
 # ==================== widget ====================
 
 SITE = "https://shop.example"
-
-
-def test_widget_pins_its_agent_version(two_versions, client):
-    created = client.post("/api/widgets", json={
-        "workspace": "default", "name": "Pinned", "agent_id": "pin_agent",
-        "allowed_origins": [SITE], "agent_version": 1})
-    assert created.status_code == 200, created.text
-    widget = created.json()
-    assert widget["agent_version"] == 1
-
-    bad = client.patch(f"/api/widgets/{widget['widget_id']}", json={"agent_version": 9})
-    assert bad.status_code == 400
-
-    cleared = client.patch(f"/api/widgets/{widget['widget_id']}", json={"agent_version": None})
-    assert cleared.status_code == 200 and cleared.json()["agent_version"] is None
-
-    again = client.patch(f"/api/widgets/{widget['widget_id']}", json={"agent_version": 2})
-    assert again.json()["agent_version"] == 2
-    # Moving the widget to another agent drops the old agent's pin.
-    add_agent(_spec("other_helper"))
-    moved = client.patch(f"/api/widgets/{widget['widget_id']}", json={"agent_id": "other_helper"})
-    assert moved.json()["agent_version"] is None
-
-
-def test_widget_turn_request_carries_the_pin_for_its_own_agent_only(two_versions):
-    from widgets.turn import VisitorTurn as WidgetTurn
-
-    turn = WidgetTurn.__new__(WidgetTurn)
-    turn.widget = {"widget_id": "wgt_x", "agent_id": "pin_agent", "workspace": "default",
-                   "agent_version": 1}
-    turn.thread = {"thread_id": "wth_x", "title": ""}
-    turn.attachments = []
-    turn.text = "hi"
-    turn.agent_id = "pin_agent"
-    assert turn._request([]).agent_version == 1
-    turn.agent_id = "someone_else"
-    assert turn._request([]).agent_version is None
 
 
 # ==================== resident instances ====================
@@ -292,17 +229,6 @@ def test_worker_task_build_uses_the_task_pin(two_versions):
 
     gone = SimpleNamespace(id="t3", agent_version=99, assigned_agent_params=None)
     assert instance_run._task_build_pin(gone, rid, "pin_agent") == {}
-
-
-def test_service_pin_for_plain_mailbox_messages(two_versions):
-    from runtime import instance_run
-    from services import store as service_store
-
-    svc = service_store.create(name="s", agent_id="pin_agent", workspace="default", agent_version=1)
-    assert instance_run._service_pin(svc["service_id"], "pin_agent") == 1
-    assert instance_run._service_pin(None, "pin_agent") is None
-    other = service_store.create(name="s2", agent_id="pin_agent", workspace="default")
-    assert instance_run._service_pin(other["service_id"], "pin_agent") is None
 
 
 # ==================== task assign ====================

@@ -11,11 +11,10 @@ and any replica that shares the signing key can finish a flow another one
 started. A payload carries its own ``exp`` and, where two flows could be
 confused, its own ``purpose``.
 
-The key is ``AGENTS_HUB_SECRET_KEY`` when set, else the OIDC client secret,
-else the process's service credential (``identity.service_token()``), in that
-order, so a multi-replica deployment has something shared to sign with and a
-single process always has something. The derivation is unchanged from when
-this lived in the OIDC module, so cookies already issued stay valid.
+The key is ``AGENTS_HUB_SECRET_KEY`` when set, else one random secret per
+process, so a single process always has something to sign with. The
+derivation is unchanged from when this lived in the OIDC module, so cookies
+already issued under a configured key stay valid.
 """
 from __future__ import annotations
 
@@ -88,12 +87,20 @@ def safe_next(value: Optional[str]) -> str:
 
 # ── the signed payload ───────────────────────────────────────────────────────
 
+#: Minted once per process when no secret key is configured. In memory only:
+#: it dies with the process, which is the lifetime of the round trips it signs.
+_process_secret: Optional[str] = None
+
+
 def _signing_key() -> bytes:
-    from common import identity
+    global _process_secret
     settings = _settings()
-    material = ((getattr(settings, "secret_key", "") or "").strip()
-                or (getattr(settings, "auth_oidc_client_secret", "") or "").strip()
-                or identity.service_token())
+    material = (getattr(settings, "secret_key", "") or "").strip()
+    if not material:
+        if _process_secret is None:
+            import secrets as _secrets
+            _process_secret = _secrets.token_urlsafe(32)
+        material = _process_secret
     return hashlib.sha256(b"agents-hub-oidc-state:" + material.encode("utf-8")).digest()
 
 

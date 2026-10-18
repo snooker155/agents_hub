@@ -50,7 +50,7 @@ Best for:
 - structured implementation work
 - multi-step development tasks
 - repeatable internal workflows
-- team demos of agent collaboration
+- demos of agent collaboration
 
 Recommended setup:
 
@@ -74,7 +74,7 @@ Best for:
 
 - higher-risk changes
 - production-sensitive repositories
-- onboarding new teams to agent automation
+- getting used to agent automation
 - supervised internal pilots
 
 Recommended setup:
@@ -246,7 +246,7 @@ These settings influence how agents themselves are executed.
 | `AGENT_WORKSPACE` | Per run, injected | `default`, `Test1` | Name of the workspace the run operates in; resolved under `.agents_hub/workspaces/<name>/`. The location is fixed and not configurable | Managed automatically |
 | `AGENT_SESSION_ID` | Per run, injected | run/session uuid | Session the run belongs to, so its records group with the rest of the conversation | Managed automatically |
 | `AGENT_LOG_FILE` | Per run, injected | `.agents_hub/run_logs/<run_id>.log` | Where the run writes its trace | Managed automatically |
-| `AGENT_RUN_CHANNEL` | Per run, injected | `local`, `continuation`, `eval` | Which channel the run is recorded under; evaluation channels are excluded from production cost and budget aggregation | Managed automatically |
+| `AGENT_RUN_CHANNEL` | Per run, injected | `local`, `continuation`, `eval` | Which channel the run is recorded under; evaluation channels are excluded from production cost aggregation | Managed automatically |
 | `AGENT_INSTANCE_ID` | Per run, injected | instance uuid | The live agent copy this run belongs to | Managed automatically |
 
 Model, provider, base URL, API key, temperature and max tokens are **not**
@@ -263,7 +263,6 @@ JSON stores are migrated in automatically on first start and renamed to
 | Setting | Scope | Values / Examples | What It Controls | Recommended Use |
 |---|---|---|---|---|
 | `AGENTS_HUB_ROOT` | Global `.env` / environment | absolute path | Redirects the entire state directory (database, logs, workspaces) | Set to run an isolated second instance; the test suite sets it to a throwaway dir |
-| `AGENTS_HUB_API_TOKEN` | Global `.env` | empty (default) or a secret string | When set, every `/api` request must present the token via `Authorization: Bearer`, `X-Api-Token`, or `?token=` (the query form lets the SSE stream authenticate) | Set whenever the backend is reachable beyond localhost |
 | `CHAT_REQUEST_TIMEOUT` | Global `.env` | `900` (default, seconds) | Wall-clock budget for the blocking `/api/chat/message` endpoint; the effective budget is `max(this, LLM_REQUEST_TIMEOUT + 60)` | Raise for slow local models or heavy tool loops |
 | `LLM_REQUEST_TIMEOUT` | Global `.env` | `600` (default, seconds) | Per-LLM-call timeout so a wedged backend can't hang a run forever | Raise only for very slow local models |
 | `RUN_RETENTION_DAYS` | Global `.env` | `30` (default), `0` to disable | Daily maintenance deletes terminal run records, payloads and logs older than this | Lower to cap disk growth; `0` to keep everything |
@@ -328,7 +327,6 @@ Important workspace-level controls include:
 | `model_override` | Explicit UI-selected override for active execution |
 | `agent_capacity_overrides` | Adjusts capacity per agent for the workspace |
 | `agent_memory_overrides` | Which memory pool each agent is bound to here; the same agent can carry different knowledge in another workspace |
-| `budget` | `hard_limit_usd`, `soft_limit_usd` and `period` (`total` / `daily` / `monthly`). The hard limit is enforced at run launch; `0` disables it |
 | `env_vars` | Environment variables injected into this workspace's runs |
 | `orchestrator` | Stores workspace orchestration settings such as enabled state, assignment mode, and follow-up mode |
 

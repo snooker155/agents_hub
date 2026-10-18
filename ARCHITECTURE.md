@@ -14,7 +14,6 @@ for what the product *does*, the corpus in [docs/](./docs/).
 - [Importing agents from their own repositories](#importing-agents-from-their-own-repositories)
 - [Memory subsystems](#memory-subsystems)
 - [Storage model](#storage-model)
-- [Running more than one backend](#running-more-than-one-backend)
 - [API surface](#api-surface)
 - [Agent execution modes](#agent-execution-modes)
 - [Security posture](#security-posture)
@@ -22,23 +21,6 @@ for what the product *does*, the corpus in [docs/](./docs/).
 - [Tech stack](#tech-stack)
 
 ## Runtime layers
-
-Since the services step (September 2026) the backend process runs no agent
-for a chat, `/v1`, widget or Telegram turn: `chat/routing.py` hands the turn
-to a replica of a service (`services/`), a resident instance in a process of
-its own, and relays its events; `chat/turns.py` is the replica's side. The
-runner service of each workspace, created on first use and kept warm by
-`services/supervisor.py`, is where a turn goes when the agent has no service
-of its own. See docs/services.md.
-
-Project deployments (`deployments/`) run a project's own frontend and
-backend from inside the hub: `detect.py` proposes the services from the
-folder, `runner.py` starts them as containers, a compose project or local
-processes, `service.py` is every transition (deploy, refresh, stop, links),
-`supervisor.py` keeps them alive on its own lease, and
-`dashboard/backend/routes/project_deployments.py` serves the API and the
-published pages under `/apps/<slug>/` through the same proxy as the preview
-iframe. See docs/project-deployments.md.
 
 Agents Hub is split into two main runtime layers:
 
@@ -55,11 +37,9 @@ Under those runtime layers, the backend works with several domain modules:
 - `managers/`
   Process-level lifecycle: run records and logs, agent containers (`container_manager`), and the watchdog that reconciles crashed runs. `run_manager.py` is a facade over `managers/runs/` (`store`, `lifecycle`, `task_finalize`, `notifications`, `groups`), kept as the single import point the rest of the codebase already uses.
 - `runtime/`
-  Entrypoints a subprocess actually executes — `agent_run.py`, `instance_run.py`, `flow_run.py`, plus the direct HTTP port of a resident instance and the Docker runner.
+  Entrypoints a subprocess actually executes — `agent_run.py`, `instance_run.py`, `flow_run.py`, plus the Docker runner.
 - `common/`
-  The database core (`db.py`: SQLite by default, Postgres by `AGENTS_HUB_DATABASE_URL`; `common/migrations/`, `db_migrate.py`, `db_transfer.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, budgets, optional auth, and the sinks that route a run's side effects (stream, artifacts, views, graph).
-- `ee/`
-  The part kept apart for a separate edition: single sign-on (`ee/oidc.py`, the protocol; `ee/routes/oidc.py`) and SCIM provisioning (`ee/scim.py`, `ee/routes/scim.py`). The core never imports it except behind `common/edition.py`'s `enterprise_available()`, so a tree without it is a complete product. The signed round-trip cookie both single sign-on and the GitHub connection use is core (`common/signed_state.py`).
+  The database core (`db.py`: SQLite; `common/migrations/`, `db_migrate.py`, `db_transfer.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, and the sinks that route a run's side effects (stream, artifacts, views, graph).
 - `instances/`
   Live agent copies: the single registration point every execution channel calls, the instance store, the carrier of a resident instance (the process or container the agent page's Run starts, `carrier.py`, running `runtime/instance_run.py`), the per-instance mailbox with its conversations and wake-up, and the server-side rebuild of a copy's conversation history.
 - `chat/`
@@ -83,18 +63,11 @@ Under those runtime layers, the backend works with several domain modules:
 - `tools/`
   Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call. The `_crud.py` factory builds the six entity management tool modules (flow, loop, team, scenario, world, project) from handlers and schemas; `_json.py` provides the shared JSON envelope for all tool results.
 - `connectors/`
-  Outside-world integrations — Telegram (poller, chat→agent bindings) and git (GitHub/GitLab providers, repo operations, issue sync).
-- `connections/`
-  The other direction from an imported agent: an external agent that runs on its own trigger and reports its runs in over `/api/ingest`, authenticated by its own per-connection token rather than the operator's. Holds the connection store, the reporting service that turns a posted run into the same records a local run leaves, OTel/OTLP ingestion, and history retention. See [docs/connections.md](docs/connections.md).
-- `a2a/`
-  The Agent2Agent protocol in both directions, as pure functions over dicts: `card.py` builds an Agent Card for every agent here and validates a foreign one, `server.py` holds the JSON-RPC envelopes and the hub-to-A2A state mapping used by `dashboard/backend/routes/a2a.py`, and `client.py` is the wire format `agents/remote_agent.py` speaks to an imported A2A agent. See [docs/a2a.md](docs/a2a.md).
+  Outside-world integrations: Jira and git (GitLab provider, repo operations, issue sync).
 - `mcp_client/`
   Connects to MCP servers configured per workspace and turns their tools into hub tools, named `mcp__<server id>__<tool name>` so the capability model can classify them.
 - `notify/`
-  Outbound webhooks and Slack incoming-webhooks, plus the alert rules that decide when an event fires one. Delivery runs off a queue on its own worker thread so a broken endpoint never blocks the run or notification that triggered it.
-- `clients/`
-  Tracer libraries an *external* graph imports to report into this hub in observe mode — `agents-hub-langgraph` (Python) and `agents-hub-langgraph-js` (JS/TS) — the client side of `connections/`.
-
+  Outbound webhooks, plus the alert rules that decide when an event fires one. Delivery runs off a queue on its own worker thread so a broken endpoint never blocks the run or notification that triggered it.
 At a high level, the flow looks like this:
 
 `Dashboard / CLI -> FastAPI backend -> task/project/workspace services -> agent factory (assembles layered instructions + memory tools) -> local or Docker execution -> runs, logs, results, views, sessions, files`
@@ -120,7 +93,7 @@ agents_hub/
 │   ├── prompt_assembly.py   # Builds the runtime system prompt from the three markdown layers
 │   ├── registry.py          # AgentSpec loader (the `agents` document store)
 │   ├── agent_factory.py     # Constructs runnable agents and binds tools / memory
-│   ├── agent_launcher.py    # Starts a run (budget check, process launch, run record)
+│   ├── agent_launcher.py    # Starts a run (process launch, run record)
 │   ├── agent_response.py    # Structured response envelope (buttons, views, …)
 │   ├── agent_replay.py      # Re-run a recorded run, optionally on another model
 │   ├── capability_guard.py  # Refuses dangerous tool combinations at save/build time
@@ -130,20 +103,16 @@ agents_hub/
 │   └── callbacks/           # Streaming, in-loop guards, run statistics
 ├── managers/                # Run records (a facade over managers/runs/), agent containers, run watchdog
 ├── runtime/                 # Subprocess entrypoints: agent_run, instance_run, flow_run, docker_runner
-├── connections/             # External agents reporting runs in over /api/ingest (the reverse of an imported agent)
 ├── mcp_client/              # MCP server connections, turned into hub tools
-├── notify/                  # Outbound webhooks / Slack incoming-webhooks and alert rules
-├── clients/                 # Tracer libraries an external graph imports to report into connections/
+├── notify/                  # Outbound webhooks and alert rules
 ├── common/
-│   ├── db.py                # database core (SQLite WAL, or Postgres) — runs, tasks, sessions, instances, views, evals …
-│   ├── migrations/          # numbered schema migrations, one syntax for both backends
-│   ├── db_transfer.py       # ah db migrate: copy the whole database between backends
+│   ├── db.py                # database core (SQLite WAL) — runs, tasks, sessions, instances, views, evals …
+│   ├── migrations/          # numbered schema migrations
+│   ├── db_transfer.py       # ah db migrate: copy the database to another file
 │   ├── db_migrate.py        # One-time migration from the legacy JSON stores
 │   ├── config.py            # Environment-driven settings
 │   ├── paths.py             # Canonical paths under .agents_hub/
 │   ├── pricing.py           # Run cost from catalog prices
-│   ├── budget.py            # Per-workspace spend caps, enforced at run launch
-│   ├── auth.py              # Optional API-token authorization
 │   ├── *_sink.py            # Where a run's stream / artifacts / entities / graph updates go
 │   └── entity_links.py      # Entity kind → dashboard URL, for the links a reply carries
 ├── instances/               # Live agent copies — registry, store, carrier, mailbox, wake-up, rebuilt history
@@ -158,7 +127,7 @@ agents_hub/
 ├── playground/              # Multi-agent simulations (environments, authored worlds, roles, tick log)
 ├── reasoning/               # think / plan scratchpads and their step gates
 ├── providers/               # Provider registry, OpenAI-compatible adapters, context windows
-├── connectors/              # Telegram and git (GitHub / GitLab) integrations
+├── connectors/              # Jira and git (GitLab) integrations
 ├── dashboard/
 │   ├── backend/             # FastAPI API and route modules
 │   └── frontend/            # React/Vite dashboard
@@ -223,7 +192,7 @@ agents_hub/
 - `agents/agent_factory.py`
   Builds runnable agent instances from registry definitions and wires tools / memory.
 - `agents/agent_launcher.py`
-  Starts a run: resolves the model, checks the workspace budget, launches the process, and records the run.
+  Starts a run: resolves the model, launches the process, and records the run.
 - `managers/run_manager.py`
   Tracks runs, logs, session links, and execution metadata.
 - `managers/container_manager.py`
@@ -241,7 +210,7 @@ agents_hub/
 - `projects/proxy_service.py`
   Validated backend base URLs for proxied requests: rejects non-http(s) schemes and cloud metadata addresses, rewrites container hostnames to reach the Docker host.
 - `common/db.py`
-  The database core. One WAL-journaled SQLite file (or, with `AGENTS_HUB_DATABASE_URL`, a Postgres database) backs the stores that several processes mutate concurrently — runs, tasks, sessions, instances, views, evals, loops, teams, simulations.
+  The database core. One WAL-journaled SQLite file backs the stores that several processes mutate concurrently — runs, tasks, sessions, instances, views, evals, loops, teams, simulations.
 - `memory/injection.py`
   Injects shared / episodic / graph / RAG capability hints into the assembled system prompt at runtime.
 - `common/dotenv.py`
@@ -256,7 +225,7 @@ agents_hub/
   CRUD tool factory shared by six entity management modules (flow, loop, team, scenario, world, project). Wraps entity-specific handlers with try/except, `json_ok`/`json_err` envelopes, and the `@tool` decorator.
 - `tools/_json.py`
   Shared JSON envelope for all tool results: `json_ok({...})` on success, `json_err(message, code=...)` on failure. One module where twenty-six identical copies used to live.
-- `.agents_hub/agents_hub.db` (or Postgres, by `AGENTS_HUB_DATABASE_URL`)
+- `.agents_hub/agents_hub.db`
   The database holding runs, tasks, sessions, instances, views, the eval / loop / team / simulation records, and the document collections below.
 - `agents` document store
   Registry of `AgentSpec` records — model, provider, tools, memory, node settings (`agents/registry.py`; a run container reads it from the snapshot in `.agents_hub/run_snapshots/`).
@@ -384,9 +353,9 @@ The contents of the pool are **not** dumped into the prompt — only names and s
 
 ## Storage Model
 
-State is split between a database (SQLite by default, Postgres by `AGENTS_HUB_DATABASE_URL`) and files on disk, along one line: anything several processes mutate concurrently lives in the database; anything a human edits, or that is naturally a file, stays a file.
+State is split between a database (SQLite) and files on disk, along one line: anything several processes mutate concurrently lives in the database; anything a human edits, or that is naturally a file, stays a file.
 
-**The database** — `.agents_hub/agents_hub.db` (SQLite, WAL-journaled so the backend, agent subprocesses, and resident instances can read and write at the same time) or a Postgres database holding the same tables (`common/db.py`, `common/migrations/`). The JSON stores it replaced suffered whole-file locking, lost updates, and corruption-wipe hazards under exactly that concurrency. Tables:
+**The database** — `.agents_hub/agents_hub.db` (SQLite, WAL-journaled so the backend, agent subprocesses, and resident instances can read and write at the same time; `common/db.py`, `common/migrations/`). The JSON stores it replaced suffered whole-file locking, lost updates, and corruption-wipe hazards under exactly that concurrency. Tables:
 
 | Group | Tables |
 | --- | --- |
@@ -398,10 +367,9 @@ State is split between a database (SQLite by default, Postgres by `AGENTS_HUB_DA
 | Simulation | `scenarios`, `sim_runs`, `sim_ticks` |
 | Loops | `loops`, `loop_runs`, `loop_iterations` |
 | Teams | `teams`, `team_runs`, `team_messages` |
-| Integration | `inbound_deliveries` (notify's idempotency record for an inbound webhook) |
-| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `agents`, `custom_providers`, `models`, `flows`, `flow_entities`, `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `connections`, `telegram`, `git_connectors`, `blender_connector`, `node_connections`, `web_log`, `user_context` |
+| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `agents`, `custom_providers`, `models`, `flows`, `flow_entities`, `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `git_connectors`, `web_log` |
 
-The schema is a sequence of numbered migrations (`common/migrations/`, ledger table `schema_migrations`), written once in SQLite syntax and rewritten for Postgres by the runner. The first connection in any process applies the pending ones and runs the one-time import of the legacy JSON stores (`common/db_migrate.py` for the original tables, each `DocStore` for its own file), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first. `ah db migrate --to <url|path>` copies a whole database between the two backends (`common/db_transfer.py`).
+The schema is a sequence of numbered migrations (`common/migrations/`, ledger table `schema_migrations`), written in SQLite syntax. The first connection in any process applies the pending ones and runs the one-time import of the legacy JSON stores (`common/db_migrate.py` for the original tables, each `DocStore` for its own file), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first. `ah db migrate --to <url|path>` copies the database to another file (`common/db_transfer.py`).
 
 `chats` is the newest of these and arrived the same way the others did. The Chat page kept its conversations in the browser's `localStorage`, which made the record the service exists to produce the one thing it did not store: bound to a single browser profile, erased with the site data, and trimmed oldest-first once the ~5 MB quota was reached. A conversation is now a row (`common/chat_store.py`, `/api/chats`), holding the transcript as the UI renders it, beside the `runs` its turns produced. The browser keeps only what is true of that browser — which panel is open, which view mode was last used — and a profile still holding the old key hands it over once, additively, on first load.
 
@@ -412,11 +380,7 @@ The schema is a sequence of numbered migrations (`common/migrations/`, ledger ta
 - `run_logs/`, `instance_logs/`, `dockerfiles/` — generated artifacts
 - `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in the `workspaces` document store, not in its folder
 - `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts, in the repository rather than the state directory
-- `*.migrated` — the JSON and YAML files the database replaced (`agents.json`, `models.json`, `custom_providers.json`, `workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `connections.json`, `telegram.json`, `flows/`, ...), left behind by the one-time import and safe to delete
-
-## Running more than one backend
-
-The default deployment is one backend replica; nothing below is needed for it. `docker-compose.yml` also supports `--scale backend=N` behind nginx, but two pieces of state stop that from being safe on their own: the session broker (`common/session_broker.py`) is an in-process SSE hub, so an event published on one replica never reaches a browser tab connected to another; and everything else (SQLite, the `.agents_hub/` state directory) is a bind mount shared by every replica on one host, which is fine as long as it stays one host. `common/broker_bridge.py` closes the first gap: set `AGENTS_HUB_BROKER_URL` to a Redis URL and every replica fans its local events out to every other replica, with an `origin` tag so a replica never re-delivers its own event to itself. It stays off (no import, no connection) when the setting is empty. Scheduled jobs (`plans/`) already use DB leases so several schedulers racing the same due job is safe regardless of the bridge. `AGENTS_HUB_DATABASE_URL` moves the database itself into Postgres (`common/db.py` has both backends behind one API; `ah db migrate` copies an existing SQLite state across), which leaves the files under `.agents_hub/` as the remaining one-host boundary. See [docs/scaling.md](./docs/scaling.md) for the full picture and the exact commands.
+- `*.migrated` — the JSON and YAML files the database replaced (`agents.json`, `models.json`, `custom_providers.json`, `workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `flows/`, ...), left behind by the one-time import and safe to delete
 
 ## API Surface
 
@@ -429,7 +393,7 @@ The backend is organized by route domains, registered in `dashboard/backend/main
 | Measurement | `stats`, `models`, `costs`, `evals`, `playground`, `runs/{id}/replay` |
 | Knowledge | `shared-memory`, `web-logs`, `views` |
 | Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `containers` |
-| Integration | `external`, `telegram`, `git`, `settings`, `stream`, `health`, `connections`, `ingest`, `mcp`, `notify` |
+| Integration | `git`, `settings`, `stream`, `health`, `mcp`, `notify` |
 
 The root endpoint (`GET /`) returns the API banner and the domains it serves. Most application endpoints live under `/api/*`.
 
@@ -440,11 +404,11 @@ curl http://localhost:8000/            # API banner + route domains
 curl http://localhost:8000/api/health  # DB reachability, row counts, background services, state size
 ```
 
-`/api/health` is what to read when something feels stuck: it reports the liveness of every background service — the plan scheduler, the run watchdog, the Telegram poller, the external-state publisher — instead of making you infer it from logs.
+`/api/health` is what to read when something feels stuck: it reports the liveness of every background service — the plan scheduler and the run watchdog — instead of making you infer it from logs.
 
 **Live updates.** The dashboard holds a single `EventSource` onto `/api/stream`, and everything that moves is a channel on it: chat tokens, flow nodes, team boards, loop iterations, simulation ticks, view frames. Nothing needs polling to discover that the backend went away.
 
-**A turn belongs to its conversation, not to the window that asked for it.** Every chat pipeline publishes its events to `chat:<conversation_id>` (`chat/broadcast.py`), so the same conversation open in a second tab or on another device mirrors the generation as it happens, and a turn started from Telegram or from an agent's inbox shows up in the chat page rather than appearing complete at the end. Each event names the client that started the turn, which is how that tab recognises its own echo and does not render every token twice. The mirror is never saved: the tab that ran the turn writes the transcript, and a save announces itself on the same channel so the others reload rather than drift. If that tab is gone when the run finishes, the server writes the turn itself, so closing a window mid-answer no longer loses it.
+**A turn belongs to its conversation, not to the window that asked for it.** Every chat pipeline publishes its events to `chat:<conversation_id>` (`chat/broadcast.py`), so the same conversation open in a second tab or on another device mirrors the generation as it happens, and a turn started from an agent's inbox shows up in the chat page rather than appearing complete at the end. Each event names the client that started the turn, which is how that tab recognises its own echo and does not render every token twice. The mirror is never saved: the tab that ran the turn writes the transcript, and a save announces itself on the same channel so the others reload rather than drift. If that tab is gone when the run finishes, the server writes the turn itself, so closing a window mid-answer no longer loses it.
 
 **Catching up.** A broadcast only carries what comes next, so `common/live_runs.py` keeps a short-term tail of each run in flight: the text so far, the thinking and tool steps behind it, dropped shortly after the run ends. It is what `GET /api/chats/{id}/live` and `GET /api/messages/{run_id}/live` answer, so a page opened mid-answer starts from the middle of the answer rather than the middle of a word. This is what makes a running run's own page show its generation instead of an empty log.
 
@@ -487,7 +451,7 @@ Related environment variables:
 
 The hub runs locally by default and its guardrails reflect that, but several are worth knowing before exposing it further:
 
-- **Identity: three modes, one variable.** `AUTH_MODE` picks the posture. `single` (the default) is one operator with no login, no accounts and no owner checks, which is what a laptop wants; `token` gates every `/api` request on the shared `AGENTS_HUB_API_TOKEN`, the minimum whenever the port is reachable by somebody else; `multi` adds named accounts with passwords, a global role and per-workspace membership roles. Setting only `AGENTS_HUB_API_TOKEN` still resolves to `token` mode, so nothing that predates this changed. The pure decision table lives in `common/auth.py` and the stateful half (users, sessions, membership, the service credential subprocess relays carry) in `common/identity.py`; one middleware in front of the API applies it in all three modes. See docs/identity.md.
+- **Identity.** One local person, no login and no accounts: everything is allowed. Keep the port on the local machine.
 - **Capability guard.** `tools/capabilities.py` classifies tools, and `agents/capability_guard.py` refuses tool sets that compose into a data-exfiltration primitive — enforced at save time (the bad combination never reaches a runtime) and again at build time, since memory pools, skills, and reasoning tools all append to the list.
 - **In-loop guards.** Tool-repetition limits and a context-window guard intercept an agent's own loop (`agents/callbacks/guards.py`). These do *not* apply to imported remote agents, whose loop lives in another process.
 - **Tool hooks and approval.** A workspace can run its own code around every tool call (`PreToolUse` / `PostToolUse`, configured in `<workspace>/.hooks.json`, executed with a scrubbed environment) and can require a human yes before a destructive call happens: the task parks in `awaiting_approval` with the call on it and resumes once the operator answers. Both are off until configured. See `agents/hooks.py`, `tools/approval.py` and `docs/hooks.md`.
@@ -506,6 +470,6 @@ Wording lives in `dashboard/frontend/src/i18n/locales/<lang>/<namespace>.js` —
 
 ## Tech stack
 
-**Backend** — FastAPI, Uvicorn, Pydantic / pydantic-settings, SQLite (WAL) or Postgres (psycopg 3) for concurrent state, LangChain ecosystem libraries, Chroma / Pinecone / Qdrant for RAG vector storage, Typer for the CLI, Docker for optional agent isolation.
+**Backend** — FastAPI, Uvicorn, Pydantic / pydantic-settings, SQLite (WAL) for concurrent state, LangChain ecosystem libraries, Chroma / Pinecone / Qdrant for RAG vector storage, Typer for the CLI, Docker for optional agent isolation.
 
 **Frontend** — React 19, Vite, Tailwind CSS, React Router, Axios, React Flow (flow canvas), and the view renderers: Vega-Lite (charts), Cytoscape (graphs), three.js with React Three Fiber (3D scenes), Mermaid (diagrams), KaTeX (equations).

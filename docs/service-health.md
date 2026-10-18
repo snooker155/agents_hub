@@ -1,29 +1,21 @@
 # Service health and diagnostics
 
-Whether the moving parts are alive, and what to do when they are not. For a
-symptom-confirm-fix writeup of the failures people actually hit, see the
-[runbook](runbook.md); for the two service level objectives judged over a
-rolling window, see [slo](slo.md).
+Whether the moving parts are alive, and what to do when they are not.
 
 ## The snapshot
 
 `GET /api/health`, and the Service Agent's `service_health` tool, both report the
 same thing:
 
-- **database** — reachable, row counts per store, and how many runs are in a
+- **database**: reachable, row counts per store, and how many runs are in a
   running state
-- **entity_runs** — counts by kind (flow, loop, team, scenario) and active runs
+- **entity_runs**: counts by kind (flow, loop, team, scenario) and active runs
   by kind
-- **services** — plan scheduler, run watchdog, Telegram poller, external-state
-  publisher
-- **storage** — database size, WAL size, run-log size and file count, total
+- **services**: plan scheduler and run watchdog
+- **storage**: database size, WAL size, run-log size and file count, total
   state size
-- **providers** — which is default, which keys are set (as booleans), whether
-  API auth is on
-- **blender** — the geometry engine: whether the connector is on, whether a
-  binary was found, and how many engines are running right now, counted across
-  processes rather than only this one
-- **agent_cache** — whether the build cache is on, and its stats
+- **providers**: which is default and which keys are set (as booleans)
+- **agent_cache**: whether the build cache is on, and its stats
 
 ## Reading it correctly
 
@@ -32,90 +24,29 @@ Two traps, both common:
 - **`null` is not `false`.** A service reported as null means the probe could
   not tell: the module did not import, or it only exists inside the running web
   app. `false` means it is genuinely not running.
-- **`running_runs` counts rows, not processes.** A large number with no live
-  nodes means orphaned records left by a process that died, not live work.
+- **`running_runs` counts rows, not processes.** A large number with nothing
+  actually running means orphaned records left by a process that died, not live work.
 
-## Probes and metrics
+## Probes
 
-`GET /api/health` is for an operator looking at a page. `/livez`, `/readyz`
-and `/metrics` are for infrastructure: a load balancer, a container
-orchestrator, a Prometheus scraper. All three sit outside `/api` and answer
-without the operator's token whatever `AUTH_MODE` is set to, the same way
-`/api/ingest` authenticates itself rather than as the operator: a scrape
-target or a health check is not the operator either, and closing these three
-behind the same token as the dashboard would mean handing that token to every
-load balancer that needs to probe the service.
+`GET /api/health` is for you looking at a page. `/livez` and `/readyz` are
+for a container health check. Both sit outside `/api`.
 
-- **`GET /livez`** — 200 `{"status": "alive"}` whenever the process can run
-  Python at all. No database access: a liveness probe that can fail because
-  the database is slow would restart a process that was never the problem.
-- **`GET /readyz`** — whether this process should receive traffic right now.
-  200 when the database answers a trivial query and, whichever of the checks
-  below apply, none of them says no; 503 otherwise. The body names each
-  check, so a 503 does not require guessing:
-  - `database` — a trivial query answered
-  - `broker` — `null` when `AGENTS_HUB_BROKER_URL` is not set (nothing to
-    check); `true`/`false` once it is, from the cross-replica broker
-    bridge's own connection state
-  - `blob` — `null` when `AGENTS_HUB_BLOB_URL` is not set; `"unknown"` when
-    `common.blobs` cannot be read (never fails readiness); `true`/`false`
-    from `common.blobs.configured()` otherwise
-  - `singletons` (in the `all`/`api` roles only) — whether some process
-    currently holds each singleton role's lease (scheduler, watchdog,
-    outbox, and telegram when a bot token is configured). Informational,
-    not a readiness failure: a deployment that has been up for one second
-    has no holder yet, and that is normal, not degraded.
-- **`GET /metrics`** — Prometheus text exposition format
-  (`text/plain; version=0.0.4`), hand-written in `common/metrics.py` so a
-  future in-process reader (the Service Agent, say) can call the same
-  `render()` the route does. Metrics: `agents_hub_runs_total{status=}`,
-  `agents_hub_runs_running`, `agents_hub_run_queue{status=}`,
-  `agents_hub_run_queue_oldest_seconds`, `agents_hub_outbox{state=}`,
-  `agents_hub_lease_age_seconds{role=}`, `agents_hub_lease_held{role=,owner=}`,
-  `agents_hub_tokens_total{workspace=}`, `agents_hub_cost_usd_total{workspace=}`
-  (omitted if the price catalog cannot be read), `agents_hub_database_up`,
-  `agents_hub_run_start_seconds` (a summary, the SLO window's p95 quantile),
-  `agents_hub_slo_breach{objective=}` (1 in breach, 0 ok, omitted while there
-  is not yet enough data; see [slo](slo.md)), and
-  `agents_hub_info{role=,instance=}`. The metrics operators ask for (runs
-  finished by agent and status, tokens and cost by model, a run duration
-  histogram, tool calls by tool) and the Grafana dashboard are in
-  [observability](observability.md).
-
-## Exporting runs as spans
-
-Set `AGENTS_HUB_OTEL_EXPORT_URL` to an OTLP/HTTP traces endpoint (including
-another Agents Hub's own `/api/ingest/v1/traces`) and every run that reaches a
-terminal status (`completed`, `stopped`, `failed`, `error`) is posted there as
-one span, best-effort, from a background thread (`common/otel_export.py`):
-never blocks or fails the run, one retry, and a dropped export on a process
-restart is an acceptable loss for telemetry. `AGENTS_HUB_OTEL_EXPORT_HEADERS`
-adds extra request headers (a collector token, say) as `"k=v,k=v"`.
-
-The span is shaped to match what this hub's own OTLP receiver
-(`connections/otel.py`, `connections/otlp.py`) decodes, carrying `run_id`,
-`task_id`, `workspace`, `agent_id`, `status`, provider, model, token counts,
-duration and, when the price catalog can compute one, `cost_usd`. That
-mirroring is deliberate: pointing one deployment's export at another
-deployment's ingest endpoint records the same run there, the same way a real
-collector forwarding to a second backend would.
-
-Under the run's span the export carries one child span per model call and per
-tool call, and the hub can also push its metrics as OTLP; the standard
-`OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` work as
-fallbacks. All of it is in [observability](observability.md).
+- **`GET /livez`**: 200 `{"status": "alive"}` whenever the process can run
+  Python at all. No database access.
+- **`GET /readyz`**: 200 when the database answers a trivial query, 503
+  otherwise. The body names the check.
 
 ## The usual diagnoses
 
 | Symptom | Look at |
 |---|---|
-| Tasks never start | nodes: a `running` row with a dead pid |
+| Tasks never start | a `running` row with a dead pid |
 | A chat hung | the session, then its runs, then the run's log |
 | Everything is slow | runs by duration; then the model in use |
 | Scheduled jobs stopped | `services.plan_scheduler` |
 | Disk filling | `storage.run_logs_bytes` |
 | Costs spiked | costs by agent and model over the window |
-| A 3D view will not build | `blender.available` and `blender.engines_running` |
 | An agent fetched something odd | the [web access log](web-logs.md) for that run |
 
 ## Doctor
@@ -145,71 +76,24 @@ the provider's status page.
 ### Check: cors
 
 What `ALLOW_ORIGINS` lets browsers do. Ok for a list of origins or the local
-dev defaults. With `*` the hub allows any origin but without credentials
-(browsers refuse a wildcard with credentials anyway); that is fine in `single`
-and `token` mode, and a warning in `multi` mode, where any site can call the
-API with a token stolen from a person. Fix: set `ALLOW_ORIGINS` to the
-dashboard's origins, comma separated.
+dev defaults. With `*` the hub allows any origin but without credentials,
+which is fine for one person. Fix: set `ALLOW_ORIGINS` to the dashboard's
+origins, comma separated.
 
 ### Check: security
 
 The settings the hardening list in `SECURITY.md` (repository root) asks for,
-read together. A warning for each of: `CAPABILITY_GUARD` set to
-anything but `block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty
-(runs then receive none of them); secrets bound to hosts while
-`AGENTS_HUB_EGRESS_PROXY` is off (runs that declare them refuse to start, or,
-with `AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1`, receive the real values);
-`token` or `multi` mode with
-`AGENT_EXECUTION_MODE=local`, where every person's runs have the host's own
-permissions. `single` mode with local runs is the one person laptop case and
-reads ok. Fix: the setting the warning names, in `.env` or on the Settings
-page. The [threat model](threat-model.md) says why each matters.
+read together. A warning for each of: `CAPABILITY_GUARD` set to anything but
+`block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty (runs then
+receive none of them). Fix: the setting the warning names, in `.env` or on
+the Settings page.
 
 ### Check: stale runs
 
 Agent runs still `running` whose heartbeat is older than the watchdog's
-threshold (`RUN_HEARTBEAT_STALE_SECONDS`, 180 s), and expired singleton
-leases. Warn; fail when there are stale runs and the run watchdog is not
+threshold (`RUN_HEARTBEAT_STALE_SECONDS`, 180 s). Warn; fail when there are stale runs and the run watchdog is not
 running. Fix: the watchdog fails dead runs on its own; if it is down, restart
-the backend. An expired lease means the process holding that role died.
-
-### Check: run queue
-
-Launches waiting in the queue. Warn when more than 10 wait, or one has waited
-over 5 minutes, and no worker is alive. Fix: start a worker (`ah worker`, see
-[workers](workers.md)), or run the backend in the `all` role.
-
-### Check: outbox
-
-Outbound notifications not yet delivered. Warn when any was given up on after
-every retry, or more than 100 wait. Fix: check the notification endpoints'
-URLs and credentials; the outbox lease holder delivers them.
-
-### Check: broker
-
-The Redis broker that carries live events between replicas answers a PING.
-Skip when `AGENTS_HUB_BROKER_URL` is not set; fail when it is set and the
-bridge is not connected or Redis does not answer. Fix: check the URL, that
-Redis is running (`docker compose ps redis`) and that the `redis` package is
-installed. The Cluster page's service map shows its latency and connected
-clients.
-
-### Check: blob store
-
-The object store takes a real round trip: a small object under `.health/` is
-written, read back and deleted. Skip when `AGENTS_HUB_BLOB_URL` is not set;
-fail when any step errors. Fix: check the bucket name, `AGENTS_HUB_BLOB_ENDPOINT`
-(MinIO or another S3-compatible server) and the access keys, and that the
-credentials may write, read and delete.
-
-### Check: oidc
-
-The identity provider's discovery document answers, asked at
-`AUTH_OIDC_INTERNAL_URL` when that is set, else at the issuer. Skip unless
-single sign-on is configured (multi mode with an issuer and a client id); fail
-when the provider cannot be reached or its document lacks an endpoint. Fix:
-check the issuer and the internal URL, and that Keycloak (or your provider) is
-up; nobody can sign in while this fails.
+the backend.
 
 ### Check: disk
 
@@ -223,10 +107,6 @@ The browser service's `/healthz` answers. Skip when `AGENTS_HUB_BROWSER_URL`
 is not set; warn when it answers but `AGENTS_HUB_BROWSER_TOKEN` is missing.
 Fix: start `deploy/browser`, check the URL and the token.
 
-### Check: models runtime
-
-The [model runtime](local-models.md)'s `/healthz` answers: the one `AGENTS_HUB_MODELS_URL` names, or the one the hub runs itself on the host. Skip when both are off (`AGENTS_HUB_MODELS_MANAGED=false` and no URL); warn when the hub's own runtime was stopped from the Models page, or when it answers without a token. Fix: the Models page, Local tab, shows the runtime's state and log and has Start; for a runtime run elsewhere, check the URL and the token.
-
 ### Check: docker
 
 A docker daemon answers. Fail when agents are set to run in docker; warn when
@@ -235,15 +115,10 @@ start Docker, or check that this process can reach its socket.
 
 ### Check: sandbox
 
-Every sandbox provider ([docs/sandboxes.md](sandboxes.md): docker, local,
-e2b, modal), whether it can run something right now, and why not (daemon
-down, SDK missing, key missing). Fail when the resolved default provider
-cannot run at all; warn when it can but the egress proxy is off, so a
-`limited`/`none` environment network policy is enforced only by the hub's
-own tool checks rather than by the container network itself; ok when both
-hold. Fix: start Docker (or set `CODE_RUNNER_FALLBACK=local`), install the
-`e2b`/`modal` package and set its key, or set `AGENTS_HUB_EGRESS_PROXY=1` for
-the enforced network policy.
+Every sandbox provider ([sandboxes](sandboxes.md): docker, local), whether it
+can run something right now, and why not (daemon down). Fail when the
+resolved default provider cannot run at all. Fix: start Docker, or set
+`CODE_RUNNER_FALLBACK=local`.
 
 ### Check: frontend build
 
@@ -269,19 +144,6 @@ open the skill on the Skills page, read its flags, then detach or delete it,
 or keep it knowingly; for an unreviewed repository skill, **Sync from
 repositories**.
 
-## Support bundle
-
-`GET /api/support/bundle` (admin only), the Health page's **Download support
-bundle** button, or `ah support-bundle [--out PATH] [--since 24h]` from a
-terminal (works in direct mode, or against a remote backend when
-`AGENTS_HUB_URL` is set): one zip with `version.json`, `doctor.json`,
-`health.json`, `migrations.json`, `config.json` (secrets reduced to "is it
-set", never the value), `errors.json`, `slo.json` and a tail of each running
-process's own log. `common.support_bundle.scrub` runs over every file before
-it enters the zip, so nothing that looks like a key, a token or a
-credentialed URL survives regardless of which section it turned up in. See
-the [runbook](runbook.md#support-bundle) for the full field list.
-
 ## The Service Agent
 
 The [system agent](system-agents.md) that owns this. It reads health,
@@ -299,4 +161,4 @@ hold whatever the service handled, so giving it a way out would turn the
 service's own diagnostics into an exfiltration path. See
 [tools-and-capabilities](tools-and-capabilities.md).
 
-Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md), [runbook](runbook.md), [slo](slo.md).
+Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md).

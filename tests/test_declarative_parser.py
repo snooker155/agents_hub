@@ -55,21 +55,21 @@ def test_a_part_file_named_in_frontmatter_and_inline_text(tmp_path):
 
 
 def test_yaml_holds_several_documents_and_unrelated_files_are_skipped(tmp_path):
-    _write(tmp_path, "hub.yaml", "kind: environment\nid: one\n---\nkind: memory_pool\nid: two\n")
-    _write(tmp_path, ".github/workflows/ci.yml", "kind: environment\nid: hidden\n")
+    _write(tmp_path, "hub.yaml", "kind: memory_pool\nid: one\n---\nkind: memory_pool\nid: two\n")
+    _write(tmp_path, ".github/workflows/ci.yml", "kind: memory_pool\nid: hidden\n")
     _write(tmp_path, "compose.yaml", "services:\n  web: {}\n")
     _write(tmp_path, "README.md", "# Not an agent\n")
     bundle = load_bundle(tmp_path)
-    assert bundle.addresses() == ["environment/one", "memory_pool/two"]
+    assert bundle.addresses() == ["memory_pool/one", "memory_pool/two"]
     assert bundle.get("memory_pool", "two").line == 5  # the line of its id
 
 
 def test_every_problem_is_reported_with_file_and_line(tmp_path):
     _write(tmp_path, "a.yaml", "\n".join([
-        "kind: environment",         # 1
+        "kind: memory_pool",         # 1
         "id: dup",                   # 2
         "---",                       # 3
-        "kind: environment",         # 4
+        "kind: memory_pool",         # 4
         "id: dup",                   # 5
         "---",                       # 6
         "kind: gadget",              # 7
@@ -78,28 +78,28 @@ def test_every_problem_is_reported_with_file_and_line(tmp_path):
         "kind: memory_pool",         # 10
         "name: no id",               # 11
         "---",                       # 12
-        "kind: environment",         # 13
+        "kind: deployment",          # 13
         "id: typo",                  # 14
         "colour: blue",              # 15
-        "is_default: maybe",         # 16
+        "paused: maybe",             # 16
     ]) + "\n")
     with pytest.raises(ValidationError) as excinfo:
         load_bundle(tmp_path)
     problems = _problems(excinfo)
-    assert any(p.startswith("a.yaml:5: environment 'dup' is declared twice (first at a.yaml:2)") for p in problems)
+    assert any(p.startswith("a.yaml:5: memory_pool 'dup' is declared twice (first at a.yaml:2)") for p in problems)
     assert any(p.startswith("a.yaml:7: unknown kind 'gadget'") for p in problems)
     assert "a.yaml:10: memory_pool has no id" in problems
-    assert any(p.startswith("a.yaml:15: unknown environment field 'colour'") for p in problems)
-    assert "a.yaml:16: is_default must be true or false" in problems
+    assert any(p.startswith("a.yaml:15: unknown deployment field 'colour'") for p in problems)
+    assert "a.yaml:16: paused must be true or false" in problems
 
 
 def test_duplicate_yaml_key_and_broken_yaml(tmp_path):
-    _write(tmp_path, "a.yaml", "kind: environment\nid: a\nmode: local\nmode: docker\n")
-    _write(tmp_path, "b.yaml", "kind: environment\nid: [unclosed\n")
+    _write(tmp_path, "a.yaml", "kind: memory_pool\nid: a\ntype: text\ntype: json\n")
+    _write(tmp_path, "b.yaml", "kind: memory_pool\nid: [unclosed\n")
     with pytest.raises(ValidationError) as excinfo:
         load_bundle(tmp_path)
     problems = _problems(excinfo)
-    assert any(p.startswith("a.yaml:4:") and "duplicate key 'mode'" in p for p in problems)
+    assert any(p.startswith("a.yaml:4:") and "duplicate key 'type'" in p for p in problems)
     assert any(p.startswith("b.yaml:") and "invalid YAML" in p for p in problems)
 
 
@@ -146,4 +146,4 @@ def test_the_example_repository_parses():
     bundle = load_bundle(root)
     assert sorted(bundle.addresses()) == [
         "agent/team_researcher", "agent/team_writer", "deployment/weekday-digest", "deployment/weekly-report",
-        "environment/research-sandbox", "memory_pool/team-notes"]
+        "memory_pool/team-notes"]

@@ -3,7 +3,6 @@ import SystemAgentWarning from './SystemAgentWarning';
 import { AlertTriangle, ChevronDown, ChevronRight, Loader, Lock, Save, Share2, ShieldCheck, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import useToolPolicy, { TOOL_POLICY_INHERIT } from './useToolPolicy';
-import useWorkspaceIsolation from '../workspace/useWorkspaceIsolation';
 import { useAgentPage } from './context';
 import { Link } from 'react-router-dom';
 import { getWorkspaceRoles } from '../../api';
@@ -92,12 +91,6 @@ export default function ToolsTab() {
     saveFailedText: t('toolPolicy.saveFailed'),
   });
 
-  // When the workspace is isolated, a tool outside its allowlist cannot be
-  // added (common/isolation.py check_agent_tools, 400 at save time): show it
-  // disabled here rather than let the save round trip just to refuse it.
-  const isolation = useWorkspaceIsolation(selectedWorkspace || agent?.owner_workspace || undefined);
-  const isolationAllowed = isolation.data?.isolated ? new Set(isolation.data.allowed_tools || []) : null;
-  const isolationBlocked = (toolId) => Boolean(isolationAllowed) && !isolationAllowed.has(toolId);
   const modeLabel = (mode) => t(`toolPolicy.modes.${mode}`);
   const sourceLabel = (source) => t(`toolPolicy.sources.${source}`);
 
@@ -262,27 +255,21 @@ export default function ToolsTab() {
                             const row = policy.effective[tool];
                             const locked = row?.source === 'never_gated';
                             const mode = policy.draft[tool] || TOOL_POLICY_INHERIT;
-                            const blocked = isolationBlocked(tool);
                             return (
                               <div
                                 key={tool}
                                 role="checkbox"
                                 aria-checked={enabled}
-                                aria-disabled={blocked || undefined}
                                 aria-label={meta.label || tool}
-                                tabIndex={blocked ? -1 : 0}
-                                title={blocked ? t('isolation.toolHint') : undefined}
-                                onClick={() => { if (!blocked) toggleTool(tool); }}
+                                tabIndex={0}
+                                onClick={() => toggleTool(tool)}
                                 onKeyDown={(e) => {
-                                  if (blocked) return;
                                   if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleTool(tool); }
                                 }}
                                 className={`group rounded-lg border p-2.5 select-none transition-colors flex flex-col gap-1.5 min-w-0 ${
-                                  blocked
-                                    ? 'cursor-not-allowed opacity-60 border-gray-200 bg-gray-50'
-                                    : enabled
-                                      ? 'cursor-pointer border-green-300 bg-green-50 hover:bg-green-100'
-                                      : 'cursor-pointer border-gray-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/40'
+                                  enabled
+                                    ? 'cursor-pointer border-green-300 bg-green-50 hover:bg-green-100'
+                                    : 'cursor-pointer border-gray-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/40'
                                 }`}
                               >
                                 <div className="flex items-start justify-between gap-2">
@@ -291,11 +278,6 @@ export default function ToolsTab() {
                                     <div className="text-xs text-gray-500 mt-0.5 truncate" title={meta.description || tool}>{meta.description || tool}</div>
                                     {policy.groupOf[tool] && (
                                       <div className="text-[11px] text-gray-400 mt-0.5">{t('toolPolicy.fromGroup', { group: policy.groupOf[tool] })}</div>
-                                    )}
-                                    {blocked && (
-                                      <div className="text-[11px] text-amber-700 mt-0.5 flex items-center gap-1" data-testid={`isolation-blocked-${tool}`}>
-                                        <Lock className="w-3 h-3 shrink-0" /> {t('isolation.toolHint')}
-                                      </div>
                                     )}
                                   </div>
                                   <span className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border flex items-center justify-center text-xs font-bold ${

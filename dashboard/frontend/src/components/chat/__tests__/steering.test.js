@@ -1,11 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const getMyPreferences = vi.fn();
-const putMyPreferences = vi.fn(() => Promise.resolve({}));
-vi.mock('../../../api/palette', () => ({
-  getMyPreferences: (...a) => getMyPreferences(...a),
-  putMyPreferences: (...a) => putMyPreferences(...a),
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   STEER_MODE_KEY, applyUndelivered, availableModes, buildSteerBubble, effectiveMode,
@@ -20,25 +13,16 @@ const agent = (id, extra = {}) => ({ id, role: 'agent', content: '', ...extra })
 
 describe('steer mode choice', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     window.localStorage.clear();
   });
 
-  it('defaults to Steer and remembers the last choice locally and on the account', () => {
+  it('defaults to Steer and remembers the last choice in this browser', async () => {
     expect(readLocalSteerMode()).toBe('inject');
     saveSteerMode('queue');
     expect(window.localStorage.getItem(STEER_MODE_KEY)).toBe('queue');
-    expect(putMyPreferences).toHaveBeenCalledWith({ steer_mode: 'queue' });
     expect(readLocalSteerMode()).toBe('queue');
     saveSteerMode('shout');
     expect(readLocalSteerMode()).toBe('queue');
-  });
-
-  it("prefers the account's choice and falls back to this browser's", async () => {
-    getMyPreferences.mockResolvedValueOnce({ data: { steer_mode: 'interrupt' } });
-    expect(await loadSteerMode()).toBe('interrupt');
-    window.localStorage.setItem(STEER_MODE_KEY, 'queue');
-    getMyPreferences.mockRejectedValueOnce({ response: { status: 404 } });
     expect(await loadSteerMode()).toBe('queue');
   });
 });

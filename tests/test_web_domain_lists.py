@@ -215,10 +215,7 @@ def test_route_reads_and_writes_the_lists(monkeypatch):
     from fastapi.testclient import TestClient
 
     from agents.registry import add_agent, get_agent
-    from common.config import settings
     from dashboard.backend.main import app
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
     add_agent(AgentSpec(id="web_route_agent", name="W", type="local", entrypoint="m:f"),
               user_edit=False)
     client = TestClient(app)

@@ -3,8 +3,7 @@
 A workspace called `demo`, seeded end to end so every page of the product has
 something real to look at: a small sample web shop, four custom agents that
 work on it, a flow, a team, a scenario, a handful of views, tasks in every
-status, six recorded chats with their runs and sessions, an example instance
-and service, the project's files as workspace files, and one agent published
+status, six recorded chats with their runs and sessions, example instances, the project's files as workspace files, and one agent published
 to the marketplace. Nothing about it is special beyond that: it is a workspace
 like any other, and you can open it, poke at it, and delete it like one.
 
@@ -34,10 +33,9 @@ like any other, and you can open it, poke at it, and delete it like one.
   each turn backed by a real run and every turn of a chat on one session, so
   Chat, Sessions, Messages and the Run pages all have something to show. Two
   of the answers carry a view (the chart and the table).
-- **Instances and a service**: a finished resident copy of the writer with
-  the runs it performed on its timeline, a finished task copy of the reviewer,
-  and a paused "Demo Writer service" with one stopped replica and its event
-  journal. Records to look at, nothing running.
+- **Instances**: a finished resident copy of the writer with the runs it
+  performed on its timeline, and a finished task copy of the reviewer.
+  Records to look at, nothing running.
 - **Workspace files**: the project's four files, registered the way an
   agent's writes are, plus two uploads (`supplier-questions.md`, used by the
   support chat, and `august-report.md`).
@@ -49,7 +47,7 @@ like any other, and you can open it, poke at it, and delete it like one.
 
 Every seeded record is marked for cleanup: the agents, the project, the flow,
 the team and the scenario carry fixed `demo_`-prefixed ids; everything else
-(tasks, views, chats, sessions, runs, instances, services, files) is matched
+(tasks, views, chats, sessions, runs, instances, files) is matched
 by its `workspace == "demo"` field. See `common/demo_workspace.py`.
 
 ## Turning it on
@@ -65,33 +63,5 @@ by its `workspace == "demo"` field. See `common/demo_workspace.py`.
 Seeding is idempotent: turning the demo on when it is already present does
 nothing. Turning it off removes exactly what was seeded: an unrelated task,
 chat or view you created yourself in some other workspace is never touched.
-
-## The site's interactive demo
-
-The product's marketing site runs the same frontend the dashboard does, over
-a fixed set of recorded API responses instead of a live backend: there is no
-server behind it. Those responses live in
-`dashboard/frontend/src/demo/fixtures/fixtures.json` (`{generated_at,
-workspace, responses}`, where `responses` is keyed `METHOD /path?query`) and
-`streams.json` (a flat `{run_id: [frames]}` map, a handful of synthesized
-`{event, data}` frames per recorded run, for the pages that stream a run's
-output; no wrapper around it, since `src/demo/resolver.js` reads the object's
-own keys as the set of recorded run ids). Both files are checked in, generated
-content, not something built at request time. The frames are synthesized from
-each run's plain-text log, not a verbatim replay of the SSE route: a finished
-run has no live broadcaster left to replay from.
-
-Regenerate them after a seed content change:
-
-```bash
-python scripts/export_demo_fixtures.py
-```
-
-The script seeds the demo workspace into an isolated, throwaway state (never
-your real install) and records a fixed list of GET requests through an
-in-process FastAPI client. One system agent, the playground's quest designer
-(`plot-manager`), is left out of the recorded agent lists: it exists in every
-install, but reads as noise in a content shop demo (`HIDDEN_AGENT_IDS` in the
-script).
 
 Related: [installation](installation.md), [workspaces](workspaces.md), [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md), [playground](playground.md), [views](views.md).

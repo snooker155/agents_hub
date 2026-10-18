@@ -4,7 +4,7 @@ Regression replay API.
 ``POST /api/runs/{run_id}/replay`` re-runs a recorded run (optionally against a
 different provider/model) and returns a diff of the original vs replay output
 plus each side's tokens and estimated cost. The replay is recorded as its own
-``channel="replay"`` run, excluded from cost/usage/budget aggregation.
+``channel="replay"`` run, excluded from cost/usage aggregation.
 
 The re-invocation is a real (potentially slow, billable) LLM call, so the
 handler is a plain ``def`` — FastAPI runs it in a worker thread instead of

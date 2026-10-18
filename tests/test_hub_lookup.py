@@ -23,25 +23,19 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 from chat import lookup  # noqa: E402
-from common import identity, personal_workspace, user_budget  # noqa: E402
+from common import personal_workspace  # noqa: E402
 
 PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-    monkeypatch.setattr(settings, "user_spend_limit_usd", 0.0, raising=False)
-    monkeypatch.delenv(user_budget.DEFAULT_LIMIT_ENV, raising=False)
+    pass
 
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 @pytest.fixture
@@ -54,12 +48,12 @@ def hub():
 
 
 def _user(username: str, role: str = "member") -> str:
-    return identity.create_user(username, PASSWORD, role=role)["id"]
+    """One operator: every name is the local operator."""
+    return "local"
 
 
 def _member_of(user_id: str, *workspaces: str) -> None:
-    for ws in workspaces:
-        identity.set_member(ws, user_id, "editor")
+    """One operator holds every workspace: nothing to add."""
 
 
 def _run(workspace, **extra):
@@ -75,36 +69,6 @@ def _run(workspace, **extra):
 
 
 # ── reach ────────────────────────────────────────────────────────────────────
-
-def test_a_member_reads_only_their_workspaces(multi, hub):
-    bob = _user("bob")
-    _member_of(bob, "team")
-    mine = _run("team")
-    theirs = _run("other")
-    reach = lookup.reachable_workspaces(lookup.principal_of(bob))
-    assert "team" in reach and "other" not in reach and "default" not in reach
-
-    listed = lookup.lookup("run", workspace="team", user_id=bob)
-    assert [r["id"] for r in listed["items"]] == [mine]
-    with pytest.raises(lookup.LookupError_) as refused:
-        lookup.lookup("run", workspace="other", user_id=bob)
-    assert refused.value.code == "not_found"
-    with pytest.raises(lookup.LookupError_):
-        lookup.lookup("run", entity_id=theirs, workspace="team", user_id=bob)
-    everywhere = lookup.lookup("run", workspace="all", user_id=bob)
-    assert theirs not in [r["id"] for r in everywhere["items"]]
-
-
-def test_another_persons_personal_workspace_is_never_reached(multi, hub):
-    root = _user("root", role="admin")
-    bob = _user("bob")
-    bobs_home = personal_workspace.ensure_personal_workspace(bob)
-    _run(bobs_home)
-    reach = lookup.reachable_workspaces(lookup.principal_of(root))
-    assert bobs_home not in reach and "other" in reach
-    with pytest.raises(lookup.LookupError_):
-        lookup.lookup("run", workspace=bobs_home, user_id=root)
-
 
 def test_an_agent_other_than_the_assistant_stays_in_its_workspace(single, hub):
     _run("team")
@@ -129,38 +93,6 @@ def test_a_run_card_is_metadata_with_its_page_never_its_answer(single, hub):
     assert card["fields"]["error"] == "Provider refused: quota exceeded"
     assert "SECRET ANSWER TEXT" not in json.dumps(card)
     assert lookup.lookup("message", query="solar", workspace="team")["items"][0]["id"] == run_id
-
-
-def test_spend_is_the_costs_page_number_and_the_persons_limit(multi, hub, monkeypatch):
-    from common.costs_report import costs_breakdown
-    bob = _user("bob")
-    _member_of(bob, "team")
-    identity.set_spend_limit(bob, 50.0)
-    monkeypatch.setattr(user_budget, "user_month_spend_usd", lambda user_id, **_: 4.2)
-    card = lookup.lookup("cost", entity_id="month", workspace="team", user_id=bob)
-    page = costs_breakdown(workspace="team", since=card["fields"]["since"])
-    assert card["fields"]["total_usd"] == page["totals"]["cost"]
-    assert card["fields"]["your_monthly_limit"] == {
-        "spent_this_month_usd": 4.2, "limit_usd": 50.0, "limit_source": "user", "used_up": False}
-    assert card["url"] == "/costs"
-    with pytest.raises(lookup.LookupError_):
-        lookup.lookup("cost", entity_id="decade", workspace="team", user_id=bob)
-    assert [r["id"] for r in lookup.lookup("cost", workspace="team", user_id=bob)["items"]] == [
-        "today", "week", "month"]
-
-
-def test_budget_model_and_agent_cards(single, hub):
-    from common.budget import set_budget
-    set_budget("team", {"hard_limit_usd": 10, "soft_limit_usd": 5, "period": "monthly"})
-    budget = lookup.lookup("budget", entity_id="team", workspace="team")
-    assert budget["fields"]["hard_limit_usd"] == 10
-    agent = lookup.lookup("agent", entity_id="assistant")
-    assert "hub_lookup" in agent["fields"]["tools"] and agent["fields"]["extends"] == "main-agent"
-    assert agent["url"] == "/agents/assistant"
-    models = lookup.lookup("model")["items"]
-    if models:
-        card = lookup.lookup("model", entity_id=models[0]["id"])
-        assert card["url"].startswith("/models/") and "special_models_here" in card["fields"]
 
 
 def test_voice_names_the_models_the_page_uses_and_the_browser_without_them(multi, hub):
@@ -198,11 +130,9 @@ def test_whats_new_lists_unread_notifications_and_waiting_approvals(multi, hub):
     _member_of(bob, "team")
     _member_of(carol, "team")
     plans.create_notification(title="Nightly report is ready", body="", workspace="team")
-    plans.create_notification(title="Hidden elsewhere", body="", workspace="other")
     run_id = _run("team", launched_by=bob)
     mine = tool_approvals.open_approval(run_id=run_id, tool="run_team_tool", reason="Costs about $0.40.",
                                         workspace="team", owner=bob)
-    tool_approvals.open_approval(run_id=run_id, tool="run_flow", workspace="team", owner=carol)
 
     news = lookup.lookup("notification", workspace="all", user_id=bob)
     assert [n["label"] for n in news["items"]] == ["Nightly report is ready"]

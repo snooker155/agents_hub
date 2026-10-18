@@ -4,17 +4,13 @@ import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
-import { MULTI, useAuth } from './auth';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
-import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
-import SyncIndicator from './SyncIndicator';
-import SyncedDataBanner from './vault/SyncedDataBanner';
 import LanguageSwitcher from './LanguageSwitcher';
-import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
 import OnboardingModal from './docs/OnboardingModal';
 import useSetupGuide from './setup/useSetupGuide';
@@ -68,7 +64,6 @@ const Layout = ({ children }) => {
   // Optional features the backend reports at /api/health; a feature that is
   // switched off has no sidebar row and no route (see App.jsx).
   const features = useFeatures();
-  const auth = useAuth();
   const { t } = useI18n();
   // The guided setup's own pill, while it runs (docs/assistant.md "Guided
   // setup"); cheap, since useSetupGuide only polls while the guide is
@@ -295,8 +290,8 @@ const Layout = ({ children }) => {
   // only the rows a newcomer needs. The viewer's own choice wins over the
   // default for their role, and is kept per browser.
   const [menuChoice, setMenuChoice] = useState(readMenuMode);
-  const menuMode = menuChoice || defaultMenuMode(auth);
-  const allGroups = buildMenu({ t, auth, features });
+  const menuMode = menuChoice || defaultMenuMode();
+  const allGroups = buildMenu({ t, features });
   const menuGroups = visibleGroups(allGroups, menuMode);
   const moreCount = hiddenCount(allGroups);
   const toggleMenuMode = () => {
@@ -333,29 +328,6 @@ const Layout = ({ children }) => {
       <span>{t(currentThemeOption.labelKey)}</span>
     </button>
   );
-  // Who is signed in, and the way out. Only under AUTH_MODE=multi: in the
-  // single-operator modes there is nobody to be signed in as and nothing to
-  // sign out of.
-  const userControls = auth.mode === MULTI && auth.user ? (
-    <div className="flex items-center gap-2">
-      <span
-        title={auth.user.username}
-        className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase"
-      >
-        {String(auth.user.username || '?').slice(0, 2)}
-      </span>
-      <button
-        type="button"
-        onClick={auth.logout}
-        title={t('auth.logout')}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
-      >
-        <LogOut className="w-3.5 h-3.5" />
-        <span>{t('auth.logout')}</span>
-      </button>
-    </div>
-  ) : null;
-
   // A page the assistant opened beside itself ("show on screen"): the page
   // alone, without the sidebar, the header and the panels around it.
   if (isEmbedded()) {
@@ -471,7 +443,6 @@ const Layout = ({ children }) => {
             <div className="px-4 pt-2 pb-1 flex flex-wrap items-center gap-2">
               {themeButton}
               <LanguageSwitcher up />
-              {userControls}
             </div>
           )}
         </div>
@@ -505,7 +476,6 @@ const Layout = ({ children }) => {
                 </option>
               ))}
             </select>
-            <span className="hidden sm:contents"><IsolationBadge workspace={selectedWorkspace} /></span>
             <div className="hidden sm:block h-5 w-px bg-gray-200" />
             {/* Global model picker; on a phone the chip is its icon alone */}
             <div className="relative shrink-0" ref={modelPickerRef}>
@@ -628,8 +598,6 @@ const Layout = ({ children }) => {
             )}
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
-            {/* Two-way sync with the linked hub: only while it is on */}
-            <SyncIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}
@@ -654,14 +622,10 @@ const Layout = ({ children }) => {
             {!narrow && themeButton}
             {/* Interface language */}
             {!narrow && <LanguageSwitcher />}
-            {!narrow && userControls}
             {/* Help (docs/help.md): the Support agent, for a user who is lost */}
             <HelpPanel />
           </div>
         </header>
-        {/* Data the person synced into this workspace end-to-end encrypted: said
-            plainly, so nobody wonders why their records look locked here. */}
-        <SyncedDataBanner />
         <main className="flex-1 min-h-0 overflow-y-auto pb-safe">{children}</main>
         {/* The chat that follows the page: a button in the corner everywhere
             but on the Chat page, which is one already. */}

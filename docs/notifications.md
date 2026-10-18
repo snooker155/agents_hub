@@ -2,13 +2,13 @@
 
 The dashboard inbox (the bell icon) is always the source of truth for a
 notification: everything else is a best-effort side channel that reaches the
-same event somewhere else. This page covers the two outbound side channels
-that leave the hub (a webhook, a Slack incoming webhook), the alert rules that
-raise a notification on their own, and the inbound signing scheme that lets an
-external system talk back: the node runner, a flow's webhook trigger, and a
-webhook that files a task.
+same event somewhere else. This page covers the outbound webhook that leaves
+the hub, the alert rules that raise a notification on their own, and the
+inbound signing scheme that lets an external system talk back: a flow's
+webhook trigger, a webhook that files a task and a webhook that wakes an
+agent.
 
-## Outbound: webhooks and Slack
+## Outbound: webhooks
 
 **Integrations → Connectors → Webhooks** in the sidebar. An endpoint is configured
 per [workspace](workspaces.md):
@@ -24,36 +24,19 @@ per [workspace](workspaces.md):
 }
 ```
 
-`kind` is `webhook` or `slack`. A webhook's `secret` is optional but signs
-every delivery; a Slack endpoint has none, since Slack's own incoming-webhook
-URL is the secret. `events` is a list of event names the endpoint subscribes
-to; an endpoint created before this list existed, or created with
-`events: ["notification"]` explicitly, only ever sees `notification`.
-
-Two events exist:
-
-- **`notification`**: everything the inbox raises, a fired [alert
-  rule](#alert-rules) or an explicit `create_notification` call.
-- **`audit`**: every row of the [audit trail](audit.md), append-only, one
-  event per recorded action. A row with no workspace of its own (a login, an
-  account change: identity is not workspace-scoped) is offered to the
-  `default` workspace's endpoints, which is where an installation's global
-  integrations live. This is how a SIEM collects the trail without polling
-  `GET /api/audit` itself.
-
-The Connectors page offers both as a checkbox pair when adding an endpoint.
+`kind` is `webhook`. The `secret` is optional but signs every delivery.
+`events` is a list of event names the endpoint subscribes to. One event
+exists: **`notification`**, everything the inbox raises, a fired [alert
+rule](#alert-rules) or an explicit `create_notification` call.
 
 A notification's channels decide which side channels fire: `create_notification`
-(the same call the inbox uses) accepts `channels` including `"telegram"`,
-`"slack"`, `"discord"`, `"teams"`, `"mail"` and `"webhook"`, and fans out to
-every enabled endpoint of that kind. An [alert rule](#alert-rules)'s own
-`channels` field is what a fired rule passes through. For Slack, the same field
-reaches both incoming webhook endpoints and the chats bound to the Slack bot.
+(the same call the inbox uses) accepts `channels` including `"webhook"`, and
+fans out to every enabled endpoint of that kind. An [alert rule](#alert-rules)'s
+own `channels` field is what a fired rule passes through.
 
 ### The event shape
 
-Every delivery, webhook or Slack, carries the same envelope, `type` naming
-which of the two events it is:
+Every delivery carries the same envelope:
 
 ```json
 {
@@ -70,29 +53,7 @@ which of the two events it is:
 }
 ```
 
-An `audit` delivery carries the same envelope with `type: "audit"`, `id` set
-to `"audit-<row id>"`, and `data` set to the row exactly as
-[`GET /api/audit`](audit.md) returns it:
-
-```json
-{
-  "id": "audit-482",
-  "type": "audit",
-  "workspace": "acme",
-  "created_at": "2026-09-22T10:00:00+00:00",
-  "data": {
-    "id": 482, "at": "2026-09-22T10:00:00+00:00",
-    "actor_id": "u1", "actor_kind": "user", "actor_name": "alice",
-    "action": "workspace.policy", "object_type": "workspace", "object_id": "acme",
-    "workspace": "acme", "ip": "10.0.0.4", "method": null, "path": null,
-    "result": "ok", "details": {"keys": ["require_tool_approval"]}
-  }
-}
-```
-
-A webhook endpoint receives this exact JSON object as its request body. A
-Slack endpoint receives a Slack incoming-webhook payload built from it instead:
-`{"text": ..., "blocks": [...]}`.
+A webhook endpoint receives this exact JSON object as its request body.
 
 ### Headers
 
@@ -145,7 +106,7 @@ one, evaluated whenever a run reaches a terminal status:
   "kind": "run_failed",
   "threshold_usd": 0,
   "agent_id": null,
-  "channels": ["dashboard", "slack"],
+  "channels": ["dashboard", "webhook"],
   "enabled": true
 }
 ```
@@ -171,28 +132,23 @@ Four kinds:
   **Live quality** card (Overview tab) or through `/api/notify/rules`; see
   [evals](evals.md#online-evals).
 
-`channels` is the same list `create_notification` accepts: any of
-`dashboard`, `telegram`, `slack`, `webhook`. The inbox entry is written
+`channels` is the same list `create_notification` accepts: `dashboard` or
+`webhook`. The inbox entry is written
 regardless; the rest are best-effort side channels.
 
 ## Inbound: signing and idempotency
 
-The same scheme protects three inbound webhooks this hub accepts:
+The same scheme protects the inbound webhooks this hub accepts:
 
-- **POST `/api/external/{token}/messages`** (and `/run`, `GET .../messages/{id}`)
-  — the public address of a published [instance](instances.md). When the
-  instance has an `inbound_secret` configured, the request must be signed; an
-  instance with none configured accepts the token alone.
-- **POST `/api/flows/{flow_id}/trigger`** — a flow's webhook trigger. Same
-  rule: signed when the flow record carries a `webhook_secret`, open
-  otherwise.
-- **POST `/api/webhooks/tasks`** — see below. This one has no "open" fallback:
+- **POST `/api/flows/{flow_id}/trigger`**: a flow's webhook trigger. Signed
+  when the flow record carries a `webhook_secret`, open otherwise.
+- **POST `/api/webhooks/tasks`**: see below. This one has no "open" fallback:
   a workspace with no inbound secret configured cannot be posted to at all.
-- **POST `/api/webhooks/agents/{id}/wake`** — wakes a [proactive
+- **POST `/api/webhooks/agents/{id}/wake`**: wakes a [proactive
   agent](proactive.md) with an event. Signed and fail-closed like the task
   webhook; the agent must have a `webhook` trigger on its profile.
 
-All three verify the signature the same way outbound deliveries produce it,
+All of them verify the signature the same way outbound deliveries produce it,
 and reject a repeated `X-AgentsHub-Delivery` with `409` for 24 hours. A
 missing or invalid signature, or a timestamp more than 5 minutes old, is
 rejected with `401`.
@@ -229,16 +185,14 @@ The body accepts `title` (required), `workspace` (required), `description`,
 `agent_id` (assigns the task immediately, the same as the Tasks page's Assign
 action). The response is the created task, in the same shape
 [Tasks](tasks.md) returns everywhere else. The task is created with
-`created_by: "external"`, exactly like a task filed through
-`/api/external/{token}/run`.
+`created_by: "external"`.
 
 ## Gotchas
 
 - **A webhook's secret is optional; a task-filing workspace's is not.** An
   outbound endpoint with no secret still delivers, unsigned. The inbound task
   webhook fails closed: no secret configured means no request gets through,
-  because there is no token or existing trust to fall back on the way the node
-  runner has.
+  because there is no existing trust to fall back on.
 - **Secrets are masked on the way out.** GET `/api/notify/endpoints` returns a
   webhook's secret as its last four characters, the same convention
   [MCP servers](mcp.md) use for headers and env values. Sending that masked
@@ -247,4 +201,4 @@ action). The response is the created task, in the same shape
   once its window has passed; idempotency here is about a retry or a flaky
   network landing twice, not a permanent id registry.
 
-Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [instances](instances.md), [flows](flows.md), [audit](audit.md), [proactive](proactive.md).
+Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [flows](flows.md), [proactive](proactive.md).

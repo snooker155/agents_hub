@@ -11,11 +11,11 @@ The steps read and change the hub through these, besides routes of their own
 search, a workspace's personal memory, ``/api/demo``):
 
 * ``GET /api/first-run/context``: what is already set (providers, the default
-  model, the runtime and its ready set, search, demo, voice), no provider asked;
+  model, search, demo, voice), no provider asked;
 * ``GET /api/first-run/options``: each connected provider's model tiers and the
   voices (common/setup_ops.py ``options``), which asks the providers;
 * ``POST /api/first-run/op``: one setup operation (choose_model, voice_cloud,
-  voice_local, seed_demo), the same the assistant's ``setup_step`` makes after
+  seed_demo), the same the assistant's ``setup_step`` makes after
   a yes; here pressing the button is the yes.
 """
 from __future__ import annotations
@@ -30,8 +30,8 @@ from common import identity
 
 router = APIRouter(prefix="/api/first-run", tags=["first-run"])
 
-#: What a first run may change through ``/op``; ``local_set`` has its own route.
-_OPERATIONS = ("choose_model", "voice_cloud", "voice_local", "seed_demo")
+#: What a first run may change through ``/op``.
+_OPERATIONS = ("choose_model", "voice_cloud", "seed_demo")
 
 
 class FirstRunAction(BaseModel):

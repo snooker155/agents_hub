@@ -6,8 +6,6 @@ agent: team_researcher
 message: Summarize the most important news about open source AI agents from the last day.
 cron: "0 9 * * 1-5"
 timezone: Europe/Berlin
-environment: research-sandbox
-budget_usd: 1.5
 ---
 kind: deployment
 id: weekly-report

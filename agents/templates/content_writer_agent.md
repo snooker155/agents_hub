@@ -11,7 +11,7 @@ domain: marketing
 tools: [search_memory, write_memory, list_workspace_files, read_workspace_file, save_workspace_file, create_view, document_set, ask_user, think]
 connectors:
   required: []
-  optional: [google, notion, confluence]
+  optional: []
 outcome:
   rubric: |
     - The draft follows the brief: audience, goal, format, length and call to action are all there.

@@ -4,9 +4,8 @@ Tools that take a ``workspace`` argument (``create_task``, ``update_task``,
 workspace the run belongs to (common/workspace_scope.py).
 
 Without this an agent could create a task in a neighbouring workspace and put
-its data in the description, an agent there would act on it, and an isolated
-workspace (common/isolation.py) would have a way out through the hub itself.
-Naming a workspace that does not exist would even create it. The wrapper
+its data in the description, and an agent there would act on it. Naming a
+workspace that does not exist would even create it. The wrapper
 refuses a call that names another workspace and leaves every other call
 untouched. The service's own agents are not wrapped.
 """

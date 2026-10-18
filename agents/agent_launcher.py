@@ -9,8 +9,7 @@ stays free of the agent-build / spec-building dependency stack.
 Run record creation and completion updates for local subprocess runs are
 handled by agent_run.py (which receives --run-id and manages its own lifecycle).
 
-A launch has two halves, and since stage 2 of the scaling plan they may run
-in different processes on different hosts (docs/workers.md):
+A launch has two halves:
 
 - :func:`prepare_run` does the database side: resolves the workspace and
   project, the session, the instance, the log path, and writes the
@@ -19,11 +18,7 @@ in different processes on different hosts (docs/workers.md):
   environment from this process's own configuration and spawns the
   subprocess or the container.
 
-:func:`start_run` is both halves in order. With the default role
-(``AGENTS_HUB_ROLE=all``) it spawns right here, exactly as it always has.
-In the ``api`` role it puts the spec on the launch queue
-(``common/run_queue.py``) instead, and a worker anywhere calls
-:func:`launch_prepared` with it.
+:func:`start_run` is both halves in order, in this process.
 
 Public API:
 - preregister_run(task_id, agent_id, session_id) -> run_id
@@ -80,17 +75,9 @@ def start_run(
     Returns (run_id, session_id). For local subprocess runs, the run record is
     created by agent_run.py at startup (it receives --run-id). For remote runs
     the record is created here since agent_run.py is not involved.
-
-    In the ``api`` role the spawn is handed to a worker through the launch
-    queue; the run record then reads ``queued`` until a worker picks it up.
     """
     spec = prepare_run(task_id, agent_id, params, run_id)
-    from common.config import hub_role
-
-    if hub_role() == "api":
-        enqueue_prepared(spec)
-    else:
-        launch_prepared(spec)
+    launch_prepared(spec)
     return spec["run_id"], spec.get("session_id")
 
 
@@ -155,19 +142,6 @@ def prepare_run(
     from agents.registry import get_agent as _get_agent_for_launch
     max_concurrent_delegates = _run_overrides.effective_max_concurrent_delegates(
         _get_agent_for_launch(agent_id), run_overrides)
-
-    # Budget gate: refuse to launch when the workspace has hit its hard cost cap.
-    # Opt-in (only enforced when a hard cap is configured) and fail-open on any
-    # lookup/pricing error, so a pricing hiccup never wedges a workspace.
-    from common.budget import check_budget
-    check_budget(ws_name)
-
-    # A personal key's own money cap (common/api_keys.py
-    # budget_usd_per_month, docs/api-keys.md "Money quota"): a task run
-    # launched with a key that already spent its month refuses to start,
-    # the same as the workspace's own hard cap above.
-    from common.attribution import check_launch_budget
-    check_launch_budget()
 
     # Ensure a session exists for this task
     session_id = get_or_create_task_session(
@@ -304,18 +278,6 @@ def prepare_run(
             log.debug("prepare_run: ignored error", exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
-    # Two optional contributions to the launch, each a module that may be
-    # absent or fail without changing the launch: the per-run money cap
-    # (common/run_budget.py, docs/costs.md) puts the cap and the task's
-    # spend so far into the child's environment; the environment the run
-    # executes in (environments/launch.py, docs/environments.md) may add
-    # environment variables, replace the execution mode and shape the docker
-    # profile. Everything they return travels on the spec, so a worker on
-    # another host applies it in launch_prepared.
-    launch_env, docker_options, environment_id, env_mode = _launch_extras(task, ws_name)
-    if env_mode in ("local", "docker"):
-        execution_mode = env_mode
-
     # Audit trail (common/audit.py): who launched this run. No HTTP request is
     # in flight here (a launch may be re-queued by a worker), so the actor
     # comes from the current-user contextvar rather than a principal, "local"
@@ -337,23 +299,11 @@ def prepare_run(
     except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
         log.debug("prepare_run: ignored error", exc_info=True)
 
-    if environment_id:
-        try:
-            _update_run(run_id, {"environment_id": environment_id})
-        except Exception:  # noqa: BLE001 - the run still launches without the environment note on its record
-            log.debug("prepare_run: ignored error", exc_info=True)
-
-    # The sandbox size (environments/models.py SIZE_PRESETS) and effective
-    # cpu limit of a docker-mode run's container, so common.pricing can price
-    # the hours it lived once it ends (docs/costs.md "Container hours"). A
-    # run without a size is still priced, per its effective cpus, once it is
-    # known to execute in docker.
+    # The effective cpu limit of a docker-mode run's container, so
+    # common.pricing can price the hours it lived once it ends (docs/costs.md
+    # "Container hours").
     container_profile: Dict[str, Any] = {}
-    if docker_options and docker_options.get("size"):
-        container_profile["container_size"] = str(docker_options["size"])
-    if docker_options and docker_options.get("cpus"):
-        container_profile["container_cpus"] = str(docker_options["cpus"])
-    elif execution_mode == "docker":
+    if execution_mode == "docker":
         try:
             from common.config import live_setting
             from managers.container_manager import DEFAULT_RUN_CPUS
@@ -363,17 +313,12 @@ def prepare_run(
     if container_profile:
         try:
             _update_run(run_id, container_profile)
-        except Exception:  # noqa: BLE001 - same as the environment_id note above
+        except Exception:  # noqa: BLE001 - the run still launches without the cpu note on its record
             logging.getLogger(__name__).debug("launch: container profile not recorded on run %s", run_id, exc_info=True)
 
     spec: Dict[str, Any] = {
         "kind": QUEUE_KIND,
         "run_id": run_id,
-        # Contributions from the run budget and the environment (see
-        # _launch_extras): plain strings and JSON, applied in launch_prepared.
-        "launch_env": launch_env,
-        "docker_options": docker_options,
-        "environment_id": environment_id,
         # This run's own delegate concurrency limit (see max_concurrent_delegates
         # above), applied to the child's environment in launch_prepared.
         "max_concurrent_delegates": max_concurrent_delegates,
@@ -387,7 +332,6 @@ def prepare_run(
         "launched_by": _current_user_id(),
         # The personal key it is charged to (common/attribution.py), handed to
         # the child so the runs it creates count against the same key.
-        "key_id": _launching_key(),
         "ws_path": str(ws_path),
         "log_file": str(log_file),
         "cli_args": cli_args,
@@ -414,24 +358,12 @@ def _child_env_extra() -> Dict[str, str]:
     return {str(k): str(v) for k, v in extra.items()}
 
 
-def enqueue_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Hand a prepared launch to the workers (``api`` role)."""
-    from common import run_queue
-
-    _update_run(spec["run_id"], {"status": "queued"})
-    return run_queue.enqueue(
-        spec["run_id"], QUEUE_KIND, spec,
-        workspace=spec.get("workspace"), execution_mode=spec.get("execution_mode"),
-        priority=int(spec.get("priority") or 0),
-    )
-
-
 def launch_prepared(spec: Dict[str, Any]) -> None:
     """Spawn the process for a prepared launch, on this host.
 
-    Rebuilds the environment here (it carries provider keys and the relay
-    token, which never travel through the queue) and records on the run which
-    host started it, so only this host ever probes its pid or container.
+    Builds the environment here (it carries provider keys and the relay
+    token, which never go into the spec) and records on the run which host
+    started it, so only this host ever probes its pid or container.
     """
     run_id = str(spec["run_id"])
     agent_id = str(spec["agent_id"])
@@ -457,26 +389,15 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     if isinstance(extra, dict):
         for key, value in extra.items():
             env.setdefault(str(key), str(value))
-    # The launcher's own contributions (run budget, environment) are not
-    # caller hints, so they win over the base environment.
-    launch_env = spec.get("launch_env")
-    if isinstance(launch_env, dict):
-        for key, value in launch_env.items():
-            env[str(key)] = str(value)
     # This run's own delegate concurrency limit (tools/delegation.py
     # MAX_CONCURRENT_ENV): read directly off the environment by
     # delegate_task_tool, so a container run enforces it with no database
     # round trip, exactly like the delegation depth.
     from tools.delegation import MAX_CONCURRENT_ENV
     env[MAX_CONCURRENT_ENV] = str(int(spec.get("max_concurrent_delegates") or 6))
-    # Host-bound secrets ride the token the run actually uses, now that the
-    # environment may have replaced the proxy URL (environments/secret_egress.py).
-    from common.subprocess_env import route_secrets
-    route_secrets(env, execution_mode=execution_mode, workspace=ws_name)
 
     if execution_mode == "docker":
-        _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id,
-                             docker_options=spec.get("docker_options") or None)
+        _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)
         return
 
     args = [sys.executable, str(PROJECT_ROOT / "runtime" / "agent_run.py")] + cli_args
@@ -521,7 +442,6 @@ def _start_run_in_docker(
     env: Dict[str, str],
     log_file: Path,
     instance_id: Optional[str],
-    docker_options: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Launch a task run in a sandboxed container instead of a subprocess.
 
@@ -572,12 +492,8 @@ def _start_run_in_docker(
         lf.write(f"Command (in container): {inner_cmd}\nWorkspace: {str(ws_path)}\n"
                  f"Host: {socket.gethostname()}\n\n")
 
-    # docker_options is what the run's environment asks of the container
-    # (environments/launch.py: network, limits, image, see docs/environments.md);
-    # None keeps the plain hardened profile and the call exactly as before.
-    _runner_kwargs: Dict[str, Any] = {"options": docker_options} if docker_options else {}
     result = docker_runner.start_run_container(
-        run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env, **_runner_kwargs,
+        run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env,
     )
 
     if not result.get("success"):
@@ -616,9 +532,6 @@ def _start_run_in_docker(
         log.debug("_start_run_in_docker: ignored error", exc_info=True)
 
 
-def _launching_key() -> Optional[str]:
-    from common.attribution import launching_key
-    return launching_key()
 
 
 def _current_user_id() -> str:
@@ -626,60 +539,6 @@ def _current_user_id() -> str:
     # run was launched by (common/attribution.py).
     from common.attribution import launching_user
     return launching_user()
-
-
-def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], Optional[Dict[str, Any]],
-                                                              Optional[str], Optional[str]]:
-    """What the run budget and the environment add to a launch.
-
-    Returns ``(env, docker_options, environment_id, execution_mode)``:
-
-    - ``env``: environment variables for the child, from
-      ``common.run_budget.launch_env(task, ws_name)`` (the money cap and the
-      task's spend so far) and ``environments.launch.launch_fields(...)["env"]``.
-    - ``docker_options``: the environment's docker profile (network, limits,
-      image), or None.
-    - ``environment_id``: the environment the run executes in, or None.
-    - ``execution_mode``: ``"local"`` / ``"docker"`` when the environment pins
-      one, else None.
-
-    Either module being absent, or raising, leaves the launch as it was:
-    these are additions, never a reason not to start a run.
-    """
-    import logging
-    _log = logging.getLogger(__name__)
-    env: Dict[str, str] = {}
-    docker_options: Optional[Dict[str, Any]] = None
-    environment_id: Optional[str] = None
-    execution_mode: Optional[str] = None
-    try:
-        from common.run_budget import RunBudgetUnavailableError, launch_env as _budget_env
-    except ImportError:
-        RunBudgetUnavailableError = None  # type: ignore[assignment,misc]
-        _budget_env = None  # type: ignore[assignment]
-    if _budget_env is not None:
-        try:
-            env.update({str(k): str(v) for k, v in (_budget_env(task, ws_name) or {}).items()})
-        except Exception as exc:  # noqa: BLE001 - the cap is an addition; a failure to compute it never blocks the launch, unless the workspace asked for fail closed
-            if RunBudgetUnavailableError is not None and isinstance(exc, RunBudgetUnavailableError):
-                # The workspace's budget is fail closed (docs/costs.md): a cap
-                # that cannot be computed refuses the launch the same way
-                # check_budget does, so every caller's budget handling applies.
-                from common.budget import BudgetUnavailableError
-                raise BudgetUnavailableError(ws_name or "", "run", str(exc)) from exc
-            _log.debug("run budget launch env failed for task %s", getattr(task, "id", None), exc_info=True)
-    try:
-        from environments.launch import launch_fields
-        fields = launch_fields(task, ws_name) or {}
-        env.update({str(k): str(v) for k, v in (fields.get("env") or {}).items()})
-        docker_options = fields.get("docker") or None
-        environment_id = fields.get("environment_id") or None
-        execution_mode = fields.get("execution_mode") or None
-    except ImportError:
-        pass
-    except Exception:  # noqa: BLE001 - same: an environment that cannot be resolved falls back to the workspace's mode
-        _log.debug("environment launch fields failed for task %s", getattr(task, "id", None), exc_info=True)
-    return env, docker_options, environment_id, execution_mode
 
 
 def _build_env(ws_name: str, session_id: str, log_file: str,

@@ -195,13 +195,6 @@ def _check_between_ticks(sim_run_id: str, started: float,
             "cost_ceiling",
             f"cost ceiling reached (${spend:.4f} of ${scenario.cost_ceiling:.2f})",
         )
-    try:
-        from common.budget import check_budget
-        check_budget(workspace)
-    except SimStopped:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise SimStopped("budget", f"budget: {e}")
 
 
 def _deliver_external(env: Environment, sim_run_id: str, names: List[str]) -> None:

@@ -41,11 +41,10 @@ import {
   getAgentModel,
   removeAgentFromWorkspace,
   addAgentToWorkspace,
-  getServices,
+  getInstancesSummary,
   startInstance,
 } from '../api';
 import ImportAgentModal from '../components/ImportAgentModal';
-import DeployServiceModal from '../components/services/DeployServiceModal';
 import AgentParentPicker from '../components/agent/inheritance/AgentParentPicker';
 import AgentTemplatePicker, { ConnectorChip } from '../components/agent/AgentTemplatePicker';
 import { templateText } from '../components/agent/agentTemplates';
@@ -62,11 +61,8 @@ const AgentManager = () => {
   const toast = useToast();
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
-  // The workspace's services: every copy of an agent lives in one, its own
-  // or the workspace's runner, so the cards read their copies and their
-  // limits from here rather than from the agents themselves.
-  const [services, setServices] = useState([]);
-  const [deployAgentId, setDeployAgentId] = useState(null);
+  // Live copies per agent (GET /instances/summary), for the badge and tiles.
+  const [liveByAgent, setLiveByAgent] = useState({});
   const [startingAgentId, setStartingAgentId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -134,10 +130,10 @@ const AgentManager = () => {
     }
   }, [workspaceFilter]);
 
-  const fetchServices = useCallback(() => {
-    getServices({ workspace: workspaceFilter || undefined })
-      .then((r) => setServices(r.data?.items || []))
-      .catch(() => setServices([]));
+  const fetchLive = useCallback(() => {
+    getInstancesSummary({ workspace: workspaceFilter || undefined })
+      .then((r) => setLiveByAgent(r.data?.by_agent || {}))
+      .catch(() => setLiveByAgent({}));
   }, [workspaceFilter]);
 
   useEffect(() => {
@@ -146,14 +142,12 @@ const AgentManager = () => {
     /* eslint-disable react-hooks/set-state-in-effect -- shared loaders, state is set after the await */
     fetchData();
     fetchTools();
-    fetchServices();
+    fetchLive();
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchServices]);
+  }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchLive]);
   useLiveRefetch(fetchData, { type: 'agents.changed', enabled: liveUpdates });
-  // Replica counts ride on the services, so a copy starting or stopping is
-  // a services refetch too.
-  useLiveRefetch(fetchServices, { type: 'services.changed', enabled: liveUpdates });
-  useLiveRefetch(fetchServices, { type: 'instances.changed', enabled: liveUpdates });
+  // A copy starting or stopping changes the live counts.
+  useLiveRefetch(fetchLive, { type: 'instances.changed', enabled: liveUpdates });
 
   // Sync agent order with fetched agents, restoring saved order from
   // localStorage. Adjusted during render when the agents or the workspace
@@ -453,33 +447,8 @@ const AgentManager = () => {
     };
   };
 
-  // Where an agent's copies live: its own services, else the workspace's
-  // runner (the first turn creates one when there is none yet).
-  const servicesByAgent = useMemo(() => {
-    const map = {};
-    for (const svc of services) {
-      if (svc.kind === 'agent' && svc.agent_id) (map[svc.agent_id] ||= []).push(svc);
-    }
-    return map;
-  }, [services]);
-  const runnerService = useMemo(
-    () => services.find((svc) => svc.kind === 'runner' && svc.is_default) || services.find((svc) => svc.kind === 'runner') || null,
-    [services],
-  );
-  const servingFor = (agentId) => {
-    const own = servicesByAgent[agentId] || [];
-    const serving = own.length ? own : (runnerService ? [runnerService] : []);
-    return {
-      own,
-      serving,
-      live: serving.reduce((n, svc) => n + (svc.replicas?.live || 0), 0),
-      cap: serving.reduce((n, svc) => n + (svc.replicas_max || 0), 0),
-      paused: serving.length > 0 && serving.every((svc) => svc.status !== 'active'),
-    };
-  };
-
-  // Run: the agent starts in its service (routes/instances.py) and its
-  // page opens; a runner replica opens with this agent picked.
+  // Run: the agent starts as an instance (routes/instances.py) and its
+  // page opens.
   const runAgent = async (agent) => {
     setStartingAgentId(agent.id);
     try {
@@ -547,16 +516,6 @@ const AgentManager = () => {
           >
             <Sparkles className="w-4 h-4" /> {t('agentManager.addCodex')}
           </button>
-          {/* The other direction, and it belongs here because this is where
-              someone stands when they think "the agent I want is not in this
-              list, and it is not going to move into it either". */}
-          <Link
-            to="/connections"
-            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium transition-colors"
-            title={t('agentManager.connectExternalHint')}
-          >
-            <Share2 className="w-4 h-4" /> {t('agentManager.connectExternal')}
-          </Link>
           <button
             onClick={openWizard}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"
@@ -589,9 +548,7 @@ const AgentManager = () => {
           {visibleAgents.map((agent) => {
             const metrics = getAgentMetrics(agent);
             const isHealthy = true;
-            const serving = servingFor(agent.id);
-            const liveInstances = serving.live;
-            const instancesAtCap = serving.serving.length > 0 && liveInstances >= serving.cap;
+            const liveInstances = liveByAgent[agent.id]?.live || 0;
             const isDragging = dragId === agent.id;
             const isDragOver = dragOverId === agent.id && dragId !== agent.id;
 
@@ -657,37 +614,16 @@ const AgentManager = () => {
                   const totalCap = liveInstances * (agent.capacity || 1);
                   const sessionLoad = totalCap > 0 ? Math.min(100, Math.round((metrics.used / totalCap) * 100)) : 0;
                   const atCap = liveInstances > 0 && metrics.used >= totalCap;
-                  const own = serving.own;
-                  const serviceTone = serving.paused ? 'amber' : own.length ? 'indigo' : 'gray';
-                  const tone = {
-                    amber: ['bg-amber-50 border-amber-200', 'text-amber-500', 'text-amber-900', 'text-amber-700'],
-                    indigo: ['bg-indigo-50 border-indigo-100', 'text-indigo-500', 'text-indigo-900', 'text-indigo-600'],
-                    gray: ['bg-gray-50 border-gray-200', 'text-gray-400', 'text-gray-600', 'text-gray-400'],
-                  }[serviceTone];
                   return (
                     <div className="mb-3">
-                      <div className="grid grid-cols-3 gap-2">
-                        {/* Copies: the replicas of the services the agent runs in, against their limit */}
-                        <div className={`border rounded-lg px-2 py-2 ${instancesAtCap ? 'bg-orange-50 border-orange-300' : liveInstances > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
-                          <div className="flex items-center justify-between">
-                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${instancesAtCap ? 'text-orange-500' : liveInstances > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentManager.instances')}</div>
-                            {instancesAtCap && <span className="text-[9px] font-bold text-white bg-orange-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Copies: the live instances of the agent */}
+                        <div className={`border rounded-lg px-2 py-2 ${liveInstances > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
+                          <div className={`text-[10px] uppercase tracking-wider font-semibold ${liveInstances > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentManager.instances')}</div>
+                          <div className={`text-sm font-semibold ${liveInstances > 0 ? 'text-indigo-900' : 'text-gray-500'}`}>
+                            {liveInstances}
                           </div>
-                          <div className={`text-sm font-semibold ${instancesAtCap ? 'text-orange-900' : liveInstances > 0 ? 'text-indigo-900' : 'text-gray-500'}`}>
-                            {liveInstances}/{serving.serving.length ? serving.cap : '—'}
-                          </div>
-                          <div className={`text-[10px] mt-0.5 ${instancesAtCap ? 'text-orange-600' : liveInstances > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{t('agentManager.live')}</div>
-                        </div>
-
-                        {/* Services: the agent's own, or the runner it shares */}
-                        <div className={`border rounded-lg px-2 py-2 min-w-0 ${tone[0]}`}>
-                          <div className={`text-[10px] uppercase tracking-wider font-semibold ${tone[1]}`}>{t('agentManager.services')}</div>
-                          <div className={`text-sm font-semibold truncate ${tone[2]}`}>
-                            {own.length ? t('agentManager.ownServices', { count: own.length }) : runnerService ? t('agentManager.runner') : t('agentManager.noServices')}
-                          </div>
-                          <div className={`text-[10px] mt-0.5 truncate ${tone[3]}`} title={serving.serving.map((svc) => svc.name).join(', ')}>
-                            {serving.paused ? t('agentManager.servicePaused') : serving.serving.map((svc) => svc.name).join(', ') || t('agentManager.runnerOnFirstRun')}
-                          </div>
+                          <div className={`text-[10px] mt-0.5 ${liveInstances > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{t('agentManager.live')}</div>
                         </div>
 
                         {/* Sessions: open runs against the slots the live copies give */}
@@ -733,21 +669,14 @@ const AgentManager = () => {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => runAgent(agent)}
-                    disabled={startingAgentId === agent.id || serving.paused}
-                    title={serving.paused ? t('agentManager.servicePausedHint') : t('agentManager.startHint')}
+                    disabled={startingAgentId === agent.id}
+                    title={t('agentManager.startHint')}
                     className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {startingAgentId === agent.id
                       ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
                       : <Play className="w-3.5 h-3.5 mr-1" />}
                     {t('common.start')}
-                  </button>
-                  <button
-                    onClick={() => setDeployAgentId(agent.id)}
-                    className="p-1.5 border border-indigo-200 text-indigo-600 rounded hover:bg-indigo-50 transition-colors"
-                    title={t('agentManager.deployHint')}
-                  >
-                    <Rocket className="w-4 h-4" />
                   </button>
                   {agent.system ? (
                     <span
@@ -1270,12 +1199,6 @@ const AgentManager = () => {
         />
       )}
 
-      <DeployServiceModal
-        open={!!deployAgentId}
-        onClose={() => setDeployAgentId(null)}
-        agentId={deployAgentId}
-        defaultWorkspace={selectedWorkspace}
-      />
     </PageContainer>
   );
 };

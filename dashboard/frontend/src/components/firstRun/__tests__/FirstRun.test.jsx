@@ -13,8 +13,6 @@ const firstRunApi = vi.hoisted(() => ({
 vi.mock('../../../api/firstRun', () => firstRunApi);
 const setupApi = vi.hoisted(() => ({ connectFirstModel: vi.fn(), getSetupGuide: vi.fn(), setupGuideAction: vi.fn() }));
 vi.mock('../../../api/setupGuide', () => setupApi);
-const localApi = vi.hoisted(() => ({ getReadySet: vi.fn(), startReadySet: vi.fn() }));
-vi.mock('../../../api/localModels', () => localApi);
 const settingsApi = vi.hoisted(() => ({ updateSettings: vi.fn() }));
 vi.mock('../../../api/models', () => settingsApi);
 const demoApi = vi.hoisted(() => ({ setDemo: vi.fn() }));
@@ -35,8 +33,8 @@ const recorder = vi.hoisted(() => ({
 vi.mock('../../assistant/useRecorder', () => ({ default: () => recorder }));
 
 const EMPTY = {
-  providers: [], default_model: { provider: 'openai', model: '', usable: false }, runtime: false,
-  local_set: null, search: { provider: '', source: 'none', key_set: false }, demo: false, voice: false,
+  providers: [], default_model: { provider: 'openai', model: '', usable: false },
+  search: { provider: '', source: 'none', key_set: false }, demo: false, voice: false,
 };
 const CONNECTED = {
   ...EMPTY,
@@ -55,7 +53,6 @@ const OPTIONS = {
   },
   voice: {
     cloud: { openai: { connected: true, voices: ['alloy', 'nova'] }, google: { connected: false, voices: [] } },
-    local: { available: false, speech: [] },
   },
 };
 
@@ -70,7 +67,7 @@ const cont = () => fireEvent.click(screen.getByTestId('first-run-continue'));
 describe('FirstRun', () => {
   beforeEach(() => {
     localStorage.clear();
-    Object.values({ ...firstRunApi, ...setupApi, ...localApi, ...settingsApi, ...demoApi, ...wsApi, ...assistantApi })
+    Object.values({ ...firstRunApi, ...setupApi, ...settingsApi, ...demoApi, ...wsApi, ...assistantApi })
       .forEach((fn) => fn.mockReset());
     [speaker.say, speaker.cancel, recorder.start, recorder.stop].forEach((fn) => fn.mockReset());
     setupApi.getSetupGuide.mockResolvedValue({ data: { work: null } });
@@ -80,7 +77,6 @@ describe('FirstRun', () => {
     firstRunApi.getFirstRunContext.mockResolvedValue({ data: EMPTY });
     firstRunApi.getFirstRunOptions.mockResolvedValue({ data: OPTIONS });
     firstRunApi.firstRunOp.mockResolvedValue({ data: { ok: true } });
-    localApi.getReadySet.mockResolvedValue({ data: { available: false } });
     wsApi.getWorkspacePersonalMemory.mockResolvedValue({ data: { enabled: true } });
   });
 
@@ -176,28 +172,6 @@ describe('FirstRun', () => {
     fireEvent.click(screen.getByTestId('first-run-connect'));
     expect(await screen.findByRole('alert')).toHaveTextContent('The provider did not accept it');
     expect(screen.getByTestId('first-run-model')).toBeTruthy();
-  });
-
-  it('the hub\'s own runtime offers the local download, which counts as the model', async () => {
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...EMPTY, runtime: true } });
-    localApi.getReadySet.mockResolvedValue({ data: { available: true, chat: { label: 'Qwen3 8B', size_bytes: 5e9 }, job: null } });
-    renderRun({ initial: { step: 'model' } });
-    fireEvent.click(await screen.findByTestId('first-run-way-download'));
-    localApi.startReadySet.mockResolvedValue({ data: { job: { id: 'j1', status: 'running' } } });
-    localApi.getReadySet.mockResolvedValue({ data: { available: true, chat: { label: 'Qwen3 8B', size_bytes: 5e9 }, job: { status: 'running', percent: 10 } } });
-    firstRunApi.getFirstRunContext.mockResolvedValue({ data: { ...EMPTY, runtime: true, local_set: { status: 'running' } } });
-    // The button stays disabled until the ready set answers; click only once it is enabled.
-    const downloadButton = await screen.findByTestId('first-run-download');
-    await waitFor(() => expect(downloadButton).not.toBeDisabled());
-    fireEvent.click(downloadButton);
-    await waitFor(() => expect(localApi.startReadySet).toHaveBeenCalledWith('default', 'en'));
-    // The way on appears once the download is seen running.
-    fireEvent.click(await screen.findByTestId('first-run-continue'));
-    // No provider with tiers: the model choice is skipped; the voice comes with the set,
-    // so the voice screen opens on its check, which waits for the download.
-    expect(await screen.findByTestId('first-run-voice-check-step')).toBeTruthy();
-    expect(screen.getByTestId('first-run-voice-downloading')).toBeTruthy();
-    expect(screen.getByTestId('first-run-greet')).toBeDisabled();
   });
 
   it('a model server on this computer offers each model it serves', async () => {

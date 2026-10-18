@@ -23,14 +23,14 @@ See [agent-loop](agent-loop.md) for the policies that populate the loop block.
 ## Entity runs
 
 Flows, loops, teams and scenarios run as processes of their own, spawned
-where the request landed or by a worker, and all four share one lifecycle. An entity run is one execution of any of these four kinds, recorded in
+by the hub, and all four share one lifecycle. An entity run is one execution of any of these four kinds, recorded in
 the `entity_runs` table alongside agent runs in the `runs` table.
 
 Entity runs share one status vocabulary:
 
 | Status | Meaning |
 | --- | --- |
-| `pending` | Record exists, no process yet; also a launch waiting for a worker |
+| `pending` | Record exists, no process yet; also a launch waiting to start |
 | `running` | The process is alive |
 | `stopping` | A stop was requested; the process will end at its next safe point |
 | `awaiting_input` | A flow parked on a human interrupt node, waiting for an answer |
@@ -94,9 +94,7 @@ once.
 Errors group usefully: the same message across several agents is a model or
 infrastructure problem, while one agent failing repeatedly with different
 messages is an agent problem. A run stopped by a guardrail ends with status
-`guardrail_tripped` and an error naming the guardrail; a run that reached its
-money cap is not failed but paused, with its task waiting for approval (see
-[costs](costs.md)).
+`guardrail_tripped` and an error naming the guardrail.
 
 ## Stale runs
 
@@ -111,9 +109,7 @@ is dead whatever its pid says, and a run with a fresh heartbeat is alive
 whatever its pid says. The watchdog resumes a dead entity run from its checkpoint
 up to 2 times, else fails it; a dead agent run is resumed from its own checkpoint
 the same way.
-A run with no heartbeat is probed by pid or container only on the host that
-started it. The queue and heartbeat details are on the [workers](workers.md)
-page.
+A run with no heartbeat is probed by pid or container.
 
 ## Live updates
 
@@ -142,4 +138,4 @@ view:
   data instead of trusting a stream that skipped a beat. The same happens on a
   `lagged` event.
 
-Related: [agent-loop](agent-loop.md), [instances](instances.md), [service-health](service-health.md), [costs](costs.md), [workers](workers.md).
+Related: [agent-loop](agent-loop.md), [instances](instances.md), [service-health](service-health.md), [costs](costs.md).

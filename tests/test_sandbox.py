@@ -12,7 +12,7 @@ import pytest
 from sandbox import docker as docker_mod
 from sandbox import local as local_mod
 from sandbox import registry
-from sandbox.base import SandboxNetwork, SandboxRequest, SandboxResult
+from sandbox.base import SandboxRequest, SandboxResult
 
 
 # ── base ─────────────────────────────────────────────────────────────────────
@@ -42,12 +42,9 @@ def test_get_provider_refuses_an_unknown_name():
 def test_available_reports_every_provider(monkeypatch):
     monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
     out = registry.available()
-    assert set(out) == {"docker", "local", "e2b", "modal"}
+    assert set(out) == {"docker", "local"}
     assert out["docker"]["available"] is True
     assert out["local"]["available"] is True
-    # Neither SDK is installed in this checkout's environment.
-    assert out["e2b"]["available"] is False and out["e2b"]["reason"]
-    assert out["modal"]["available"] is False and out["modal"]["reason"]
 
 
 def test_available_survives_a_provider_that_raises(monkeypatch):
@@ -63,28 +60,15 @@ class _Env:
         self.sandbox_provider = sandbox_provider
 
 
-def test_resolve_prefers_the_environments_own_choice(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "code_runner_provider", "docker")
-    assert registry.resolve(_Env("e2b"), settings) == "e2b"
-
-
-def test_resolve_falls_back_to_the_setting_when_environment_inherits(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "code_runner_provider", "modal")
-    assert registry.resolve(_Env("inherit"), settings) == "modal"
-    assert registry.resolve(None, settings) == "modal"
-
-
 def test_resolve_falls_back_to_local_only_when_fallback_is_local(monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "code_runner_provider", "docker")
     monkeypatch.setattr(settings, "code_runner_fallback", "none")
     monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
-    assert registry.resolve(None, settings) == "docker"  # still docker: no opt-in
+    assert registry.resolve(settings) == "docker"  # still docker: no opt-in
 
     monkeypatch.setattr(settings, "code_runner_fallback", "local")
-    assert registry.resolve(None, settings) == "local"
+    assert registry.resolve(settings) == "local"
 
 
 def test_resolve_does_not_fall_back_when_docker_is_available(monkeypatch):
@@ -92,7 +76,7 @@ def test_resolve_does_not_fall_back_when_docker_is_available(monkeypatch):
     monkeypatch.setattr(settings, "code_runner_provider", "docker")
     monkeypatch.setattr(settings, "code_runner_fallback", "local")
     monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    assert registry.resolve(None, settings) == "docker"
+    assert registry.resolve(settings) == "docker"
 
 
 # ── docker: command construction (pure) ─────────────────────────────────────
@@ -131,13 +115,6 @@ def test_stdin_makes_the_container_interactive():
     assert "-i" in _cmd(interactive=True)
 
 
-def test_network_and_extra_env_are_threaded_through():
-    cmd = _cmd(network="agents-hub-egress", extra_env={"HTTP_PROXY": "http://tok@gw:8099"})
-    joined = " ".join(cmd)
-    assert "--network agents-hub-egress" in joined
-    assert "-e HTTP_PROXY=http://tok@gw:8099" in joined
-
-
 def test_images_are_configurable_per_language():
     assert docker_mod.parse_images("") == docker_mod.DEFAULT_IMAGES
     assert docker_mod.parse_images("python=python:3.13-slim, node=node:22")["python"] == "python:3.13-slim"
@@ -146,44 +123,6 @@ def test_images_are_configurable_per_language():
 
 
 # ── docker: network resolution ──────────────────────────────────────────────
-
-def test_resolve_network_none_and_unrestricted_need_no_egress():
-    name, env, err = docker_mod._resolve_network(SandboxNetwork(type="none"), None)
-    assert (name, env, err) == ("none", {}, "")
-    name, env, err = docker_mod._resolve_network(SandboxNetwork(type="unrestricted"), None)
-    assert (name, env, err) == ("bridge", {}, "")
-
-
-def test_resolve_network_limited_refuses_when_the_proxy_is_off(monkeypatch):
-    from environments import egress
-    monkeypatch.setattr(egress, "enabled", lambda: False)
-    name, env, err = docker_mod._resolve_network(SandboxNetwork(type="limited", hosts=["pypi.org"]), None)
-    assert name == "none" and env == {} and "egress proxy" in err
-
-
-def test_resolve_network_limited_refuses_when_the_gateway_cannot_start(monkeypatch):
-    from environments import egress
-    from managers import container_manager as cm
-    monkeypatch.setattr(egress, "enabled", lambda: True)
-    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: None)
-    name, env, err = docker_mod._resolve_network(SandboxNetwork(type="limited", hosts=["pypi.org"]), None)
-    assert name == "none" and "gateway" in err
-
-
-def test_resolve_network_limited_registers_a_token_and_points_at_the_gateway(monkeypatch):
-    from environments import egress
-    from managers import container_manager as cm
-    monkeypatch.setattr(egress, "enabled", lambda: True)
-    monkeypatch.setattr(egress, "port", lambda: 8099)
-    monkeypatch.setattr(egress, "register", lambda hosts, **kw: "tok-123")
-    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
-    name, env, err = docker_mod._resolve_network(
-        SandboxNetwork(type="limited", hosts=["pypi.org"]), "env-1")
-    assert err == ""
-    assert name == cm.EGRESS_NETWORK_NAME
-    assert env["HTTP_PROXY"] == "http://tok-123@agents-hub-egress-gateway:8099"
-    assert env["HTTPS_PROXY"] == env["HTTP_PROXY"]
-
 
 # ── docker: run() ────────────────────────────────────────────────────────────
 
@@ -224,17 +163,6 @@ def test_docker_provider_runs_and_reports_the_provider(monkeypatch, settings):
     assert result.exit_code == 0 and "42" in result.stdout
     assert result.provider == "docker"
     assert "--network" in seen["cmd"] and "none" in seen["cmd"]
-
-
-def test_docker_provider_limited_network_refuses_without_the_proxy(monkeypatch, settings):
-    from environments import egress
-    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(egress, "enabled", lambda: False)
-    monkeypatch.setattr(docker_mod.subprocess, "run",
-                        lambda *a, **k: pytest.fail("must not run when the network cannot be enforced"))
-    result = docker_mod.DockerProvider().run(SandboxRequest(
-        language="python", code="1", network=SandboxNetwork(type="limited", hosts=["pypi.org"])))
-    assert result.exit_code == -1 and "egress proxy" in result.error
 
 
 def test_docker_provider_timeout_removes_the_container(monkeypatch, settings):

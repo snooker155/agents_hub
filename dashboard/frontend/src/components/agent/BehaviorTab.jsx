@@ -2,7 +2,6 @@ import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat
 import SystemAgentWarning from './SystemAgentWarning';
 import AgentSecretsCard from './AgentSecretsCard';
 import AgentWebDomainsCard from './AgentWebDomainsCard';
-import AgentConsentCard from './AgentConsentCard';
 import AgentOutcomeCard from './AgentOutcomeCard';
 import { BrainCircuit, HelpCircle, Layers, MessageSquare, Repeat } from 'lucide-react';
 import { useAgentPage } from './context';
@@ -334,9 +333,6 @@ export default function BehaviorTab() {
 
           {/* The hosts web_search, fetch_url and the browser may reach (tools/web.py). */}
           <AgentWebDomainsCard agentId={id} readOnly={Boolean(agent.system)} />
-
-          {/* The end user's own Google or Microsoft account in widget and channel turns (docs/consent.md). */}
-          <AgentConsentCard agentId={id} readOnly={Boolean(agent.system)} />
 
           {/* What a task assigned this agent inherits when it has no outcome of its own yet (tasks/outcome.py). */}
           <AgentOutcomeCard agentId={id} readOnly={Boolean(agent.system)} />

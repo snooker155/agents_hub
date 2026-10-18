@@ -1,8 +1,7 @@
 """
 Credential connectors API, one set of routes for every registered one.
 
-Endpoints (``<name>`` is jira, linear, google, microsoft, notion, confluence
-or databases), each for one workspace (``?workspace=``, the default workspace
+Endpoints (``<name>`` is jira), each for one workspace (``?workspace=``, the default workspace
 when omitted):
 - GET    /api/connectors                 — the connectors and their config fields
 - GET    /api/connectors/<name>/config   — the config in effect there (secrets as
@@ -17,12 +16,12 @@ when omitted):
 - POST   /api/connectors/<name>/test     — verify the credentials in effect there
 
 A connector lives in the workspace that defines it, and the default
-workspace's live everywhere (connectors/channels/store.py). The middleware
+workspace's live everywhere (connectors/store.py). The middleware
 reads ``?workspace=`` like any other request: reading needs membership,
 changing needs an editor of that workspace.
 
-Connector-specific routes (a Google OAuth flow, database connections, a
-project's tracker) live in their own route modules.
+Connector-specific routes (a project's tracker link) live in their own
+route modules.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ from pydantic import BaseModel
 
 from common.session_broker import notify_change
 from connectors import credentials
-from connectors.channels.store import DEFAULT_WORKSPACE, in_workspace
+from connectors.store import DEFAULT_WORKSPACE, in_workspace
 
 
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])

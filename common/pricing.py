@@ -19,11 +19,10 @@ backend. It only *reads* the catalog; curation/discovery stays in
 ``dashboard/backend/routes/models.py``.
 
 A docker-mode run also spends container time, not just tokens: the hours its
-container lived, priced per the sandbox size its environment names
-(``environments/models.py`` ``SIZE_PRESETS``) or, for a custom profile, per
-vCPU-hour (:func:`container_cost_usd`, fifth-cycle stage 3). Those prices are
-settings, not catalog entries, resolved live from .env the way other
-container defaults are (``common.config.live_setting``).
+container lived, priced per vCPU-hour against its effective cpu limit
+(:func:`container_cost_usd`). That price is a setting, not a catalog entry,
+resolved live from .env the way other container defaults are
+(``common.config.live_setting``).
 """
 from __future__ import annotations
 
@@ -114,9 +113,8 @@ def run_cached_tokens(run: Dict[str, Any]) -> int:
 
 
 # Channels whose runs are evaluation, not production spend. Replays and eval
-# cells cost real tokens, but charging them to the workspace's budget would let
-# measuring an agent starve the agent. Both cost aggregation (routes/costs.py)
-# and budget enforcement (common/budget.py) skip these; the runs themselves stay
+# cells cost real tokens, but they measure an agent rather than do its work,
+# so cost aggregation (routes/costs.py) skips these; the runs themselves stay
 # fully visible in the normal run views.
 EVALUATION_CHANNELS = frozenset({"replay", "eval"})
 
@@ -136,10 +134,10 @@ def _tokens_cost(prices: PriceMap, provider: str, model: str,
 
 def serving_cost_usd(provider: str, model: str, prompt_tokens: int,
                      completion_tokens: int, *, prices: Optional[PriceMap] = None) -> float:
-    """USD cost of one served completion (``common/serving.py``) at catalog
-    price. No cache split: ``serving_usage`` tracks a plain prompt/completion
-    pair, not a cached-token count. Unknown models cost 0.0, the same
-    fail-open rule :func:`run_cost_usd` follows."""
+    """USD cost of one completion at catalog price, for the ``after_run`` hook
+    (agents/hooks.py). No cache split: a plain prompt/completion pair, not a
+    cached-token count. Unknown models cost 0.0, the same fail-open rule
+    :func:`run_cost_usd` follows."""
     table = prices if prices is not None else load_price_map()
     return round(_tokens_cost(table, str(provider or ""), str(model or ""),
                               max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)), 0), 6)
@@ -183,21 +181,10 @@ def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
     return total
 
 
-#: USD per container-hour for each named sandbox size
-#: (environments/models.py SIZE_PRESETS), resolved live from .env/Settings
-#: the same way other container defaults are (common.config.live_setting),
-#: so a price change needs no restart. Defaults picked to agree with the
-#: per-cpu rate below (1/2/4 cpus -> 0.05/0.10/0.20).
-CONTAINER_HOUR_PRICE_ENV: Dict[str, str] = {
-    "small": "AGENTS_HUB_CONTAINER_HOUR_SMALL",
-    "medium": "AGENTS_HUB_CONTAINER_HOUR_MEDIUM",
-    "large": "AGENTS_HUB_CONTAINER_HOUR_LARGE",
-}
-CONTAINER_HOUR_PRICE_DEFAULT: Dict[str, float] = {"small": 0.05, "medium": 0.10, "large": 0.20}
-
-#: USD per vCPU-hour for a docker-mode run whose environment names no size
-#: (a custom profile, or the run profile's own defaults): the container is
-#: still priced, by its effective cpu limit.
+#: USD per vCPU-hour for a docker-mode run: the container is priced by its
+#: effective cpu limit, resolved live from .env/Settings the same way other
+#: container defaults are (common.config.live_setting), so a price change
+#: needs no restart.
 CONTAINER_HOUR_PRICE_PER_CPU_ENV = "AGENTS_HUB_CONTAINER_HOUR_PER_CPU"
 CONTAINER_HOUR_PRICE_PER_CPU_DEFAULT = 0.05
 
@@ -211,17 +198,8 @@ def _live_price(env_key: str, default: float) -> float:
         return default
 
 
-def container_hour_price(size: str) -> float:
-    """USD per hour for a named sandbox size; 0.0 for a name this version
-    does not know (fails open, like an unpriced model)."""
-    size = str(size or "").strip().lower()
-    if size not in CONTAINER_HOUR_PRICE_DEFAULT:
-        return 0.0
-    return _live_price(CONTAINER_HOUR_PRICE_ENV[size], CONTAINER_HOUR_PRICE_DEFAULT[size])
-
-
 def container_hour_price_per_cpu() -> float:
-    """USD per vCPU-hour for a container with no named size."""
+    """USD per vCPU-hour for a docker-mode run's container."""
     return _live_price(CONTAINER_HOUR_PRICE_PER_CPU_ENV, CONTAINER_HOUR_PRICE_PER_CPU_DEFAULT)
 
 
@@ -245,9 +223,8 @@ def _container_hours(run: Dict[str, Any]) -> float:
 
 def container_cost_usd(run: Dict[str, Any]) -> float:
     """USD for the hours a docker-mode run's container lived
-    (``run.container_size``/``run.container_cpus``, agents/agent_launcher.py),
-    priced per its sandbox size or, for a custom profile, per vCPU-hour.
-    Zero for a run that never executed in a container, or carries neither
+    (``run.container_cpus``, agents/agent_launcher.py), priced per vCPU-hour.
+    Zero for a run that never executed in a container, or carries no cpu
     figure (recorded before this was tracked). Fails open like the rest of
     this module: an unreadable record prices as zero, never raises.
     """
@@ -255,9 +232,6 @@ def container_cost_usd(run: Dict[str, Any]) -> float:
         hours = _container_hours(run)
         if hours <= 0:
             return 0.0
-        size = str(run.get("container_size") or "").strip().lower()
-        if size:
-            return round(hours * container_hour_price(size), 6)
         cpus = float(run.get("container_cpus") or 0.0)
         if cpus <= 0:
             return 0.0
@@ -298,7 +272,7 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
 
 # Providers that run on this machine: their tokens cost nothing, so a $0
 # estimate for them is the real figure, not a missing catalog price.
-LOCAL_PROVIDERS = frozenset({"hub-local", "ollama", "lmstudio"})
+LOCAL_PROVIDERS = frozenset({"ollama", "lmstudio"})
 
 
 def cost_is_known(run: Dict[str, Any], prices: PriceMap, cost: float) -> bool:

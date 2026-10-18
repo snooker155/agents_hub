@@ -41,14 +41,14 @@ def fresh(tmp_path, monkeypatch):
 
 @pytest.fixture
 def secrets(monkeypatch):
-    values = {"MAIL_PW": "hunter2", "HEADERS": json.dumps({"Authorization": "Bearer t"})}
+    values = {"HEADERS": json.dumps({"Authorization": "Bearer t"})}
     monkeypatch.setattr(service, "_secret_resolver", lambda ws: (lambda name: values.get(name)))
     return values
 
 
 def _watcher(**kw):
-    data = dict(name="inbox", kind="imap",
-                config={"host": "imap.example.org", "username": "me", "password_secret": "MAIL_PW"})
+    data = dict(name="status", kind="http",
+                config={"url": "https://example.org/status.json", "json_path": "state"})
     data.update(kw)
     return service.create("default", data)
 
@@ -57,7 +57,7 @@ def _listener(agent_id, watcher_id, workspace="default"):
     add_agent(AgentSpec(id=agent_id, name=agent_id.title(), type="langchain",
                         entrypoint="agents.definitions.demo:build", owner_workspace=workspace))
     return proactive.save_profile(agent_id, {
-        "enabled": True, "cron": "0 0 1 1 *", "brief": "watch the mail",
+        "enabled": True, "cron": "0 0 1 1 *", "brief": "watch the status page",
         "triggers": [{"kind": "watch", "watcher_id": watcher_id}],
     })
 
@@ -65,10 +65,10 @@ def _listener(agent_id, watcher_id, workspace="default"):
 # -------------------- model and config --------------------
 
 def test_config_validation():
-    cfg = kinds.validate_config("imap", {"host": "h", "username": "u", "password_secret": "P", "port": "143", "ssl": "false"})
-    assert cfg["port"] == 143 and cfg["ssl"] is False and cfg["folder"] == "INBOX"
-    with pytest.raises(ValueError, match="password_secret"):
-        kinds.validate_config("imap", {"host": "h", "username": "u"})
+    cfg = kinds.validate_config("http", {"url": "https://x.org/a"})
+    assert cfg["method"] == "GET" and cfg["json_path"] == ""
+    with pytest.raises(ValueError, match="url"):
+        kinds.validate_config("http", {})
     with pytest.raises(ValueError, match="http"):
         kinds.validate_config("http", {"url": "ftp://x"})
     with pytest.raises(ValueError, match="GET or HEAD"):
@@ -85,8 +85,8 @@ def test_create_update_and_interval_bounds():
     with pytest.raises(service.WatcherError, match="name"):
         service.create("default", {"name": "", "kind": "http", "config": {"url": "https://x.org"}})
     # Changing the source resets the observed state.
-    store.update(w.id, state={"last_uid": 40}, last_error="old")
-    again = service.update(w.id, {"config": {**w.config, "folder": "Archive"}})
+    store.update(w.id, state={"hash": "old"}, last_error="old")
+    again = service.update(w.id, {"config": {**w.config, "json_path": "other"}})
     assert again.state == {} and again.last_error is None
     assert service.list_watchers("default")[0].id == w.id
     assert service.list_watchers("other") == []
@@ -104,62 +104,14 @@ def test_pause_resume_and_disable():
 
 # -------------------- probes --------------------
 
-class _FakeImap:
-    """Enough of imaplib for probe_imap: a folder of (uid, raw message)."""
+class _Page:
+    """A JSON resource whose value the test changes between probes."""
 
-    def __init__(self, messages):
-        self.messages = dict(messages)
-        self.logged_out = False
+    def __init__(self, state):
+        self.state = state
 
-    def select(self, folder, readonly=True):
-        return "OK", [b"3"]
-
-    def uid(self, command, *args):
-        if command == "search":
-            crit = args[1]
-            uids = sorted(self.messages)
-            if crit.startswith("UID "):
-                start = int(crit.split()[1].split(":")[0])
-                uids = [u for u in uids if u >= start]
-            return "OK", [" ".join(str(u) for u in uids).encode()]
-        if command == "fetch":
-            uid = int(args[0])
-            return "OK", [(b"1 (UID %d BODY[] {n}" % uid, self.messages[uid]), b")"]
-        raise AssertionError(command)
-
-    def logout(self):
-        self.logged_out = True
-
-
-def _mail(sender, subject, body, html=False):
-    ctype = "text/html" if html else "text/plain"
-    return (f"From: {sender}\r\nSubject: {subject}\r\nDate: Thu, 02 Oct 2026 09:00:00 +0000\r\n"
-            f"Message-ID: <{subject}@x>\r\nContent-Type: {ctype}; charset=utf-8\r\n\r\n{body}").encode()
-
-
-def test_imap_probe_takes_a_baseline_then_reports_new_mail(secrets):
-    w = _watcher(config={**_watcher().config, "from_filter": "supplier"})
-    box = _FakeImap({1: _mail("a@x", "old", "x"), 2: _mail("b@x", "older", "y")})
-    first = kinds.probe_imap(w, lambda n: "pw", connect=lambda cfg, pw: box)
-    assert first.events == [] and first.state == {"last_uid": 2}
-    assert box.logged_out
-
-    w = store.update(w.id, state=first.state)
-    box.messages[3] = _mail("supplier@x", "Trailpack spec", "Here is the <b>spec</b>")
-    box.messages[4] = _mail("spam@x", "Buy now", "no")
-    box.messages[5] = _mail("Supplier Two <two@x>", "Delivery", "<p>Next week</p>", html=True)
-    second = kinds.probe_imap(w, lambda n: "pw", connect=lambda cfg, pw: box)
-    assert second.state == {"last_uid": 5}
-    assert [e["subject"] for e in second.events] == ["Trailpack spec", "Delivery"]
-    assert second.events[1]["body"] == "Next week"
-    assert "1 filtered out" in second.summary
-    assert second.events[0]["summary"].startswith("new mail from supplier@x")
-
-
-def test_imap_probe_needs_the_secret():
-    w = _watcher()
-    with pytest.raises(kinds.ProbeError, match="MAIL_PW"):
-        kinds.probe_imap(w, lambda n: None, connect=lambda cfg, pw: _FakeImap({}))
+    def fetch(self, cfg, headers):
+        return json.dumps({"state": self.state})
 
 
 def test_http_probe_watches_a_json_field():
@@ -206,31 +158,30 @@ def test_http_fetch_refuses_private_hosts(monkeypatch):
 
 def test_run_due_wakes_the_listening_agent(secrets, monkeypatch):
     w = _watcher(interval_seconds=60)
-    profile = _listener("mailbot", w.id)
+    profile = _listener("statusbot", w.id)
     _listener("deaf", "watch_other")
-    box = _FakeImap({1: _mail("a@x", "old", "x")})
-    monkeypatch.setattr(kinds, "_imap_connect", lambda cfg, pw: box)
+    page = _Page("up")
+    monkeypatch.setattr(kinds, "_http_fetch", page.fetch)
 
     first = service.run_due()
     assert len(first) == 1 and first[0]["ok"] and first[0]["events"] == 0
     assert ps.get_job(profile["job_id"]).pending_events == []
     stored = service.get(w.id)
-    assert stored.state == {"last_uid": 1} and stored.last_checked_at is not None
+    assert stored.state.get("hash") and stored.last_checked_at is not None
 
     # Not due again until the interval passed.
     assert service.run_due() == []
     store.update(w.id, last_checked_at=datetime.now(UTC) - timedelta(seconds=120))
-    box.messages[2] = _mail("supplier@x", "Spec", "attached")
+    page.state = "down"
     second = service.run_due()
-    assert second[0]["events"] == 1 and second[0]["woken"] == ["mailbot"]
+    assert second[0]["events"] == 1 and second[0]["woken"] == ["statusbot"]
     job = ps.get_job(profile["job_id"])
     assert len(job.pending_events) == 1
     event = job.pending_events[0]
     assert event["kind"] == "watch" and event["data"]["watcher_id"] == w.id
-    assert event["data"]["subject"] == "Spec" and "[inbox]" in event["summary"]
+    assert event["data"]["value"] == "down" and "[status]" in event["summary"]
     assert job.run_at <= datetime.now(UTC) + timedelta(seconds=31)
-    stored = service.get(w.id)
-    assert stored.fired == 1 and stored.last_event.startswith("new mail from supplier@x")
+    assert service.get(w.id).fired == 1
     assert ps.get_job(proactive.get_profile("deaf")["job_id"]).pending_events == []
 
 
@@ -239,9 +190,9 @@ def test_errors_count_and_pause(secrets, monkeypatch):
     sent = []
     monkeypatch.setattr(ps, "create_notification", lambda **kw: sent.append(kw))
 
-    def boom(cfg, pw):
-        raise kinds.ProbeError("IMAP connection failed: refused")
-    monkeypatch.setattr(kinds, "_imap_connect", boom)
+    def boom(cfg, headers):
+        raise kinds.ProbeError("HTTP request failed: refused")
+    monkeypatch.setattr(kinds, "_http_fetch", boom)
 
     r1 = service.probe_once(w.id)
     assert r1["ok"] is False and r1["consecutive_errors"] == 1 and not r1["paused"]
@@ -256,22 +207,24 @@ def test_errors_count_and_pause(secrets, monkeypatch):
 
 def test_dry_run_reports_without_storing_or_waking(secrets, monkeypatch):
     w = _watcher()
-    profile = _listener("mailbot", w.id)
-    store.update(w.id, state={"last_uid": 1})
-    box = _FakeImap({1: _mail("a@x", "old", "x"), 2: _mail("b@x", "New", "y")})
-    monkeypatch.setattr(kinds, "_imap_connect", lambda cfg, pw: box)
+    profile = _listener("statusbot", w.id)
+    page = _Page("up")
+    monkeypatch.setattr(kinds, "_http_fetch", page.fetch)
+    service.probe_once(w.id, dry_run=False)
+    baseline = service.get(w.id).state
+    page.state = "down"
     result = service.probe_once(w.id, dry_run=True)
-    assert result["dry_run"] and len(result["events"]) == 1 and result["would_wake"] == ["mailbot"]
-    assert service.get(w.id).state == {"last_uid": 1}
+    assert result["dry_run"] and len(result["events"]) == 1 and result["would_wake"] == ["statusbot"]
+    assert service.get(w.id).state == baseline
     assert ps.get_job(profile["job_id"]).pending_events == []
 
 
 def test_summary_lists_listeners():
     w = _watcher()
-    _listener("mailbot", w.id)
+    _listener("statusbot", w.id)
     body = service.summary("default")
     assert body["active"] == 1 and body["total"] == 1
-    assert body["watchers"][0]["listeners"] == [{"agent_id": "mailbot", "name": "Mailbot"}]
+    assert body["watchers"][0]["listeners"] == [{"agent_id": "statusbot", "name": "Statusbot"}]
     assert body["watchers"][0]["next_check_at"] is None  # never checked yet
 
 
@@ -301,7 +254,7 @@ def client():
 
 def test_routes_crud_and_actions(client, secrets, monkeypatch):
     kinds_resp = client.get("/api/watchers/kinds").json()
-    assert {k["kind"] for k in kinds_resp["kinds"]} == {"imap", "http"}
+    assert {k["kind"] for k in kinds_resp["kinds"]} == {"http"}
 
     resp = client.post("/api/watchers", json={
         "workspace": "default", "name": "status page", "kind": "http",

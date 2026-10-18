@@ -1,7 +1,7 @@
 /**
  * The Assistant: the whole service through one agent, by voice and by text
  * (docs/assistant.md). The thread is the person's own (routes/assistant.py);
- * every turn is an ordinary chat turn, so approvals, budgets and the run
+ * every turn is an ordinary chat turn, so approvals and the run
  * ledger apply, and voice is a way in and out of it:
  *
  *  - hold the button (or Space) and speak: the recording is turned into text
@@ -363,10 +363,9 @@ export default function Assistant() {
       });
     } catch (e) {
       if (e.name !== 'AbortError') {
-        const msg = e instanceof AssistantError && e.code === 'budget'
-          ? t('assistant.errors.budget')
-          : e instanceof AssistantError && e.code === 'busy' ? t('assistant.errors.busy')
-            : (e.message || t('assistant.errors.turn'));
+        const msg = e instanceof AssistantError && e.code === 'busy'
+          ? t('assistant.errors.busy')
+          : (e.message || t('assistant.errors.turn'));
         setFeed((f) => [...f, { k: 'error', text: msg, refusal: e instanceof AssistantError ? e.refusal : null }]);
         // Under the button as well: on a phone there is no transcript to read it in.
         setNotice(msg);
@@ -475,16 +474,13 @@ export default function Assistant() {
       if (e instanceof AssistantError && e.code === 'model_not_added') {
         setSttFallback(true);
         setNotice(t('assistant.notes.browserListen'));
-      } else if (e instanceof AssistantError && e.code === 'budget') {
-        setNotice(t('assistant.errors.budget'));
-        sayLocal(t('assistant.errors.budget'));
       } else {
         setNotice(e.message || t('assistant.errors.transcribe'));
       }
     } finally {
       setTranscribing(false);
     }
-  }, [browserRec, heard, language, mode, recorder, sayLocal, t, workspace]);
+  }, [browserRec, heard, language, mode, recorder, t, workspace]);
   useEffect(() => { endTalkRef.current = endTalk; }, [endTalk]);
 
   // Space is the talk button while nothing else wants the key; hands-free
@@ -619,11 +615,6 @@ export default function Assistant() {
         // The ear starts over with the browser's recognition.
         setSttFallback(true);
         setNotice(t('assistant.notes.browserListen'));
-      } else if (e instanceof AssistantError && e.code === 'budget') {
-        setNotice(t('assistant.errors.budget'));
-        sayLocal(t('assistant.errors.budget'));
-        endHandsFree();
-        if (listenMode === 'wake') setPrefs({ listen: 'hold' });
       } else {
         setNotice(e?.message || t('assistant.errors.transcribe'));
       }

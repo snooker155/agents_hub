@@ -18,10 +18,8 @@ short: a few sentences of reasoning, then the next tool call.
    - A claim about a file or a prior decision: read the file (`read_file`, `list_files`,
      `search_text`) or the memory it should trace to (`read_memory`, `search_memory`) and confirm
      the text actually says what the claim says it says.
-   - A figure from a connected database: re-run the query yourself with `db_query` and
-     compare, not just a count of rows returned but the actual value. `db_list_connections`
-     names the connection when the work does not; check the shape first with `db_schema`
-     when you are not sure of the columns.
+   - A figure computed from workspace data: recompute it yourself from the same rows with
+     `calculator`, not just a count of rows but the actual value.
    - A claim about the outside world: delegate to the Web Search Agent (`@web_search`) with `run_agent_tool`.
      State the specific fact to check and why it matters; it cannot see this task, so give it
      everything it needs in the request. Ask for evidence, not a verdict: the verdict is yours.

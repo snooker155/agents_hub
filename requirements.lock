@@ -1,9 +1,8 @@
 # A full, pinned resolution of the three top-level requirement files
 # (requirements-agents.txt, dashboard/backend/requirements.txt,
 # requirements-cli.txt), for reproducing an environment exactly. This is what
-# the backend image (Dockerfile) and CI install from; requirements-postgres.txt
-# and requirements-rag.txt are not part of it and are still installed
-# separately (docs/scaling.md, docs/memory.md say why). It is universal (built
+# the backend image (Dockerfile) and CI install from; requirements-rag.txt is
+# not part of it and is installed separately (docs/memory.md says why). It is universal (built
 # with --universal, markers cover the platform/version differences), so pip
 # can install it unmodified on Python 3.11 and 3.12.
 #

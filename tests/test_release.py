@@ -89,7 +89,6 @@ def test_write_versions_moves_every_file_together(tmp_path, monkeypatch):
         "PYPROJECT": ROOT / "pyproject.toml",
         "PACKAGE_JSON": ROOT / "dashboard" / "frontend" / "package.json",
         "PACKAGE_LOCK": ROOT / "dashboard" / "frontend" / "package-lock.json",
-        "CHART": ROOT / "deploy" / "helm" / "agents-hub" / "Chart.yaml",
         "README": ROOT / "README.md",
     }
     for name, src in paths.items():

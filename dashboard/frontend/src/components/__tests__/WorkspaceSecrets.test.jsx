@@ -14,19 +14,11 @@ const fail = (status, detail) => Promise.reject({ response: { status, data: { de
 const getWorkspaceSecrets = vi.fn();
 const setWorkspaceSecret = vi.fn(() => ok({}));
 const deleteWorkspaceSecret = vi.fn(() => ok({ deleted: true }));
-const getUsers = vi.fn(() => ok([{ id: 'u1', username: 'alice' }]));
 
 vi.mock('../../api', () => ({
   getWorkspaceSecrets: (...a) => getWorkspaceSecrets(...a),
   setWorkspaceSecret: (...a) => setWorkspaceSecret(...a),
   deleteWorkspaceSecret: (...a) => deleteWorkspaceSecret(...a),
-  getUsers: (...a) => getUsers(...a),
-}));
-
-let authMode = 'single';
-vi.mock('../auth', () => ({
-  MULTI: 'multi',
-  useAuth: () => ({ mode: authMode }),
 }));
 
 import WorkspaceSecrets from '../workspace/WorkspaceSecrets';
@@ -47,7 +39,6 @@ const show = (props = {}) => render(
 describe('WorkspaceSecrets', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authMode = 'single';
     getWorkspaceSecrets.mockImplementation(() => ok(ROWS));
   });
 
@@ -57,9 +48,7 @@ describe('WorkspaceSecrets', () => {
     expect(screen.getByText('Agent publisher')).toBeTruthy();
     expect(screen.getByText('••••x9Qa')).toBeTruthy();
     expect(screen.getByText('User u1')).toBeTruthy();
-    // No user picker outside multi mode.
     expect(screen.queryByLabelText('Any user')).toBeNull();
-    expect(getUsers).not.toHaveBeenCalled();
   });
 
   it('stores a secret with its agent scope', async () => {
@@ -95,16 +84,7 @@ describe('WorkspaceSecrets', () => {
     expect(alert.textContent).toContain('ah secrets keygen');
   });
 
-  it('offers the user scope in multi mode', async () => {
-    authMode = 'multi';
-    show();
-    await screen.findByText('GITHUB_TOKEN');
-    await waitFor(() => expect(getUsers).toHaveBeenCalled());
-    expect(await screen.findByText('alice', { selector: 'option' })).toBeTruthy();
-  });
-
   it('hides itself from a viewer the backend refuses', async () => {
-    authMode = 'multi';
     getWorkspaceSecrets.mockImplementation(() => fail(403, 'no'));
     const { container } = show();
     await waitFor(() => expect(getWorkspaceSecrets).toHaveBeenCalled());

@@ -17,11 +17,6 @@ lives on the instance row (``instances`` table, carrier fields in ``extra``):
 - inputs: ``take_tasks`` (also answer tasks assigned to the agent in the
   instance's workspace, the strict resource cap the worker node used to be),
   ``concurrency`` (runs at once, one per conversation);
-- publication: ``is_exposed``, ``expose_token``, ``exposed_at``,
-  ``inbound_secret``; the public address is served by the hub
-  (``/api/external/{token}/messages``), and an optional direct port
-  (``http_port``, ``http_host_port``, ``http_url``) when the agent asks for one;
-- ``environment_id`` / ``environment_name``.
 
 One instance, one carrier, never several instances in one process: the
 environment, ``os.environ`` and the working directory are per process.
@@ -35,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets as _secrets
 import signal
 import socket
 import subprocess
@@ -47,7 +41,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common import db
-from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from instances import registry, store
 
@@ -58,9 +51,6 @@ CARRIER_LOGS_DIR = AGENTS_HUB_ROOT / "instance_logs"
 LIVE_CARRIER_STATUSES = ("starting", "running", "stopping")
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 32
-CONNECTIONS_KEEP = 500
-
-_connections = DocStore("instance_connections")
 
 
 def _now() -> str:
@@ -141,38 +131,10 @@ def carriers(instance_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-# ── Environment and execution mode ───────────────────────────────────────────
+# ── Execution mode ───────────────────────────────────────────────────────────
 
-def _environment_fields(workspace: Optional[str], environment_id: Optional[str]) -> Dict[str, Any]:
-    """The environment's launch fields (environments/launch.py).
-
-    An explicit id is validated strictly (unknown, archived or foreign raises
-    ValueError): a new instance must not silently start somewhere else. The
-    workspace default is looked up leniently.
-    """
-    try:
-        from environments import service as env_service
-        from environments.launch import fields_for
-    except ImportError:
-        if environment_id:
-            raise ValueError("environments are not available in this installation")
-        return {}
-    if environment_id:
-        try:
-            env = env_service.resolve_for(workspace, environment_id)
-        except env_service.EnvironmentServiceError as exc:
-            raise ValueError(str(exc)) from exc
-    else:
-        try:
-            env = env_service.default_for(workspace)
-        except Exception:  # noqa: BLE001 - no default reachable: start without one
-            log.debug("default environment lookup failed for %s", workspace, exc_info=True)
-            return {}
-    return fields_for(env, workspace, owner={"kind": "instance"}) if env is not None else {}
-
-
-def _execution_mode(workspace: Optional[str], env_fields: Dict[str, Any]) -> str:
-    """Workspace override, else the live setting; an environment pins it."""
+def _execution_mode(workspace: Optional[str]) -> str:
+    """Workspace override, else the live setting."""
     from common.config import agent_execution_mode
     ws_mode: Optional[str] = None
     if workspace:
@@ -182,14 +144,6 @@ def _execution_mode(workspace: Optional[str], env_fields: Dict[str, Any]) -> str
         except Exception:  # noqa: BLE001 - an unreadable workspace override falls back to the default
             log.debug("workspace agent_mode lookup failed for %s", workspace, exc_info=True)
     mode = ws_mode or agent_execution_mode()
-    if env_fields.get("execution_mode") in ("local", "docker"):
-        mode = env_fields["execution_mode"]
-    from common import isolation
-    if isolation.is_isolated(workspace):
-        # An isolated workspace's agent loop runs on the hub, next to the
-        # state it needs; its shell and code go to the no-network sandbox
-        # (common/isolation.py).
-        return "local"
     return "docker" if mode == "docker" else "local"
 
 
@@ -250,11 +204,8 @@ def start(
     *,
     workspace: Optional[str] = None,
     label: Optional[str] = None,
-    environment_id: Optional[str] = None,
     take_tasks: bool = False,
-    publish: bool = False,
     concurrency: Optional[int] = None,
-    direct_port: Optional[bool] = None,
     started_by: Optional[str] = None,
     service_id: Optional[str] = None,
     check_capacity: bool = True,
@@ -263,9 +214,7 @@ def start(
 
     The row is written first (``starting``) so the page has something to open
     while the process boots; the process marks it ``standby`` once its loop is
-    up. ``direct_port`` opens the agent's own HTTP port next to the hub's
-    public address (defaults to the agent's ``http_expose`` or a ``service``
-    node type). Raises ValueError for an unknown agent or environment,
+    up. Raises ValueError for an unknown agent,
     CapacityReached when the workspace already runs as many copies of the
     agent as it allows, and RuntimeError when the process or container cannot
     be started.
@@ -286,15 +235,6 @@ def start(
             raise ValueError(f"Unknown agent: {agent_id}")
         if check_capacity:
             _check_capacity(workspace, agent_id)
-    env_fields = _environment_fields(workspace, environment_id)
-
-    if direct_port is None:
-        direct_port = bool(spec is not None and (
-            getattr(spec, "http_expose", False)
-            or getattr(spec, "node_type", "worker") == "service"))
-    http_port = int(getattr(spec, "http_port", 8080) or 8080) if direct_port else None
-    http_host_port = getattr(spec, "http_host_port", None) if direct_port else None
-
     kind = store.RESIDENT_KIND if agent_id else store.RUNNER_KIND
     if not label and not agent_id:
         label = registry.build_label("runner", registry._next_seq("", workspace))
@@ -306,28 +246,20 @@ def start(
     fields: Dict[str, Any] = {
         "take_tasks": bool(take_tasks) and bool(agent_id),
         "concurrency": clamp_concurrency(concurrency) if concurrency else default_concurrency(),
-        "environment_id": env_fields.get("environment_id"),
-        "environment_name": env_fields.get("environment_name"),
-        "http_port": http_port,
-        "http_host_port": (http_host_port if http_host_port is not None else http_port) if http_port else None,
         "carrier_log_file": str(CARRIER_LOGS_DIR / f"instance_{instance_id}.log"),
         "started_by": started_by,
-        # Kept so a restart can rebuild the same process without asking again.
-        "environment_request": (environment_id or "").strip() or None,
     }
     instance = store.update(instance_id, **fields) or {**instance, **fields}
     try:
-        instance = _spawn(instance, env_fields, reason="start")
+        instance = _spawn(instance, reason="start")
     except Exception as exc:
         store.update(instance_id, carrier_status="failed", carrier_error=str(exc)[:2000])
         registry.mark_failed(instance_id, str(exc))
         raise
-    if publish:
-        instance = publish_instance(instance_id) or instance
     return instance
 
 
-def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+def _spawn(instance: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
     """Start the carrier process (or container) for ``instance``."""
     instance_id = instance["instance_id"]
     agent_id = str(instance.get("agent_id") or "")
@@ -335,8 +267,6 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     log_file = Path(instance.get("carrier_log_file")
                     or CARRIER_LOGS_DIR / f"instance_{instance_id}.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    http_port = instance.get("http_port")
-
     inner_cmd = [
         sys.executable, "-m", "runtime.instance_run",
         "--instance-id", instance_id,
@@ -347,8 +277,6 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     abs_ws = _abs_workspace(workspace)
     if abs_ws:
         inner_cmd.extend(["--workspace", abs_ws])
-    if http_port:
-        inner_cmd.extend(["--http-port", str(http_port)])
 
     env = os.environ.copy()
     # A provider key saved since the backend started (common/provider_env.py).
@@ -356,39 +284,21 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     provider_env.overlay(env)
     from common.workspace_context import normalize_workspace_name
     env["AGENT_WORKSPACE"] = normalize_workspace_name(workspace) or "default"
-    # The carrier relays its turns' events back with a token of its own that
-    # reaches only the relay routes (common/run_tokens.py), never the shared
-    # API token or the service credential the copied environment may hold. A
-    # restart retires the previous carrier's token.
-    from common import run_tokens
-    run_tokens.retire_for_instance(instance_id)
-    run_tokens.mint_for_env(env, kind="instance", instance_id=instance_id,
-                            workspace=env["AGENT_WORKSPACE"])
+    from common.subprocess_env import strip_hub_credentials
+    strip_hub_credentials(env)
     env[registry.ENV_INSTANCE_ID] = instance_id
-    env_vars: Dict[str, str] = {str(k): str(v) for k, v in (env_fields.get("env") or {}).items()}
-    env.update(env_vars)
-    mode = _execution_mode(workspace, env_fields)
+    mode = _execution_mode(workspace)
 
     pid: Optional[int] = None
     container_name: Optional[str] = None
-    http_url: Optional[str] = None
     if mode == "docker":
         from managers.container_manager import container_name_for_node, start_node_container
         container_name = container_name_for_node(instance_id)
-        kwargs: Dict[str, Any] = {}
-        if env_fields.get("docker"):
-            kwargs["options"] = env_fields["docker"]
-        if env_vars:
-            kwargs["extra_env"] = env_vars
         result = start_node_container(
             instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"], workspace, env,
-            http_expose=bool(http_port), http_port=int(http_port or 8080),
-            http_host_port=instance.get("http_host_port"), **kwargs,
         )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
-        if http_port:
-            http_url = result.get("http_url")
     else:
         popen_kwargs: Dict[str, Any] = {}
         if os.name == "nt":
@@ -423,7 +333,6 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         "carrier_log_file": str(log_file),
         "pid": pid,
         "container_name": container_name,
-        "http_url": http_url,
         "started_at": now,
         "finished_at": None,
         "error": None,
@@ -435,7 +344,7 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     _open_carrier(instance, reason)
     append_log(instance, f"[carrier_start] reason={reason} mode={mode} "
                          f"pid={pid or container_name or '-'} agent={agent_id} "
-                         f"workspace={workspace or '-'}" + (f" http={http_url}" if http_url else ""))
+                         f"workspace={workspace or '-'}")
     return store.get(instance_id) or instance
 
 
@@ -688,9 +597,8 @@ def restart(instance_id: str) -> Optional[Dict[str, Any]]:
     if instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
         stop(instance_id, reason="restart")
     current = store.get(instance_id) or instance
-    env_fields = _environment_fields(current.get("workspace"), current.get("environment_request"))
     try:
-        return _spawn(current, env_fields, reason="restart")
+        return _spawn(current, reason="restart")
     except Exception as exc:
         update_from_process(instance_id, "failed", error=str(exc))
         raise
@@ -711,10 +619,6 @@ def remove(instance_id: str) -> bool:
                 Path(log_file).unlink(missing_ok=True)
             except OSError:
                 pass
-        try:
-            _connections.delete(instance_id)
-        except Exception:  # noqa: BLE001 - the history is orphaned, not harmful
-            log.debug("could not delete the connections of %s", instance_id, exc_info=True)
     return removed
 
 
@@ -742,75 +646,11 @@ def set_inputs(instance_id: str, *, take_tasks: Optional[bool] = None,
     return inst
 
 
-# ── Publication ──────────────────────────────────────────────────────────────
-
-def publish_instance(instance_id: str) -> Optional[Dict[str, Any]]:
-    """Give the instance a public address through the hub (a fresh token)."""
-    instance = store.get(instance_id)
-    if not is_resident(instance):
-        return None
-    token = _secrets.token_hex(32)
-    updated = store.update(instance_id, is_exposed=True, expose_token=token, exposed_at=_now())
-    if updated:
-        append_log(updated, f"[publish] published, token={token[:8]}…")
-    return updated
-
-
-def unpublish_instance(instance_id: str) -> bool:
-    instance = store.get(instance_id)
-    if not is_resident(instance):
-        return False
-    updated = store.update(instance_id, is_exposed=False, expose_token=None, exposed_at=None)
-    if updated:
-        append_log(updated, "[publish] withdrawn")
-    return updated is not None
-
-
-def set_inbound_secret(instance_id: str, secret: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Require (or with None, stop requiring) a signature on public calls."""
-    return store.update(instance_id, inbound_secret=(secret or None))
-
-
-def get_by_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
-    """The published instance holding ``token``.
-
-    Compared in constant time against every published instance, so how long
-    a lookup takes says nothing about how much of a guess was right.
-    """
-    import hmac
-    if not token or not isinstance(token, str):
-        return None
-    presented = token.encode("utf-8")
-    found: Optional[Dict[str, Any]] = None
-    page = store.list_instances(limit=5000, kinds=store.CARRIER_KINDS, include_archived=True)
-    for inst in page["items"]:
-        stored = inst.get("expose_token")
-        if not inst.get("is_exposed") or not isinstance(stored, str) or not stored:
-            continue
-        if hmac.compare_digest(stored.encode("utf-8"), presented) and found is None:
-            found = inst
-    return sync(found) if found else None
+#: Fields an older install may still carry on an instance row from when a
+#: copy could be published outside the hub; never shown.
+_HIDDEN_FIELDS = ("inbound_secret", "expose_token")
 
 
 def public_view(instance: Dict[str, Any]) -> Dict[str, Any]:
-    """The record without its secrets: the token only while published (the
-    operator needs it to build the address), the inbound secret never."""
-    out = {k: v for k, v in instance.items() if k != "inbound_secret"}
-    out["inbound_secret_configured"] = bool(instance.get("inbound_secret"))
-    return out
-
-
-# ── Connection history ───────────────────────────────────────────────────────
-
-def log_connection(instance_id: str, record: Dict[str, Any]) -> None:
-    """Append one public call to the instance's connection history (capped)."""
-    with _connections.transaction():
-        existing = _connections.get(instance_id)
-        items = list(existing) if isinstance(existing, list) else []
-        items.append(record)
-        _connections.put(instance_id, items[-CONNECTIONS_KEEP:])
-
-
-def get_connections(instance_id: str) -> List[Dict[str, Any]]:
-    records = _connections.get(instance_id)
-    return list(reversed(records)) if isinstance(records, list) else []
+    """The record without secrets or the fields of the removed publication."""
+    return {k: v for k, v in instance.items() if k not in _HIDDEN_FIELDS}

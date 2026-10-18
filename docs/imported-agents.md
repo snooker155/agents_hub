@@ -7,10 +7,6 @@ checks whether it can run, and adds it to the agent list either way.
 Distinct from the [marketplace](marketplace.md), which shares definitions built
 *in* this product. An imported agent's behaviour stays in its own repository.
 
-Distinct too from a [connection](connections.md), which is the same idea with
-the direction reversed: there the external agent runs on its own trigger and
-reports in, and the hub never calls it.
-
 ## Where it runs
 
 Outside this process. The hub never imports the agent's Python, so its
@@ -26,8 +22,7 @@ HTTP endpoint:
 
 - **`POST <run_path>`** — receives `{prompt, run_id, workspace}`, replies
   `{ok, output, error}`. Required; everything else is optional.
-- **`GET <health_path>`** — any 2xx/3xx. Used by the readiness check and by the
-  agent card.
+- **`GET <health_path>`** — any 2xx/3xx. Used by the readiness check.
 - **`POST <stream_path>`** — optional. Answers with NDJSON or SSE frames
   (`token`, `thinking`, `tool_start`, `tool_end`, `usage`, `done`). The agent's
   tokens then appear in the chat bubble live, exactly like a built-in agent's,
@@ -234,23 +229,6 @@ containers), `POST .../docker/mode` with `{"mode": "url"|"docker"}`,
 `POST .../docker/start` and `POST .../docker/stop` with `{"workspace": ...}`
 (stop with no workspace stops them all).
 
-## Importing an A2A agent
-
-An agent that speaks [A2A](a2a.md), the Agent2Agent protocol, needs no manifest
-and no repository: it is already running and its Agent Card already says where
-its endpoint is and what it can do. Paste the card URL (it ends in
-`/.well-known/agent-card.json`) where the dialog asks for a repository URL, and
-the hub reads the card instead of cloning. Everything after that is the same:
-the same readiness report, the same registry record, the same agent page.
-
-A repository may also declare `runtime.kind = "a2a"` with the endpoint under
-`runtime.url`, for an agent whose code lives in git but whose service runs
-somewhere else.
-
-The hub serves the other direction too: every agent here has its own A2A card,
-so an outside orchestrator can drive it without knowing this API. The agent page
-shows that URL with a copy button.
-
 ## What you give up
 
 The process boundary that keeps a foreign agent's dependencies out also hides
@@ -282,4 +260,4 @@ its internals:
 - An import whose service is not running imports fine and simply cannot run.
   That is the intended state, not a failure.
 
-Related: [agents](agents.md), [a2a](a2a.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).
+Related: [agents](agents.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).

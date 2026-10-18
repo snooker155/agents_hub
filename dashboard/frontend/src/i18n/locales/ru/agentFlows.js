@@ -55,5 +55,4 @@ export default {
   cannotFullyImplementWithAvailable: 'Нельзя полностью реализовать имеющимися агентами',
   reasoning: 'Обоснование',
   cancel: 'Отмена',
-  mirrorExternal: 'Зеркало внешнего графа',
 };

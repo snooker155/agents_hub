@@ -1,21 +1,13 @@
 """
-Leases for the roles only one process may play at a time.
+Leases for the roles only one loop may play at a time, kept in this process.
 
-The backend starts several loops that must not run twice across a deployment:
-the plan scheduler, the run watchdog, the Telegram poller (two pollers on one
-bot token fight over ``getUpdates``), the outbox drainer and, when the event
-bridge is on, the external-state publisher. With one backend replica that is
-trivially true. With several, each role is guarded by a row in
-``service_leases`` (``common/migrations/0007_scale.sql``): the process that
-holds an unexpired lease on a role runs it, everyone else checks back every
-tick and takes over when the lease lapses.
-
-A lease is taken and renewed with one read-modify-write under
-``db.transaction()``, which is exclusive on both backends (``BEGIN
-IMMEDIATE`` on SQLite, the advisory lock on Postgres), so two replicas racing
-for the same role cannot both win. The owner id is ``AGENTS_HUB_INSTANCE_ID``
-when set, else ``hostname:pid``, the same identity the broker bridge and the
-plan scheduler's job leases use.
+The backend starts several loops that must not run twice: the plan
+scheduler, the run watchdog, the outbox drainer, the watchers. This hub is
+one process, so a role is held by whoever asked for it first and the
+bookkeeping is a dictionary, not a table; the module keeps the API the loops
+were written against (``hold``, ``fencing_token``, ``fenced``) so each loop
+still guards its writes the same way, and tests can still play a second
+owner with :func:`set_owner_id`.
 
 Usage in a loop::
 
@@ -27,33 +19,21 @@ Usage in a loop::
         sleep(20)
 
 :func:`hold` acquires or renews in one call and returns whether this process
-holds the role right now. Pick a TTL longer than the loop's tick, so a slow
-tick does not lose the role, and short enough that a dead holder is replaced
-within a minute or so. Holders release their roles on shutdown so a restart
-takes them back immediately instead of waiting the TTL out.
-
-Fencing. A holder that stalls past its TTL (a GC pause, a slow tick) can be
-superseded and then wake up still believing it holds the role. Every lease
-row therefore carries ``version``, bumped on each insert and takeover (never
-on a renewal); :func:`fencing_token` is the version this process got, and a
-loop that writes on behalf of its role checks it inside the write's own
-transaction::
-
-    token = leases.fencing_token("outbox")
-    with leases.fenced("outbox", token) as conn:   # raises LeaseLost
-        conn.execute(...)
-
-The check and the write share the exclusive transaction, so no takeover can
-slip in between them.
+holds the role right now. A lease carries ``version``, bumped on each insert
+and takeover (never on a renewal); :func:`fencing_token` is the version this
+owner got, and a loop that writes on behalf of its role checks it inside the
+write's own transaction with :func:`fenced`, which raises :class:`LeaseLost`
+before the body runs when the role has moved on.
 """
 from __future__ import annotations
 
 import logging
 import os
 import socket
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional
 
 from common import db
 
@@ -65,10 +45,9 @@ DEFAULT_TTL_SECONDS = float(os.environ.get("AGENTS_HUB_LEASE_TTL_SECONDS", "90")
 
 _owner_override: Optional[str] = None
 
-#: What this process last acquired or renewed, per role: (owner, version).
-#: The owner is kept beside the version because tests play two replicas from
-#: one process with :func:`set_owner_id`; a token belongs to one owner only.
-_held: Dict[str, Tuple[str, int]] = {}
+_lock = threading.Lock()
+#: role -> {owner, until, acquired_at, renewed_at, version}
+_leases: Dict[str, Dict[str, Any]] = {}
 
 
 class LeaseLost(Exception):
@@ -87,8 +66,7 @@ def owner_id() -> str:
 
 
 def set_owner_id(owner: Optional[str]) -> None:
-    """Pin the owner id for this process (tests use it to play two replicas
-    from one process)."""
+    """Pin the owner id for this process (tests use it to play two owners)."""
     global _owner_override
     _owner_override = owner
 
@@ -109,6 +87,11 @@ def _parse(ts: Optional[str]) -> Optional[datetime]:
     return dt
 
 
+def _expired(rec: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    expires = _parse(rec.get("until"))
+    return expires is None or expires <= (now or _now())
+
+
 def acquire(role: str, owner: Optional[str] = None,
             ttl_seconds: float = DEFAULT_TTL_SECONDS) -> bool:
     """Take ``role`` for ``owner``, or renew it when already held by them.
@@ -120,97 +103,66 @@ def acquire(role: str, owner: Optional[str] = None,
     owner = owner or owner_id()
     now = _now()
     until = (now + timedelta(seconds=ttl_seconds)).isoformat()
-    with db.transaction() as conn:
-        row = conn.execute(
-            "SELECT owner, until, version FROM service_leases WHERE role = ?", (role,)).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO service_leases (role, owner, until, acquired_at, renewed_at, version) "
-                "VALUES (?, ?, ?, ?, ?, 1)",
-                (role, owner, until, now.isoformat(), now.isoformat()))
-            _held[role] = (owner, 1)
+    with _lock:
+        rec = _leases.get(role)
+        if rec is None:
+            _leases[role] = {"role": role, "owner": owner, "until": until,
+                             "acquired_at": now.isoformat(), "renewed_at": now.isoformat(),
+                             "version": 1}
             log.info("lease %s acquired by %s", role, owner)
             return True
-        current_owner = str(row["owner"] or "")
-        expires = _parse(row["until"])
-        version = int(row["version"] or 0)
-        if current_owner == owner:
-            # A renewal keeps the version: the incarnation did not change.
-            conn.execute(
-                "UPDATE service_leases SET until = ?, renewed_at = ? WHERE role = ?",
-                (until, now.isoformat(), role))
-            _held[role] = (owner, version)
+        if rec["owner"] == owner:
+            rec["until"] = until
+            rec["renewed_at"] = now.isoformat()
             return True
-        if expires is not None and expires > now:
-            if _held.get(role, ("", 0))[0] == owner:
-                _held.pop(role, None)
+        if not _expired(rec, now):
             return False
-        conn.execute(
-            "UPDATE service_leases SET owner = ?, until = ?, acquired_at = ?, renewed_at = ?, "
-            "version = ? WHERE role = ?",
-            (owner, until, now.isoformat(), now.isoformat(), version + 1, role))
-        _held[role] = (owner, version + 1)
-        log.info("lease %s taken over by %s (was %s, version %d)",
-                 role, owner, current_owner or "nobody", version + 1)
+        log.info("lease %s taken over by %s from %s", role, owner, rec["owner"])
+        rec.update({"owner": owner, "until": until, "acquired_at": now.isoformat(),
+                    "renewed_at": now.isoformat(), "version": int(rec.get("version") or 0) + 1})
         return True
 
 
 def release(role: str, owner: Optional[str] = None) -> bool:
-    """Give ``role`` up if ``owner`` holds it. Returns True when a row was
-    removed."""
+    """Give ``role`` up, if ``owner`` holds it. True when it was held."""
     owner = owner or owner_id()
-    with db.transaction() as conn:
-        row = conn.execute(
-            "SELECT owner FROM service_leases WHERE role = ?", (role,)).fetchone()
-        if row is None or str(row["owner"] or "") != owner:
+    with _lock:
+        rec = _leases.get(role)
+        if rec is None or rec["owner"] != owner:
             return False
-        conn.execute("DELETE FROM service_leases WHERE role = ?", (role,))
-        if _held.get(role, ("", 0))[0] == owner:
-            _held.pop(role, None)
+        del _leases[role]
         return True
 
 
 def release_all(owner: Optional[str] = None) -> int:
     """Release every role ``owner`` holds (process shutdown)."""
     owner = owner or owner_id()
-    with db.transaction() as conn:
-        rows = conn.execute(
-            "SELECT role FROM service_leases WHERE owner = ?", (owner,)).fetchall()
-        for row in rows:
-            conn.execute("DELETE FROM service_leases WHERE role = ?", (row["role"],))
-            if _held.get(row["role"], ("", 0))[0] == owner:
-                _held.pop(row["role"], None)
-        return len(rows)
+    with _lock:
+        mine = [role for role, rec in _leases.items() if rec["owner"] == owner]
+        for role in mine:
+            del _leases[role]
+        return len(mine)
 
 
 def holder(role: str) -> Optional[Dict[str, Any]]:
     """Who holds ``role`` and until when, or None when nobody does (an expired
     lease counts as nobody)."""
-    row = db.get_conn().execute(
-        "SELECT role, owner, until, acquired_at, renewed_at, version FROM service_leases "
-        "WHERE role = ?",
-        (role,)).fetchone()
-    if row is None:
-        return None
-    expires = _parse(row["until"])
-    if expires is None or expires <= _now():
-        return None
-    return dict(row)
+    with _lock:
+        rec = _leases.get(role)
+        if rec is None or _expired(rec):
+            return None
+        return dict(rec)
 
 
 def all_leases() -> List[Dict[str, Any]]:
-    """Every lease row with its age, for health and metrics."""
-    rows = db.get_conn().execute(
-        "SELECT role, owner, until, acquired_at, renewed_at, version FROM service_leases "
-        "ORDER BY role"
-    ).fetchall()
+    """Every lease with its age, for the health page."""
     now = _now()
     out: List[Dict[str, Any]] = []
-    for row in rows:
-        rec = dict(row)
-        expires = _parse(rec.get("until"))
+    with _lock:
+        records = [dict(rec) for _, rec in sorted(_leases.items())]
+    for rec in records:
         renewed = _parse(rec.get("renewed_at"))
-        rec["expired"] = expires is None or expires <= now
+        rec["expired"] = _expired(rec, now)
         rec["age_seconds"] = (now - renewed).total_seconds() if renewed else None
         rec["mine"] = str(rec.get("owner") or "") == owner_id()
         out.append(rec)
@@ -218,11 +170,7 @@ def all_leases() -> List[Dict[str, Any]]:
 
 
 def hold(role: str, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> bool:
-    """Acquire or renew ``role`` for this process; True when held.
-
-    Never raises: a database hiccup means "not held this tick", and the loop
-    tries again next time. A role nobody can hold for a while is visible on
-    the health page (``service_leases`` shows an expired holder)."""
+    """Acquire or renew ``role`` for this process; True when held."""
     try:
         return acquire(role, owner_id(), ttl_seconds)
     except Exception:  # noqa: BLE001 - never raises, module contract: a hiccup means "not held this tick"
@@ -237,33 +185,25 @@ def held_by_me(role: str) -> bool:
 
 
 def fencing_token(role: str) -> Optional[int]:
-    """The lease version this process last acquired or renewed for ``role``,
-    or None when it does not hold it. Take it right after :func:`hold` and
-    pass it to :func:`verify` or :func:`fenced` with every write."""
-    held = _held.get(role)
-    if held is None or held[0] != owner_id():
+    """The lease version this process holds ``role`` under, or None when it
+    does not hold it. Take it right after :func:`hold` and pass it to
+    :func:`verify` or :func:`fenced` with every write."""
+    rec = holder(role)
+    if rec is None or str(rec.get("owner") or "") != owner_id():
         return None
-    return held[1]
+    return int(rec.get("version") or 0)
 
 
 def verify(role: str, token: Optional[int], conn: Any = None) -> bool:
     """Whether ``role`` is still held by this process under ``token``: the
-    row's owner is us, its version is ``token`` and it has not expired.
-
-    Pass the transaction's ``conn`` to make the check part of a write (that
-    is what :func:`fenced` does); without it the answer is only as fresh as
-    the read."""
+    owner is us, the version is ``token`` and it has not expired. ``conn`` is
+    accepted for the callers that pass their transaction's connection."""
     if token is None:
         return False
-    conn = conn if conn is not None else db.get_conn()
-    row = conn.execute(
-        "SELECT owner, until, version FROM service_leases WHERE role = ?", (role,)).fetchone()
-    if row is None or str(row["owner"] or "") != owner_id():
+    rec = holder(role)
+    if rec is None or str(rec.get("owner") or "") != owner_id():
         return False
-    if int(row["version"] or 0) != int(token):
-        return False
-    expires = _parse(row["until"])
-    return expires is not None and expires > _now()
+    return int(rec.get("version") or 0) == int(token)
 
 
 @contextmanager
@@ -277,8 +217,14 @@ def fenced(role: str, token: Optional[int]) -> Iterator[Any]:
         yield conn
 
 
+def reset() -> None:
+    """Forget every lease. Tests only."""
+    with _lock:
+        _leases.clear()
+
+
 __all__ = [
     "DEFAULT_TTL_SECONDS", "LeaseLost", "acquire", "all_leases", "fenced", "fencing_token",
-    "held_by_me", "hold", "holder", "owner_id", "release", "release_all", "set_owner_id",
-    "verify",
+    "held_by_me", "hold", "holder", "owner_id", "release", "release_all", "reset",
+    "set_owner_id", "verify",
 ]

@@ -102,11 +102,11 @@ A task or a scheduled `agent_task` job can be pinned to a stored agent version v
 
 Every agent run record carries `agent_version`: the pin if it still existed, the A/B experiment arm's version if an experiment routed the run, or the version matching the live definition's hash. The hash is snapshotted on first use, so it is never null for a registered agent.
 
-The run page panel shows that version against the agent's current one and offers rollback: `POST /api/runs/{run_id}/rollback-agent` (same checks as the agent's own rollback route: refuses a version whose tool set the capability guard now blocks; audited `agent.rollback`).
+The run page panel shows that version against the agent's current one and offers rollback: `POST /api/runs/{run_id}/rollback-agent` (same checks as the agent's own rollback route: refuses a version whose tool set the capability guard now blocks).
 
 The task page has a version picker (live or a stored version, via `PATCH /api/tasks/{id}` with `agent_version`, validated against the assigned agent's versions). The Deployments page job editor has the same picker for an `agent_task` job with an agent; `agent_version` requires `agent_id` on the job and is copied onto the task at fire time.
 
-A subtask never inherits its parent's pin, because a subtask usually runs a different agent. Environment and budget are inherited instead.
+A subtask never inherits its parent's pin, because a subtask usually runs a different agent.
 
 Every other way to start a run takes a pin too, and a pinned run never quietly builds the live definition:
 
@@ -114,13 +114,9 @@ Every other way to start a run takes a pin too, and a pinned run never quietly b
 |---|---|
 | Task launch | `params.agent_version` on `POST /api/tasks/{id}/assign` (this launch only), else the task's own pin |
 | Chat turn | `agent_version` in the chat request (`/api/chat/message`, `/api/chat/stream`) |
-| `/v1` agent model | `agent_version` in the completion body (`extra_body` in an OpenAI SDK) |
-| Service | the service's `agent_version`: chat turns, `/v1`, widget turns and plain messages to its replicas |
-| Widget | the widget's `agent_version` (the widget form has a picker) |
-| Resident worker | a task taken by an instance in `node` mode builds the task's pin |
 | CLI | `ah agent run AGENT TEXT --agent-version N`, `ah task assign TASK AGENT --agent-version N`, `ah task create TITLE --agent-version N` |
 
-An unknown version is refused (400, or 404 on `/v1`). The run record says `agent_version_pinned: true` when the run was asked for its version, and the run page shows it as pinned. A pin names a version of one agent: when the conversation is handed to another agent, the receiving agent runs as it is.
+An unknown version is refused (400). The run record says `agent_version_pinned: true` when the run was asked for its version, and the run page shows it as pinned. A pin names a version of one agent: when the conversation is handed to another agent, the receiving agent runs as it is.
 
 ## Editing an agent that changed meanwhile
 
@@ -128,7 +124,7 @@ Agent edits are optimistic: `GET /api/agents/{id}`, `GET /api/agents/{id}/defini
 
 ## Per-run overrides
 
-One run can differ from its agent without the agent changing: an `overrides` object, accepted by a task launch (`params.overrides`), a chat request, `/v1` agent completions, `ah agent run --overrides JSON` (or `--overrides-file PATH`), `ah task assign --overrides` and `python -m runtime.agent_run --overrides`. Keys:
+One run can differ from its agent without the agent changing: an `overrides` object, accepted by a task launch (`params.overrides`), a chat request, `ah agent run --overrides JSON` (or `--overrides-file PATH`), `ah task assign --overrides` and `python -m runtime.agent_run --overrides`. Keys:
 
 | Key | Effect |
 |---|---|
@@ -155,7 +151,7 @@ list means no restriction.
 
 Inside a task the tool is `delegate_task_tool`. It creates a subtask of the task
 the agent is working, launches the chosen agent on it as a real run (its own
-process or container, the task's environment and money cap, the live stream),
+process or container, the live stream),
 waits for it by default, and returns the delegate's output together with the
 subtask and run ids. The `model` argument picks any enabled catalog model for
 that one run, as `provider/model`; `list_models_tool` lists them with the
@@ -224,15 +220,14 @@ One page per agent, in tabs:
 - **Docker**: the agent's image and environment
   ([containers](containers.md)); when Docker is missing or not answering the
   tab says so instead of calling every image "not built".
-- **Pulse**: the agent's own schedule, quiet hours, budget, brief and
+- **Pulse**: the agent's own schedule, quiet hours, brief and
   triggers, and the feed of its ticks ([proactive](proactive.md)).
 - **Guardrails**: which guardrails already apply and the `selected` ones the
   agent opts into ([guardrails](guardrails.md)).
 - **Experiments**: an A/B experiment between two stored versions
   ([experiments](experiments.md)).
 
-**Run** on the page starts a resident [instance](instances.md); **Deploy**
-keeps the agent running as a [service](services.md) with replicas.
+**Run** on the page starts a resident [instance](instances.md).
 
 ## Gotchas
 

@@ -173,15 +173,12 @@ def test_the_assistant_named_as_agent_gets_an_agent_of_its_own(where):
     assert p["new_agent"] and p["agent_id"].startswith("pulse-")
 
 
-def test_unknown_channels_and_an_unconnected_telegram_are_refused(where, monkeypatch):
+def test_unknown_channels_are_refused(where):
     with pytest.raises(from_phrase.PulsePlanError):
         from_phrase.plan(**_args(notify=["carrier-pigeon"]))
-    monkeypatch.setattr("connectors.telegram.notify.chat_ids_for_workspace", lambda ws: [])
-    with pytest.raises(from_phrase.PulsePlanError) as tg:
+    with pytest.raises(from_phrase.PulsePlanError):
         from_phrase.plan(**_args(notify=["telegram"]))
-    assert tg.value.code == "channel_not_connected"
-    monkeypatch.setattr("connectors.telegram.notify.chat_ids_for_workspace", lambda ws: [42])
-    assert from_phrase.plan(**_args(notify=["telegram", "assistant"]))["notify"] == ["dashboard", "telegram"]
+    assert from_phrase.plan(**_args(notify=["webhook", "assistant"]))["notify"] == ["dashboard", "webhook"]
 
 
 def test_a_refused_profile_leaves_no_agent_behind(where, monkeypatch):

@@ -1,7 +1,6 @@
 """The generated tool catalog (tools/registry.py) stays accurate and complete.
 
-The catalog used to be 143 hand-typed ``ToolSpec`` entries plus a small
-generated tail (geometry). Hand-typed entries drift from the tools they
+The catalog used to be hand-typed ``ToolSpec`` entries. Hand-typed entries drift from the tools they
 describe, so the whole thing is now generated from each tool's ``args_schema``
 and docstring (see ``spec_from_tool``). This file is the safety net for that
 change: every entry must still resolve to a real tool object with matching
@@ -24,25 +23,23 @@ from tools.registry import TOOL_CATALOG, get_tool_by_id
 OLD_CATEGORIES = {
     "agent_coordination", "agent_management", "calculator", "coordination",
     "documentation", "entity_runs", "evals", "execution", "filesystem",
-    "flow_management", "geometry", "loop_management", "memory",
+    "flow_management", "loop_management", "memory",
     "project_management", "reasoning", "scenario_management",
     "schedule_management", "service_ops", "system_ops", "task_management",
     "team_management",
     "visualization", "web", "world_management",
-    # tools/connector_tools.py (chat channels, trackers, Google, Microsoft,
-    # Notion, Confluence, databases)
+    # tools/connector_tools.py and tools/trackers.py (Jira, GitLab)
     "connectors",
     # tools/special_models.py (images, video, speech, transcription, the
     # workspace's own models)
     "special_models",
 }
 
-# Size of the old, hand-written catalog (143 literal entries + 17 generated
-# geometry entries). Nothing in that catalog turned out to be a dead entry
-# (every id resolved to a real tool object), so the generated catalog must be
-# at least this big — it only ever adds tool objects the old catalog missed
-# (see the inventory in this task's report), never removes one.
-OLD_CATALOG_SIZE = 160
+# Size of the catalog in this single-user edition, after the tools of the
+# removed connectors, the Blender geometry engine, the remote nodes and the
+# project deployments went. The generated catalog must stay at least this big:
+# a smaller one means a tool was dropped by accident.
+OLD_CATALOG_SIZE = 200
 
 
 def _tool_objects_by_id() -> dict:
@@ -58,7 +55,6 @@ def _tool_objects_by_id() -> dict:
     from tools.human_input import ask_user
     from reasoning.think import think
     from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
-    from tools.geometry import create_geometry_tools, GEOMETRY_TOOLS
     from tools.graph_builder import GRAPH_BUILDER_TOOLS
     from tools.task_management import (
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
@@ -82,7 +78,6 @@ def _tool_objects_by_id() -> dict:
     from tools.project_management import PROJECT_MANAGEMENT_TOOLS
     from tools.entity_runs import ENTITY_RUN_TOOLS
     from tools.git_publish import GIT_PUBLISH_TOOLS
-    from tools.project_deploy import PROJECT_DEPLOY_TOOLS
     from tools.service_ops import SERVICE_OPS_TOOLS
     from tools.system_ops import SYSTEM_OPS_TOOLS
     from tools.docs_tool import DOCS_TOOLS
@@ -94,7 +89,6 @@ def _tool_objects_by_id() -> dict:
     from tools.web import WEB_TOOLS
     from tools.browser import BROWSER_TOOLS
     from tools.run_code import run_code
-    from tools.node_map import map_on_nodes
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,
@@ -114,7 +108,6 @@ def _tool_objects_by_id() -> dict:
         calculator, run_shell, ask_user, think,
         *create_filesystem_tools(workspace=None),
         *create_view_tools(workspace=None), *VIEW_MUTATION_TOOLS,
-        *GEOMETRY_TOOLS, *create_geometry_tools(None),
         *GRAPH_BUILDER_TOOLS,
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
         block_task, set_task_dependencies, create_sequence, get_task_result,
@@ -128,10 +121,10 @@ def _tool_objects_by_id() -> dict:
         *SCENARIO_MANAGEMENT_TOOLS, *WORLD_MANAGEMENT_TOOLS,
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
-        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
+        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
         cancel_scheduled, update_scheduled, wake_agent,
-        *WEB_TOOLS, *BROWSER_TOOLS, run_code, map_on_nodes,
+        *WEB_TOOLS, *BROWSER_TOOLS, run_code,
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,
         append_journal_tool,

@@ -10,7 +10,7 @@ import { GRADER_FIELDS, graderSpec } from './onlineEvals';
 
 const GRADER_KINDS = Object.keys(GRADER_FIELDS);
 const SEVERITIES = ['info', 'warning', 'error'];
-const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
+const CHANNELS = ['dashboard', 'webhook'];
 
 const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none';
 

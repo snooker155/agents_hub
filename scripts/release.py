@@ -10,19 +10,17 @@ section, a release commit and an annotated ``vX.Y.Z`` tag.
     python scripts/release.py notes 0.2.0         # that version's CHANGELOG section
 
 The version lives in ``pyproject.toml``; ``dashboard/frontend/package.json``
-(and its lock file) and the Helm chart's ``Chart.yaml`` follow it, so an image,
-the dashboard and the chart never disagree about which release they are.
-``check`` is what the release workflow runs before it builds anything: a tag
-that does not match the files is refused there, not discovered by a user.
+(and its lock file) and the README follow it, so the backend and the dashboard
+never disagree about which release they are. ``check`` refuses a tag that does
+not match the files.
 
 The CHANGELOG follows keepachangelog.com: work lands under ``## [Unreleased]``
 and a release renames that section. When nobody wrote anything there, the
 section is filled from the commit subjects since the previous tag, which is
 better than an empty release note and easy to edit before pushing.
 
-Nothing here pushes. ``cut`` prints the two commands that publish the release;
-pushing the tag starts ``.github/workflows/release.yml`` (docs/deployment.md
-"Releases").
+Nothing here pushes. ``cut`` prints the two commands that publish the release
+(docs/deployment.md "Releases").
 """
 from __future__ import annotations
 
@@ -39,7 +37,6 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 PACKAGE_JSON = ROOT / "dashboard" / "frontend" / "package.json"
 PACKAGE_LOCK = ROOT / "dashboard" / "frontend" / "package-lock.json"
-CHART = ROOT / "deploy" / "helm" / "agents-hub" / "Chart.yaml"
 CHANGELOG = ROOT / "CHANGELOG.md"
 # The README names the current release between two markers, so the number a
 # visitor reads on GitHub is the one the tag carries.
@@ -96,11 +93,6 @@ def read_versions() -> Dict[str, str]:
     if PACKAGE_LOCK.exists():
         lock = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
         found["package-lock.json"] = lock.get("version", "")
-    chart = CHART.read_text(encoding="utf-8")
-    m = re.search(r'(?m)^appVersion:\s*"?([^"\n]+)"?', chart)
-    found["Chart.yaml appVersion"] = m.group(1).strip() if m else ""
-    m = re.search(r'(?m)^version:\s*"?([^"\n]+)"?', chart)
-    found["Chart.yaml version"] = m.group(1).strip() if m else ""
     m = README_VERSION.search(README.read_text(encoding="utf-8"))
     found["README.md"] = m.group(2).strip() if m else ""
     return found
@@ -127,12 +119,6 @@ def write_versions(version: str) -> List[Path]:
     if PACKAGE_LOCK.exists():
         _json(PACKAGE_LOCK)
         touched.append(PACKAGE_LOCK)
-
-    chart = CHART.read_text(encoding="utf-8")
-    chart = re.sub(r'(?m)^appVersion:.*$', f'appVersion: "{version}"', chart, count=1)
-    chart = re.sub(r'(?m)^version:.*$', f'version: {version}', chart, count=1)
-    CHART.write_text(chart, encoding="utf-8")
-    touched.append(CHART)
 
     readme = README.read_text(encoding="utf-8")
     README.write_text(README_VERSION.sub(rf"\g<1>{version}\g<3>", readme, count=1), encoding="utf-8")

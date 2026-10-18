@@ -2,7 +2,7 @@ export default {
   models: 'Modelle',
   theCatalogOfProvidersAnd: 'Der Katalog der Anbieter und Modelle, die dieser Hub aufrufen kann, und was sie bisher gekostet haben.',
   loadingCatalog: 'Katalog wird geladen…',
-  tabs: { catalog: 'Katalog', usage: 'Verbrauch', special: 'Spezialmodelle', cache: 'Prompt-Cache', endpoint: 'Endpunkt /v1' },
+  tabs: { catalog: 'Katalog', usage: 'Verbrauch', special: 'Spezialmodelle' },
   apply: 'Anwenden',
   discover: 'Ermitteln',
   refresh: 'Aktualisieren',

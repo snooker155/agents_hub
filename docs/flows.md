@@ -30,52 +30,13 @@ and create a flow from a description of what you want.
 Validation is separate from creation on purpose: a design can be checked before
 it costs anything to run.
 
-## Templates and examples
-
-**Create flow** offers a blank canvas or one of twelve ready flows of the
-hub's system agents (research report, competitor brief, fact check, pull
-request review, candidate screening and more), each step with its task
-written; a flow made from one opens on its run page, ready to run. Every flow
-can also carry example requests that its empty chat shows as buttons: a
-template's own, ones written in the editor's Flow settings, or else those of
-the agent its first step runs. See [Flow templates](flow-templates.md).
-
-## n8n workflows
-
-With the n8n connector set up (Connectors, n8n tab: the base URL, plus an API
-key to list workflows), **Import from n8n** on the Flows page takes a
-workflow from your n8n, or an exported workflow pasted as JSON, in one of two
-ways:
-
-- **Run in n8n**: one `run_n8n` node. The workflow keeps running in n8n; the
-  node starts it through its Webhook or Chat trigger, waits, and writes the
-  answer into its output key (`result`). Put agents before and after it like
-  any node. The workflow has to have one of those triggers and be active.
-- **Convert to hub nodes**: every step becomes an Agent node whose task says
-  what the step did (an AI step's system message and prompt, any other step's
-  operation and settings, the model and tools wired into it, the credential
-  names it used). Triggers and sticky notes are dropped, No Op steps are wired
-  through, a two way IF becomes a `state_branch` condition on a state key
-  named after it. You then pick an agent for each node in the editor.
-
-Either way a report lists what became what and what did not carry over.
-Credentials never travel: an n8n export only names them.
-
-The `run_n8n` node never takes a URL. It takes a workflow id (its trigger is
-read through the API at run time, so renaming the webhook in n8n does not
-break the flow) or a trigger path, joined to the connector's base URL. A
-Webhook trigger gets `{goal, state, flow_run_id}` as JSON, `state` holding the
-keys listed in `send_keys`; a Chat trigger gets the goal as `chatInput` with
-the flow run as its session. An n8n AI Agent's `output` is unwrapped.
-
 ## Node kinds
 
 - **Agent**: runs the agent picked for it with the input it receives.
 - **Condition** — routes down one branch or another.
 - **Transform** — reshapes data between nodes without a model call.
 - **Processor** — non-agent work in the middle of a pipeline.
-- **Container**: runs a whole team, loop or flow as a nested run (see below),
-  or an n8n workflow (see above).
+- **Container**: runs a whole team, loop or flow as a nested run (see below).
 - **Map**: runs one agent per item of a list, several at once (see Branching).
 
 ## Branching
@@ -126,7 +87,7 @@ and calls again with `user_approved=true` once you agree (in
 
 The flow is stored as a **temporary** flow (`ephemeral: true`): the run loads it
 by id and its run page shows it, but no list does (the Flows page, pickers,
-`list_flows_tool`, MCP, references). The run page has **Keep flow**, and
+`list_flows_tool`, references). The run page has **Keep flow**, and
 `save=true` or `modify_flow_tool(keep=true)` does the same; a kept flow is an
 ordinary flow. A temporary flow is deleted a week after its last change
 (`AGENTS_HUB_EPHEMERAL_FLOW_DAYS`) unless it is running. `orchestrator`,
@@ -138,9 +99,8 @@ shapes for flows it saves.
 `run_flow_tool` starts it, and refuses until you have approved (or
 [auto mode](hooks.md#auto-mode) is on in the chat): a flow is as
 many model calls as it has agent nodes. It returns a run id immediately and
-streams per-node progress; it does not block the conversation. In the default
-(all-in-one) role the flow starts at once in-process; in the `api` role the
-launch is queued and a worker spawns it on its own host.
+streams per-node progress; it does not block the conversation. The
+flow starts at once as a process of its own.
 
 Nodes that do not depend on each other run at the same time. A node starts as
 soon as every node feeding it has finished, up to `max_parallel` (4 unless the
@@ -237,8 +197,7 @@ the same way.
 chain of nested flows deeper than that, and at run time every container node
 checks again: its depth is the larger of `AGENTS_HUB_RUN_DEPTH` in its own
 environment and the length of the `parent_run_id` chain above its run. The
-child gets one more in `AGENTS_HUB_RUN_DEPTH` (runtime/entity_launch.child_env,
-which the launch spec carries to a worker as well), and a node whose child
+child gets one more in `AGENTS_HUB_RUN_DEPTH` (runtime/entity_launch.child_env), and a node whose child
 would pass the limit fails with a clear error instead of launching.
 
 **Cost.** A child is an ordinary entity run hanging off the flow run through

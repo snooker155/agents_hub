@@ -1,7 +1,7 @@
 /**
  * The speech model's voice per language (providers/speech_languages.py): for
- * each page language, another model of the same provider (a Piper voice
- * speaks one language) and/or another voice. A line is read with the entry of
+ * each page language, another model of the same provider and/or another
+ * voice. A line is read with the entry of
  * its own language; an empty row keeps the model's own voice.
  */
 import { LANGUAGES, useI18n } from '../../i18n';

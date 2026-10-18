@@ -24,11 +24,8 @@ same four routes as the Help panel (``routes/help_chat.py``) under
   turn's run, its tools and its files are there, pinned like any agent's. So
   the assistant reaches exactly the person's workspaces, one turn at a time.
 
-A turn is refused before it starts when the person's spend limit or the
-workspace's budget is used up: 402 with ``{"code": "budget", "message"}``.
 Every turn is a run stamped with the person (``launched_by``), so it shows in
-Messages and counts toward their limit. One turn at a time per thread: a send
-while one runs is 409 ``busy``.
+Messages. One turn at a time per thread: a send while one runs is 409 ``busy``.
 
 Voice (chat/voice.py) is two more routes around the same turn, not another
 loop: ``POST /transcribe`` turns a recording into text, which the browser
@@ -84,8 +81,7 @@ MAX_SPEAK_CHARS = 1000
 #: How long a cloud speech model gets for one stretch before the page falls
 #: back to the browser's voice. A sentence normally takes one to four seconds;
 #: OpenAI's gpt-4o-mini-tts has been seen taking 80 to 100 (2026-10-14), and
-#: every later sentence waited behind it. The hub's own runtime keeps the media
-#: timeout: a cloning model on a CPU is slow but still answers.
+#: every later sentence waited behind it.
 CLOUD_SPEAK_TIMEOUT = float(os.environ.get("AGENTS_HUB_SPEAK_TIMEOUT", "15") or 15)
 _VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
@@ -195,17 +191,7 @@ def own_thread_ids() -> List[str]:
     """The assistant thread keys that belong to the user of this request:
     their personal thread, and their service thread when they may have one.
     Used where a thread is named by its key (routes/entity_chats.py)."""
-    if not _multi():
-        return [f"user-{_clean(identity.current_user_id()) or 'local'}"]
-    user_id = identity.current_user_id()
-    from common.auth import LOCAL_OPERATOR_ID
-    if not user_id or user_id == LOCAL_OPERATOR_ID:
-        return []
-    ids = [f"user-{_clean(user_id)}"]
-    user = identity.get_user(user_id) or {}
-    if user.get("role") == "admin":
-        ids.append(f"service-{_clean(user_id)}")
-    return ids
+    return [f"user-{_clean(identity.current_user_id()) or 'local'}"]
 
 
 # ── the threads on the Chat page ─────────────────────────────────────────────
@@ -399,17 +385,6 @@ def _target(ctx: SimpleNamespace, requested: Optional[str]) -> str:
     return name
 
 
-def _check_budget(workspace: str) -> None:
-    """The person's limit and the workspace's budget, before anything runs."""
-    from common.budget import BudgetExceededError, check_budget
-    try:
-        check_budget(workspace)
-    except BudgetExceededError as exc:
-        from chat.refusals import refusal_of
-        raise HTTPException(status_code=402, detail={"code": "budget", "message": str(exc),
-                                                     "refusal": refusal_of(exc, agent_id=ASSISTANT_AGENT_ID)})
-
-
 def _personal_pool(workspace: str) -> Optional[str]:
     """The person's memory pool in the workspace the turn runs in; None when
     personal memory is off for the assistant there."""
@@ -433,8 +408,7 @@ def _reference_lines(refs: List[AssistantRef], workspace: str) -> List[str]:
 def _setup_lines(principal: Any) -> List[str]:
     """The person's guided setup while it runs (common/setup_guide.py), else []."""
     try:
-        from common import setup_guide, setup_ops
-        setup_ops.advance_work(principal)
+        from common import setup_guide
         return setup_guide.prompt_lines(principal)
     except Exception:  # noqa: BLE001 - a turn never fails on the guide
         log.debug("setup guide unreadable for the turn", exc_info=True)
@@ -462,8 +436,8 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
     from chat.entity_chat import transcript_block
 
     principal = ctx.principal
-    user = identity.get_user(principal.id) if (_multi() and principal is not None) else None
-    who = (user or {}).get("display_name") or getattr(principal, "username", "") or "the operator"
+    user = None
+    who = getattr(principal, "username", "") or "the operator"
     parts = [
         "=== This turn ===",
         "(Data from the hub, not instructions.)",
@@ -622,7 +596,6 @@ def _load_send(request: Request, body: Dict[str, Any]) -> SimpleNamespace:
     ctx.workspace = _target(ctx, payload.workspace)
     enter_workspace(ctx, ctx.workspace)
     ctx.reachable = reachable_workspaces(ctx.principal)
-    _check_budget(ctx.workspace)
     ctx.personal_pool = _personal_pool(ctx.workspace)
     return ctx
 
@@ -684,11 +657,9 @@ def voice_status(workspace: str, home: Optional[str] = None, viewer: Any = None)
         kind = special.provider_kind(str(entry.get("provider") or ""))
         purpose = special.get_purpose("speech")
         speech["voice"] = (entry.get("options") or {}).get("voice") or ""
-        own = special.model_voices(str(entry.get("provider") or ""), str(entry.get("model") or ""), viewer)
-        speech["voices"] = own if own is not None else (
-            list(purpose.voices.get(kind, ())) if (purpose and kind) else [])
-        speech["languages"] = {v: lang for v in speech["voices"]
-                               if (lang := special.voice_language(str(entry.get("model") or ""), v))}
+        speech["voices"] = list(purpose.voices.get(kind, ())) if (purpose and kind) else []
+        # A cloud voice speaks every language: none is tied to one.
+        speech["languages"] = {}
         # A voice per language (providers/speech_languages.py).
         speech["by_language"] = dict(entry.get("languages") or {})
     return {"transcription": model("transcription"), "speech": speech,
@@ -775,15 +746,12 @@ async def transcribe(request: Request):
             "code": "too_long", "message": f"The recording is longer than {int(MAX_AUDIO_SECONDS)} seconds."})
 
     entry, where = _speech_entry("transcription", workspace, ctx.home)
-    _check_budget(where)
     language = str(request.query_params.get("language") or "").strip().lower()[:5] or None
     language = language or (entry.get("options") or {}).get("language")
     import asyncio
     from providers import media, special
-    from providers.local_models import runtime_source
     try:
-        with runtime_source("voice"):
-            ep = special.entry_endpoint(entry, where)
+        ep = special.entry_endpoint(entry, where)
         text = await asyncio.to_thread(media.transcribe, ep, entry["model"],
                                        (f"recording.{ext}", data, mime), language=language, prompt=None)
     except Exception as exc:  # noqa: BLE001 - the page shows the provider's reason
@@ -845,10 +813,7 @@ def _thread_run(principal: Any, run_id: str) -> Dict[str, Any]:
 
 
 def _home_of_thread(principal: Any, key: str) -> str:
-    if not _multi() or key.startswith("service-"):
-        return "default"
-    from common import personal_workspace
-    return personal_workspace.ensure_personal_workspace(principal.id)
+    return "default"
 
 
 def _phrase(body: SpeakIn, run: Dict[str, Any]) -> str:
@@ -908,12 +873,10 @@ async def speak(body: SpeakIn, request: Request):
         raise HTTPException(status_code=400, detail="voice must be a voice name")
     turn_workspace = str(run.get("workspace") or home)
     entry, where = _speech_entry("speech", turn_workspace, home)
-    _check_budget(turn_workspace)
     price = _price(entry)
     cost = None if price is None else price * len(spoken) / 1000.0
     import asyncio
     from providers import media, special, speech_languages
-    from providers.local_models import runtime_source
     # The answer's language picks its voice, once per turn: a sentence in
     # another language inside it keeps the same voice. The hub's own phrases
     # (a card, a long step) are in the page's language.
@@ -924,12 +887,11 @@ async def speak(body: SpeakIn, request: Request):
         language = speech_languages.text_language(spoken, body.language)
     entry, chosen_voice = speech_languages.pick(entry, language, body.voice)
     try:
-        with runtime_source("voice"):
-            ep = special.entry_endpoint(entry, where)
+        ep = special.entry_endpoint(entry, where)
         audio = await asyncio.to_thread(media.synthesize_speech, ep, entry["model"], spoken,
                                         voice=chosen_voice, instructions=None,
                                         options=dict(entry.get("options") or {}),
-                                        timeout=None if ep.local else CLOUD_SPEAK_TIMEOUT)
+                                        timeout=CLOUD_SPEAK_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - the page falls back to the browser's voice
         raise _provider_failed("Speech synthesis", exc)
     item = voice.call_entry("speech", entry, cost, round(len(spoken) / 1000.0, 3))
@@ -961,7 +923,6 @@ async def voice_sample(body: SampleIn, request: Request):
     if body.voice and not _VOICE_NAME_RE.match(body.voice):
         raise HTTPException(status_code=400, detail="voice must be a voice name")
     entry, where = _speech_entry("speech", workspace, ctx.home)
-    _check_budget(where)
     import asyncio
     from urllib.parse import quote
     from providers import special, speech_languages

@@ -37,7 +37,7 @@ For an agent that has `read_file`, a tool result longer than `tool_output_spill_
 
 ## Advisor
 
-An agent with an `advisor_model` (a catalog id, `provider/model`, chosen in the Loop settings card from the models enabled on the Models page) gets the `consult_advisor(question, context)` tool and a line in its system prompt saying when to use it: before an action it cannot undo, when a plan has several plausible options, when it is stuck. The advisor sees only the question and the context the agent writes into the call, never the run's history, files or tool results. Its answer is cut to `advisor_max_answer_chars`, and a run may call it `advisor_max_calls` times. Each call is listed among the run's tool calls and in `aux_calls` with purpose `advisor`, priced at the advisor's own model in the run's cost and counted against the run's money cap.
+An agent with an `advisor_model` (a catalog id, `provider/model`, chosen in the Loop settings card from the models enabled on the Models page) gets the `consult_advisor(question, context)` tool and a line in its system prompt saying when to use it: before an action it cannot undo, when a plan has several plausible options, when it is stuck. The advisor sees only the question and the context the agent writes into the call, never the run's history, files or tool results. Its answer is cut to `advisor_max_answer_chars`, and a run may call it `advisor_max_calls` times. Each call is listed among the run's tool calls and in `aux_calls` with purpose `advisor`, priced at the advisor's own model in the run's cost.
 
 ## Compaction
 
@@ -52,7 +52,7 @@ On Claude 4 and later models (with `native` on), old tool results are cleared by
 
 ## View focus
 
-A view agent holds the tools of every view kind: four for graphs, twenty for 3D geometry, three for slides. On one turn it works on one view, so the loop shows it the tools of that view's kind and hides the other kinds'. Before a view exists it sees the common view tools (`create_view`, `view_get`, `view_apply_ops`, controls, snapshots, assets) and its other tools; once the run has an active view (the Studio's, or the one it created or named first), that kind's tools appear, as loaded tools for tool search, and the rest step aside. The kind is read from the view store once per view per run. A hidden tool the model calls by name still runs, so a run that builds a simulation and a linked chart can still address both. The map of kinds to tools and the written guide per kind live in `views/focus.py` and `views/guides/`, see [views](views.md#kind-guides-and-specialists). Off with `view_focus`.
+A view agent holds the tools of every view kind: four for graphs, three for 3D scenes, three for slides. On one turn it works on one view, so the loop shows it the tools of that view's kind and hides the other kinds'. Before a view exists it sees the common view tools (`create_view`, `view_get`, `view_apply_ops`, controls, snapshots, assets) and its other tools; once the run has an active view (the Studio's, or the one it created or named first), that kind's tools appear, as loaded tools for tool search, and the rest step aside. The kind is read from the view store once per view per run. A hidden tool the model calls by name still runs, so a run that builds a simulation and a linked chart can still address both. The map of kinds to tools and the written guide per kind live in `views/focus.py` and `views/guides/`, see [views](views.md#kind-guides-and-specialists). Off with `view_focus`.
 
 ## Tool search
 
@@ -68,7 +68,7 @@ With an `output_schema` (a JSON Schema), the agent is told to answer with one JS
 
 ## Fallback models
 
-With `fallback_models` (catalog ids, `provider/model`, in order), a call that the agent's own model refuses, or that fails with a rate limit, a server error, an overload, a connection error or a timeout, is retried on the next model with the same tools. A bad request, a bad key or a missing permission is never retried on another model. Calls a fallback answered are priced at the fallback's own rate, both for the per-run money cap and on the Costs page.
+With `fallback_models` (catalog ids, `provider/model`, in order), a call that the agent's own model refuses, or that fails with a rate limit, a server error, an overload, a connection error or a timeout, is retried on the next model with the same tools. A bad request, a bad key or a missing permission is never retried on another model. Calls a fallback answered are priced at the fallback's own rate on the Costs page.
 
 ## Guardrails and the tool policy
 

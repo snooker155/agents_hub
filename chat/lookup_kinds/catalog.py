@@ -1,14 +1,10 @@
 """Lookup kinds: catalog (see chat/lookup_kinds/__init__.py).
 
-Connections, skills, MCP servers, the embeddable widget, the registry
-(published agents, flows, skills and the MCP allowlist, with their review
-state), what was installed from the linked hub's catalog, the person's sync
-spaces with this hub's own sync status, and the person's own account. The
-registry and the marketplace are the one place this module treats something
-as visible beyond the person's own workspaces: an item that has been shared
-is, by the app's own design, meant to be seen from anywhere, exactly like the
-Marketplace page already shows it to everyone. (This hub's own sync status is
-one per hub too, but its mappings are cut to the workspaces a lookup reads.)
+Skills, MCP servers and the registry (published agents, flows, skills and
+the MCP allowlist). The registry is the one place this module treats
+something as visible beyond the current workspace: an item that has been
+shared is meant to be seen from anywhere, exactly like the Marketplace page
+shows it.
 """
 from __future__ import annotations
 
@@ -17,84 +13,6 @@ from typing import Any, Dict, List, Optional
 
 from chat import lookup
 from chat.actions import HubAction, register_action
-
-
-# ── connections ──────────────────────────────────────────────────────────────
-
-def _list_connections(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    from connections import store as connection_store
-    rows: List[Dict[str, Any]] = []
-    for ws in ctx.workspaces:
-        for record in connection_store.list_connections(ws):
-            if not lookup.matches(query, record.get("name"), record.get("id"), record.get("kind")):
-                continue
-            state = "disabled" if record.get("disabled") else "enabled"
-            rows.append(lookup.row(
-                record["id"], record.get("name") or record["id"],
-                " · ".join(x for x in [record.get("kind"), state,
-                                       lookup.short_time(record.get("last_seen"))] if x),
-                f"/connections/{record['id']}", workspace=ws if ctx.workspace is None else None,
-                at=record.get("last_seen") or record.get("created_at"),
-            ))
-    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _connection_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    from connections import store as connection_store
-    from managers.run_manager import query_runs
-    record = connection_store.get_connection(entity_id)
-    if record is None or not lookup.visible(ctx, record.get("workspace")):
-        return None
-    reported = query_runs(agent_id=entity_id, limit=1)
-    fields = {
-        "id": record["id"], "name": record.get("name"), "kind": record.get("kind"),
-        "description": record.get("description"), "workspace": record.get("workspace") or "default",
-        "disabled": bool(record.get("disabled")), "created_at": record.get("created_at"),
-        "last_seen": record.get("last_seen"), "reported_runs": reported.get("total", 0),
-        "retention_runs": record.get("retention_runs"),
-    }
-    return {"title": record.get("name") or entity_id, "fields": fields,
-            "url": f"/connections/{entity_id}"}
-
-
-def _connection_target(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    from connections import store as connection_store
-    record = connection_store.get_connection(entity_id)
-    if record is None or not lookup.visible(ctx, record.get("workspace")):
-        return None
-    return {"workspace": record.get("workspace") or "default", "label": record.get("name") or entity_id,
-            "url": f"/connections/{entity_id}", "disabled": bool(record.get("disabled"))}
-
-
-def _connection_enable(ctx: SimpleNamespace, entity_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from connections import store as connection_store
-    if not target.get("disabled"):
-        raise lookup.LookupError_(f"Connection {target.get('label')} is already enabled.", code="conflict")
-    connection_store.update_connection(entity_id, {"disabled": False})
-    return {}
-
-
-def _connection_disable(ctx: SimpleNamespace, entity_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from connections import store as connection_store
-    if target.get("disabled"):
-        raise lookup.LookupError_(f"Connection {target.get('label')} is already disabled.", code="conflict")
-    connection_store.update_connection(entity_id, {"disabled": True})
-    return {}
-
-
-lookup.register(lookup.LookupKind(
-    "connection", "connections reporting runs into this hub, their volume and whether they are disabled",
-    _list_connections, _connection_card, ("/connections",)))
-
-register_action(HubAction(
-    "connection", "enable", "accept a connection's reporter again",
-    _connection_target, _connection_enable,
-    "Enable connection {label} in {workspace}: its token is accepted again."))
-register_action(HubAction(
-    "connection", "disable", "stop accepting a connection's reporter",
-    _connection_target, _connection_disable,
-    "Disable connection {label} in {workspace}: its token stops being accepted until re-enabled."))
 
 
 # ── skills ───────────────────────────────────────────────────────────────────
@@ -241,144 +159,6 @@ register_action(HubAction(
     "Disable MCP server {label} in {workspace}: agents stop seeing its tools until it is re-enabled."))
 
 
-# ── catalog installations of the Slack and Teams apps (docs/distribution.md) ──
-
-def _install_stores(ctx: SimpleNamespace):
-    """``(channel, bot workspace, store)`` for every bot whose installations
-    this person may see: the default's when default is visible, and each
-    visible workspace's own bot."""
-    from connectors.channels import registry
-    for channel in ("slack", "teams"):
-        spec = registry.get(channel)
-        if spec is None:
-            continue
-        for ws in ctx.workspaces:
-            if ws == "default" or spec.store.defines(ws):
-                yield channel, ws, spec.store.for_workspace(ws)
-
-
-def _install_id(channel: str, bot_ws: str, org_id: str) -> str:
-    return f"{channel}:{bot_ws}:{org_id}"
-
-
-def _list_installs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for channel, bot_ws, store in _install_stores(ctx):
-        for inst in store.public_installs():
-            if not lookup.matches(query, inst.get("name"), inst.get("org_id"), channel,
-                                  inst.get("status")):
-                continue
-            rows.append(lookup.row(
-                _install_id(channel, bot_ws, inst["org_id"]), inst.get("name") or inst["org_id"],
-                " · ".join(x for x in [channel, inst.get("status"),
-                                       f"agent {inst['agent_id']}" if inst.get("agent_id") else "",
-                                       lookup.short_time(inst.get("installed_at"))] if x),
-                "/distribution", workspace=bot_ws if ctx.workspace is None else None,
-                at=inst.get("installed_at")))
-    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _install_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    channel, _, rest = entity_id.partition(":")
-    bot_ws, _, org_id = rest.partition(":")
-    for ch, ws, store in _install_stores(ctx):
-        if ch != channel or ws != bot_ws:
-            continue
-        inst = next((i for i in store.public_installs() if i.get("org_id") == org_id), None)
-        if inst is None:
-            return None
-        fields = {"channel": channel, "bot_workspace": bot_ws, **inst}
-        return {"title": inst.get("name") or org_id, "fields": fields, "url": "/distribution"}
-    return None
-
-
-lookup.register(lookup.LookupKind(
-    "distribution_install",
-    "organisations that installed the hub's Slack or Teams app from a catalog: pending or "
-    "approved, and the workspace and agent their chats run in",
-    _list_installs, _install_card, ("/distribution",), aliases=("slack_install", "teams_install")))
-
-
-# ── the embeddable widget ────────────────────────────────────────────────────
-
-def _list_widgets(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    from widgets import store
-    rows: List[Dict[str, Any]] = []
-    for ws in ctx.workspaces:
-        for w in store.list_widgets(ws):
-            if not lookup.matches(query, w.get("name"), w.get("agent_id")):
-                continue
-            rows.append(lookup.row(
-                w["widget_id"], w.get("name") or w["widget_id"],
-                f"{'on' if w.get('enabled') else 'off'} · agent {w.get('agent_id')}", "/widgets",
-                workspace=ws if ctx.workspace is None else None, at=w.get("created_at"),
-            ))
-    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _widget_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    from widgets import store
-    w = store.get_widget(entity_id)
-    if w is None or not lookup.visible(ctx, w.get("workspace")):
-        return None
-    fields = {
-        "id": w["widget_id"], "name": w.get("name"), "workspace": w.get("workspace") or "default",
-        "agent_id": w.get("agent_id"), "enabled": bool(w.get("enabled")),
-        "allowed_origins": list(w.get("allowed_origins") or []),
-        "accent": w.get("accent"), "language": w.get("language"),
-        "thread_count": store.count_threads(w["widget_id"]),
-        "created_at": w.get("created_at"), "updated_at": w.get("updated_at"),
-    }
-    return {"title": w.get("name") or entity_id, "fields": fields, "url": "/widgets"}
-
-
-def _widget_target(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    from widgets import store
-    w = store.get_widget(entity_id)
-    if w is None or not lookup.visible(ctx, w.get("workspace")):
-        return None
-    return {"workspace": w.get("workspace") or "default", "label": w.get("name") or entity_id,
-            "url": "/widgets", "enabled": bool(w.get("enabled"))}
-
-
-def _widget_enable(ctx: SimpleNamespace, entity_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from widgets import service, store
-    if target.get("enabled"):
-        raise lookup.LookupError_(f"Widget {target.get('label')} is already enabled.", code="conflict")
-    widget = store.get_widget(entity_id)
-    if widget is None:
-        raise lookup.LookupError_(f"No widget '{entity_id}' here.", code="not_found")
-    service.update_widget(widget, {"enabled": True})
-    return {}
-
-
-def _widget_disable(ctx: SimpleNamespace, entity_id: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    from widgets import service, store
-    if not target.get("enabled"):
-        raise lookup.LookupError_(f"Widget {target.get('label')} is already disabled.", code="conflict")
-    widget = store.get_widget(entity_id)
-    if widget is None:
-        raise lookup.LookupError_(f"No widget '{entity_id}' here.", code="not_found")
-    service.update_widget(widget, {"enabled": False})
-    return {}
-
-
-lookup.register(lookup.LookupKind(
-    "widget", "the embeddable chat widget: its agent, allowed origins and whether it is on",
-    _list_widgets, _widget_card, ("/widgets",)))
-
-register_action(HubAction(
-    "widget", "enable", "let a widget's visitors talk to it again",
-    _widget_target, _widget_enable,
-    "Enable widget {label} in {workspace}: visitors can talk to it again."))
-register_action(HubAction(
-    "widget", "disable", "stop a widget's visitors from talking to it",
-    _widget_target, _widget_disable,
-    "Disable widget {label} in {workspace}: visitors can no longer open it until it is re-enabled."))
-
-
 # ── the registry and the marketplace ─────────────────────────────────────────
 # Agents, flows, skills and the MCP allowlist all carry the same review state
 # (common/review.py). A row's id is "<type>:<id>" (agent, flow, skill or
@@ -405,7 +185,7 @@ def _list_registry(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[st
             continue
         rows.append(lookup.row(f"agent:{spec.id}", spec.name,
                                f"agent · {spec.review_status or 'draft'} · {spec.owner_workspace or 'global'}",
-                               "/registry"))
+                               "/marketplace"))
     for flow in flow_store.list_flows():
         ws, shared = flow.get("workspace"), bool(flow.get("shared"))
         if not _reg_visible(ctx, ws, shared):
@@ -415,7 +195,7 @@ def _list_registry(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[st
             continue
         rows.append(lookup.row(f"flow:{flow.get('id')}", name,
                                f"flow · {flow.get('review_status') or 'draft'} · {ws or 'global'}",
-                               "/registry"))
+                               "/marketplace"))
     for p in all_procedures():
         if not _reg_visible(ctx, p.workspace, p.shared):
             continue
@@ -423,12 +203,12 @@ def _list_registry(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[st
             continue
         rows.append(lookup.row(f"skill:{p.id}", p.name,
                                f"skill · {p.review_status or 'draft'} · {p.workspace or 'global'}",
-                               "/registry"))
+                               "/marketplace"))
     for entry in mcp_catalog.list_all():
         if not lookup.matches(query, entry.get("name"), entry.get("status")):
             continue
         rows.append(lookup.row(f"mcp_catalog:{entry['id']}", entry.get("name") or entry["id"],
-                               f"MCP allowlist · {entry.get('status')}", "/registry"))
+                               f"MCP allowlist · {entry.get('status')}", "/marketplace"))
     rows.sort(key=lambda r: str(r.get("label") or "").lower())
     return rows[:limit]
 
@@ -449,7 +229,7 @@ def _registry_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, A
                   "owner_workspace": spec.owner_workspace, "shared": bool(spec.shared),
                   "review_status": spec.review_status, "review_note": spec.review_note,
                   "reviewed_by": spec.reviewed_by, "reviewed_at": spec.reviewed_at}
-        return {"title": spec.name, "fields": fields, "url": "/registry"}
+        return {"title": spec.name, "fields": fields, "url": "/marketplace"}
 
     if kind_prefix == "flow":
         from flow import store as flow_store
@@ -461,7 +241,7 @@ def _registry_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, A
                   "owner_workspace": flow.get("workspace"), "shared": bool(flow.get("shared")),
                   "review_status": flow.get("review_status"), "review_note": flow.get("review_note"),
                   "reviewed_by": flow.get("reviewed_by"), "reviewed_at": flow.get("reviewed_at")}
-        return {"title": name, "fields": fields, "url": "/registry"}
+        return {"title": name, "fields": fields, "url": "/marketplace"}
 
     if kind_prefix == "skill":
         from memory.procedural import find_procedure
@@ -472,7 +252,7 @@ def _registry_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, A
                   "owner_workspace": p.workspace, "shared": bool(p.shared),
                   "review_status": p.review_status, "review_note": p.review_note,
                   "reviewed_by": p.reviewed_by, "reviewed_at": p.reviewed_at}
-        return {"title": p.name, "fields": fields, "url": "/registry"}
+        return {"title": p.name, "fields": fields, "url": "/marketplace"}
 
     if kind_prefix == "mcp_catalog":
         from mcp_client import catalog as mcp_catalog
@@ -483,253 +263,13 @@ def _registry_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, A
                   "transport": entry.get("transport"), "status": entry.get("status"),
                   "owner_user": entry.get("owner_user"), "note": entry.get("note"),
                   "reviewed_by": entry.get("reviewed_by"), "created_at": entry.get("created_at")}
-        return {"title": entry.get("name") or entry["id"], "fields": fields, "url": "/registry"}
+        return {"title": entry.get("name") or entry["id"], "fields": fields, "url": "/marketplace"}
 
     return None
 
 
 lookup.register(lookup.LookupKind(
     "registry", "published agents, flows and skills with their review state, and the MCP allowlist",
-    _list_registry, _registry_card, ("/registry", "/agent-registry", "/marketplace")))
+    _list_registry, _registry_card, ("/marketplace",)))
 
 
-# ── the person's own account ─────────────────────────────────────────────────
-# Never another person's: the id is always "me", and a card ignores anything
-# else. Outside multi mode there is one operator and nothing personal to
-# separate out, so the card says only that.
-
-def _list_account(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    label = "you"
-    if ctx.principal is not None:
-        from common import identity
-        user = identity.get_user(ctx.user_id) or {}
-        label = user.get("display_name") or user.get("username") or "you"
-    return [lookup.row("me", label, "your own account", "/account")]
-
-
-def _account_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    if str(entity_id or "").strip().lower() != "me":
-        return None
-    from common import identity
-    if ctx.principal is None:
-        fields = {"mode": identity.current_mode(), "workspaces_reachable": len(ctx.reachable),
-                  "note": "Outside multi mode there is one operator, who holds every role."}
-        return {"title": "Your account", "fields": fields, "url": "/account"}
-
-    user = identity.get_user(ctx.user_id)
-    if user is None:
-        return None
-    from common import api_keys, user_budget
-    spend = user_budget.user_budget_status(ctx.user_id)
-    keys = [
-        {"id": k.get("id"), "name": k.get("name") or None, "created_at": k.get("created_at"),
-         "last_used_at": k.get("last_used_at"), "scope": k.get("workspaces") or "every reachable workspace"}
-        for k in api_keys.list_keys(ctx.user_id)
-    ]
-    fields = {
-        "username": user.get("username"), "role": user.get("role"), "email": user.get("email") or None,
-        "workspaces": identity.workspace_roles_for_user(ctx.user_id),
-        "monthly_spend_usd": round(spend.get("spend") or 0, 4), "monthly_limit_usd": spend.get("limit_usd"),
-        "limit_source": spend.get("source"), "limit_used_up": spend.get("exceeded"),
-        "api_keys": keys, "active_sessions": len(identity.list_sessions(ctx.user_id)),
-        "preferences": identity.get_preferences(ctx.user_id),
-    }
-    return {"title": "Your account", "fields": fields, "url": "/account"}
-
-
-lookup.register(lookup.LookupKind(
-    "account", "the person's own account: role, workspaces, spend, personal API keys, sessions, preferences",
-    _list_account, _account_card, ("/account",)))
-
-
-# ── what was installed from the linked hub's catalog (hublink/catalog.py) ───
-# Read from the provenance store alone: the remote's name for an item and
-# whether it moved on both need a call to the linked hub, which a lookup never
-# makes, so those stay on the Catalog page's Updates tab. A row's id is the
-# store's own key, "<kind>:<local id>", because a skill and an agent may share
-# a local id.
-
-def _link_url(url: Any) -> str:
-    """The remote's address without anything a person might have typed into
-    its userinfo: the API key travels in a header, but a URL is free text."""
-    from urllib.parse import urlparse
-    text = str(url or "")
-    try:
-        parts = urlparse(text)
-    except ValueError:
-        return ""
-    if not parts.scheme or not parts.hostname:
-        return ""
-    port = f":{parts.port}" if parts.port else ""
-    return f"{parts.scheme}://{parts.hostname}{port}{parts.path or ''}"
-
-
-def _catalog_installs(ctx: SimpleNamespace) -> List[Dict[str, Any]]:
-    from hublink import catalog as hub_catalog
-    return [rec for rec in hub_catalog.installed()
-            if rec.get("kind") and rec.get("local_id") and lookup.visible(ctx, rec.get("workspace"))]
-
-
-def _list_catalog_installs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for rec in _catalog_installs(ctx):
-        kind, local_id = str(rec["kind"]), str(rec["local_id"])
-        if not lookup.matches(query, local_id, kind, rec.get("remote_id")):
-            continue
-        rows.append(lookup.row(
-            f"{kind}:{local_id}", local_id,
-            " · ".join(x for x in [kind.rstrip("s"), f"from {rec.get('remote_id')}",
-                                   lookup.short_time(rec.get("updated_at") or rec.get("installed_at"))] if x),
-            "/catalog", workspace=(rec.get("workspace") or "default") if ctx.workspace is None else None,
-            at=rec.get("updated_at") or rec.get("installed_at"),
-        ))
-    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
-    return rows[:limit]
-
-
-def _catalog_install_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    from hublink import catalog as hub_catalog
-    wanted = str(entity_id or "").strip()
-    kind, sep, local_id = wanted.partition(":")
-    found = [rec for rec in _catalog_installs(ctx)
-             if (sep and rec["kind"] == kind and rec["local_id"] == local_id)
-             or (not sep and rec["local_id"] == wanted)]
-    if len(found) != 1:
-        return None
-    rec = found[0]
-    # Local only: the copy here against the hash written at install time
-    # (the same comparison the Updates tab makes before it asks the remote).
-    local = hub_catalog._local_portable(rec["kind"], rec["local_id"])
-    fields = {
-        "id": f"{rec['kind']}:{rec['local_id']}", "kind": rec["kind"], "local_id": rec["local_id"],
-        "workspace": rec.get("workspace") or "default", "remote": _link_url(rec.get("remote_url")) or None,
-        "remote_id": rec.get("remote_id"), "installed_at": rec.get("installed_at"),
-        "updated_at": rec.get("updated_at"), "local_missing": local is None,
-        "locally_modified": local is not None and hub_catalog.digest(local) != rec.get("local_hash"),
-        "dependencies": {k: dict(v) for k, v in (rec.get("deps") or {}).items() if isinstance(v, dict) and v},
-        "note": "Whether the linked hub has a newer version is on the Catalog page's Updates tab.",
-    }
-    return {"title": rec["local_id"], "fields": fields, "url": "/catalog"}
-
-
-lookup.register(lookup.LookupKind(
-    "catalog_install", "agents, skills, flows, teams and loops installed here from the linked hub's catalog, "
-    "where they came from and whether the copy was changed here",
-    _list_catalog_installs, _catalog_install_card, ("/catalog",), aliases=("catalog",)))
-
-
-# ── sync spaces (hubsync/) ───────────────────────────────────────────────────
-# Two sides of the same feature, both on the Vault page. As the vault, this
-# hub holds the caller's own spaces, one per workspace name, and only ever
-# the caller's: the owner is the principal, exactly as routes/sync.py does,
-# so nobody counts another person's records. As a client, this hub pushes to
-# the hub it is linked to; that status is one per hub and readable by anyone
-# signed in (the header shows it to everyone).
-#
-# Only the clear columns of the vault (hubsync/vault.py): counts, sizes,
-# times, whether a key sealed the records. Never a payload, which is the
-# person's content and, when encrypted, not this hub's to read; never the
-# key's id, only whether there is one; never the sync key, the passphrase or
-# the link's API key. The client row has the id "this-hub/client": a
-# workspace name is one path component, so no space can take that id.
-
-_CLIENT_ID = "this-hub/client"
-
-
-def _sync_owner(ctx: SimpleNamespace) -> str:
-    from common.auth import LOCAL_OPERATOR_ID
-    return str(getattr(ctx.principal, "id", "") or LOCAL_OPERATOR_ID)
-
-
-def _vault_spaces(ctx: SimpleNamespace) -> List[Dict[str, Any]]:
-    from hubsync import vault
-    return [s for s in vault.list_spaces(_sync_owner(ctx)) if lookup.visible(ctx, s.get("space"))]
-
-
-def _space_url(name: str) -> str:
-    from urllib.parse import quote
-    return f"/vault?space={quote(name, safe='')}"
-
-
-def _space_fields(space: Dict[str, Any]) -> Dict[str, Any]:
-    counts = space.get("counts") or {}
-    return {
-        "space": space.get("space"), "encrypted": bool(space.get("encrypted")),
-        "key_set": bool(space.get("key_id")), "records": int(counts.get("total") or 0),
-        "encrypted_records": int(counts.get("encrypted") or 0), "bytes": int(counts.get("bytes") or 0),
-        "by_kind": dict(counts.get("by_kind") or {}), "created_at": space.get("created_at"),
-        "last_push_at": space.get("last_push_at"),
-    }
-
-
-def _client_status(ctx: SimpleNamespace) -> Optional[Dict[str, Any]]:
-    """This hub's own sync status trimmed to what the lookup may show, or
-    None when the hub is not linked. The mappings are cut to the workspaces
-    this lookup reads, the error to whether there is one (it is the remote's
-    own words, like an MCP server's)."""
-    from hubsync import client as sync_client
-    status = sync_client.status()
-    if not status.get("linked"):
-        return None
-    mappings = [{"workspace": m.get("workspace"), "space": m.get("space"), "encrypted": bool(m.get("encrypted"))}
-                for m in status.get("mappings") or []
-                if isinstance(m, dict) and lookup.visible(ctx, m.get("workspace"))]
-    result = status.get("last_result") or {}
-    return {
-        "remote": _link_url(status.get("remote")) or None, "remote_name": status.get("remote_name") or None,
-        "enabled": bool(status.get("enabled")), "encrypted": bool(status.get("encrypted")),
-        "key_set": bool(status.get("key_set")), "key_unlocked": bool(status.get("key_unlocked")),
-        "mappings": mappings, "last_pass_at": status.get("last_pass_at"),
-        "last_result": {k: v for k, v in result.items() if isinstance(v, (int, float)) and not isinstance(v, bool)},
-        "has_error": bool(status.get("last_error")), "open_conflicts": int(status.get("conflicts") or 0),
-    }
-
-
-def _list_synced(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    client = _client_status(ctx)
-    if client is not None and lookup.matches(query, "client", "this hub", client.get("remote_name"),
-                                             *[m.get("workspace") for m in client["mappings"]]):
-        state = "on" if client["enabled"] else "off"
-        rows.append(lookup.row(
-            _CLIENT_ID, f"This hub's sync to {client.get('remote_name') or client.get('remote') or 'the linked hub'}",
-            " · ".join(x for x in [state, "encrypted" if client["encrypted"] else "",
-                                   f"{len(client['mappings'])} mapped",
-                                   f"{client['open_conflicts']} conflicts" if client["open_conflicts"] else "",
-                                   "failing" if client["has_error"] else "",
-                                   lookup.short_time(client.get("last_pass_at"))] if x),
-            "/vault",
-        ))
-    spaces = []
-    for space in _vault_spaces(ctx):
-        name = str(space.get("space") or "")
-        if not lookup.matches(query, name, *(space.get("counts") or {}).get("by_kind", {}).keys()):
-            continue
-        fields = _space_fields(space)
-        spaces.append(lookup.row(
-            name, name,
-            " · ".join(x for x in [f"{fields['records']} records", "encrypted" if fields["encrypted"] else "",
-                                   lookup.short_time(fields["last_push_at"])] if x),
-            _space_url(name), at=fields["last_push_at"] or fields["created_at"],
-        ))
-    spaces.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
-    return (rows + spaces)[:limit]
-
-
-def _synced_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
-    wanted = str(entity_id or "").strip()
-    if wanted == _CLIENT_ID:
-        client = _client_status(ctx)
-        if client is None:
-            return None
-        return {"title": "This hub's sync", "fields": client, "url": "/vault"}
-    for space in _vault_spaces(ctx):
-        if space.get("space") == wanted:
-            return {"title": f"Sync space {wanted}", "fields": _space_fields(space), "url": _space_url(wanted)}
-    return None
-
-
-lookup.register(lookup.LookupKind(
-    "synced", "the person's sync spaces on this hub (record counts, encryption, last push) and this hub's "
-    f"own sync to the linked hub (id {_CLIENT_ID}: on or off, mappings, last pass, open conflicts)",
-    _list_synced, _synced_card, ("/vault",), aliases=("sync", "vault")))

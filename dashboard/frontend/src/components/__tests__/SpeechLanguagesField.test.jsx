@@ -29,12 +29,12 @@ const options = {
   custom: { tool: 'ask_special_model', kinds: ['chat', 'http'] },
   providers: [
     { id: 'openai', label: 'OpenAI', kind: 'openai_compat' },
-    { id: 'hub-local', label: 'Hub runtime', kind: 'openai_compat', local_runtime: true },
+    { id: 'my-llm', label: 'My server', kind: 'openai_compat' },
   ],
 };
 const own = {
-  speech: { provider: 'hub-local', model: 'kokoro-v1.0', options: {},
-    languages: { ru: { model: 'piper-ru_RU-irina-medium' } } },
+  speech: { provider: 'openai', model: 'gpt-4o-mini-tts', options: {},
+    languages: { ru: { model: 'tts-1-hd' } } },
 };
 
 const renderForm = () => render(
@@ -46,12 +46,12 @@ describe('a voice per language in the special models form', () => {
     getWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'default', own, effective: own, options }));
     updateWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'default', own, effective: own, options }));
     renderForm();
-    expect(await screen.findByTestId('special-speech-language-ru-model')).toHaveValue('piper-ru_RU-irina-medium');
-    fireEvent.change(screen.getByTestId('special-speech-language-de-model'), { target: { value: 'piper-de_DE-thorsten-medium' } });
+    expect(await screen.findByTestId('special-speech-language-ru-model')).toHaveValue('tts-1-hd');
+    fireEvent.change(screen.getByTestId('special-speech-language-de-model'), { target: { value: 'tts-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save models' }));
     await waitFor(() => expect(updateWorkspaceSpecialModels).toHaveBeenCalled());
     expect(updateWorkspaceSpecialModels.mock.calls[0][1].speech.languages).toEqual({
-      ru: { model: 'piper-ru_RU-irina-medium' }, de: { model: 'piper-de_DE-thorsten-medium' },
+      ru: { model: 'tts-1-hd' }, de: { model: 'tts-1' },
     });
   });
 
@@ -61,7 +61,7 @@ describe('a voice per language in the special models form', () => {
     updateWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'default', own, effective: own, options }));
     renderForm();
     await screen.findByTestId('special-speech-language-ru-model');
-    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } });
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'my-llm' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save models' }));
     await waitFor(() => expect(updateWorkspaceSpecialModels).toHaveBeenCalled());
     expect(updateWorkspaceSpecialModels.mock.calls[0][1].speech.languages).toBeUndefined();

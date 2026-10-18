@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { StreamContext } from './stream';
-import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
+import { API_ORIGIN } from '../api';
 
 /*
  * Single multiplexed SSE connection for the whole dashboard.
@@ -25,13 +25,9 @@ import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
 
 function postChannels(clientId, add, remove) {
   if (!clientId) return;
-  const token = getAuthToken();
   fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ add, remove }),
   }).catch(() => {});
 }
@@ -95,29 +91,9 @@ export function StreamProvider({ children }) {
     let retry = null;
     let es = null;
 
-    // EventSource cannot set request headers, so the credential has to
-    // travel in the query string. What goes there is a one-time ticket
-    // minted just before each (re)connect (POST /api/auth/ticket), never
-    // the session itself: under AUTH_MODE=multi a ticket is the only query
-    // credential the backend accepts, and a spent one would be refused, so
-    // a reconnect always mints afresh. A backend too old to mint (404) or a
-    // failed mint falls back to the legacy `token=` form, which token mode
-    // still accepts. See docs/identity.md, "Tickets for streams".
-    const credentialParam = async (token) => {
-      try {
-        return `ticket=${encodeURIComponent(await mintAuthTicket())}`;
-      } catch {
-        return `token=${encodeURIComponent(token)}`;
-      }
-    };
-
-    // With no credential at all (the single-operator case) there is nothing
-    // to mint and the connection opens at once.
     const connect = () => {
       if (closed) return;
-      const token = getAuthToken();
-      if (!token) { open(null); return; }
-      credentialParam(token).then((credential) => { if (!closed) open(credential); });
+      open(null);
     };
 
     const open = (credential) => {

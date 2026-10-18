@@ -25,16 +25,7 @@ def client():
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 def _bearer(token):
@@ -53,7 +44,6 @@ def test_summary_carries_what_the_pages_used_to_ask_for_separately(single, clien
     body = response.json()
     assert body["name"] == "sum-ws"
     assert body["palette"] == palette
-    assert body["isolated"] is False
     assert body["personal_memory_enabled"] is False
     assert isinstance(body["allowed_agents"], list)
     assert body["allowed_agents"] == client.get("/api/workspaces/sum-ws").json()["metadata"].get("allowed_agents", [])
@@ -72,23 +62,3 @@ def test_summary_of_an_unknown_workspace_is_404(single, client):
     assert client.get("/api/workspaces/no-such-ws/summary").status_code == 404
 
 
-def test_a_viewer_reads_the_summary_but_not_the_owner_settings(multi, client):
-    boot = client.post("/api/auth/bootstrap", json={"username": "root", "password": PASSWORD})
-    assert boot.status_code == 200, boot.text
-    admin = _bearer(boot.json()["token"])
-    client.post("/api/workspaces", json={"name": "alpha"}, headers=admin)
-    client.put("/api/workspaces/alpha/settings-overrides",
-               json={"overrides": {"palette": {"brand": "#c2410c"}}}, headers=admin)
-    created = client.post("/api/auth/users", json={"username": "bob", "password": PASSWORD},
-                          headers=admin)
-    bob = _bearer(client.post("/api/auth/login",
-                              json={"username": "bob", "password": PASSWORD}).json()["token"])
-    client.put("/api/workspaces/alpha/members", json={"user_id": created.json()["id"], "role": "viewer"},
-               headers=admin)
-
-    assert client.get("/api/workspaces/alpha/settings-overrides", headers=bob).status_code == 403
-    assert client.get("/api/workspaces/alpha/isolation", headers=bob).status_code == 403
-    summary = client.get("/api/workspaces/alpha/summary", headers=bob)
-    assert summary.status_code == 200, summary.text
-    assert summary.json()["palette"] == {"brand": "#c2410c"}
-    assert summary.json()["isolated"] is False

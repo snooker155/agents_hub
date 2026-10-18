@@ -2,18 +2,15 @@
 A voice per language for the speech model (docs/assistant.md, "A voice per
 language").
 
-Many speech voices speak one language only: a Piper voice is trained on one
-(``piper-ru_RU-irina-medium``), Kokoro's voices are English, Japanese or
-Chinese by their prefix. One voice for everything reads a Russian answer with
-an English voice. So the workspace's speech entry may carry ``languages``,
-one model and voice per language code, besides its own::
+A voice that suits English narration may read Russian or German poorly, and
+some voices are tuned for one language. So the workspace's speech entry may
+carry ``languages``, a model and voice per language code, besides its own::
 
-    {"provider": "hub-local", "model": "piper-en_US-lessac-medium",
-     "languages": {"ru": {"model": "piper-ru_RU-irina-medium"},
-                   "de": {"model": "piper-de_DE-thorsten-medium"}}}
+    {"provider": "openai", "model": "gpt-4o-mini-tts", "options": {"voice": "alloy"},
+     "languages": {"ru": {"voice": "nova"}, "de": {"voice": "onyx"}}}
 
-A cloud voice speaks any language, so there a language names only another
-voice of the same model (``{"ru": {"voice": "alloy"}}``).
+A cloud voice speaks any language, so a language usually names only another
+voice of the same model; it may also name another model of the provider.
 
 Before an answer is read, its language is told from the text itself
 (:func:`text_language`: the script first, then common words, else the

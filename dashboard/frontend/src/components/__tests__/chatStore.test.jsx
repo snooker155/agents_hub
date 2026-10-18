@@ -157,19 +157,8 @@ describe('useConversationStore', () => {
     vi.useRealTimers();
   });
 
-  it('leaves a Telegram thread to the rebuild that owns it', async () => {
-    // Its transcript comes from the runs behind the binding, not from here.
-    listChats.mockResolvedValue({
-      data: { items: [summary({ ...CONV, origin: 'telegram' })], total: 1 },
-    });
-    const { result } = renderHook(() => useConversationStore('c1'));
-
-    await waitFor(() => expect(result.current.ready).toBe(true));
-    expect(getChat).not.toHaveBeenCalled();
-  });
-
   it('takes in a save made somewhere else', async () => {
-    // The same chat open on a phone, or answered from Telegram: the other
+    // The same chat open on a phone or in another tab: the other
     // writer announces it and this tab reloads instead of drifting.
     listChats.mockResolvedValue({ data: { items: [summary(CONV)], total: 1 } });
     const { result } = renderHook(() => useConversationStore('c1'));
@@ -306,7 +295,7 @@ describe('useConversationStore', () => {
 describe('stored refusals', () => {
   it('keeps a refusal on a saved message, so the card comes back after a reload', async () => {
     const { stripForStorage } = await import('../chatStore');
-    const refusal = { code: 'budget', kind: 'workspace', agent_id: 'a1' };
+    const refusal = { code: 'capability_guard', rule_id: 'lethal_trifecta', agent_id: 'a1' };
     const conv = { id: 'c1', messages: [{ role: 'assistant', error: true, refusal, running_tool: 'x' }] };
     const [msg] = stripForStorage(conv).messages;
     expect(msg.refusal).toEqual(refusal);

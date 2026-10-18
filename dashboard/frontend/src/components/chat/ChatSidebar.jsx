@@ -1,18 +1,17 @@
-import { AlertCircle, AudioLines, Copy, FolderGit2, Loader, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
+import { AlertCircle, AudioLines, FolderGit2, Loader, MessageSquare, PlusCircle, Trash2, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
- * The conversation list: the ordinary chats on top, the Telegram threads below
- * when there are any, each labelled with the workspace, target and project it
- * belongs to.
+ * The conversation list, each chat labelled with the workspace, target and
+ * project it belongs to.
  */
 export default function ChatSidebar() {
   const {
     currentConvId, deleteConversation, flows, listOpen, navigate, newConversation, projects,
     setListOpen,
-    selectableAgents, selectedWorkspace, setConversations, setSelectedAgent,
+    selectableAgents, selectedWorkspace, setSelectedAgent,
     setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode, syncError, t,
-    runningChats, teams, turns, visibleConversations, visibleTelegramBindings,
+    runningChats, teams, turns, visibleConversations,
   } = useChatPage();
   return (
     <>
@@ -158,18 +157,6 @@ export default function ChatSidebar() {
                       {(!selectedWorkspace || selectedWorkspace === 'default') && conv.workspace && <> · {conv.workspace}</>}
                     </span>
                   )}
-                  {conv.origin === 'mirror' && (
-                    <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium" title={conv.mirror?.node} data-testid="mirror-badge">
-                      <Copy className="w-2.5 h-2.5 flex-shrink-0" />
-                      {t('chat.mirror.badge')}{conv.mirror?.node ? ` · ${conv.mirror.node}` : ''}
-                    </span>
-                  )}
-                  {conv.origin === 'telegram' && (
-                    <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
-                      <SendIcon className="w-2.5 h-2.5 flex-shrink-0" />
-                      {t('chat.telegram2')}
-                    </span>
-                  )}
                   {conv.project_id && (() => {
                     const proj = projects.find(p => p.id === conv.project_id);
                     return proj ? (
@@ -195,69 +182,6 @@ export default function ChatSidebar() {
           </div>
         </div>
 
-        {/* Bottom panel — Telegram chats. Collapsed entirely when there are none,
-            so the top panel claims the full column. When present, it takes
-            exactly the bottom half of the column (flex-1 + a matching flex-1 on
-            the top "Chats" panel makes them split 50/50). Overflow uses the
-            macOS-style overlay scrollbar via overflow-y-auto. */}
-        {visibleTelegramBindings.length > 0 && (
-          <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200">
-            <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
-              <SendIcon className="w-3 h-3" /> {t('chat.telegramChats')}
-            </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
-              {visibleTelegramBindings.map((b) => {
-                const convId = b.conversation_id;
-                const isActive = currentConvId === convId;
-                const agent = selectableAgents.find((a) => a.id === b.agent_id);
-                return (
-                  <button
-                    key={`tg-${b.chat_id}`}
-                    onClick={() => {
-                      if (!convId) return;
-                      setListOpen(false);
-                      // Ensure a local conversation entry exists so the main pane renders.
-                      setConversations((prev) => {
-                        if (prev.some((c) => c.id === convId)) return prev;
-                        return [{
-                          id: convId,
-                          title: b.title || `Telegram ${b.chat_id}`,
-                          agent_id: b.agent_id,
-                          workspace: b.workspace || null,
-                          messages: [],
-                          origin: 'telegram',
-                          chat_id: b.chat_id,
-                          createdAt: b.created_at || new Date().toISOString(),
-                        }, ...prev];
-                      });
-                      if (b.agent_id && selectableAgents.some((a) => a.id === b.agent_id)) {
-                        setSelectedAgent(b.agent_id);
-                      }
-                      navigate(`/chat/${convId}`);
-                    }}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-start gap-2 transition-colors
-                      ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-white hover:shadow-sm'}`}
-                  >
-                    <SendIcon className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-70" />
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate leading-5">{b.title || t('chat.telegramChat', { id: b.chat_id })}</div>
-                      <div className="mt-0.5 flex flex-wrap gap-1">
-                        <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-medium truncate max-w-full">
-                          {agent ? agent.name : b.agent_id}
-                        </span>
-                        {b.workspace && (
-                          <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-medium truncate max-w-full">
-                            {b.workspace}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
     </>
   );

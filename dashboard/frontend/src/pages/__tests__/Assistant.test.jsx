@@ -189,15 +189,6 @@ describe('the Assistant page', () => {
     expect(screen.queryByPlaceholderText('Or type here')).toBeNull();
   });
 
-  it('says a refusal for the budget in words, not as a raw error', async () => {
-    assistantApi.streamAssistantTurn.mockRejectedValue(
-      new assistantApi.AssistantError(402, { code: 'budget', message: 'limit' }));
-    show();
-    fireEvent.change(await screen.findByPlaceholderText('Or type here'), { target: { value: 'run the team' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText(/spending limit is used up/)).toBeInTheDocument();
-  });
-
   it('a spoken question is shown for correction, then its answer is read aloud from its run', async () => {
     assistantApi.getAssistant.mockResolvedValue({
       data: { ...META, voice: { max_seconds: 120, transcription: { provider: 'openai', model: 'stt' },

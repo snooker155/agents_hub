@@ -32,7 +32,7 @@ from loops.runner import LoopResumeError
 log = logging.getLogger(__name__)
 
 #: What a loop launch is called on the queue and in runtime.entity_launch's
-#: ENTRYPOINTS / LAUNCHERS tables.
+#: ENTRYPOINTS table.
 QUEUE_KIND = "loop"
 
 

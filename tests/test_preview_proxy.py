@@ -58,18 +58,6 @@ def test_garbage_does_not_verify():
     assert preview_tickets.verify("a.b.c") is None
 
 
-def test_a_ticket_for_a_deleted_user_does_not_verify_in_multi_mode(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-    from common import identity
-    user = identity.create_user("previewer", "hunter2-but-longer")
-    ticket = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id=user["id"])
-    assert preview_tickets.verify(ticket) is not None
-    identity.delete_user(user["id"])
-    assert preview_tickets.verify(ticket) is None
-
-
 # ── POST /api/preview/tickets ────────────────────────────────────────────────
 
 @pytest.fixture
@@ -81,16 +69,7 @@ def client():
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 def _bearer(token: str) -> dict:
@@ -159,27 +138,6 @@ def test_an_unknown_container_is_404(single, client, monkeypatch):
     monkeypatch.setattr(container_manager, "list_containers", lambda: [])
     resp = client.post("/api/preview/tickets", json={"kind": "container", "name": "nope"})
     assert resp.status_code == 404
-
-
-def test_multi_mode_refuses_a_non_member_and_serves_a_member(multi, client, monkeypatch):
-    _fake_running_container(monkeypatch, workspace="alpha")
-    admin = _admin(client)
-    assert client.post("/api/workspaces", json={"name": "alpha"},
-                       headers=admin).status_code == 200
-    bob = _member(client, admin)
-
-    refused = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"},
-                          headers=bob)
-    assert refused.status_code == 403
-
-    added = client.put("/api/workspaces/alpha/members",
-                       json={"user_id": client.get("/api/auth/me", headers=bob).json()["id"],
-                             "role": "viewer"},
-                       headers=admin)
-    assert added.status_code == 200
-    allowed = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"},
-                          headers=bob)
-    assert allowed.status_code == 200, allowed.text
 
 
 def test_a_project_with_no_preview_url_or_port_is_404(single, client):

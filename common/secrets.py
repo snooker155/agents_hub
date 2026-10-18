@@ -30,17 +30,14 @@ therefore logs a warning and returns nothing on any error. Values are never
 logged, never returned by ``list``, and never written to the audit trail.
 
 Secrets bound to hosts. A secret may name ``allowed_hosts`` (a host matches an
-entry or is a subdomain of one, as in the egress allowlist). Such a secret
-never reaches a run process in plain text: the run gets a placeholder
-(``ahsec_...``), and the egress proxy (environments/egress.py, with
-environments/secret_egress.py) swaps the real value into a request only on its
-way to one of those hosts. That needs the proxy, so with
-``AGENTS_HUB_EGRESS_PROXY`` off the launch is refused
+entry or is a subdomain of one). Inside the backend process :func:`get` hands
+it only to a caller that names one of those hosts. A separate run process
+cannot be watched that way, so such a launch is refused
 (:class:`SecretEgressUnavailable`) unless the operator set
 ``AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1``, which hands the value over in plain
-text as before. This is the one secrets failure that stops a launch: quietly
-handing the value out unbound would be the very leak the hosts were set to
-prevent, and quietly handing out nothing would hide the reason a run fails.
+text. This is the one secrets failure that stops a launch: quietly handing the
+value out unbound would be the very leak the hosts were set to prevent, and
+quietly handing out nothing would hide the reason a run fails.
 """
 from __future__ import annotations
 
@@ -84,14 +81,14 @@ class SecretsError(ValueError):
 
 
 class SecretEgressUnavailable(SecretsError):
-    """A secret bound to hosts cannot be handed out: the egress proxy is off.
+    """A secret bound to hosts cannot be handed to a separate run process.
 
     Raised from :func:`env_for_run` / :func:`env_for_flow` and never swallowed,
     so the launch fails with this message instead of starting a run that holds
     the value unbound."""
 
 
-#: Hand a host-bound secret over in plain text when the egress proxy is off.
+#: Hand a host-bound secret to a separate run process in plain text.
 PLAINTEXT_FALLBACK_ENV = "AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK"
 
 
@@ -592,10 +589,8 @@ def _hand_out(resolved: Dict[str, Tuple[str, List[str]]], *, run_label: str) -> 
     """The environment entries for resolved secrets.
 
     A secret without hosts goes in as its value. A secret with hosts goes in
-    as a placeholder sealed with the egress layer (environments/secret_egress.py),
-    and the placeholders are listed under ``AGENTS_HUB_SECRET_PLACEHOLDERS`` so
-    the launch routes the run through the proxy. With the proxy off: plain
-    text when the operator allowed it, else :class:`SecretEgressUnavailable`.
+    as plain text only when the operator allowed it, else the launch fails
+    with :class:`SecretEgressUnavailable`.
     """
     out: Dict[str, str] = {}
     bound = {name: pair for name, pair in resolved.items() if pair[1]}
@@ -604,71 +599,34 @@ def _hand_out(resolved: Dict[str, Tuple[str, List[str]]], *, run_label: str) -> 
             out[name] = value
     if not bound:
         return out
-    from environments import egress, secret_egress
-    if not egress.enabled():
-        if _plaintext_fallback():
-            log.warning("secrets: %s handed to %s in plain text: the egress proxy is off and %s "
-                        "is set", ", ".join(sorted(bound)), run_label, PLAINTEXT_FALLBACK_ENV)
-            out.update({name: pair[0] for name, pair in bound.items()})
-            return out
-        raise SecretEgressUnavailable(
-            f"secret {', '.join(sorted(bound))} may only be sent to its allowed hosts, which "
-            "needs the egress proxy, and the proxy is off. Turn it on with "
-            f"AGENTS_HUB_EGRESS_PROXY=1, or set {PLAINTEXT_FALLBACK_ENV}=1 to hand such "
-            "secrets over in plain text.")
-    placeholders: List[str] = []
-    for name, (value, hosts) in bound.items():
-        placeholder = secret_egress.seal(name, value, hosts)
-        out[name] = placeholder
-        placeholders.append(placeholder)
-    out[secret_egress.PLACEHOLDERS_ENV] = ",".join(placeholders)
-    return out
+    if _plaintext_fallback():
+        log.warning("secrets: %s handed to %s in plain text: %s is set",
+                    ", ".join(sorted(bound)), run_label, PLAINTEXT_FALLBACK_ENV)
+        out.update({name: pair[0] for name, pair in bound.items()})
+        return out
+    raise SecretEgressUnavailable(
+        f"secret {', '.join(sorted(bound))} may only be sent to its allowed hosts, and a "
+        f"separate run process cannot be held to that. Set {PLAINTEXT_FALLBACK_ENV}=1 to "
+        "hand such secrets over in plain text, or remove the host binding.")
 
 
-def _github_app_bound(resolved: Dict[str, Tuple[str, List[str]]], allowed: Iterable[str],
-                      workspace: str, agent_id: Optional[str],
-                      user_id: Optional[str]) -> Dict[str, Tuple[str, List[str]]]:
-    """:func:`_with_github_app` for the ``(value, hosts)`` shape: the app's
-    token carries no hosts of its own."""
-    plain = {name: pair[0] for name, pair in resolved.items()}
-    filled = _with_github_app(plain, allowed, workspace, agent_id, user_id)
-    out = dict(resolved)
-    for name, value in filled.items():
-        if name not in out:
-            out[name] = (value, [])
-    return out
-
+def host_allowed(host: str, allowed: Iterable[str]) -> bool:
+    """``host`` equals an entry or is a subdomain of one. Case and a trailing
+    dot are ignored; an empty host or list allows nothing."""
+    host = (host or "").strip().lower().rstrip(".").strip("[]")
+    if not host:
+        return False
+    for entry in allowed or ():
+        entry = str(entry or "").strip().lower().strip(".")
+        if entry and (host == entry or host.endswith("." + entry)):
+            return True
+    return False
 
 def allowed_for_agent(agent_id: str) -> List[str]:
     """The agent's declared ``secrets`` list, empty when it has none."""
     from agents.registry import get_agent
     spec = get_agent(agent_id)
     return list(getattr(spec, "secrets", None) or []) if spec else []
-
-
-#: The one name the GitHub App (connectors/git/github_app.py) can supply when
-#: no secret of that name exists for the run's scope.
-GITHUB_TOKEN_NAME = "GITHUB_TOKEN"
-
-
-def _with_github_app(out: Dict[str, str], allowed: Iterable[str], workspace: str,
-                     agent_id: Optional[str], user_id: Optional[str]) -> Dict[str, str]:
-    """Fill a declared but unresolved ``GITHUB_TOKEN`` from the GitHub App.
-
-    An explicit secret always wins, so an operator who stored a token keeps
-    control. Imported lazily: this module must stay importable without the
-    connector package, and ``token_for_run`` itself never raises.
-    """
-    if GITHUB_TOKEN_NAME in out or GITHUB_TOKEN_NAME not in allowed:
-        return out
-    try:
-        from connectors.git import github_app
-    except ImportError:
-        return out
-    token = github_app.token_for_run(workspace, agent_id, user_id)
-    if token:
-        out[GITHUB_TOKEN_NAME] = token
-    return out
 
 
 def _allowed_names(agent_id: str, extra_names: Optional[Iterable[str]]) -> List[str]:
@@ -699,8 +657,7 @@ def env_for_run(workspace: str, agent_id: Optional[str],
         allowed = _allowed_names(agent_id, extra_names)
         if not allowed:
             return {}
-        resolved = _github_app_bound(_resolve_with_hosts(workspace, agent_id, user_id, allowed),
-                                     allowed, workspace, agent_id, user_id)
+        resolved = _resolve_with_hosts(workspace, agent_id, user_id, allowed)
         return _hand_out(resolved, run_label=f"agent {agent_id}")
     except SecretEgressUnavailable:
         raise
@@ -732,10 +689,7 @@ def env_for_flow(workspace: str, flow_id: Optional[str],
                     names.append(name)
         if not names:
             return {}
-        # The app identity for a flow: one environment serves every node, so
-        # no single agent's github_identity can speak for all of them.
-        resolved = _github_app_bound(_resolve_with_hosts(workspace, "", user_id, names),
-                                     names, workspace, None, user_id)
+        resolved = _resolve_with_hosts(workspace, "", user_id, names)
         return _hand_out(resolved, run_label=f"flow {flow_id}")
     except SecretEgressUnavailable:
         raise
@@ -774,60 +728,13 @@ def active_scope() -> Optional[Tuple[str, str, str]]:
     return None if scope is None else (scope[0], scope[1], scope[2])
 
 
-# ── the end user of a turn ───────────────────────────────────────────────────
-#
-# A widget visitor or a chat channel user has no hub account: the turn runs as
-# the widget's owner or the binding's operator, and ``user_id`` above is that
-# person. The end user is named separately, as a principal string the consent
-# portal (connectors/consent/, docs/consent.md) keys personal secrets by:
-# ``widget:<widget_id>:<visitor_id>`` or ``channel:<channel>:<chat_key>``.
-# Bound next to the secret scope, and like it a context variable, so a thread
-# started for the agent (asyncio.to_thread copies the context) sees it and no
-# other request in flight does.
-
-_END_USER: ContextVar[str] = ContextVar("agents_hub_end_user", default="")
-
-
-def widget_principal(widget_id: str, visitor_id: str) -> str:
-    return f"widget:{widget_id}:{visitor_id}"
-
-
-def channel_principal(channel: str, chat_key: Any) -> str:
-    return f"channel:{channel}:{chat_key}"
-
-
-def set_end_user(principal: Optional[str]):
-    """Bind the turn's end user; returns the token for :func:`reset_end_user`."""
-    return _END_USER.set(str(principal or "").strip())
-
-
-def reset_end_user(token) -> None:
-    _END_USER.reset(token)
-
-
-@contextmanager
-def end_user(principal: Optional[str]) -> Iterator[None]:
-    """Bind the turn's end user for the ``with`` block."""
-    token = set_end_user(principal)
-    try:
-        yield
-    finally:
-        _END_USER.reset(token)
-
-
-def current_end_user() -> str:
-    """The end user of the turn in this context, ``""`` when there is none
-    (a dashboard chat, a task, a schedule)."""
-    return _END_USER.get()
-
-
 def get(name: str, *, host: Optional[str] = None) -> Optional[str]:
     """One secret for the active in-process run, or None.
 
     None outside :func:`activate`, and None for a name the active agent does
     not declare, exactly as the environment of a subprocess run would lack it.
     A secret bound to hosts is returned only when ``host`` is given and is one
-    of them: an in-process run has no proxy to swap a placeholder in, so the
+    of them: an in-process run cannot be watched on the wire, so the
     caller that knows where the value goes has to say so.
     """
     scope = _ACTIVE.get()
@@ -838,14 +745,12 @@ def get(name: str, *, host: Optional[str] = None) -> Optional[str]:
     try:
         if name not in _allowed_names(agent_id, extras):
             return None
-        resolved = _github_app_bound(_resolve_with_hosts(workspace, agent_id, user_id, [name]),
-                                     [name], workspace, agent_id, user_id)
+        resolved = _resolve_with_hosts(workspace, agent_id, user_id, [name])
         pair = resolved.get(name)
         if pair is None:
             return None
         value, hosts = pair
         if hosts:
-            from environments.egress import host_allowed
             if not host or not host_allowed(host, hosts):
                 log.info("secrets: %s withheld in process: host %r is not among its allowed hosts",
                          name, host)
@@ -864,6 +769,5 @@ __all__ = [
     "validate_name", "make_hint", "keygen", "key_configured",
     "set_secret", "get_secret", "delete_secret", "list_secrets", "resolve_for_run",
     "allowed_for_agent", "env_for_run", "env_for_flow", "activate", "active_scope", "get",
-    "widget_principal", "channel_principal", "set_end_user", "reset_end_user", "end_user",
-    "current_end_user", "secret_updated_at",
+    "host_allowed", "secret_updated_at",
 ]

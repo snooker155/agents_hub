@@ -133,7 +133,7 @@ describe('Settings', () => {
     const seen = [];
     const { unmount } = render(
       <I18nProvider>
-        <MemoryRouter initialEntries={['/settings/telegram']}>
+        <MemoryRouter initialEntries={['/settings/git']}>
           <Routes>
             <Route path="/settings/:section" element={<Settings />} />
             <Route path="/connectors" element={<Landed onRender={() => seen.push('connectors')} />} />

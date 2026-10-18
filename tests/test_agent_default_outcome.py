@@ -207,9 +207,6 @@ def isolated_definitions(tmp_path, monkeypatch):
 
 @pytest.fixture
 def request_fn(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
     from fastapi.testclient import TestClient
     from cli.backend import BackendError
     from dashboard.backend.main import app

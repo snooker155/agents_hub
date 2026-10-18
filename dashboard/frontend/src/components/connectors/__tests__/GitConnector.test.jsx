@@ -4,35 +4,27 @@ import { WorkspaceContext } from '../../workspace';
 import { I18nProvider } from '../../../i18n';
 import GitConnector from '../GitConnector';
 
-// GitHub, GitLab, Bitbucket and Gitea tokens, one per provider, each scoped
-// per workspace like the other connectors (connectors/channels/store.py):
-// the default workspace's token works everywhere, another workspace's own
-// token works only there. The config GET answers `sources` (per provider,
-// "here" or "default") and, from the default workspace, `defined_in` per
-// provider.
+// The GitLab token and base URL, scoped per workspace like the other
+// connectors (connectors/channels/store.py): the default workspace's token
+// works everywhere, another workspace's own token works only there. The
+// config GET answers `sources` ("here" or "default") and, from the default
+// workspace, `defined_in`.
 
 const api = vi.hoisted(() => ({
   getGitConfig: vi.fn(),
   updateGitConfig: vi.fn(),
   deleteGitConfig: vi.fn(),
   testGitConnection: vi.fn(),
-  getGitHubApp: vi.fn(() => Promise.reject({ response: { status: 404 } })),
   getWorkspaces: vi.fn(() => Promise.resolve({ data: [] })),
-  getWorkspaceGithubInstallation: vi.fn(() => Promise.resolve({ data: { own: null, effective: null, source: 'default' } })),
 }));
 vi.mock('../../../api', () => api);
 
-const BASE_CONFIG = {
-  github: { has_token: false }, gitlab: { has_token: false, base_url: '' },
-  bitbucket: { has_token: false, username: '' }, gitea: { has_token: false, base_url: '' },
-};
+const BASE_CONFIG = { gitlab: { has_token: false, base_url: '' } };
 
-describe('GitConnector: per workspace, per provider source', () => {
+describe('GitConnector: per workspace source', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    api.getGitHubApp.mockImplementation(() => Promise.reject({ response: { status: 404 } }));
     api.getWorkspaces.mockResolvedValue({ data: [] });
-    api.getWorkspaceGithubInstallation.mockResolvedValue({ data: { own: null, effective: null, source: 'default' } });
   });
 
   const show = (workspace) => render(
@@ -47,69 +39,50 @@ describe('GitConnector: per workspace, per provider source', () => {
     await waitFor(() => expect(api.getGitConfig).toHaveBeenCalledWith('default'));
   });
 
-  it('shows github read only with "Define for this workspace" when only the default defines it', async () => {
+  it('shows the token read only with "Define for this workspace" when only the default defines it', async () => {
     api.getGitConfig.mockResolvedValue({
-      data: {
-        ...BASE_CONFIG,
-        github: { has_token: true },
-        sources: { github: 'default', gitlab: 'here', bitbucket: 'here', gitea: 'here' },
-      },
+      data: { gitlab: { has_token: true, base_url: '' }, sources: { gitlab: 'default' } },
     });
     show('acme');
-    const badges = await screen.findAllByTestId('connector-source-badge');
-    expect(badges[0].textContent).toMatch(/default workspace/i);
-    // The github section's token field is read only; the others are not.
-    const tokenInputs = screen.getAllByPlaceholderText('Leave empty to keep the existing token');
-    expect(tokenInputs[0]).toBeDisabled();
-    expect(screen.getAllByTestId('connector-define-here')).toHaveLength(1);
+    const badge = await screen.findByTestId('connector-source-badge');
+    expect(badge.textContent).toMatch(/default workspace/i);
+    expect(screen.getByPlaceholderText('Leave empty to keep the existing token')).toBeDisabled();
+    expect(screen.getByTestId('connector-define-here')).toBeInTheDocument();
   });
 
   it('"Define for this workspace" makes the token field editable and saves with the workspace', async () => {
-    api.getGitConfig.mockResolvedValue({
-      data: { ...BASE_CONFIG, sources: { github: 'default', gitlab: 'here', bitbucket: 'here', gitea: 'here' } },
-    });
+    api.getGitConfig.mockResolvedValue({ data: { ...BASE_CONFIG, sources: { gitlab: 'default' } } });
     api.updateGitConfig.mockResolvedValue({
-      data: { ...BASE_CONFIG, github: { has_token: true }, sources: { github: 'here', gitlab: 'here', bitbucket: 'here', gitea: 'here' } },
+      data: { gitlab: { has_token: true, base_url: '' }, sources: { gitlab: 'here' } },
     });
     show('acme');
     const defineButton = await screen.findByTestId('connector-define-here');
     act(() => { defineButton.click(); });
-    const tokenInput = screen.getAllByPlaceholderText(/token/i)[0];
+    const tokenInput = screen.getByPlaceholderText(/token/i);
     await waitFor(() => expect(tokenInput).not.toBeDisabled());
-    fireEvent.change(tokenInput, { target: { value: 'ghp_secret' } });
-    fireEvent.click(screen.getAllByText('Save')[0]);
+    fireEvent.change(tokenInput, { target: { value: 'glpat_secret' } });
+    fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(api.updateGitConfig).toHaveBeenCalledWith(
-      { provider: 'github', token: 'ghp_secret' }, 'acme',
+      { provider: 'gitlab', token: 'glpat_secret' }, 'acme',
     ));
   });
 
   it('offers "Remove, use the default\'s" once this workspace has its own token, calling DELETE with the provider', async () => {
     api.getGitConfig.mockResolvedValue({
-      data: {
-        ...BASE_CONFIG,
-        github: { has_token: true },
-        sources: { github: 'here', gitlab: 'here', bitbucket: 'here', gitea: 'here' },
-      },
+      data: { gitlab: { has_token: true, base_url: '' }, sources: { gitlab: 'here' } },
     });
-    api.deleteGitConfig.mockResolvedValue({
-      data: { ...BASE_CONFIG, sources: { github: 'default', gitlab: 'here', bitbucket: 'here', gitea: 'here' } },
-    });
+    api.deleteGitConfig.mockResolvedValue({ data: { ...BASE_CONFIG, sources: { gitlab: 'default' } } });
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     show('acme');
-    // Every provider is "here" in this fixture; the github card is first.
-    const removeButtons = await screen.findAllByTestId('connector-remove-here');
-    act(() => { removeButtons[0].click(); });
-    await waitFor(() => expect(api.deleteGitConfig).toHaveBeenCalledWith('github', 'acme'));
+    const removeButton = await screen.findByTestId('connector-remove-here');
+    act(() => { removeButton.click(); });
+    await waitFor(() => expect(api.deleteGitConfig).toHaveBeenCalledWith('gitlab', 'acme'));
     confirmSpy.mockRestore();
   });
 
-  it('lists the other workspaces defining their own github token, from the default workspace', async () => {
+  it('lists the other workspaces defining their own token, from the default workspace', async () => {
     api.getGitConfig.mockResolvedValue({
-      data: {
-        ...BASE_CONFIG,
-        sources: { github: 'here', gitlab: 'here', bitbucket: 'here', gitea: 'here' },
-        defined_in: { github: ['default', 'acme'], gitlab: ['default'], bitbucket: ['default'], gitea: ['default'] },
-      },
+      data: { ...BASE_CONFIG, sources: { gitlab: 'here' }, defined_in: { gitlab: ['default', 'acme'] } },
     });
     show('default');
     const note = await screen.findByTestId('connector-defined-in');

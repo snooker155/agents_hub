@@ -81,19 +81,12 @@ async def get_stats(workspace: Optional[str] = None):
 
 @router.get("/api/stats/overview")
 def get_overview(request: Request, workspace: Optional[str] = None, days: int = 14):
-    """The Dashboard's load and spend widgets (common/dashboard_overview.py).
-    Sync on purpose: it asks the model runtime over HTTP, so FastAPI runs it
-    in a worker thread. ``/v1`` calls are narrowed to the viewer's own the
-    way the Models page's Endpoint tab narrows them."""
+    """The Dashboard's load and spend widgets (common/dashboard_overview.py)."""
     from common import identity
     from common.dashboard_overview import overview
 
     principal = identity.request_principal(request)
-    user_id = None
-    if identity.current_mode() == "multi" and not getattr(principal, "is_admin", False):
-        user_id = getattr(principal, "id", None) or "-"
-    return overview(normalize_workspace_name(workspace) or None, days=days,
-                    principal=principal, serving_user_id=user_id)
+    return overview(normalize_workspace_name(workspace) or None, days=days, principal=principal)
 
 
 @router.get("/api/runs")

@@ -6,5 +6,4 @@ export default {
   jobFieldLabel: 'Agentenversion',
   jobFieldLive: 'Aktuell',
   saveFailed: 'Die festgelegte Agentenversion konnte nicht gespeichert werden',
-  widgetHint: 'Besucher sprechen mit dieser Version des Agenten. Aktuell folgt jeder Änderung am Agenten.',
 };

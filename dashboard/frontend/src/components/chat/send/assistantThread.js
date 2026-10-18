@@ -57,7 +57,6 @@ export function markLive(conversations, convId) {
 export function assistantErrorText(err, t) {
   if (err instanceof AssistantError) {
     if (err.code === 'busy') return t('chat.assistantThread.busy');
-    if (err.code === 'budget') return err.message || t('chat.assistantThread.budget');
     return err.message;
   }
   return err?.message || String(err);

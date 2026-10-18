@@ -23,10 +23,8 @@ export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-as
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
 export const answerTask = (taskId, answer) => api.post(`/tasks/${taskId}/answer`, { answer });
 // The decision on a tool call a task is parked on (status awaiting_approval).
-// `budget_usd` is only meaningful when `pending_approval.kind === 'budget'`:
-// the new cap to resume with on approval (see TaskDetails' budget pause card).
-export const approveTaskCall = (taskId, approved, note = '', budget_usd) =>
-  api.post(`/tasks/${taskId}/approve`, { approved, note, ...(budget_usd !== undefined ? { budget_usd } : {}) });
+export const approveTaskCall = (taskId, approved, note = '') =>
+  api.post(`/tasks/${taskId}/approve`, { approved, note });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
 // Every agent's overrides in one response ({agent_id: {workspace: capacity}}).

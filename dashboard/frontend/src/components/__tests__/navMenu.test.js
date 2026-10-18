@@ -5,30 +5,27 @@ import {
 } from '../navMenu';
 
 const t = (k) => k;
-const single = { mode: 'single', features: {} };
-const multiAdmin = { mode: 'multi', user: { username: 'a', role: 'admin' }, features: { audit: true } };
-const multiUser = { mode: 'multi', user: { username: 'u', role: 'member' }, features: { audit: true } };
 const paths = (groups) => groups.flatMap((g) => g.items.map((i) => i.path));
 
 describe('navMenu', () => {
   beforeEach(() => { localStorage.clear(); });
 
   it('has five groups in object tree order', () => {
-    const groups = buildMenu({ t, auth: single });
+    const groups = buildMenu({ t });
     expect(groups.map((g) => g.key)).toEqual(['conversation', 'work', 'agents', 'integrations', 'records']);
     expect(groups[0].label).toBe('nav.groups.conversation');
   });
 
   it('puts every page in exactly one place', () => {
-    const all = paths(buildMenu({ t, auth: multiAdmin, features: { cluster: true } }));
+    const all = paths(buildMenu({ t }));
     expect(new Set(all).size).toBe(all.length);
-    for (const p of ['/connectors', '/connections', '/mcp', '/watchers', '/nodes', '/widgets']) {
-      expect(buildMenu({ t, auth: single }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain(p);
+    for (const p of ['/connectors', '/mcp', '/watchers']) {
+      expect(buildMenu({ t }).find((g) => g.key === 'integrations').items.map((i) => i.path)).toContain(p);
     }
   });
 
   it('simple menu keeps a short list with workspaces, settings and docs', () => {
-    const groups = buildMenu({ t, auth: single });
+    const groups = buildMenu({ t });
     const shown = paths(visibleGroups(groups, SIMPLE));
     expect(shown.length).toBeLessThanOrEqual(16);
     expect(shown).toEqual(expect.arrayContaining(['/assistant', '/chat', '/workspaces', '/agents', '/models', '/settings', '/docs']));
@@ -39,60 +36,50 @@ describe('navMenu', () => {
   });
 
   it('simple menu lights up the home row of a hidden page instead of adding one', () => {
-    const shown = visibleGroups(buildMenu({ t, auth: single }), SIMPLE);
+    const shown = visibleGroups(buildMenu({ t }), SIMPLE);
     expect(paths(shown)).not.toContain('/deployments');
     const lit = (pathname) => shown.flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
     expect(lit('/deployments')).toEqual(['/plan']);
     expect(lit('/loops/l1')).toEqual(['/flows']);
-    expect(lit('/connectors/slack')).toEqual(['/settings']);
+    expect(lit('/connectors/git')).toEqual(['/settings']);
     expect(lit('/sessions')).toEqual(['/settings']);
     expect(lit('/plan')).toEqual(['/plan']);
   });
 
   it('every page is in the simple menu or names a home row that is', () => {
-    const groups = buildMenu({ t, auth: multiAdmin, features: { cluster: true } });
+    const groups = buildMenu({ t });
     const simple = new Set(groups.flatMap((g) => g.items).filter((it) => it.simple).map((it) => it.path));
     for (const it of groups.flatMap((g) => g.items)) {
       if (!it.simple) expect(simple.has(it.home)).toBe(true);
     }
   });
 
-  it('dashboard and the agent registry sit with the administration under settings', () => {
-    const groups = buildMenu({ t, auth: single });
-    const records = groups.find((g) => g.key === 'records').items.map((it) => it.path);
-    expect(records).toContain('/agent-registry');
-    expect(groups.find((g) => g.key === 'agents').items.map((it) => it.path)).not.toContain('/agent-registry');
+  it('dashboard sits with the administration under settings', () => {
+    const groups = buildMenu({ t });
     const lit = (pathname) => visibleGroups(groups, SIMPLE).flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
     expect(lit('/dashboard')).toEqual(['/settings']);
-    expect(lit('/agent-registry')).toEqual(['/settings']);
   });
 
   it('full menu shows everything', () => {
-    const groups = buildMenu({ t, auth: single });
+    const groups = buildMenu({ t });
     expect(visibleGroups(groups, FULL)).toBe(groups);
   });
 
-  it('cluster row for every operator, one process or many', () => {
-    expect(paths(buildMenu({ t, auth: single }))).toContain('/cluster');
-    expect(paths(buildMenu({ t, auth: single, features: { cluster: true } }))).toContain('/cluster');
-    expect(paths(buildMenu({ t, auth: multiUser, features: { cluster: true } }))).not.toContain('/cluster');
-    expect(paths(buildMenu({ t, auth: multiUser }))).not.toContain('/health');
-    expect(paths(buildMenu({ t, auth: multiAdmin }))).toEqual(expect.arrayContaining(['/health', '/users', '/audit']));
-  });
-
-  it('account stays in the simple menu for a signed in user', () => {
-    expect(paths(visibleGroups(buildMenu({ t, auth: multiUser }), SIMPLE))).toContain('/account');
+  it('has no row for a page the single-user build dropped', () => {
+    const all = paths(buildMenu({ t }));
+    for (const p of ['/cluster', '/users', '/account', '/audit', '/registry', '/agent-registry', '/services', '/vault', '/nodes', '/widgets']) {
+      expect(all).not.toContain(p);
+    }
+    expect(all).toContain('/health');
   });
 
   it('playground row follows the feature flag', () => {
-    expect(paths(buildMenu({ t, auth: single, features: { playground: false } }))).not.toContain('/playground');
-    expect(paths(buildMenu({ t, auth: single, features: {} }))).toContain('/playground');
+    expect(paths(buildMenu({ t, features: { playground: false } }))).not.toContain('/playground');
+    expect(paths(buildMenu({ t, features: {} }))).toContain('/playground');
   });
 
-  it('defaults to full only for a multi user administrator', () => {
-    expect(defaultMenuMode(single)).toBe(SIMPLE);
-    expect(defaultMenuMode(multiUser)).toBe(SIMPLE);
-    expect(defaultMenuMode(multiAdmin)).toBe(FULL);
+  it('starts in the simple menu', () => {
+    expect(defaultMenuMode()).toBe(SIMPLE);
   });
 
   it('remembers the choice and ignores junk', () => {

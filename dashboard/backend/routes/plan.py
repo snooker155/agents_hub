@@ -47,14 +47,10 @@ class JobCreate(BaseModel):
     seed: Optional[Dict[str, Any]] = None
     max_concurrent: int = 1
     channels: Optional[List[str]] = None
-    # Environment (environments/) and per-task money cap copied onto every
-    # task this job creates; auto_pause_after (0 = off) is the run of
-    # consecutive firing failures that pauses a recurring job on its own.
-    environment_id: Optional[str] = None
-    budget_usd: Optional[float] = None
     # Agent version pin (agents/versions.py) copied onto every task this job
     # creates; only meaningful together with agent_id (validated as such by
-    # plans.service.create_job).
+    # plans.service.create_job). auto_pause_after (0 = off) is the run of
+    # consecutive firing failures that pauses a recurring job on its own.
     agent_version: Optional[int] = None
     auto_pause_after: int = 3
     # agent_task only: the deployment's resources (plans.service._validate_resources).
@@ -94,8 +90,6 @@ class JobUpdate(BaseModel):
     catch_up: Optional[bool] = None
     agent_id: Optional[str] = None
     channels: Optional[List[str]] = None
-    environment_id: Optional[str] = None
-    budget_usd: Optional[float] = None
     agent_version: Optional[int] = None
     auto_pause_after: Optional[int] = None
     project_id: Optional[str] = None
@@ -146,8 +140,6 @@ async def create_job(payload: JobCreate):
             seed=payload.seed,
             max_concurrent=payload.max_concurrent,
             channels=payload.channels,
-            environment_id=payload.environment_id,
-            budget_usd=payload.budget_usd,
             agent_version=payload.agent_version,
             auto_pause_after=payload.auto_pause_after,
             project_id=payload.project_id,

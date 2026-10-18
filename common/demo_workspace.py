@@ -249,54 +249,8 @@ def _seed_tasks(seed: Dict[str, Any]) -> Dict[str, str]:
     return task_ids
 
 
-def _seed_services(seed: Dict[str, Any]) -> Dict[str, str]:
-    """One example service per seed entry, paused, so the Services page has a
-    record to show. Returns ``{id_hint: service_id}``."""
-    from services import store as sstore
-
-    service_ids: Dict[str, str] = {}
-    for s in seed.get("services") or []:
-        rec = sstore.create(
-            name=str(s.get("name") or ""),
-            agent_id=str(s.get("agent_id") or DEMO_AGENT_IDS[0]),
-            workspace=DEMO_WORKSPACE_NAME,
-            replicas_min=int(s.get("replicas_min") or 1),
-            replicas_max=int(s.get("replicas_max") or 1),
-            concurrency=int(s.get("concurrency") or 4),
-            idle_stop_seconds=int(s.get("idle_stop_seconds") or 600),
-            created_by="local",
-        )
-        hint = s.get("id_hint")
-        if hint:
-            service_ids[str(hint)] = rec["service_id"]
-    return service_ids
-
-
-def _seed_service_events(seed: Dict[str, Any], service_ids: Dict[str, str],
-                         instance_ids: Dict[str, str]) -> None:
-    """The service journal, written once its replica instance exists so an
-    event can name it. A seeded service ends paused: nothing runs in the demo,
-    and an active service with no live replica would read as a failure."""
-    from services import store as sstore
-
-    for s in seed.get("services") or []:
-        service_id = service_ids.get(str(s.get("id_hint") or ""))
-        if not service_id:
-            continue
-        for ev in s.get("events") or []:
-            if str(ev.get("kind")) == "paused":
-                continue  # written by pause() below
-            sstore.add_event(
-                service_id, str(ev.get("kind") or "note"), str(ev.get("detail") or ""),
-                instance_id=instance_ids.get(str(ev.get("instance_id_hint") or "")),
-            )
-        sstore.pause(service_id, str(s.get("paused_reason") or "paused by operator"))
-
-
-def _seed_instances(seed: Dict[str, Any], task_ids: Dict[str, str],
-                    service_ids: Dict[str, str]) -> Dict[str, str]:
-    """Example instance records: a resident copy, a task copy and a service
-    replica. Returns ``{id_hint: instance_id}``. The final state is applied
+def _seed_instances(seed: Dict[str, Any], task_ids: Dict[str, str]) -> Dict[str, str]:
+    """Example instance records: a resident copy and a task copy. Returns ``{id_hint: instance_id}``. The final state is applied
     after the runs are seeded (:func:`_settle_instances`), since closing a
     run moves its instance along on its own."""
     from instances import store as istore
@@ -311,7 +265,6 @@ def _seed_instances(seed: Dict[str, Any], task_ids: Dict[str, str],
             label=str(i.get("label") or ""),
             project_id=DEMO_PROJECT_ID,
             task_id=task_ids.get(str(i.get("task_title") or "")),
-            service_id=service_ids.get(str(i.get("service_id_hint") or "")),
         )
         hint = i.get("id_hint")
         if hint:
@@ -500,9 +453,7 @@ def ensure_demo_workspace() -> bool:
     _seed_scenario(seed)
     view_ids = _seed_views(seed)
     task_ids = _seed_tasks(seed)
-    service_ids = _seed_services(seed)
-    instance_ids = _seed_instances(seed, task_ids, service_ids)
-    _seed_service_events(seed, service_ids, instance_ids)
+    instance_ids = _seed_instances(seed, task_ids)
     file_ids = _seed_files(seed)
     _seed_chats(seed, view_ids, instance_ids, file_ids)
     _seed_runs(seed, task_ids, instance_ids)
@@ -525,7 +476,7 @@ def remove_demo_workspace() -> Dict[str, int]:
     counts: Dict[str, int] = {
         "agents": 0, "project": 0, "flow": 0, "team": 0, "scenario": 0,
         "views": 0, "tasks": 0, "chats": 0, "sessions": 0, "runs": 0,
-        "instances": 0, "services": 0, "files": 0, "jobs": 0, "ticks": 0,
+        "instances": 0, "files": 0, "jobs": 0, "ticks": 0,
         "workspace": 0,
     }
 
@@ -600,11 +551,6 @@ def remove_demo_workspace() -> Dict[str, int]:
     for inst in instances_page["items"]:
         if istore.delete(inst["instance_id"]):
             counts["instances"] += 1
-
-    from services import store as sstore
-    for svc in sstore.list_services(workspace=DEMO_WORKSPACE_NAME):
-        if sstore.delete(svc["service_id"]):
-            counts["services"] += 1
 
     from files import service as files
     for rec in files.list_files(DEMO_WORKSPACE_NAME, limit=500):

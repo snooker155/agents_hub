@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BookOpen, Boxes, Calendar, Database, GitBranch, Hash, Link2, Mail, MessageCircle, Send, Ticket, Users, Webhook, Workflow } from 'lucide-react';
+import { GitBranch, Link2, Ticket, Webhook } from 'lucide-react';
 
-import BlenderConnector from '../components/connectors/BlenderConnector';
-import ChannelConnector from '../components/connectors/ChannelConnector';
-import DatabasesConnector from '../components/connectors/DatabasesConnector';
-import GoogleConnector from '../components/connectors/GoogleConnector';
-import KnowledgeConnector from '../components/connectors/KnowledgeConnector';
-import MicrosoftConnector from '../components/connectors/MicrosoftConnector';
 import TrackersConnector from '../components/connectors/TrackersConnector';
-import CredentialConnector from '../components/connectors/CredentialConnector';
 import GitConnector from '../components/connectors/GitConnector';
-import TelegramConnector from '../components/connectors/TelegramConnector';
 import WebhooksConnector from '../components/connectors/WebhooksConnector';
 import { ConnectionProposalCard } from '../components/chat/ConnectionProposalCard';
 import { listConnectionProposals } from '../api/connectionProposals';
@@ -20,21 +12,11 @@ import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
 /**
- * Connectors: services this hub reaches out to.
+ * Connectors: systems this hub reaches out to (GitLab, Jira, webhooks).
  *
- * The other half of the Connect group, and the opposite direction from
- * [Connections]: there something of yours runs elsewhere and reports in, here
- * this service goes out to a system you already use. Both answer "how do I
- * attach something that is not defined in here", which is why they share a
- * group and why each page says which way it points in one line.
- *
- * These three lived as tabs inside Settings, next to model keys and log levels,
+ * These lived as tabs inside Settings, next to model keys and log levels,
  * which is not where anyone looked for them.
  */
-
-// The chat channels after Telegram share one component and one API
-// (components/connectors/ChannelConnector.jsx, routes/channels.py).
-const channel = (id, icon) => ({ id, icon, Component: () => <ChannelConnector name={id} /> });
 
 // A connector lives only in the workspace that defines it: the default
 // workspace's definition works everywhere, another workspace's own
@@ -81,30 +63,18 @@ function ProposedConnections() {
 }
 
 const TABS = [
-  { id: 'telegram', icon: Send, Component: TelegramConnector },
-  channel('slack', Hash),
-  channel('discord', MessageCircle),
-  channel('teams', Users),
-  channel('mail', Mail),
   { id: 'git', icon: GitBranch, Component: GitConnector },
   { id: 'trackers', icon: Ticket, Component: TrackersConnector },
-  { id: 'google', icon: Calendar, Component: GoogleConnector },
-  { id: 'microsoft', icon: Calendar, Component: MicrosoftConnector },
-  { id: 'knowledge', icon: BookOpen, Component: KnowledgeConnector },
-  { id: 'databases', icon: Database, Component: DatabasesConnector },
-  { id: 'n8n', icon: Workflow, Component: () => <CredentialConnector name="n8n" /> },
-  { id: 'blender', icon: Boxes, Component: BlenderConnector },
   { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
 ];
 
 export default function Connectors() {
   const { t } = useI18n();
-  // ?tab=google opens a tab directly: the Google OAuth callback lands there,
-  // and the mail forms link to it for "Connect with Gmail".
+  // ?tab=trackers opens a tab directly (a link from a project's page).
   const [params] = useSearchParams();
   const [active, setActive] = useState(() => {
     const wanted = params.get('tab');
-    return TABS.some((tab) => tab.id === wanted) ? wanted : 'telegram';
+    return TABS.some((tab) => tab.id === wanted) ? wanted : 'git';
   });
   const { Component } = TABS.find((tab) => tab.id === active) || TABS[0];
 

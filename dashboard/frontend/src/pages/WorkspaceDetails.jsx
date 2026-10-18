@@ -3,20 +3,15 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, Sparkles, Repeat } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import ProjectCard from '../components/projects/ProjectCard';
 import { PROJECT_GRID } from '../components/projects/projectCardConfig';
-import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
-import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
-import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
-import WorkspaceHubSync from '../components/workspace/WorkspaceHubSync';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
-import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
 import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
@@ -1150,11 +1145,6 @@ const WorkspaceDetails = () => {
         </div>
       )}
 
-      {/* Who may reach this workspace. Renders nothing outside AUTH_MODE=multi,
-          and nothing for a viewer who is neither an owner of it nor an admin.
-          See components/workspace/WorkspaceMembers.jsx. */}
-      {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
-
       {activeTab === 'settings' && (
         <WorkspaceSettingsTab workspace={name} agents={ws?.metadata?.allowed_agents || []} />
       )}
@@ -1224,7 +1214,6 @@ const SETTINGS_GROUPS = [
       { id: 'toolPolicy', icon: Shield },
       { id: 'webPolicy', icon: Globe },
       { id: 'personalMemory', icon: UserRound },
-      { id: 'isolation', icon: ShieldAlert },
       { id: 'tasks', icon: CheckSquare, saves: true },
     ],
   },
@@ -1232,9 +1221,6 @@ const SETTINGS_GROUPS = [
     key: 'workspace',
     items: [
       { id: 'secrets', icon: Lock },
-      // Sync with the linked hub and its encryption, this workspace's row of
-      // the list under Settings → Remote hub (docs/hub-sync.md).
-      { id: 'remoteSync', icon: RefreshCw },
       { id: 'palette', icon: PaletteIcon, adminOnly: true },
     ],
   },
@@ -1248,16 +1234,12 @@ const SETTINGS_GROUPS = [
  */
 function WorkspaceSettingsTab({ workspace, agents }) {
   const { t } = useI18n();
-  const auth = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const s = useWorkspaceSettings(workspace);
 
-  // The palette card renders nothing for a non-admin in multi mode, so its
-  // menu entry would lead to an empty page.
-  const canSeePalette = !isMultiUser(auth) || isAdmin(auth);
   const groups = SETTINGS_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.adminOnly || canSeePalette),
+    items: group.items,
   }));
   const items = groups.flatMap((group) => group.items);
   const active = items.find((item) => item.id === searchParams.get('section')) || items[0];
@@ -1349,14 +1331,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
-          {active.id === 'isolation' && (
-            <div className="space-y-6">
-              <WorkspaceIsolation key={workspace} workspace={workspace} />
-              <WorkspaceDataClass key={`dc-${workspace}`} workspace={workspace} />
-            </div>
-          )}
           {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
-          {active.id === 'remoteSync' && <WorkspaceHubSync key={workspace} workspace={workspace} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}
         </div>
@@ -1379,8 +1354,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
 function WorkspacePaletteDefault({ workspace }) {
   const { t } = useI18n();
   const { theme, resolvedMode } = useTheme();
-  const auth = useAuth();
-  const visible = !isMultiUser(auth) || isAdmin(auth);
+  const visible = true;
 
   const [overrides, setOverrides] = useState(null);
   const [draft, setDraft] = useState(PRESETS.navy);

@@ -566,47 +566,6 @@
       "task_title": "Confirm the three product categories match the sales data",
       "state": "finished",
       "last_activity": "run finished"
-    },
-    {
-      "id_hint": "demo_instance_replica",
-      "agent_id": "demo_writer",
-      "kind": "resident",
-      "label": "Demo Writer service, replica 1",
-      "service_id_hint": "demo_service_writer",
-      "state": "stopped",
-      "last_activity": "stopped with the service"
-    }
-  ],
-  "services": [
-    {
-      "id_hint": "demo_service_writer",
-      "name": "Demo Writer service",
-      "agent_id": "demo_writer",
-      "replicas_min": 1,
-      "replicas_max": 2,
-      "concurrency": 2,
-      "idle_stop_seconds": 600,
-      "paused_reason": "Paused by the operator: the recorded demo runs nothing.",
-      "events": [
-        {
-          "kind": "created",
-          "detail": "Service created for demo_writer, 1 to 2 replicas."
-        },
-        {
-          "kind": "replica_started",
-          "detail": "Replica 1 started.",
-          "instance_id_hint": "demo_instance_replica"
-        },
-        {
-          "kind": "replica_stopped",
-          "detail": "Replica 1 stopped: idle for 600 s.",
-          "instance_id_hint": "demo_instance_replica"
-        },
-        {
-          "kind": "paused",
-          "detail": "Paused by the operator."
-        }
-      ]
     }
   ],
   "files": [

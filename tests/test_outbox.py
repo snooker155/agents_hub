@@ -59,16 +59,6 @@ def test_given_up_after_max_attempts(monkeypatch):
     assert outbound.stats() == {"pending": 0, "dead": 1}
 
 
-def test_only_the_lease_holder_drains(monkeypatch):
-    delivered = []
-    monkeypatch.setattr(outbound, "deliver", lambda e, ev: delivered.append(1) or True)
-    outbound.enqueue(_endpoint(), _event())
-    leases.acquire(outbound.LEASE_ROLE, "replica-b", 60)
-    assert outbound.drain() == 0
-    assert not delivered
-    assert outbound.drain(require_lease=False) == 1
-
-
 def test_rows_survive_the_process_that_raised_them(monkeypatch):
     """A row left by an earlier process is delivered by the next drainer."""
     outbound.enqueue(_endpoint(), _event())

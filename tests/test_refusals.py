@@ -40,16 +40,6 @@ def test_system_workspace_rule_has_no_override():
     assert refusals.refusal_of(CapabilityViolation("x", v))["override_allowed"] is False
 
 
-def test_workspace_and_person_budgets_are_told_apart():
-    from common.budget import BudgetExceededError
-    from common.user_budget import UserBudgetExceededError
-    ws = refusals.refusal_of(BudgetExceededError("team", 12.0, 10.0, "monthly"), agent_id="a")
-    assert (ws["code"], ws["kind"], ws["workspace"], ws["limit_usd"], ws["spent_usd"]) == (
-        "budget", "workspace", "team", 10.0, 12.0)
-    person = refusals.refusal_of(UserBudgetExceededError("u1", 5.0, 5.0, "ann"))
-    assert person["kind"] == "person" and person["user_id"] == "u1"
-
-
 def test_an_ordinary_error_is_not_a_refusal():
     assert refusals.refusal_of(RuntimeError("boom")) is None
 
@@ -60,8 +50,7 @@ def test_the_route_detail_carries_the_refusal(monkeypatch):
     from fastapi import HTTPException
     from routes import chat as chat_route
     from chat.send import ChatSendError
-    from common.budget import BudgetExceededError
-    refusal = refusals.refusal_of(BudgetExceededError("w", 3.0, 2.0, "monthly"))
+    refusal = refusals.refusal_of(_violation())
 
     async def boom(request):
         raise ChatSendError("over", status=402, refusal=refusal)
@@ -69,7 +58,7 @@ def test_the_route_detail_carries_the_refusal(monkeypatch):
     with pytest.raises(HTTPException) as info:
         asyncio.run(chat_route.send_message(object()))
     assert info.value.status_code == 402
-    assert info.value.detail["message"] == "over" and info.value.detail["refusal"]["kind"] == "workspace"
+    assert info.value.detail["message"] == "over" and info.value.detail["refusal"]["code"] == "capability_guard"
 
 
 def test_a_refused_build_reaches_the_drive_result_as_a_refusal(monkeypatch):

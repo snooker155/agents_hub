@@ -76,11 +76,6 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
             "Flow and team chat require the streaming endpoint (/api/chat/stream)",
             status=400,
         )
-    from chat import routing
-    if routing.enabled():
-        # The turn runs on a service replica (docs/services.md): drain the
-        # relayed stream and answer in this function's shape.
-        return await _send_routed(request)
     validate_chat_request(request)
     materialize_attachments(request)
     resolve_references(request)
@@ -96,22 +91,6 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
     # Propagate workspace to agent tools (e.g. list_tasks) via a context var
     # that is thread-safe and copied into asyncio.to_thread's execution context.
     ws_name = apply_workspace_ctx(request, workspace_abs)
-
-    # The launcher, evals and loops all refuse to start a run once a workspace's
-    # hard budget cap is met (common.budget.check_budget); chat was the one
-    # surface that could still spend past it turn after turn. Gate here, before
-    # the agent is built or invoked, using the same resolved workspace name the
-    # run record and journal already use.
-    from common.budget import check_budget, BudgetExceededError
-    try:
-        check_budget(ws_name)
-    except BudgetExceededError as e:
-        finished = utc_iso()
-        _write_log(log_file, log_lines + [f"(budget: {e})", "", f"Finished: {finished}"])
-        update_run(run_id, {"status": "failed", "finished_at": finished,
-                            "exit_code": 1, "error": str(e)})
-        from chat.refusals import refusal_of
-        raise ChatSendError(str(e), status=402, refusal=refusal_of(e, agent_id=request.agent_id))
 
     step_request, prompt, chain = request, full_prompt, [request.agent_id]
     received: Optional[handoff_mod.HandoffIntent] = None
@@ -139,19 +118,6 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
         step_request, run, received = receiving, next_run, intent
         chain = [*chain, intent.to_agent_id]
         prompt = handoff_mod.receiving_prompt(handoff_mod.handoff_note(intent, replies=replies), base_prompt)
-        # Each run spends on its own; the cap is checked before this one starts.
-        try:
-            check_budget(ws_name)
-        except BudgetExceededError as e:
-            finished = utc_iso()
-            _write_log(run[2], run[3] + [f"(budget: {e})", "", f"Finished: {finished}"])
-            update_run(run[0], {"status": "failed", "finished_at": finished,
-                                "exit_code": 1, "error": str(e)})
-            from chat.refusals import refusal_of
-            refusal = refusal_of(e, agent_id=step_request.agent_id)
-            return {"response": f"Error: {e}", "ok": False, "run_id": run[0],
-                    **({"refusal": refusal} if refusal else {}),
-                    **_handoff_fields(step_request.agent_id, handoffs)}
 
 
 def _handoff_fields(agent_id: Optional[str], handoffs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -300,21 +266,6 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "stopped by user"})
         return {"response": "Stopped by user", "ok": False, "run_id": run_id}, None
 
-    from chat.streaming import budget_pause
-    capped = budget_pause(result)
-    if capped is not None:
-        error_text = str(capped.get("reason") or "The turn reached its money cap")
-        _write_log(log_file, log_lines + [f"(budget: {error_text})", "", f"Finished: {finished}", "Status  : failed"])
-        update_run(run_id, {"status": "failed", "finished_at": finished,
-                            "exit_code": 1, "error": error_text})
-        from chat.refusals import KIND_TURN, budget_refusal
-        return {"response": f"Error: {error_text}", "ok": False, "run_id": run_id,
-                "error_code": "budget",
-                "budget": {"spent_usd": capped.get("spent_usd"), "limit_usd": capped.get("limit_usd")},
-                "refusal": budget_refusal(KIND_TURN, spent_usd=capped.get("spent_usd"),
-                                          limit_usd=capped.get("limit_usd"), message=error_text,
-                                          agent_id=request.agent_id)}, None
-
     if result.ok:
         response_text = str(result.agent_output)
         intent = handoff_sink.intent
@@ -330,54 +281,6 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
     update_run(run_id, {"status": "failed", "finished_at": finished,
                         "exit_code": 1, "error": error_text})
     return {"response": f"Error: {error_text}", "ok": False, "run_id": run_id}, None
-
-
-async def _send_routed(request: ChatRequest) -> Dict[str, Any]:
-    """The blocking turn when chat turns run on service replicas: the same
-    events the streaming path relays, folded into ``{response, ok, run_id}``
-    (plus the handoff fields when the conversation changed hands)."""
-    from fastapi import HTTPException
-    from chat.pipelines import run_chat_pipeline
-    from common.config import settings as _cfg
-
-    chat_timeout = max(_cfg.chat_request_timeout, _cfg.llm_request_timeout + 60)
-    state: Dict[str, Any] = {"done": None, "handoffs": []}
-
-    async def _drain() -> None:
-        async for event in run_chat_pipeline(request):
-            if not isinstance(event, dict):
-                continue
-            if event.get("type") == "handoff":
-                state["handoffs"].append(event)
-            elif event.get("type") == "done" and state["done"] is None:
-                state["done"] = event
-
-    try:
-        await asyncio.wait_for(_drain(), timeout=chat_timeout)
-    except asyncio.TimeoutError:
-        raise ChatSendError(f"Agent timed out after {chat_timeout // 60} minutes", status=504)
-    except HTTPException as e:
-        raise ChatSendError(str(e.detail), status=int(e.status_code))
-    done = state["done"]
-    if done is None:
-        raise ChatSendError("the turn ended without an answer", status=502)
-    if not done.get("ok") and done.get("status"):
-        raise ChatSendError(str(done.get("error") or "the agent could not run"),
-                            status=int(done["status"]))
-    result: Dict[str, Any] = {
-        "response": str(done.get("response") or (f"Error: {done.get('error')}" if not done.get("ok") else "")),
-        "ok": bool(done.get("ok")),
-        "run_id": done.get("run_id"),
-    }
-    # Why a turn failed, when the reply alone does not say (a money cap, a
-    # conversation that outgrew the model), the way the streaming done says it.
-    for key in ("error_code", "budget", "refusal"):
-        if done.get(key) is not None:
-            result[key] = done[key]
-    if done.get("handoffs"):
-        result.update({"agent_id": done.get("agent_id"), "handoff": done.get("handoff"),
-                       "handoffs": done.get("handoffs")})
-    return result
 
 
 def send_chat_message_sync(request: ChatRequest) -> Dict[str, Any]:

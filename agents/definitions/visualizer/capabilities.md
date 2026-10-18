@@ -14,7 +14,7 @@ The Visualizer Agent builds and edits interactive views live in the Visualizatio
 - Author interactive **controls** (`slider`, `select`, `toggle`, `multi-toggle`, `color`, `text`, `range`, `play`, `button`, `folder`) bound to spec paths with `view_add_control` / `view_remove_control`; the user's control changes are visible to the agent.
 - **Link views** (`view_link`): pin a chart beside a simulation on a shared timebase; selection is shared.
 - Annotate with labels, callouts, regions and **live equations** (`view_annotate`); bind workspace files into a view with `view_add_asset`.
-- Hand a 3D request to the `modeler_3d` agent and an html or code request to the `web_view_builder` agent: by conversation handoff when talking to the user, by `run_agent_tool` or `delegate_task_tool` when working for another agent or inside a task.
+- Hand an html or code request to the `web_view_builder` agent: by conversation handoff when talking to the user, by `run_agent_tool` or `delegate_task_tool` when working for another agent or inside a task.
 - Find the data to visualize with read-only workspace and catalog tools: `list_files`, `read_file`, `search_text`, `list_tasks`, `list_flows_tool`, `list_agents_tool`; read this product's own documentation with `search_docs` and `read_doc`.
 
 ## Cannot

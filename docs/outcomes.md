@@ -42,11 +42,9 @@ When a retry happens, the agent's new instruction includes its prior attempts' f
 
 When attempts run out with unmet criteria, the task is blocked with a reason that lists each unmet criterion and its feedback, an `outcome_limit` entry goes to the task's activity log, and a dashboard notification is sent. To try again, raise the attempts or edit the rubric and restart the task: editing keeps the gradings, so attempts already used still count. Removing the outcome clears its gradings.
 
-## API and audit
+## API
 
 `GET/PUT/DELETE /api/tasks/{id}/outcome` manage the rubric and settings. `GET /api/tasks/{id}/outcome/evaluations` lists all grading results with iteration, score, per-criterion feedback, grader model, tokens and cost. The task create and update routes accept `outcome` with the same validation.
-
-Writes are audited as `task.outcome.set`, `task.outcome.delete`, `task.outcome.grade`.
 
 The same grader is available in [eval sets](evals.md) as the grader kind `rubric`; it calls a model, so it costs tokens.
 
@@ -56,10 +54,10 @@ Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop
 
 ## Cost
 
-Every grading is one model call about a whole attempt, and it is recorded as a run of its own: agent `outcome_grader`, channel `outcome`, with the grader's model and tokens. It never adds to the runs it graded, which each keep their own cost. The grading run is tied to the task, so the [Costs](costs.md) page and the task's money cap count it once, and to the work it graded through `parent_run_id`: the agent run, or the flow, team, loop or scenario run. A scenario's grading also carries its `sim_run_id` and a flow's its `flow_run_id`, the link the runs of that scenario or flow share, so summing those runs includes it. For a team, a loop or a scenario, whose run keeps a total cost, the grading's cost is added to that total, so the attempt's total says what it cost including its grading. The evaluation records the grading run's id as `grading_run_id`.
+Every grading is one model call about a whole attempt, and it is recorded as a run of its own: agent `outcome_grader`, channel `outcome`, with the grader's model and tokens. It never adds to the runs it graded, which each keep their own cost. The grading run is tied to the task, so the [Costs](costs.md) page counts it once, and to the work it graded through `parent_run_id`: the agent run, or the flow, team, loop or scenario run. A scenario's grading also carries its `sim_run_id` and a flow's its `flow_run_id`, the link the runs of that scenario or flow share, so summing those runs includes it. For a team, a loop or a scenario, whose run keeps a total cost, the grading's cost is added to that total, so the attempt's total says what it cost including its grading. The evaluation records the grading run's id as `grading_run_id`.
 
 ## An agent's default outcome
 
-An agent can carry its own outcome, the same shape as a task's, instead of every task that uses it repeating the rubric. `GET/PUT /api/agents/{id}/default-outcome` read and write it (an empty body clears it); the agent page's Behavior tab shows a card to view and edit it. A task is given the agent's default outcome once, when it is first assigned an agent and has no outcome of its own yet (`assign_executor`, `tasks/service.py`); a later reassignment to a different agent does not overwrite an outcome the task already has. The `outcome:` field on an agent's declarative file ([apply](apply.md)) manages it the same way. [Kits](kits.md) set a default outcome on each of their agents, so installing one gives every agent it creates a rubric from the start.
+An agent can carry its own outcome, the same shape as a task's, instead of every task that uses it repeating the rubric. `GET/PUT /api/agents/{id}/default-outcome` read and write it (an empty body clears it); the agent page's Behavior tab shows a card to view and edit it. A task is given the agent's default outcome once, when it is first assigned an agent and has no outcome of its own yet (`assign_executor`, `tasks/service.py`); a later reassignment to a different agent does not overwrite an outcome the task already has. The `outcome:` field on an agent's declarative file ([apply](apply.md)) manages it the same way.
 
 Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).

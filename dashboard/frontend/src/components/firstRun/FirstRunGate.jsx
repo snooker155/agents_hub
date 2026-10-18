@@ -14,7 +14,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageLoader from '../PageLoader';
-import { isMultiUser, useAuth } from '../auth';
 import { isEmbedded } from '../embed';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../theme';
@@ -42,12 +41,11 @@ function Fallback() {
 }
 
 export default function FirstRunGate({ children }) {
-  const auth = useAuth();
   const navigate = useNavigate();
   const tour = useWelcomeTour();
   const { setLanguage } = useI18n();
   const { setTheme } = useTheme();
-  const skip = IS_DEMO || isEmbedded() || isMultiUser(auth);
+  const skip = IS_DEMO || isEmbedded();
   const [state, setState] = useState(skip ? { required: false } : null);
   const [after, setAfter] = useState('');
   // Read on mount, before anything here can have written them.

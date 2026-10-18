@@ -37,9 +37,6 @@ def fresh_registry():
 
 @pytest.fixture
 def request_fn(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
     from fastapi.testclient import TestClient
     from cli.backend import BackendError
     from dashboard.backend.main import app
@@ -91,16 +88,7 @@ handoffs: [{aid}]
 You help.
 """
 
-RESOURCES_YAML = """kind: environment
-id: sandbox
-description: Limited network.
-network:
-  type: limited
-  allowed_hosts: [docs.python.org]
-env:
-  STYLE: brief
----
-kind: memory_pool
+RESOURCES_YAML = """kind: memory_pool
 id: notes
 name: Apply notes {suffix}
 blocks:
@@ -113,8 +101,6 @@ agent: {aid}
 message: Summarize the day.
 cron: "0 9 * * 1-5"
 timezone: Europe/Berlin
-environment: sandbox
-budget_usd: 1.5
 """
 
 
@@ -153,16 +139,13 @@ def test_create_reapply_update_drift_and_prune(tmp_path, request_fn, ws):
     assert agent["owner_workspace"] == ws
     assert sorted(agent["tools"]) == ["list_files", "read_file"]
     pool_id = lock.hub_id("memory_pool", "notes")
-    env_id = lock.hub_id("environment", "sandbox")
     assert agent["memory_type"] == "shared" and agent["memory_data"] == pool_id
     assert agent["max_concurrent_delegates"] == 2
     assert request_fn("GET", f"/api/agents/{hid}")["handoffs"] == [aid]
     definition = request_fn("GET", f"/api/agents/{aid}/definition")
     assert definition["usage"].strip() == "Use it for research."
     job = request_fn("GET", f"/api/plan/jobs/{lock.hub_id('deployment', 'digest')}")
-    assert job["agent_id"] == aid and job["environment_id"] == env_id and job["cron"] == "0 9 * * 1-5"
-    env = request_fn("GET", f"/api/environments/{env_id}")
-    assert env["network"]["type"] == "limited" and env["env"] == {"STYLE": "brief"}
+    assert job["agent_id"] == aid and job["cron"] == "0 9 * * 1-5"
     pool = request_fn("GET", f"/api/shared-memory/{pool_id}")
     assert any(b["name"] == "persona" and b["value"] == "Terse and factual." for b in pool["blocks"])
     skills = request_fn("GET", "/api/skills", params={"workspace": ws, "agent_id": aid})
@@ -296,7 +279,6 @@ def test_export_then_apply_to_a_fresh_state_plans_unchanged(tmp_path, request_fn
     lock = Lock()
     assert apply(plan(load_bundle(root), request_fn, lock, ws), request_fn, lock).ok
     refs = [aid, hid,
-            f"environment:{lock.hub_id('environment', 'sandbox')}",
             f"pool:{lock.hub_id('memory_pool', 'notes')}",
             f"deployment:{lock.hub_id('deployment', 'digest')}"]
 
@@ -305,7 +287,7 @@ def test_export_then_apply_to_a_fresh_state_plans_unchanged(tmp_path, request_fn
     assert (out / "agents" / f"{aid}.md").exists()
     assert (out / "agents" / f"{aid}.usage.md").read_text().strip() == "Use it for research."
     deployment = (out / "deployments" / "daily-digest.yaml").read_text()
-    assert f"agent: {aid}" in deployment and "environment: sandbox" in deployment
+    assert f"agent: {aid}" in deployment
 
     # Adopted into a lock against the same hub: nothing to do.
     own = Lock()
@@ -316,7 +298,6 @@ def test_export_then_apply_to_a_fresh_state_plans_unchanged(tmp_path, request_fn
     # A fresh state: everything the first apply made is gone.
     for job in request_fn("GET", "/api/plan/jobs", params={"workspace": ws}):
         request_fn("DELETE", f"/api/plan/jobs/{job['id']}")
-    request_fn("DELETE", f"/api/environments/{lock.hub_id('environment', 'sandbox')}")
     request_fn("DELETE", f"/api/shared-memory/{lock.hub_id('memory_pool', 'notes')}")
     registry.replace_all_raw([])
 

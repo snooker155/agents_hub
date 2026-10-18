@@ -1,7 +1,7 @@
 import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
 import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
-import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
+import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -92,12 +92,11 @@ export default function ChatComposer() {
   const {
     addReferences, addWorkspaceFiles, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage,
-    currentConv, currentTelegramBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
+    currentConv, fileInputRef, handleKeyDown, hasTarget, input, loading,
     onPickFiles, pendingAttachments, pendingReferences, pickerKind, removeAttachment,
     removeReference, resizeTextarea, selectCommand, selectedProject, selectedWorkspace,
-    sendAsBot, sendMessage, setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen,
-    setInput, setPickerKind, t, telegramError, telegramReplyAllowed,
-    telegramSending, textareaRef, toggleAttachmentStore,
+    sendMessage, setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen,
+    setInput, setPickerKind, t, textareaRef, toggleAttachmentStore,
   } = page;
 
   // The box follows the text however it got there: typed, a slash command's
@@ -141,10 +140,8 @@ export default function ChatComposer() {
     language, onText: sendSpoken, onError: onVoiceError,
   });
   const boxEmpty = !input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0;
-  const micShown = boxEmpty && voice.available && !steering.busy && !currentTelegramBinding;
-  // A mirrored conversation (docs/hub-link.md) is written on another hub; nothing is sent from here.
-  const mirrored = currentConv?.origin === 'mirror';
-  const micUsable = micShown && hasTarget && !loading && !mirrored;
+  const micShown = boxEmpty && voice.available && !steering.busy;
+  const micUsable = micShown && hasTarget && !loading;
   useEffect(() => {
     if (!micUsable) return undefined;
     const down = (e) => {
@@ -172,7 +169,7 @@ export default function ChatComposer() {
   const { autoMode } = page;
   const onKeyDown = (e) => {
     // Shift+Tab switches auto mode, as in Claude Code.
-    if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed && !currentTelegramBinding) {
+    if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed) {
       e.preventDefault();
       autoMode.toggle();
       return;
@@ -315,7 +312,7 @@ export default function ChatComposer() {
             <div
               data-testid="composer-box"
               className={`flex items-center gap-3 border rounded-2xl px-4 py-3 bg-white shadow-lg transition-all
-                ${autoMode?.on && !currentTelegramBinding && !mirrored ? 'border-amber-400' : 'border-gray-300'}`}
+                ${autoMode?.on ? 'border-amber-400' : 'border-gray-300'}`}
             >
               {/* Attach: a file from the computer, or a record the hub already
                   holds (task / view / project / scenario / loop / …). An entity
@@ -415,26 +412,12 @@ export default function ChatComposer() {
                     <StopCircle className="w-4 h-4" />
                   </button>
                 </>
-              ) : currentTelegramBinding ? (
-                <button
-                  onClick={sendAsBot}
-                  disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
-                  title={!telegramReplyAllowed
-                    ? t('chat.telegramBoundElsewhere', { workspace: currentTelegramBinding.workspace || 'default' })
-                    : t('chat.sendAsBotToChat')}
-                  className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
-                    bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
-                    disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <SendIcon className="w-3.5 h-3.5" />
-                  {telegramSending ? t('chat.sending') : t('chat.sendAsBot')}
-                </button>
               ) : micShown ? (
                 <ComposerMic voice={voice} disabled={!micUsable} t={t} />
               ) : (
                 <button
                   onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget || mirrored}
+                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget}
                   title={t('chat.sendEnter')}
                   className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
                     bg-indigo-600 text-white hover:bg-indigo-700
@@ -444,9 +427,6 @@ export default function ChatComposer() {
                 </button>
               )}
             </div>
-            {telegramError && (
-              <p className="text-xs text-red-600 mt-2">{telegramError}</p>
-            )}
             {attachmentError && (
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
             )}
@@ -477,7 +457,7 @@ export default function ChatComposer() {
               />
             )}
             <div className="mt-2 flex items-center justify-between gap-3 text-xs">
-              {autoMode && !currentTelegramBinding && !mirrored ? (
+              {autoMode ? (
                 <button
                   type="button"
                   role="switch"

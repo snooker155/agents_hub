@@ -39,19 +39,9 @@ router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
 
 def _visible_to_caller(request, roots: List[Path]) -> List[Path]:
-    """Filter a workspace listing down to what the caller may see.
-
-    Only ``multi`` filters: in ``single`` and ``token`` mode there is one
-    operator and every workspace is theirs.
-    """
-    from common import identity
-    if identity.current_mode() != "multi":
-        return roots
-    principal = identity.request_principal(request)
-    if principal is None or principal.is_admin:
-        return roots
-    allowed = set(identity.workspaces_for_user(principal.id))
-    return [p for p in roots if p.name in allowed]
+    """Filter a workspace listing down to what the caller may see: there is
+    one operator and every workspace is theirs."""
+    return roots
 
 
 def _is_safe_workspace_name(name: str) -> bool:
@@ -147,12 +137,6 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
-def _person_label(user_id: str) -> str:
-    """Whose personal workspace this is, for the picker."""
-    user = identity.get_user(user_id) if identity.current_mode() == "multi" else None
-    return (user or {}).get("display_name") or (user or {}).get("username") or user_id
-
-
 @router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces(request: Request):
     roots = list_workspace_folders()
@@ -164,16 +148,6 @@ async def list_workspaces(request: Request):
         except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
             log.debug("list_workspaces: best-effort step failed", exc_info=True)
 
-    # A person in multi mode gets their personal workspace the first time they
-    # look (common/personal_workspace.py); listed first, as theirs.
-    from common import personal_workspace
-    own_personal = personal_workspace.ensure_for_principal(identity.request_principal(request))
-    if own_personal and all(p.name != own_personal for p in roots):
-        roots = list_workspace_folders()
-
-    # Under AUTH_MODE=multi a user sees the workspaces they are a member of and
-    # nothing else; an admin sees all of them. A no-op in the single-operator
-    # modes, where there is nobody to hide anything from. See common/identity.py.
     roots = _visible_to_caller(request, roots)
 
     all_tasks = tasks_service.list_tasks()
@@ -184,6 +158,7 @@ async def list_workspaces(request: Request):
         # `path` stays the entry under the workspaces root so it keeps naming the
         # workspace; `target` is where an attached one actually lives.
         attached = p.is_symlink()
+        from common import personal_workspace
         personal_of = personal_workspace.owner_of(name)
         items.append({
             "name": name,
@@ -193,15 +168,13 @@ async def list_workspaces(request: Request):
             "target": str(p.resolve()) if attached else None,
             "personal": bool(personal_of),
             "personal_of": personal_of,
-            "personal_label": _person_label(personal_of) if personal_of else None,
-            "own_personal": bool(own_personal) and name == own_personal,
+            "personal_label": personal_of or None,
+            "own_personal": False,
         })
 
     def _order(item):
-        # The caller's own personal workspace, then default, then the rest by
-        # name, other people's personal ones (an admin sees them) last.
-        if item["own_personal"]:
-            return (0, "")
+        # Default first, then the rest by name, a personal workspace carried
+        # over from an older install last.
         if item["name"] == "default":
             return (1, "")
         return (3 if item["personal"] else 2, item["name"])
@@ -572,12 +545,11 @@ async def get_workspace_model(name: str):
 async def get_workspace_summary(name: str):
     """What every page shows about the selected workspace, in one answer.
 
-    The header (model picker, "Isolated" badge), the palette and the chat
-    page each used to ask on their own: ``/{name}`` (which also builds the
-    task list), ``/{name}/model``, ``/{name}/isolation`` and
-    ``/{name}/settings-overrides``. Readable by any member: it carries only
-    the isolation switch, the data class and the palette, not the owner
-    scoped settings around them.
+    The header (model picker), the palette and the chat page each used to
+    ask on their own: ``/{name}`` (which also builds the task list),
+    ``/{name}/model`` and ``/{name}/settings-overrides``. Readable by any
+    member: it carries only the palette and the model, not the owner scoped
+    settings around them.
     """
     from memory import personal
     root = _require_workspace_folder(name)
@@ -590,16 +562,9 @@ async def get_workspace_summary(name: str):
         "personal_memory_enabled": personal.workspace_enabled(root.name),
         # Whether the chat's Auto toggle may be switched on here (common/auto_mode.py).
         "auto_approve_allowed": settings.get("allow_auto_approve") is not False,
-        "isolated": bool(settings.get("isolated")),
-        "data_class": _data_class(settings),
         "palette": palette if isinstance(palette, dict) else None,
         "model": _model_state(root.name, metadata),
     }
-
-
-def _data_class(settings: dict) -> str:
-    from common.data_class import DEFAULT_CLASS, normalize_class
-    return normalize_class(settings.get("data_class")) or DEFAULT_CLASS
 
 
 def _model_state(name: str, metadata: dict) -> dict:
@@ -1040,14 +1005,6 @@ async def update_workspace_personal_memory(request: Request, name: str, data: Wo
     it off; the agents' own switches are kept for when it is turned back on."""
     from memory import personal
     _ensure_writable_workspace(name)
-    if data.enabled:
-        # The personal pool is shared with the person's other workspaces:
-        # writing to it from an isolated one would carry data out.
-        from common import isolation
-        try:
-            isolation.ensure_not_isolated(name, "the personal memory pool, shared with other workspaces,")
-        except isolation.IsolationError as exc:
-            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     result = personal.set_workspace_enabled(name, data.enabled)
     audit.record("workspace.personal_memory", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,

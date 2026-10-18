@@ -30,7 +30,7 @@ the app's shortcuts menu offers Assistant, Chat and Dashboard directly.
 ## On a phone
 
 - **Menu.** The sidebar is a drawer: ☰ opens it, a tap outside it or any
-  navigation closes it. Theme, language and sign out sit at its foot, since the
+  navigation closes it. Theme and language sit at its foot, since the
   header has no room for them.
 - **Header.** The workspace picker, the model chip (its icon; the full name is in
   the picker it opens), watchers, notifications, the live dot and Help. The
@@ -55,8 +55,8 @@ The service worker (`public/sw.js`) keeps the app shell: the last good
 has not answered in four seconds, the installed app still opens, moves between
 the pages whose code it has loaded before and reports the backend offline in
 the header. Data
-is never cached: `/api` (live state, streams, sign in), and the backend's own
-pages under `/preview`, `/apps` and `/consent` always go to the network. A deploy
+is never cached: `/api` (live state, streams) and the backend's own
+pages under `/preview` always go to the network. A deploy
 is picked up on the next open, because page loads go to the network first.
 
 The worker is registered only by a production build on a secure origin: not by
@@ -73,11 +73,9 @@ DNS record at the server, open ports 80 and 443, and add to `.env`:
 ```
 COMPOSE_PROFILES=https
 HUB_DOMAIN=hub.example.com
-AUTH_MODE=multi
 ```
 
-then `docker compose up -d`. With the `postgres` profile on as well, list both:
-`COMPOSE_PROFILES=postgres,https`.
+then `docker compose up -d`.
 
 **Any other reverse proxy** works the same way: terminate TLS and forward
 everything to the dashboard container (nginx on port 80 inside it), which
@@ -88,16 +86,15 @@ proxy for `/api`, or streamed replies arrive all at once.
 it too, for example `tailscale serve --bg 8080`, which publishes the dashboard
 at `https://<machine>.<tailnet>.ts.net` to your own devices only.
 
-A hub reachable from the internet must not run in the default `single` mode,
-which has no login: use `AUTH_MODE=multi` (named accounts, a login screen) or at
-least `token` ([identity](identity.md)).
+The hub has no login. Keep it on your own devices and do not publish it to the
+internet.
 
 ## Gotchas
 
 - **Plain HTTP on a LAN address installs nothing.** The page works, but there
   is no Install item, no offline shell and no microphone. Use HTTPS.
-- **iOS keeps the installed app's storage apart from Safari's.** Signing in in
-  Safari does not sign the installed app in; sign in once inside the app.
+- **iOS keeps the installed app's storage apart from Safari's.** Settings you
+  made in Safari (theme, language) are not shared with the installed app.
 - **The service worker outlives a rollback of itself.** It is served with
   `no-cache` (docker/nginx.conf), so the browser checks it on every open; a
   changed `sw.js` takes over on the next load. To drop it on one device, clear

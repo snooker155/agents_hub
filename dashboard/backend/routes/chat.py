@@ -125,43 +125,10 @@ async def stream_message_sse(request: ChatRequest):
         try:
             async for _event in pipeline:
                 pass
-        except Exception as exc:  # noqa: BLE001 - any failure ends the turn; this reports it
-            # A turn run here has had its error published by the broadcaster.
-            # The relay to a replica publishes only what the replica posts, so
-            # a request it refuses before dispatch (an unknown agent) has to be
-            # put on the channel here, or the caller waits for good.
-            from chat import routing
-            if routing.enabled():
-                await _publish_failure(channel, request, exc)
+        except Exception:  # noqa: BLE001 - any failure ends the turn; the broadcaster published it
+            log.debug("chat turn %s ended with an error", conv, exc_info=True)
 
     task = asyncio.create_task(drive())
     _PUMP_TASKS.add(task)
     task.add_done_callback(_PUMP_TASKS.discard)
     return {"channel": channel, "conversation_id": conv}
-
-
-async def _publish_failure(channel: str, request: ChatRequest, exc: Exception) -> None:
-    """A failed turn's ``done`` and ``chat_stream_end``, stamped like the
-    broadcaster stamps a turn's events."""
-    from common.session_broker import broker
-
-    detail = getattr(exc, "detail", None)
-    refusal = detail.get("refusal") if isinstance(detail, dict) else None
-    if isinstance(detail, dict):
-        detail = detail.get("message")
-    error = str(detail if detail is not None else exc) or "the turn failed"
-    stamp = {"conversation_id": request.conversation_id, "origin_client": request.client_id}
-    if request.client_turn_id:
-        stamp["client_turn_id"] = request.client_turn_id
-    done = {**stamp, "type": "done", "ok": False, "response": f"Error: {error}",
-            "error": error, "agent_id": request.agent_id}
-    status = getattr(exc, "status_code", None)
-    if status is not None:
-        done["status"] = status
-    if refusal:
-        done["refusal"] = refusal
-    try:
-        await broker.apublish(channel, done)
-        await broker.apublish(channel, {**stamp, "type": "chat_stream_end"})
-    except Exception:  # noqa: BLE001 - the broker is down; nothing else can tell the caller
-        log.warning("could not publish a failed turn on %s", channel, exc_info=True)

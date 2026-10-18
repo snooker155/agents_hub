@@ -11,7 +11,7 @@ domain: hr
 tools: [list_workspace_files, read_workspace_file, save_workspace_file, search_memory, write_memory, read_structured_memory, write_structured_memory, create_view, document_set, ask_user, think]
 connectors:
   required: []
-  optional: [google, microsoft]
+  optional: []
 outcome:
   rubric: |
     - Each candidate is assessed against the role's listed criteria, and every rating (met, partly met, not shown) quotes or points to the CV text that supports it.

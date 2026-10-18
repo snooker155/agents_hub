@@ -146,32 +146,6 @@ def test_a_run_on_this_host_with_no_heartbeat_and_a_dead_pid_is_failed(monkeypat
 
 # ── pending runs ─────────────────────────────────────────────────────────
 
-def test_a_pending_run_whose_queue_row_failed_is_failed():
-    from common import run_queue
-
-    _write_run("scenario", "sim-run-3", status="pending", heartbeat_at=None)
-    run_queue.enqueue("sim-run-3", "scenario", {"kind": "scenario", "run_id": "sim-run-3"})
-    for _ in range(run_queue.MAX_ATTEMPTS):
-        run_queue.claim("w1")
-        run_queue.requeue("sim-run-3", "boom")
-    assert run_queue.get("sim-run-3")["status"] == run_queue.STATUS_FAILED
-
-    assert run_watchdog._sweep_entity_runs(kinds=("scenario",)) == 1
-    rec = entity_runs.get("sim-run-3")
-    assert rec["status"] == "failed"
-    assert "boom" in rec["error"]
-
-
-def test_a_pending_run_with_a_live_queue_row_is_left_alone():
-    from common import run_queue
-
-    _write_run("scenario", "sim-run-4", status="pending", heartbeat_at=None)
-    run_queue.enqueue("sim-run-4", "scenario", {"kind": "scenario", "run_id": "sim-run-4"})
-
-    assert run_watchdog._sweep_entity_runs(kinds=("scenario",)) == 0
-    assert entity_runs.get("sim-run-4")["status"] == "pending"
-
-
 # ── orphans and unfinished stop requests ──────────────────────────────────
 
 def test_an_orphan_without_pid_heartbeat_or_host_is_failed_not_resumed(monkeypatch):

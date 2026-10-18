@@ -67,10 +67,6 @@ def test_the_agent_may_not_fill_a_secret(jira):
     with pytest.raises(proposals.ProposalError) as err:
         proposals.build("connector", "jira", {"api_token": "abc"})
     assert err.value.code == "secret_from_agent"
-    with pytest.raises(proposals.ProposalError) as err:
-        proposals.build("database", "warehouse", {"kind": "postgres", "dsn": "postgres://u:p@h/db"},
-                        workspace="acme")
-    assert err.value.code == "secret_from_agent"
 
 
 def test_unknown_targets_and_fields_say_what_exists():
@@ -80,9 +76,6 @@ def test_unknown_targets_and_fields_say_what_exists():
     with pytest.raises(proposals.ProposalError) as err:
         proposals.build("connector", "jira", {"password": "x"})
     assert err.value.code == "unknown_field"
-    with pytest.raises(proposals.ProposalError) as err:
-        proposals.build("connector", "databases")
-    assert "'database' kind" in str(err.value)
     with pytest.raises(proposals.ProposalError):
         proposals.build("teleport", "x")
 
@@ -111,18 +104,18 @@ def test_an_mcp_server_claims_everything_and_asks_for_secret_headers():
 
 
 def test_a_watcher_asks_for_the_secret_it_names_when_the_workspace_lacks_it(key):
-    p = proposals.build("watcher", "inbox", {"kind": "imap", "host": "imap.acme.test",
-                                             "username": "ann", "password_secret": "MAIL_PASSWORD"},
+    p = proposals.build("watcher", "status", {"kind": "http", "url": "https://status.acme.test/api",
+                                              "headers_secret": "STATUS_HEADERS"},
                         workspace="acme")
     fields = _keys(p)
-    assert fields["secret:MAIL_PASSWORD"]["secret"]
+    assert fields["secret:STATUS_HEADERS"]["secret"]
     assert proposals.required_role(p)["role"] == "owner"
     from common import secrets
-    secrets.set_secret("acme", "MAIL_PASSWORD", "hunter2")
-    again = proposals.build("watcher", "inbox", {"kind": "imap", "host": "imap.acme.test",
-                                                 "username": "ann", "password_secret": "MAIL_PASSWORD"},
+    secrets.set_secret("acme", "STATUS_HEADERS", '{"Authorization": "Bearer t"}')
+    again = proposals.build("watcher", "status", {"kind": "http", "url": "https://status.acme.test/api",
+                                                  "headers_secret": "STATUS_HEADERS"},
                             workspace="acme")
-    assert "secret:MAIL_PASSWORD" not in _keys(again)
+    assert "secret:STATUS_HEADERS" not in _keys(again)
     assert proposals.required_role(again)["role"] == "editor"
 
 
@@ -130,7 +123,8 @@ def test_options_name_things_but_never_values(key, jira):
     from common import secrets
     secrets.set_secret("acme", "DEPLOY_KEY", "do-not-show")
     out = proposals.options(workspace="acme")
-    assert {"connector", "channel", "mcp_server", "database", "watcher", "secret"} <= set(out)
+    assert {"connector", "mcp_server", "watcher", "secret"} <= set(out)
+    assert not {"channel", "database"} & set(out)
     assert "DEPLOY_KEY" in out["secret"]["existing"]
     assert "do-not-show" not in json.dumps(out)
     jira_opts = next(t for t in out["connector"]["targets"] if t["target"] == "jira")
@@ -201,17 +195,6 @@ def test_applying_an_mcp_server_attaches_it_with_the_persons_claim(monkeypatch):
     with pytest.raises(proposals.ProposalError) as err:
         proposals.build("mcp_server", "tickets", {"command": "x"}, workspace="acme")
     assert err.value.status == 409
-
-
-def test_applying_a_database_connection_tests_it(tmp_path):
-    import sqlite3
-    from connectors.databases import store as db_store
-    path = tmp_path / "shop.db"
-    sqlite3.connect(path).execute("CREATE TABLE t (x INTEGER)").connection.commit()
-    p = proposals.build("database", "shop", {"kind": "sqlite"}, workspace="acme")
-    out = _run(proposals.apply(p, secrets={"dsn": str(path)}))
-    assert out["ok"], out
-    assert [c["name"] for c in db_store.list_connections("acme")] == ["shop"]
 
 
 # ── the routes ───────────────────────────────────────────────────────────────
@@ -285,22 +268,6 @@ def test_an_agent_may_not_apply_its_own_proposal(client, jira):
                        headers={"x-test-principal": "service:svc:admin"})
     assert resp.status_code == 403
     assert not jira.is_configured()
-
-
-def test_in_multi_mode_a_secret_needs_the_workspace_owner(client, key, monkeypatch):
-    from common import identity
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
-    monkeypatch.setattr("common.access.can_see_workspace", lambda principal, ws: True)
-    monkeypatch.setattr(identity, "membership_role", lambda ws, uid: "editor")
-    run_id = _rid()
-    _open_run(run_id)
-    p = proposals.build("secret", "API_TOKEN", {}, workspace="acme")
-    row = tool_approvals.open_approval(run_id=run_id, tool=proposals.TOOL, tool_input=p,
-                                       workspace="acme", owner="u-owner")
-    resp = client.post(f"/api/connection-proposals/{row['approval_id']}/apply",
-                       json={"secrets": {"value": "v"}}, headers={"x-test-principal": "user:u-owner:member"})
-    assert resp.status_code == 403
-    assert tool_approvals.get(row["approval_id"])["status"] == "pending"
 
 
 # ── the agent's tools ────────────────────────────────────────────────────────
@@ -424,7 +391,7 @@ def test_a_proposal_past_its_deadline_reads_as_expired(jira):
 
 
 def test_a_connector_proposed_in_a_workspace_lives_there_only(jira):
-    from connectors.channels.store import in_workspace
+    from connectors.store import in_workspace
     p = proposals.build("connector", "jira", {"base_url": "https://team.atlassian.net",
                                               "email": "t@team.test"}, workspace="team-a")
     assert p["workspace"] == "team-a" and p["scope"] == "workspace"

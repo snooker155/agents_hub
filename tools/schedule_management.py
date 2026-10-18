@@ -108,10 +108,6 @@ class ScheduleNotificationInput(BaseModel):
     run_at: Optional[str] = Field(None, description="ISO 8601 datetime when to notify (UTC if no offset)")
     delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
     recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, or weekly")
-    telegram: bool = Field(
-        False,
-        description="When it fires, also deliver to the user's bound Telegram chat(s). Default false = inbox/bell only.",
-    )
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -138,10 +134,6 @@ class ScheduleTaskInput(BaseModel):
         None,
         description="Optional agent to run the task. Omit to let the orchestrator pick one at fire time.",
     )
-    telegram: bool = Field(
-        False,
-        description="Also send the 'task started' notification to the user's bound Telegram chat(s). Default false = inbox/bell only.",
-    )
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -156,12 +148,8 @@ class NotifyUserInput(BaseModel):
     severity: str = Field("info", description="One of: info, success, warning, error")
     channels: Optional[List[str]] = Field(
         None,
-        description="Extra delivery channels besides the inbox: any of telegram, slack, discord, teams, mail, webhook. "
-                    "A chat channel reaches the chats bound in this workspace on the Connectors page.",
-    )
-    telegram: bool = Field(
-        False,
-        description="Also deliver to the user's bound Telegram chat(s). Default false = inbox/bell only.",
+        description="Extra delivery channels besides the inbox: slack or webhook, the endpoints "
+                    "configured for this workspace on the Connectors page's Webhooks tab.",
     )
 
     @model_validator(mode="after")
@@ -202,14 +190,12 @@ def schedule_notification(
     run_at: Optional[str] = None,
     delay_minutes: Optional[int] = None,
     recurrence: Recurrence = Recurrence.none,
-    telegram: bool = False,
 ) -> str:
     """Schedule a future notification (reminder) for the user.
 
     At the scheduled time the user gets an entry in their notification inbox
     (and the dashboard bell). Use for reminders like "remind me tomorrow to
-    review the report". Set telegram=true to also deliver to the user's bound
-    Telegram chat(s) when it fires. Returns JSON with the created job.
+    review the report". Returns JSON with the created job.
     """
     try:
         when = _resolve_run_at(run_at, delay_minutes)
@@ -221,7 +207,7 @@ def schedule_notification(
             recurrence=recurrence,
             workspace=resolve_active_workspace(),
             created_by="agent",
-            channels=["dashboard", "telegram"] if telegram else ["dashboard"],
+            channels=["dashboard"],
         )
         _record_job(job, "scheduled")
         return _json_ok({
@@ -246,7 +232,6 @@ def schedule_task(
     cron: Optional[str] = None,
     timezone: Optional[str] = None,
     agent_id: Optional[str] = None,
-    telegram: bool = False,
 ) -> str:
     """Schedule agent work for the future.
 
@@ -256,8 +241,7 @@ def schedule_task(
     generate a summary" or "in 3 hours run the tests again". For recurrence
     'cron', pass a cron expression; timezone (IANA name, default UTC) applies
     to cron and keeps hourly/daily/weekly at the same local time across a DST
-    change. Set telegram=true to also send that start notification to the
-    user's bound Telegram chat(s). Returns JSON with the created job.
+    change. Returns JSON with the created job.
     """
     try:
         if agent_id and _agent_unavailable(agent_id):
@@ -274,7 +258,7 @@ def schedule_task(
             workspace=resolve_active_workspace(),
             created_by="agent",
             agent_id=agent_id or None,
-            channels=["dashboard", "telegram"] if telegram else ["dashboard"],
+            channels=["dashboard"],
         )
         _record_job(job, "scheduled")
         return _json_ok({
@@ -290,7 +274,7 @@ schedule_task.description += "\n\n" + _TIME_HELP
 
 
 @tool("notify_user", args_schema=NotifyUserInput)
-def notify_user(title: str, message: str = "", severity: str = "info", telegram: bool = False,
+def notify_user(title: str, message: str = "", severity: str = "info",
                 channels: Optional[List[str]] = None) -> str:
     """Send the user an immediate notification (inbox + dashboard bell), right now.
 
@@ -300,14 +284,11 @@ def notify_user(title: str, message: str = "", severity: str = "info", telegram:
     need their input. Do NOT use it for routine progress updates: run results
     are already reported to the user automatically.
 
-    Set telegram=true to also push the message to the user's bound Telegram
-    chat(s) for this workspace, or name other channels (slack, discord, teams,
-    mail, webhook) in ``channels``; otherwise it is inbox/bell only.
+    Name the workspace's notification endpoints (slack, webhook) in
+    ``channels`` to push it there too; otherwise it is inbox/bell only.
     """
     try:
         extra = [str(c).strip().lower() for c in (channels or []) if str(c).strip()]
-        if telegram:
-            extra.append("telegram")
         channels = ["dashboard", *dict.fromkeys(extra)]
         n = plan_service.create_notification(
             title=title,

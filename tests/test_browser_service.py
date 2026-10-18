@@ -10,6 +10,7 @@ Run: ``python -m pytest tests/test_browser_service.py -q``
 """
 from __future__ import annotations
 
+import socket
 import sys
 import textwrap
 import time
@@ -58,9 +59,6 @@ def quiet_probes(monkeypatch, tmp_path):
 
 @pytest.fixture
 def client(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
     from fastapi.testclient import TestClient
     from dashboard.backend.main import app
     return TestClient(app)
@@ -102,8 +100,9 @@ def test_start_local_refuses_without_a_token_or_chromium(quiet_probes, monkeypat
 def test_start_local_runs_the_service_script_and_stop_ends_it(quiet_probes, monkeypatch, tmp_path):
     """A stand-in app.py that answers /healthz, so the whole start, remember,
     find-again and stop path runs without Chromium."""
-    from deployments.runner import free_port
-    port = free_port()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
     service_dir = tmp_path / "svc"
     service_dir.mkdir()
     (service_dir / "app.py").write_text(textwrap.dedent("""

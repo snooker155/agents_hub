@@ -7,11 +7,11 @@ the calculator.
 
 Every tool is classified by what it grants, not by what it is called:
 
-- **`ingests_untrusted`** — pulls text the operator does not control into the
-  agent's context (web fetches, page content, run logs, inbound chat messages).
-- **`reads_private`** — can read data the operator would not want published
+- **`ingests_untrusted`**: pulls text the operator does not control into the
+  agent's context (web fetches, page content, run logs, inbound webhook payloads).
+- **`reads_private`**: can read data the operator would not want published
   (files, memory, tasks, run records).
-- **`can_exfiltrate`** — can move agent-chosen bytes outside the system (a
+- **`can_exfiltrate`**: can move agent-chosen bytes outside the system (a
   fetched URL carries its query string; a notification carries its payload).
 
 An agent holding **all three** is a data-exfiltration primitive: text it ingests
@@ -43,10 +43,6 @@ against the single most dangerous tool.
 
 ## Lifting the block: per agent, or for every agent
 
-An agent of an [isolated workspace](isolation.md) is not judged at all: its
-shell and code have no network and its tools are the perimeter's allowlist, so
-nothing it combines can send data out.
-
 Two switches turn a refusal into a warning, and both keep the combination
 visible on the agent page and in the log rather than pretending it is gone.
 
@@ -75,11 +71,10 @@ the guard to `warn`.
 ## When a chat turn is refused
 
 A turn stopped by the guard shows a card in the chat, not a red error: the
-reason in plain words and, for an editor of the agent's workspace, the button
-**Allow for this agent**. The button records the same per-agent exception as the
-agent editor's switch (`POST /api/agents/{id}/capability-override`, which now
-needs editor on the agent's workspace). A viewer sees the reason and is told to
-ask an editor. The system workspace rule has no button. If the guard is in
+reason in plain words and the button **Allow for this agent**. The button
+records the same per-agent exception as the agent editor's switch
+(`POST /api/agents/{id}/capability-override`). The system workspace rule has
+no button. If the guard is in
 `block` mode and exceptions require a container, the card says the exception
 is saved but the turn still stops until the agent runs in a container. After
 the action, **Try again** sends the same message. The streamed `done` event and
@@ -101,7 +96,7 @@ it against the caller's `delegates` list at run time (see
 
 So the guard evaluates the *effective* set: an agent's own grants, unioned
 with the grants of every agent it can reach through one of those tools. An
-agent's `delegates` field decides reach — a non-empty allowlist restricts it
+agent's `delegates` field decides reach: a non-empty allowlist restricts it
 to exactly those ids; empty or absent means unrestricted, and it can reach
 every agent in the registry. `create_agent_tool` and `modify_agent_tool` are
 not delegation edges: whatever they create or change is re-validated by this
@@ -125,7 +120,7 @@ the guard was turned on is grandfathered: it saves unchanged or narrower, but
 cannot gain a new violating capability.
 
 The tables backing all of this live in `tools/capabilities.py`: `CAPABILITY_GRANTS`
-(what a tool grants directly), `REVIEWED_NO_GRANT` (classified, grants nothing —
+(what a tool grants directly), `REVIEWED_NO_GRANT` (classified, grants nothing:
 a write into the hub's own store, a control action, a piece of configuration),
 and `DELEGATING_TOOLS` (the seven edges above). Every catalog tool id ends up in
 exactly one of them; a test enforces that, and `python -m agents.capability_guard`
@@ -320,8 +315,7 @@ The same rules as `fetch_url`, enforced twice:
   no request can bypass the filter, and downloads are off.
 - **Reachability.** The service requires the shared token on every call and
   refuses to start without one. In compose it sits alone on its own network
-  with no published port, so pages cannot reach the database, Redis or any
-  other of our services.
+  with no published port, so pages cannot reach any other of our services.
 
 What remains: the host is resolved by the filter and then again by the
 browser, so a DNS answer that changes in between (rebinding) is not caught by
@@ -341,20 +335,14 @@ the approval gate on, it needs a yes every time.
 Node or Bash snippet in a throwaway sandbox and returns its exit code,
 duration, which [sandbox provider](sandboxes.md) ran it, stdout and stderr,
 truncated like `run_shell`'s. The provider is resolved by
-`sandbox/registry.py`: the run's environment (`sandbox_provider`) first, else
-`CODE_RUNNER_PROVIDER` (default `docker`); see [sandboxes](sandboxes.md) for
-docker, local, e2b and modal.
+`sandbox/registry.py` from `CODE_RUNNER_PROVIDER` (default `docker`); see
+[sandboxes](sandboxes.md) for docker and local.
 
 The default (docker) container has no network, a read-only filesystem apart
 from a small `/tmp`, no capabilities, runs as `nobody`, and is limited in
-memory, CPU and process count. It receives no environment from the hub. A
-run whose environment sets network `limited` relaxes that to the
-environment's own allowed hosts instead of a blanket refusal; everything
-else (no environment, or `unrestricted`/`none`) keeps the historical
-no-network sandbox. The workspace is not mounted unless the agent asks:
-`mount_workspace=True` mounts it read-only at `/work` (docker and local
-only; the remote providers, e2b and modal, have no local filesystem to
-mount from and refuse the request instead of silently ignoring it).
+memory, CPU and process count. It receives no environment from the hub. The
+workspace is not mounted unless the agent asks:
+`mount_workspace=True` mounts it read-only at `/work`.
 
 ### Why prefer it over run_shell
 
@@ -378,10 +366,8 @@ what it finds. Its default timeout is 60 seconds, capped by
   in a temporary directory with the provider keys scrubbed from its
   environment and the same timeout. That has no network or filesystem
   isolation at all, so it is an opt-in for development machines.
-- `CODE_RUNNER_PROVIDER` (default `docker`): the sandbox provider a run gets
-  when its environment does not name one. `E2B_API_KEY`/`E2B_TEMPLATE` and
-  `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`/`MODAL_IMAGE` configure the e2b and
-  modal providers; see [sandboxes](sandboxes.md).
+- `CODE_RUNNER_PROVIDER` (default `docker`): the sandbox provider; see
+  [sandboxes](sandboxes.md).
 
 Capabilities: in the default (docker, network none) sandbox `run_code` only
 reads private data (the optional workspace mount), since nothing can come in
@@ -389,15 +375,6 @@ or go out without a network. With `CODE_RUNNER_FALLBACK=local` it is
 classified like `run_shell`, the whole trifecta, because the snippet then has
 the network and the host's filesystem. It is not idempotent, and with the
 approval gate on it needs a yes every time, like `run_shell`.
-
-In a run whose environment has a `limited` network the snippet reaches that
-environment's hosts, whatever the provider (docker through the enforced
-fence, e2b and modal through their own allowlists). It then gets no
-workspace mount (`mount_workspace` is refused), and the guard classifies it
-at build time, when the run's environment is known, as ingesting untrusted
-text and able to send data out, like the web tools: an agent that also reads
-private files is the whole trifecta and is refused. Any other network
-setting, `unrestricted` included, still gives the snippet no network.
 
 The Chat code panel's Run button (see [chat](chat.md#code-panel) and
 [views](views.md#code)) goes through the same sandbox: `POST
@@ -409,26 +386,16 @@ mounting read-only exactly the way `mount_workspace` does here.
 
 ## Connector tools
 
-Tools that integrate with external services come from [connectors](connectors.md),
-[channels](channels.md), [trackers](trackers.md) and [integrations](integrations.md).
+Tools that integrate with external services come from [connectors](connectors.md)
+and [trackers](trackers.md).
 Each grants one or more capabilities: reading typically grants `reads_private`
 and `ingests_untrusted`, writing grants `can_exfiltrate`.
 
 | Connector | Tools | Grants |
 |---|---|---|
-| Chat channels | `channel_send` | `can_exfiltrate` |
-| Git | `git_publish` | `can_exfiltrate` |
-| Issue trackers (Jira, Linear) | `tracker_list_issues`, `tracker_get_issue`, `tracker_sync` | `reads_private`, `ingests_untrusted` |
+| Git (GitLab) | `git_publish` | `can_exfiltrate` |
+| Issue trackers (Jira) | `tracker_list_issues`, `tracker_get_issue`, `tracker_sync` | `reads_private`, `ingests_untrusted` |
 | | `tracker_comment`, `tracker_transition`, `tracker_create_issue` | `can_exfiltrate` |
-| Google Workspace | `google_drive_search`, `google_drive_import`, `google_sheets_read`, `google_calendar_list` | `reads_private`, `ingests_untrusted` |
-| | `google_sheets_append`, `google_docs_create`, `google_calendar_create` | `can_exfiltrate` |
-| Microsoft Graph | `outlook_calendar_list` | `reads_private`, `ingests_untrusted` |
-| | `outlook_calendar_create` | `can_exfiltrate` |
-| Notion | `notion_search`, `notion_read_page`, `notion_import` | `reads_private`, `ingests_untrusted` |
-| | `notion_create_page`, `notion_append` | `can_exfiltrate` |
-| Confluence | `confluence_search`, `confluence_read_page`, `confluence_import` | `reads_private`, `ingests_untrusted` |
-| | `confluence_create_page` | `can_exfiltrate` |
-| Databases | `db_list_connections`, `db_schema`, `db_query` | `reads_private` |
 | Connection proposals | `connection_options`, `propose_connection`, `connection_proposal_status` | none: names and flags only, a person applies the change ([connectors](connectors.md)) |
 
 ## Group aliases
@@ -451,7 +418,7 @@ person answers on the task page, and run its own code around every tool call.
 See [hooks](hooks.md).
 
 A [proactive agent](proactive.md)'s profile is checked the same way: a
-webhook, Telegram or file trigger counts as ingesting untrusted content, a
+webhook or file trigger counts as ingesting untrusted content, a
 delivery channel other than the inbox as sending data outside. `wake_agent`
 grants nothing: it nudges another agent's pulse and gets only an
 acknowledgement back.

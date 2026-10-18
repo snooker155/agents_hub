@@ -1,9 +1,8 @@
 """Lookup kinds: admin (see chat/lookup_kinds/__init__.py).
 
-Every kind here is service-wide (``admin=True``): accounts, groups, the audit
-trail, the hub's own health, containers, the web access log, non-secret
-settings and the cluster map. ``chat.lookup.lookup`` already refuses a
-non-administrator before any of these run (``_require_admin``), so a
+Every kind here is service-wide (``admin=True``): the hub's own health,
+containers, the web access log, and non-secret settings.
+``chat.lookup.lookup`` only reads them from a service thread, so a
 function below never re-checks who is asking; it only has to stay cheap
 (no network, no subprocess beyond a cached local probe) and to keep content
 out of what it returns (log text, secret values, page snippets), the same
@@ -13,7 +12,6 @@ No actions: an administrator reads these, nothing here changes anything.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -49,122 +47,6 @@ def _safe_details(raw: Any) -> Dict[str, Any]:
     return {k: v for k, v in raw.items() if k in _SAFE_DETAIL_KEYS and _plain(v)}
 
 
-# ── user ─────────────────────────────────────────────────────────────────────
-
-def _last_logins() -> Dict[str, str]:
-    """Newest ``auth_sessions.created_at`` per user, login or not still live:
-    an expired session still answers "when did they last sign in"."""
-    from common import db
-    rows = db.get_conn().execute(
-        "SELECT user_id, MAX(created_at) AS last FROM auth_sessions GROUP BY user_id").fetchall()
-    return {str(r["user_id"]): r["last"] for r in rows if r["last"]}
-
-
-def _list_users(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from common import identity
-    rows = []
-    for u in identity.list_users():
-        if not lookup.matches(query, u.get("username"), u.get("display_name"), u.get("email")):
-            continue
-        subtitle = " · ".join(x for x in [
-            u.get("role"), "disabled" if u.get("disabled") else "active",
-        ] if x)
-        rows.append(lookup.row(u["id"], u.get("display_name") or u["username"], subtitle, "/users"))
-    rows.sort(key=lambda r: r["label"].lower())
-    return rows[:limit]
-
-
-def _user_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
-    from common import identity
-    u = identity.get_user(entity_id)
-    if u is None:
-        return None
-    workspaces = identity.workspaces_for_user(u["id"])
-    fields: Dict[str, Any] = {
-        "user_id": u["id"], "username": u["username"], "display_name": u.get("display_name"),
-        "role": u.get("role"), "active": not u.get("disabled"), "created_at": u.get("created_at"),
-        "last_login": _last_logins().get(str(u["id"])),
-        "workspaces_count": len(workspaces), "spend_limit_usd": u.get("spend_limit_usd"),
-        "source": u.get("source"),
-    }
-    # The Users page shows an account's email next to its name; a person
-    # provisioned without one simply has nothing here.
-    if u.get("email"):
-        fields["email"] = u["email"]
-    return {"title": u.get("display_name") or u["username"], "fields": fields, "url": "/users"}
-
-
-# ── group ────────────────────────────────────────────────────────────────────
-
-def _list_groups(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from common import groups
-    rows = []
-    for g in groups.list_groups():
-        if not lookup.matches(query, g.get("name"), g.get("display_name")):
-            continue
-        rows.append(lookup.row(
-            g["id"], g.get("display_name") or g["name"],
-            f"{g.get('member_count', 0)} member(s) · {g.get('source') or 'manual'}", "/users"))
-    return rows[:limit]
-
-
-def _group_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
-    from common import groups
-    g = groups.get_group(entity_id)
-    if g is None:
-        return None
-    mappings = groups.list_mappings(group_name=g["name"])
-    fields = {
-        "group_id": g["id"], "name": g["name"], "display_name": g.get("display_name"),
-        "source": g.get("source"), "member_count": len(groups.group_member_ids(g["id"])),
-        "created_at": g.get("created_at"),
-        "mappings": [{"target": m.get("target"), "role": m.get("role"), "workspace": m.get("workspace")}
-                     for m in mappings],
-    }
-    return {"title": g.get("display_name") or g["name"], "fields": fields, "url": "/users"}
-
-
-# ── audit ────────────────────────────────────────────────────────────────────
-
-def _list_audit(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from common import audit
-    page = audit.query(limit=limit, text=query or None)
-    rows = []
-    for r in page.get("items", []):
-        who = r.get("actor_name") or r.get("actor_id") or r.get("actor_kind") or "system"
-        subtitle = " · ".join(x for x in [
-            r.get("object_type"), r.get("object_id"), r.get("workspace"), r.get("result"),
-            lookup.short_time(r.get("at")),
-        ] if x)
-        rows.append(lookup.row(r["id"], f"{r.get('action')} by {who}", subtitle, "/audit",
-                                at=r.get("at")))
-    return rows[:limit]
-
-
-def _audit_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
-    from common import db
-    try:
-        row_id = int(entity_id)
-    except (TypeError, ValueError):
-        return None
-    row = db.get_conn().execute("SELECT * FROM audit_log WHERE id = ?", (row_id,)).fetchone()
-    if row is None:
-        return None
-    try:
-        details = json.loads(row["details"] or "{}")
-    except (TypeError, ValueError):
-        details = {}
-    fields: Dict[str, Any] = {
-        "at": row["at"], "actor_name": row["actor_name"] or row["actor_id"] or row["actor_kind"],
-        "action": row["action"], "object_type": row["object_type"], "object_id": row["object_id"],
-        "workspace": row["workspace"], "result": row["result"],
-    }
-    safe = _safe_details(details)
-    if safe:
-        fields["details"] = safe
-    return {"title": f"{row['action']} ({row['result']})", "fields": fields, "url": "/audit"}
-
-
 # ── health (common/health.py snapshot + common/doctor.py's cheap checks) ────
 
 #: Checks that reach the network (a provider, the browser service, the model
@@ -176,7 +58,7 @@ def _audit_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
 #: worker thread, only for ``GET /api/health/doctor``), so these three are
 #: simply left out of what this kind lists or runs; asked for by id, they
 #: answer "skip" rather than probing live or pretending not to exist.
-_NETWORKED_CHECKS = frozenset({"provider", "browser", "models_runtime"})
+_NETWORKED_CHECKS = frozenset({"provider", "browser"})
 
 #: The id of the one row that is the overall snapshot rather than a check.
 _SNAPSHOT_ID = "snapshot"
@@ -367,7 +249,7 @@ def _docker_available() -> Optional[bool]:
 
 
 def _settings_categories() -> Dict[str, Dict[str, Any]]:
-    from common.config import agent_execution_mode, chat_execution
+    from common.config import agent_execution_mode
     from common.config import settings as cfg
 
     providers: Dict[str, Any] = {
@@ -411,7 +293,7 @@ def _settings_categories() -> Dict[str, Dict[str, Any]]:
     }
 
     execution: Dict[str, Any] = {
-        "agent_execution_mode": agent_execution_mode(), "chat_execution": chat_execution(),
+        "agent_execution_mode": agent_execution_mode(),
         "agent_docker_image": cfg.agent_docker_image, "agent_docker_network": cfg.agent_docker_network,
         # Extra docker arguments can carry ``-e KEY=value``: whether any are set.
         "agent_docker_extra_args_set": bool(cfg.agent_docker_extra_args),
@@ -451,42 +333,8 @@ def _setting_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
     return {"title": f"Settings: {entity_id}", "fields": fields, "url": "/settings"}
 
 
-# ── cluster ──────────────────────────────────────────────────────────────────
-
-def _list_cluster(ctx: Any, query: str, limit: int) -> List[Dict[str, Any]]:
-    from common import members
-    rows = []
-    for m in members.list_members():
-        if not lookup.matches(query, m.get("member_id"), m.get("role"), m.get("host")):
-            continue
-        subtitle = " · ".join(x for x in [m.get("role"), m.get("status"), m.get("host")] if x)
-        rows.append(lookup.row(m["member_id"], m["member_id"], subtitle, "/cluster"))
-    return rows[:limit]
-
-
-def _cluster_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
-    from common import members
-    m = members.get(entity_id)
-    if m is None:
-        return None
-    fields = {k: m.get(k) for k in (
-        "member_id", "role", "host", "status", "started_at", "heartbeat_at",
-        "heartbeat_age_seconds", "uptime_seconds", "version", "self", "pid",
-    ) if m.get(k) is not None}
-    return {"title": m["member_id"], "fields": fields, "url": "/cluster"}
-
-
 # ── registration ─────────────────────────────────────────────────────────────
 
-lookup.register(lookup.LookupKind(
-    "user", "accounts: username, display name, role, whether they are active, workspaces count, "
-            "spend limit", _list_users, _user_card, ("/users",), admin=True))
-lookup.register(lookup.LookupKind(
-    "group", "groups, their member count and the role/workspace rules they grant",
-    _list_groups, _group_card, ("/users",), admin=True))
-lookup.register(lookup.LookupKind(
-    "audit", "the audit trail: who did what, when, to which object, and the result",
-    _list_audit, _audit_card, ("/audit",), admin=True))
 lookup.register(lookup.LookupKind(
     "health", "the service's own health: a snapshot and the doctor's checks (id 'snapshot' or a "
               "check id)", _list_health, _health_card, ("/health",), admin=True))
@@ -499,6 +347,3 @@ lookup.register(lookup.LookupKind(
 lookup.register(lookup.LookupKind(
     "setting", "non-secret hub settings by category (providers, rag, web, execution); a secret "
               "reads as set true/false", _list_settings, _setting_card, ("/settings",), admin=True))
-lookup.register(lookup.LookupKind(
-    "cluster", "cluster members, their role, liveness and last heartbeat", _list_cluster,
-    _cluster_card, ("/cluster", "/deployment"), admin=True))

@@ -12,7 +12,6 @@ Channels:
 - ``containers``               → ``{type: "snapshot", data: [...]}``  (docker ps)
 - ``logs:instance:<instance_id>`` → ``{type: "logs", content: "..."}``  (a resident instance's carrier log)
 - ``logs:container:<name>``    → ``{type: "logs", content: "..."}``
-- ``logs:member:<id>``         → ``{type: "logs", content: "..."}``  (a replica's or worker's own log)
 """
 from __future__ import annotations
 
@@ -59,15 +58,6 @@ def _instance_log(instance_id: str) -> Optional[str]:
         return None
 
 
-def _member_log(member_id: str) -> Optional[str]:
-    from common import members
-    try:
-        return members.read_log(member_id, tail=400)
-    except Exception:  # noqa: BLE001 - a log tail for one open panel must not break the publisher
-        log.debug("member log read failed for %s", member_id, exc_info=True)
-        return None
-
-
 def _container_log(name: str) -> Optional[str]:
     from managers import container_manager
     try:
@@ -105,8 +95,6 @@ async def _publish_snapshots() -> None:
             content = await _run_blocking(_instance_log, resource)
         elif kind == "container":
             content = await _run_blocking(_container_log, resource)
-        elif kind == "member":
-            content = await _run_blocking(_member_log, resource)
         else:
             continue
         if content is not None:

@@ -45,6 +45,6 @@ def test_unknown_model_is_not_priced(run_cost):
 
 
 def test_local_model_is_free_not_unpriced(run_cost):
-    run = {"provider": "hub-local", "model": "qwen3-8b",
+    run = {"provider": "ollama", "model": "qwen3-8b",
            "process": {"token_usage": {"inbound_tokens": 10, "outbound_tokens": 10}}}
-    assert run_cost(run, "qwen3-8b", "hub-local", {"total_tokens": 20}) == {"usd": 0.0, "priced": True}
+    assert run_cost(run, "qwen3-8b", "ollama", {"total_tokens": 20}) == {"usd": 0.0, "priced": True}

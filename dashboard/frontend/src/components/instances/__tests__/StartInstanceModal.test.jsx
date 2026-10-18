@@ -3,25 +3,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../../i18n';
 
-// The Run button's form: the agent starts in a service (its own, else the
-// workspace's runner) with the workspace and environment the operator
-// picked, and the page of the replica opens; a runner replica opens with the
-// agent picked, since it answers for whichever agent a message names. A
-// refusal from the backend (a paused service, one at its replica limit, an
-// unknown environment) is shown inside the form instead of being swallowed.
+// The Run button's form: the agent starts with the workspace the operator
+// picked, and the page of the copy opens; a runner opens with the agent
+// picked, since it
+// answers for whichever agent a message names. A refusal from the backend (a
+// paused service, one at its replica limit) is shown inside the form instead
+// of being swallowed.
 
 const ok = (data) => Promise.resolve({ data });
 
 const startInstance = vi.fn(() => ok({ instance_id: 'inst_new1' }));
 const getWorkspaces = vi.fn(() => ok([{ name: 'team', label: 'Team' }]));
-const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'Sandbox' }]));
 const getAgents = vi.fn(() => ok([]));
 const navigate = vi.fn();
 
 vi.mock('../../../api', () => ({
   startInstance: (...a) => startInstance(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
-  getEnvironments: (...a) => getEnvironments(...a),
   getAgents: (...a) => getAgents(...a),
 }));
 
@@ -47,21 +45,20 @@ beforeEach(() => {
 });
 
 describe('StartInstanceModal', () => {
-  it('starts the agent in a service with the chosen inputs and opens the replica', async () => {
+  it('starts the agent with the chosen inputs and opens the copy', async () => {
     show();
-    await waitFor(() => expect(getEnvironments).toHaveBeenCalled());
+    await waitFor(() => expect(getWorkspaces).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByDisplayValue('Workspace default'), { target: { value: 'env-1' } });
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
 
     await waitFor(() => expect(startInstance).toHaveBeenCalledTimes(1));
     expect(startInstance.mock.calls[0][0]).toEqual({
-      agent_id: 'swe_agent', workspace: 'team', environment_id: 'env-1',
+      agent_id: 'swe_agent', workspace: 'team',
     });
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/instances/inst_new1'));
   });
 
-  it('opens a runner replica with the agent it was started for', async () => {
+  it('opens a runner with the agent it was started for', async () => {
     startInstance.mockImplementationOnce(() => ok({ instance_id: 'inst_run1', kind: 'runner', for_agent: 'swe_agent' }));
     show();
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
@@ -70,7 +67,7 @@ describe('StartInstanceModal', () => {
 
   it('shows the backend refusal inside the form', async () => {
     startInstance.mockImplementationOnce(() => Promise.reject({
-      response: { data: { detail: "Service 'team runner' is paused" } },
+      response: { data: { detail: "Agent 'swe_agent' is paused" } },
     }));
     show();
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));

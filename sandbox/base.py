@@ -4,29 +4,26 @@ A sandbox runs one snippet of code to completion and reports what happened:
 nothing here is provider-specific (no docker command line, no SDK object).
 ``SandboxRequest`` is what a caller asks for; ``SandboxResult`` is what came
 back; ``SandboxProvider`` is the seam between them. ``sandbox/registry.py``
-picks a provider by name; ``sandbox/docker.py``, ``local.py``, ``e2b.py`` and
-``modal.py`` are the implementations.
+picks a provider by name; ``sandbox/docker.py`` and ``local.py`` are the
+implementations.
 
 The network policy on a request is the one part every provider must honour or
 refuse, never silently narrow or widen: ``none`` gives the snippet no network
-at all, ``limited`` gives it only ``hosts``, ``unrestricted`` gives it the
-provider's normal outbound access. A provider that cannot enforce ``limited``
-(no allowlist mechanism, or the mechanism it has cannot be reached right now)
-must return an error result, not run the snippet wide open — see each
-provider's module docstring for how it enforces the policy.
+at all, ``unrestricted`` gives it the provider's normal outbound access. See
+each provider's module docstring for how it enforces the policy.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Tuple
 
-NetworkType = Literal["none", "limited", "unrestricted"]
+NetworkType = Literal["none", "unrestricted"]
 
 #: language -> (file name inside the sandbox, interpreter command, local
 #: interpreter candidates in PATH order). Shared by every provider so a
 #: language is defined once: docker.py uses the file name and interpreter,
-#: local.py the candidates too, e2b.py/modal.py the file name and interpreter.
+#: local.py the candidates too.
 LANGS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
     "python": ("main.py", "python", ("python3", "python")),
     "node": ("main.js", "node", ("node",)),
@@ -42,11 +39,9 @@ DEFAULT_IMAGES: Dict[str, str] = {
 
 @dataclass
 class SandboxNetwork:
-    """What a run may reach. ``hosts`` only matters when ``type`` is
-    ``limited``: bare hostnames (as environments/models.py normalizes them),
-    covering their subdomains the same way the egress proxy does."""
+    """What a run may reach: nothing (the default) or the provider's
+    ordinary outbound network."""
     type: NetworkType = "none"
-    hosts: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -57,9 +52,7 @@ class SandboxRequest:
     ``workspace`` is a host directory to mount read-only at ``/work``, when
     set; not every provider can honour it (a remote sandbox has no local
     filesystem to mount from), in which case the provider refuses rather than
-    silently dropping it. ``environment_id`` is only used to scope things a
-    provider needs an identity for (an egress token, a derived image cache
-    key); providers that need nothing of the sort ignore it.
+    silently dropping it.
     """
     language: str
     code: str
@@ -71,7 +64,6 @@ class SandboxRequest:
     pids_limit: Optional[int] = None
     network: SandboxNetwork = field(default_factory=SandboxNetwork)
     workspace: Optional[str] = None
-    environment_id: Optional[str] = None
     image: Optional[str] = None
 
 
@@ -108,8 +100,7 @@ def truncate_output(text: str, limit: int) -> "tuple[str, bool]":
 
 class SandboxProvider(ABC):
     """One way to run a :class:`SandboxRequest`. ``name`` is the id used in
-    settings, the environment's ``sandbox_provider`` field and doctor's
-    report (``docker``, ``local``, ``e2b``, ``modal``)."""
+    settings and doctor's report (``docker``, ``local``)."""
 
     name: str = ""
 

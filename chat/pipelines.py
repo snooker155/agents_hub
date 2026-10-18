@@ -436,9 +436,6 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
             code = error_code(err)
             if code:
                 done_event["error_code"] = code
-            if drive.budget:
-                done_event["error_code"] = "budget"
-                done_event["budget"] = drive.budget
             if drive.refusal:
                 done_event["refusal"] = _with_agent(drive.refusal, request.agent_id)
             if undelivered:
@@ -493,8 +490,8 @@ def _with_agent(refusal: dict, agent_id: str) -> dict:
 
 
 def _close_unstarted(step: _AgentStep, *, status: str, error: str, refusal: dict | None = None) -> dict:
-    """Close a receiving run that never started (a stop, a budget cap) and
-    return the ``done`` event that ends the turn on it."""
+    """Close a receiving run that never started (a stop) and return the
+    ``done`` event that ends the turn on it."""
     run_id, _msg_id, log_file, log_lines, session_id = step.run
     finished = utc_iso()
     _write_log(log_file, log_lines + [f"({error})", "", f"Finished: {finished}", f"Status  : {status}"])
@@ -610,19 +607,10 @@ async def _run_chat_pipeline(request: ChatRequest):
             handoffs.append(event)
             yield event
 
-            # Each run of the turn spends on its own: the workspace's hard cap
-            # is checked before the receiving agent starts, as for any run.
-            from common.budget import BudgetExceededError, check_budget
             closing = None
-            try:
-                check_budget(ws_name)
-            except BudgetExceededError as e:
-                from chat.refusals import refusal_of
-                closing = _close_unstarted(next_step, status="failed", error=str(e), refusal=refusal_of(e))
-            if closing is None:
-                from managers.run_manager import get_run_by_id
-                if (get_run_by_id(next_run_id) or {}).get("status") in ("stop", "stopped"):
-                    closing = _close_unstarted(next_step, status="stopped", error="stopped by user")
+            from managers.run_manager import get_run_by_id
+            if (get_run_by_id(next_run_id) or {}).get("status") in ("stop", "stopped"):
+                closing = _close_unstarted(next_step, status="stopped", error="stopped by user")
             if closing is not None:
                 unstarted = None
                 if undelivered:
@@ -978,11 +966,9 @@ async def _run_chat_team_pipeline(request: ChatRequest):
 # out (see chat.broadcast); the generators above are unchanged by it.
 
 #
-# Where the turn runs (chat/routing.py, docs/services.md): with chat execution
-# on ``instances`` (the default) the three public pipelines hand the turn to a
-# service replica and relay its events; ``execute_locally`` is the turn in
-# this process, what the replica itself runs (chat/turns.py), and what every
-# process runs with chat execution on ``inprocess``.
+# ``execute_locally`` is the turn in this process, which is where every turn
+# runs; the split from the public pipelines is kept so the broadcast wrapper
+# stays one place.
 
 def _local_pipeline(request: ChatRequest, kind: str):
     if kind == "team":
@@ -1020,11 +1006,6 @@ async def execute_locally(request: ChatRequest, kind: Optional[str] = None):
 
 
 async def _run(request: ChatRequest, kind: str):
-    from chat import routing
-    if routing.enabled():
-        async for event in routing.relay(request, kind):
-            yield event
-        return
     async for event in execute_locally(request, kind):
         yield event
 

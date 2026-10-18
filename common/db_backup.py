@@ -1,22 +1,17 @@
 """
 One archive with the whole state in it: ``ah db backup`` / ``restore`` / ``verify``.
 
-``common.db_transfer`` already knows how to copy every table between SQLite
-and Postgres; this module is a thin shell around it. A backup always produces
-a self-contained SQLite file (``database.sqlite`` inside the archive), never a
-``pg_dump``, so restoring needs nothing beyond this checkout and whichever
-driver the *target* database happens to need: when the live database is
-Postgres, :func:`backup` copies it into a temporary SQLite file with
-``db_transfer.transfer`` (the same call ``ah db migrate`` makes); when it is
-already SQLite, ``VACUUM INTO`` does the same thing without going through
-Python row by row.
+``common.db_transfer`` already knows how to copy every table between two
+SQLite files; this module is a thin shell around it. A backup produces a
+self-contained SQLite file (``database.sqlite`` inside the archive) with
+``VACUUM INTO``, so restoring needs nothing beyond this checkout.
 
 Beside the database, the archive optionally holds the state directories that
 live next to it in ``AGENTS_HUB_ROOT``: run/node/flow logs, workspaces, view
 assets, generated Dockerfiles, imported agent checkouts, and the shared-memory
-pools (episodes, graphs, extractions). Nothing else moves: run queue leases,
-Redis, and a running process's pid are not part of the state a backup can
-restore, and the ``.env`` file with its secrets is never touched.
+pools (episodes, graphs, extractions). Nothing else moves: a running
+process's pid is not part of the state a backup can restore, and the ``.env``
+file with its secrets is never touched.
 
 A ``manifest.json`` at the root of the archive records what was backed up and
 from where, so :func:`verify` can check an archive without touching the live
@@ -116,20 +111,13 @@ def _sqlite_table_counts(path: Path) -> Dict[str, int]:
 
 def _dump_database(dest: Path, *, log: LogFn) -> None:
     """Copy the configured database into a fresh, standalone SQLite file at
-    ``dest``, whatever backend it actually lives in."""
+    ``dest``. A page-level VACUUM INTO is faster than copying every row
+    through Python and gives a plain SQLite file."""
     if dest.exists():
         dest.unlink()
-    if db.dialect() == "sqlite":
-        # The live database is already SQLite: a page-level VACUUM INTO is
-        # faster than copying every row through Python, and gives the exact
-        # same archive shape (a plain SQLite file) as the Postgres path below.
-        conn = db.get_conn()
-        conn.execute("VACUUM INTO ?", (str(dest),))
-        log(f"database.sqlite: copied via VACUUM INTO ({db.DB_FILE})")
-    else:
-        report = db_transfer.transfer(str(dest), force=True, log=log)
-        total = sum(v["target"] for v in report["tables"].values())
-        log(f"database.sqlite: copied {total} row(s) from Postgres via transfer")
+    conn = db.get_conn()
+    conn.execute("VACUUM INTO ?", (str(dest),))
+    log(f"database.sqlite: copied via VACUUM INTO ({db.DB_FILE})")
 
 
 def _skip_member(rel_parts: tuple) -> bool:
@@ -277,8 +265,7 @@ def restore(archive: Path, *, force: bool = False, include_files: bool = True,
             _extract(tar, db_member, tmp)
             dumped = Path(tmp) / _DB_NAME
 
-            target_ref = str(db.DB_FILE) if db.dialect() == "sqlite" else db.database_url()
-            transfer_report = db_transfer.transfer(target_ref, source=str(dumped), force=True, log=say)
+            transfer_report = db_transfer.transfer(str(db.DB_FILE), source=str(dumped), force=True, log=say)
 
         files_restored = 0
         if include_files:
@@ -345,10 +332,9 @@ def verify(archive: Path) -> Dict[str, Any]:
 # first process of a new build takes that copy itself, in the ordinary archive
 # shape ``ah db restore`` reads (docs/deployment.md "Rolling back").
 #
-# SQLite only: the copy is SQLite's online backup of the live file, which is
-# fast and needs no second connection through ``common.db`` (this runs while
+# The copy is SQLite's online backup of the live file, which is fast and
+# needs no second connection through ``common.db`` (this runs while
 # ``common.db`` is still making the schema ready, so ``get_conn`` would recurse).
-# A Postgres deployment takes ``ah db backup`` before upgrading instead.
 
 PRE_MIGRATE_DIR_NAME = "backups"
 PRE_MIGRATE_KEEP = 5

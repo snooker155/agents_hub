@@ -16,10 +16,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-KINDS = ("imap", "http")
+KINDS = ("http",)
 
 #: Poll intervals a watcher may use, in seconds. The floor keeps a chatty
-#: watcher from hammering a mail server; the ceiling keeps "every day" out of
+#: watcher from hammering a server; the ceiling keeps "every day" out of
 #: a feature that is about noticing things soon.
 MIN_INTERVAL_SECONDS = 15
 MAX_INTERVAL_SECONDS = 6 * 3600

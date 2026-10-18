@@ -43,23 +43,15 @@ DEFAULT_VIEW_AGENT = "visualizer"
 
 #: Kinds a specialist agent owns in the Studio and in the view's own chat.
 SPECIALISTS: Dict[str, str] = {
-    "scene3d": "modeler_3d",
     "html": "web_view_builder",
     "code": "web_view_builder",
 }
-
-_MESH_TOOLS: FrozenSet[str] = frozenset({
-    "mesh_new", "mesh_select", "mesh_group", "mesh_extrude", "mesh_inset", "mesh_bevel",
-    "mesh_transform", "mesh_subdivide", "mesh_delete", "mesh_merge", "mesh_normals",
-    "mesh_validate", "mesh_stats", "mesh_preview", "mesh_history", "mesh_revert",
-    "mesh_export",
-})
 
 #: Tools that act on one kind of view only. ``view_set_timeline`` and
 #: ``view_link`` serve two kinds each and are listed under both.
 KIND_TOOLS: Dict[str, FrozenSet[str]] = {
     "graph": frozenset({"graph_add_node", "graph_add_edge", "graph_remove", "graph_set_layout"}),
-    "scene3d": frozenset({"scene_camera", "scene_light", "scene_environment"}) | _MESH_TOOLS,
+    "scene3d": frozenset({"scene_camera", "scene_light", "scene_environment"}),
     "math": frozenset({"math_plot"}),
     "simulation": frozenset({"sim_configure", "view_compute", "view_set_timeline", "view_link"}),
     "process": frozenset({"view_set_timeline"}),

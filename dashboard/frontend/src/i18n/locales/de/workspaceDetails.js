@@ -23,10 +23,8 @@ export default {
       toolPolicy: 'Tool-Richtlinie',
       webPolicy: 'Webzugriff',
       personalMemory: 'Persönlicher Speicher',
-      isolation: 'Isolation',
       tasks: 'Aufgabenzuweisung',
       secrets: 'Secrets',
-      remoteSync: 'Hub-Synchronisierung',
       palette: 'Farbpalette',
     },
   },
@@ -184,7 +182,7 @@ export default {
   specialModels: {
     languages: {
       title: 'Eine Stimme pro Sprache',
-      hint: 'Eine Zeile wird mit der Stimme ihrer Sprache gelesen. Eine Stimme, die nur eine Sprache spricht (Piper), braucht für jede ein eigenes Modell; eine Cloud-Stimme spricht alle, dort genügt eine andere Stimme. Leere Zeilen behalten Modell und Stimme von oben.',
+      hint: 'Eine Zeile wird mit der Stimme ihrer Sprache gelesen. Einer Stimme, die auf eine Sprache abgestimmt ist, lässt sich für jede ein eigenes Modell geben; eine Cloud-Stimme spricht alle, dort genügt eine andere Stimme. Leere Zeilen behalten Modell und Stimme von oben.',
       model: 'Modell',
       voice: 'Stimme',
       modelFor: 'Modell für {{language}}',
@@ -213,7 +211,7 @@ export default {
     },
     options: {
       size: 'Größe', quality: 'Qualität', aspect_ratio: 'Seitenverhältnis', seconds: 'Standardlänge, s',
-      voice: 'Stimme', format: 'Format', language: 'Sprache', temperature: 'Temperatur',
+      voice: 'Stimme', format: 'Format', language: 'Sprache',
     },
     customTitle: 'Eigene Modelle',
     customHint: 'Jedes andere Modell, etwa eines, das Ihr Team für eine enge Aufgabe betreibt. Agenten rufen es mit ask_special_model über seine Id auf; an der Beschreibung erkennen sie, wann.',
@@ -228,8 +226,6 @@ export default {
     remove: 'Entfernen',
     addCustom: 'Modell hinzufügen',
     discover: 'Beim Anbieter suchen',
-    localRuntimeHint: 'Die Modellumgebung des Hubs hat, was Sie in sie geladen haben:',
-    localRuntimeLink: 'ein Modell im Reiter Lokal laden',
     discoverHint: 'Den Anbieter nach seinen Modellen fragen und nur die zeigen, die zu diesem Zweck passen',
     discoverFound: '{{count}} von {{total}} Modellen des Anbieters passen. Zum Auswählen anklicken.',
     discoverNone: 'Keines der {{total}} Modelle des Anbieters passt. Ein Modell lässt sich trotzdem eintippen.',

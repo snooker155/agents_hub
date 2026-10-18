@@ -36,19 +36,15 @@ export default {
     },
     ai_teammate: {
       name: 'AI teammate',
-      description: 'Joins the team chat, answers from the team\'s own docs and notes with sources, picks up small tasks and remembers decisions.',
+      description: 'Answers from the team\'s own docs and notes with sources, picks up small tasks and remembers decisions.',
     },
-    github_issue_agent: {
-      name: 'GitHub issue agent',
-      description: 'Takes an issue synced from GitHub or GitLab, finds the cause in the code, writes a focused fix with a test and opens a pull request.',
-    },
-    data_agent: {
-      name: 'Data agent',
-      description: 'Answers business questions from the connected databases and spreadsheets, shows the query behind every number, and draws charts.',
+    gitlab_issue_agent: {
+      name: 'GitLab issue agent',
+      description: 'Takes an issue synced from GitLab or Jira, finds the cause in the code, writes a focused fix with a test and opens a merge request.',
     },
     invoice_agent: {
       name: 'Invoice agent',
-      description: 'Extracts vendor, dates, line items, tax and totals from invoices, checks arithmetic, duplicates and purchase orders, and prepares records for approval.',
+      description: 'Extracts vendor, dates, line items, tax and totals from invoices, checks arithmetic and duplicates, and prepares records for approval.',
     },
     contract_review_agent: {
       name: 'Contract review agent',

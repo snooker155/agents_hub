@@ -351,7 +351,7 @@ def resolve_entity(node: Dict[str, Any]) -> Optional[flow_registry.FlowEntitySpe
 def is_unchosen_agent(node: Dict[str, Any]) -> bool:
     """True for the editor's abstract agent node before an agent is picked:
     category ``agent`` and no ``agent_id``. Such a node is a valid part of a
-    saved flow (the editor and the n8n import both make them) but cannot run,
+    saved flow (the editor makes them) but cannot run,
     so loading accepts it and the preflight names it."""
     category = str(node_field(node, "category") or "")
     return category == "agent" and not node_field(node, "agent_id") and not node_field(node, "entity_id")

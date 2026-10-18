@@ -41,11 +41,10 @@ log = logging.getLogger(__name__)
 
 NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
-    "deploy_project", "stop_project_deployment",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
-    "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
+    "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "hub_action",
@@ -93,9 +92,9 @@ CAPABILITY_LABELS: Dict[str, str] = {
 #
 # ``ingests_untrusted`` is granted at the *tool* layer only by tools that pull
 # text from outside the operator's control (``run_shell`` via curl/wget, and the
-# web tools). Telegram inbound and imported git issues also carry
-# attacker-controllable text, but they arrive through the run's *channel*, not
-# through a tool grant — see ``channel_capabilities`` below.
+# web tools). Imported git and tracker issues also carry attacker-controllable
+# text, but they arrive through the run's *channel*, not through a tool grant;
+# see ``channel_capabilities`` below.
 
 CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # ── execution: the whole trifecta in one tool ────────────────────────────
@@ -156,11 +155,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # Search returns third-party text — ingest, nothing more: the query goes to
     # one fixed API endpoint, which is not a channel an attacker can aim.
     "web_search": frozenset({INGESTS_UNTRUSTED}),
-    # map_on_nodes (tools/node_map.py) sends agent-supplied text to models on
-    # the linked nodes, only those trusted for the run's data class; what
-    # comes back was written on someone's machine, and an untrusted node
-    # (public work only) could answer anything: ingest, nothing more.
-    "map_on_nodes": frozenset({INGESTS_UNTRUSTED}),
     # Fetch also *sends*: the agent chooses the host, path and query string, so
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
     # tool, which is why it is the second, more restricted grant.
@@ -194,9 +188,9 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # carries the conversation, the routing log carries task titles.
     #
     # Log-bearing tools also ingest untrusted content. A run log holds whatever
-    # that run handled — pages it fetched, messages strangers sent it over
-    # Telegram — so reading one pulls attacker-controllable text into the
-    # reader's context just as surely as fetching the page would. Claiming that
+    # that run handled (pages it fetched, issues strangers wrote), so reading
+    # one pulls attacker-controllable text into the reader's context just as
+    # surely as fetching the page would. Claiming that
     # honestly is what stops a log reader from ever being combined with an
     # outbound channel, which is exactly the shape that would turn the service's
     # own diagnostics into an exfiltration path.
@@ -248,14 +242,14 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "system_run_tests": frozenset({READS_PRIVATE}),
 
     # ── outbound channels ────────────────────────────────────────────────────
-    # These deliver free text to a chat transport (Telegram today). The
+    # These deliver free text to the notification endpoints (webhooks). The
     # destination is the operator, but the *payload* is agent-controlled, which
     # is exactly the exfiltration shape.
     "notify_user": frozenset({CAN_EXFILTRATE}),
     "schedule_notification": frozenset({CAN_EXFILTRATE}),
     # Proxies a caller-supplied upstream URL through the view server.
     "view_serve": frozenset({CAN_EXFILTRATE}),
-    # git_publish pushes a branch to GitHub/GitLab and opens a PR/MR — the
+    # git_publish pushes a branch to GitLab and opens a merge request: the
     # payload is the workspace's own tracked (and newly added) files, chosen by
     # the agent's commit, leaving the system over a real network destination.
     # Reading issues/PRs with the same token (connectors/git/providers.py)
@@ -263,10 +257,7 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "git_publish": frozenset({CAN_EXFILTRATE}),
 
     # ── connectors (tools/connector_tools.py aggregates these) ──────────────
-    # channel_send delivers agent-written text to a Slack/Discord/Teams/mail
-    # chat: the notify_user shape over another transport.
-    "channel_send": frozenset({CAN_EXFILTRATE}),
-    # Issue trackers (connectors/trackers: Jira, Linear). Reading an issue
+    # The issue tracker (connectors/trackers: Jira). Reading an issue
     # pulls text strangers wrote into context; a comment, a transition or a
     # new issue carries agent-written text out.
     "tracker_list_issues": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
@@ -275,35 +266,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "tracker_comment": frozenset({CAN_EXFILTRATE}),
     "tracker_transition": frozenset({CAN_EXFILTRATE}),
     "tracker_create_issue": frozenset({CAN_EXFILTRATE}),
-    # Google Workspace (connectors/google): Drive, Docs, Sheets, Calendar.
-    # Documents and sheets are the operator's private data, written by
-    # whoever shared them; a write sends agent text into a Google account.
-    "google_drive_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "google_drive_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "google_sheets_read": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "google_sheets_append": frozenset({CAN_EXFILTRATE}),
-    "google_docs_create": frozenset({CAN_EXFILTRATE}),
-    "google_calendar_list": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "google_calendar_create": frozenset({CAN_EXFILTRATE}),
-    # Microsoft Graph (connectors/microsoft): the Outlook calendar.
-    "outlook_calendar_list": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "outlook_calendar_create": frozenset({CAN_EXFILTRATE}),
-    # Knowledge bases (connectors/knowledge: Notion, Confluence).
-    "notion_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "notion_read_page": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "notion_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "notion_create_page": frozenset({CAN_EXFILTRATE}),
-    "notion_append": frozenset({CAN_EXFILTRATE}),
-    "confluence_search": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "confluence_read_page": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "confluence_import": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE}),
-    "confluence_create_page": frozenset({CAN_EXFILTRATE}),
-    # Read-only databases (connectors/databases): rows are operator data.
-    # The query only ever goes to a connection the operator configured, so
-    # nothing agent-chosen leaves the system.
-    "db_list_connections": frozenset({READS_PRIVATE}),
-    "db_schema": frozenset({READS_PRIVATE}),
-    "db_query": frozenset({READS_PRIVATE}),
     # Connection proposals (tools/connection_setup.py, connectors/proposals.py).
     # They grant nothing: connection_options returns names and configured
     # flags, never a value, URL or command of an existing item;
@@ -313,16 +275,6 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "connection_options": frozenset(),
     "propose_connection": frozenset(),
     "connection_proposal_status": frozenset(),
-
-    # ── project deployments (tools/project_deploy.py) ────────────────────────
-    # Every answer carries the deployment's share key (in browser_url) and the
-    # services' commands and variables, operator-authored private content.
-    # The logs are whatever the deployed app printed, which includes the
-    # request lines of strangers who opened its share link.
-    "deploy_project": frozenset({READS_PRIVATE}),
-    "project_deployment_status": frozenset({READS_PRIVATE}),
-    "stop_project_deployment": frozenset({READS_PRIVATE}),
-    "project_deployment_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
 
     # ── agent and job reads ──────────────────────────────────────────────────
     # get_agent_tool returns instructions.md, capabilities.md and usage.md in
@@ -352,25 +304,9 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # grant as list_tasks.
     "list_scheduled": frozenset({READS_PRIVATE}),
 
-    # ── geometry engine ──────────────────────────────────────────────────────
-    # The mesh_* tools drive a local Blender through a fixed command whitelist.
-    # They grant nothing, and the reasoning is worth writing down because "it
-    # runs a whole application" looks alarming: the engine takes named
-    # operations with validated numeric arguments, never Blender Python, so an
-    # agent cannot express a read or a send through it. Nothing enters agent
-    # context from outside the system (geometry is authored, not fetched),
-    # nothing private is read, and the files produced land in the view's own
-    # assets or, for mesh_export, inside the agent's own workspace — writing
-    # into a workspace the agent already writes to is not an outbound channel.
-    "mesh_new": frozenset(), "mesh_select": frozenset(), "mesh_group": frozenset(),
-    "mesh_extrude": frozenset(), "mesh_inset": frozenset(), "mesh_bevel": frozenset(),
-    "mesh_transform": frozenset(), "mesh_subdivide": frozenset(), "mesh_delete": frozenset(),
-    "mesh_merge": frozenset(), "mesh_normals": frozenset(), "mesh_validate": frozenset(),
-    "mesh_stats": frozenset(), "mesh_preview": frozenset(), "mesh_history": frozenset(),
-    "mesh_revert": frozenset(), "mesh_export": frozenset(),
     # slides_export writes a .pptx of a slides view the agent authored into the
-    # agent's own workspace, like mesh_export: nothing is read from outside the
-    # system (remote slide images are never fetched) and nothing leaves it.
+    # agent's own workspace: nothing is read from outside the system (remote
+    # slide images are never fetched) and nothing leaves it.
     "slides_export": frozenset(),
 }
 
@@ -413,8 +349,8 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # The consent portal (connectors/consent/tools.py). request_account_access
     # hands the person in the conversation a link to a page they open
     # themselves; revoke_account_access drops that person's own grant. Neither
-    # reads data nor sends anything out; what the grant lets the Google and
-    # Microsoft tools do is classified on those tools.
+    # reads data nor sends anything out; what a grant lets a connector's
+    # tools do is classified on those tools.
     "request_account_access", "revoke_account_access",
 
     # ── filesystem writes ────────────────────────────────────────────────────
@@ -527,7 +463,7 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # classified READS_PRIVATE above).
     "stop_scenario_run_tool", "stop_team_run_tool", "stop_loop_run_tool",
 
-    # ── visualization / views / geometry-adjacent scene tools ───────────────
+    # ── visualization / views / scene tools ────────────────────────────────
     # Every view_*, graph_*, scene_*, slides_*, document_*, sim_configure,
     # math_plot and view_compute tool operates on a view the agent itself is
     # authoring, rendered through the hub's own view server — not a stored
@@ -633,8 +569,6 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
     # Product documentation the operator installed with the product. Public by
     # construction, so it is neither private data nor untrusted input.
     "docs": frozenset(),
-    # Modelling operations on a local engine: see the mesh_* entries above.
-    "geometry": frozenset(),
 }
 
 
@@ -711,27 +645,15 @@ def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
 # but has no way in for untrusted text and no way out. With
 # CODE_RUNNER_FALLBACK=local the same snippet runs as a host subprocess with
 # the network and the host's filesystem, which is run_shell's whole trifecta.
-# In a run whose environment has a ``limited`` network (AGENTS_HUB_NETWORK,
-# set by environments/launch.py in the run's own process), the snippet can
-# reach that environment's hosts: text from them comes in, anything can go
-# out to them. run_code then refuses the workspace mount, so it grants
-# ingests_untrusted and can_exfiltrate but not reads_private; the tool set's
-# own check catches an agent that also reads private files, exactly as it does
-# for the web tools. That is decided at build time, when the run's environment
-# is known (agents.capability_guard, build time); at save time no environment
-# is set and the sandboxed claim applies. The claim is looked up lazily the way
-# ``mcp_grants`` reads a server's configuration, and fails closed: if the
-# setting cannot be read, the worst case applies.
+# The claim is looked up lazily the way ``mcp_grants`` reads a server's
+# configuration, and fails closed: if the setting cannot be read, the worst
+# case applies.
 
 _RUN_CODE_SANDBOXED: FrozenSet[str] = frozenset({READS_PRIVATE})
-_RUN_CODE_NETWORKED: FrozenSet[str] = frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE})
 
 
 def run_code_grants() -> FrozenSet[str]:
-    """What ``run_code`` grants under the current configuration and, inside
-    a run, under that run's environment network."""
-    import os
-
+    """What ``run_code`` grants under the current configuration."""
     try:
         from common.config import settings
         fallback = str(getattr(settings, "code_runner_fallback", "") or "").strip().lower()
@@ -740,8 +662,6 @@ def run_code_grants() -> FrozenSet[str]:
         return CAPABILITY_GRANTS["run_code"]
     if fallback == "local":
         return CAPABILITY_GRANTS["run_code"]
-    if os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower() == "limited":
-        return _RUN_CODE_NETWORKED
     return _RUN_CODE_SANDBOXED
 
 
@@ -1029,19 +949,14 @@ def check_effective_combination(
 
 # ── Channel-level ingest ──────────────────────────────────────────────────────
 #
-# The exposure is already live, before any web tool exists: the Telegram runner
-# and the git issue sync both pull attacker-controllable text into agent context.
-# A tool-grant check cannot see this, so runs on these channels are evaluated
-# with ``ingests_untrusted`` added.
+# The exposure is already live, before any web tool exists: the git issue sync
+# and the tracker sync pull attacker-controllable text into agent context, and
+# an inbound webhook carries whatever an outside system posted. A tool-grant
+# check cannot see this, so runs on these channels are evaluated with
+# ``ingests_untrusted`` added.
 
 UNTRUSTED_CHANNELS: FrozenSet[str] = frozenset({
-    "telegram", "git_issue", "issue_sync", "webhook", "email", "slack",
-    # The chat channels of connectors/channels (a run's ``source``) and the
-    # issue trackers of connectors/trackers.
-    "discord", "teams", "mail", "tracker_sync",
-    # An MCP client (Claude Code, Cursor) forwards whatever its own agent read:
-    # a repository, a web page, a ticket (dashboard/backend/routes/mcp_server.py).
-    "mcp",
+    "git_issue", "issue_sync", "webhook", "tracker_sync",
 })
 
 
@@ -1072,16 +987,11 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     "git_publish", "git_push", "run_shell",
     # Arbitrary code with the host's network unless container isolated.
     "run_code",
-    # Runs a project's own install and start commands (tools/project_deploy.py).
-    "deploy_project",
     # Every tool in the grant table that can send data outside.
     "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
     "notify_user", "schedule_notification", "view_serve", "schedule_management",
     # The connector tools that write outward (tools/connector_tools.py).
-    "channel_send", "tracker_comment", "tracker_transition", "tracker_create_issue",
-    "google_sheets_append", "google_docs_create", "google_calendar_create",
-    "outlook_calendar_create", "notion_create_page", "notion_append",
-    "confluence_create_page",
+    "tracker_comment", "tracker_transition", "tracker_create_issue",
     # Delegation reaches other agents' tools, which this rule cannot see.
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
     "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
@@ -1291,7 +1201,7 @@ def capability_sources(
     """Map each granted capability to the tool ids that granted it.
 
     ``extra`` maps a capability to a non-tool source label (e.g. a channel), so
-    a violation can name "channel:telegram" alongside real tool ids.
+    a violation can name "channel:git_issue" alongside real tool ids.
     """
     sources: Dict[str, List[str]] = {}
     for tid in tool_ids or []:
@@ -1329,7 +1239,7 @@ def check_combination(
     """Return the first blocked combination this tool list forms, or None.
 
     ``extra_capabilities`` maps a capability to the label of a non-tool source
-    that grants it (``{"ingests_untrusted": "channel:telegram"}``), so run-level
+    that grants it (``{"ingests_untrusted": "channel:git_issue"}``), so run-level
     ingest can be folded into the same check.
     """
     tool_ids = list(tool_ids or [])

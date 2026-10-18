@@ -17,8 +17,7 @@ is the agent's own configuration: agents/agent_factory.py adds the tool, and
 The call is counted on the run like the other model calls made beside its
 loop (common/aux_usage.py, purpose ``advisor``): its tokens land on
 ``loop.aux_calls``, priced at the advisor's own model in the run's cost
-(common/pricing.py) and charged to the run's money cap
-(agents/callbacks/guards.py ``RunBudgetGuard``). Two workspace loop settings
+(common/pricing.py). Two workspace loop settings
 bound it (agents/loop_ext/settings.py): ``advisor_max_calls`` per run (5) and
 ``advisor_max_answer_chars`` (4000), which also caps the tokens asked for.
 

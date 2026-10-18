@@ -262,15 +262,15 @@ def test_a_delegates_secrets_are_reached_through_delegation():
 
 def test_git_token_prefers_the_runs_environment(monkeypatch):
     from connectors.git import store
-    store.set_token("github", "connector-token")
+    store.set_token("gitlab", "connector-token")
     monkeypatch.delenv("AGENT_WORKSPACE", raising=False)
-    monkeypatch.setenv("GITHUB_TOKEN", "shell-token")
+    monkeypatch.setenv("GITLAB_TOKEN", "shell-token")
     # Outside a run, a shell export does not replace the configured token.
-    assert store.get_token("github") == "connector-token"
+    assert store.get_token("gitlab") == "connector-token"
     monkeypatch.setenv("AGENT_WORKSPACE", "ws")
-    assert store.get_token("github") == "shell-token"
-    monkeypatch.delenv("GITHUB_TOKEN")
-    assert store.get_token("github") == "connector-token"
+    assert store.get_token("gitlab") == "shell-token"
+    monkeypatch.delenv("GITLAB_TOKEN")
+    assert store.get_token("gitlab") == "connector-token"
 
 
 def test_git_token_prefers_the_active_in_process_secret(key, monkeypatch):
@@ -360,16 +360,7 @@ def client():
 
 @pytest.fixture
 def single(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "single", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-
-
-@pytest.fixture
-def multi(monkeypatch):
-    from common.config import settings
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
+    pass
 
 
 def _bearer(token):
@@ -420,27 +411,6 @@ def test_routes_validate_the_name_the_workspace_and_the_key(single, no_key, clie
     assert unknown_agent.status_code == 400
 
 
-def test_multi_mode_secrets_are_owner_only(multi, key, client):
-    admin = _admin(client)
-    client.post("/api/workspaces", json={"name": "alpha"}, headers=admin)
-    bob_id, bob = _member(client, admin, "bob")
-    carol_id, carol = _member(client, admin, "carol")
-    client.put("/api/workspaces/alpha/members", json={"user_id": bob_id, "role": "viewer"},
-               headers=admin)
-    client.put("/api/workspaces/alpha/members", json={"user_id": carol_id, "role": "owner"},
-               headers=admin)
-    assert client.get("/api/workspaces/alpha/secrets", headers=bob).status_code == 403
-    assert client.put("/api/workspaces/alpha/secrets/X", json={"value": "v"},
-                      headers=bob).status_code == 403
-    put = client.put("/api/workspaces/alpha/secrets/X",
-                     json={"value": "owner-value-1", "user_id": carol_id}, headers=carol)
-    assert put.status_code == 200, put.text
-    listed = client.get("/api/workspaces/alpha/secrets", headers=carol)
-    assert listed.status_code == 200
-    assert listed.json()[0]["created_by"] == carol_id
-    assert listed.json()[0]["user_id"] == carol_id
-
-
 def test_agent_allowlist_route_validates_and_guards(single, client, monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "capability_guard", "block", raising=False)
@@ -456,16 +426,6 @@ def test_agent_allowlist_route_validates_and_guards(single, client, monkeypatch)
     blocked = client.put("/api/agents/fetcher/secrets", json={"secrets": ["TOKEN"]})
     assert blocked.status_code == 400 and "secrets:TOKEN" in blocked.json()["detail"]
     assert client.get("/api/agents/nobody/secrets").status_code == 404
-
-
-def test_multi_mode_agent_allowlist_needs_an_admin(multi, client):
-    admin = _admin(client)
-    _agent("worker")
-    _, bob = _member(client, admin, "bob")
-    assert client.put("/api/agents/worker/secrets", json={"secrets": ["T"]},
-                      headers=bob).status_code == 403
-    assert client.put("/api/agents/worker/secrets", json={"secrets": ["T"]},
-                      headers=admin).status_code == 200
 
 
 def test_a_flow_gets_its_agents_names_at_workspace_and_user_scope_only(key, monkeypatch):

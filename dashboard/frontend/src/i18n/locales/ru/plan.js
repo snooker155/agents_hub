@@ -59,14 +59,6 @@ export default {
   consolidatePool: 'Пул памяти',
   selectAPool: 'Выберите пул…',
   consolidateSessionLimit: 'Недавних сессий',
-  alsoSendToTelegram: 'Также отправить в Telegram',
-  telegram: {
-    noToken: 'Токен Telegram-бота не настроен — добавьте его в Настройки → Telegram.',
-    disabled: 'Интеграция с Telegram отключена — включите её в Настройки → Telegram.',
-    ready: 'Также отправлять в чаты, привязанные к этому пространству.',
-    taskStartedHint: 'Уведомление «задача запущена» также придёт в Telegram. В ящик и колокольчик оно приходит всегда.',
-    bothHint: 'Доставляется и в ящик/колокольчик, и в Telegram.',
-  },
   kinds: {
     notification: 'Уведомление',
     notificationHint: 'Напомнить в нужное время',

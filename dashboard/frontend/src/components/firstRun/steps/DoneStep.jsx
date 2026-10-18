@@ -8,7 +8,7 @@ import LiveMark from '../../liveMark/LiveMark';
 import { LANGUAGES, useI18n } from '../../../i18n';
 import { useTheme } from '../../theme';
 import { ErrorLine, PrimaryButton } from '../ui';
-import { PROVIDER_LABELS, errorText, localSetStarted } from '../firstRunModel';
+import { PROVIDER_LABELS, errorText } from '../firstRunModel';
 
 function Row({ label, value }) {
   return (
@@ -39,9 +39,9 @@ export default function DoneStep({ ctx, onFinish, assistantReady = false }) {
   const dm = ctx?.default_model || {};
   const model = dm.model
     ? `${PROVIDER_LABELS[dm.provider] || dm.provider} · ${dm.model}`
-    : localSetStarted(ctx) ? t('firstRun.done.downloading') : t('firstRun.done.none');
+    : t('firstRun.done.none');
   const search = ctx?.search?.key_set ? (PROVIDER_LABELS[ctx.search.provider] || ctx.search.provider) : t('firstRun.done.off');
-  const voice = ctx?.voice || localSetStarted(ctx) ? t('firstRun.done.voiceOwn') : t('firstRun.done.voiceBrowser');
+  const voice = ctx?.voice ? t('firstRun.done.voiceOwn') : t('firstRun.done.voiceBrowser');
 
   return (
     <section className="w-full max-w-xl mx-auto flex flex-col justify-center flex-1 min-h-0" data-testid="first-run-done">

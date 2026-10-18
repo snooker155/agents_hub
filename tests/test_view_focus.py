@@ -29,10 +29,8 @@ from views.store import create_live_view, create_view
 # ── the map ──────────────────────────────────────────────────────────────────
 
 def _all_view_tool_names() -> set:
-    from tools.geometry import GEOMETRY_TOOLS, create_geometry_tools
     from tools.views import VIEW_MUTATION_TOOLS, create_view_tools
-    tools = [*create_view_tools(workspace=None), *VIEW_MUTATION_TOOLS,
-             *GEOMETRY_TOOLS, *create_geometry_tools(workspace=None)]
+    tools = [*create_view_tools(workspace=None), *VIEW_MUTATION_TOOLS]
     return {t.name for t in tools}
 
 
@@ -62,7 +60,7 @@ def test_every_kind_is_mapped_and_has_a_guide():
 def test_hidden_tools_are_the_other_kinds():
     assert focus.hidden_for_kind(None) == focus.KIND_SPECIFIC_TOOLS
     hidden = focus.hidden_for_kind("slides")
-    assert "mesh_new" in hidden and "graph_add_node" in hidden
+    assert "scene_camera" in hidden and "graph_add_node" in hidden
     assert not ({"slides_add", "slides_style", "slides_export"} & hidden)
     assert "view_get" not in hidden and "create_view" not in hidden
     assert focus.kinds_of_tool("view_set_timeline") == {"simulation", "process"}
@@ -70,7 +68,7 @@ def test_hidden_tools_are_the_other_kinds():
 
 
 def test_the_specialists_own_their_kinds():
-    assert focus.agent_for_kind("scene3d") == "modeler_3d"
+    assert focus.agent_for_kind("scene3d") == "visualizer"
     assert focus.agent_for_kind("html") == "web_view_builder"
     assert focus.agent_for_kind("code") == "web_view_builder"
     assert focus.agent_for_kind("slides") == "visualizer"
@@ -161,7 +159,7 @@ def test_the_studio_note_carries_the_kinds_guide():
     note = scene_context_note(vid)
     assert "Active view" in note and "slides" in note
     assert "## Building a slide deck" in note
-    assert "mesh_new" not in note
+    assert "scene_camera" not in note
 
 
 def test_a_guide_edit_lands_without_a_restart(tmp_path, monkeypatch):
@@ -203,16 +201,16 @@ def test_the_extension_applies_only_to_agents_with_kind_tools(monkeypatch):
     monkeypatch.delenv("AGENTS_HUB_LOOP_VIEW_FOCUS", raising=False)
     plain = _agent([_stub("read_file"), _stub("create_view"), _stub("view_get")])
     assert view_focus.extension_for(plain) is None
-    vis = _agent([_stub("read_file"), _stub("create_view"), _stub("slides_add"), _stub("mesh_new")])
+    vis = _agent([_stub("read_file"), _stub("create_view"), _stub("slides_add"), _stub("scene_camera")])
     ext = view_focus.extension_for(vis)
-    assert ext is not None and ext.held == {"create_view", "slides_add", "mesh_new"}
+    assert ext is not None and ext.held == {"create_view", "slides_add", "scene_camera"}
     monkeypatch.setenv("AGENTS_HUB_LOOP_VIEW_FOCUS", "off")
     assert view_focus.extension_for(vis) is None
 
 
 def test_without_a_view_every_kind_tool_is_hidden():
     tools = [_stub("read_file"), _stub("create_view"), _stub("view_get"), _stub("slides_add"),
-             _stub("mesh_new"), _stub("graph_add_node")]
+             _stub("scene_camera"), _stub("graph_add_node")]
     ext = view_focus.extension_for(_agent(tools))
     state = LoopState(run_id="r1")
     token = current_view_binding.set({})
@@ -229,7 +227,7 @@ def test_without_a_view_every_kind_tool_is_hidden():
 def test_with_a_view_its_kinds_tools_show_and_the_others_hide():
     vid = create_live_view("slides", "Deck").view_id
     tools = [_stub("read_file"), _stub("create_view"), _stub("view_get"), _stub("slides_add"),
-             _stub("slides_style"), _stub("mesh_new"), _stub("graph_add_node")]
+             _stub("slides_style"), _stub("scene_camera"), _stub("graph_add_node")]
     ext = view_focus.extension_for(_agent(tools))
     state = LoopState(run_id="r1")
     token = current_view_binding.set({"id": vid})
@@ -246,7 +244,7 @@ def test_with_a_view_its_kinds_tools_show_and_the_others_hide():
 
 def test_the_studio_binding_decides_the_kind():
     vid = create_live_view("scene3d", "Cube").view_id
-    tools = [_stub("view_get"), _stub("mesh_new"), _stub("scene_light"), _stub("slides_add")]
+    tools = [_stub("view_get"), _stub("scene_camera"), _stub("scene_light"), _stub("slides_add")]
     ext = view_focus.extension_for(_agent(tools))
     state = LoopState(run_id="r1")
     token = current_view_id.set(vid)
@@ -254,13 +252,13 @@ def test_the_studio_binding_decides_the_kind():
         shown = _names(ext.select_tools(state, tools))
     finally:
         current_view_id.reset(token)
-    assert shown == ["view_get", "mesh_new", "scene_light"]
+    assert shown == ["view_get", "scene_camera", "scene_light"]
 
 
 def test_a_hidden_tool_called_by_name_still_runs():
     """Hiding is what the model is shown; the executor keeps every tool."""
     calls: List[str] = []
-    tools = [_stub("view_get", calls), _stub("slides_add", calls), _stub("mesh_new", calls)]
+    tools = [_stub("view_get", calls), _stub("slides_add", calls), _stub("scene_camera", calls)]
     ext = view_focus.extension_for(_agent(tools))
     assert ext is not None
     # No view: slides_add is hidden, yet a call to it runs.
@@ -306,7 +304,7 @@ def test_the_loop_binds_the_kinds_tools_once_the_view_exists(tmp_path):
     create = create_view_tools(workspace=str(tmp_path))[0]
     calls: List[str] = []
     tools = [create, _stub("view_get", calls), _stub("slides_add", calls), _stub("slides_style", calls),
-             _stub("mesh_new", calls), _stub("mesh_extrude", calls), _stub("read_file", calls)]
+             _stub("scene_camera", calls), _stub("scene_environment", calls), _stub("read_file", calls)]
     ext = view_focus.extension_for(_agent(tools))
     result, bound = _run(tools, [ext], [
         AIMessage(content="", tool_calls=[{"name": "create_view", "id": "c1", "args": {
@@ -331,7 +329,7 @@ def test_view_focus_runs_before_tool_search_and_feeds_it(tmp_path):
     from tools.views import create_view_tools
     create = create_view_tools(workspace=str(tmp_path))[0]
     filler = [_stub(f"misc_{i}") for i in range(30)]
-    tools = [create, _stub("view_get"), _stub("slides_add"), _stub("mesh_new"), *filler]
+    tools = [create, _stub("view_get"), _stub("slides_add"), _stub("scene_camera"), *filler]
     agent = _agent(tools, system_prompt="Use create_view first.")
     vf = view_focus.extension_for(agent)
     ts = tool_search.extension_for(agent)
@@ -346,8 +344,8 @@ def test_view_focus_runs_before_tool_search_and_feeds_it(tmp_path):
         AIMessage(content="done"),
     ])
     assert result["output"] == "done"
-    assert "slides_add" not in bound[0] and "mesh_new" not in bound[0]
-    assert "slides_add" in bound[1] and "view_get" in bound[1] and "mesh_new" not in bound[1]
+    assert "slides_add" not in bound[0] and "scene_camera" not in bound[0]
+    assert "slides_add" in bound[1] and "view_get" in bound[1] and "scene_camera" not in bound[1]
 
 
 # ── the seed and the Studio ──────────────────────────────────────────────────
@@ -358,19 +356,17 @@ def _seed():
     return {a["id"]: a for a in json.loads((root / "bootstrap" / "agents.json").read_text())["agents"]}
 
 
-def test_the_seed_splits_the_kinds_between_the_three_agents():
+def test_the_seed_splits_the_kinds_between_the_two_agents():
     seed = _seed()
-    vis, modeler, web = seed["visualizer"], seed["modeler_3d"], seed["web_view_builder"]
-    assert modeler["system"] is True and web["system"] is True
-    # the visualizer holds no tool of the kinds it hands over
-    for kind in ("scene3d", "html"):
-        assert not (set(vis["tools"]) & focus.KIND_TOOLS[kind]), kind
-    assert focus.KIND_TOOLS["scene3d"] <= set(modeler["tools"])
+    vis, web = seed["visualizer"], seed["web_view_builder"]
+    assert web["system"] is True
+    # the visualizer holds no tool of the kind it hands over, and shows 3D itself
+    assert not (set(vis["tools"]) & focus.KIND_TOOLS["html"])
+    assert focus.KIND_TOOLS["scene3d"] <= set(vis["tools"])
     assert focus.KIND_TOOLS["html"] <= set(web["tools"])
     assert set(vis["handoffs"]) == set(vis["delegates"]) == set(focus.SPECIALISTS.values())
     assert {"run_agent_tool", "delegate_task_tool"} <= set(vis["tools"])
-    # the specialists keep to their craft
-    assert not (set(modeler["tools"]) & (focus.KIND_TOOLS["slides"] | focus.KIND_TOOLS["html"]))
+    # the specialist keeps to its craft
     assert not (set(web["tools"]) & (focus.KIND_TOOLS["scene3d"] | focus.KIND_TOOLS["slides"]))
 
 
@@ -382,6 +378,6 @@ def test_the_handoff_list_is_seed_owned():
 def test_the_studio_opens_a_kind_with_its_agent():
     from routes.views import VIEW_AGENT_ID, view_agent_for
     assert VIEW_AGENT_ID == "visualizer"
-    assert view_agent_for("scene3d") == "modeler_3d"
+    assert view_agent_for("scene3d") == "visualizer"
     assert view_agent_for("html") == "web_view_builder"
     assert view_agent_for("graph") == "visualizer"

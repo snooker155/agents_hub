@@ -149,35 +149,8 @@ def test_stale_runs_warn_then_fail_without_a_watchdog():
     assert status == "fail"
 
 
-def test_stale_runs_ok_when_quiet_and_warn_on_expired_lease():
+def test_stale_runs_ok_when_quiet():
     assert doctor.check_stale_runs(_snap())[0] == "ok"
-    snap = _snap(cluster={"leases": [{"role": "scheduler", "expired": True}]})
-    status, summary, detail = doctor.check_stale_runs(snap)
-    assert status == "warn" and "scheduler" in summary
-    assert detail["expired_leases"] == ["scheduler"]
-
-
-def test_run_queue_warns_only_when_nobody_can_drain_it(monkeypatch):
-    deep = {"queued": 50, "oldest_queued_seconds": 10.0}
-    monkeypatch.setattr(doctor, "_live_workers", lambda: 0)
-    assert doctor.check_run_queue(_snap(cluster={"queue": deep}))[0] == "warn"
-    old = {"queued": 1, "oldest_queued_seconds": 3600.0}
-    assert doctor.check_run_queue(_snap(cluster={"queue": old}))[0] == "warn"
-    assert doctor.check_run_queue(_snap(cluster={"queue": {"queued": 0}}))[0] == "ok"
-    monkeypatch.setattr(doctor, "_live_workers", lambda: 2)
-    assert doctor.check_run_queue(_snap(cluster={"queue": deep}))[0] == "ok"
-
-
-def test_run_queue_fails_when_unreadable():
-    status, _s, _d = doctor.check_run_queue(_snap(cluster={"queue_error": "no table"}))
-    assert status == "fail"
-
-
-def test_outbox():
-    assert doctor.check_outbox(_snap(cluster={"outbox": {"pending": 3, "dead": 0}}))[0] == "ok"
-    assert doctor.check_outbox(_snap(cluster={"outbox": {"pending": 0, "dead": 2}}))[0] == "warn"
-    assert doctor.check_outbox(_snap(cluster={"outbox": {"pending": 500, "dead": 0}}))[0] == "warn"
-    assert doctor.check_outbox(_snap(cluster={"outbox_error": "x"}))[0] == "fail"
 
 
 @pytest.mark.parametrize("free,expected", [
@@ -235,20 +208,13 @@ def _no_local_fallback(monkeypatch):
 
 def test_sandbox_check(monkeypatch):
     from sandbox import docker as docker_mod
-    from environments import egress
 
     _no_local_fallback(monkeypatch)
     monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(egress, "enabled", lambda: True)
     status, summary, detail = doctor.check_sandbox(_snap())
     assert status == "ok" and "docker" in summary
     assert detail["default_provider"] == "docker"
     assert detail["providers"]["docker"]["available"] is True
-    assert detail["egress_proxy"] is True
-
-    monkeypatch.setattr(egress, "enabled", lambda: False)
-    status, summary, _ = doctor.check_sandbox(_snap())
-    assert status == "warn" and "egress proxy is off" in summary
 
     monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
     status, summary, detail = doctor.check_sandbox(_snap())
@@ -262,7 +228,7 @@ def test_sandbox_check_lists_every_provider_even_when_all_unavailable(monkeypatc
     monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
     status, _summary, detail = doctor.check_sandbox(_snap())
     assert status == "fail"
-    assert set(detail["providers"]) == {"docker", "local", "e2b", "modal"}
+    assert set(detail["providers"]) == {"docker", "local"}
     # local is always "available" in the loose sense sandbox/local.py uses,
     # since it is a plain subprocess with nothing to be unavailable about.
     assert detail["providers"]["local"]["available"] is True
@@ -358,22 +324,17 @@ def test_service_tool_wraps_the_doctor(quiet_probes):
     assert out["doctor"]["checks"]
 
 
-@pytest.mark.parametrize("origins,mode,expected", [
-    ("", "multi", "ok"),
-    ("https://hub.example.com", "multi", "ok"),
-    ("*", "multi", "warn"),
-    ("*", "single", "ok"),
-    ("*", "token", "ok"),
+@pytest.mark.parametrize("origins,expected", [
+    ("", "ok"),
+    ("https://hub.example.com", "ok"),
+    ("*", "warn"),
 ])
-def test_cors_warns_only_for_a_wildcard_in_multi_mode(monkeypatch, origins, mode, expected):
-    from common import identity
+def test_cors_warns_for_a_wildcard(monkeypatch, origins, expected):
     monkeypatch.setenv("ALLOW_ORIGINS", origins)
-    monkeypatch.setattr(identity, "current_mode", lambda: mode)
     status, summary, detail = doctor.check_cors(_snap())
     assert status == expected
-    assert detail["auth_mode"] == mode
     if expected == "warn":
-        assert "stolen token" in summary
+        assert "no login" in summary
 
 
 def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch):
@@ -419,7 +380,6 @@ def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
     assert status == "ok" and detail["secrets_stored"] == 0
 
     monkeypatch.setattr(guard, "guard_mode", lambda: "warn")
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
     db.get_conn().execute(
         "INSERT INTO secrets (secret_id, workspace, name, agent_id, user_id, ciphertext, key_version, hint,"
         " created_by, created_at, updated_at) VALUES ('s1', 'default', 'TOKEN', '', '', 'x', 1, '', '', '', '')")
@@ -427,36 +387,8 @@ def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
     assert status == "warn"
     assert "CAPABILITY_GUARD is warn" in summary
     assert "1 secret(s) stored" in summary
-    assert "multi mode with AGENT_EXECUTION_MODE=local" in summary
 
     monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
     monkeypatch.setattr(guard, "guard_mode", lambda: "block")
     monkeypatch.setattr(secrets, "key_configured", lambda: True)
-    assert doctor.check_security(_snap())[0] == "ok"
-
-
-def test_security_warns_on_host_bound_secrets_without_the_egress_proxy(monkeypatch):
-    import agents.capability_guard as guard
-    import common.config as config
-    from common import db, identity, secrets
-    from environments import egress
-    monkeypatch.setattr(identity, "current_mode", lambda: "single")
-    monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
-    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
-    monkeypatch.setattr(secrets, "key_configured", lambda: True)
-    monkeypatch.setattr(secrets, "_plaintext_fallback", lambda: False)
-    monkeypatch.setattr(egress, "enabled", lambda: False)
-    db.get_conn().execute(
-        "INSERT INTO secrets (secret_id, workspace, name, agent_id, user_id, ciphertext, key_version, hint,"
-        " created_by, created_at, updated_at, allowed_hosts) VALUES ('s2', 'default', 'GH_TOKEN', '', '',"
-        " 'x', 1, '', '', '', '', 'github.com')")
-    status, summary, detail = doctor.check_security(_snap())
-    assert status == "warn" and detail["host_bound_secrets"] == 1
-    assert "refuse to start" in summary and summary.parts[0].key == "security.hostBoundNoProxy"
-
-    monkeypatch.setattr(secrets, "_plaintext_fallback", lambda: True)
-    status, summary, _detail = doctor.check_security(_snap())
-    assert status == "warn" and summary.parts[0].key == "security.hostBoundPlain"
-
-    monkeypatch.setattr(egress, "enabled", lambda: True)
     assert doctor.check_security(_snap())[0] == "ok"

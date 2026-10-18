@@ -196,40 +196,6 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return "db"
         return v
-    # Where a chat turn runs (docs/services.md, chat/routing.py): "instances"
-    # (default) hands every turn of the chat, /v1, the widget and Telegram to a
-    # replica of a service, a process of its own, so this process never runs
-    # an agent; "inprocess" runs the turn here, the way it always did. Read
-    # live through chat_execution() below, so the Settings page applies it
-    # without a restart.
-    chat_execution: Literal["instances", "inprocess"] = Field(
-        default="instances",
-        validation_alias=AliasChoices("AGENTS_HUB_CHAT_EXECUTION", "chat_execution"),
-        validate_default=False,
-    )
-
-    @field_validator("chat_execution", mode="before")
-    @classmethod
-    def _default_chat_execution(cls, v: object) -> object:
-        if v == "" or v is None:
-            return "instances"
-        return v
-    # The runner service chat turns fall back to when the agent has no service
-    # of its own in the workspace (services/store.py ensure_runner): how many
-    # replicas it keeps warm, how many it may grow to, how many turns each
-    # answers at once, and after how long an idle replica beyond the minimum
-    # is stopped. Stored on the service row when it is created; the Services
-    # page changes a service after that.
-    runner_min: int = Field(default=1, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MIN", "runner_min"))
-    runner_max: int = Field(default=4, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MAX", "runner_max"))
-    runner_concurrency: int = Field(
-        default=8, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_CONCURRENCY", "runner_concurrency"))
-    runner_idle_seconds: int = Field(
-        default=600, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_IDLE_SECONDS", "runner_idle_seconds"))
-    # How long a routed chat turn may wait for its replica to pick it up
-    # (a cold start: process boot plus the agent build), in seconds.
-    turn_start_timeout: int = Field(
-        default=180, validation_alias=AliasChoices("AGENTS_HUB_TURN_START_TIMEOUT", "turn_start_timeout"))
     # Docker image to use when agent_mode = "docker"
     agent_docker_image: str = Field(default="")
     # Optional Docker network (e.g. "host" or a named bridge network)
@@ -238,123 +204,6 @@ class Settings(BaseSettings):
     agent_docker_extra_args: str = Field(default="")
 
     # ── Security ──────────────────────────────────────────────────────────────
-    # Optional bearer token. When set, every /api request must carry
-    # ``Authorization: Bearer <token>`` (or ``X-Api-Token: <token>``). Empty
-    # (default) keeps the API open, preserving the current local-only behaviour.
-    api_token: str = Field(default="", validation_alias=AliasChoices("AGENTS_HUB_API_TOKEN", "api_token"))
-    # Rate limits (common/rate_limit.py, docs/api-keys.md "Rate limits"). All
-    # default to 0, off. Requests per minute apply to every /api and /v1
-    # request per principal (a personal key, a person, the shared token) and
-    # are counted in memory per API replica. Tokens per day apply to
-    # /v1/chat/completions, counted from serving_usage since 00:00 UTC. A
-    # personal key may carry its own values, which win over these.
-    rate_limit_per_minute: int = Field(
-        default=0,
-        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"))
-    rate_limit_tokens_per_day: int = Field(
-        default=0,
-        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
-                                      "rate_limit_tokens_per_day"))
-    # Default monthly spend limit of every person in multi mode, in USD
-    # (common/user_budget.py, docs/costs.md "Limit per person"). 0 = none. A
-    # person's own limit, set on the Users page, wins over it.
-    user_spend_limit_usd: float = Field(
-        default=0.0,
-        validation_alias=AliasChoices("AGENTS_HUB_USER_SPEND_LIMIT_USD", "user_spend_limit_usd"))
-    # Requests per minute per client address on the public instance routes
-    # (/api/external/{token}/messages and /run),
-    # known and unknown tokens alike, so token guessing is slow. 0 disables.
-    external_rate_per_minute: int = Field(
-        default=30,
-        validation_alias=AliasChoices("AGENTS_HUB_EXTERNAL_RATE_PER_MINUTE",
-                                      "external_rate_per_minute"))
-    # Identity posture. Three explicit modes, documented in docs/identity.md:
-    #   "single" (default) — exactly one operator on this machine or host. No
-    #     login, no users, no roles, no owner checks; the API behaves as it
-    #     always has and every ownable record is owned by the constant
-    #     ``common.auth.LOCAL_OPERATOR_ID``.
-    #   "token"  — the shared ``AGENTS_HUB_API_TOKEN`` below gates /api. Still
-    #     one operator: no users, no roles.
-    #   "multi"  — named users with passwords, sessions, a global role and
-    #     per-workspace membership roles.
-    # Backwards compatibility: leaving this unset (or "single") while a token
-    # *is* configured resolves to "token", so a deployment that only ever set
-    # AGENTS_HUB_API_TOKEN keeps working exactly as before. Resolve it through
-    # ``common.auth.effective_auth_mode``, never off this field directly.
-    auth_mode: str = Field(
-        default="single",
-        validation_alias=AliasChoices("AUTH_MODE", "auth_mode"),
-    )
-    # How long a login stays valid, in hours. Sessions are opaque random tokens
-    # stored hashed (no JWT, nothing to sign), so there is no signing secret to
-    # configure: revoking one is deleting its row.
-    auth_session_hours: int = Field(
-        default=24 * 14,
-        validation_alias=AliasChoices("AUTH_SESSION_HOURS", "auth_session_hours"),
-    )
-    # ── Corporate identity (stage 3, docs/identity.md) ─────────────────────
-    # OIDC single sign-on, Authorization Code + PKCE. Setting the issuer turns
-    # it on; the client secret may be empty for a public client.
-    auth_oidc_issuer: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_OIDC_ISSUER", "auth_oidc_issuer"))
-    # Server-to-server address of the provider when browsers use a public one
-    # (the bundled Keycloak: http://keycloak:8080). Empty = use the issuer.
-    auth_oidc_internal_url: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_OIDC_INTERNAL_URL", "auth_oidc_internal_url"))
-    auth_oidc_client_id: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_OIDC_CLIENT_ID", "auth_oidc_client_id"))
-    auth_oidc_client_secret: str = Field(
-        default="",
-        validation_alias=AliasChoices("AUTH_OIDC_CLIENT_SECRET", "auth_oidc_client_secret"))
-    auth_oidc_scopes: str = Field(
-        default="openid profile email",
-        validation_alias=AliasChoices("AUTH_OIDC_SCOPES", "auth_oidc_scopes"))
-    # The id-token claim that carries group names (Keycloak: ``groups`` with
-    # the mapper on; Entra ID: ``groups``; Google Workspace has none, so map
-    # by ``email`` domain or provision with SCIM instead).
-    auth_oidc_groups_claim: str = Field(
-        default="groups",
-        validation_alias=AliasChoices("AUTH_OIDC_GROUPS_CLAIM", "auth_oidc_groups_claim"))
-    # A label for the sign-in button ("Sign in with Keycloak").
-    auth_oidc_provider_name: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_OIDC_PROVIDER_NAME", "auth_oidc_provider_name"))
-    # OIDC sessions are shorter than password ones: the provider's own
-    # session makes a re-login silent, so there is no cost to asking again.
-    auth_oidc_session_hours: int = Field(
-        default=8, validation_alias=AliasChoices("AUTH_OIDC_SESSION_HOURS", "auth_oidc_session_hours"))
-    # Link an OIDC login to an existing local account with the same email
-    # (or username) instead of creating a second account for the same person.
-    auth_oidc_link_by_email: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("AUTH_OIDC_LINK_BY_EMAIL", "auth_oidc_link_by_email"))
-    # Password login. Off, only administrators may still sign in with a
-    # password (the emergency door when the provider is down).
-    auth_local_passwords: bool = Field(
-        default=True, validation_alias=AliasChoices("AUTH_LOCAL_PASSWORDS", "auth_local_passwords"))
-    # Failed logins per account (or per address) inside the window before
-    # further attempts are refused with 429.
-    auth_login_max_attempts: int = Field(
-        default=10, validation_alias=AliasChoices("AUTH_LOGIN_MAX_ATTEMPTS", "auth_login_max_attempts"))
-    auth_login_window_minutes: int = Field(
-        default=15, validation_alias=AliasChoices("AUTH_LOGIN_WINDOW_MINUTES", "auth_login_window_minutes"))
-    # The URL the browser reaches this hub at, for OIDC redirect URIs behind a
-    # reverse proxy. Empty: derived from the request (honouring
-    # X-Forwarded-Proto and X-Forwarded-Host).
-    auth_public_url: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_PUBLIC_URL", "auth_public_url"))
-    # Mark the short-lived OIDC state cookie Secure. Auto: on when the public
-    # URL (or the request) is https.
-    auth_cookie_secure: str = Field(
-        default="auto", validation_alias=AliasChoices("AUTH_COOKIE_SECURE", "auth_cookie_secure"))
-    # SCIM 2.0 provisioning: the bearer token an identity provider presents on
-    # /scim/v2. Empty turns the endpoints off.
-    auth_scim_token: str = Field(
-        default="", validation_alias=AliasChoices("AUTH_SCIM_TOKEN", "auth_scim_token"))
-    # Audit log: record every write request from the middleware. "auto" is on
-    # in token and multi mode, off in single (where the key points are still
-    # recorded: login, role changes, launches, approvals, policy, budget).
-    audit_requests: str = Field(
-        default="auto", validation_alias=AliasChoices("AUDIT_REQUESTS", "audit_requests"))
     # Days an audit row is kept; 0 keeps everything.
     audit_retention_days: int = Field(
         default=365, validation_alias=AliasChoices("AUDIT_RETENTION_DAYS", "audit_retention_days"))
@@ -366,31 +215,6 @@ class Settings(BaseSettings):
         default="", validation_alias=AliasChoices("AGENTS_HUB_SECRET_KEY", "secret_key"))
     secret_backend: str = Field(
         default="local", validation_alias=AliasChoices("AGENTS_HUB_SECRET_BACKEND", "secret_backend"))
-    # GitHub App (connectors/git/github_app.py, docs/github-app.md): the hub
-    # issues installation tokens and user-to-server tokens itself. Configured
-    # when the app id, the private key and the client id are set. The private
-    # key is PEM text, or a path to the .pem file in GITHUB_APP_PRIVATE_KEY_FILE.
-    github_app_id: str = Field(
-        default="", validation_alias=AliasChoices("GITHUB_APP_ID", "github_app_id"))
-    github_app_slug: str = Field(
-        default="", validation_alias=AliasChoices("GITHUB_APP_SLUG", "github_app_slug"))
-    github_app_client_id: str = Field(
-        default="", validation_alias=AliasChoices("GITHUB_APP_CLIENT_ID", "github_app_client_id"))
-    github_app_client_secret: str = Field(
-        default="",
-        validation_alias=AliasChoices("GITHUB_APP_CLIENT_SECRET", "github_app_client_secret"))
-    github_app_private_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY", "github_app_private_key"))
-    github_app_private_key_file: str = Field(
-        default="",
-        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY_FILE", "github_app_private_key_file"))
-    # GitHub Enterprise Server: https://<host>/api/v3 and https://<host>.
-    github_api_url: str = Field(
-        default="https://api.github.com",
-        validation_alias=AliasChoices("GITHUB_API_URL", "github_api_url"))
-    github_url: str = Field(
-        default="https://github.com", validation_alias=AliasChoices("GITHUB_URL", "github_url"))
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).
@@ -528,33 +352,6 @@ class Settings(BaseSettings):
     browser_timeout: float = Field(
         default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
 
-    # ── Model runtime (providers/local_models.py, deploy/models/) ──────────────
-    # Base URL of a model runtime run elsewhere, e.g. http://models:8200 for
-    # the compose service. Empty (default): the hub runs its own on this host
-    # (providers/model_runtime_host.py), unless models_managed is off.
-    models_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_URL", "models_url"))
-    # Whether the hub starts and keeps its own runtime when models_url is
-    # empty: a process of its own on 127.0.0.1:models_port, with its own
-    # Python environment and token under AGENTS_HUB_ROOT/models-runtime.
-    models_managed: bool = Field(
-        default=True, validation_alias=AliasChoices("AGENTS_HUB_MODELS_MANAGED", "models_managed"))
-    models_port: int = Field(
-        default=8200, validation_alias=AliasChoices("AGENTS_HUB_MODELS_PORT", "models_port"))
-    # A file holding the token, for a runtime that wrote its own (compose
-    # shares it over the models volume). models_token wins when both are set.
-    models_token_file: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN_FILE", "models_token_file"))
-    # Shared token the runtime requires on every call (its MODELS_TOKEN). It
-    # is also the api_key of the hub-local backend. The _TOKEN suffix keeps it
-    # out of run_shell's environment (scrubbed_env).
-    models_token: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN", "models_token"))
-    # Seconds the hub waits for one call to the runtime. A load waits longer
-    # on its own (the runtime gives llama-server up to 120 s to come up).
-    models_timeout: float = Field(
-        default=60.0, validation_alias=AliasChoices("AGENTS_HUB_MODELS_TIMEOUT", "models_timeout"))
-
     # ── Sandboxed code execution (tools/run_code.py) ──────────────────────────
     # Image per language, as JSON ({"python": "python:3.12-slim"}) or as
     # comma-separated lang=image pairs. Languages left out keep their default
@@ -578,35 +375,9 @@ class Settings(BaseSettings):
         default=300, validation_alias=AliasChoices("CODE_RUNNER_MAX_TIMEOUT", "code_runner_max_timeout"))
     # Which sandbox/registry.py provider a run gets when its environment does
     # not name one explicitly (sandbox_provider "inherit" or no environment
-    # at all): "docker" (default), "local", "e2b" or "modal".
+    # at all): "docker" (default) or "local".
     code_runner_provider: str = Field(
         default="docker", validation_alias=AliasChoices("CODE_RUNNER_PROVIDER", "code_runner_provider"))
-
-    # ── Remote sandboxes (sandbox/e2b.py, sandbox/modal.py) ────────────────────
-    # e2b.dev. Optional dependency (requirements-sandbox.txt); the provider
-    # reports itself unavailable without a key, same as a missing docker.
-    e2b_api_key: str = Field(
-        default="", validation_alias=AliasChoices("E2B_API_KEY", "e2b_api_key"))
-    # Sandbox template name; e2b's own default template when empty.
-    e2b_template: str = Field(
-        default="", validation_alias=AliasChoices("E2B_TEMPLATE", "e2b_template"))
-    # modal.com. Optional dependency (requirements-sandbox.txt).
-    modal_token_id: str = Field(
-        default="", validation_alias=AliasChoices("MODAL_TOKEN_ID", "modal_token_id"))
-    modal_token_secret: str = Field(
-        default="", validation_alias=AliasChoices("MODAL_TOKEN_SECRET", "modal_token_secret"))
-    # A registry image name; modal.Image.debian_slim() (modal's own base) when empty.
-    modal_image: str = Field(
-        default="", validation_alias=AliasChoices("MODAL_IMAGE", "modal_image"))
-
-    # ── Egress gateway (managers/container_manager.py, environments/egress.py) ─
-    # The image the enforced-network-policy gateway container runs: a tiny
-    # TCP relay onto the egress proxy, so a container fenced to the internal,
-    # no-route-out network (managers.container_manager.EGRESS_NETWORK_NAME)
-    # can still reach it. Any image with `socat` on its PATH works.
-    egress_gateway_image: str = Field(
-        default="alpine/socat:latest",
-        validation_alias=AliasChoices("AGENTS_HUB_EGRESS_GATEWAY_IMAGE", "egress_gateway_image"))
 
     # ── Retention ─────────────────────────────────────────────────────────────
     # Daily maintenance deletes terminal run records (and their payloads/logs)
@@ -662,95 +433,6 @@ class Settings(BaseSettings):
     # content-addressed: rebuild only when inputs change).
     agent_cache_ttl: int = Field(
         default=900, validation_alias=AliasChoices("AGENT_CACHE_TTL", "agent_cache_ttl"))
-
-    # ── Cross-replica event bridge (common/broker_bridge.py) ──────────────────
-    # Empty (default, off): the session broker stays in-process only, exactly as
-    # today. Set to a Redis URL (e.g. redis://redis:6379/0) when more than one
-    # backend replica is running behind a load balancer: every local publish is
-    # then also fanned out over Redis pub/sub, so a browser tab connected to a
-    # different replica than the one that produced an event still receives it.
-    # See docs/scaling.md for when this is needed and how to run it.
-    broker_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_BROKER_URL", "broker_url"))
-
-    # ── Database (common/db.py) ───────────────────────────────────────────────
-    # Empty (default): SQLite at <AGENTS_HUB_ROOT>/agents_hub.db, one host. A
-    # postgresql:// URL puts the same schema in Postgres, which is what lets
-    # backend replicas and workers run on different hosts. Every process that
-    # touches state (backend, agent subprocesses, node workers, the CLI in
-    # direct mode) reads this, so set it in .env rather than per service.
-    database_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_DATABASE_URL", "database_url"))
-    # Postgres only: connections in this process's pool. The backend serves
-    # requests from a thread pool and needs ten or so; a run subprocess needs
-    # one or two, so runtime entrypoints may set it lower in their environment.
-    db_pool_size: int = Field(
-        default=10, validation_alias=AliasChoices("AGENTS_HUB_DB_POOL_SIZE", "db_pool_size"))
-
-    # ── Object store mirror (common/blobs.py) ─────────────────────────────────
-    # Empty (default): run logs, node logs, flow logs, view assets and generated
-    # Dockerfiles live only under AGENTS_HUB_ROOT on the one host that wrote
-    # them, exactly as today. Set to an s3://bucket/prefix URL (real AWS S3, or
-    # MinIO via blob_endpoint below) and every writer also mirrors its file
-    # there, so a backend replica or worker on another host can read a
-    # finished run's log or a view's asset it does not have locally. See
-    # docs/storage.md.
-    blob_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_URL", "blob_url"))
-    # MinIO (or any other S3-compatible) endpoint; empty targets real AWS S3.
-    # Region and credentials come from the usual AWS env vars (AWS_ACCESS_KEY_ID,
-    # AWS_SECRET_ACCESS_KEY, AWS_REGION / AWS_DEFAULT_REGION), not a setting here.
-    blob_endpoint: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_ENDPOINT", "blob_endpoint"))
-
-    # ── Process role (docs/workers.md) ────────────────────────────────────────
-    # "all" (default): this backend launches runs itself, exactly as it always
-    # has; one process does everything a laptop needs. "api": the backend only
-    # prepares runs and puts the launch on the queue (common/run_queue.py) for
-    # a worker on any host. "worker": a process started with `ah worker` that
-    # claims launches from that queue and spawns them; it serves no HTTP.
-    role: str = Field(
-        default="all", validation_alias=AliasChoices("AGENTS_HUB_ROLE", "role"))
-    # What a worker can run, comma separated: "local", "docker" or both. A
-    # worker without a Docker socket says "local" and never claims a run that
-    # wants a container.
-    worker_modes: str = Field(
-        default="local,docker",
-        validation_alias=AliasChoices("AGENTS_HUB_WORKER_MODES", "worker_modes"))
-    # How many launches one worker keeps alive at once.
-    worker_concurrency: int = Field(
-        default=4, validation_alias=AliasChoices("AGENTS_HUB_WORKER_CONCURRENCY", "worker_concurrency"))
-
-    # ── OTel export (common/otel_export.py) ───────────────────────────────────
-    # Empty (default, off): finished runs are recorded here and nowhere else.
-    # Set to a collector's OTLP/HTTP traces URL (including another Agents Hub's
-    # own .../api/ingest/v1/traces) and every run that reaches a terminal
-    # status is also posted there as one span, best-effort. See
-    # docs/service-health.md, "Exporting runs as spans".
-    otel_export_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_URL", "otel_export_url"))
-    # Extra headers the export POST carries, as "k=v,k=v" (a collector token,
-    # say). Empty sends none beyond Content-Type.
-    otel_export_headers: str = Field(
-        default="",
-        validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_HEADERS", "otel_export_headers"))
-    # The standard OpenTelemetry variables, used as fallbacks when the
-    # AGENTS_HUB_ ones above are empty: a base endpoint (the traces go to
-    # <endpoint>/v1/traces, the metrics to <endpoint>/v1/metrics) and headers.
-    otel_endpoint: str = Field(
-        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_ENDPOINT", "otel_endpoint"))
-    otel_headers: str = Field(
-        default="", validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS", "otel_headers"))
-    # Where OTLP metrics go, when not <traces url with /v1/metrics>. Empty
-    # with no endpoint anywhere: no metrics export.
-    otel_metrics_url: str = Field(
-        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_URL", "otel_metrics_url"))
-    otel_metrics_interval_seconds: int = Field(
-        default=60, validation_alias=AliasChoices("AGENTS_HUB_OTEL_METRICS_INTERVAL", "otel_metrics_interval_seconds"))
-    # Model-call and tool-call child spans under each run's span: at most this
-    # many per run (0 turns them off).
-    otel_max_child_spans: int = Field(
-        default=40, validation_alias=AliasChoices("AGENTS_HUB_OTEL_MAX_CHILD_SPANS", "otel_max_child_spans"))
 
     model_config = SettingsConfigDict(
         case_sensitive=False,
@@ -847,15 +529,6 @@ def playground_enabled() -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
-def blob_url() -> str:
-    """Effective ``AGENTS_HUB_BLOB_URL``, resolved live like the other
-    .env-backed settings (see :func:`live_setting`). Empty means the local,
-    no-op mirror (``common.blobs.LocalBlobStore``); an ``s3://bucket/prefix``
-    value is what ``common.blobs.store()`` builds an ``S3BlobStore`` from.
-    """
-    return live_setting("AGENTS_HUB_BLOB_URL", settings.blob_url)
-
-
 def agent_execution_mode() -> str:
     """How agents are launched: "local" subprocess or "docker" container.
 
@@ -868,56 +541,17 @@ def agent_execution_mode() -> str:
     return mode if mode in ("local", "docker") else "local"
 
 
-def chat_execution() -> str:
-    """Where a chat turn runs: "instances" (a replica of a service, its own
-    process) or "inprocess" (this process). Resolved live like
-    ``agent_execution_mode``; anything unrecognised reads as "instances", the
-    documented default. See chat/routing.py for the two cases that always
-    run in process whatever this says: a worker, and the replica itself."""
-    mode = live_setting("AGENTS_HUB_CHAT_EXECUTION", settings.chat_execution).lower()
-    return mode if mode in ("instances", "inprocess") else "instances"
-
-
 def run_state_transport() -> str:
     """How a run's own entrypoint reaches its run/task records: "db" (direct
     database access) or "http" (relayed through the backend's /api/run-state
     routes). Resolved live, the same way as ``agent_execution_mode``. Left
-    unset, it is "db" on SQLite and "http" on Postgres (docs/containers.md,
-    docs/scaling.md); an explicit value wins on either. Unrecognised reads as
-    the unset case.
+    unset it is "db": the state directory is mounted into a run container
+    anyway (docs/containers.md). Unrecognised reads as the unset case.
     """
     mode = live_setting("AGENT_RUN_STATE_TRANSPORT", "").lower()
     if mode in ("db", "http"):
         return mode
-    # Not set anywhere: under Postgres the relay is the default, so a run
-    # container is never handed the database URL and password just to write
-    # its own status; under SQLite direct access stays the default, as the
-    # state directory is mounted into the container anyway.
-    try:
-        from common import db
-        if db.is_postgres():
-            return "http"
-    except (ImportError, RuntimeError):
-        pass
     return settings.run_state_transport if settings.run_state_transport in ("db", "http") else "db"
-
-
-def hub_role() -> str:
-    """This process's role: "all", "api" or "worker" (docs/workers.md).
-
-    Read from the environment first so a worker started with
-    ``AGENTS_HUB_ROLE=worker ah worker`` never inherits the backend's ``.env``
-    value, then from settings. Anything unrecognised is "all", the mode that
-    needs nothing else running.
-    """
-    raw = (os.environ.get("AGENTS_HUB_ROLE") or settings.role or "all").strip().lower()
-    return raw if raw in ("all", "api", "worker") else "all"
-
-
-def worker_execution_modes() -> list:
-    raw = os.environ.get("AGENTS_HUB_WORKER_MODES") or settings.worker_modes or "local,docker"
-    modes = [m.strip().lower() for m in raw.split(",") if m.strip()]
-    return [m for m in modes if m in ("local", "docker")] or ["local"]
 
 
 # Convenience accessors to align with previous orchestrator.config API

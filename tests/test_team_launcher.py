@@ -77,25 +77,6 @@ def test_start_team_run_refuses_an_unknown_team(no_real_spawn):
         start_team_run("team_nope", "go")
 
 
-def test_the_api_role_enqueues_the_launch_instead_of_spawning(monkeypatch):
-    """In the api role dispatch() puts the spec on run_queue for a worker to
-    claim, rather than calling launch_prepared in this process at all."""
-    from common import run_queue
-
-    monkeypatch.setattr("common.config.hub_role", lambda: "api")
-    team = _team()
-    run = start_team_run(team.team_id, "ship the page")
-
-    queued = run_queue.get(run.team_run_id)
-    assert queued is not None
-    assert queued["kind"] == "team"
-    assert queued["status"] == "queued"
-    assert queued["payload"]["entrypoint"] == "team_run"
-    # Nothing spawned it — the record is exactly as start_team_run's own
-    # database half left it.
-    assert store.get_run(run.team_run_id).status == "pending"
-
-
 # ── Resume ───────────────────────────────────────────────────────────────────
 
 def test_resume_refuses_an_unknown_run(no_real_spawn):

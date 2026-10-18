@@ -11,11 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import sys
-import time
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 
@@ -28,140 +25,6 @@ SECRET = "hunter2-but-longer"
 
 def _sign(body: bytes, secret: str = SECRET) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-
-
-# ── PUT/DELETE /api/instances/{instance_id}/inbound-secret ───────────────────
-
-@pytest.fixture(autouse=True)
-def stub_registry(monkeypatch):
-    """The suite runs against an empty state root with no agents.json; the
-    instance routes only ask the registry for a display name."""
-    from agents.registry import AgentSpec
-
-    monkeypatch.setattr(
-        "agents.registry.get_agent",
-        lambda agent_id: AgentSpec(id=agent_id, name="SWE", type="local",
-                                   entrypoint="agents.standard_agent:StandardAgent"),
-    )
-
-
-@pytest.fixture
-def nodes_client():
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from routes import instances as instance_routes
-
-    app = FastAPI()
-    app.include_router(instance_routes.router)
-    return TestClient(app)
-
-
-@pytest.fixture
-def external_client(no_launch):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from routes import external as external_routes
-
-    app = FastAPI()
-    app.include_router(external_routes.router)
-    return TestClient(app)
-
-
-@pytest.fixture
-def exposed_node():
-    """A published resident instance with no secret configured yet."""
-    from instances import carrier, store
-
-    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
-    instance_id = instance["instance_id"]
-    carrier.publish_instance(instance_id)
-    token = store.get(instance_id)["expose_token"]
-    return instance_id, token
-
-
-def test_node_secret_is_set_reported_and_cleared(nodes_client, exposed_node):
-    instance_id, _token = exposed_node
-
-    before = nodes_client.get(f"/api/instances/{instance_id}").json()
-    assert before["inbound_secret_configured"] is False
-
-    resp = nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["inbound_secret_configured"] is True
-
-    after = nodes_client.get(f"/api/instances/{instance_id}").json()
-    assert after["inbound_secret_configured"] is True
-
-    cleared = nodes_client.delete(f"/api/instances/{instance_id}/inbound-secret")
-    assert cleared.status_code == 200
-    assert cleared.json()["inbound_secret_configured"] is False
-    assert nodes_client.get(f"/api/instances/{instance_id}").json()["inbound_secret_configured"] is False
-
-
-def test_node_secret_is_never_returned(nodes_client, exposed_node):
-    instance_id, _token = exposed_node
-    nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
-
-    detail = nodes_client.get(f"/api/instances/{instance_id}").text
-    listing = nodes_client.get("/api/instances").text
-    assert SECRET not in detail
-    assert SECRET not in listing
-
-
-def test_empty_node_secret_is_rejected(nodes_client, exposed_node):
-    instance_id, _token = exposed_node
-    resp = nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": "   "})
-    assert resp.status_code == 400
-
-
-def test_node_secret_on_a_missing_node_is_404(nodes_client):
-    resp = nodes_client.put("/api/instances/nope/inbound-secret", json={"secret": SECRET})
-    assert resp.status_code == 404
-
-
-def test_external_route_honours_a_secret_set_through_the_route(
-    nodes_client, external_client, exposed_node,
-):
-    """The end the operator sets it from and the end that checks it agree."""
-    instance_id, token = exposed_node
-    payload = {"prompt": "do the thing"}
-    body = json.dumps(payload).encode("utf-8")
-
-    # No secret yet: the token alone is enough.
-    unsigned = external_client.post(
-        f"/api/external/{token}/run", content=body,
-        headers={"Content-Type": "application/json"},
-    )
-    assert unsigned.status_code == 202
-
-    nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
-
-    # Now an unsigned call is refused ...
-    refused = external_client.post(
-        f"/api/external/{token}/run", content=body,
-        headers={"Content-Type": "application/json"},
-    )
-    assert refused.status_code == 401
-
-    # ... and one signed with what was set goes through.
-    signed = external_client.post(
-        f"/api/external/{token}/run", content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-AgentsHub-Signature": _sign(body),
-            "X-AgentsHub-Timestamp": str(int(time.time())),
-            "X-AgentsHub-Delivery": str(uuid4()),
-        },
-    )
-    assert signed.status_code == 202
-
-    # Clearing it puts the instance back to token-only.
-    nodes_client.delete(f"/api/instances/{instance_id}/inbound-secret")
-    reopened = external_client.post(
-        f"/api/external/{token}/run", content=body,
-        headers={"Content-Type": "application/json"},
-    )
-    assert reopened.status_code == 202
 
 
 # ── PUT /api/flows/{flow_id} with webhook_secret ─────────────────────────────

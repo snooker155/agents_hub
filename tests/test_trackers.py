@@ -1,5 +1,5 @@
 """
-Tests for connectors/trackers (Jira, Linear providers + sync), tools/trackers.py
+Tests for connectors/trackers (the Jira provider + sync), tools/trackers.py
 and dashboard/backend/routes/trackers.py.
 
 No network: httpx.get/httpx.post are monkeypatched per test, the same
@@ -23,7 +23,7 @@ BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
-from connectors.trackers.providers import JiraProvider, LinearProvider
+from connectors.trackers.providers import JiraProvider
 
 
 class _FakeResponse:
@@ -129,64 +129,6 @@ def test_jira_test_connection_returns_the_display_name(monkeypatch):
     provider = _jira_provider()
     result = provider.test_connection()
     assert result == {"ok": True, "identity": "Alice Example", "error": None}
-
-
-# ── Linear: issue normalization ──────────────────────────────────────────
-
-_LINEAR_ISSUES_RESPONSE = {
-    "issues": {
-        "nodes": [
-            {
-                "id": "abc-1", "identifier": "ENG-123", "title": "Fix bug",
-                "description": "Steps to repro", "state": {"name": "Done", "type": "completed"},
-                "labels": {"nodes": [{"name": "bug"}]},
-                "url": "https://linear.app/acme/issue/ENG-123",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "creator": {"name": "Alice"}, "assignee": {"name": "Bob"},
-                "priority": 2,
-            },
-            {
-                "id": "abc-2", "identifier": "ENG-124", "title": "Still open",
-                "description": None, "state": {"name": "In Progress", "type": "started"},
-                "labels": {"nodes": []},
-                "url": "https://linear.app/acme/issue/ENG-124",
-                "updatedAt": "2026-01-02T00:00:00Z",
-                "creator": {"name": "Alice"}, "assignee": None,
-                "priority": 0,
-            },
-        ]
-    }
-}
-
-
-def test_linear_list_issues_normalizes_state(monkeypatch):
-    monkeypatch.setattr(
-        "httpx.post",
-        lambda url, headers=None, json=None, timeout=None: _FakeResponse({"data": _LINEAR_ISSUES_RESPONSE}),
-    )
-    provider = LinearProvider("key-123")
-    issues = provider.list_issues("ENG")
-
-    assert len(issues) == 2
-    closed = next(i for i in issues if i["key"] == "ENG-123")
-    assert closed["state"] == "closed"
-    assert closed["labels"] == ["bug"]
-    assert closed["assignee"] == "Bob"
-
-    open_issue = next(i for i in issues if i["key"] == "ENG-124")
-    assert open_issue["state"] == "open"
-    assert open_issue["body"] == ""
-
-
-def test_linear_test_connection_returns_the_viewer_name(monkeypatch):
-    monkeypatch.setattr(
-        "httpx.post",
-        lambda url, headers=None, json=None, timeout=None:
-            _FakeResponse({"data": {"viewer": {"id": "u1", "name": "Alice", "email": "a@acme.com"}}}),
-    )
-    provider = LinearProvider("key-123")
-    result = provider.test_connection()
-    assert result == {"ok": True, "identity": "Alice", "error": None}
 
 
 # ── sync_tracker_issues: import then update, idempotently ───────────────
@@ -307,7 +249,7 @@ def test_tracker_list_issues_tool_returns_not_configured_error():
 def test_tracker_sync_tool_returns_not_configured_error():
     from tools.trackers import tracker_sync
 
-    project = _make_project_with_tracker(provider="linear", remote_id="ENG")
+    project = _make_project_with_tracker(provider="jira", remote_id="ENG")
     raw = tracker_sync.invoke({"project": project.id})
     data = json.loads(raw)
     assert data["ok"] is False

@@ -43,13 +43,6 @@ export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`,
 export const startInstance = (data) => api.post('/instances', data);
 export const restartInstance = (instanceId) => api.post(`/instances/${instanceId}/restart`);
 export const interruptInstance = (instanceId) => api.post(`/instances/${instanceId}/interrupt`);
-export const publishInstance = (instanceId) => api.post(`/instances/${instanceId}/publish`);
-export const unpublishInstance = (instanceId) => api.delete(`/instances/${instanceId}/publish`);
-// Inbound signing for a published instance. Write-only: an instance reports
-// only `inbound_secret_configured`, never the value.
-export const setInstanceInboundSecret = (instanceId, secret) => api.put(`/instances/${instanceId}/inbound-secret`, { secret });
-export const clearInstanceInboundSecret = (instanceId) => api.delete(`/instances/${instanceId}/inbound-secret`);
-export const getInstanceConnections = (instanceId) => api.get(`/instances/${instanceId}/connections`);
 export const getInstanceCarriers = (instanceId) => api.get(`/instances/${instanceId}/carriers`);
 export const updateInstanceInputs = (instanceId, data) => api.patch(`/instances/${instanceId}/inputs`, data);
 export const getInstanceConversations = (instanceId) => api.get(`/instances/${instanceId}/conversations`);

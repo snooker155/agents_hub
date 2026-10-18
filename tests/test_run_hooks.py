@@ -77,7 +77,6 @@ def _agent(monkeypatch, *, output="the answer", tokens=(0, 0)):
 
     agent._executor = _Exec()
     monkeypatch.setattr(StandardAgent, "_context_window_guard", lambda self: None)
-    monkeypatch.setattr(StandardAgent, "_run_budget_guard", lambda self: None)
     monkeypatch.setattr(StandardAgent, "_guardrail_trip", lambda self, state, stage, text: None)
     monkeypatch.setattr(StandardAgent, "_finalize_output", lambda self, out: (out, None))
     return agent, calls

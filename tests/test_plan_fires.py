@@ -1,5 +1,4 @@
-"""The scheduler firing journal, auto pause, and the environment/budget fields
-copied from a ScheduledJob onto the task(s) it creates.
+"""The scheduler firing journal and auto pause.
 
 Mirrors the fixture style of test_plan_scheduler.py: plans.service's module
 singletons (plan_store, fire_store) are pointed at throwaway stores per test,
@@ -136,12 +135,6 @@ def test_classify_loop_missing():
 def test_classify_loop_busy():
     err = RuntimeError("skipped: run abc123 of loop 'nightly' is still running")
     assert ps.classify_fire_error(err) == "loop_busy"
-
-
-def test_classify_budget_exceeded_by_type():
-    from common.budget import BudgetExceededError
-    err = BudgetExceededError("default", 5.0, 3.0, "monthly")
-    assert ps.classify_fire_error(err) == "budget_exceeded"
 
 
 def test_classify_capacity():
@@ -351,60 +344,6 @@ def test_job_to_dict_last_fire_reflects_the_newest_journal_row(store, no_side_ef
     assert data["last_fire"]["job_id"] == str(job.id)
 
 
-# -------------------- budget/environment copied onto the task --------------------
-
-def test_fire_agent_task_passes_budget_and_environment_to_create_task(store, no_side_effects, monkeypatch):
-    captured = {}
-
-    def _fake_create_task(**kw):
-        captured.update(kw)
-        class _T:
-            id = "11111111-1111-1111-1111-111111111111"
-        return _T()
-
-    monkeypatch.setattr("tasks.service.create_task", _fake_create_task)
-    monkeypatch.setattr("tasks.service.append_task_activity_log", lambda *a, **k: None)
-    monkeypatch.setattr("tasks.service.update_task", lambda *a, **k: None)
-
-    job = store.add(_job(
-        kind=JobKind.agent_task, run_at=datetime.now(UTC) - timedelta(seconds=5),
-        budget_usd=12.5, environment_id="env-1",
-    ))
-
-    ps.fire_job(job)
-
-    assert captured.get("budget_usd") == 12.5
-    assert captured.get("environment_id") == "env-1"
-
-
-# -------------------- environment_id validation --------------------
-
-def test_create_job_accepts_a_valid_environment_id(store):
-    from environments import service as env_service
-
-    env = env_service.create_environment({"name": "sandbox"})
-
-    job = ps.create_job(
-        kind=JobKind.notification, title="t", run_at=datetime.now(UTC),
-        environment_id=env.id,
-    )
-
-    assert job.environment_id == env.id
-
-
-def test_create_job_rejects_an_archived_environment_id(store):
-    from environments import service as env_service
-
-    env = env_service.create_environment({"name": "sandbox"})
-    env_service.archive_environment(env.id)
-
-    with pytest.raises(ValueError, match="archived"):
-        ps.create_job(
-            kind=JobKind.notification, title="t", run_at=datetime.now(UTC),
-            environment_id=env.id,
-        )
-
-
 # -------------------- routes --------------------
 
 @pytest.fixture
@@ -465,27 +404,12 @@ def test_route_run_now_allowed_while_paused(plan_client, no_side_effects):
     assert run_resp.json()["result"]["ok"] is True
 
 
-def test_route_create_accepts_environment_budget_and_auto_pause(plan_client):
-    from environments import service as env_service
-    env = env_service.create_environment({"name": "sandbox"})
-
+def test_route_create_accepts_auto_pause(plan_client):
     resp = plan_client.post("/api/plan/jobs", json={
-        "kind": "notification", "title": "t", "delay_minutes": 5,
-        "environment_id": env.id, "budget_usd": 4.5, "auto_pause_after": 1,
+        "kind": "notification", "title": "t", "delay_minutes": 5, "auto_pause_after": 1,
     })
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["environment_id"] == env.id
-    assert body["budget_usd"] == 4.5
-    assert body["auto_pause_after"] == 1
-
-
-def test_route_create_rejects_an_unknown_environment_id(plan_client):
-    resp = plan_client.post("/api/plan/jobs", json={
-        "kind": "notification", "title": "t", "delay_minutes": 5,
-        "environment_id": "no-such-env",
-    })
-    assert resp.status_code == 400
+    assert resp.json()["auto_pause_after"] == 1
 
 
 def test_route_jobs_filters_by_kinds(plan_client):

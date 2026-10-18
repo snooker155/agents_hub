@@ -3,45 +3,19 @@ Shared pytest fixtures.
 
 Point the whole state root at a throwaway directory *before* any store module
 imports, so the suite never reads or writes the real ``.agents_hub``. Each test
-then gets a fresh, empty database via the autouse ``fresh_db`` fixture.
-
-The suite runs against both database backends (docs/scaling.md):
-
-- SQLite (default): every test gets its own file under ``tmp_path``.
-- Postgres: set ``AGENTS_HUB_TEST_DATABASE_URL`` to a database the suite may
-  empty, e.g. ``postgresql://ah:ah@localhost:5433/agents_hub``. Every test
-  starts by truncating every table (the migration ledger excepted) in that
-  one database, so it must not be shared with anything else. Tests marked
-  ``sqlite_only`` (they open the SQLite file directly or test SQLite's own
-  locking) are skipped.
-
-``AGENTS_HUB_DATABASE_URL`` itself is pinned here to the test URL, or to the
-empty string, so a developer's ``.env`` can never route the suite at a real
-database.
+then gets a fresh, empty SQLite file under ``tmp_path`` via the autouse
+``fresh_db`` fixture.
 """
 import logging
 import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import List
 
 # Redirect the state root before common.paths is imported by anything else.
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="agents_hub_tests_"))
 os.environ["AGENTS_HUB_ROOT"] = str(_TEST_ROOT)
 
-# The hub runs its own model runtime when no URL names one
-# (providers/model_runtime_host.py): a process and a venv the suite must not
-# make. Tests of that module turn it back on with a fake spawn.
-os.environ["AGENTS_HUB_MODELS_MANAGED"] = "false"
-
-TEST_DATABASE_URL = os.environ.get("AGENTS_HUB_TEST_DATABASE_URL", "").strip()
-os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
-
-# Chat turns run in this process under test (chat/routing.py): the default
-# hands every turn to a service replica, a process the suite must not spawn.
-# Tests of the routing itself patch ``chat.routing.enabled``.
-os.environ.setdefault("AGENTS_HUB_CHAT_EXECUTION", "inprocess")
 
 # The backend's route modules import their request models as a top level
 # ``models`` package (``from models import TaskCreate``), which only resolves
@@ -60,79 +34,18 @@ import pytest
 
 
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "sqlite_only: the test opens the SQLite file directly; skipped on Postgres")
-
-
-def pytest_collection_modifyitems(config, items):
-    if not TEST_DATABASE_URL:
-        return
-    skip = pytest.mark.skip(reason="SQLite-specific; the suite is running on Postgres")
-    for item in items:
-        if "sqlite_only" in item.keywords:
-            item.add_marker(skip)
-
-
-# The Postgres tables the suite empties before every test, listed once: the
-# schema is built by the migrations on the first test's startup sequence and
-# never changes afterwards, so asking information_schema again for each of the
-# thousands of tests is pure overhead. Empty until the tables exist (the very
-# first test on a new database finds none), and rebuilt once if a reset fails
-# because the list went stale (a test that dropped or created a table itself).
-_PG_TABLES: List[str] = []
-
-
-def _pg_table_names(conn) -> List[str]:
-    rows = conn.execute(
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
-    ).fetchall()
-    return [str(r[0]) for r in rows if str(r[0]) != "schema_migrations"]
-
-
-def _pg_reset_sql(tables: List[str]) -> str:
-    """One round trip that empties every table and rewinds the sequences that
-    were used. DELETE rather than TRUNCATE: nearly every table is empty before
-    nearly every test, and a DELETE on an empty table costs nothing, whereas
-    TRUNCATE takes an exclusive lock and allocates new storage for the table
-    and each of its indexes, and then waits for the disk at commit; on seventy
-    tables that was most of the Postgres run. setval(seq, 1, false) is what
-    RESTART IDENTITY did, applied only to sequences that ever advanced
-    (last_value is null until the first nextval). Sent as one multi-statement
-    string, which Postgres runs as a single implicit transaction."""
-    statements = [f"DELETE FROM {name}" for name in tables]
-    statements.append(
-        "SELECT setval(format('%I.%I', schemaname, sequencename)::regclass, 1, false) "
-        "FROM pg_sequences WHERE schemaname = current_schema() AND last_value IS NOT NULL"
-    )
-    return "; ".join(statements)
+    # Kept so the tests that carried the marker still collect: the suite runs
+    # on SQLite only, so the marker no longer skips anything.
+    config.addinivalue_line("markers", "sqlite_only: the test opens the SQLite file directly")
 
 
 def _fresh_database(db, path: Path) -> None:
-    """Point the process at an empty database: a new file on SQLite, the one
-    shared database emptied on Postgres. Resets the per-thread connections and
-    the schema-ready flag either way, so the next ``get_conn()`` runs the
+    """Point the process at a new, empty SQLite file. Resets the per-thread
+    connections and the schema-ready flag, so the next ``get_conn()`` runs the
     startup sequence (migrations, legacy JSON import) again."""
-    global _PG_TABLES
     db.DB_FILE = path
     db._local = threading.local()
     db._schema_ready = False
-    if db.is_postgres():
-        # A bare connection, not get_conn(): the startup sequence (migrations
-        # and the legacy JSON import) must run only once the tables are empty
-        # again, from the first get_conn() the test itself makes.
-        conn = db._connect()
-        if not _PG_TABLES:
-            _PG_TABLES = _pg_table_names(conn)
-        if _PG_TABLES:
-            try:
-                conn.execute(_pg_reset_sql(_PG_TABLES))
-            except Exception:  # noqa: BLE001 - the cached table list went stale; rebuild it once
-                _PG_TABLES = _pg_table_names(conn)
-                if _PG_TABLES:
-                    conn.execute(_pg_reset_sql(_PG_TABLES))
-        db._local = threading.local()
-        db._schema_ready = False
 
 
 # Settings the developer's own .env may carry that the suite must not
@@ -246,15 +159,19 @@ def browser_service_isolated(tmp_path, monkeypatch):
 def fresh_db(tmp_path, monkeypatch):
     """Give every test an isolated, empty database.
 
-    Points ``common.db.DB_FILE`` at a per-test file (SQLite) or empties the
-    shared test database (Postgres), and resets the module's per-thread
-    connection cache and schema-ready flag so the schema is rebuilt (and the
-    empty-dir migration no-ops) against the fresh database.
+    Points ``common.db.DB_FILE`` at a per-test file and resets the module's
+    per-thread connection cache and schema-ready flag so the schema is rebuilt
+    (and the empty-dir migration no-ops) against the fresh database. The
+    leases live in process memory (common/leases.py), so they are forgotten
+    too: a lease one test took must not stop the next one's loop.
     """
     import common.db as db
+    from common import leases
 
     monkeypatch.setattr(db, "DB_FILE", tmp_path / "test.db")
     _fresh_database(db, tmp_path / "test.db")
+    leases.reset()
+    leases.set_owner_id(None)
 
     # Neutralise change notifications: with no running event loop, notify_change
     # would otherwise spawn HTTP-relay timers. Patching the relay covers every
@@ -263,10 +180,6 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(sb, "_relay_notify", lambda *a, **k: None)
     monkeypatch.setattr(sb, "_relay_publish", lambda *a, **k: None)
 
-    # Personal workspaces this process made sure of live in the database
-    # just emptied (their membership rows), so forget them too.
-    from common import personal_workspace
-    personal_workspace.forget_cache()
 
     yield
 

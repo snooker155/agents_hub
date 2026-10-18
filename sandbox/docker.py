@@ -1,8 +1,6 @@
-"""The docker sandbox: today's ``run_code`` isolation, moved here unchanged
-for network ``none``, plus a real fence for network ``limited``.
+"""The docker sandbox: ``run_code``'s isolation.
 
-``none`` (the default, and the only mode ``run_code`` used before this
-module existed) is exactly what it always was::
+``none`` (the default, and the only mode ``run_code`` itself asks for) is::
 
     docker run --rm --network none --read-only --cap-drop ALL
                --security-opt no-new-privileges --user 65534:65534
@@ -14,22 +12,6 @@ environment, no workspace unless asked for.
 
 ``unrestricted`` joins docker's own default ``bridge`` network: ordinary
 outbound internet, the same as any other container on this host.
-
-``limited`` is the enforced case: the container joins the internal, no
-route out network (``managers.container_manager.EGRESS_NETWORK_NAME``,
-created and fronted by an egress gateway on demand,
-:func:`managers.container_manager.ensure_egress_gateway`) and gets
-``HTTP_PROXY``/``HTTPS_PROXY`` pointing at the gateway with a token scoped to
-the request's hosts (``environments/egress.py``). A process that ignores the
-proxy variables has nowhere to go: the internal network has no default
-route, unlike the ordinary ``agents-hub`` bridge a plain proxy-only fence
-would leave open to a raw socket. When the egress proxy is disabled
-(``AGENTS_HUB_EGRESS_PROXY`` unset) there is no way to enforce ``limited``
-at the docker level, and this provider refuses the request rather than
-running it unfenced — unlike an agent run container, which still needs
-*some* network for its model calls and so falls back to the soft,
-proxy-and-tool-level fence (environments/launch.py); a ``run_code`` snippet
-needs nothing by default, so there is nothing to lose by refusing.
 """
 from __future__ import annotations
 
@@ -170,14 +152,10 @@ def build_docker_command(
     workspace_dir: Optional[str] = None,
     interactive: bool = False,
     network: str = "none",
-    extra_env: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """The full ``docker run`` argv for one snippet. Pure: no I/O.
 
-    ``network`` defaults to ``"none"`` (today's only mode): the network name
-    to join, or the literal ``"none"``/``"bridge"``. ``extra_env`` adds ``-e``
-    flags beyond ``HOME`` (the egress proxy variables, for a ``limited``
-    network); empty for ``none``/``unrestricted``.
+    ``network`` is the literal ``"none"`` (the default) or ``"bridge"``.
     """
     file_name, interpreter, _ = LANGS[language]
     cmd = [
@@ -195,9 +173,6 @@ def build_docker_command(
         "--pids-limit", str(int(pids_limit)),
         "-e", "HOME=/tmp",
     ]
-    for key, value in (extra_env or {}).items():
-        if value:
-            cmd += ["-e", f"{key}={value}"]
     cmd += ["-v", f"{code_dir}:/code:ro"]
     if workspace_dir:
         # $WORK names the mount, the same variable sandbox/local.py sets, so a
@@ -211,35 +186,14 @@ def build_docker_command(
 
 # ── network policy ───────────────────────────────────────────────────────────
 
-def _resolve_network(net: SandboxNetwork, environment_id: Optional[str]) -> Tuple[str, Dict[str, str], str]:
-    """(docker network name, extra ``-e`` vars, error). Error non-empty means
-    refuse rather than run: the caller must not fall back to running unfenced."""
+def _resolve_network(net: SandboxNetwork) -> Tuple[str, str]:
+    """(docker network name, error). Error non-empty means refuse rather than
+    run: an unknown policy must not fall back to running unfenced."""
     if net.type == "unrestricted":
-        return "bridge", {}, ""
+        return "bridge", ""
     if net.type == "none":
-        return "none", {}, ""
-    # limited
-    try:
-        from environments import egress
-    except Exception as exc:  # noqa: BLE001 - reported as a refusal
-        return "none", {}, f"cannot enforce a limited network: {exc}"
-    if not egress.enabled():
-        return "none", {}, (
-            "a limited network needs the egress proxy (AGENTS_HUB_EGRESS_PROXY=1); it is off, so "
-            "run_code refuses this request rather than running the snippet with no network fence")
-    from managers import container_manager as cm
-    gateway = cm.ensure_egress_gateway()
-    if not gateway:
-        return "none", {}, ("the egress gateway container could not be started (see the sandbox "
-                            "doctor check); run_code refuses a limited network rather than running "
-                            "the snippet unfenced")
-    token = egress.register(net.hosts, environment_id=environment_id, owner={"kind": "run_code"})
-    url = f"http://{token}@{gateway}:{egress.port()}"
-    extra_env = {
-        "HTTP_PROXY": url, "HTTPS_PROXY": url, "http_proxy": url, "https_proxy": url,
-        "NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1",
-    }
-    return cm.EGRESS_NETWORK_NAME, extra_env, ""
+        return "none", ""
+    return "none", f"unknown network policy {net.type!r} (expected none or unrestricted)"
 
 
 # ── the provider ─────────────────────────────────────────────────────────────
@@ -265,8 +219,7 @@ class DockerProvider(SandboxProvider):
                 "subprocesses instead (no isolation)."))
 
         s = _settings()
-        network_name, extra_env, net_error = _resolve_network(
-            request.network or SandboxNetwork(), request.environment_id)
+        network_name, net_error = _resolve_network(request.network or SandboxNetwork())
         if net_error:
             return SandboxResult(exit_code=-1, provider=self.name, error=net_error)
 
@@ -279,7 +232,7 @@ class DockerProvider(SandboxProvider):
             memory=request.memory or s.code_runner_memory, cpus=request.cpus or s.code_runner_cpus,
             pids_limit=request.pids_limit or s.code_runner_pids_limit,
             workspace_dir=workspace_host, interactive=request.stdin is not None,
-            network=network_name, extra_env=extra_env,
+            network=network_name,
         )
         started = time.monotonic()
         try:

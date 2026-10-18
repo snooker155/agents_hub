@@ -2,8 +2,8 @@
 
 Used only when docker is unavailable and an operator has explicitly opted in
 (``CODE_RUNNER_FALLBACK=local``, checked by ``sandbox/registry.py`` before
-this provider is ever selected) or when an environment names ``local`` as its
-``sandbox_provider`` outright. No network fence, no filesystem fence: the
+this provider is ever selected) or when ``CODE_RUNNER_PROVIDER`` names it
+outright. No network fence, no filesystem fence: the
 snippet runs as this process's own user with a scrubbed environment
 (``tools.shell.scrubbed_env``) in a throwaway directory. The network policy on
 the request is not enforced here at all — there is nothing to enforce it

@@ -9,7 +9,7 @@ Everything here needs the browser service (`deploy/browser/`) and the two settin
 **Settings → Browser** does the whole thing without a restart: the service address and the token (generated with one click), how to run it, a Start button, the log, and a Chromium install for the local mode. The two settings are read live (`common.config.live_setting`), so saving applies to the next call.
 
 - **Local process**: the service runs as a subprocess of the hub's own Python, the one with Playwright installed (`deploy/browser/requirements.txt`), bound to loopback on the configured port (3000 by default), logging to `.agents_hub/browser_service.log`. It needs Chromium for that Playwright version, which the same page installs (`python -m playwright install chromium`). The hub remembers the process in `.agents_hub/browser_service.json`, so a restarted hub still finds and stops it.
-- **Docker container**: the image from `deploy/browser/Dockerfile`, built on the first start (a few minutes, shown as a job), run as `agents-hub-browser` with the port published on loopback only. Offered only while docker answers; otherwise the option is disabled with the reason. Choosing it also sets `AGENTS_HUB_BROWSER_HUB_URL` to the host gateway once, so the agent's browser can open a [deployed app](project-deployments.md).
+- **Docker container**: the image from `deploy/browser/Dockerfile`, built on the first start (a few minutes, shown as a job), run as `agents-hub-browser` with the port published on loopback only. Offered only while docker answers; otherwise the option is disabled with the reason.
 
 The same can be done by hand: `AGENTS_HUB_BROWSER_URL` and `AGENTS_HUB_BROWSER_TOKEN` in `.env`, `docker compose --profile browser up --build` (see [Tools and capabilities](tools-and-capabilities.md), "The browser tools"). `AGENTS_HUB_BROWSER_MODE` (`local` or `container`) is what the page's mode switch writes.
 
@@ -17,7 +17,7 @@ The same can be done by hand: `AGENTS_HUB_BROWSER_URL` and `AGENTS_HUB_BROWSER_T
 
 A run that calls any `browser_*` tool gets a **Browser** panel in its live output (the task page, and everywhere else the live output appears), under the list of tool calls. The panel shows the page the run's session is on, pushed as the page paints: the hub relays the service's frame stream (Chromium's own screencast over CDP, JPEG frames of the viewport, one per paint and nothing while the page is still) over a WebSocket at `/api/browser/sessions/{id}/ws`, opened with a one-time ticket minted just before each connect. When that socket cannot be opened, or the service has no CDP for the page, the panel polls `/frame` a little faster than once a second instead; the service itself falls back to a screenshot every half second, sent only when the picture changed. The picture pauses while the tab is hidden and a dropped stream reconnects after three seconds. A finished run shows the page where it was left, once, without polling.
 
-The hub finds the session through the browser service, which records for every session the run it serves, its workspace, whether an agent or a person drives it, and a label (the agent or the person's name). The panel asks once the run's first browser tool appears, and asks again on the next browser tool if the first answer was "no session yet".
+The hub finds the session through the browser service, which records for every session the run it serves, its workspace, whether an agent or a person drives it, and a label. The panel asks once the run's first browser tool appears, and asks again on the next browser tool if the first answer was "no session yet".
 
 ## Taking control
 
@@ -35,31 +35,18 @@ What a person does is subject to exactly what the agent is:
 
 ## The Browser page
 
-**Browser** in the navigation is free browsing on the same service. Choose a workspace, then either type an address and press Enter or press **New session**. The session is created under that workspace's domain policy, owned by you and labelled with your user name; its page is yours to drive at once.
+**Browser** in the navigation is free browsing on the same service. Choose a workspace, then either type an address and press Enter or press **New session**. The session is created under that workspace's domain policy, owned by you; its page is yours to drive at once.
 
 The list on the left shows the workspace's open sessions, the agents' and the people's, with a badge for each. Opening an agent's session shows it the way a run's panel does, with the same Take control toggle. The close button ends the session on the service.
 
 Sessions close on their own after `BROWSER_IDLE_TIMEOUT` seconds without use. Watching counts as use: every frame touches the session.
-
-## A deployed app in the browser
-
-A [project deployment](project-deployments.md) is served by the hub itself,
-on an address the private-network block would refuse from where the service
-sits. The hub declares its own origins with the session's policy
-(`internal_origins`, from `AGENTS_HUB_PUBLIC_URL`, `AGENTS_HUB_BROWSER_HUB_URL`
-and `AGENTS_HUB_INTERNAL_ORIGINS`), and the service and the hub's own
-`validate_url` let a URL through when it is on one of them *and* under
-`/apps/` or `/preview/`; the rest of the hub stays blocked. "Open in the
-agent browser" on a project's Deploy tab lands on this page with `?url=`,
-which opens a session on that address at once, and `project_deployment_status`
-gives an agent the same address as `browser_url`.
 
 ## Handing a page to an agent
 
 **Hand to agent** on an open session asks for an agent of the workspace and a message, then:
 
 1. creates a task in the session's workspace with the message as its description and a note that a browser session is attached (the session id and the page it is on);
-2. assigns the agent and starts it, on the same terms as assigning from the task board (the workspace's allowed agents, node or subprocess mode);
+2. assigns the agent and starts it, on the same terms as assigning from the task board (the workspace's allowed agents);
 3. retags the session on the service: owner `agent`, the agent as label, and the new run's id.
 
 The run's browser tools then continue in that page, with the cookies and whatever the person already did in it. `tools/browser.py` looks for a handed over session before opening a new one: the `adopt_session` context variable (in process), the `AGENTS_HUB_BROWSER_SESSION` environment variable (the hand-off sets it around the launch through `runtime.entity_launch.child_env`), then a session on the service tagged with the run's id. Each is checked once; a session that expired in the meantime is ignored and the run opens its own. The page shows a link to the task, where the run's live output carries the Browser panel as usual.
@@ -77,10 +64,6 @@ seconds, release, close. Start the service with a short idle window
 (`BROWSER_CONTROL_IDLE=3`) and pass `--control-idle 3` so the expiry step is
 quick. Last passed 2026-09-24 on the host with Playwright 1.49.
 
-## Access
-
-In `AUTH_MODE=multi` a session belongs to its workspace. A member of the workspace sees it in the list, its frames and its run's panel. Driving it, closing it and handing it over need the editor role there. The session list only ever shows sessions of workspaces the caller can see.
-
 ## API
 
 All routes are under `/api/browser` and answer 503 with an explanation when the service is not configured.
@@ -93,7 +76,7 @@ All routes are under `/api/browser` and answer 503 with an explanation when the 
 | `GET /sessions/{id}` | one session |
 | `DELETE /sessions/{id}` | close it |
 | `GET /sessions/{id}/frame` | `{url, title, width, height, image, controlled_by}`, `image` a JPEG data URL of the viewport |
-| `WS /sessions/{id}/ws` | the frame stream: JSON messages of the `/frame` shape with `type: frame` and a `seq`, `type: keepalive` on a quiet page, one `type: error` before the close when the service cannot be reached. The credential is a one-time `?ticket=` from `POST /api/auth/ticket`, as for the SSE stream (see [identity](identity.md#tickets-for-streams)); `?token=` works only outside `multi` mode |
+| `WS /sessions/{id}/ws` | the frame stream: JSON messages of the `/frame` shape with `type: frame` and a `seq`, `type: keepalive` on a quiet page, one `type: error` before the close when the service cannot be reached. The credential is a one-time `?ticket=` minted just before each connect |
 | `POST /sessions/{id}/control` | `{on}`: take or release control in the caller's name. Returns the session, with `controlled_by` |
 | `POST /sessions/{id}/input` | `{kind, x, y, text, key, dx, dy, url}`; `kind` is one of click, dblclick, mousemove, type, key, scroll, navigate, back, forward, reload; coordinates are viewport pixels. Returns `{url, title, blocked}` |
 | `GET /runs/{run_id}/session` | the session of a run, or 404 |

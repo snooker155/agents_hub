@@ -63,11 +63,8 @@ all (older than heartbeats, or a process that died before its first beat) falls
 back to :func:`runtime.entity_launch.child_alive`, which is ``None`` (leave it
 alone) for a run this host did not start.
 
-A pending entity run follows the same two rules an agent run's ``queued`` status
-does: a queue row (``common/run_queue.py``) that failed or vanished means no
-worker will ever start it, so it fails now; one that never touched the queue at
-all (the default role launches synchronously, so this is the rare true orphan)
-gets :data:`PENDING_TIMEOUT_SECONDS` before the same fate. A run parked
+A pending entity run that never started (launches are synchronous, so this is
+the rare true orphan) gets :data:`PENDING_TIMEOUT_SECONDS` before it fails. A run parked
 ``awaiting_input`` is untouched either way: ``entity_runs.list_runs(active=True)``
 never returns it (see ``run_status.PARKED_STATUSES``), because it is not a run
 that died, it is one waiting on a person.
@@ -427,11 +424,8 @@ def _sweep(counter: list) -> None:
         elif status == "stop":
             counter[0] += _settle_stop(rec)
 
-        elif status == "queued":
-            counter[0] += _check_queued_run(rec)
 
     _check_fence()
-    counter[0] += _sweep_queue()
     _sweep_containers()
     counter[0] += _sweep_entity_runs()
     _check_fence()
@@ -467,41 +461,6 @@ def _settle_stop(rec: Dict[str, Any]) -> int:
         rm.update_run(run_id, updates)
     log.warning("watchdog settled stopped run %s (%s)", run_id[:8], rec.get("agent_id"))
     return 1
-
-
-def _check_queued_run(rec: Dict[str, Any]) -> int:
-    """A run waiting for a worker. The queue row is the truth about it: gone
-    or failed means no worker will ever start it, so the run fails now."""
-    from common import run_queue
-
-    run_id = str(rec.get("run_id") or "")
-    try:
-        row = run_queue.get(run_id)
-    except Exception:  # noqa: BLE001 - falls back to leaving the run alone this pass
-        log.debug("run_queue.get failed for %s", run_id, exc_info=True)
-        return 0
-    if row is None:
-        _fail_run(rec, "Run was queued for a worker but its queue entry is gone.")
-        return 1
-    if row.get("status") == run_queue.STATUS_FAILED:
-        _fail_run(rec, "No worker could start this run: "
-                  + str(row.get("last_error") or "launch failed"))
-        return 1
-    return 0
-
-
-def _sweep_queue() -> int:
-    """Close or hand back launch rows whose worker stopped renewing."""
-    try:
-        from common import run_queue
-        done = run_queue.sweep()
-    except Exception:
-        log.exception("run queue sweep failed")
-        return 0
-    n = int(done.get("requeued", 0)) + int(done.get("failed", 0))
-    if n or done.get("closed"):
-        log.info("run queue sweep: %s", done)
-    return n
 
 
 def _sweep_containers() -> None:
@@ -736,26 +695,8 @@ def _resume_or_fail_entity_run(rec: Dict[str, Any]) -> int:
 
 
 def _check_pending_entity_run(rec: Dict[str, Any]) -> int:
-    """A pending entity run waiting for a worker. Mirrors :func:`_check_queued_run`
-    for agent runs: a queue row that failed or disappeared means no worker will
-    ever start it, so the run fails now. A run that never touched the queue at
-    all (the default role launches synchronously, so this is the rare true
-    orphan, not the common case) gets :data:`PENDING_TIMEOUT_SECONDS` before the
-    same fate."""
-    from common import run_queue
-
-    run_id = str(rec.get("run_id") or "")
-    try:
-        row = run_queue.get(run_id)
-    except Exception:  # noqa: BLE001 - falls back to leaving the run alone this pass
-        log.debug("run_queue.get failed for %s", run_id, exc_info=True)
-        return 0
-    if row is not None:
-        if row.get("status") == run_queue.STATUS_FAILED:
-            _fail_entity_run(rec, "No worker could start this run: "
-                             + str(row.get("last_error") or "launch failed"))
-            return 1
-        return 0
+    """A pending entity run that never started gets
+    :data:`PENDING_TIMEOUT_SECONDS`, then fails."""
     age = _age_seconds(str(rec.get("created_at") or ""))
     if age is not None and age > PENDING_TIMEOUT_SECONDS:
         _fail_entity_run(rec, (

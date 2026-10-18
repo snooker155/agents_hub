@@ -4,11 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
 
-// Deployments (Part D of the run-budget / firing-journal / environments /
-// deployments contract): agent_task/flow/loop scheduled jobs with a firing
-// journal, an environment and a per-run budget. The backend (Parts A/B) is
-// written in parallel, so every call here is mocked against the contract's
-// documented shapes.
+// Deployments: agent_task/flow/loop scheduled jobs with a firing journal and
+// the resources a job hands to its tasks. Every call is mocked against the
+// documented shapes of routes/plan.py.
 
 const ok = (data) => Promise.resolve({ data });
 
@@ -24,15 +22,12 @@ const getJobFires = vi.fn(() => ok([]));
 const getAgents = vi.fn(() => ok([{ id: 'agent-1', name: 'Scout' }]));
 const listFlows = vi.fn(() => ok([{ id: 'flow-1', name: 'Onboarding' }]));
 const getLoops = vi.fn(() => ok([{ id: 'loop-1', name: 'Retry loop' }]));
-const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'sandboxed-python' }]));
 // CronHint (under the recurrence field once it is not 'none') debounces a
 // call to this; never resolving keeps every existing assertion exactly as
 // it was before the hint existed, since nothing here asserts on it.
 const previewCron = vi.fn(() => new Promise(() => {}));
 
 vi.mock('../../api', () => ({
-  // Project deployments (the apps table on top of the page): none in these tests.
-  listDeployedApps: () => Promise.resolve({ data: { items: [] } }),
   previewCron: (...args) => previewCron(...args),
   getPlanJobs: (...args) => getPlanJobs(...args),
   createPlanJob: (...args) => createPlanJob(...args),
@@ -46,7 +41,6 @@ vi.mock('../../api', () => ({
   getAgents: (...args) => getAgents(...args),
   listFlows: (...args) => listFlows(...args),
   getLoops: (...args) => getLoops(...args),
-  getEnvironments: (...args) => getEnvironments(...args),
   getProjects: vi.fn(() => Promise.resolve({ data: [] })),
   getSharedMemories: vi.fn(() => Promise.resolve({ data: [] })),
   getWorkspaceSecrets: vi.fn(() => Promise.resolve({ data: [] })),
@@ -90,8 +84,6 @@ const JOB = {
   agent_id: 'agent-1',
   flow_id: null,
   loop_id: null,
-  environment_id: 'env-1',
-  budget_usd: 5,
   auto_pause_after: 3,
   consecutive_errors: 3,
   paused_reason: 'errors',
@@ -132,8 +124,6 @@ describe('Deployments — the list', () => {
     expect(screen.getByText('Scout')).toBeInTheDocument();
     expect(screen.getByText(/errors/i)).toBeInTheDocument();
     expect(screen.getByText(/3 consecutive failures/i)).toBeInTheDocument();
-    expect(screen.getByText('sandboxed-python')).toBeInTheDocument();
-    expect(screen.getByText('$5')).toBeInTheDocument();
   });
 });
 

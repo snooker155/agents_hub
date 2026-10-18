@@ -5,17 +5,13 @@ sandbox instead of a shell in the agent's working directory.
 access: fine for building and testing a project the agent owns, wrong for a
 snippet whose content came from somewhere else. ``run_code`` writes the
 snippet and runs it through ``sandbox/registry.py``, which resolves a
-provider (the run's environment first, then ``CODE_RUNNER_PROVIDER``, default
-``docker``; see :func:`sandbox.registry.resolve`) and hands it a
-``sandbox.base.SandboxRequest``. The default sandbox (docker, network "none")
-has no network, no writable filesystem beyond a small ``/tmp``, no host
-environment and no workspace; ``mount_workspace=True`` adds the run's
-workspace read-only at ``/work``. A run whose *environment* sets network
-``limited`` relaxes the network fence to that environment's own hosts instead
-of a blanket refusal (unchanged for everything else: no environment, or one
-that is ``unrestricted``/``none``, still gets the historical no-network
-sandbox). See docs/sandboxes.md for the providers (docker, local, e2b,
-modal) and what each one's network policy actually guarantees.
+provider (``CODE_RUNNER_PROVIDER``, default ``docker``; see
+:func:`sandbox.registry.resolve`) and hands it a
+``sandbox.base.SandboxRequest``. The sandbox (docker, network "none") has no
+network, no writable filesystem beyond a small ``/tmp``, no host environment
+and no workspace; ``mount_workspace=True`` adds the run's workspace read-only
+at ``/work``. See docs/sandboxes.md for the providers (docker, local) and
+what each one guarantees.
 
 When docker is unavailable, ``CODE_RUNNER_FALLBACK=local`` runs the snippet as
 a plain subprocess in a temporary directory with ``scrubbed_env`` and the same
@@ -31,7 +27,6 @@ snippet run from the Chat code panel gets exactly the isolation an agent's
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -48,35 +43,6 @@ from tools.shell import _MAX_OUTPUT
 def _settings():
     from common.config import settings
     return settings
-
-
-def _network_policy() -> SandboxNetwork:
-    """The current process's environment network fence, if any: the same
-    ``AGENTS_HUB_NETWORK``/``AGENTS_HUB_ALLOWED_HOSTS`` an agent run's
-    environment sets (environments/launch.py), also read by tools/web.py.
-    Defaults to ``none`` — unchanged from before ``sandbox/`` existed, a
-    snippet gets no network unless its environment says ``limited``."""
-    net = os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower()
-    if net == "limited":
-        hosts = [h.strip() for h in os.environ.get("AGENTS_HUB_ALLOWED_HOSTS", "").split(",") if h.strip()]
-        return SandboxNetwork(type="limited", hosts=hosts)
-    return SandboxNetwork(type="none")
-
-
-def _current_environment():
-    """The Environment record this process's run belongs to
-    (``AGENTS_HUB_ENVIRONMENT_ID``, set by environments/launch.py whenever
-    any environment applies), or None: no environment, or it could not be
-    loaded — fails open to the settings-level default provider, the same
-    rule every other environment lookup in this codebase follows."""
-    env_id = os.environ.get("AGENTS_HUB_ENVIRONMENT_ID", "").strip()
-    if not env_id:
-        return None
-    try:
-        from environments import service
-        return service.get_environment(env_id)
-    except Exception:  # noqa: BLE001 - falls back to the settings default
-        return None
 
 
 def _workspace_dir() -> Optional[str]:
@@ -152,15 +118,8 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
     limit = max(1, int(s.code_runner_max_timeout or 300))
     timeout = max(1, min(int(timeout or 60), limit))
 
-    environment = _current_environment()
-    # An isolated workspace (common/isolation.py): the docker sandbox with no
-    # network, whatever the environment or the settings name. A cloud
-    # provider or the local fallback would run the snippet outside the
-    # perimeter, so neither is ever chosen here.
-    from common import isolation
-    isolated = isolation.current_isolated()
     try:
-        provider_name = "docker" if isolated else registry.resolve(environment, s)
+        provider_name = registry.resolve(s)
         provider = registry.get_provider(provider_name)
     except Exception as exc:  # noqa: BLE001 - an unknown provider name is a configuration error, reported not raised
         return SandboxResult(exit_code=-1, provider="none", error=f"cannot resolve a sandbox provider: {exc}")
@@ -174,23 +133,10 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
     ok, reason = provider.is_available()
     if not ok:
         hint = (" An operator can set CODE_RUNNER_FALLBACK=local to run snippets as plain "
-               "subprocesses instead (no isolation)." if provider_name == "docker" and not isolated
-                else "")
+               "subprocesses instead (no isolation)." if provider_name == "docker" else "")
         return SandboxResult(exit_code=-1, provider="none", error=(
             f"the {provider_name} sandbox provider is not available ({reason}), so run_code cannot "
             f"start its sandbox.{hint}"))
-
-    network = SandboxNetwork(type="none") if isolated else _network_policy()
-    # A snippet gets either the workspace or the network, never both: with a
-    # limited network it can reach the environment's hosts, so it must not
-    # also read the workspace's files, or it would be the whole trifecta in
-    # one call. The capability guard classifies it the same way
-    # (tools.capabilities.run_code_grants).
-    if mount_workspace and network.type != "none":
-        return SandboxResult(exit_code=-1, provider=provider_name, error=(
-            "mount_workspace is not available here: this run's environment gives snippets "
-            "network access (limited), and a snippet gets either the workspace or the network, "
-            "not both."))
 
     ok, ws, err = _resolve_mount_workspace(mount_workspace, workspace_override)
     if not ok:
@@ -199,7 +145,7 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
     request = SandboxRequest(
         language=language, code=code or "", timeout=timeout, stdin=stdin,
         memory=s.code_runner_memory, cpus=s.code_runner_cpus, pids_limit=s.code_runner_pids_limit,
-        network=network, workspace=ws, environment_id=getattr(environment, "id", None),
+        network=SandboxNetwork(type="none"), workspace=ws,
     )
     try:
         return provider.run(request)
@@ -264,9 +210,8 @@ def run_code(language: str, code: str, timeout: Optional[int] = 60,
              stdin: Optional[str] = None, mount_workspace: bool = False) -> str:
     """Run a Python, Node or Bash snippet in a throwaway sandbox and return its output.
 
-    The sandbox has no network by default (an environment with a limited
-    network relaxes that to its own allowed hosts) and cannot change anything
-    outside itself. Use it for calculations, data transformation, parsing and
+    The sandbox has no network and cannot change anything outside itself.
+    Use it for calculations, data transformation, parsing and
     quick experiments. Set mount_workspace to read the workspace's files
     (read-only, at /work). Returns exit_code, duration, which sandbox
     provider ran it, stdout and stderr: 0 means success.

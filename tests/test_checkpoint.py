@@ -150,9 +150,9 @@ def test_the_launcher_passes_the_resume_flag(monkeypatch):
     import agents.agent_launcher as launcher
     import agents.registry as registry
     monkeypatch.setattr(registry, "get_agent", lambda agent_id: object())
-    monkeypatch.setenv("AGENTS_HUB_ROLE", "api")
+    seen = []
+    monkeypatch.setattr(launcher, "launch_prepared", lambda spec: seen.append(spec))
     t = ts.create_task("resume flag")
-    run_id, _ = launcher.start_run(str(t.id), "swe_agent", {"resume_checkpoint": "old-run"})
-    from common import run_queue
-    args = run_queue.get(run_id)["payload"]["cli_args"]
+    launcher.start_run(str(t.id), "swe_agent", {"resume_checkpoint": "old-run"})
+    args = seen[0]["cli_args"]
     assert args[args.index("--resume-checkpoint") + 1] == "old-run"

@@ -4,8 +4,8 @@
  * `workspace` is where the next turn runs (it decides the voice models).
  *
  * A turn streams like every entity chat, but goes through its own fetch so a
- * refusal keeps its status and code (402 `budget`, 409 `busy`): the page says
- * those aloud instead of showing a raw error. Voice is two more calls:
+ * refusal keeps its status and code (409 `busy`): the page says it aloud
+ * instead of showing a raw error. Voice is two more calls:
  * `transcribe` sends a recording as the request body, `speak` returns one
  * stretch of speech as a Blob (null for 204, nothing left to say).
  */
@@ -33,7 +33,7 @@ export class AssistantError extends Error {
     this.name = 'AssistantError';
     this.status = status;
     this.code = typeof detail === 'object' && detail ? detail.code || '' : '';
-    // The structured refusal of a 402 (chat/refusals.py), for the RefusalCard.
+    // The structured refusal (chat/refusals.py), for the RefusalCard.
     this.refusal = typeof detail === 'object' && detail ? detail.refusal || null : null;
   }
 }

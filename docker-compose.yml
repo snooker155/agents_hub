@@ -1,8 +1,11 @@
-# Shared build and runtime settings for every service built from the backend
-# image (`backend`, `backend-api`, `worker`; see the `ha` profile below).
-# Pulled into one anchor so the three stay in step instead of drifting apart:
-# a change to the Dockerfile target, the bind mount or the docker-socket note
-# only needs to be made once.
+# Agents Hub for one person on their own machine: the backend, the dashboard
+# and, with `--profile browser`, the agents' browser service.
+#   docker compose up --build
+#
+# The API has no login in this edition, so both published ports listen on
+# 127.0.0.1 by default. Set HUB_BIND in .env only to an address of a network
+# you alone can reach.
+
 x-backend: &backend
   build:
     context: .
@@ -23,13 +26,8 @@ x-backend: &backend
     # Lets this container drive the host daemon to build agent images and run
     # agent containers. Drop this line to forbid that outright: with it
     # mounted, anything running in this container has host-root-equivalent
-    # access to the daemon. A worker with the line dropped still works, as
-    # long as its AGENTS_HUB_WORKER_MODES is "local" (docs/workers.md), so it
-    # never claims a launch that wants a container.
+    # access to the daemon. Without it, set AGENT_EXECUTION_MODE=local.
     - /var/run/docker.sock:/var/run/docker.sock
-    # The model runtime's volume, read only: the backend reads the token the
-    # runtime wrote there (AGENTS_HUB_MODELS_TOKEN_FILE below).
-    - models_data:/models-data:ro
     # ---- Named volume for .agents_hub: opt-in only, read this first ----
     # It is tempting to replace the whole-repo bind mount above with a named
     # volume for just the state directory, so state does not sit inside the
@@ -51,12 +49,7 @@ x-backend: &backend
     #   volumes:
     #     - ${AGENTS_HUB_DATA_DIR:-./.agents_hub}:/data/agents_hub
     # keeping it a bind mount (not a named volume) so the rebasing above
-    # still finds a real host path. Under the `ha` profile, several backend
-    # and worker replicas share this one mount, which is exactly what keeps
-    # them all seeing the same .agents_hub/ (docs/scaling.md's "one host"
-    # limit): the `ha` profile is several processes on one host, not several
-    # hosts, unless AGENTS_HUB_BLOB_URL also moves the files themselves onto
-    # an object store (docs/deployment.md).
+    # still finds a real host path.
   # The image runs as a non-root user (hub, uid 1000), so it needs to be in
   # the socket's group to use the mounted /var/run/docker.sock above. Find
   # the group id as the container sees it: `docker compose run --rm --no-deps
@@ -104,71 +97,13 @@ services:
       # Nothing else is pinned here on purpose: values set in this block
       # override .env, so AGENT_EXECUTION_MODE (local | docker), ALLOW_ORIGINS
       # and the provider settings all stay where you edit them, in .env.
-      # Cross-replica broker bridge (see docs/scaling.md). Empty by default,
-      # which keeps the session broker in-process only, exactly like a single
-      # replica today. Compose cannot set this only when --scale is used, so
-      # it is passed through here and left for you to set in .env: put
-      # AGENTS_HUB_BROKER_URL=redis://redis:6379/0 there and start the `redis`
-      # service with `--profile scale` when running more than one backend.
-      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-}
-      # Database (see docs/scaling.md). Empty keeps SQLite on the bind mount
-      # below. Set AGENTS_HUB_DATABASE_URL in .env to the bundled server's URL
-      # (postgresql://agents_hub:agents_hub@postgres:5432/agents_hub) and start
-      # it with `--profile postgres`, or point it at a Postgres of your own.
-      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-}
-      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
-      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
-      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
-      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
-    # Wait for the bundled Postgres when its profile is on; skipped otherwise.
-    depends_on:
-      postgres:
-        condition: service_healthy
-        required: false
-      # First, so the shared volume is made by the runtime, owned by its user
-      # and holding its token, before the backend mounts it.
-      models:
-        condition: service_started
+      - "${HUB_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
 
-  # Dashboard: the built bundle behind nginx, which also proxies /api and
-  # balances it over however many backend replicas are up.
-  #   docker compose up --build
+  # Dashboard: the built bundle behind nginx, which also proxies /api.
   # The bundle is baked into the image, so a source change needs a rebuild of
   # this service. For an HMR loop, run Vite on the host instead:
   #   cd dashboard/frontend && npm run dev
-  #
-  # ---- Running more than one backend (--scale backend=N) ----
-  # The backend keeps state in process (the SSE session broker, per-client
-  # replay buffers) and on the local disk (.agents_hub/, SQLite). Scaling to
-  # several replicas is safe only when ALL of the following hold; see
-  # docs/scaling.md for the full picture:
-  #   1. AGENTS_HUB_BROKER_URL is set (in .env) to a reachable Redis URL, so
-  #      each replica's live SSE events reach every other replica's clients.
-  #   2. Every replica runs on the SAME host and shares the SAME bind mount
-  #      for the repo and .agents_hub/ (SQLite plus the state directory) —
-  #      this compose file already guarantees that; it only breaks if you
-  #      change the volumes to per-replica ones.
-  #   3. The `redis` service is started too:
-  #        docker compose --profile scale up --build --scale backend=3
-  # Without the broker URL set, --scale must NOT be used: a live update
-  # produced by one replica (a run finishing, a chat token, a notification)
-  # would only ever reach the browser tabs whose SSE connection happens to
-  # land on that same replica, and every other tab would silently stop
-  # updating until its next full refetch. The default (this file, no
-  # --scale, no AGENTS_HUB_BROKER_URL) is one backend replica, which needs
-  # none of this and is the supported default.
-  #
-  # ---- The `ha` profile (several backends, several workers, one Postgres) ----
-  # This service is shared between the default topology and the `ha` profile
-  # below (docker compose --profile ha up --build; docs/deployment.md walks
-  # through it end to end). Under `ha` the backends nginx should balance over
-  # are the `backend-api` replicas, not this single `backend`, because compose
-  # cannot give one service two different values of AGENTS_HUB_ROLE for two
-  # different profiles. Put this in .env before starting the `ha` profile:
-  #   BACKEND_SERVERS=backend-api:8000
-  # (added to the variable list in the plain comment block below this one).
   frontend:
     build:
       context: ./dashboard/frontend
@@ -178,336 +113,11 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "${HUB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
     environment:
-      # Space-separated host:port list. With `--scale backend=N` compose gives
-      # every replica the same `backend` DNS name, so one entry is still
-      # correct; name replicas explicitly to pin the set instead. Under the
-      # `ha` profile, set this to `backend-api:8000` in .env so nginx balances
-      # over the `backend-api` replicas instead of this file's single
-      # `backend`.
       BACKEND_SERVERS: ${BACKEND_SERVERS:-backend:8000}
       # Shared cache TTL for generated view assets. 0 turns it off.
       API_ASSET_CACHE_SECONDS: ${API_ASSET_CACHE_SECONDS:-30}
-
-  # Cross-replica pub/sub for the session broker (common/broker_bridge.py).
-  # Only needed, and only started, when running more than one backend replica
-  # (see the note above the `frontend` service and docs/scaling.md); under the
-  # `scale` profile so a plain `docker compose up` never pulls or starts it.
-  # Also part of the `ha` profile below, which needs the same bridge for the
-  # same reason: several `backend-api` replicas behind one `frontend`.
-  #   docker compose --profile scale up --build --scale backend=3
-  # No port published: only the backend replicas on this compose network talk
-  # to it. Not exposed to the host, and not meant to be.
-  redis:
-    image: redis:7-alpine
-    profiles:
-      - scale
-      - ha
-    # A password only when REDIS_PASSWORD is set in .env (the setup wizard
-    # does for a production install); empty keeps the open, network-private
-    # Redis of a plain run. The shell test runs inside the container, hence
-    # the doubled dollar signs: compose must not interpolate them itself. The
-    # image's own entrypoint is called so redis-server still drops to its
-    # unprivileged user.
-    command:
-      - sh
-      - -c
-      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec docker-entrypoint.sh redis-server --requirepass "$$REDIS_PASSWORD"; fi; exec docker-entrypoint.sh redis-server'
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    # Uncomment to persist queued pub/sub state across a restart. Pub/sub
-    # itself is fire-and-forget and needs no persistence, so this is optional.
-    # volumes:
-    #   - redis_data:/data
-    restart: unless-stopped
-
-  # Postgres for AGENTS_HUB_DATABASE_URL (docs/scaling.md). Under the
-  # `postgres` profile so a plain `docker compose up` never starts it; the
-  # backend only uses it when the URL in .env says so:
-  #   AGENTS_HUB_DATABASE_URL=postgresql://agents_hub:agents_hub@postgres:5432/agents_hub
-  #   docker compose --profile postgres up --build
-  # Combine with `--profile scale` (Redis) to run several backend replicas.
-  # Data lives in the named volume; no port is published, only the compose
-  # network reaches it. Publish 5432 yourself if you want psql from the host.
-  # Also part of the `ha` profile below: Postgres is required there, not
-  # optional, since `backend-api` and `worker` replicas only stay consistent
-  # through one shared database.
-  postgres:
-    image: postgres:17-alpine
-    profiles:
-      - postgres
-      - ha
-      # Keycloak keeps its realm in a database of this server.
-      - keycloak
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agents_hub}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
-      POSTGRES_DB: ${POSTGRES_DB:-agents_hub}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agents_hub} -d ${POSTGRES_DB:-agents_hub}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
-
-  # Keycloak, the bundled identity provider for AUTH_MODE=multi with OIDC
-  # (docs/identity.md), under the `keycloak` profile so a plain `up` never
-  # starts it. `ah setup` writes the realm file mounted below and the
-  # variables here; the hub reaches Keycloak server side at
-  # http://keycloak:8080, the browser at KEYCLOAK_PUBLIC_URL. Two steps
-  # first, both one-shot: Postgres comes up (it carries the `keycloak`
-  # profile too), then `keycloak-db-init` creates the `keycloak` database
-  # next to the hub's own, since the postgres image only creates one.
-  #   docker compose --profile keycloak up -d
-  keycloak-db-init:
-    image: postgres:17-alpine
-    profiles:
-      - keycloak
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
-    # `\gexec` runs the query result as SQL, which is how CREATE DATABASE is
-    # made conditional: it has no IF NOT EXISTS. Safe on every `up`.
-    entrypoint: >
-      /bin/sh -c "
-      echo \"SELECT 'CREATE DATABASE keycloak' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'keycloak')\\gexec\"
-      | psql -h postgres -U ${POSTGRES_USER:-agents_hub} -d ${POSTGRES_DB:-agents_hub}
-      "
-    restart: "no"
-
-  # No healthcheck: the Keycloak image ships neither curl nor wget, so there
-  # is nothing to probe /health/ready with from inside it. Health is enabled
-  # (KC_HEALTH_ENABLED) for an external probe on port 9000 of the container.
-  # The admin password has no default: with it empty the bootstrap admin is
-  # not created and the console stays locked until the wizard's value is set.
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0.7
-    profiles:
-      - keycloak
-    command: ["start", "--import-realm"]
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: ${POSTGRES_USER:-agents_hub}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
-      # The address the browser sees. The hub's server side calls arrive on
-      # another name (keycloak:8080), which the dynamic backchannel allows.
-      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8081}
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
-      KC_HTTP_ENABLED: "true"
-      KC_PROXY_HEADERS: xforwarded
-      KC_HEALTH_ENABLED: "true"
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
-    volumes:
-      # Written by `ah setup`; imported on the first start only.
-      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
-    ports:
-      - "${KEYCLOAK_PORT:-8081}:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      keycloak-db-init:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  # The guided installer, run from this checkout's image:
-  #   docker compose run --rm setup
-  # Under its own profile so `up` never starts it. The folder is mounted at
-  # the same path inside and out: the wizard starts a compose project through
-  # the socket, and the daemon resolves that project's bind mounts on the
-  # host, where only the real path exists. Root so it can write into the
-  # folder; it hands what it wrote back to the folder's owner. host.docker.internal
-  # is how it reaches the dashboard port the stack publishes on the host.
-  setup:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: backend
-      args:
-        WITH_RAG: ${WITH_RAG:-false}
-    profiles:
-      - setup
-    command: ["setup"]
-    user: "0:0"
-    stdin_open: true
-    tty: true
-    restart: "no"
-    working_dir: ${PWD}
-    volumes:
-      - ${PWD}:${PWD}
-      - /var/run/docker.sock:/var/run/docker.sock
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      AGENTS_HUB_SETUP_HOST_DIR: ${PWD}
-
-  # ── The `ha` profile: postgres + redis + minio + two backend-api replicas
-  # ── + two worker replicas, everything docs/scaling.md and docs/workers.md
-  # ── describe, wired together in one command:
-  #
-  #   docker compose --profile ha up --build
-  #
-  # It still starts this file's default `backend` and `frontend` too (a
-  # profile only adds services, it cannot remove the ones with no profile at
-  # all), so a deployment that wants only the HA services running scales the
-  # single-role backend to zero once the rest is healthy:
-  #
-  #   docker compose --profile ha up --build --scale backend=0
-  #
-  # .env needs, beyond the plain compose variables above:
-  #   AGENTS_HUB_DATABASE_URL=postgresql://agents_hub:agents_hub@postgres:5432/agents_hub
-  #   AGENTS_HUB_BROKER_URL=redis://redis:6379/0
-  #   AGENTS_HUB_BLOB_URL=s3://agents-hub/
-  #   AGENTS_HUB_BLOB_ENDPOINT=http://minio:9000
-  #   AWS_ACCESS_KEY_ID=agents_hub          # same as MINIO_ROOT_USER below
-  #   AWS_SECRET_ACCESS_KEY=agents_hub_minio # same as MINIO_ROOT_PASSWORD below
-  #   BACKEND_SERVERS=backend-api:8000
-  # AGENTS_HUB_BLOB_URL and AGENTS_HUB_BLOB_ENDPOINT are read by
-  # common/blobs.py (not imported here); this file only sets the two
-  # environment variables through to `backend-api` and `worker` and starts
-  # the MinIO server they point at. Liveness and readiness for `backend-api`
-  # are the same image-level HEALTHCHECK the Dockerfile already defines
-  # (`curl http://localhost:8000/`); dedicated `/livez` and `/readyz` routes
-  # are landing separately and this file will switch to them once they are
-  # in, rather than depend on an endpoint that may not exist yet.
-  #
-  # MinIO is the bundled S3-compatible object store for AGENTS_HUB_BLOB_URL
-  # (docs/deployment.md): the step that takes .agents_hub/ files (run logs,
-  # workspaces, view assets) off the one shared host bind mount, which is
-  # otherwise the last thing keeping every replica above on one machine. No
-  # port is published by default — only the compose network reaches it —
-  # since the console (9001) and API (9000) have no business being open on
-  # the host in a default setup; add "9001:9001" yourself to browse it.
-  minio:
-    image: minio/minio
-    profiles:
-      - ha
-    command: server /data --console-address :9001
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-agents_hub}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-agents_hub_minio}
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
-
-  # One-shot: waits for `minio` to answer healthy, creates the `agents-hub`
-  # bucket AGENTS_HUB_BLOB_URL=s3://agents-hub/ names, and exits. `mc mb
-  # --ignore-existing` no-ops when the bucket is already there, so this is
-  # safe to run on every `up`. `backend-api` and `worker` wait for it to exit
-  # 0 before they start (see their `depends_on` below), so the bucket always
-  # exists before anything tries to write a blob into it.
-  minio-init:
-    image: minio/mc
-    profiles:
-      - ha
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-agents_hub} ${MINIO_ROOT_PASSWORD:-agents_hub_minio} &&
-      mc mb --ignore-existing local/agents-hub
-      "
-    restart: "no"
-
-  # The `api` half of the `ha` topology: the same image and mounts as
-  # `backend` (via the `x-backend` anchor at the top of this file), but
-  # AGENTS_HUB_ROLE=api, so it only prepares each run and puts the launch on
-  # the queue (common/run_queue.py, docs/workers.md) instead of spawning it
-  # itself. No host port published — several replicas cannot share one fixed
-  # host port, and nothing outside this compose network needs to reach one
-  # replica directly; `frontend`'s nginx reaches all of them by the shared
-  # DNS name `backend-api` once BACKEND_SERVERS names it (see the `frontend`
-  # service above). Two replicas by default; change with
-  # `docker compose --profile ha up --build --scale backend-api=N`.
-  backend-api:
-    <<: *backend
-    profiles:
-      - ha
-    command:
-      - python
-      - -m
-      - uvicorn
-      - dashboard.backend.main:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-    environment:
-      PYTHONPATH: /app
-      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
-      AGENTS_HUB_ROLE: api
-      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
-      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
-      AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
-      AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
-      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
-      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
-      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
-      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    deploy:
-      replicas: 2
-
-  # The `worker` half: claims launches `backend-api` put on the queue and
-  # spawns them on its own host (docs/workers.md). `ah worker` needs the
-  # package installed editable to be a command on PATH, and the Dockerfile
-  # deliberately does not `pip install -e .` (it copies the source and runs
-  # it with `python -m`), so this runs the module directly instead of `ah
-  # worker`; both do the same thing. Same docker-socket note as `backend`
-  # applies here through the shared `x-backend` anchor: with the socket
-  # mounted, this worker can also run agent containers; drop that one line
-  # in an override file and set AGENTS_HUB_WORKER_MODES=local below to run a
-  # worker that only ever launches agents as local subprocesses. The image's
-  # HEALTHCHECK (`curl http://localhost:8000/`) is disabled here because a
-  # worker serves no HTTP and would otherwise sit "unhealthy" forever without
-  # that meaning anything.
-  worker:
-    <<: *backend
-    profiles:
-      - ha
-    command:
-      - python
-      - -m
-      - runtime.worker
-    environment:
-      PYTHONPATH: /app
-      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
-      AGENTS_HUB_ROLE: worker
-      AGENTS_HUB_WORKER_MODES: ${AGENTS_HUB_WORKER_MODES:-local,docker}
-      AGENTS_HUB_WORKER_CONCURRENCY: ${AGENTS_HUB_WORKER_CONCURRENCY:-4}
-      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
-      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
-      AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
-      AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
-      # The model runtime service below. AGENTS_HUB_MODELS_URL in .env points
-      # it elsewhere; AGENTS_HUB_MODELS_TOKEN there replaces the token file.
-      AGENTS_HUB_MODELS_URL: ${AGENTS_HUB_MODELS_URL:-http://models:8200}
-      AGENTS_HUB_MODELS_TOKEN_FILE: /models-data/.token
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    healthcheck:
-      disable: true
-    deploy:
-      replicas: 2
 
   # Headless Chromium for the browser_* tools (tools/browser.py,
   # deploy/browser/). Under the `browser` profile, so a plain `docker compose
@@ -521,7 +131,7 @@ services:
   #
   # Network isolation: the service sits alone on `browser_net`, which the
   # backend services also join. Docker keeps separate bridge networks apart,
-  # so a page cannot reach postgres, redis, minio or anything else on the
+  # so a page cannot reach the backend or anything else on the
   # `default` network, not even by IP. What compose cannot express is "the
   # internet but not the host's LAN": that part is the service's own check,
   # which refuses every request (subresources and redirect hops included) to
@@ -547,61 +157,6 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
-  # The hub's own model runtime (deploy/models/): downloads models from
-  # Hugging Face and serves them, llama.cpp for chat models and Whisper,
-  # Piper and Kokoro for transcription and speech, behind a token-protected
-  # API and an OpenAI-compatible gateway that the hub registers as the
-  # provider `hub-local`. Part of a plain `docker compose up`; nothing to set:
-  # it writes a token to its volume (/models/.token) and the backends read it
-  # from there. A backend run on the host starts a runtime of its own instead
-  # (providers/model_runtime_host.py); set AGENTS_HUB_MODELS_URL to use this
-  # one from the host, http://127.0.0.1:8200.
-  # Unlike the browser service, the port is published, on loopback only: a
-  # backend run on the host (the usual dev setup) has to reach it, and it
-  # serves no untrusted content, so it needs no network of its own. Every
-  # call but /healthz still needs the token.
-  #
-  # CPU only by default. For NVIDIA, build from the llama.cpp :server-cuda
-  # image (deploy/models/Dockerfile) and add under this service:
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
-  # Docker on macOS has no GPU; run the runtime on the host there
-  # (docs/local-models.md, host mode).
-  models:
-    build:
-      context: .
-      dockerfile: deploy/models/Dockerfile
-    environment:
-      MODELS_TOKEN: ${AGENTS_HUB_MODELS_TOKEN:-}
-      MODELS_TOKEN_FILE: /models/.token
-      MODELS_MAX_LOADED: ${MODELS_MAX_LOADED:-2}
-      HF_TOKEN: ${HF_TOKEN:-}
-    volumes:
-      - models_data:/models
-    ports:
-      - "127.0.0.1:${MODELS_PORT:-8200}:8200"
-    init: true
-    # Time to save the models' prompt cache slots to the volume on a stop.
-    stop_grace_period: 60s
-    mem_limit: ${MODELS_MEM_LIMIT:-8g}
-    security_opt:
-      - no-new-privileges:true
-    restart: unless-stopped
-
 networks:
   browser_net:
     driver: bridge
-
-volumes:
-  postgres_data:
-  # MinIO's object data, used only under the `ha` profile.
-  minio_data:
-  # The model runtime's models, installed engines and token.
-  models_data:
-# Uncomment together with the redis volume above to persist Redis too.
-#   redis_data:

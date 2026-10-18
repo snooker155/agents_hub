@@ -86,7 +86,7 @@ or 200 KB from the task's project folder. What it never copies: secrets
 matched by name (`.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`,
 `id_rsa*`, `.netrc`, `.npmrc`, `credentials*`, `secrets*` and similar),
 anything under `.git` or other VCS folders, dependency and cache folders,
-binary files, the workspace settings file, the connections store, API keys,
+binary files, the workspace settings file, API keys,
 and any external state such as issues, remote repositories or services. A
 task with no workspace copies no files at all.
 
@@ -260,12 +260,10 @@ grader in batch mode.
 ## Cost
 
 A sweep is cases times configs model calls before you learn anything, so the
-projected spend is reported before it starts, and the workspace
-[budget](costs.md) is re-checked between cells: a runaway sweep stops the sweep,
-not just one run.
+projected spend is reported before it starts ([costs](costs.md)).
 
 Eval runs are tagged as an evaluation channel, which keeps measurement spend out
-of production cost and budget aggregation while leaving every cell inspectable
+of production cost aggregation while leaving every cell inspectable
 in the normal run views.
 
 ## Batch mode
@@ -425,7 +423,7 @@ agent's production runs and raises a notification when one scores too low.
   ],
   "min_score": 0.7,
   "severity": "warning",
-  "channels": ["dashboard", "slack"]
+  "channels": ["dashboard"]
 }
 ```
 
@@ -434,11 +432,11 @@ How it runs:
 1. When a run finishes `completed`, each enabled `online_eval` rule whose
    kind and agent filters match decides whether the run is sampled. The decision is a
    hash of the rule id and the run id against `sample_rate`, so it is the same
-   on every replica and on every re-evaluation. A sampled run becomes one row
+   on every re-evaluation. A sampled run becomes one row
    in `online_eval_jobs`; nothing is graded on the finish path. Eval and
    replay runs are never sampled, and failed runs are left to `run_failed`.
 2. The `online_evals` background loop grades pending jobs every ten seconds.
-   It runs on one replica at a time, under a lease held by the singleton
+   It runs as a singleton under the
    supervisor (the health page lists it). It loads the run's output and its
    structured payload, the same way a trajectory grader does, and runs the
    graders. Each grader gets a case built from the run: the input is the

@@ -36,9 +36,8 @@ and setting it counts as the child overriding that key.
 
 **Never inherited, always the agent's own:** `id`, `name`, `description`,
 `domain`, `capacity`, `definition_id`, `memory_type`, `memory_data`,
-`owner_workspace`, `owner_user`, `shared`, the review fields, `system`,
-`user_modified`, `is_default_chat_agent`, `proactive`, `api_key`,
-`github_identity`, the `http_*` fields, `node_type`, `remote`,
+`owner_workspace`, `shared`, the review fields, `system`,
+`user_modified`, `is_default_chat_agent`, `proactive`, the `http_*` fields,
 `default_workspace_only`, and `capability_override` — a security exemption is
 granted per agent, reviewed on its own terms, never picked up from a parent.
 
@@ -106,7 +105,7 @@ frozen copy of the list.
             {"id": "finance_analyst", "name": "Analyst", "version": 2, "pinned": false}],
   "children": [],
   "fields": {"model": {"value": "inherit", "source": "analyst", "overridden": false}},
-  "list_deltas": {"tools": {"add": ["google_sheets_append"], "remove": []}},
+  "list_deltas": {"tools": {"add": ["web_search"], "remove": []}},
   "effective_lists": {"tools": [{"value": "db_query", "source": "analyst", "added": false}]},
   "prompt": {"parent_sections": [{"heading": "How to work", "source": "analyst"}],
              "own_sections": [{"heading": "Finance specifics", "mode": "new"}],
@@ -209,7 +208,7 @@ file can declare only its own additions and removals:
 ---
 id: finance_analyst
 extends: analyst
-tools: [db_list_connections, db_schema, db_query, calculator, write_file, google_sheets_append, run_agent_tool]
+tools: [db_list_connections, db_schema, db_query, calculator, write_file, web_search, run_agent_tool]
 ---
 
 ## Finance specifics
@@ -238,9 +237,7 @@ not a per-field route. `ah apply --export` on a child writes `extends` (and
 child's own — an inherited field the child never touched is left out of the
 file, the same way a fresh agent's defaults are.
 
-See [apply](apply.md) for the rest of the agent file format, and
-[kits](kits.md) for `extends` used to specialize a kit's agents from the
-system roster.
+See [apply](apply.md) for the rest of the agent file format.
 
-Related: [agents](agents.md), [apply](apply.md), [kits](kits.md),
+Related: [agents](agents.md), [apply](apply.md),
 [system-agents](system-agents.md), [tools-and-capabilities](tools-and-capabilities.md).

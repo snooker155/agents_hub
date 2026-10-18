@@ -2,14 +2,13 @@
 # The two Python images of Agents Hub, built from one file so the dependency
 # stack is installed once and shared between them:
 #
-#   backend   the service (API and worker roles, docker-compose.yml, the Helm
-#             chart):          docker build --target backend -t agents-hub-backend .
+#   backend   the service (docker-compose.yml):
+#                              docker build --target backend -t agents-hub-backend .
 #   agents    the base image agents run from in their own containers,
 #             agents-hub/base:latest (managers/container_manager.py builds it):
 #                              docker build --target agents -t agents-hub/base:latest .
 #
-# Stages: deps-false installs the pinned stack (requirements.lock plus the
-# Postgres driver); deps-true adds the RAG extras on top of it (torch,
+# Stages: deps-false installs the pinned stack (requirements.lock); deps-true adds the RAG extras on top of it (torch,
 # sentence-transformers, chromadb, the remote vector stores); WITH_RAG chooses
 # which of the two the final images build on. The RAG stack is a gigabyte of
 # wheels that only the embedding and vector-store features import (docs/memory.md),
@@ -42,14 +41,8 @@ RUN apt-get update \
 # dashboard/backend/requirements.txt and requirements-cli.txt (it is
 # universal, so the same file installs cleanly on every platform); refresh it
 # with the command in its header when one of those three files changes.
-# The Postgres driver rides along: a few megabytes, and inert until
-# AGENTS_HUB_DATABASE_URL names a postgresql:// database (docs/scaling.md).
-# It is not part of requirements.lock (see that file's header), so it is
-# still installed from its own requirement file.
-# The connector drivers (requirements-connectors.txt) ride along the same way:
-# imported lazily, inert until a connector is configured.
-COPY requirements.lock requirements-postgres.txt requirements-connectors.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.lock -r /tmp/requirements-postgres.txt -r /tmp/requirements-connectors.txt
+COPY requirements.lock /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.lock
 
 # ---------- the same stack plus the RAG extras ----------
 # Torch comes from the CPU-only index first so the image does not carry the
@@ -71,10 +64,6 @@ FROM python:3.11-slim AS docker-cli
 
 ARG TARGETARCH
 ARG DOCKER_CLI_VERSION=27.5.1
-# The Compose v2 plugin rides along: `ah setup` run from this image starts the
-# stack it just configured through the mounted socket, and the overlay it
-# writes uses the !reset and !override tags, which need Compose 2.24 or newer.
-ARG DOCKER_COMPOSE_VERSION=2.32.4
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -88,11 +77,7 @@ RUN set -eux; \
     tar -xzf /tmp/docker.tgz -C /tmp docker/docker; \
     mv /tmp/docker/docker /usr/local/bin/docker; \
     rm -rf /tmp/docker /tmp/docker.tgz; \
-    mkdir -p /usr/local/lib/docker/cli-plugins; \
-    curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${docker_arch}" -o /usr/local/lib/docker/cli-plugins/docker-compose; \
-    chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose; \
-    docker --version; \
-    docker compose version
+    docker --version
 
 # ============================================================
 # backend: the service
@@ -100,7 +85,6 @@ RUN set -eux; \
 FROM deps-${WITH_RAG} AS backend
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=docker-cli /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
 # `ah` on PATH, so `docker compose exec backend ah ...` works the way it does on
 # a local install. A wrapper rather than `pip install -e .`: the source under
@@ -108,15 +92,6 @@ COPY --from=docker-cli /usr/local/lib/docker/cli-plugins/docker-compose /usr/loc
 # checkout over /app, which an editable install's metadata would not follow.
 RUN printf '#!/bin/sh\nexec python -m cli "$@"\n' > /usr/local/bin/ah \
     && chmod 755 /usr/local/bin/ah
-
-# `setup` is the guided installer for a container started in the folder the
-# install should land in (docker run ... setup, docker compose run --rm
-# setup). It remembers that folder, then changes to /app before starting
-# Python: with a checkout mounted as the working directory, the current
-# directory would otherwise be first on sys.path and its cli package would
-# shadow the one this image was built with.
-RUN printf '#!/bin/sh\ntarget="$(pwd)"\ncd /app && exec python -m cli setup --in-docker --workdir "$target" "$@"\n' > /usr/local/bin/setup \
-    && chmod 755 /usr/local/bin/setup
 
 # ---------- security: non-root user ----------
 # Root is only needed for apt-get and pip install above. The docker CLI is
@@ -212,6 +187,5 @@ CMD ["python", "-m", "runtime.instance_run"]
 
 # The dashboard frontend has its own image: dashboard/frontend/Dockerfile
 # (Vite dev server, or nginx serving the production bundle). It shares nothing
-# with these two, so it also keeps its own build context. The model runtime
-# and the browser service likewise: deploy/models/Dockerfile and
-# deploy/browser/Dockerfile.
+# with these two, so it also keeps its own build context. The browser service
+# likewise: deploy/browser/Dockerfile.

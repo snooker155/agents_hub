@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Info, Loader, Play, X } from 'lucide-react';
+import { Loader, Play, X } from 'lucide-react';
 
-import { getAgents, getEnvironments, getWorkspaces, startInstance } from '../../api';
+import { getAgents, getWorkspaces, startInstance } from '../../api';
 import { useWorkspace } from '../workspace';
 import { instancePath } from '../instanceUtils';
 import { useI18n } from '../../i18n';
@@ -10,11 +10,8 @@ import { useI18n } from '../../i18n';
 /**
  * Run, where the agent is not already fixed: the Instances page's button.
  *
- * Every copy lives in a service: the agent starts in its own service when it
- * has one, else in the workspace's runner (routes/instances.py), within that
- * service's replica limits. So the form asks only what the service does not
- * already know — the agent, the workspace, the environment — and opens the
- * replica's page. A runner replica answers for the agent named in each
+ * The form asks only the agent and the workspace (routes/instances.py) and
+ * opens the copy's page. A runner answers for the agent named in each
  * message, so its page opens with that agent picked.
  *
  * `agentId` fixes the agent (Run from the agent's own page); without it the
@@ -30,8 +27,6 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
   const [selectedAgentId, setSelectedAgentId] = useState(agentId || '');
   const [workspaces, setWorkspaces] = useState([]);
   const [workspace, setWorkspace] = useState(defaultWorkspace || selectedWorkspace || '');
-  const [environments, setEnvironments] = useState([]);
-  const [environmentId, setEnvironmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -45,7 +40,6 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
     if (open) {
       setSelectedAgentId(agentId || '');
       setWorkspace(defaultWorkspace || selectedWorkspace || '');
-      setEnvironmentId('');
       setError('');
     }
   }
@@ -59,11 +53,6 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
     if (!open) return;
     getWorkspaces().then((r) => setWorkspaces(r.data || [])).catch(() => setWorkspaces([]));
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    getEnvironments(workspace || undefined).then((r) => setEnvironments(r.data || [])).catch(() => setEnvironments([]));
-  }, [open, workspace]);
 
   if (!open) return null;
 
@@ -81,7 +70,6 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
       const { data } = await startInstance({
         agent_id: effectiveAgentId,
         workspace: workspace || null,
-        environment_id: environmentId || null,
       });
       onClose();
       navigate(instancePath(data, effectiveAgentId));
@@ -135,23 +123,6 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
               ))}
             </select>
           </div>
-
-          <div>
-            <label className={label}>
-              {t('startInstance.environment')} <span className="text-gray-400 font-normal normal-case">({t('common.optional')})</span>
-            </label>
-            <select className={field} value={environmentId} onChange={(e) => setEnvironmentId(e.target.value)}>
-              <option value="">{t('startInstance.environmentDefault')}</option>
-              {environments.map((env) => (
-                <option key={env.id} value={env.id}>{env.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <p className="text-xs text-gray-500 flex items-start gap-1.5">
-            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-500" />
-            {t('startInstance.serviceHint')}
-          </p>
 
           <div className="flex justify-end gap-3 pt-2">
             <button

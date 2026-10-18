@@ -2,10 +2,9 @@
 What the assistant can set up in the hub during the guided setup
 (common/setup_guide.py), behind one tool (``setup_step``, tools/setup_guide.py).
 
-Four operations, the ones `ah setup` makes in the terminal and the rest of a
+Three operations, the ones `ah setup` makes in the terminal and the rest of a
 first setup that needs no secret: choose the default model, give the assistant
-a cloud voice, give it a voice from the hub's own model runtime, seed the demo
-workspace. A key is never one of them: it is typed into a connection card
+a cloud voice, seed the demo workspace. A key is never one of them: it is typed into a connection card
 (connectors/proposals.py, kind ``provider``).
 
 **Every call waits for a yes.** ``setup_step`` is on the list of tools that ask
@@ -19,28 +18,19 @@ Models catalog (starred and enabled) and ``.env`` (``DEFAULT_PROVIDER`` and the
 provider's model, as `ah setup` does), and applies at once
 (common/provider_env.py); a voice goes into the ``default`` workspace's special
 models, which every personal workspace falls back to.
-
-**A download goes on without the turn.** ``voice_local`` saves the models at
-once and leaves the engines and downloads to the runtime as jobs; the guide
-carries them as its ``work`` and :func:`advance_work` moves them on whenever
-the guide is read (the setup panel polls it, the assistant reads it).
 """
 from __future__ import annotations
 
 import logging
-import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from cli.onboard import probe as P
-from cli.onboard.presets import HUB_LOCAL, VOICE_CLOUD, VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION, speech_models
+from cli.onboard.presets import VOICE_CLOUD, speech_models
 
 log = logging.getLogger(__name__)
 
-#: How long the runtime may take to come up before the voice step says so.
-START_GRACE_SECONDS = 20 * 60
 #: A provider's model list is asked again after this long.
 LISTING_TTL_SECONDS = 600
 
@@ -76,14 +66,6 @@ OPERATIONS: Dict[str, Operation] = {op.name: op for op in (
                "model": "optional: the speech model, one of the provider's speech_models in setup_guide options "
                         "(default the first)",
                "voice": "optional: one of the voices setup_guide options lists"}),
-    Operation("voice_local", "voice",
-              "give the assistant a voice from the hub's own model runtime (free; downloads 0.5 to 2 GB)",
-              {"speech": "optional: a speech preset id from setup_guide options (default by language)",
-               "transcription": "optional: whisper-small (default) or whisper-turbo"}),
-    Operation("local_set", "default_model",
-              "go local in one action: the hub's llama.cpp engine, one chat model sized to this machine, "
-              "Whisper and Kokoro (free; downloads 3 to 12 GB, in the background)",
-              {"workspace": "optional: the workspace that gets the speech models (default: default)"}),
     Operation("seed_demo", "demo", "add the demo workspace: four agents with chats, views, a team and a pulse"),
 )}
 
@@ -138,8 +120,8 @@ def _custom_backend(provider: str) -> Optional[Dict[str, Any]]:
 
 def options() -> Dict[str, Any]:
     """The choices the assistant offers, read now: each connected provider's
-    model tiers, the voices, the web search providers, whether the demo and
-    the hub's runtime are there. Names only, never a key."""
+    model tiers, the voices, the web search providers. Names only, never a
+    key."""
     from common import setup_guide
     usable = setup_guide.usable_providers()
     models: Dict[str, Any] = {}
@@ -160,12 +142,6 @@ def options() -> Dict[str, Any]:
             backend = _custom_backend(provider) or {}
             models[provider] = {"listed": False, "custom": True,
                                 "default_model": backend.get("default_model") or ""}
-    runtime = False
-    try:
-        from providers import local_models as lm
-        runtime = lm.runtime_configured()
-    except Exception:  # noqa: BLE001
-        log.debug("setup options: runtime unreadable", exc_info=True)
     return {
         "default_model": setup_guide.default_model(),
         "models": models,
@@ -173,39 +149,11 @@ def options() -> Dict[str, Any]:
             "cloud": {p: {"speech": s["speech"], "transcription": s["transcription"], "voices": s["voices"],
                           "speech_models": speech_models(p), "connected": bool(_key_of(p))}
                       for p, s in VOICE_CLOUD.items()},
-            "local": {"available": runtime,
-                      "speech": [{"id": i, "label": label, "size": size} for i, label, size, *_ in VOICE_LOCAL_SPEECH],
-                      "transcription": [{"id": i, "label": label, "size": size}
-                                        for i, label, size, *_ in VOICE_LOCAL_TRANSCRIPTION],
-                      "default_speech": _local_speech_default(), "default_transcription": "whisper-small",
-                      # The voice each page language gets with the default.
-                      "languages": _local_language_labels(_local_speech_default())},
             "browser": "without models the page uses the browser's own voice (Chrome, Edge, Safari; not Firefox)",
         },
         "web_search": ["brave", "tavily", "exa"],
         "providers_to_connect": [p for p in P.CLOUD if p not in usable],
     }
-
-
-def _local_language_labels(speech: str) -> Dict[str, str]:
-    """``{language: voice label}`` the local voice ``speech`` reads each page language with."""
-    row = _preset(VOICE_LOCAL_SPEECH, speech)
-    if row is None:
-        return {}
-    own = _preset_language(row)
-    out = {lang: row[1] for lang in VOICE_LANGUAGES if own in (None, lang)}
-    for lang, pid in _language_voices(row).items():
-        other = _preset(VOICE_LOCAL_SPEECH, pid)
-        if other:
-            out[lang] = other[1]
-    return out
-
-
-def _local_speech_default() -> str:
-    from common import first_run
-    lang = (first_run.language() or os.environ.get("AGENTS_HUB_LANGUAGE") or os.environ.get("LC_ALL")
-            or os.environ.get("LANG") or "").lower()
-    return "piper-ru" if lang.startswith("ru") else "piper-de" if lang.startswith("de") else "piper-en"
 
 
 # ── describing a call (the card's sentence) ───────────────────────────────────
@@ -227,26 +175,9 @@ def describe(operation: str, args: Optional[Dict[str, Any]] = None) -> str:
         return (f"Give the assistant {a.get('provider', '?')}'s voice: speech {a.get('model') or spec.get('speech', '?')} "
                 f"(voice {voice}) and transcription {spec.get('transcription', '?')}, paid per use, "
                 f"for every workspace that has none of its own.")
-    if operation == "voice_local":
-        speech = _preset(VOICE_LOCAL_SPEECH, a.get("speech") or _local_speech_default())
-        hear = _preset(VOICE_LOCAL_TRANSCRIPTION, a.get("transcription") or "whisper-small")
-        extra = [_preset(VOICE_LOCAL_SPEECH, pid) for pid in _language_voices(speech).values()]
-        others = ", ".join(row[1] for row in extra if row)
-        return (f"Give the assistant a voice from the hub's own runtime: {speech[1] if speech else '?'} "
-                f"({speech[2] if speech else '?'})" + (f", with {others} for the other languages" if others else "")
-                + f" and {hear[1] if hear else '?'} ({hear[2] if hear else '?'}), "
-                f"downloaded in the background, free to use.")
-    if operation == "local_set":
-        return ("Set the hub up to run locally: use a chat model already on the runtime or download one sized "
-                "to this machine's memory, then Whisper and one voice for the hub's language. Runs in the "
-                "background and becomes the default model only if no other model is configured.")
     if operation == "seed_demo":
         return "Add the demo workspace with four agents, their chats, views, a team and a pulse."
     return ""
-
-
-def _preset(table: List[tuple], wanted: str) -> Optional[tuple]:
-    return next((row for row in table if row[0] == wanted), None)
 
 
 # ── the operations ────────────────────────────────────────────────────────────
@@ -307,29 +238,6 @@ def choose_model(provider: str, model: str, *, principal: Any = None, check: boo
             "summary": f"The default model is now {provider}/{model}."}
 
 
-#: The languages the hub's pages speak; each gets a voice of its own.
-VOICE_LANGUAGES = ("en", "ru", "de")
-#: The Piper voice of each language, for a speech model that speaks another.
-_PIPER_FOR = {"en": "piper-en", "ru": "piper-ru", "de": "piper-de"}
-
-
-def _preset_language(row: Optional[tuple]) -> Optional[str]:
-    """The one language a local speech preset speaks; None for one that speaks many."""
-    if row is None:
-        return None
-    from providers import special
-    return special.voice_language(row[4]) or ("en" if row[5] in ("kokoro", "kitten") else None)
-
-
-def _language_voices(row: Optional[tuple]) -> Dict[str, str]:
-    """``{language: preset id}``: a Piper voice for each page language that the
-    chosen preset does not speak (none for a preset that speaks them all)."""
-    own = _preset_language(row)
-    if own is None:
-        return {}
-    return {lang: _PIPER_FOR[lang] for lang in VOICE_LANGUAGES if lang != own}
-
-
 def voice_cloud(provider: str, voice: str = "", *, model: str = "", principal: Any = None,
                 voices: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """A cloud voice; ``model`` is one of the provider's speech models (the
@@ -341,7 +249,7 @@ def voice_cloud(provider: str, voice: str = "", *, model: str = "", principal: A
         raise SetupOpError(f"A cloud voice comes from {' or '.join(VOICE_CLOUD)}.", code="unknown_provider")
     if not _key_of(provider):
         raise SetupOpError(f"No {P.LABELS[provider]} key is connected: offer propose_connection with kind "
-                           f"provider first, or the hub's own runtime (voice_local).", code="no_key")
+                           f"provider first; until then the page uses the browser's own voice.", code="no_key")
     offered = speech_models(provider)
     model = (model or "").strip() or offered[0]["id"]
     chosen = next((m for m in offered if m["id"] == model), None)
@@ -386,60 +294,6 @@ def _save_voice(entries: Dict[str, Any]) -> None:
     special.save("default", {**special.stored("default"), **entries})
 
 
-def voice_local(speech: str = "", transcription: str = "", *, principal: Any = None) -> Dict[str, Any]:
-    from common import setup_guide
-    from providers import local_models as lm
-    if not lm.runtime_configured():
-        raise SetupOpError("This hub has no model runtime (AGENTS_HUB_MODELS_MANAGED is off and "
-                           "AGENTS_HUB_MODELS_URL is empty): offer a cloud voice or the browser's own.",
-                           code="no_runtime")
-    s = _preset(VOICE_LOCAL_SPEECH, (speech or "").strip() or _local_speech_default())
-    h = _preset(VOICE_LOCAL_TRANSCRIPTION, (transcription or "").strip() or "whisper-small")
-    if s is None:
-        raise SetupOpError("speech is one of " + ", ".join(r[0] for r in VOICE_LOCAL_SPEECH), code="unknown_voice")
-    if h is None:
-        raise SetupOpError("transcription is one of " + ", ".join(r[0] for r in VOICE_LOCAL_TRANSCRIPTION),
-                           code="unknown_voice")
-    _, s_label, _, s_repo, s_package, s_engine = s
-    _, h_label, _, h_repo, h_package = h
-    # A voice of its own for each page language the chosen one does not speak.
-    rows = {lang: _preset(VOICE_LOCAL_SPEECH, pid) for lang, pid in _language_voices(s).items()}
-    extra = [row for row in rows.values() if row]
-    languages = {lang: {"model": row[4]} for lang, row in rows.items() if row}
-    # The runtime's backend first: a special model names it as its provider.
-    lm.ensure_hub_local_backend()
-    _save_voice({"speech": {"provider": HUB_LOCAL, "model": s_package, "options": {},
-                            **({"languages": languages} if languages else {})},
-                 "transcription": {"provider": HUB_LOCAL, "model": h_package, "options": {}}})
-    setup_guide.set_work(principal, {
-        "step": "voice", "kind": "voice_local", "phase": "starting", "started_at": _now(),
-        "engines": list(dict.fromkeys(["whisper", s_engine, *(row[5] for row in extra)])),
-        "packages": [[h_repo, h_package, h_label], [s_repo, s_package, s_label],
-                     *([row[3], row[4], row[1]] for row in extra)],
-        "jobs": [], "message": "",
-    })
-    advance_work(principal)
-    _audit(principal, "voice_local", {"speech": s[0], "transcription": h[0]})
-    return {"ok": True, "summary": f"The voice is set to {s_label} and {h_label} on the hub's runtime. "
-                                   f"The engines and models download in the background (setup_guide status "
-                                   f"shows how far); the page uses the browser's voice until they are ready."}
-
-
-def local_set(workspace: str = "", *, principal: Any = None) -> Dict[str, Any]:
-    """Start the ready local set (providers/local_set.py) as a background job."""
-    from providers import local_models as lm
-    from providers import local_set as ready
-    if not lm.runtime_configured():
-        raise SetupOpError("This hub has no model runtime (AGENTS_HUB_MODELS_MANAGED is off and "
-                           "AGENTS_HUB_MODELS_URL is empty): offer a cloud model instead.", code="no_runtime")
-    job = ready.start((workspace or "").strip() or "default")
-    _audit(principal, "local_set", {"job": job.get("id")})
-    return {"ok": True, "job_id": job.get("id"), "summary": (
-        "The local set is already being prepared." if job.get("already_running") else
-        "The local set is being prepared in the background: the engine, a chat model sized to this machine, "
-        "Whisper and Kokoro. The Models page, Local tab, shows each step.")}
-
-
 def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
     from common.demo_workspace import demo_status, ensure_demo_workspace
     ensure_demo_workspace()
@@ -454,8 +308,6 @@ _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "voice_cloud": lambda a, p: voice_cloud(a.get("provider", ""), a.get("voice", ""), model=a.get("model", ""),
                                             principal=p,
                                             voices=a.get("voices") if isinstance(a.get("voices"), dict) else None),
-    "voice_local": lambda a, p: voice_local(a.get("speech", ""), a.get("transcription", ""), principal=p),
-    "local_set": lambda a, p: local_set(a.get("workspace", ""), principal=p),
     "seed_demo": lambda a, p: seed_demo(principal=p),
 }
 
@@ -507,89 +359,5 @@ def first_model(provider: str, api_key: str = "", base_url: str = "", *, princip
     return {**result, "models": len(found.models)}
 
 
-# ── the voice download, carried on ────────────────────────────────────────────
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _age_seconds(iso: Optional[str]) -> float:
-    try:
-        return (datetime.now(timezone.utc) - datetime.fromisoformat(str(iso))).total_seconds()
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _in_backend() -> bool:
-    """A runner replica or an agent process must not start the runtime: it
-    would become that process's child. Only the backend does."""
-    from instances import registry
-    return not os.environ.get(registry.ENV_INSTANCE_ID) and not os.environ.get("AGENT_RUN_ID")
-
-
-def advance_work(principal: Any) -> Optional[Dict[str, Any]]:
-    """Move the person's voice download on by one look: start the runtime,
-    hand it the jobs, read how far they are. Never raises."""
-    from common import setup_guide
-    state = setup_guide.load_state(principal)
-    work = state.get("work")
-    if not isinstance(work, dict) or work.get("phase") in ("done", "error"):
-        return work if isinstance(work, dict) else None
-    try:
-        work = _advance(dict(work))
-    except Exception as exc:  # noqa: BLE001 - reported on the step, tried again next look
-        log.debug("setup: voice work did not advance", exc_info=True)
-        work["message"] = str(exc)[:200]
-    setup_guide.set_work(principal, work)
-    return work
-
-
-def _advance(work: Dict[str, Any]) -> Dict[str, Any]:
-    from providers import local_models as lm
-    client = lm.RuntimeClient(timeout=15)
-    if work.get("phase") == "starting":
-        try:
-            have = client.listing()
-        except lm.LocalModelError:
-            if _age_seconds(work.get("started_at")) > START_GRACE_SECONDS:
-                work.update(phase="error", message="The hub's model runtime did not start: the Models page, "
-                                                   "Local tab, shows why.")
-                return work
-            if _in_backend():
-                from providers import model_runtime_host as host
-                if host.active():
-                    host.ensure(explicit=True)
-            work["message"] = "starting the hub's model runtime"
-            return work
-        engines = (have.get("engines") or {})
-        models = {m.get("name") for m in have.get("models") or [] if isinstance(m, dict)}
-        jobs: List[Dict[str, Any]] = []
-        for engine in dict.fromkeys(work.get("engines") or []):
-            if not engines.get(engine):
-                job = client.install_engine(engine)
-                jobs.append({"id": job.get("job_id"), "label": f"Installing the {engine} engine",
-                             "status": "running"})
-        for repo, package, label in work.get("packages") or []:
-            if package not in models:
-                job = client.download(repo, package=package)
-                jobs.append({"id": job.get("job_id"), "label": f"Downloading {label}", "status": "running"})
-        work.update(phase="submitted", jobs=[j for j in jobs if j.get("id")], message="")
-    if work.get("phase") == "submitted":
-        for job in work.get("jobs") or []:
-            if job.get("status") in ("done", "error"):
-                continue
-            rec = client.job(str(job["id"]))
-            job["status"] = rec.get("status") or job.get("status")
-            job["percent"] = rec.get("percent") or 0
-            if job["status"] == "error":
-                job["error"] = str(rec.get("error") or rec.get("message") or "")[:200]
-        states = {j.get("status") for j in work.get("jobs") or []}
-        if not states - {"done", "error"}:
-            failed = "error" in states
-            work.update(phase="error" if failed else "done",
-                        message="" if failed else "the voice models are ready")
-    return work
-
-
-__all__ = ["OPERATIONS", "Operation", "SetupOpError", "advance_work", "choose_model", "describe",
-           "first_model", "listing", "local_set", "options", "perform", "seed_demo", "voice_cloud", "voice_local"]
+__all__ = ["OPERATIONS", "Operation", "SetupOpError", "choose_model", "describe",
+           "first_model", "listing", "options", "perform", "seed_demo", "voice_cloud"]

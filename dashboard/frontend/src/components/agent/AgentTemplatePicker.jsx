@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Siren, Users, Github, Database, Receipt, Scale,
+  Siren, Users, Gitlab, Receipt, Scale,
   Headset, Telescope, NotebookPen, ClipboardCheck, PenLine, Target, LayoutTemplate, Check, CheckCircle2, XCircle, RefreshCw,
 } from 'lucide-react';
 import { getAgentTemplates, getAgentTemplate } from '../../api';
@@ -10,7 +10,7 @@ import { templateText } from './agentTemplates';
 // template.icon is a plain word from agents/templates/<id>.md; an unknown one
 // falls back to a generic glyph rather than guessing at an icon name.
 const ICONS = {
-  siren: Siren, users: Users, github: Github, database: Database, receipt: Receipt, scale: Scale,
+  siren: Siren, users: Users, gitlab: Gitlab, receipt: Receipt, scale: Scale,
   headset: Headset, telescope: Telescope, notebook: NotebookPen, clipboard: ClipboardCheck, pen: PenLine, target: Target,
 };
 

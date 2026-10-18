@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, CheckCircle, Database, Download, Gauge, GitBranch, HardDrive,
+  Activity, AlertTriangle, CheckCircle, Database, GitBranch, HardDrive,
   KeyRound, Loader, Pause, Play, RefreshCw, Server, Stethoscope, Trash2, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import {
@@ -10,9 +10,6 @@ import {
 import {
   getDoctor, getSystem, syncSystem, setSystemSchedule, pruneSystemBranches, getSystemBranches,
 } from '../api/system';
-import { getClusterStack } from '../api/services';
-import { getSlo, getSupportBundle } from '../api/support';
-import { saveBlobAs } from '../api/files';
 import EntityChat from '../components/EntityChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -300,99 +297,6 @@ function DiagnosticsSection() {
   );
 }
 
-// The two SLO objectives (common/slo.py): run start time p95 and error rate,
-// each ok/breach/no_data with the number behind it. Reads GET /api/support/slo
-// on mount and on Refresh; the same numbers the hub's own alert rules
-// (notify/rules.py's slo_start_latency / slo_error_rate) act on, so this card
-// never disagrees with what fired.
-const SLO_TONES = {
-  ok: { dot: 'bg-green-500', text: 'text-green-700' },
-  breach: { dot: 'bg-red-500', text: 'text-red-700' },
-  no_data: { dot: 'bg-gray-300', text: 'text-gray-500' },
-};
-
-function SloStatusDot({ status }) {
-  const { t } = useI18n();
-  const tone = SLO_TONES[status] || SLO_TONES.no_data;
-  const key = status === 'breach' ? 'statusBreach' : status === 'ok' ? 'statusOk' : 'statusNoData';
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${tone.text}`}>
-      <span className={`w-2 h-2 rounded-full ${tone.dot}`} /> {t(`health.slo.${key}`)}
-    </span>
-  );
-}
-
-function SloObjectiveRow({ label, objective, format }) {
-  const { t } = useI18n();
-  if (!objective) return null;
-  return (
-    <div className="py-1.5 border-b border-gray-100 last:border-0">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-gray-700">{label}</span>
-        <SloStatusDot status={objective.status} />
-      </div>
-      <div className="text-xs text-gray-400 mt-0.5">
-        {format(objective)}
-        {objective.sample != null && ` · ${t('health.slo.sample', { count: objective.sample })}`}
-      </div>
-    </div>
-  );
-}
-
-function SloCard() {
-  const { t } = useI18n();
-  const toast = useToast();
-  const [slo, setSlo] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // A promise chain rather than an async body, so the effect below may call it
-  // without a synchronous setState.
-  const load = useCallback(() => getSlo()
-    .then(({ data }) => setSlo(data))
-    .catch((e) => toast.error(t('health.slo.unreachable'), errorDetail(e)))
-    .finally(() => setLoading(false)), [t, toast]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const refresh = () => { setLoading(true); load(); };
-
-  const objectives = slo?.objectives || {};
-
-  return (
-    <Card
-      icon={Gauge}
-      title={t('health.slo.title')}
-      badge={slo && <SloStatusDot status={slo.status} />}
-      actions={(
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={loading}
-          className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-        >
-          {loading ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          {t('health.refresh')}
-        </button>
-      )}
-    >
-      <SloObjectiveRow
-        label={t('health.slo.startP95')}
-        objective={objectives.start_p95}
-        format={(o) => (o.value_seconds == null
-          ? t('health.slo.noValue')
-          : `${o.value_seconds.toFixed(1)}s / ${o.threshold_seconds}s`)}
-      />
-      <SloObjectiveRow
-        label={t('health.slo.errorRate')}
-        objective={objectives.error_rate}
-        format={(o) => (o.value == null
-          ? t('health.slo.noValue')
-          : `${(o.value * 100).toFixed(1)}% / ${(o.threshold * 100).toFixed(1)}%`)}
-      />
-    </Card>
-  );
-}
-
 // The system workspace: its clone, its scheduled loop and its recent
 // branches. Reads GET /api/system once on mount; a 404 means the feature is
 // off entirely, which is shown as one line rather than an error.
@@ -606,66 +510,11 @@ function SystemWorkspaceCard() {
   );
 }
 
-/**
- * The shared services around the hub (common/stack.py): database, Redis,
- * object store, identity provider, browser service, model runtime, egress
- * proxy. Loaded on its own, not with the snapshot, because the probes reach
- * the network and a slow one must not hold the rest of the page back. The
- * Cluster page draws the same rows as a map.
- */
-const STACK_DOT = {
-  ok: 'bg-green-500', warn: 'bg-amber-500', fail: 'bg-red-500',
-  off: 'bg-gray-300', unknown: 'border-2 border-gray-400 bg-transparent',
-};
-
-function StackCard() {
-  const { t } = useI18n();
-  const [rows, setRows] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getClusterStack()
-      .then(({ data }) => { if (!cancelled) setRows(data?.components || []); })
-      .catch(() => { if (!cancelled) setRows([]); });
-    return () => { cancelled = true; };
-  }, []);
-
-  return (
-    <Card icon={Server} title={t('health.stack.title')}
-          actions={<Link to="/cluster" className="text-xs font-semibold text-indigo-600 hover:underline">{t('health.stack.openMap')}</Link>}>
-      {rows === null ? (
-        <p className="text-sm text-gray-500">{t('health.stack.loading')}</p>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-gray-500">{t('health.stack.none')}</p>
-      ) : rows.map((c) => {
-        const unit = c.unit ? t(`cluster.units.${c.unit}`) : '';
-        const hasLoad = c.load !== null && c.load !== undefined;
-        const load = hasLoad ? `${unit} ${c.load}${c.capacity ? `/${c.capacity}` : ''}`.trim() : '';
-        return (
-          <div key={c.id} className="flex items-start justify-between gap-3 py-1.5 text-sm" data-testid={`stack-${c.id}`}>
-            <span className="flex min-w-0 items-start gap-2">
-              <span className={`mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${STACK_DOT[c.status] || STACK_DOT.unknown}`}
-                    title={t(`cluster.stack.status.${c.status}`)} />
-              <span className="min-w-0">
-                <span className="font-semibold text-gray-900">{t(`cluster.stack.names.${c.id}`, { defaultValue: c.label })}</span>
-                <span className="block text-xs text-gray-500 break-words">{c.summary}</span>
-              </span>
-            </span>
-            {load && <span className="shrink-0 text-xs tabular-nums text-gray-600">{load}</span>}
-          </div>
-        );
-      })}
-    </Card>
-  );
-}
-
 export default function Health() {
   const { t } = useI18n();
-  const toast = useToast();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [bundling, setBundling] = useState(false);
   const chat = useChatColumn(true);
 
   // A promise chain rather than an async body, so the effect below may call it
@@ -710,23 +559,6 @@ export default function Health() {
   }), [loadChat, clearChat, stopChat, onEvent, t]);
   usePageChat(chatDescriptor);
 
-  // Content-Disposition carries the bundle's own timestamped name
-  // (common.support_bundle.default_filename); a fallback covers a proxy that
-  // strips the header.
-  const handleDownloadBundle = async () => {
-    setBundling(true);
-    try {
-      const res = await getSupportBundle();
-      const disposition = res.headers?.['content-disposition'] || '';
-      const match = /filename="?([^";]+)"?/i.exec(disposition);
-      saveBlobAs(res.data, match ? match[1] : 'agents-hub-support-bundle.zip');
-    } catch (e) {
-      toast.error(t('health.supportBundle.failed'), errorDetail(e));
-    } finally {
-      setBundling(false);
-    }
-  };
-
   const db = health?.database || {};
   const counts = db.counts || {};
   const services = health?.services || {};
@@ -750,14 +582,6 @@ export default function Health() {
         )}
         actions={<>
           <ChatToggle open={chat.open} onToggle={chat.toggle} label={t('health.agentChat')} />
-          <button
-            onClick={handleDownloadBundle}
-            disabled={bundling}
-            className="inline-flex items-center px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-          >
-            {bundling ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1" />}
-            {t('health.supportBundle.download')}
-          </button>
           <button
             onClick={load}
             className="inline-flex items-center px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -783,7 +607,6 @@ export default function Health() {
       <div className={`grid grid-cols-1 gap-4 items-start ${chat.open ? '2xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
         <div className="space-y-4 min-w-0">
           <DiagnosticsSection />
-          <StackCard />
           {!loading && (
             <Card icon={Database} title={t('health.database')} tone={db.reachable ? 'default' : 'bad'}>
               {db.reachable ? (
@@ -801,7 +624,6 @@ export default function Health() {
           )}
         </div>
         <div className="space-y-4 min-w-0">
-          <SloCard />
           <SystemWorkspaceCard />
           {loading ? (
             <PageLoader label={t('health.loading')} />

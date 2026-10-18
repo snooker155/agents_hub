@@ -3,7 +3,7 @@
 A ``BaseChatModel`` from ``langchain_core`` on top of the official ``openai``
 SDK, in place of ``langchain-openai``. It speaks both endpoints of the
 protocol, ``/v1/chat/completions`` and ``/v1/responses``, which covers OpenAI
-itself, LM Studio, the hub's model runtime, vLLM, llama.cpp, OpenRouter and
+itself, LM Studio, vLLM, llama.cpp, OpenRouter and
 every gateway in between.
 
 Everything above it (``bind_tools``, the callbacks, the agent loop) sees the

@@ -61,9 +61,8 @@ function WakeEar({ prefs, onOff }) {
       .then((res) => answer(res.text))
       .catch((e) => {
         if (e instanceof AssistantError && e.code === 'model_not_added') setSttFallback(true);
-        else if (e instanceof AssistantError && e.code === 'budget') onOff();
       });
-  }, [answer, onOff]);
+  }, [answer]);
   const onError = useCallback(() => setBlocked(true), []);
 
   const ear = useHandsFree({ engine, language, onSegment, onUtterance: answer, onInterim, onError });

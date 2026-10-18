@@ -159,7 +159,6 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     params: Dict[str, Any] = dict(requested)
 
     from agents.agent_launcher import preregister_run, start_run
-    from common.budget import BudgetExceededError
     from common.entity_sink import record_entity
     from runtime.entity_launch import child_env
 
@@ -167,12 +166,8 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     extra_env = {str(k): str(v) for k, v in extra_env.items()} if isinstance(extra_env, Mapping) else {}
 
     run_id = preregister_run(str(child.id), agent_id, session_id=session_id)
-    try:
-        with child_env(extra_env):
-            run_id, _ = start_run(str(child.id), agent_id, params, run_id=run_id)
-    except BudgetExceededError as exc:
-        update_task(child.id, status=TaskStatus.blocked, blocked_reason=str(exc))
-        return _err(str(exc), "budget", task_id=str(child.id))
+    with child_env(extra_env):
+        run_id, _ = start_run(str(child.id), agent_id, params, run_id=run_id)
     if parent_run_id:
         # So a later delegation from the same parent run can count this one
         # among its running children (running_delegate_count above).

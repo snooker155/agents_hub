@@ -9,8 +9,7 @@ Three entry points, in the order a tick goes through them:
   schedule updates it, switching it off cancels it. The job id is kept on
   the profile either way, so the tick feed survives an off-and-on.
 * :func:`fire_heartbeat` is what ``plans.service.fire_job`` calls for a
-  heartbeat job. It checks the quiet hours, the day's budget and tick
-  count, and whether the previous tick is still running; a tick that fails
+  heartbeat job. It checks the quiet hours, the day's tick count, and whether the previous tick is still running; a tick that fails
   a gate is a *skipped* tick with that outcome on its journal row, not a
   failure. One that passes becomes an ordinary task of the agent, with the
   tick's prompt as its text and the tick's answer schema on its run.
@@ -82,7 +81,7 @@ EVENT_WINDOW_ENV = "AGENTS_HUB_HEARTBEAT_EVENT_WINDOW_SECONDS"
 
 #: Outcomes the journal compaction folds into counted rows: the ticks that
 #: did nothing. Acted, blocked and error rows are kept one by one.
-QUIET_LIKE_OUTCOMES = frozenset({"quiet", "quiet_hours", "busy", "rate", "budget", "disabled"})
+QUIET_LIKE_OUTCOMES = frozenset({"quiet", "quiet_hours", "busy", "rate", "disabled"})
 
 
 def _now() -> datetime:
@@ -208,7 +207,7 @@ def sync_job(spec: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
     ``job_id`` set.
 
     Enabled: create the heartbeat job, or update the existing one (schedule,
-    brief, channels, budget, environment) and bring a cancelled one back to
+    brief, channels) and bring a cancelled one back to
     ``scheduled``. A manual pause survives an edit: only ``cancelled`` is
     reset. Disabled: cancel the job if there is one, keep its id.
     """
@@ -234,8 +233,6 @@ def sync_job(spec: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
         timezone=out["timezone"],
         agent_id=spec.id,
         channels=list(out["notify"] or ["dashboard"]),
-        environment_id=out["environment_id"],
-        budget_usd=out["tick_budget_usd"],
         auto_pause_after=int(out["auto_pause_after"]),
     )
     workspace = _job_workspace(spec, out)
@@ -289,7 +286,6 @@ def daily_usage(job: Any, profile: Dict[str, Any], now: Optional[datetime] = Non
         "runs": len(today),
         "spent_usd": round(spent, 6),
         "max_runs_per_day": int(profile.get("max_runs_per_day") or 0),
-        "daily_budget_usd": float(profile.get("daily_budget_usd") or 0.0),
     }
 
 
@@ -352,11 +348,8 @@ def tick_prompt(spec: Any, profile: Dict[str, Any], *, last: Optional[Any], usag
     else:
         lines.append("")
         lines.append(f"Reason for this tick: the schedule ({describe_schedule(profile)}).")
-    budget = usage.get("daily_budget_usd") or 0
     max_runs = usage.get("max_runs_per_day") or 0
     allowance = []
-    if budget:
-        allowance.append(f"${usage.get('spent_usd', 0):.2f} of ${budget:.2f} spent today")
     if max_runs:
         allowance.append(f"tick {usage.get('runs', 0) + 1} of {max_runs} today")
     if allowance:
@@ -404,9 +397,9 @@ def fire_heartbeat(job: Any, *, trigger: str = "schedule",
     ``{"outcome": <skip>, "summary": ..., "resume_at"?: ...}`` for a tick that
     a gate stopped: ``disabled`` (the profile is off), ``quiet_hours`` (with
     the window's end as ``resume_at``), ``busy`` (the previous tick's task is
-    still active), ``rate`` and ``budget`` (the day's allowance is spent). A
-    manual wake (``trigger="manual"``) passes the quiet hours, since a person
-    asked, but still obeys the budget, the tick limit and the busy gate.
+    still active) and ``rate`` (the day's ticks are used up). A manual wake
+    (``trigger="manual"``) passes the quiet hours, since a person asked, but
+    still obeys the tick limit and the busy gate.
 
     Raises for a missing agent, which the scheduler classifies as
     ``agent_missing`` and pauses the job on.
@@ -442,10 +435,6 @@ def fire_heartbeat(job: Any, *, trigger: str = "schedule",
     max_runs = int(profile.get("max_runs_per_day") or 0)
     if max_runs and usage["runs"] >= max_runs:
         return {"outcome": "rate", "summary": f"{usage['runs']} of {max_runs} ticks already ran today"}
-    budget = float(profile.get("daily_budget_usd") or 0.0)
-    if budget and usage["spent_usd"] >= budget:
-        return {"outcome": "budget",
-                "summary": f"${usage['spent_usd']:.2f} of today's ${budget:.2f} already spent"}
 
     fresh = plans.get_job(job.id) or job
     pending = list(fresh.pending_events or [])
@@ -763,15 +752,15 @@ def compact_journal(days: int, *, now: Optional[datetime] = None) -> int:
 
 def summary(workspace: Optional[str] = None, *, hours: int = 24) -> Dict[str, Any]:
     """Every agent with a pulse on, and what its ticks of the last *hours*
-    came to: acted, quiet, blocked, error, skipped (by budget, tick limit,
-    busy or quiet hours), with the budget skips counted on their own."""
+    came to: acted, quiet, blocked, error, skipped (by tick limit, busy or
+    quiet hours)."""
     from agents import registry
     from plans import service as plans
     from plans.models import JobKind, JobStatus
     since = _now() - timedelta(hours=hours)
     agents: List[Dict[str, Any]] = []
     totals = {"agents": 0, "acted": 0, "quiet": 0, "blocked": 0, "error": 0, "skipped": 0,
-              "budget": 0, "running": 0, "paused": 0}
+              "running": 0, "paused": 0}
     for spec in registry.list_agents():
         profile = profile_of(spec)
         if not profile.get("enabled") or not profile.get("job_id"):
@@ -781,7 +770,7 @@ def summary(workspace: Optional[str] = None, *, hours: int = 24) -> Dict[str, An
             continue
         if workspace and _job_workspace(spec, profile) != workspace:
             continue
-        counts = {"acted": 0, "quiet": 0, "blocked": 0, "error": 0, "skipped": 0, "budget": 0, "running": 0}
+        counts = {"acted": 0, "quiet": 0, "blocked": 0, "error": 0, "skipped": 0, "running": 0}
         for r in _journal(job.id):
             at = _aware(r.at)
             if at is None or at < since:
@@ -791,8 +780,6 @@ def summary(workspace: Optional[str] = None, *, hours: int = 24) -> Dict[str, An
                 counts[r.outcome] += n
             elif r.outcome in QUIET_LIKE_OUTCOMES:
                 counts["skipped"] += n
-                if r.outcome == "budget":
-                    counts["budget"] += n
             elif r.task_id and not r.outcome:
                 counts["running"] += 1
         row = {
@@ -872,7 +859,7 @@ def resume(agent_id: str) -> Dict[str, Any]:
 
 def wake(agent_id: str) -> Dict[str, Any]:
     """Tick now, outside the schedule. Passes the quiet hours (a person
-    asked), still obeys the budget, the tick limit and the busy gate."""
+    asked), still obeys the tick limit and the busy gate."""
     from plans import service as plans
     from plans.models import JobStatus
     job = _job_for(agent_id)

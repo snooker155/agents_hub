@@ -8,8 +8,6 @@ import pytest
 from agents import agent_replay
 from agents.agent_invoke import AgentInvocation
 from managers import run_manager as rm
-from common import budget
-from providers import catalog as model_catalog
 
 
 class _FakeAgent:
@@ -101,26 +99,3 @@ def test_replay_no_input_raises(monkeypatch):
         agent_replay.replay_run("empty")
 
 
-def test_replay_run_excluded_from_budget_spend(monkeypatch, tmp_path):
-    # Price catalog so both runs would otherwise cost money.
-    model_catalog.save_catalog_raw({
-        "anthropic": {"default": "claude-sonnet-5", "models": [
-            {"id": "claude-sonnet-5", "enabled": True, "input_price": 3.0, "output_price": 15.0},
-        ]},
-        "openai": {"default": "gpt-4o", "models": [
-            {"id": "gpt-4o", "enabled": True, "input_price": 2.5, "output_price": 10.0},
-        ]},
-    })
-
-    _stub_agent(monkeypatch)
-    _seed_original(ws="ws1")
-    # Give the original run some tokens so it has real spend.
-    rm.update_run("orig", {"process": {"token_usage": {
-        "inbound_tokens": 1_000_000, "outbound_tokens": 0, "total_tokens": 1_000_000}}})
-    baseline = budget.workspace_period_spend("ws1", "total")
-    assert baseline == pytest.approx(2.5)
-
-    agent_replay.replay_run("orig")  # creates a replay run with 100/50 tokens in ws1
-
-    # Spend is unchanged: the replay run is excluded from budget aggregation.
-    assert budget.workspace_period_spend("ws1", "total") == pytest.approx(2.5)

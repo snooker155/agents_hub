@@ -1,5 +1,5 @@
-import React, { Suspense, lazy, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import React, { Suspense, lazy } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import PageLoader from './components/PageLoader';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -8,8 +8,6 @@ import { FeaturesProvider } from './components/FeaturesContext';
 import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
-import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
-import { getInstances } from './api';
 
 // ---------------------------------------------------------------------------
 // Pages are loaded on demand.
@@ -26,8 +24,6 @@ import { getInstances } from './api';
 // every route, so deferring them would only add a round trip to every visit.
 const TaskManager = lazy(() => import('./pages/TaskManager'));
 const AgentManager = lazy(() => import('./pages/AgentManager'));
-const ConnectionDetail = lazy(() => import('./pages/ConnectionDetail'));
-const Connections = lazy(() => import('./pages/Connections'));
 const Connectors = lazy(() => import('./pages/Connectors'));
 const Mcp = lazy(() => import('./pages/Mcp'));
 const AgentDetails = lazy(() => import('./pages/AgentDetails'));
@@ -47,27 +43,16 @@ const SessionDetails = lazy(() => import('./pages/SessionDetails'));
 const Messages = lazy(() => import('./pages/Messages'));
 const Instances = lazy(() => import('./pages/Instances'));
 const InstanceDetail = lazy(() => import('./pages/InstanceDetail'));
-const Services = lazy(() => import('./pages/Services'));
-const ServiceDetail = lazy(() => import('./pages/ServiceDetail'));
 const MessageDetails = lazy(() => import('./pages/MessageDetails'));
 const Chat = lazy(() => import('./pages/Chat'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
-const Cluster = lazy(() => import('./pages/Cluster'));
-const Vault = lazy(() => import('./pages/Vault'));
-const Catalog = lazy(() => import('./pages/Catalog'));
-const Environments = lazy(() => import('./pages/Environments'));
 const Watchers = lazy(() => import('./pages/Watchers'));
-const Nodes = lazy(() => import('./pages/Nodes'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
-const Widgets = lazy(() => import('./pages/Widgets'));
-const Distribution = lazy(() => import('./pages/Distribution'));
-const AgentRegistry = lazy(() => import('./pages/AgentRegistry'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
-const ModelDetail = lazy(() => import('./pages/ModelDetail'));
 const Browser = lazy(() => import('./pages/Browser'));
 const Costs = lazy(() => import('./pages/Costs'));
 const Evals = lazy(() => import('./pages/Evals'));
@@ -81,7 +66,6 @@ const Teams = lazy(() => import('./pages/Teams'));
 const TeamDetails = lazy(() => import('./pages/TeamDetails'));
 const ProjectManager = lazy(() => import('./pages/ProjectManager'));
 const ProjectDetails = lazy(() => import('./pages/ProjectDetails'));
-const Registry = lazy(() => import('./pages/Registry'));
 const Plan = lazy(() => import('./pages/Plan'));
 const Marketplace = lazy(() => import('./pages/Marketplace'));
 const SkillsCatalog = lazy(() => import('./pages/SkillsCatalog'));
@@ -95,11 +79,6 @@ const Docs = lazy(() => import('./pages/Docs'));
 const MarkLab = lazy(() => import('./pages/MarkLab'));
 // Identity pages. Both are inert outside AUTH_MODE=multi: the login screen is
 // never reached and the users route is not registered. See docs/identity.md.
-const Login = lazy(() => import('./pages/Login'));
-const Users = lazy(() => import('./pages/Users'));
-const Audit = lazy(() => import('./pages/Audit'));
-const Account = lazy(() => import('./pages/Account'));
-const OidcCallback = lazy(() => import('./pages/OidcCallback'));
 
 /** Centred spinner shown while a page's chunk is on the wire. */
 function RouteFallback() {
@@ -128,33 +107,8 @@ function RouteBoundary({ children }) {
 /** `<Route element={guard(<Page />)} />` — every route gets the same wrapper. */
 const guard = (element) => <RouteBoundary>{element}</RouteBoundary>;
 
-/**
- * `/nodes/:nodeId` used to be a node's own page. Nodes are gone: a migration
- * folded every node into the instance it became (`common/migrations/0029_...`)
- * and `GET /api/instances?node_id=` finds it. A stale bookmark or external
- * link lands here and is bounced straight to that instance, or to the plain
- * Instances list if the id no longer resolves to anything.
- */
-function NodeRedirect() {
-  const { nodeId } = useParams();
-  const navigate = useNavigate();
-  useEffect(() => {
-    let cancelled = false;
-    getInstances({ node_id: nodeId, include_archived: true })
-      .then(({ data }) => {
-        if (cancelled) return;
-        const first = data?.items?.[0];
-        navigate(first ? `/instances/${first.instance_id}` : '/instances', { replace: true });
-      })
-      .catch(() => { if (!cancelled) navigate('/instances', { replace: true }); });
-    return () => { cancelled = true; };
-  }, [nodeId, navigate]);
-  return <RouteFallback />;
-}
-
 function AppRoutes() {
   const { playground } = useFeatures();
-  const auth = useAuth();
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
@@ -170,9 +124,6 @@ function AppRoutes() {
         <Route path="/deployments" element={guard(<Deployments />)} />
         {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
         <Route path="/files" element={<ArtifactsRedirect />} />
-        <Route path="/widgets" element={guard(<Widgets />)} />
-        <Route path="/distribution" element={guard(<Distribution />)} />
-        <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
         <Route path="/agents/:id" element={guard(<AgentDetails />)} />
         <Route path="/marketplace" element={guard(<Marketplace />)} />
@@ -189,33 +140,21 @@ function AppRoutes() {
         <Route path="/loops" element={guard(<Loops />)} />
         <Route path="/teams" element={guard(<Teams />)} />
         <Route path="/teams/:teamId" element={guard(<TeamDetails />)} />
-        <Route path="/registry" element={guard(<Registry />)} />
         <Route path="/sessions" element={guard(<Sessions />)} />
         <Route path="/sessions/:sessionId" element={guard(<SessionDetails />)} />
         <Route path="/run-groups" element={guard(<RunGroups />)} />
         <Route path="/messages" element={guard(<Messages />)} />
         <Route path="/messages/:runId" element={guard(<MessageDetails />)} />
-        <Route path="/connections" element={guard(<Connections />)} />
-        <Route path="/connections/:connectionId" element={guard(<ConnectionDetail />)} />
         <Route path="/connectors" element={guard(<Connectors />)} />
         <Route path="/watchers" element={guard(<Watchers />)} />
-        <Route path="/nodes" element={guard(<Nodes />)} />
         <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
-        <Route path="/services" element={guard(<Services />)} />
-        <Route path="/services/:serviceId" element={guard(<ServiceDetail />)} />
         <Route path="/nodes" element={<Navigate to="/instances" replace />} />
-        <Route path="/nodes/:nodeId" element={guard(<NodeRedirect />)} />
-        <Route path="/environments" element={guard(<Environments />)} />
         <Route path="/guardrails" element={guard(<Guardrails />)} />
         <Route path="/containers" element={guard(<Containers />)} />
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
-        <Route path="/cluster" element={guard(<Cluster />)} />
-        <Route path="/vault" element={guard(<Vault />)} />
-        <Route path="/catalog" element={guard(<Catalog />)} />
-        <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
         <Route path="/artifacts" element={guard(<Artifacts />)} />
@@ -225,7 +164,6 @@ function AppRoutes() {
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />
         <Route path="/models" element={guard(<Models />)} />
-        <Route path="/models/:provider/:model" element={guard(<ModelDetail />)} />
         <Route path="/costs" element={guard(<Costs />)} />
         <Route path="/evals" element={guard(<Evals />)} />
         {/* The playground is optional (GET /api/health → features.playground).
@@ -247,59 +185,13 @@ function AppRoutes() {
         )}
         <Route path="/settings" element={guard(<Settings />)} />
         <Route path="/settings/:section" element={guard(<Settings />)} />
-        {/* Accounts exist only under AUTH_MODE=multi, and only an administrator
-            manages them. Anyone else lands on the dashboard, so the page never
-            has to render a refusal of its own. */}
-        {isAdmin(auth) ? (
-          <Route path="/users" element={guard(<Users />)} />
-        ) : (
-          <Route path="/users" element={<Navigate to="/dashboard" replace />} />
-        )}
-        {/* The audit trail exists outside single mode (features.audit); an
-            administrator reads all of it, a workspace owner their own. */}
-        {auth.features?.audit ? (
-          <Route path="/audit" element={guard(<Audit />)} />
-        ) : (
-          <Route path="/audit" element={<Navigate to="/dashboard" replace />} />
-        )}
-        {/* The caller's own account: sessions and personal API keys. */}
-        {isMultiUser(auth) ? (
-          <Route path="/account" element={guard(<Account />)} />
-        ) : (
-          <Route path="/account" element={<Navigate to="/dashboard" replace />} />
-        )}
         <Route path="/docs" element={guard(<Docs />)} />
         <Route path="/docs/:section" element={guard(<Docs />)} />
         <Route path="/mark-lab" element={guard(<MarkLab />)} />
-        {/* The api client sends a browser whose session died to /login; once
-            AuthGate has let it back in there is nothing to show at that path. */}
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-        {/* Where the OIDC callback lands the browser with its new session. */}
-        <Route path="/login/oidc" element={<OidcCallback />} />
       </Routes>
     </Suspense>
   );
-}
-
-/**
- * Nothing of the application renders until the viewer is allowed to see it.
- *
- * A pass-through in `single` and `token` mode, where there is one operator and
- * no login to do. In `multi` mode it shows the login screen (or, on a first
- * run, the form that creates the first administrator) in place of the whole
- * app, so there is no route to bookmark past it and no shell behind it.
- */
-function AuthGate({ children }) {
-  const auth = useAuth();
-  if (auth.loading) return <RouteFallback />;
-  if (needsLogin(auth)) {
-    return (
-      <Suspense fallback={<RouteFallback />}>
-        <Login />
-      </Suspense>
-    );
-  }
-  return children;
 }
 
 function App() {
@@ -313,15 +205,13 @@ function App() {
       <AuthProvider>
         <FeaturesProvider>
           <PageChatProvider>
-            <AuthGate>
-              {/* Outside multi mode, a new install sets itself up first
+              {/* A new install sets itself up first
                   (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
               <FirstRunGate>
                 <Layout>
                   <AppRoutes />
                 </Layout>
               </FirstRunGate>
-            </AuthGate>
           </PageChatProvider>
         </FeaturesProvider>
       </AuthProvider>

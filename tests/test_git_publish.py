@@ -4,7 +4,7 @@ that tie them together.
 
 Everything that touches an actual git process uses a real temporary repo with
 a bare "origin" next to it in tmp_path, so push is exercised for real, offline
-— no network, no real GitHub/GitLab call. Anything that would hit a provider's
+— no network, no real GitLab call. Anything that would hit a provider's
 HTTP API is monkeypatched at the ``_post``/``get_repo`` layer instead.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ if BACKEND not in sys.path:
 
 from connectors.git import git_ops
 from connectors.git.git_ops import GitOpsError
-from connectors.git.providers import GitHubProvider, GitLabProvider, remote_id_from_url
+from connectors.git.providers import GitLabProvider, remote_id_from_url
 import connectors.git.store as git_store
 
 
@@ -181,8 +181,8 @@ def test_remote_id_from_url(url, expected):
 # ── providers: default_branch ────────────────────────────────────────────────
 
 def test_default_branch_delegates_to_get_repo(monkeypatch):
-    monkeypatch.setattr(GitHubProvider, "get_repo", lambda self, remote_id: {"default_branch": "develop"})
-    provider = GitHubProvider("fake-token")
+    monkeypatch.setattr(GitLabProvider, "get_repo", lambda self, remote_id: {"default_branch": "develop"})
+    provider = GitLabProvider("fake-token")
     assert provider.default_branch("acme/repo") == "develop"
 
 
@@ -194,30 +194,6 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
-
-
-def test_github_create_pull_request_posts_the_expected_payload(monkeypatch):
-    captured = {}
-
-    def fake_post(self, url, headers, json_body):
-        captured["url"] = url
-        captured["json"] = json_body
-        return _FakeResponse({"html_url": "https://github.com/acme/repo/pull/7", "number": 7})
-
-    monkeypatch.setattr(GitHubProvider, "_post", fake_post)
-    provider = GitHubProvider("fake-token")
-
-    result = provider.create_pull_request(
-        "acme/repo", title="Add feature", body="does a thing",
-        head="agent/demo-1-add-feature", base="main", draft=True,
-    )
-
-    assert captured["url"] == "https://api.github.com/repos/acme/repo/pulls"
-    assert captured["json"] == {
-        "title": "Add feature", "body": "does a thing",
-        "head": "agent/demo-1-add-feature", "base": "main", "draft": True,
-    }
-    assert result == {"url": "https://github.com/acme/repo/pull/7", "number": 7}
 
 
 def test_gitlab_create_merge_request_posts_the_expected_payload(monkeypatch):
@@ -245,7 +221,7 @@ def test_gitlab_create_merge_request_posts_the_expected_payload(monkeypatch):
 
 # ── the tool + route, end to end ─────────────────────────────────────────────
 
-def _make_project(tmp_path_factory, *, provider="github", remote_id="acme/repo"):
+def _make_project(tmp_path_factory, *, provider="gitlab", remote_id="acme/repo"):
     """A real project backed by a real repo, registered in the (test-isolated)
     project store, with a workspace folder the tool's own resolution walks
     through (see tools/git_publish.py's _repo_dir / workspace.get_workspace_folder).
@@ -293,21 +269,21 @@ def fake_token(monkeypatch):
 
 
 @pytest.fixture
-def fake_github_pr(monkeypatch, fake_token):
+def fake_gitlab_mr(monkeypatch, fake_token):
     """default_branch + create_pull_request never hit the network."""
     calls = {}
-    monkeypatch.setattr(GitHubProvider, "default_branch", lambda self, remote_id: "main")
+    monkeypatch.setattr(GitLabProvider, "default_branch", lambda self, remote_id: "main")
 
     def fake_create(self, owner_repo, *, title, body, head, base, draft=False):
         calls["args"] = {"owner_repo": owner_repo, "title": title, "body": body,
                           "head": head, "base": base, "draft": draft}
-        return {"url": "https://github.com/acme/repo/pull/42", "number": 42}
+        return {"url": "https://gitlab.com/acme/repo/-/merge_requests/42", "number": 42}
 
-    monkeypatch.setattr(GitHubProvider, "create_pull_request", fake_create)
+    monkeypatch.setattr(GitLabProvider, "create_merge_request", fake_create)
     return calls
 
 
-def test_git_publish_tool_end_to_end(tmp_path_factory, fake_github_pr):
+def test_git_publish_tool_end_to_end(tmp_path_factory, fake_gitlab_mr):
     from tools.git_publish import git_publish
 
     project, repo_dir, origin = _make_project(tmp_path_factory)
@@ -324,10 +300,10 @@ def test_git_publish_tool_end_to_end(tmp_path_factory, fake_github_pr):
     assert result["branch"].startswith("agent/")
     assert result["commit"]
     assert result["pushed"] is True
-    assert result["pr_url"] == "https://github.com/acme/repo/pull/42"
+    assert result["pr_url"] == "https://gitlab.com/acme/repo/-/merge_requests/42"
 
     # The PR really was requested with this run's branch/base/body.
-    args = fake_github_pr["args"]
+    args = fake_gitlab_mr["args"]
     assert args["owner_repo"] == "acme/repo"
     assert args["title"] == "Add a feature"
     assert args["body"] == "hand-written description"
@@ -342,7 +318,7 @@ def test_git_publish_tool_end_to_end(tmp_path_factory, fake_github_pr):
     assert f"refs/heads/{result['branch']}" in refs
 
 
-def test_git_publish_refuses_to_push_the_default_branch(tmp_path_factory, fake_github_pr):
+def test_git_publish_refuses_to_push_the_default_branch(tmp_path_factory, fake_gitlab_mr):
     from tools.git_publish import run_git_publish
 
     project, repo_dir, _origin = _make_project(tmp_path_factory)
@@ -353,10 +329,10 @@ def test_git_publish_refuses_to_push_the_default_branch(tmp_path_factory, fake_g
     assert result["ok"] is False
     assert result["code"] == "branch_protection"
     # The PR must never have been attempted once the branch check refused.
-    assert "args" not in fake_github_pr
+    assert "args" not in fake_gitlab_mr
 
 
-def test_git_publish_refuses_when_nothing_changed(tmp_path_factory, fake_github_pr):
+def test_git_publish_refuses_when_nothing_changed(tmp_path_factory, fake_gitlab_mr):
     from tools.git_publish import run_git_publish
 
     project, _repo_dir, _origin = _make_project(tmp_path_factory)
@@ -368,7 +344,7 @@ def test_git_publish_refuses_when_nothing_changed(tmp_path_factory, fake_github_
     assert "nothing to commit" in result["error"]
 
 
-def test_git_publish_builds_the_body_from_the_current_task(tmp_path_factory, fake_github_pr):
+def test_git_publish_builds_the_body_from_the_current_task(tmp_path_factory, fake_gitlab_mr):
     from common.agent_context import current_task_id
     from tasks.service import create_task, set_task_result
     from tools.git_publish import run_git_publish
@@ -389,7 +365,7 @@ def test_git_publish_builds_the_body_from_the_current_task(tmp_path_factory, fak
         current_task_id.reset(token)
 
     assert result["ok"] is True
-    args = fake_github_pr["args"]
+    args = fake_gitlab_mr["args"]
     assert "Ship the feature" in args["body"]
     assert "Wire up the new endpoint." in args["body"]
     assert "Implemented and tested locally." in args["body"]
@@ -397,7 +373,7 @@ def test_git_publish_builds_the_body_from_the_current_task(tmp_path_factory, fak
     assert task.key.lower() in result["branch"]
 
 
-def test_git_publish_route(tmp_path_factory, fake_github_pr):
+def test_git_publish_route(tmp_path_factory, fake_gitlab_mr):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from routes.projects import router as projects_router
@@ -416,7 +392,7 @@ def test_git_publish_route(tmp_path_factory, fake_github_pr):
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["pr_url"] == "https://github.com/acme/repo/pull/42"
+    assert body["pr_url"] == "https://gitlab.com/acme/repo/-/merge_requests/42"
 
     refs = subprocess.run(
         ["git", "ls-remote", "--heads", str(origin)],
@@ -425,7 +401,7 @@ def test_git_publish_route(tmp_path_factory, fake_github_pr):
     assert f"refs/heads/{body['branch']}" in refs
 
 
-def test_git_publish_route_refuses_base_equal_to_head(tmp_path_factory, fake_github_pr):
+def test_git_publish_route_refuses_base_equal_to_head(tmp_path_factory, fake_gitlab_mr):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from routes.projects import router as projects_router
@@ -447,7 +423,7 @@ def test_git_publish_route_refuses_base_equal_to_head(tmp_path_factory, fake_git
 
 # ── the reduced path: a remote with no provider configured ──────────────────
 # A project attached to a plain git remote (or one whose provider is not
-# GitHub/GitLab) still has somewhere to push. It just cannot ask a provider
+# GitLab) still has somewhere to push. It just cannot ask a provider
 # API to open a pull/merge request, so run_git_publish falls back to
 # commit + push and reports {pushed, branch, remote, pull_request: None}
 # instead of refusing outright.

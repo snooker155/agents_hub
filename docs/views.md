@@ -25,8 +25,8 @@ from them. A card shows an owner chip linking to the run's page.
 Studio is the view's own editing surface, opened from the Artifacts page (the
 Studio button for a new view, a card's Studio action for an existing one; it
 has no menu item of its own), bound to the agent that owns the
-view's kind: the **Visualizer** for most kinds, the **3D Modeler** for a
-`scene3d` view, the **Web View Builder** for `html` and `code` views (see
+view's kind: the **Visualizer** for most kinds, the **Web View Builder** for
+`html` and `code` views (see
 [Kind guides and specialists](#kind-guides-and-specialists)). You edit by
 talking: "make the bars horizontal", "colour by region", "add a slider
 for the year". The outliner lists the objects in the view, and selecting one is
@@ -35,11 +35,11 @@ without re-reading the whole document.
 
 ## From chat
 
-Ask any chat agent for something to look at, a 3D object or a chart, and it
+Ask any chat agent for something to look at, a chart or a table, and it
 delegates to the Visualizer. With no view open, the Visualizer creates one with
 `create_view` and builds it: the view it created becomes the default target of
 its view tools for the rest of that run, and the result of `create_view` carries
-the guide for that kind. A 3D object or a web page it passes on to the
+the guide for that kind. A web page it passes on to the
 specialist that owns the kind. It reports the `view_id` back, and the delegating agent either answers or delegates again with
 that id to finish the same view. The reply shows each view the turn made as a
 live preview that opens full size and links to the view's page; build view
@@ -48,16 +48,8 @@ lists them in its panel next to the changed files.
 ## What views can do
 
 - **Charts and graphs** from data the agent computed
-- **3D objects modelled by a real geometry engine** — a headless Blender behind
-  a fixed set of operations (`mesh_new`, `mesh_extrude`, `mesh_inset`,
-  `mesh_bevel`, …). The agent works the way a person models: primitive first,
-  then inset and extrude. Every command is a revision in the object's build log,
-  so the build is repeatable and `mesh_revert` can roll it back. `mesh_validate`
-  checks manifoldness, holes and self-intersections; `mesh_preview` renders the
-  object so the agent can see what it made. Configure it under
-  [settings](settings.md) → Blender.
-- **3D scenes** around that object: cameras, lights, environments, and glTF
-  models bound in from the workspace
+- **3D scenes** that show existing `.glb` or `.gltf` models bound in from the
+  workspace, with cameras, lights and environments
 - **Simulations** — `view_compute` runs a scenario server-side on numpy and
   streams frames in: gravitational N-body, a 2D wave field, the 1D
   time-dependent Schrödinger equation, the per-layer activations of a forward
@@ -75,7 +67,7 @@ The fifteen kinds share one tool surface and have little in common, so what a
 view agent sees and is told depends on the kind of the view it is on.
 
 - **Tools follow the kind.** `views/focus.py` maps each kind to the tools that
-  act on it alone (`graph_*` for graphs, `scene_*` and `mesh_*` for 3D,
+  act on it alone (`graph_*` for graphs, `scene_*` for 3D,
   `slides_*` for decks, `sim_configure`, `view_compute` and `view_set_timeline`
   for simulations, `document_set`, `math_plot`, `view_serve` for html). The
   agent loop shows the model the common view tools plus the active kind's and
@@ -86,16 +78,12 @@ view agent sees and is told depends on the kind of the view it is on.
   in the first `view_get` on an existing view, or in the Studio's active-view
   note. Each guide is read once per run, and the system prompt stays general.
   Editing a guide changes the next call; no restart.
-- **Two specialists.** 3D modelling and web pages are different crafts, so
-  `scene3d` belongs to the `modeler_3d` agent and `html` and `code` to the
-  `web_view_builder` agent. The Studio and a view's own chat open those kinds
-  with the specialist. The `visualizer` stays the single entry point for any
-  other agent: it hands the conversation over when the user talks to it
+- **One specialist.** Web pages are a craft of their own, so `html` and
+  `code` belong to the `web_view_builder` agent. The Studio and a view's own
+  chat open those kinds with it. The `visualizer` stays the single entry point
+  for any other agent: it hands the conversation over when the user talks to it
   directly, and delegates (`run_agent_tool` in a chat, `delegate_task_tool` in
-  a task) when it works for another agent. The three are system agents, so an
-  existing install receives the two new ones and the visualizer's handoff list
-  on its next start; a visualizer the install already had keeps its mesh tools,
-  which view focus hides unless the run is on a 3D view.
+  a task) when it works for another agent.
 
 ## Code
 
@@ -192,9 +180,5 @@ by the server; the slide gets a placeholder, and the export's
   or the file.
 - `view_serve` proxies a running localhost service behind the view's isolated
   proxy. It counts as an outbound channel for capability purposes.
-- 3D modelling needs Blender installed and configured. Each open 3D view holds
-  its own engine process, which costs a few hundred MB; the ceiling and the idle
-  timeout are on the settings page. Stopping an engine loses nothing, since the
-  next command rebuilds the scene from its log.
 
 Related: [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md).

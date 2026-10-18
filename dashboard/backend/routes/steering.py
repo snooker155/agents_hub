@@ -77,23 +77,10 @@ _TURNS: "set" = set()
 
 
 def _require_can_steer(request: Request, run: Dict[str, Any]):
-    """The caller's principal, once they may write to this run.
-
-    Visible like any single-run route (``access.require_visible``), and in
-    ``multi`` mode at least an editor of the run's workspace: steering changes
-    what a run does, which a viewer may not.
-    """
-    from common.auth import MULTI, WS_EDITOR, role_satisfies
-
+    """The caller's principal, once they may write to this run: visible like
+    any single-run route (``access.require_visible``)."""
     principal = identity.request_principal(request)
-    workspace = run.get("workspace")
-    access.require_visible(principal, workspace)
-    if (workspace and identity.current_mode() == MULTI and principal is not None
-            and not principal.is_admin and principal.kind == "user"):
-        role = identity.membership_role(str(workspace), principal.id)
-        if not role_satisfies(role, WS_EDITOR):
-            raise HTTPException(status_code=403,
-                                detail="steering a run needs an editor's role in its workspace")
+    access.require_visible(principal, run.get("workspace"))
     return principal
 
 

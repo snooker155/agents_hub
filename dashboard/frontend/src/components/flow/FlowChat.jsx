@@ -6,9 +6,6 @@ import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
 import { autoGrowTextarea } from '../../lib/autoGrow';
 import { historyWindowStart } from '../chat/send/buildRequest';
-import ExampleRequests from '../chat/ExampleRequests';
-import fillComposer from '../chat/fillComposer';
-import { getFlowExamples } from '../../api/flows';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
@@ -116,7 +113,7 @@ export default function FlowChat({
   // persisted record. Not used for live progress anymore (see onStreamEvent).
   onActivity = null,
 }) {
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   // The flow's own chat, in the editor's right-hand panel: while it is mounted
   // the floating launcher would sit on its composer, so it stands down.
   useInlineChatOpen();
@@ -373,14 +370,6 @@ export default function FlowChat({
             <p className="max-w-sm text-sm leading-relaxed text-slate-500">
               {t('chat.emptyFlow')}
             </p>
-            {/* The flow's own example requests, else its first agent's
-                (GET /api/flows/{id}/examples); a click fills the box. */}
-            <ExampleRequests
-              compact
-              load={() => getFlowExamples(flowId, language)}
-              loadKey={flowId ? `${flowId}:${language}` : null}
-              onPick={(text) => fillComposer(text, setInput, textareaRef)}
-            />
           </div>
         ) : (
           <>

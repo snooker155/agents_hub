@@ -73,16 +73,6 @@ def _not_added(what: str) -> str:
         "another way.", code="model_not_added")
 
 
-def _refused(price: Optional[float]) -> Optional[str]:
-    try:
-        from agents.callbacks.guards import flat_spend_refusal
-        reason = flat_spend_refusal(price)
-    except Exception:  # noqa: BLE001 - no guard module: nothing to enforce
-        log.debug("special models: budget check unavailable", exc_info=True)
-        reason = None
-    return json_err(reason, code="budget") if reason else None
-
-
 def _charge(purpose: str, entry: Dict[str, Any], cost: Optional[float], units: Optional[float] = None) -> None:
     from common.aux_usage import record_flat
     record_flat(f"special:{purpose}", provider=str(entry.get("provider") or entry.get("url") or ""),
@@ -167,9 +157,6 @@ def generate_image(prompt: str, image_file_id: Optional[str] = None, size: Optio
     if err:
         return err
     price = entry.get("price_usd")
-    refused = _refused(price)
-    if refused:
-        return refused
     image = None
     if image_file_id:
         record, err = _input_file(image_file_id, workspace)
@@ -237,9 +224,6 @@ def generate_video(prompt: str = "", seconds: Optional[int] = None, job_id: Opti
             length = int(seconds or options.get("seconds") or 0) or None
             price = entry.get("price_usd")
             cost = None if price is None else float(price) * float(length or 8)
-            refused = _refused(cost)
-            if refused:
-                return refused
             job_id = media.start_video(ep, entry["model"], prompt.strip(), seconds=length, options=options)
             _charge("video", entry, cost, length)
         result = media.poll_video(ep, job_id, timeout=_video_wait())
@@ -279,9 +263,6 @@ def synthesize_speech(text: str, voice: Optional[str] = None, instructions: Opti
         return err
     price = entry.get("price_usd")
     cost = None if price is None else float(price) * len(text) / 1000.0
-    refused = _refused(cost)
-    if refused:
-        return refused
     try:
         from providers import media, special, speech_languages
         # The text's own language picks its voice, when the workspace set one for it.
@@ -324,9 +305,6 @@ def transcribe_audio(file_id: str, language: Optional[str] = None, prompt: Optio
     if not (mime.startswith("audio/") or mime.startswith("video/")):
         return json_err(f"'{record['name']}' is not an audio or video file.", code="bad_request")
     price = entry.get("price_usd")
-    refused = _refused(price)
-    if refused:
-        return refused
     data, err = _file_bytes(record)
     if err:
         return err
@@ -376,9 +354,6 @@ def ask_special_model(model: str, input: str, file_id: Optional[str] = None,
         return _not_added(f"Model '{model}' is not added in workspace '{workspace}' "
                           f"(its own models: {known}).")
     price = entry.get("price_usd")
-    refused = _refused(price)
-    if refused:
-        return refused
     record = None
     if file_id:
         record, err = _input_file(file_id, workspace)

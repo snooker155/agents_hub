@@ -25,7 +25,6 @@ const fmt = (iso) => {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 };
 
-const numOrNull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
 
 // The cron expression an interval amounts to, mirroring
 // proactive/profile.py schedule_cron exactly (same cases, same divisor
@@ -60,9 +59,9 @@ const rowToTrigger = (row) => {
 
 /**
  * The agent's pulse (proactive/, docs/proactive.md): the profile that makes it
- * wake up on its own (schedule, quiet hours, a daily budget and a tick limit,
+ * wake up on its own (schedule, quiet hours and a run limit,
  * the brief, where an acted tick is delivered), the state of the job the
- * profile owns (next tick, paused), today's usage against the budget, and the
+ * profile owns (next tick, paused), today's usage against the run limit, and the
  * tick feed with its outcomes. Quiet ticks fold into one row.
  */
 export default function ProactiveCard({ agentId, onSaved }) {
@@ -96,9 +95,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
       timezone: p.timezone || 'UTC',
       quiet_from: p.quiet_hours?.from || '',
       quiet_to: p.quiet_hours?.to || '',
-      daily_budget_usd: p.daily_budget_usd ?? 0,
       max_runs_per_day: p.max_runs_per_day ?? 0,
-      tick_budget_usd: p.tick_budget_usd ?? '',
       brief: p.brief || '',
       notify: Array.isArray(p.notify) ? [...p.notify] : ['dashboard'],
       triggers: Array.isArray(p.triggers) ? p.triggers.map(triggerToRow) : [],
@@ -154,9 +151,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
         cron: form.mode === 'cron' ? form.cron.trim() : '',
         timezone: form.timezone.trim() || 'UTC',
         quiet_hours: { from: form.quiet_from.trim(), to: form.quiet_to.trim() },
-        daily_budget_usd: Number(form.daily_budget_usd) || 0,
         max_runs_per_day: Number(form.max_runs_per_day) || 0,
-        tick_budget_usd: numOrNull(form.tick_budget_usd),
         brief: form.brief,
         notify: form.notify,
         triggers: form.triggers.map(rowToTrigger),
@@ -237,7 +232,6 @@ export default function ProactiveCard({ agentId, onSaved }) {
                       runs: usage.runs,
                       maxRuns: usage.max_runs_per_day || '∞',
                       spent: Number(usage.spent_usd || 0).toFixed(2),
-                      budget: usage.daily_budget_usd ? Number(usage.daily_budget_usd).toFixed(2) : '∞',
                     })}
                   </span>
                 )}
@@ -325,22 +319,10 @@ export default function ProactiveCard({ agentId, onSaved }) {
               <span className="text-xs text-gray-500">{t('proactive.quietHours.hint')}</span>
             </div>
             <label className="flex flex-col gap-1 text-sm text-gray-700">
-              <span className="font-medium">{t('proactive.dailyBudget')}</span>
-              <input type="number" min="0" step="0.5" value={form.daily_budget_usd}
-                onChange={(e) => set('daily_budget_usd', e.target.value)} aria-label={t('proactive.dailyBudget')} className={inputCls} />
-              <span className="text-xs text-gray-500">{t('proactive.zeroMeansNone')}</span>
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-gray-700">
               <span className="font-medium">{t('proactive.maxRuns')}</span>
               <input type="number" min="0" step="1" value={form.max_runs_per_day}
                 onChange={(e) => set('max_runs_per_day', e.target.value)} aria-label={t('proactive.maxRuns')} className={inputCls} />
               <span className="text-xs text-gray-500">{t('proactive.zeroMeansNone')}</span>
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-gray-700">
-              <span className="font-medium">{t('proactive.tickBudget')}</span>
-              <input type="number" min="0" step="0.1" value={form.tick_budget_usd}
-                onChange={(e) => set('tick_budget_usd', e.target.value)} aria-label={t('proactive.tickBudget')} className={inputCls} />
-              <span className="text-xs text-gray-500">{t('proactive.tickBudgetHint')}</span>
             </label>
           </div>
 
@@ -380,7 +362,7 @@ export default function ProactiveCard({ agentId, onSaved }) {
               </ul>
             )}
             <button type="button" onClick={addTrigger} className={smallBtn}>{t('proactive.triggers.add')}</button>
-            {form.triggers.some((r) => ['webhook', 'telegram', 'file', 'watch', 'slack', 'discord', 'teams', 'mail'].includes(r.kind)) && (
+            {form.triggers.some((r) => ['webhook', 'file', 'watch'].includes(r.kind)) && (
               <p className="text-xs text-amber-700 mt-2">{t('proactive.triggers.untrusted')}</p>
             )}
           </div>

@@ -6,20 +6,15 @@ A migration is a file in this directory named ``NNNN_<name>.sql`` or
 ``schema_migrations`` records which versions a database has, and
 ``apply_pending`` runs every version the ledger does not name, oldest first.
 It is called by ``common.db._ensure_ready`` inside the same transaction as the
-legacy JSON import, so a migration either lands whole or not at all (both
-SQLite and Postgres run DDL transactionally).
+legacy JSON import, so a migration either lands whole or not at all (SQLite
+runs DDL transactionally).
 
 Formats:
 
-- ``.sql``: statements separated by ``;`` with ``--`` line comments, written
-  in SQLite syntax. :func:`sql_for_dialect` rewrites the few type names that
-  differ for Postgres (``INTEGER PRIMARY KEY AUTOINCREMENT`` → ``BIGSERIAL
-  PRIMARY KEY``, ``INTEGER`` → ``BIGINT``, ``REAL`` → ``DOUBLE PRECISION``,
-  ``BLOB`` → ``BYTEA``). A file named ``NNNN_<name>.postgres.sql`` or
-  ``NNNN_<name>.sqlite.sql`` replaces the plain one for that dialect when the
-  rewrite is not enough.
-- ``.py``: a module with ``upgrade(conn, dialect)``. For the odd migration that
-  needs to look at the data, or to branch on the dialect in code.
+- ``.sql``: statements separated by ``;`` with ``--`` line comments.
+- ``.py``: a module with ``upgrade(conn, dialect)``, for the odd migration that
+  needs to look at the data. ``dialect`` is always ``"sqlite"`` now; the
+  parameter stays because every migration file was written against it.
 
 Numbering starts at 5, not 1: versions 1 to 4 were the pre-ledger era, when
 ``common.db`` carried the whole schema as one DDL string plus an
@@ -47,7 +42,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 LEDGER_TABLE = "schema_migrations"
 
-_FILE_RE = re.compile(r"^(\d{4})_([A-Za-z0-9_]+?)(?:\.(sqlite|postgres))?\.(sql|py)$")
+_FILE_RE = re.compile(r"^(\d{4})_([A-Za-z0-9_]+?)(?:\.(sqlite))?\.(sql|py)$")
 
 
 @dataclass(frozen=True)
@@ -60,8 +55,7 @@ class Migration:
 
 
 def discover() -> List[Migration]:
-    """Every migration file, sorted by version; dialect-specific files included
-    (``select_for`` picks between them)."""
+    """Every migration file, sorted by version."""
     found: List[Migration] = []
     for path in sorted(MIGRATIONS_DIR.iterdir()):
         m = _FILE_RE.match(path.name)
@@ -76,8 +70,8 @@ def discover() -> List[Migration]:
 
 
 def select_for(dialect: str, migrations: Optional[Iterable[Migration]] = None) -> List[Migration]:
-    """One migration per version for ``dialect``: the dialect-specific file
-    when there is one, else the shared one."""
+    """One migration per version for ``dialect``: a file suffixed with the
+    dialect wins over the shared one of the same version."""
     by_version: dict[int, Migration] = {}
     for mg in (migrations if migrations is not None else discover()):
         if mg.dialect not in (None, dialect):
@@ -108,22 +102,9 @@ def split_statements(text: str) -> List[str]:
     return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
 
 
-# Case-sensitive on purpose: type names are upper case in our migration files,
-# column names lower case, so a column called ``blob`` or ``real`` is left alone.
-_PG_REWRITES = (
-    (re.compile(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b"), "BIGSERIAL PRIMARY KEY"),
-    (re.compile(r"\bINTEGER\b"), "BIGINT"),
-    (re.compile(r"\bREAL\b"), "DOUBLE PRECISION"),
-    (re.compile(r"\bBLOB\b"), "BYTEA"),
-)
-
-
 def sql_for_dialect(statement: str, dialect: str) -> str:
-    """Rewrite one SQLite-syntax DDL statement for ``dialect``."""
-    if dialect != "postgres":
-        return statement
-    for pattern, replacement in _PG_REWRITES:
-        statement = pattern.sub(replacement, statement)
+    """One DDL statement as SQLite runs it. The dialect no longer changes the
+    text; the function stays because the migrations call it."""
     return statement
 
 
@@ -132,35 +113,23 @@ def execute_sql(conn: Any, dialect: str, text: str) -> None:
         conn.execute(sql_for_dialect(statement, dialect))
 
 
-# ── Introspection (dialect-aware, usable from migrations) ────────────────────
+# ── Introspection (usable from migrations) ───────────────────────────────────
 
 def table_exists(conn: Any, dialect: str, table: str) -> bool:
-    if dialect == "postgres":
-        row = conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = current_schema() AND table_name = ?", (table,)
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
     return row is not None
 
 
 def table_columns(conn: Any, dialect: str, table: str) -> Set[str]:
-    if dialect == "postgres":
-        rows = conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?", (table,)
-        ).fetchall()
-        return {str(r[0]) for r in rows}
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return {str(r["name"]) for r in rows}
 
 
 def add_column_if_missing(conn: Any, dialect: str, table: str, column: str, decl: str) -> bool:
     """``ALTER TABLE ADD COLUMN`` unless the column is already there. Returns
-    True when it was added. Both dialects accept the same statement."""
+    True when it was added."""
     if column in table_columns(conn, dialect, table):
         return False
     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_for_dialect(decl, dialect)}")
@@ -173,9 +142,6 @@ def _ensure_ledger(conn: Any, dialect: str) -> None:
     conn.execute(
         f"CREATE TABLE IF NOT EXISTS {LEDGER_TABLE} ("
         "version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)"
-        if dialect != "postgres" else
-        f"CREATE TABLE IF NOT EXISTS {LEDGER_TABLE} ("
-        "version BIGINT PRIMARY KEY, name TEXT, applied_at TEXT)"
     )
 
 

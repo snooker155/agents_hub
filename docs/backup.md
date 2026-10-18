@@ -2,24 +2,19 @@
 
 One archive, one command in, one command out: `ah db backup` writes it, `ah
 db restore` loads it back, `ah db verify` checks it without touching the live
-database. Whatever backend is configured (SQLite or Postgres,
-[scaling.md](scaling.md#postgres)), the archive is always a plain `.tar.gz`
-with a self-contained SQLite file inside, so restoring needs nothing beyond
-this checkout: no `pg_dump`, no server-specific tool.
+database. The archive is a plain `.tar.gz` with a self-contained SQLite file
+inside, so restoring needs nothing beyond this checkout.
 
 ## What the archive holds
 
-- **`database.sqlite`** — every table `ah db migrate` would copy: runs,
-  tasks, sessions, nodes, flows, identity, and the rest. When the live
-  database is already SQLite this is a `VACUUM INTO` copy (fast, no row-by-row
-  Python); when it is Postgres, it is copied across with the same
-  `common/db_transfer.py` machinery `ah db migrate` uses.
-- **`manifest.json`** — when the backup was made, the app version, the
-  source's dialect and location, its schema version, and a row count per
+- **`database.sqlite`**: every table: runs, tasks, sessions, flows, and the
+  rest. It is a `VACUUM INTO` copy of the live database (fast, consistent).
+- **`manifest.json`**: when the backup was made, the app version, the
+  source's location, its schema version, and a row count per
   table. `ah db verify` and `ah db restore` compare against it; a hand-edited
   manifest is exactly what "tampered" means to `verify`.
-- **The state directories beside the database**, unless `--no-files`: run,
-  node and flow logs, `workspaces/` (including each workspace's own `.git`,
+- **The state directories beside the database**, unless `--no-files`: run
+  and flow logs, `workspaces/` (including each workspace's own `.git`,
   since a checkout's history is part of the workspace), view assets,
   generated Dockerfiles, imported-agent checkouts, and the shared-memory
   pools (episodes, graphs, extractions). `__pycache__/`, `node_modules/` and
@@ -32,14 +27,9 @@ What is **not** in the archive:
   `running` at backup time comes back in the database as a `running` row
   with nobody actually running it. Stop or let long-running work finish
   first where you can, or reconcile it after restoring.
-- Redis (`AGENTS_HUB_BROKER_URL`, [scaling.md](scaling.md#the-broker-bridge)).
-  It holds in-flight cross-replica pub/sub only, nothing durable.
 - The `.env` file and any other secrets. The archive is state, not
   configuration, and something you may want to hand to someone else or store
   less carefully than your API keys.
-- A configured object store's own copies, if one is in front of workspace or
-  attachment files instead of the local disk. Back that up with its own
-  tooling.
 
 ## The three commands
 
@@ -58,32 +48,28 @@ ah db verify /backups/agents_hub_backup_20260101T030000Z.tar.gz
 ah db restore /backups/agents_hub_backup_20260101T030000Z.tar.gz --force
 ```
 
-All three are direct-mode only ([cli.md](cli.md)): they open the database
-this process is configured with, so run them where the state lives, not
-against a backend over `AGENTS_HUB_URL`.
+All three open the database this process is configured with ([cli.md](cli.md)),
+so run them where the state lives.
 
-## Losing the host
+## Losing the machine
 
-1. Provision the new host and install the same way as before
-   ([installation.md](installation.md)): the checkout, `./install.sh` or
-   `pip install -e ".[backend,agents]"`, and the Postgres driver too if
-   `AGENTS_HUB_DATABASE_URL` will point at Postgres.
-2. Copy the archive over (it is a plain file — scp, an object store, whatever
-   moved it off the old host in the first place).
-3. Set `AGENTS_HUB_DATABASE_URL` and `AGENTS_HUB_ROOT` in `.env` to where this
-   host's state should live, the same as the old host unless you are moving
-   backends too.
+1. Provision the new machine and install the same way as before
+   ([installation.md](installation.md)): the checkout and `./install.sh` or
+   `pip install -e ".[backend,agents]"`.
+2. Copy the archive over (it is a plain file: scp, a USB stick, whatever
+   moved it off the old machine in the first place).
+3. Set `AGENTS_HUB_ROOT` in `.env` to where this machine's state should
+   live, the same as before unless you are moving it.
 4. `ah db restore /path/to/the.tar.gz --force` if `AGENTS_HUB_ROOT` is not
-   empty (a fresh host usually is, so `--force` is not needed).
-5. Start the backend (and any workers, [scaling.md](scaling.md#workers-on-other-hosts)).
-   `ah db status` first is a quick sanity check: dialect, schema version and
-   row counts should match what `ah db verify` reported for the archive.
+   empty (a fresh machine usually is, so `--force` is not needed).
+5. Start the backend. `ah db status` first is a quick sanity check: schema
+   version and row counts should match what `ah db verify` reported for the archive.
 
 ## How often
 
-Daily, off-peak, is enough for most deployments; hourly if a day of lost task
+Daily, off-peak, is enough for most people; hourly if a day of lost task
 history would actually hurt. Keep a handful of rotations and copy at least
-one off the host it was taken on — a backup that lives next to the data it
+one off the machine it was taken on: a backup that lives next to the data it
 protects survives everything except the one failure it exists for. A plain
 cron entry does it:
 
@@ -97,4 +83,4 @@ Verify a backup occasionally, not just take it: `ah db verify` is cheap
 (it never touches the live database) and catches a corrupted archive long
 before the day you need it.
 
-Related: [scaling.md](scaling.md), [workers.md](workers.md)
+Related: [deployment.md](deployment.md), [installation.md](installation.md)

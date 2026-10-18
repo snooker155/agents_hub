@@ -98,29 +98,6 @@ def _validate_agent_version(agent_version: Optional[int], agent_id: Optional[str
     validate_agent_version(agent_id, agent_version)
 
 
-def _validate_environment_id(environment_id: Optional[str], workspace: Optional[str]) -> None:
-    """When set, the environment must exist, be usable from ``workspace`` (its
-    own or global) and not be archived — the same check
-    ``environments.launch.launch_fields`` applies at fire time. Raises
-    ``ValueError`` (a 400 at the route) rather than silently accepting an id
-    that would resolve to nothing once the job actually fires.
-
-    Guarded by ``ImportError`` so a checkout without the ``environments``
-    package (part C) still runs plans unchanged; an id set in that case is
-    simply not checked, same as before this validation existed.
-    """
-    if not environment_id:
-        return
-    try:
-        from environments.service import EnvironmentServiceError, resolve_for
-    except ImportError:
-        return
-    try:
-        resolve_for(workspace, environment_id)
-    except EnvironmentServiceError as e:
-        raise ValueError(str(e)) from e
-
-
 # -------------------- Job CRUD --------------------
 
 _RESOURCE_FIELDS = ("project_id", "file_ids", "secrets", "memory_pool_ids", "memory_access")
@@ -249,8 +226,6 @@ def create_job(
     seed: Optional[Dict[str, Any]] = None,
     max_concurrent: int = 1,
     channels: Optional[List[str]] = None,
-    environment_id: Optional[str] = None,
-    budget_usd: Optional[float] = None,
     agent_version: Optional[int] = None,
     auto_pause_after: int = 3,
     project_id: Optional[str] = None,
@@ -263,7 +238,6 @@ def create_job(
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
-    _validate_environment_id(environment_id, workspace)
     _validate_agent_version(agent_version, agent_id)
     resources = _validate_resources(kind, workspace, agent_id, project_id=project_id, file_ids=file_ids,
                                     secrets=secrets, memory_pool_ids=memory_pool_ids,
@@ -285,8 +259,6 @@ def create_job(
         seed=seed,
         max_concurrent=max_concurrent,
         channels=channels or ["dashboard"],
-        environment_id=environment_id,
-        budget_usd=budget_usd,
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
         **resources,
@@ -327,10 +299,6 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
         existing = plan_store.get(job_id)
         cron_val = fields.get("cron") or (existing.cron if existing else None)
         fields["cron"] = _validate_cron(cron_val)
-    if "environment_id" in fields:
-        existing = plan_store.get(job_id)
-        ws = existing.workspace if existing else None
-        _validate_environment_id(fields["environment_id"], ws)
     if "agent_version" in fields or "agent_id" in fields:
         existing = plan_store.get(job_id)
         agent_id = fields.get("agent_id", existing.agent_id if existing else None)
@@ -406,11 +374,9 @@ def create_notification(
     """Persist an inbox entry and push it to live SSE subscribers.
 
     The inbox (dashboard bell) is always the source of truth. ``channels``
-    picks which best-effort side channels also get it: ``"telegram"`` reaches
-    the Telegram chats bound in this workspace; ``"slack"`` and ``"webhook"``
-    reach every enabled endpoint of that kind (see ``notify.store``) whose
-    events include ``"notification"``. Omit all three and the notification
-    stays inbox-only.
+    picks which best-effort side channels also get it: ``"webhook"`` reaches
+    every enabled webhook endpoint (see ``notify.store``) whose events include
+    ``"notification"``. Omit it and the notification stays inbox-only.
     """
     n = Notification(
         title=title,
@@ -421,42 +387,15 @@ def create_notification(
     )
     notification_store.add(n)
     _publish_notification(n)
-    if channels and "telegram" in channels:
-        _push_telegram(workspace, title, body)
-    if channels and "slack" in channels:
-        _push_endpoints(workspace, "slack", n)
     if channels and "webhook" in channels:
         _push_endpoints(workspace, "webhook", n)
-    # The chat channels of connectors/channels: "slack" reaches both the
-    # incoming-webhook endpoints above and the chats bound to the Slack bot.
-    for channel in ("slack", "discord", "teams", "mail"):
-        if channels and channel in channels:
-            _push_channel(channel, workspace, title, body)
     return n
-
-
-def _push_channel(channel: str, workspace: Optional[str], title: str, body: str) -> None:
-    """Best-effort delivery to the chats bound on a registered channel; never raises."""
-    try:
-        from connectors.channels.notify import notify_workspace
-        notify_workspace(channel, workspace, title, body)
-    except Exception:  # noqa: BLE001 - delivery is best effort, the tick goes on
-        log.debug("%s notification delivery failed", channel, exc_info=True)
-
-
-def _push_telegram(workspace: Optional[str], title: str, body: str) -> None:
-    """Best-effort proactive Telegram delivery; never raises."""
-    try:
-        from connectors.telegram.notify import notify_workspace
-        notify_workspace(workspace, title, body)
-    except Exception:  # noqa: BLE001 - best effort delivery that never raises
-        log.debug("telegram notification delivery failed", exc_info=True)
 
 
 def _push_endpoints(workspace: Optional[str], kind: str, n: Notification) -> None:
     """Best-effort delivery to every enabled ``kind`` endpoint subscribed to
-    the ``"notification"`` event; never raises. Sibling of :func:`_push_telegram`
-    for the endpoints configured on the Connectors page's Webhooks tab."""
+    the ``"notification"`` event; never raises. The endpoints are the ones
+    configured on the Connectors page's Webhooks tab."""
     try:
         from notify import outbound as notify_outbound
         from notify import store as notify_store
@@ -791,18 +730,10 @@ def classify_fire_error(exc_or_message: Any) -> str:
     String based and deliberately conservative: an error that does not match
     a known pattern lands in ``"other"`` rather than a guess, since a wrong
     bucket could pause a job that would have recovered on its own (or fail to
-    pause one that never will). Accepts either the exception itself (checked
-    by type first, for ``BudgetExceededError``) or a plain message string, so
-    a caller that only has ``last_error`` text (e.g. re-classifying an old
-    journal row) can use it too.
+    pause one that never will). Accepts either the exception itself or a
+    plain message string, so a caller that only has ``last_error`` text (e.g.
+    re-classifying an old journal row) can use it too.
     """
-    try:
-        from common.budget import BudgetExceededError
-        if isinstance(exc_or_message, BudgetExceededError):
-            return "budget_exceeded"
-    except ImportError:
-        log.debug("budget module unavailable", exc_info=True)
-
     text = str(exc_or_message) if exc_or_message is not None else ""
     low = text.lower()
     if not low:
@@ -815,8 +746,6 @@ def classify_fire_error(exc_or_message: Any) -> str:
         return "loop_missing"
     if "loop" in low and "is still" in low:
         return "loop_busy"
-    if "budget" in low and ("cap" in low or "exceeded" in low):
-        return "budget_exceeded"
     if "locked by another firing" in low or "capacity" in low:
         return "capacity"
     if "workspace" in low and ("does not exist" in low or "invalid workspace name" in low):
@@ -1075,8 +1004,6 @@ def _fire_agent_task(
         created_by=CreatedBy.user,
         status=TaskStatus.todo,
         workspace=ws_name,
-        budget_usd=job.budget_usd,
-        environment_id=job.environment_id,
         # The deployment's resources (docs/deployments.md, "Resources"): the
         # project and files become the task's, the extra secrets and the
         # pools reach only this task's runs.
@@ -1159,33 +1086,6 @@ def _fire_agent_task(
     return str(task.id)
 
 
-def _apply_job_fields_to_task(task_id: str, job: ScheduledJob) -> None:
-    """Copy the job's ``budget_usd``/``environment_id`` onto a task a flow or
-    loop launcher created, after the fact.
-
-    ``_fire_agent_task`` passes both straight into ``tasks_service.create_task``
-    because it creates the task itself; a flow or loop firing does not — the
-    task is created inside ``flow.launcher.trigger_flow`` / ``loops.launcher.
-    start_loop_run``, outside this module's files, so this function is the
-    equivalent for those two paths, applied to the task id they hand back.
-    A no-op when the job sets neither (the common case), and best-effort
-    otherwise: a task already exists and is running by the time this runs, so
-    a failure here must not turn a successful firing into a failed one.
-    """
-    if job.budget_usd is None and job.environment_id is None:
-        return
-    try:
-        from tasks import service as tasks_service
-        tasks_service.update_task(
-            UUID(str(task_id)), budget_usd=job.budget_usd, environment_id=job.environment_id,
-        )
-    except Exception:  # noqa: BLE001 - the budget and environment copy is best effort
-        log.debug(
-            "failed applying budget/environment to task %s for job %s", task_id, job.id,
-            exc_info=True,
-        )
-
-
 def _fire_flow(job: ScheduledJob) -> str:
     """Trigger a flow run for a scheduled ``flow`` job. Returns the task id.
 
@@ -1207,7 +1107,6 @@ def _fire_flow(job: ScheduledJob) -> str:
         max_concurrent=job.max_concurrent,
         created_by="schedule",
     )
-    _apply_job_fields_to_task(result["task_id"], job)
     create_notification(
         title=f"Scheduled flow started: {job.title}",
         body=f"Flow '{job.flow_id}' was triggered by scheduled job {job.id}.",
@@ -1249,7 +1148,6 @@ def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
         job.loop_id, job.message or "", workspace=job.workspace or loop.workspace,
         seed=dict(job.seed or {}),
     )
-    _apply_job_fields_to_task(run.task_id, job)
     create_notification(
         title=f"Scheduled loop started: {job.title}",
         body=f"Loop '{job.loop_id}' was started by scheduled job {job.id}.",

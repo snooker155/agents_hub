@@ -2,10 +2,10 @@
  * What every page shows about the selected workspace, in one request
  * (GET /api/workspaces/{name}/summary, dashboard/backend/routes/workspaces.py):
  *
- *   { name, allowed_agents, personal_memory_enabled, isolated, palette,
+ *   { name, allowed_agents, personal_memory_enabled, palette,
  *     model: { global_default, workspace_default, override } }
  *
- * The header (model picker, "Isolated" badge), the palette resolution in
+ * The header (model picker), the palette resolution in
  * theme.js and the chat page all read it, often in the same tick on page
  * load. `loadWorkspaceSummary` hands every caller the one request already in
  * flight, and an answer younger than FRESH_MS without asking again, so a page

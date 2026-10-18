@@ -2,17 +2,14 @@
 Credential connectors: a service the hub reaches out to with a token, with
 no inbound loop of its own.
 
-The chat channels (``connectors/channels``) have a background loop, chat
-bindings and an allowlist. Jira, Linear, Google Workspace, Microsoft Graph,
-Notion, Confluence and the read-only databases have none of that: they are a
-set of fields (a base URL, a token, an email) and a "test" call, plus the
-tools that use them. This registry gives them one shape, so one set of
-routes (``dashboard/backend/routes/connectors.py``) and one form on the
-Connectors page serve all of them.
+Jira is a set of fields (a base URL, a token, an email) and a "test" call,
+plus the tools that use it. This registry gives such connectors one shape,
+so one set of routes (``dashboard/backend/routes/connectors.py``) and one
+form on the Connectors page serve all of them.
 
-A connector package exports ``CREDENTIALS`` (a :class:`CredentialSpec`); the
-store is a :class:`connectors.channels.store.ChannelStore`, used only for its
-config half (secrets write-only, ``public_config`` masks them).
+A connector package exports ``CREDENTIALS`` (a :class:`CredentialSpec`) or
+``CREDENTIALS_LIST``; the store is a :class:`connectors.store.ConnectorStore`
+(secrets write-only, ``public_config`` masks them).
 """
 from __future__ import annotations
 
@@ -21,8 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from connectors.channels.registry import ConfigField
-from connectors.channels.store import ChannelStore
+from connectors.store import ConfigField, ConnectorStore
 
 log = logging.getLogger("connectors.credentials")
 
@@ -30,7 +26,7 @@ log = logging.getLogger("connectors.credentials")
 @dataclass
 class CredentialSpec:
     name: str
-    store: ChannelStore
+    store: ConnectorStore
     fields: list[ConfigField] = field(default_factory=list)
     #: Verifies the saved credentials; returns {"ok", "identity"?, "error"?}.
     #: Sync, run on a thread by the route.
@@ -56,14 +52,9 @@ _SPECS: dict[str, CredentialSpec] = {}
 _LOADED = False
 
 #: Modules that export ``CREDENTIALS`` (one spec) or ``CREDENTIALS_LIST``
-#: (several, e.g. jira and linear from one package). Order is display order.
+#: (several). Order is display order.
 BUILTIN_MODULES = (
     "connectors.trackers",
-    "connectors.google",
-    "connectors.microsoft",
-    "connectors.knowledge",
-    "connectors.databases",
-    "connectors.n8n",
 )
 
 

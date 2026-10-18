@@ -43,8 +43,6 @@ A call the operator already approved runs without being classified again. Identi
 
 `GET /api/tool-policy/decisions?run_id=&agent_id=&workspace=&limit=` lists decisions across runs. Rows are kept `AGENTS_HUB_TOOL_POLICY_RETENTION_DAYS` days (default 30) and at most 1000 per workspace.
 
-Decisions are audited as `tool.policy` (see the trail below); agent policy edits as `agent.tool_policy`.
-
 ## The per-call trail
 
 Every tool call of a run carries two fields, whether or not a policy is set: `evaluated_permission` (`allow`, `deny` or `ask`) and `reason_code`, a short stable code for why. They are on each entry of the run payload's `tool_calls`, on the live `tool_end` and `tool_error` events, and at the end of the run log's `[tool_call]` line, which is how the run page reads them back for older log formats too. The process graph shows the permission as a badge on the tool node; the call's detail names the reason. Flow and team runs carry them the same way, since they run their agents through the same loop.
@@ -66,18 +64,16 @@ Every tool call of a run carries two fields, whether or not a policy is set: `ev
 
 In a task an `ask` parks the call; in the dashboard chat it waits in the turn for a person ([hooks](hooks.md), "In chat"); elsewhere in chat it is the advisory refusal. The capability guard works when an agent is built, not per call, so it never appears here: a tool it removed is not in the run at all.
 
-Every deny, every ask, every `auto` decision and every spent approval writes a `tool.policy` audit row with `reason_code` and `evaluated_permission` in its details. A plain allow writes none, and a cached repeat of an `auto` call is on the trail but not in the audit log.
-
 ## Never gated
 
 Reasoning tools (`think`, `plan` and the other plan tools) and `ask_user` are never gated and are not wrapped at all, so neither the policy nor hooks run on them. Gating the question tool would mean needing approval to ask for approval.
 
 ## Cost
 
-Every classifier call is a model call made for the run: it is listed on the run's `loop.aux_calls` with its tokens, priced at the classifier's model on the [Costs](costs.md) page, and counted against the run's money cap, so a policy that asks on every call stops at the same cap as the agent.
+Every classifier call is a model call made for the run: it is listed on the run's `loop.aux_calls` with its tokens, priced at the classifier's model on the [Costs](costs.md) page.
 
 A [proactive agent](proactive.md) whose profile has an untrusted trigger
-(webhook, Telegram, file) runs every tick with its outbound tools on
+(webhook, file) runs every tick with its outbound tools on
 `always_ask`, for that run alone; the record's own policy is untouched.
 
 Related: [hooks](hooks.md), [tasks](tasks.md), [workspaces](workspaces.md), [proactive](proactive.md).

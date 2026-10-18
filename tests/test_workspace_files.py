@@ -280,48 +280,6 @@ def test_an_upload_past_the_limit_is_refused(monkeypatch):
     assert resp.status_code == 413
 
 
-def test_another_workspace_is_refused_everywhere(monkeypatch):
-    from common import identity
-    from common.auth import Principal, ROLE_MEMBER
-    from common.config import settings
-
-    mine = service.create_file("w1", "mine.txt", b"mine")
-    theirs = service.create_file("w2", "theirs.txt", b"theirs")
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-    monkeypatch.setattr(identity, "workspaces_for_user", lambda uid: ["w1"])
-    monkeypatch.setattr(identity, "membership_role",
-                        lambda ws, uid: "editor" if ws == "w1" else None)
-    api = _client(Principal(id="u1", username="bob", role=ROLE_MEMBER, kind="user"))
-
-    assert api.get(f"/api/files/{mine['file_id']}").status_code == 200
-    for path in (f"/api/files/{theirs['file_id']}", f"/api/files/{theirs['file_id']}/content",
-                 f"/api/files/{theirs['file_id']}/text", f"/api/files/{theirs['file_id']}/usage"):
-        assert api.get(path).status_code == 403, path
-    assert api.delete(f"/api/files/{theirs['file_id']}").status_code == 403
-    assert api.get("/api/files", params={"workspace": "w2"}).status_code == 403
-    up = api.post("/api/files", params={"workspace": "w2"}, files={"file": ("x.txt", b"x", "text/plain")})
-    assert up.status_code == 403
-    assert service.get_file(theirs["file_id"]) is not None
-
-
-def test_a_viewer_can_read_but_not_upload_or_delete(monkeypatch):
-    from common import identity
-    from common.auth import Principal, ROLE_MEMBER
-    from common.config import settings
-
-    rec = service.create_file("w1", "doc.txt", b"doc")
-    monkeypatch.setattr(settings, "auth_mode", "multi", raising=False)
-    monkeypatch.setattr(settings, "api_token", "", raising=False)
-    monkeypatch.setattr(identity, "workspaces_for_user", lambda uid: ["w1"])
-    monkeypatch.setattr(identity, "membership_role", lambda ws, uid: "viewer")
-    api = _client(Principal(id="u2", username="ann", role=ROLE_MEMBER, kind="user"))
-    assert api.get(f"/api/files/{rec['file_id']}/content").status_code == 200
-    assert api.delete(f"/api/files/{rec['file_id']}").status_code == 403
-    up = api.post("/api/files", params={"workspace": "w1"}, files={"file": ("y.txt", b"y", "text/plain")})
-    assert up.status_code == 403
-
-
 # ── chat attachments by id ───────────────────────────────────────────────────
 
 def _chat_request(**kw):

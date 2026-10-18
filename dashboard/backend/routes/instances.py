@@ -3,8 +3,8 @@
 
 A run is what an agent *did*; an instance is the copy that did it. This is the
 route the Instances page and the per-agent Instances tab read, the one that
-delivers a message to a copy, and the one that starts, stops, restarts and
-publishes a resident copy (the agent page's Run, instances/carrier.py): a
+delivers a message to a copy, and the one that starts, stops and restarts
+a resident copy (the agent page's Run, instances/carrier.py): a
 process or container of its own that answers its mailbox until stopped.
 A resident copy talks through its mailbox only, so the backend never runs its
 agent; any other copy that has finished comes back with its history rebuilt
@@ -112,26 +112,15 @@ class InstanceStart(BaseModel):
     agent_id: str
     workspace: Optional[str] = None
     label: Optional[str] = None
-    # The environment the process runs in (docs/environments.md); None = the
-    # workspace's default environment, if it has one.
-    environment_id: Optional[str] = None
-    # Inputs: also take the agent's tasks in the workspace; publish a public
-    # address through the hub; how many runs at once (one per conversation).
+    # Inputs: also take the agent's tasks in the workspace; how many runs at
+    # once (one per conversation).
     take_tasks: bool = False
-    publish: bool = False
     concurrency: Optional[int] = None
-    # Open the agent's own HTTP port next to the hub's address; None = the
-    # agent's own setting.
-    direct_port: Optional[bool] = None
 
 
 class InstanceInputs(BaseModel):
     take_tasks: Optional[bool] = None
     concurrency: Optional[int] = None
-
-
-class InboundSecret(BaseModel):
-    secret: str
 
 
 class CarrierEvents(BaseModel):
@@ -140,45 +129,18 @@ class CarrierEvents(BaseModel):
     event: Dict[str, Any]
 
 
-def _external_url(request: Optional[Request], instance: dict) -> Optional[str]:
-    token = instance.get("expose_token")
-    if not token or not instance.get("is_exposed") or request is None:
-        return None
-    return f"{str(request.base_url).rstrip('/')}/api/external/{token}/messages"
-
-
-def _service_names(instances: list) -> Dict[str, str]:
-    """``{service_id: name}`` for the replicas in a page, one lookup each."""
-    from services import store as service_store
-    out: Dict[str, str] = {}
-    for inst in instances:
-        sid = inst.get("service_id")
-        if sid and sid not in out:
-            svc = service_store.get(str(sid))
-            out[str(sid)] = str(svc.get("name") or sid) if svc else str(sid)
-    return out
-
-
 def _enrich(instance: dict, tasks_by_id: dict | None = None,
-            request: Optional[Request] = None,
-            service_names: Optional[Dict[str, str]] = None) -> dict:
+            request: Optional[Request] = None) -> dict:
     task_id = instance.get("task_id")
     task = (tasks_by_id or {}).get(str(task_id)) if task_id else None
     resident = carrier.is_resident(instance)
-    service_id = instance.get("service_id")
-    if service_id and service_names is None:
-        service_names = _service_names([instance])
     return {
         **carrier.public_view(instance),
         "resident": resident,
-        "runner": instance.get("kind") == store.RUNNER_KIND,
-        "service_name": (service_names or {}).get(str(service_id)) if service_id else None,
         "task_title": task.title if task else None,
         "channel": delivery.channel_for(str(instance.get("instance_id"))),
-        # A runner accepts a message too, for the agent the message names.
-        "accepts_message": True,
+        "accepts_message": bool(instance.get("agent_id")),
         "delivery": "direct" if delivery.can_deliver_directly(instance) else "queued",
-        "external_url": _external_url(request, instance) if resident else None,
     }
 
 
@@ -208,7 +170,6 @@ async def list_instances(
     node_id: Optional[str] = None,
     q: Optional[str] = None,
     include_archived: bool = False,
-    service_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     sort: Optional[str] = None,
@@ -247,7 +208,6 @@ async def list_instances(
             node_id=node_id,
             q=q,
             include_archived=include_archived,
-            service_id=service_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -256,81 +216,43 @@ async def list_instances(
     items = [carrier.sync(i) or i for i in items]
     task_ids = {str(i.get("task_id")) for i in items if i.get("task_id")}
     tasks_by_id = tasks_service.get_tasks(task_ids) if task_ids else {}
-    names = _service_names(items)
     return {
         **page,
-        "items": [_enrich(i, tasks_by_id, request, names) for i in items],
-        "counts": store.counts_by_state(workspace=workspace, agent_id=agent_id, service_id=service_id),
+        "items": [_enrich(i, tasks_by_id, request) for i in items],
+        "counts": store.counts_by_state(workspace=workspace, agent_id=agent_id),
     }
 
 
 @router.post("", status_code=201)
 async def start_instance(body: InstanceStart, request: Request):
-    """Start the agent in a service: the agent page's and the agent card's Run.
-
-    Every copy lives in a service (docs/services.md). The agent's own service
-    is used when it has one, else the workspace's runner, created on first
-    use; the copy returned is a free replica of that service, or a new one
-    when the service may still grow. The service's own limits apply, and
-    nothing else: a paused service or one at its maximum is a 409.
-
-    A start that asks for more than a place to talk to — taking the agent's
-    tasks, a public address, a port of its own — needs a copy bound to the
-    agent, which a runner replica is not. An agent without a service of its
-    own gets one created here with those settings (what Deploy does), and
-    its first replica is the copy returned.
-
-    Returns the replica while it boots (``starting``); the page opens it right
-    away. A runner replica carries ``for_agent`` so the page knows whom the
-    messages typed there are for.
+    """Start a resident copy of the agent: the agent page's and the agent
+    card's Run. The copy is returned while it boots (``starting``), so the
+    page can open it right away. The workspace's per-agent capacity applies:
+    one copy too many is a 409.
     """
-    import asyncio
-
     from agents import registry as agent_registry
-    from routes.services import _environment
-    from services import replicas as service_replicas
-    from services import routing as service_routing
-    from services import store as service_store
-    from services.replicas import ServiceUnavailable
 
     agent_id = (body.agent_id or "").strip()
-    spec = agent_registry.get_agent(agent_id)
-    if not spec:
+    if not agent_registry.get_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
     workspace = (body.workspace or "").strip() or None
-    env_id, env_name = _environment(workspace, (body.environment_id or "").strip() or None)
-    if not env_id:
-        env_id, env_name = service_routing.default_environment(workspace)
-
-    needs_own = bool(body.take_tasks or body.publish or body.direct_port)
-    service = service_store.find_agent_service(workspace, agent_id, env_id)
-    if service is None and needs_own:
-        service = service_store.create(
-            name=(body.label or "").strip() or getattr(spec, "name", None) or agent_id,
-            agent_id=agent_id, workspace=workspace,
-            environment_id=env_id, environment_name=env_name,
-            replicas_min=1, replicas_max=1,
-            concurrency=int(body.concurrency) if body.concurrency else 4,
-            take_tasks=bool(body.take_tasks),
-            created_by=identity.current_user_id(),
-        )
-        if body.publish:
-            service = service_store.publish(service["service_id"]) or service
-    if service is None:
-        service = service_store.ensure_runner(workspace, env_id, env_name)
-
     try:
-        replica = await asyncio.to_thread(service_replicas.pick, service, allow_start=True)
-    except ServiceUnavailable as e:
+        instance = await asyncio.to_thread(
+            carrier.start, agent_id,
+            workspace=workspace,
+            label=(body.label or "").strip() or None,
+            take_tasks=bool(body.take_tasks),
+            concurrency=int(body.concurrency) if body.concurrency else None,
+            started_by=identity.current_user_id(),
+        )
+    except carrier.CapacityReached as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    out = _enrich(replica, request=request)
+    out = _enrich(instance, request=request)
     out["for_agent"] = agent_id
-    out["service"] = {"service_id": service.get("service_id"), "name": service.get("name"),
-                      "kind": service.get("kind")}
     return out
 
 
@@ -448,13 +370,12 @@ async def get_instance_logs(instance_id: str):
 async def carrier_events(instance_id: str, body: CarrierEvents):
     """Fan one event a carrier posts out on the channels it names.
 
-    A service replica executing a chat turn (chat/turns.py) has no broker of
-    its own: it posts every event here, and this replica of the backend
-    publishes it to the conversation's channel (what the Chat page, a mirror
-    tab and the routing relay read) and to the instance's. A chat turn's
-    events are also kept as the conversation's live turn, and any other
-    carrier run's as the run's live tail (common/live_runs), so this backend
-    can say what a conversation or a run is in the middle of.
+    A carrier process has no broker of its own: it posts every event here,
+    and the backend publishes it to the conversation's channel (what the Chat
+    page and a mirror tab read) and to the instance's. A chat turn's events
+    are also kept as the conversation's live turn, and any other carrier
+    run's as the run's live tail (common/live_runs), so the backend can say
+    what a conversation or a run is in the middle of.
     """
     from common import live_runs
     from common.session_broker import broker
@@ -496,25 +417,7 @@ async def message_instance(instance_id: str, body: InstanceMessage, request: Req
         raise HTTPException(status_code=400, detail="Message is empty")
     text = _compose_message(instance, body, text)
     if not instance.get("agent_id"):
-        # A runner: the message becomes a chat turn of the agent it names,
-        # with the conversation's earlier turns (services/routing.py).
-        from services import routing as service_routing
-        from services import store as service_store
-        try:
-            service_routing.agent_for_runner(body.agent_id, instance.get("workspace"))
-        except ValueError as exc:
-            raise HTTPException(status_code=400 if "name the agent" in str(exc) else 404,
-                                detail=str(exc))
-        service = service_store.get(instance.get("service_id")) if instance.get("service_id") else None
-        _replica, msg_id = await asyncio.to_thread(
-            service_routing.dispatch_message, service, text, conversation_id=body.conversation_id,
-            origin="web", replica=instance, agent_id=body.agent_id)
-        started = await asyncio.to_thread(delivery.wake_resident, instance)
-        return {"mode": "queued", "instance_id": instance_id, "msg_id": msg_id,
-                "channel": delivery.channel_for(instance_id), "started": started,
-                "agent_id": (body.agent_id or "").strip(),
-                "conversation_id": inbox.public_conversation(
-                    inbox.normalize_conversation(body.conversation_id))}
+        raise HTTPException(status_code=400, detail="This instance runs no agent of its own")
 
     if carrier.is_resident(instance):
         return await delivery.deliver(instance, text, client_id=body.client_id,
@@ -614,58 +517,6 @@ async def get_instance_carriers(instance_id: str, limit: int = 50):
     """Every process the instance has had, newest first."""
     _get_or_404(instance_id)
     return {"items": carrier.carriers(instance_id, limit=max(1, min(int(limit), 500)))}
-
-
-@router.post("/{instance_id}/publish")
-async def publish_instance(instance_id: str, request: Request):
-    """Give the instance a public address through the hub (a fresh token;
-    publishing again rotates it)."""
-    _resident_or_400(instance_id)
-    updated = carrier.publish_instance(instance_id)
-    if not updated:
-        raise HTTPException(status_code=500, detail="Failed to publish the instance")
-    return _enrich(updated, request=request)
-
-
-@router.delete("/{instance_id}/publish")
-async def unpublish_instance(instance_id: str, request: Request):
-    """Withdraw the public address; the token stops working at once."""
-    _resident_or_400(instance_id)
-    carrier.unpublish_instance(instance_id)
-    return _enrich(store.get(instance_id) or {}, request=request)
-
-
-@router.put("/{instance_id}/inbound-secret")
-async def set_instance_inbound_secret(instance_id: str, data: InboundSecret, request: Request):
-    """Require a signature on the instance's public calls.
-
-    Once set, the public address refuses any request not signed with it (see
-    routes/external.py and docs/notifications.md). Write-only: it is never
-    returned, the record only says whether one is set.
-    """
-    _resident_or_400(instance_id)
-    secret = (data.secret or "").strip()
-    if not secret:
-        raise HTTPException(status_code=400, detail="secret must not be empty")
-    updated = carrier.set_inbound_secret(instance_id, secret)
-    if not updated:
-        raise HTTPException(status_code=500, detail="Failed to store the inbound secret")
-    return _enrich(updated, request=request)
-
-
-@router.delete("/{instance_id}/inbound-secret")
-async def clear_instance_inbound_secret(instance_id: str, request: Request):
-    """Drop the inbound secret: public calls go back to token only."""
-    _resident_or_400(instance_id)
-    updated = carrier.set_inbound_secret(instance_id, None)
-    return _enrich(updated or store.get(instance_id) or {}, request=request)
-
-
-@router.get("/{instance_id}/connections")
-async def get_instance_connections(instance_id: str):
-    """The public calls this instance received, newest first."""
-    _get_or_404(instance_id)
-    return carrier.get_connections(instance_id)
 
 
 @router.patch("/{instance_id}")
