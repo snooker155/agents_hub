@@ -84,6 +84,7 @@ export default function ViewRenderer({ view, onSelect, onSendToAgent, onState, o
       <AnnotationsLayer view={view} onExplain={onSendToAgent ? explain : undefined} />
       {view.fidelity && (
         <span
+          data-view-chrome=""
           title={view.fidelity === 'precise' ? t('viewViewRenderer.preciseResult') : t('viewViewRenderer.realtimeApprox')}
           className={`absolute bottom-2 left-2 z-10 px-1.5 py-0.5 rounded text-[10px] font-medium ${
             view.fidelity === 'precise'

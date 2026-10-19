@@ -56,6 +56,9 @@ FULL_DECK = {
         "i": {"order": 8, "layout": "image_left", "title": "Left", "image": "asset://shot.png", "caption": "cap", "body": "text"},
         "j": {"order": 9, "layout": "image_right", "title": "Right", "image": "shot.webp", "body": "text"},
         "k": {"order": 10, "layout": "image_full", "title": "Thanks", "image": "https://example.com/x.png"},
+        "l": {"order": 11, "layout": "chart", "title": "Revenue", "body": "- up **20%**", "chart": {
+            "type": "bar", "categories": ["Q1", "Q2", "Q3"], "unit": "%", "y_label": "growth",
+            "series": [{"name": "2025", "values": [1, 2.5, None]}, {"name": "2026", "values": [2, 3, 4]}]}},
     },
 }
 
@@ -92,6 +95,24 @@ def test_a_slide_its_layout_cannot_draw_is_refused_with_the_reason(slide, words)
         validate_spec("slides", {"slides": {"s1": slide}})
     assert words in str(exc.value)
     assert "slide s1" in str(exc.value), "the error must name the slide"
+
+
+_CH = {"type": "bar", "categories": ["a", "b"], "series": [{"name": "s", "values": [1, 2]}]}
+
+
+@pytest.mark.parametrize("slide,words", [
+    ({"layout": "chart", "title": "x", "chart": {**_CH, "type": "pie",
+      "series": [{"name": "s", "values": [1, 2]}, {"name": "t", "values": [1, 2]}]}}, "exactly one series"),
+    ({"layout": "chart", "title": "x", "chart": {**_CH, "series": [{"name": "s", "values": [1]}]}}, "one value per category"),
+    ({"layout": "content", "title": "x", "chart": _CH}, "chart only goes with layout chart"),
+    ({"layout": "chart", "title": "x"}, "needs chart"),
+    ({"layout": "chart", "title": "x", "chart": {**_CH, "type": "pie", "series": [{"name": "s", "values": [1, None]}]}}, "no nulls"),
+    ({"layout": "chart", "title": "x", "chart": {**_CH, "series": [{"name": "s", "values": [True, 2]}]}}, "slide s1"),
+])
+def test_a_bad_chart_is_refused_with_the_reason(slide, words):
+    with pytest.raises(ViewValidationError) as exc:
+        validate_spec("slides", {"slides": {"s1": slide}})
+    assert words in str(exc.value)
 
 
 def test_an_unknown_theme_is_refused():
@@ -173,6 +194,22 @@ def test_slides_export_writes_a_pptx_into_the_workspace(tmp_path):
     assert bad["ok"] is False and "escapes" in bad["error"]
 
 
+def test_slides_add_stores_a_chart_and_export_refuses_pdf(tmp_path):
+    from views.store import get_view
+    from tools.views import create_view_tools, slides_add
+    tools = {t.name: t for t in create_view_tools(str(tmp_path))}
+    made = _call(tools["create_view"], view_kind="slides", title="C", summary="s", spec='{"slides": {}}')
+    _bind_view(made["view_id"])
+    res = _call(slides_add, title="Sales", layout="chart", chart=json.dumps(_CH), slide_id="c1")
+    assert res["ok"], res
+    assert get_view(made["view_id"])["spec"]["slides"]["c1"]["chart"]["categories"] == ["a", "b"]
+    assert _call(slides_add, title="Bad", layout="chart", chart="[1]")["ok"] is False
+    assert _call(slides_add, title="Bad", layout="chart")["ok"] is False
+    pdf = _call(tools["slides_export"], path="out/deck.PDF")
+    assert pdf["ok"] is False and ".pptx" in pdf["error"]
+    assert not (tmp_path / "out").exists()
+
+
 def test_slides_export_refuses_another_kind(tmp_path):
     from tools.views import create_view_tools
     tools = {t.name: t for t in create_view_tools(str(tmp_path))}
@@ -206,7 +243,7 @@ def test_every_layout_exports_with_its_content(tmp_path):
     data, warnings = build_pptx(view, with_warnings=True,
                                 resolve_asset=lambda n: {"shot.png": png, "shot.webp": webp}.get(n))
     prs = Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 11
+    assert len(prs.slides) == 12
     assert prs.slide_width == 12192000 and prs.slide_height == 6858000  # 16:9, 13.333 x 7.5 in
     texts = [_texts(s) for s in prs.slides]
     assert "What is new" in texts[0] and "September" in texts[0] and "🚀" in texts[0]
@@ -221,7 +258,12 @@ def test_every_layout_exports_with_its_content(tmp_path):
     pictures = [sum(1 for sh in s.shapes if sh.shape_type == 13) for s in prs.slides]
     assert pictures[8] == 1 and pictures[9] == 1, "the png and the (converted) webp are embedded"
     assert pictures[10] == 0 and warnings == ["slide 11: remote image not embedded (https://example.com/x.png)"]
-    assert "Team · 2026" in texts[2] and "3 / 11" in texts[2]
+    assert "Team · 2026" in texts[2] and "3 / 12" in texts[2]
+    from pptx.enum.chart import XL_CHART_TYPE
+    charts = [sh.chart for sh in prs.slides[11].shapes if sh.has_chart]
+    assert len(charts) == 1 and charts[0].chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+    assert charts[0].has_legend and len(list(charts[0].plots[0].series)) == 2
+    assert "Revenue" in texts[11] and "20%" in texts[11]
 
 
 def test_long_text_is_shrunk_to_fit():
@@ -278,3 +320,23 @@ def test_export_route_refuses_other_kinds_and_unknown_views(client):
     env = create_view("markdown", "M", {"markdown": "# hi"}, workspace="wsX", summary="s")
     assert client.get(f"/api/views/{env.view_id}/export/pptx").status_code == 400
     assert client.get("/api/views/vw_nope/export/pptx").status_code == 404
+
+
+@pytest.mark.parametrize("extra,want", [
+    ({"type": "bar", "stacked": True}, "COLUMN_STACKED"),
+    ({"type": "bar", "horizontal": True}, "BAR_CLUSTERED"),
+    ({"type": "line"}, "LINE_MARKERS"),
+    ({"type": "area", "stacked": True}, "AREA_STACKED"),
+    ({"type": "pie", "series": [{"name": "s", "values": [3, 5]}]}, "PIE"),
+])
+def test_chart_types_map_to_native_charts(extra, want):
+    import io
+
+    from pptx import Presentation
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    from views.slides_pptx import build_pptx
+    spec = validate_spec("slides", {"slides": {"c": {"layout": "chart", "title": "T", "chart": {**_CH, **extra}}}})
+    prs = Presentation(io.BytesIO(build_pptx({"title": "D", "spec": spec})))
+    chart = next(sh.chart for sh in prs.slides[0].shapes if sh.has_chart)
+    assert chart.chart_type == getattr(XL_CHART_TYPE, want)

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import FitText from './FitText';
+import SlideChart from './SlideChart';
 import SlideMarkdown from './SlideMarkdown';
 import { plainText } from './markdown';
 import { FONT, STAGE_H, STAGE_W, deckTheme } from './deck';
@@ -180,6 +181,38 @@ function QuoteSlide(p) {
   );
 }
 
+// A chart under the header, with the optional takeaway (body) beside it on
+// the right: 720 + 40 + 360 of the 1120 the frame leaves, as in the .pptx.
+// The box is measured once laid out; before that (and where nothing lays it
+// out) its height is estimated from the header.
+function ChartSlide(p) {
+  const { s, t, accent } = p;
+  const boxRef = useRef(null);
+  const estimate = 720 - 56 - 64 - 100 - (s.subtitle ? 41 : 0) - 8;
+  const [height, setHeight] = useState(estimate);
+  useLayoutEffect(() => {
+    const h = boxRef.current?.clientHeight;
+    if (h && Math.abs(h - height) > 1) setHeight(h);
+  }, [height, s.title, s.subtitle, s.icon]);
+  const withBody = Boolean((s.body || '').trim());
+  return (
+    <div style={{ ...base(t), ...framed }}>
+      <Header s={s} t={t} accent={accent} />
+      <div ref={boxRef} style={{ flex: 1, minHeight: 0, display: 'flex', gap: 40, marginTop: 8 }}>
+        <div style={{ flex: withBody ? '0 0 720px' : '1 1 auto', minWidth: 0 }}>
+          <SlideChart chart={s.chart} width={withBody ? 720 : 1120} height={height} t={t} accent={accent} />
+        </div>
+        {withBody && (
+          <FitText base={20} min={12} contentKey={s.body} style={{ flex: '0 0 360px', height }}>
+            <SlideMarkdown md={s.body} t={t} accent={accent} />
+          </FitText>
+        )}
+      </div>
+      <Footer {...p} />
+    </div>
+  );
+}
+
 function Intro({ s, t, accent, height }) {
   if (!s.body) return null;
   return (
@@ -286,6 +319,7 @@ const LAYOUTS = {
   stats: StatsSlide,
   cards: CardsSlide,
   timeline: TimelineSlide,
+  chart: ChartSlide,
 };
 
 /**

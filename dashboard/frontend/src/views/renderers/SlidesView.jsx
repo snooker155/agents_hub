@@ -168,7 +168,9 @@ export default function SlidesView({ view }) {
       className={`flex flex-col h-full outline-none ${fullscreen ? 'bg-black' : ''}`}
       data-testid="slides-view"
     >
-      <div ref={frameRef} className={`flex-1 min-h-[240px] flex items-center justify-center ${fullscreen ? '' : 'p-3 bg-gray-100 dark:bg-gray-950'}`}>
+      {/* The floor only keeps a frame its host gives no height from folding
+          up; low enough that a small deck (a chat reply) is not letterboxed. */}
+      <div ref={frameRef} className={`flex-1 min-h-[120px] flex items-center justify-center ${fullscreen ? '' : 'p-3 bg-gray-100 dark:bg-gray-950'}`}>
         <div className={fullscreen ? '' : 'shadow-md rounded-sm overflow-hidden'} data-testid="slide-stage">
           <Scaled scale={fullscreen ? scale : Math.max(0.1, scale * 0.98)}>{stageFor(slide, cur)}</Scaled>
         </div>
@@ -183,7 +185,7 @@ export default function SlidesView({ view }) {
       )}
 
       {thumbs && !fullscreen && (
-        <div className="flex gap-2 overflow-x-auto px-3 py-2 border-t border-gray-200 dark:border-gray-700" data-testid="slide-thumbs">
+        <div data-view-chrome="" className="flex gap-2 overflow-x-auto px-3 py-2 border-t border-gray-200 dark:border-gray-700" data-testid="slide-thumbs">
           {slides.map((s, i) => (
             <button
               key={s.id}
@@ -200,7 +202,9 @@ export default function SlidesView({ view }) {
         </div>
       )}
 
-      <div className={`flex items-center gap-2 px-3 py-2 border-t ${fullscreen ? 'border-gray-800 bg-black/80' : 'border-gray-200 dark:border-gray-700'}`}>
+      {/* Wraps in a narrow card (a deck in a chat reply): the export buttons
+          go to a second line instead of past the card's edge. */}
+      <div data-view-chrome="" className={`flex flex-wrap items-center gap-2 px-3 py-2 border-t ${fullscreen ? 'border-gray-800 bg-black/80' : 'border-gray-200 dark:border-gray-700'}`}>
         <button type="button" onClick={() => go(-1)} disabled={cur === 0} className={btn} aria-label={t('viewSlidesView.prev')}>
           <ChevronLeft className="w-4 h-4" />
         </button>

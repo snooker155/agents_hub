@@ -9,6 +9,7 @@ import { getView, applyViewOps, saveViewSnapshot } from '../api';
 import { applyOp as applyOpLocal } from './opsClient';
 import ViewRenderer from './ViewRenderer';
 import { FILL_KINDS } from './fillKinds';
+import ViewImageMenu from './ViewImageMenu';
 import { useI18n } from '../i18n';
 
 // A view card — the surface-agnostic embed for a view reference (view_ref). It
@@ -101,8 +102,16 @@ function Modal({ children, onClose, title, fill = false }) {
 // gives it (a flex column with a definite height: the Artifacts panel), down
 // to the bottom of the page; where the host has no height to give it keeps
 // the compact card's 420px as a floor.
+// `inChat` — a preview inside a chat reply, whose width follows its content.
+// A deck scales its stage to the card, so there the card gets a width of its
+// own: sized by the stage it would grow step by step, every measure widening
+// the card it measures, up to the reply's full width. CHAT_DECK_WIDTH is about
+// half that full width, read off the window (the chat column is the window
+// less the two sidebars), and never wider than the reply.
 // `className` — extra classes on the root.
-export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, className = '' }) {
+const CHAT_DECK_WIDTH = { width: 'clamp(16rem, calc((100vw - 38rem) * 0.367), 40rem)' };
+
+export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, inChat = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
   const { view, error, loading, setView } = useView(viewId);
@@ -138,7 +147,9 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
 
   return (
     <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${
-      compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${className}`}>
+      compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${
+      inChat && kind === 'slides' ? 'max-w-full' : ''} ${className}`}
+      style={inChat && kind === 'slides' ? CHAT_DECK_WIDTH : undefined}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
           <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
@@ -175,6 +186,7 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
           {actions}
           {view && (
             <>
+              <ViewImageMenu view={view} getRoot={() => bodyRef.current} />
               <button onClick={capture} title={t('viewViewCard.saveSnapshot')}
                 className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
                 <Camera className="w-4 h-4" />
