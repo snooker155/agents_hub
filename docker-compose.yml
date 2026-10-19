@@ -108,6 +108,6 @@ services:
     ports:
       - "${HUB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
     environment:
-      BACKEND_SERVERS: ${BACKEND_SERVERS:-backend:8000}
+      BACKEND_SERVER: ${BACKEND_SERVER:-backend:8000}
       # Shared cache TTL for generated view assets. 0 turns it off.
       API_ASSET_CACHE_SECONDS: ${API_ASSET_CACHE_SECONDS:-30}

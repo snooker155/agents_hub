@@ -18,7 +18,7 @@ def test_every_request_is_allowed_as_the_operator():
     allowed, principal = identity.authorize_request(SimpleNamespace(headers={}))
     assert allowed is True
     assert principal is LOCAL_PRINCIPAL
-    assert principal.is_admin and principal.reaches("any-workspace")
+    assert principal.is_admin and principal.kind == "local"
 
 
 def test_require_role_never_raises():

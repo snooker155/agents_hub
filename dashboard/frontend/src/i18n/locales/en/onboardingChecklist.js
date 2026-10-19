@@ -11,7 +11,7 @@ export default {
     title: 'Connect an LLM provider',
     done: 'At least one provider is configured.',
     doneWithLabel: 'At least one provider is configured (default: {{provider}}).',
-    warn: 'A provider is configured but the connection test failed — check the API key / base URL in Settings.',
+    warn: 'A provider is configured but the connection test failed, check the API key / base URL in Settings.',
     todo: 'Add an API key (OpenAI / Anthropic / Google) in Settings, or the base URL of an Ollama / LM Studio you run.',
     openSettings: 'Open Settings',
     testConnection: 'Test connection',
@@ -30,7 +30,7 @@ export default {
   },
   chat: {
     title: 'Start your first chat',
-    desc: 'Ask an agent to do something — e.g. "Summarise the files in this workspace" or "Create a task to add a README".',
+    desc: 'Ask an agent to do something, e.g. "Summarise the files in this workspace" or "Create a task to add a README".',
     openChat: 'Open Chat',
   },
 };

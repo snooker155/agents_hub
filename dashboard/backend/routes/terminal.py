@@ -1,9 +1,7 @@
 """
-Routes: a terminal into a run's container or a service replica's container
-(docs/terminal.md). The sessions themselves live in ``common/terminal.py``.
+Routes: a terminal into a run's container (docs/terminal.md). The sessions themselves live in ``common/terminal.py``.
 
-``POST /api/terminal/{kind}/{id}/ticket`` (``kind`` is ``run`` or
-``replica``) checks, with the caller's ordinary credential, that the target
+``POST /api/terminal/{kind}/{id}/ticket`` (``kind`` is ``run``) checks, with the caller's ordinary credential, that the target
 has a running container here and that the caller may open a shell in it, and
 answers a one-time, minute-long terminal ticket for it
 (``common/terminal_tickets.py``, ``mint_terminal``). A refusal is answered
@@ -107,8 +105,6 @@ async def list_sessions(request: Request) -> Dict[str, Any]:
     if principal is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     sessions = term.manager().all()
-    if not (principal.is_admin or principal.kind in ("local", "token")):
-        sessions = [s for s in sessions if s.user_id == principal.id]
     return {"items": [s.describe() for s in sessions]}
 
 

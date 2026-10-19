@@ -455,32 +455,6 @@ export function ExecutionModeSection({ s }) {
         </div>
       </div>
 
-      {/* Where a chat turn runs (docs/services.md): on a service replica, a
-          process of its own, or in the backend process. Global, saved on change. */}
-      <div className="mt-4 pt-4 border-t border-gray-100">
-        <div className="flex items-center gap-2 mb-1">
-          <label className="text-sm font-medium text-gray-700">{t('settings.chatExecution')}</label>
-          <SourceBadge fieldName="chat_execution" {...s.badgeProps} />
-        </div>
-        <p className="text-xs text-gray-500 mb-2">
-          <strong>{t('settings.chatExecutionInstances')}</strong> {t('settings.chatExecutionInstancesHint')} <strong>{t('settings.chatExecutionInprocess')}</strong> {t('settings.chatExecutionInprocessHint')}
-        </p>
-        <div className="flex gap-4">
-          {['instances', 'inprocess'].map((mode) => (
-            <label key={mode} className="flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="chat_execution" value={mode}
-                checked={(s.globalSettings.chat_execution || 'instances') === mode}
-                disabled={s.chatExecutionSaving}
-                onChange={() => s.setChatExecution(mode)}
-                className="accent-indigo-600" />
-              <span className="text-sm font-medium text-gray-700">
-                {mode === 'instances' ? t('settings.chatExecutionInstances') : t('settings.chatExecutionInprocess')}
-              </span>
-            </label>
-          ))}
-        </div>
-      </div>
-
       {g.agent_mode === 'docker' && (
         <div className="space-y-4 mt-2 pt-4 border-t border-gray-100">
           <div>

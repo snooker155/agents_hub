@@ -4,8 +4,8 @@ Both stores are lists of pydantic models keyed by ``id``, kept in the
 ``documents`` table through :class:`common.docstore.DocStore` (one row per
 job or notification). The scheduler in the backend process and any agent
 subprocess that creates jobs through tools all go through the database, so
-the lease in :meth:`PlanStore.claim_due_jobs` holds across processes and
-hosts, which a lock file never did. An existing ``plans.json`` /
+the lease in :meth:`PlanStore.claim_due_jobs` holds across processes,
+which a lock file never did. An existing ``plans.json`` /
 ``notifications.json`` is imported once on first use and renamed
 ``.migrated``.
 """

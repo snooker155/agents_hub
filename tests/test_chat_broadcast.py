@@ -443,8 +443,8 @@ def test_a_half_written_bubble_gets_the_final_answer(broker):
 
 # ── which conversations are being answered ───────────────────────────────────
 
-def test_a_replicas_turn_is_kept_by_conversation_and_ends_with_its_marker():
-    """A turn on a service replica reaches this backend only as the events it
+def test_a_carriers_turn_is_kept_by_conversation_and_ends_with_its_marker():
+    """A turn in a resident copy's carrier reaches this backend only as the events it
     posts for the conversation's channel; they are what says the
     conversation is busy, and what the catch-up returns."""
     from common import live_runs

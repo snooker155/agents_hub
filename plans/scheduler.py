@@ -8,11 +8,8 @@ never block the event loop.
 
 Agent subprocesses that create jobs via tools write to the same store, so
 their jobs are picked up on the next tick without any IPC; the claim is a
-database lease, so several backend replicas ticking at once never fire the
-same job twice. On top of that, only the replica holding the ``scheduler``
-service lease (common/leases.py) ticks at all: the maintenance sweep and the
-escalation sweep it also drives are not per-job leased, and one process
-doing them is enough.
+short per-job lease in the database, so a tick and a manual run-now of the
+same job never fire it twice.
 """
 from __future__ import annotations
 
@@ -30,8 +27,6 @@ class PlanScheduler:
     # keeps the 20s job tick cheap.
     ESCALATION_INTERVAL_SECONDS = 300.0
 
-    LEASE_ROLE = "scheduler"
-
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
@@ -39,13 +34,9 @@ class PlanScheduler:
         # for less than ESCALATION_INTERVAL_SECONDS a 0.0 start held the first
         # sweep back. The first tick sweeps, wherever the clock starts.
         self._last_escalation: float = float("-inf")
-        self._leader = False
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
-
-    def holds_lease(self) -> bool:
-        return self._leader
 
     async def start(self) -> None:
         if self.is_running():
@@ -62,35 +53,14 @@ class PlanScheduler:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._task.cancel()
         self._task = None
-        if self._leader:
-            self._leader = False
-            try:
-                from common import leases
-                await asyncio.to_thread(leases.release, self.LEASE_ROLE)
-            except Exception:  # noqa: BLE001 - releasing the lease on stop is best effort
-                log.debug("scheduler lease release failed", exc_info=True)
 
     async def _loop(self) -> None:
         from plans import service
-        from common import leases
 
         owner = service._default_owner()
-        ttl = max(self.TICK_SECONDS * 3, leases.DEFAULT_TTL_SECONDS)
         while not self._stop.is_set():
             try:
-                self._leader = await asyncio.to_thread(leases.hold, self.LEASE_ROLE, ttl)
-            except Exception:  # noqa: BLE001 - a failing lease backend means not leader this tick
-                log.debug("scheduler lease check failed", exc_info=True)
-                self._leader = False
-            if not self._leader:
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=self.TICK_SECONDS)
-                except asyncio.TimeoutError:
-                    pass
-                continue
-            try:
-                token = leases.fencing_token(self.LEASE_ROLE)
-                results = await asyncio.to_thread(service.run_due_jobs, owner, token)
+                results = await asyncio.to_thread(service.run_due_jobs, owner)
                 for r in results:
                     if r.get("ok"):
                         log.info("fired job %s (%s)", r.get("job_id"), r.get("kind"))

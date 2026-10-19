@@ -61,7 +61,7 @@ class InstanceMessage(BaseModel):
     client_id: Optional[str] = None
     # Which conversation of the instance; the main one when left out.
     conversation_id: Optional[str] = None
-    # A runner (a replica bound to no agent) answers for the agent named here.
+    # A runner (a copy bound to no agent) answers for the agent named here.
     agent_id: Optional[str] = None
     # What the chat composer attaches to a turn (chat/models.py): files from
     # the computer or the workspace, and hub records by pointer. Folded into

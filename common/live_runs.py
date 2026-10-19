@@ -20,9 +20,9 @@ Two feeds keep it filled, and each event passes through exactly one of them:
   which sees the whole pipeline including the terminal ``done``.
 * :func:`record_run_event` — a run executing in another process, from the
   ``/api/sessions/{id}/events`` relay.
-* :func:`record_conversation_event` — a chat turn executing on a service
-  replica (chat/turns.py), from the events it posts for the conversation's
-  channel (``/api/instances/{id}/events``). The replica's own memory is not
+* :func:`record_conversation_event`: a chat turn executing in a resident
+  copy's carrier process, from the events it posts for the conversation's
+  channel (``/api/instances/{id}/events``). The carrier's own memory is not
   the backend's, so without this the backend could not say what a
   conversation is in the middle of.
 
@@ -191,7 +191,7 @@ def record_run_event(event: Dict[str, Any], *, session_id: Optional[str] = None)
 
 
 def record_conversation_event(conversation_id: str, event: Dict[str, Any]) -> Optional[str]:
-    """Fold one event a replica posted for ``chat:<conversation_id>``.
+    """Fold one event a carrier posted for ``chat:<conversation_id>``.
 
     Returns ``"started"`` or ``"ended"`` when the conversation's turn began or
     ended with this event, else None, so the caller can announce it.
@@ -227,7 +227,7 @@ def record_conversation_event(conversation_id: str, event: Dict[str, Any]) -> Op
 def running_conversations() -> List[str]:
     """The conversations with a turn still running. A turn silent for longer
     than :data:`RUNNING_SILENCE_SECONDS` is not counted: its end was lost (a
-    replica that died, a restart), and a conversation must not look busy for
+    carrier that died, a restart), and a conversation must not look busy for
     good because of it."""
     cutoff = _now() - RUNNING_SILENCE_SECONDS
     with _lock:

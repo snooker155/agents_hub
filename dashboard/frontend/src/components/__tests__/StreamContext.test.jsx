@@ -5,15 +5,7 @@ import { useStream } from '../stream';
 
 /*
  * The EventSource reconnect logic in StreamContext.jsx: what a (re)connect
- * sends, and how the `ready` frame's `resumed`/`source` fields are read.
- *
- * With the cross-replica broker bridge (common/broker_bridge.py) on, a
- * reconnect can be resumed from the shared Redis stream instead of the
- * per-process ring buffer — but only for the channels this tab actually
- * wants, and only if the last event id it hands back survives the trip: it
- * is a Redis stream id ("1695400000000-0") once the bridge is involved, not
- * the small integer the browser used to see, so it must not be mangled into
- * a Number() (NaN) on the way through.
+ * sends, and how the `ready` frame's `resumed` field is read.
  */
 
 class FakeEventSource {
@@ -83,24 +75,7 @@ describe('StreamContext reconnects', () => {
     expect(urlParams(latest()).get('channels')).toBe('session:abc');
   });
 
-  it('keeps a Redis stream id as the literal Last-Event-ID string, not Number()', () => {
-    show();
-    act(() => {
-      latest().emit({ channel: '_meta', type: 'ready', client_id: 'c1', resumed: false, replayed: 0 });
-    });
-    act(() => {
-      latest().emit({ channel: 'app', type: 'widgets.changed' }, '1695400000000-0');
-    });
-
-    act(() => { latest().fail(); });
-    act(() => { vi.advanceTimersByTime(3000); });
-
-    // Number('1695400000000-0') is NaN; the old `Number(e.lastEventId)`
-    // coercion would have dropped this silently and sent nothing.
-    expect(urlParams(latest()).get('since')).toBe('1695400000000-0');
-  });
-
-  it('does not refetch when a reconnect resumes via the stream catch-up path', () => {
+  it('does not refetch when a reconnect resumes', () => {
     const getStream = show();
     const onTick = vi.fn();
     act(() => { getStream().onRefetch(onTick); });
@@ -109,14 +84,10 @@ describe('StreamContext reconnects', () => {
       latest().emit({ channel: '_meta', type: 'ready', client_id: 'c1', resumed: false, replayed: 0 });
     });
 
-    // A reconnect that this time resumes from the Redis stream rather than
-    // the in-memory ring buffer — `source` differs, `resumed` does not.
     act(() => { latest().fail(); });
     act(() => { vi.advanceTimersByTime(3000); });
     act(() => {
-      latest().emit({
-        channel: '_meta', type: 'ready', client_id: 'c1', resumed: true, replayed: 2, source: 'stream',
-      });
+      latest().emit({ channel: '_meta', type: 'ready', client_id: 'c1', resumed: true, replayed: 2 });
     });
 
     expect(onTick).not.toHaveBeenCalled();

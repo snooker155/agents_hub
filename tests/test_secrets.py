@@ -295,12 +295,7 @@ def client():
     return TestClient(app)
 
 
-@pytest.fixture
-def single(monkeypatch):
-    pass
-
-
-def test_routes_store_list_and_delete_without_ever_returning_a_value(single, key, client):
+def test_routes_store_list_and_delete_without_ever_returning_a_value(key, client):
     client.post("/api/workspaces", json={"name": "alpha"})
     put = client.put("/api/workspaces/alpha/secrets/API_KEY", json={"value": "sk-very-secret-1"})
     assert put.status_code == 200, put.text
@@ -317,7 +312,7 @@ def test_routes_store_list_and_delete_without_ever_returning_a_value(single, key
     assert rows and "sk-very-secret-1" not in repr(rows)
 
 
-def test_routes_validate_the_name_the_workspace_and_the_key(single, no_key, client):
+def test_routes_validate_the_name_the_workspace_and_the_key(no_key, client):
     client.post("/api/workspaces", json={"name": "alpha"})
     bad = client.put("/api/workspaces/alpha/secrets/lower_case", json={"value": "v"})
     assert bad.status_code == 400
@@ -330,7 +325,7 @@ def test_routes_validate_the_name_the_workspace_and_the_key(single, no_key, clie
     assert unknown_agent.status_code == 400
 
 
-def test_agent_allowlist_route_validates_and_guards(single, client, monkeypatch):
+def test_agent_allowlist_route_validates_and_guards(client, monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "capability_guard", "block", raising=False)
     _agent("worker")

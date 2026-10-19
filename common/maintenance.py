@@ -176,15 +176,6 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
         summary.update(run_view_maintenance())
     except Exception:
         log.exception("view maintenance failed")
-    # The audit trail (common/audit.py): rows past AUDIT_RETENTION_DAYS. Isolated
-    # like the passes above, and a no-op (0 rows, 0 disables it) outside
-    # single-mode where the trail is off, so this stays safe to call always.
-    try:
-        from common import audit
-        summary["pruned_audit_rows"] = audit.prune()
-    except Exception:
-        log.exception("audit prune failed")
-        summary["pruned_audit_rows"] = 0
     # Scheduler firing journal (plans.storage.FireStore): unlike run retention
     # above, every row is terminal the moment it is written, so there is no
     # "still active" check here, only an age cutoff. Isolated like the passes

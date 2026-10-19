@@ -244,21 +244,11 @@ def test_a_system_message_during_the_final_answer_gets_one_more_pass(monkeypatch
 
 @pytest.fixture
 def client():
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from common.auth import Principal
     from routes import steering as steering_routes
 
     app = FastAPI()
-
-    @app.middleware("http")
-    async def _principal(request: Request, call_next):
-        who = request.headers.get("x-test-principal")
-        if who:
-            kind, _, rest = who.partition(":")
-            uid, _, role = rest.partition(":")
-            request.state.principal = Principal(id=uid, username=uid, role=role or "member", kind=kind)
-        return await call_next(request)
 
     app.include_router(steering_routes.router)
     return TestClient(app)
@@ -270,10 +260,9 @@ def _open(run_id, **kw):
     run_manager.open_run(run_id, kw.pop("agent_id", "helper"), link_to_session=False, **kw)
 
 
-def _steer(client, run_id, principal=None, **body):
-    headers = {"x-test-principal": principal} if principal else {}
+def _steer(client, run_id, **body):
     return client.post(f"/api/runs/{run_id}/steer",
-                       json={"message": "keep answers short", "mode": "system", **body}, headers=headers)
+                       json={"message": "keep answers short", "mode": "system", **body})
 
 
 def test_the_operator_sends_a_system_message(client):
@@ -284,14 +273,6 @@ def test_the_operator_sends_a_system_message(client):
     assert resp.json()["next"] == "wait"
     assert resp.json()["message"]["mode"] == "system"
     assert steering.pending_count(run_id) == 1
-
-
-def test_an_agents_own_credential_may_not_send_one(client):
-    run_id = _rid()
-    _open(run_id, session_type="task")
-    resp = _steer(client, run_id, principal="service:svc:admin")
-    assert resp.status_code == 403
-    assert steering.pending_count(run_id) == 0
 
 
 def test_a_team_run_takes_no_system_message(client, monkeypatch):

@@ -588,10 +588,9 @@ def up(
     backend_cmd = [sys.executable, "-m", "uvicorn", "main:app", "--host", host, "--port", str(backend_port)]
     if dev:
         backend_cmd.append("--reload")
-    # No `--workers` counterpart in production: the backend starts singletons of
-    # its own (the plan scheduler, the run watchdog), and a
-    # second worker would run a second copy of each. Scaling out is the compose
-    # prod profile's job, where replicas sit behind nginx.
+    # No `--workers`: the hub runs exactly one backend process. It starts
+    # background loops of its own (the plan scheduler, the run watchdog), and a
+    # second worker would run a second copy of each.
 
     want_frontend = frontend
     if want_frontend and not shutil.which("npm"):

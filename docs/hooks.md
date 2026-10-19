@@ -230,7 +230,7 @@ and steering work as usual).
   workspace, or `AGENTS_HUB_TOOL_APPROVAL_TIMEOUT`.
 - **Stop** ends the wait; the call does not run.
 
-Who may answer: you. An agent's own credential never can. The call's policy
+Who may answer: you. An agent never can. The call's policy
 trail carries `human_approved` or `human_denied`. A chat reopened while its
 turn waits shows the card again.
 

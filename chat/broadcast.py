@@ -47,9 +47,9 @@ def announce_running_change(conversation_id: Optional[str]) -> None:
     the list can mark the conversations being answered (GET /api/chats/running
     says which; the event names none, since not every page may see every chat).
 
-    Not from a service replica: its turns are announced by the backend it
-    posts their events to (routes/instances.py), which is the one that keeps
-    them (common/live_runs.record_conversation_event).
+    Not from a resident copy's carrier: its turns are announced by the
+    backend it posts their events to (routes/instances.py), which is the one
+    that keeps them (common/live_runs.record_conversation_event).
     """
     if not conversation_id:
         return

@@ -93,14 +93,12 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
     last_event_id = _parse_last_event_id(request.headers.get("last-event-id") or since)
     replayed: List[dict] = []
     resumed = False
-    source: Optional[str] = None
 
     resume = broker.resume_client(client, last_event_id) if client else None
     if resume is not None:
         client_id = client
         resumed = True
         replayed = resume
-        source = "buffer"
     else:
         default_channels = [APP_CHANNEL, NOTIFICATIONS_CHANNEL]
         if session:
@@ -113,7 +111,7 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
 
     async def _generate():
         # Hand the client its id first so it can manage dynamic channels.
-        yield f"data: {json.dumps({'channel': '_meta', 'type': 'ready', 'client_id': client_id, 'resumed': resumed, 'replayed': len(replayed), 'source': source})}\n\n"
+        yield f"data: {json.dumps({'channel': '_meta', 'type': 'ready', 'client_id': client_id, 'resumed': resumed, 'replayed': len(replayed)})}\n\n"
         for event in replayed:
             yield f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
         events = broker.client_events(cast(str, client_id))

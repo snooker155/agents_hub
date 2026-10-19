@@ -122,17 +122,6 @@ def main() -> None:
     finally:
         heartbeat.stop()
         control.release(run_id)
-        # Best-effort: a replica or worker on another host can then serve this
-        # run's finished log even though it never ran the process itself
-        # (common/blobs.py, docs/storage.md), the same as runtime/agent_run.py
-        # does for a single agent's run.
-        try:
-            from common import blobs
-            log_file = os.environ.get("AGENT_LOG_FILE") or run.log_file
-            if log_file:
-                blobs.mirror(blobs.rel(log_file))
-        except Exception:  # noqa: BLE001 - never turn a finished run into a reported failure
-            log.debug("could not mirror the log for run %s", run_id, exc_info=True)
 
     sys.exit(exit_code)
 

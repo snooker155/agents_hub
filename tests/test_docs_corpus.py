@@ -155,7 +155,7 @@ def _corpus_copy(tmp_path, monkeypatch, entries):
 
 
 def test_read_doc_sees_an_edit_without_a_restart(tmp_path, monkeypatch):
-    """A runner replica lives for hours; a root file changes under it."""
+    """The backend lives for hours; a root file changes under it."""
     import os
     entry = {"id": "notes", "path": "NOTES.md", "title": "Notes", "summary": "s"}
     _corpus_copy(tmp_path, monkeypatch, [entry])

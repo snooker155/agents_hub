@@ -50,7 +50,7 @@ def _ensure_aware(dt: datetime) -> datetime:
 
 
 def _default_owner() -> str:
-    """Identify this process for lease ownership: hostname:pid."""
+    """Identify this process as the owner of a job claim: hostname:pid."""
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
@@ -1118,9 +1118,9 @@ def claim_due_jobs(
 ) -> List[ScheduledJob]:
     """Atomically claim due jobs with no live lease (see PlanStore.claim_due_jobs).
 
-    Two schedulers racing this on the same store — two backend replicas, or a
-    tick that overlaps a slow previous fire — each get a disjoint set back,
-    so a job is handed to at most one of them.
+    Two callers racing this on the same store (a tick that overlaps a slow
+    previous fire, or the run-now action) each get a disjoint set back, so a
+    job is handed to at most one of them.
     """
     now = now or _now()
     owner = owner or _default_owner()
@@ -1137,28 +1137,9 @@ def claim_job_now(
     return plan_store.force_claim_job(job_id, owner, lease_seconds=lease_seconds)
 
 
-def run_due_jobs(owner: Optional[str] = None,
-                 fence_token: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Claim and fire every due job once. Called by the scheduler loop each tick.
-
-    ``fence_token`` is the ``scheduler`` service lease version the tick holds
-    (``common.leases.fencing_token``). The per-job claim already keeps two
-    replicas off the same job; the token is what stops a leader that stalled
-    past its TTL and was superseded from firing anything at all. It is
-    re-checked before each job, and the tick stops at the first failed check.
-    Jobs it claimed but did not fire keep their short claim until it lapses,
-    then the new leader takes them.
-    """
-    from common import leases
-    from plans.scheduler import PlanScheduler
-
-    results = []
-    for job in claim_due_jobs(owner=owner):
-        if fence_token is not None and not leases.verify(PlanScheduler.LEASE_ROLE, fence_token):
-            log.warning("scheduler lease lost mid-tick, not firing job %s or the rest", job.id)
-            break
-        results.append(fire_job(job))
-    return results
+def run_due_jobs(owner: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Claim and fire every due job once. Called by the scheduler loop each tick."""
+    return [fire_job(job) for job in claim_due_jobs(owner=owner)]
 
 
 __all__ = [

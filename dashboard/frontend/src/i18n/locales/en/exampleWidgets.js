@@ -71,7 +71,7 @@ export default {
   readFilesRunTests: 'read_files, run_tests',
   memoryWorkspacePool: 'memory: workspace pool',
   promptInstructionsCapabilitiesUsageConcatenated: 'Prompt = instructions + capabilities + usage, concatenated at load time.',
-  importingAiderTheReadinessReport: 'importing Aider — the readiness report',
+  importingAiderTheReadinessReport: 'importing Aider: the readiness report',
   importedAnywayMarkedNeedsSetup: 'Imported anyway, marked “needs setup”.',
   whatTheRepositoryAdds: 'What the repository adds',
   threeFilesAiderItselfIs: 'Three files. Aider itself is untouched.',
@@ -80,14 +80,14 @@ export default {
     server: 'POST /run and /run/stream -> `aider --message`',
     dockerfile: 'packages aider + the adapter',
     restName: '…the rest of the agent',
-    restNote: 'untouched — the hub never imports it',
+    restNote: 'untouched: the hub never imports it',
   },
   aiderStages: {
     before: 'Straight after cloning',
     after: 'Service started, key set',
   },
   aiderReport: {
-    beforeSummary: 'Cannot run yet — missing: Endpoint URL, Environment variables',
+    beforeSummary: 'Cannot run yet: missing: Endpoint URL, Environment variables',
     afterSummary: 'Ready to run',
   },
   aiderChecks: {
@@ -106,9 +106,9 @@ export default {
     packaging: 'Start instructions',
     packagingDetail: 'Dockerfile.agenthub found in the repository',
     streaming: 'Live streaming',
-    streamingDetail: 'POST /run/stream — tokens and tool events stream into chat',
+    streamingDetail: 'POST /run/stream: tokens and tool events stream into chat',
     health: 'Service reachable',
-    healthMissing: 'not probed — no URL configured',
+    healthMissing: 'not probed: no URL configured',
     healthFix: 'Supply the service URL to have the hub verify it responds.',
     healthOk: 'http://localhost:8410/health answered HTTP 200',
   },
@@ -121,7 +121,7 @@ export default {
   },
   clone: 'Clone',
   cloned: 'Cloned ✓',
-  illustrativeClone: '(Illustrative — cloning here doesn’t change your workspace.)',
+  illustrativeClone: '(Illustrative: cloning here doesn’t change your workspace.)',
   a4StageDeliveryFlow: 'a 4-stage delivery flow',
   flowNodes: {
     pm: {

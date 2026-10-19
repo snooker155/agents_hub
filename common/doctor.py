@@ -230,7 +230,7 @@ def check_security(snap: Dict[str, Any]) -> Result:
                       execution=execution), detail)
 
 
-# ── stale runs and leases ────────────────────────────────────────────────────
+# ── stale runs ───────────────────────────────────────────────────────────────
 
 def _age_seconds(ts: Optional[str]) -> Optional[float]:
     if not ts:

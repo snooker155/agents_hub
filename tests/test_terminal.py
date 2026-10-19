@@ -1,4 +1,4 @@
-"""The terminal into a run's or a replica's container (docs/terminal.md).
+"""The terminal into a run's container (docs/terminal.md).
 
 ``common/terminal.py`` keeps the shell sessions, ``routes/terminal.py`` mints
 the ticket and serves the socket. Docker is never called: ``_spawn`` is
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import queue
-import socket
 import sys
 import time
 from pathlib import Path
@@ -133,17 +132,17 @@ def _audit(action):
 
 # ── tickets ──────────────────────────────────────────────────────────────────
 
-def _user(user_id="u1"):
-    from common.auth import Principal
-    return Principal(id=user_id, username="x", kind="user", via="session")
+def _user():
+    from common.auth import LOCAL_PRINCIPAL
+    return LOCAL_PRINCIPAL
 
 
 def test_a_terminal_ticket_opens_only_its_own_target_and_only_once():
     ticket = terminal_tickets.mint_terminal(_user(), target_kind="run", target_id="r1")
     assert terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r2") is None
-    assert terminal_tickets.verify_terminal(ticket, target_kind="replica", target_id="r1") is None
+    assert terminal_tickets.verify_terminal(ticket, target_kind="other", target_id="r1") is None
     found = terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r1")
-    assert found["user"] == "u1" and found["session"] is None
+    assert found["user"] == "local" and found["session"] is None
     assert terminal_tickets.verify_terminal(ticket, target_kind="run", target_id="r1") is None
 
 
@@ -318,36 +317,6 @@ def test_the_buffer_keeps_only_the_newest_bytes(procs, monkeypatch):
 
 
 # ── who may open one ─────────────────────────────────────────────────────────
-
-# ── replicas ─────────────────────────────────────────────────────────────────
-
-def test_a_replica_target_and_its_refusals(procs, monkeypatch):
-    from instances import carrier
-    from instances import store as istore
-    monkeypatch.setattr(carrier, "sync", lambda inst: inst)
-    docker = istore.create("main-agent", kind="resident", workspace="default", state="active",
-                           started_by="u-owner", container_name="agents-hub-node-1",
-                           carrier_mode="docker", carrier_host=socket.gethostname(), label="svc #1")
-    target = term.resolve_target("replica", docker["instance_id"])
-    assert target.container == "agents-hub-node-1" and target.owner == "u-owner"
-    assert target.workspace == "default" and target.label == "svc #1"
-
-    local = istore.create("main-agent", kind="resident", workspace="default", state="active",
-                          carrier_mode="local", pid=123)
-    with pytest.raises(term.TerminalRefused) as exc:
-        term.resolve_target("replica", local["instance_id"])
-    assert "process on the hub's host" in exc.value.detail
-
-    stopped = istore.create("main-agent", kind="resident", workspace="default", state="stopped",
-                            container_name="agents-hub-node-2", carrier_mode="docker")
-    with pytest.raises(term.TerminalRefused) as exc:
-        term.resolve_target("replica", stopped["instance_id"])
-    assert exc.value.status == 410
-
-    with pytest.raises(term.TerminalRefused) as exc:
-        term.resolve_target("replica", "no-such-instance")
-    assert exc.value.status == 404
-
 
 # ── the real thing, minus Docker ─────────────────────────────────────────────
 

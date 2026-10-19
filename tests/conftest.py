@@ -147,17 +147,12 @@ def fresh_db(tmp_path, monkeypatch):
 
     Points ``common.db.DB_FILE`` at a per-test file and resets the module's
     per-thread connection cache and schema-ready flag so the schema is rebuilt
-    (and the empty-dir migration no-ops) against the fresh database. The
-    leases live in process memory (common/leases.py), so they are forgotten
-    too: a lease one test took must not stop the next one's loop.
+    (and the empty-dir migration no-ops) against the fresh database.
     """
     import common.db as db
-    from common import leases
 
     monkeypatch.setattr(db, "DB_FILE", tmp_path / "test.db")
     _fresh_database(db, tmp_path / "test.db")
-    leases.reset()
-    leases.set_owner_id(None)
 
     # Neutralise change notifications: with no running event loop, notify_change
     # would otherwise spawn HTTP-relay timers. Patching the relay covers every

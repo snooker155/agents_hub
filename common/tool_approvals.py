@@ -20,7 +20,7 @@ keep the advisory refusal: :func:`chat_context` returns None for them.
 Rows live in ``tool_approvals`` (migration 0035). The waiting process reaches
 them through :mod:`common.state_transport`, the way the agent loop reaches its
 steering messages: directly when it can open the database (the backend, a
-service replica), over ``/api/run-state`` when it is a run container with a
+resident copy's carrier), over ``/api/run-state`` when it is a run container with a
 read-only state mount.
 """
 from __future__ import annotations
@@ -248,7 +248,7 @@ def timeout_seconds(settings: Optional[Dict[str, Any]] = None) -> float:
 def transport_for(run_id: str) -> Any:
     """The state transport for ``run_id``'s approvals: the run's own transport
     in its own process (a run container may only have HTTP), direct database
-    access everywhere else (the backend, a service replica). The same rule
+    access everywhere else (the backend, a resident copy's carrier). The same rule
     agents/loop_ext/steering.py applies."""
     from common.state_transport import DirectStateTransport, get_state_transport
     if run_id and os.environ.get("AGENT_RUN_ID", "") == run_id:
@@ -284,8 +284,8 @@ def _owner_of(run: Dict[str, Any]) -> Optional[str]:
                 return owner
         except Exception:  # noqa: BLE001 - an unreadable chat leaves the turn's own user
             log.debug("tool approvals: chat owner lookup failed for %s", conv_id, exc_info=True)
-    # The person the run is charged to (common/attribution.py): right on a
-    # runner replica too, where no request carries the user.
+    # The person the run is charged to (common/attribution.py): right in a
+    # carrier process too, where no request carries the user.
     from common.auth import LOCAL_OPERATOR_ID
     launched_by = str(run.get("launched_by") or "")
     if launched_by and launched_by not in (LOCAL_OPERATOR_ID, "service"):

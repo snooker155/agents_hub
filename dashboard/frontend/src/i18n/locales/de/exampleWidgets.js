@@ -71,7 +71,7 @@ export default {
   readFilesRunTests: 'read_files, run_tests',
   memoryWorkspacePool: 'Speicher: Workspace-Pool',
   promptInstructionsCapabilitiesUsageConcatenated: 'Prompt = instructions + capabilities + usage, beim Laden zusammengefügt.',
-  importingAiderTheReadinessReport: 'Aider importieren — der Bereitschaftsbericht',
+  importingAiderTheReadinessReport: 'Aider importieren: der Bereitschaftsbericht',
   importedAnywayMarkedNeedsSetup: 'Trotzdem importiert, als „Einrichtung nötig“ markiert.',
   whatTheRepositoryAdds: 'Was das Repository hinzufügt',
   threeFilesAiderItselfIs: 'Drei Dateien. Aider selbst bleibt unangetastet.',
@@ -80,14 +80,14 @@ export default {
     server: 'POST /run und /run/stream -> `aider --message`',
     dockerfile: 'verpackt aider + den Adapter',
     restName: '…der Rest des Agenten',
-    restNote: 'unangetastet — der Hub importiert ihn nie',
+    restNote: 'unangetastet: der Hub importiert ihn nie',
   },
   aiderStages: {
     before: 'Direkt nach dem Klonen',
     after: 'Dienst gestartet, Schlüssel gesetzt',
   },
   aiderReport: {
-    beforeSummary: 'Kann noch nicht laufen — es fehlen: Endpunkt-URL, Umgebungsvariablen',
+    beforeSummary: 'Kann noch nicht laufen: es fehlen: Endpunkt-URL, Umgebungsvariablen',
     afterSummary: 'Bereit zum Ausführen',
   },
   aiderChecks: {
@@ -106,9 +106,9 @@ export default {
     packaging: 'Startanweisungen',
     packagingDetail: 'Dockerfile.agenthub im Repository gefunden',
     streaming: 'Live-Streaming',
-    streamingDetail: 'POST /run/stream — Tokens und Werkzeug-Ereignisse fließen in den Chat',
+    streamingDetail: 'POST /run/stream: Tokens und Werkzeug-Ereignisse fließen in den Chat',
     health: 'Dienst erreichbar',
-    healthMissing: 'nicht geprüft — keine URL konfiguriert',
+    healthMissing: 'nicht geprüft: keine URL konfiguriert',
     healthFix: 'Geben Sie die Dienst-URL an, damit der Hub die Antwort prüfen kann.',
     healthOk: 'http://localhost:8410/health antwortete mit HTTP 200',
   },
@@ -121,7 +121,7 @@ export default {
   },
   clone: 'Klonen',
   cloned: 'Geklont ✓',
-  illustrativeClone: '(Nur zur Veranschaulichung — das Klonen hier ändert Ihren Workspace nicht.)',
+  illustrativeClone: '(Nur zur Veranschaulichung: das Klonen hier ändert Ihren Workspace nicht.)',
   a4StageDeliveryFlow: 'ein vierstufiger Lieferablauf',
   flowNodes: {
     pm: {

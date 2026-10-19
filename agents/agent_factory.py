@@ -613,8 +613,8 @@ class AgentFactory:
         """Say which requested tools the build left out. One the catalog knows
         is only not offered here (the generic memory tools in a workspace run,
         say). One it does not know means this process runs other code than the
-        record was written for, like a replica started before the tool was
-        added: the prompt may still tell the model to use it. Reasoning
+        record was written for, like a resident copy started before the tool
+        was added: the prompt may still tell the model to use it. Reasoning
         tools are resolved later in the build and are not judged here."""
         from tools.approval import REASONING_TOOL_NAMES
         from tools.registry import get_tool_by_id

@@ -10,10 +10,9 @@ back ``file_<16 hex>``, and pass the id to a chat turn, a memory pool or a task.
 
 A record (one row of ``workspace_files``, migration 0021) belongs to exactly
 one workspace. Its content lives under the state root at
-``files/<workspace>/<file_id>/<safe name>`` and is mirrored to the object
-store through ``common/blobs.py``, so a worker or a replica on another host
-reads it back with :func:`local_path` / :func:`read_bytes` the same way it
-reads a run log. Uploading the same bytes into the same workspace returns the
+``files/<workspace>/<file_id>/<safe name>``, read back through
+``common/blobs.py`` with :func:`local_path` / :func:`read_bytes` the same way
+a run log is. Uploading the same bytes into the same workspace returns the
 record that already exists (same sha256), so a file attached to ten chat turns
 is still one file.
 
@@ -382,7 +381,6 @@ def create_file(workspace: str, name: str, data: bytes, *, mime_type: Optional[s
         # name, so it goes with the failed insert.
         shutil.rmtree(path.parent, ignore_errors=True)
         raise
-    blobs.mirror(storage_key)
     return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, row)))
 
 
@@ -564,7 +562,6 @@ def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
                 (shown, mime, size, sha, json.dumps(merged, ensure_ascii=False, default=str),
                  record["file_id"]),
             )
-        blobs.mirror(key)
         return get_file(record["file_id"]) or record, "updated"
 
     quota = max_workspace_bytes()
@@ -585,7 +582,6 @@ def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
             f"VALUES ({', '.join('?' * len(_COLUMNS))})",
             values,
         )
-    blobs.mirror(key)
     return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, values))), "added"
 
 

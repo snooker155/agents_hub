@@ -11,7 +11,7 @@ export default {
     title: 'Einen LLM-Anbieter verbinden',
     done: 'Mindestens ein Anbieter ist konfiguriert.',
     doneWithLabel: 'Mindestens ein Anbieter ist konfiguriert (Standard: {{provider}}).',
-    warn: 'Ein Anbieter ist konfiguriert, aber der Verbindungstest ist fehlgeschlagen — prüfen Sie API-Schlüssel und Basis-URL in den Einstellungen.',
+    warn: 'Ein Anbieter ist konfiguriert, aber der Verbindungstest ist fehlgeschlagen, prüfen Sie API-Schlüssel und Basis-URL in den Einstellungen.',
     todo: 'Fügen Sie in den Einstellungen einen API-Schlüssel hinzu (OpenAI / Anthropic / Google) oder die Basis-URL eines Ollama / LM Studio, das Sie betreiben.',
     openSettings: 'Einstellungen öffnen',
     testConnection: 'Verbindung testen',
@@ -30,7 +30,7 @@ export default {
   },
   chat: {
     title: 'Ersten Chat starten',
-    desc: 'Bitten Sie einen Agenten um etwas — z. B. „Fasse die Dateien in diesem Workspace zusammen“ oder „Erstelle eine Aufgabe für ein README“.',
+    desc: 'Bitten Sie einen Agenten um etwas, z. B. „Fasse die Dateien in diesem Workspace zusammen“ oder „Erstelle eine Aufgabe für ein README“.',
     openChat: 'Chat öffnen',
   },
 };

@@ -13,8 +13,8 @@ One process per instance, alive until stopped. What it listens to:
 - **its mailbox**, always: the instance page and the chat write to it.
   Each message is answered in a run of its own, with the history of the
   conversation it belongs to. Up to ``concurrency`` runs go at once, but never
-  two of one conversation; the rest wait in the mailbox. The carrier is woken
-  the moment a message is written (instances/wake.py) instead of polling.
+  two of one conversation; the rest wait in the mailbox. The carrier looks
+  at its mailbox every half second (instances/wake.py).
 - **tasks**, when the instance's ``take_tasks`` input is on: tasks assigned to
   its agent in its workspace (the orchestrator agent routes new ones instead),
   one at a time, in the workspace's ``node`` execution mode. That is the
@@ -779,7 +779,7 @@ class InstanceLoop:
     def _heartbeat(self) -> None:
         from instances import carrier, store
         while not _stopping.wait(HEARTBEAT_SECONDS):
-            carrier.heartbeat(self.instance_id, **_build_counts())
+            carrier.heartbeat(self.instance_id)
             try:
                 inst = store.get(self.instance_id) or {}
             except Exception:  # noqa: BLE001 - a transient read; the next heartbeat retries
@@ -792,16 +792,6 @@ class InstanceLoop:
                 return
 
 
-def _build_counts() -> Dict[str, Any]:
-    """This replica's agent build reuse (agents/agent_cache.py), sent with
-    every heartbeat: the builds live in this process's memory, so this is
-    the only way the hub's health snapshot sees them (common/health.py)."""
-    try:
-        from agents.agent_cache import cache_stats
-        return {"agent_builds": cache_stats()}
-    except Exception:  # noqa: BLE001 - the beat goes out without the counts
-        _logger.debug("agent build counts unavailable", exc_info=True)
-        return {}
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -824,9 +814,9 @@ def _on_sigterm(instance_id: str):
 
 #: What a turn imports on first use, heaviest first: the agent stack (with
 #: langchain-core 0.3 that pulls in transformers and torch) and litellm's model
-#: map behind the context-window lookup. Imported once the replica is ready,
-#: these cost the first turn nothing; a replica recycled by a settings change
-#: during the first run otherwise kept the person waiting 15 to 35 seconds.
+#: map behind the context-window lookup. Imported once the carrier is ready,
+#: these cost the first turn nothing; otherwise the first turn kept the person
+#: waiting 15 to 35 seconds.
 _WARM_MODULES = ("chat.pipelines", "agents.agent_factory", "providers.anthropic_driver")
 
 

@@ -66,10 +66,11 @@ runs on the one machine.
    concurrency for agent edits (`agents/revision.py`), and CORS from
    `ALLOW_ORIGINS`;
 4. registers the route modules from `dashboard/backend/routes/`;
-5. in its lifespan, starts the singleton supervisor (`common/singletons.py`),
-   the plan scheduler (`plans/scheduler.py`), the live-state publisher
-   (`common/live_state.py`) and the run watchdog (`managers/run_watchdog.py`).
-   Each starts in its own `try`, so one that fails does not take the API down.
+5. in its lifespan, starts the plan scheduler (`plans/scheduler.py`), the
+   live-state publisher (`common/live_state.py`) and the run watchdog
+   (`managers/run_watchdog.py`). Each starts in its own `try`, so one that
+   fails does not take the API down. The hub runs exactly one backend process,
+   so each of these loops exists once and keeps its state in memory.
 
 The routes are grouped by domain, almost all under `/api`:
 

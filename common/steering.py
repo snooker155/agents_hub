@@ -16,13 +16,12 @@ and reaches the run one of three ways:
 - ``system``: an operator's addition to the run's instructions. Claimed by the
   loop like an inject, but appended to the system prompt for the rest of the
   run instead of placed in the conversation (``agents/loop_ext/steering.py``).
-  Only the run's owner or an admin may send one, never an agent or a
-  delegated run (the route checks).
+  The operator sends it from the dashboard; no agent tool sends one.
 - ``switch_model``: the body is a catalog model id (``provider/model``). The
   loop claims it like the other two and runs every later model call of the
   run on that model, with the same tools bound and the trail kept
   (``agents/loop_ext/steering.py``). The route checks the id against the
-  enabled models; an agent's own credential may not send one.
+  enabled models.
 
 The loop checks for messages before every model call, from the backend
 process for a chat turn and from the run's own process (or container, over

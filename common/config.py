@@ -204,9 +204,6 @@ class Settings(BaseSettings):
     agent_docker_extra_args: str = Field(default="")
 
     # ── Security ──────────────────────────────────────────────────────────────
-    # Days an audit row is kept; 0 keeps everything.
-    audit_retention_days: int = Field(
-        default=365, validation_alias=AliasChoices("AUDIT_RETENTION_DAYS", "audit_retention_days"))
     # Secrets at rest (common/secrets.py): the key they are encrypted under
     # in the database.
     secret_key: str = Field(

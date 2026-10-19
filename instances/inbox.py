@@ -4,8 +4,8 @@ Per-instance mailbox.
 Writing to a *live* instance is not the same as starting a new run: the copy
 already exists, holds its own context and is sitting in its process, so the
 message has to reach that process rather than spawn a rival. The mailbox is the
-handoff: the API writes a row and wakes the carrier (instances/wake.py), the
-carrier claims the row and answers in its own run.
+handoff: the API writes a row, the carrier finds it on its next look at the
+mailbox (instances/wake.py), claims it and answers in its own run.
 
 Finished instances have no process to claim anything; the API delivers their
 messages directly through the chat pipeline instead (see the instances route),
@@ -70,11 +70,6 @@ def enqueue(instance_id: str, body: str, *, origin: str = "web",
              normalize_conversation(conversation_id), kind or KIND_MESSAGE,
              json.dumps(payload, default=str) if payload is not None else None),
         )
-    try:
-        from instances import wake
-        wake.signal(str(instance_id))
-    except Exception:  # noqa: BLE001 - a lost wake-up only costs the poll interval
-        log.debug("could not wake %s", instance_id, exc_info=True)
     return msg_id
 
 
@@ -97,39 +92,6 @@ def payload_of(message: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def pending_counts(instance_ids: Iterable[str]) -> Dict[str, int]:
-    """Undelivered messages per instance, one grouped query (the routing's
-    load figure, services/replicas.py)."""
-    ids = [str(i) for i in instance_ids if i]
-    if not ids:
-        return {}
-    rows = db.get_conn().execute(
-        "SELECT instance_id, COUNT(*) AS n FROM instance_inbox WHERE delivered_at IS NULL "
-        f"AND instance_id IN ({', '.join('?' * len(ids))}) GROUP BY instance_id", ids,
-    ).fetchall()
-    return {str(r["instance_id"]): int(r["n"]) for r in rows}
-
-
-def pending_holder(instance_ids: Iterable[str], conversation_id: Optional[str]) -> Optional[str]:
-    """Which of ``instance_ids`` holds an undelivered message of the
-    conversation, so a second message of it follows the first to the same
-    replica and is answered after it rather than beside it."""
-    ids = [str(i) for i in instance_ids if i]
-    if not ids:
-        return None
-    cid = normalize_conversation(conversation_id)
-    sql = ("SELECT instance_id FROM instance_inbox WHERE delivered_at IS NULL AND "
-           f"instance_id IN ({', '.join('?' * len(ids))}) AND ")
-    params: List[Any] = list(ids)
-    if cid is None:
-        sql += "conversation_id IS NULL"
-    else:
-        sql += "conversation_id = ?"
-        params.append(cid)
-    row = db.get_conn().execute(sql + " ORDER BY created_at LIMIT 1", params).fetchone()
-    return str(row["instance_id"]) if row is not None else None
 
 
 def has_pending(instance_id: str) -> bool:
@@ -252,35 +214,6 @@ def conversations(instance_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         "SELECT conversation_id, COUNT(*) AS n, MAX(COALESCE(started_at, created_at)) AS last_at "
         "FROM runs WHERE instance_id = ? GROUP BY conversation_id",
         (str(instance_id),),
-    ).fetchall():
-        rec = seen.setdefault(row["conversation_id"], {
-            "conversation_id": row["conversation_id"], "messages": 0, "runs": 0, "last_at": None})
-        rec["runs"] = int(row["n"])
-        rec["last_at"] = max(filter(None, [rec["last_at"], row["last_at"]]), default=None)
-    return _order_conversations(seen, limit)
-
-
-def service_conversations(service_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-    """A service's conversations across every replica it has had: the runs
-    that carry its id, plus what still waits in its live replicas' mailboxes."""
-    conn = db.get_conn()
-    seen: Dict[Optional[str], Dict[str, Any]] = {
-        None: {"conversation_id": None, "messages": 0, "runs": 0, "last_at": None},
-    }
-    for row in conn.execute(
-        "SELECT i.conversation_id AS conversation_id, COUNT(*) AS n, MAX(i.created_at) AS last_at "
-        "FROM instance_inbox i JOIN instances s ON s.instance_id = i.instance_id "
-        "WHERE s.service_id = ? GROUP BY i.conversation_id",
-        (str(service_id),),
-    ).fetchall():
-        rec = seen.setdefault(row["conversation_id"], {
-            "conversation_id": row["conversation_id"], "messages": 0, "runs": 0, "last_at": None})
-        rec["messages"] = int(row["n"])
-        rec["last_at"] = max(filter(None, [rec["last_at"], row["last_at"]]), default=None)
-    for row in conn.execute(
-        "SELECT conversation_id, COUNT(*) AS n, MAX(COALESCE(started_at, created_at)) AS last_at "
-        "FROM runs WHERE service_id = ? GROUP BY conversation_id",
-        (str(service_id),),
     ).fetchall():
         rec = seen.setdefault(row["conversation_id"], {
             "conversation_id": row["conversation_id"], "messages": 0, "runs": 0, "last_at": None})

@@ -2,19 +2,16 @@
 The model provider settings in force now, for this process and the ones it starts.
 
 The backend reads ``.env`` into its environment once, at its start
-(dashboard/backend/main.py), and every agent process and runner replica
-starts from a copy of that environment. A key typed on the Settings page or in
-the first run lands in ``.env``
-(routes/settings.py), so without this module it would reach nothing until a
-restart: the chat turns of a long-lived runner replica would go on without a
-key, or with the old one.
+(dashboard/backend/main.py), and every agent process it starts begins from a
+copy of that environment. A key typed on the Settings page or in the first
+run lands in ``.env`` (routes/settings.py), so without this module it would
+reach nothing until a restart.
 
 So after a write, :func:`sync_process` copies the provider settings of the
 file into this process (its environment and the shared ``settings``
 object); :func:`overlay` puts the file's values into an environment about to
-be handed to a child; and :func:`stamp` names them, so a replica started
-with other values is replaced like one started from other code
-(services/replicas.py ``is_stale``).
+be handed to a child; and :func:`stamp` names them, so a cache keyed on them
+(the model listings in common/setup_ops.py) is dropped when they change.
 
 Only values set in the file count: an install that passes its keys through
 the container environment and keeps them out of ``.env`` sees no change.

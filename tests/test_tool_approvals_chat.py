@@ -230,21 +230,11 @@ def test_a_chat_with_nobody_at_a_card_keeps_the_advisory_refusal(gate_on, monkey
 
 @pytest.fixture
 def client():
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from common.auth import Principal
     from routes import tool_approvals as routes
 
     app = FastAPI()
-
-    @app.middleware("http")
-    async def _principal(request: Request, call_next):
-        who = request.headers.get("x-test-principal")
-        if who:
-            kind, _, rest = who.partition(":")
-            uid, _, role = rest.partition(":")
-            request.state.principal = Principal(id=uid, username=uid, role=role or "member", kind=kind)
-        return await call_next(request)
 
     app.include_router(routes.router)
     return TestClient(app)
@@ -256,10 +246,9 @@ def _pending(run_id, owner="u-owner"):
                                         workspace="acme", owner=owner)
 
 
-def _answer(client, approval_id, principal=None, **body):
-    headers = {"x-test-principal": principal} if principal else {}
+def _answer(client, approval_id, **body):
     return client.post(f"/api/tool-approvals/{approval_id}",
-                       json={"decision": "approve", **body}, headers=headers)
+                       json={"decision": "approve", **body})
 
 
 def test_the_operator_answers_and_it_is_audited(client):
@@ -273,12 +262,6 @@ def test_the_operator_answers_and_it_is_audited(client):
     assert _answer(client, row["approval_id"], decision="deny").status_code == 409
     results = [i["result"] for i in audit.query(action="tool.approval")["items"]]
     assert "approved" in results and "error" in results
-
-
-def test_an_agents_own_credential_may_not_answer(client):
-    row = _pending(_rid())
-    assert _answer(client, row["approval_id"], principal="service:svc:admin").status_code == 403
-    assert tool_approvals.get(row["approval_id"])["status"] == "pending"
 
 
 def test_a_bad_decision_is_a_400(client):

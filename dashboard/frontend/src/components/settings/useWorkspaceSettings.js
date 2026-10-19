@@ -117,21 +117,6 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
-  // Where a chat turn runs is a machine-wide .env setting like streaming:
-  // saved on change, not with the workspace Save.
-  const [chatExecutionSaving, setChatExecutionSaving] = useState(false);
-  const setChatExecution = async (next) => {
-    setChatExecutionSaving(true);
-    setError('');
-    try {
-      await updateSettings({ chat_execution: next });
-      setGlobalSettings(s => ({ ...s, chat_execution: next }));
-    } catch (e) {
-      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setChatExecutionSaving(false);
-    }
-  };
 
   // Tool capability guard (agents/capability_guard.py): block | warn | off,
   // and whether a per-agent override needs a no-network container to count.
@@ -344,7 +329,6 @@ export function useWorkspaceSettings(workspace) {
     workspace, loading, saving, saved, error, save, defaultModels,
     g, setG, masked, globalSettings,
     badgeProps: { wsOverrides, envDefinedFields },
-    chatExecutionSaving, setChatExecution,
     policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval,
     toggleAutoApprove, saveHooks, importHooksFile,
     savePolicy,

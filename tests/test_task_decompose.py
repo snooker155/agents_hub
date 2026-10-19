@@ -1,6 +1,6 @@
 """The Decompose button on a task, run in the backend process.
 
-Without runner replicas the decomposer runs in a thread of the backend. That
+The decomposer runs in a thread of the backend. That
 thread called ``agent.run(prompt, run_id)``, but every agent's ``run`` takes the
 instruction as its only positional argument, so each decomposition died with a
 TypeError that ended up only in the run log.

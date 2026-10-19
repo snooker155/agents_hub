@@ -52,15 +52,6 @@ class LoopStopped(Exception):
 
 # ── Streaming ────────────────────────────────────────────────────────────────
 
-def _owner_id() -> str:
-    try:
-        from common.leases import owner_id
-        return owner_id()
-    except Exception:  # noqa: BLE001 - no lease owner id just means an unowned run record
-        log.debug("reading lease owner id failed", exc_info=True)
-        return ""
-
-
 def _hostname() -> str:
     import socket
     try:
@@ -453,9 +444,6 @@ def run_loop(
                     "resume_attempts": run.resume_attempts,
                     "heartbeat_at": utc_iso(),
                     "updated_at": utc_iso(),
-                    # Which replica is executing this loop (a loop is a thread in
-                    # the backend, not a queued process), for the deployment map.
-                    "owner": _owner_id(),
                     "host": _hostname(),
                 }
                 store.update_progress(

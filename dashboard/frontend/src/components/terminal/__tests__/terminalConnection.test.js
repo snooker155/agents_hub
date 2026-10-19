@@ -58,9 +58,9 @@ afterEach(() => vi.useRealTimers());
 
 describe('terminalSocketUrl and the ticket call', () => {
   it('builds a ws URL with the ticket and the size', () => {
-    const url = new URL(terminalSocketUrl('replica', 'inst_1', 'abc', { cols: 90, rows: 20 }));
+    const url = new URL(terminalSocketUrl('run', 'inst_1', 'abc', { cols: 90, rows: 20 }));
     expect(url.protocol).toBe('ws:');
-    expect(url.pathname).toBe('/api/terminal/replica/inst_1/ws');
+    expect(url.pathname).toBe('/api/terminal/run/inst_1/ws');
     expect(url.searchParams.get('ticket')).toBe('abc');
     expect(url.searchParams.get('cols')).toBe('90');
   });

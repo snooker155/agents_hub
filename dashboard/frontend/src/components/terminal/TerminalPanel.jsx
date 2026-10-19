@@ -9,9 +9,8 @@ import { useThemeColors } from '../../lib/themeColors';
 import { createTerminalConnection } from './terminalConnection';
 
 /*
- * A shell in a run's or a service replica's container, docked at the bottom
- * of the page (docs/terminal.md). Opened from the run page for a container
- * run and from a replica's row on the service page.
+ * A shell in a run's container, docked at the bottom of the page
+ * (docs/terminal.md). Opened from the run page for a container run.
  *
  * Hiding the panel only drops the socket: the hub keeps the shell for its
  * grace period, and opening the panel again (or reloading the page) resumes

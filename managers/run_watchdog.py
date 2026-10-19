@@ -42,8 +42,8 @@ happen once the copy stopped running.
 Flow, loop and team runs are swept together, in one pass over
 :mod:`common.entity_runs` (:func:`_sweep_entity_runs`), because since stage 0 of
 the September 2026 plan they are one table with one status vocabulary
-(``common/run_status.py``): every kind is a process with a lease, a heartbeat
-and a checkpoint, whatever store its own adapter (flow.run_store, loops.store,
+(``common/run_status.py``): every kind is a process with a heartbeat and a
+checkpoint, whatever store its own adapter (flow.run_store, loops.store,
 teams.store) wraps it in. For every one of them death is not
 the end: each writes a checkpoint as it goes, so a run whose process is gone is
 **resumed** from it rather than failed, through the kind's own resumer
@@ -76,35 +76,21 @@ exercise flow and loop resume (``tests/test_flow_resume.py``,
 
 Agent runs carry the same sign of life since stage 2 of the scaling plan:
 ``runtime/agent_run.py`` refreshes ``runs.heartbeat_at`` every few seconds
-through its state transport, so a run launched by a worker on another host is
-judged by its heartbeat, never by a pid this process cannot see. The pid and
-container probes remain for records without a heartbeat (older runs, or a
-process that died before its first beat) and only on the host that started
-them (``host`` on the record). A dead run with a checkpoint
+through its state transport, so a run is judged by its heartbeat rather than
+by a pid that may have been reused. The pid and container probes remain for
+records without a heartbeat (older runs, or a process that died before its
+first beat). A dead run with a checkpoint
 (``run_payloads.checkpoint``) is put back on its way with ``--resume-checkpoint``
 instead of failed, up to :data:`MAX_AUTO_RESUMES` times, the same rule flows
 and loops follow.
-
-The sweep runs only while this process holds the ``watchdog`` lease
-(``common/leases.py``).
-
-Each sweep runs under the lease version the tick took (a fencing token,
-``common.leases.fencing_token``). Every write that closes or resumes a run
-checks it inside its own transaction; a watchdog that stalled past its TTL
-and was superseded meets ``LeaseLost`` at its next write and ends the sweep
-there, leaving the rest to the new holder.
 """
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import logging
 import os
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
-
-from common import leases
+from typing import Any, Callable, Dict, Iterable, Optional
 
 log = logging.getLogger("managers.run_watchdog")
 
@@ -132,36 +118,6 @@ MAX_AUTO_RESUMES = int(os.environ.get("RUN_MAX_AUTO_RESUMES", "2"))
 # quiet for this long is gone. Generous, because a beat is one database write
 # that may itself wait on a busy database.
 RUN_HEARTBEAT_STALE_SECONDS = float(os.environ.get("RUN_HEARTBEAT_STALE_SECONDS", "180"))
-# The lease role this loop runs under, and its length.
-LEASE_ROLE = "watchdog"
-
-# The (role, token) the running sweep is fenced by, None when unfenced (tests
-# and callers that sweep outside the loop). A context variable rather than a
-# parameter threaded through every helper: sweep_once runs in a worker
-# thread per tick and sets it for that call only.
-_fence: contextvars.ContextVar[Optional[Tuple[str, int]]] = contextvars.ContextVar(
-    "run_watchdog_fence", default=None)
-
-
-@contextmanager
-def _fenced_write() -> Iterator[None]:
-    """Wrap one closing write in the sweep's fence: the lease is checked
-    inside the write's transaction and ``LeaseLost`` is raised before it."""
-    fence = _fence.get()
-    if fence is None:
-        yield
-        return
-    with leases.fenced(*fence):
-        yield
-
-
-def _check_fence() -> None:
-    """Raise ``LeaseLost`` when the sweep's fence no longer holds. For the
-    steps that launch a process, which cannot sit inside a transaction."""
-    fence = _fence.get()
-    if fence is not None and not leases.verify(*fence):
-        raise leases.LeaseLost(f"lease {fence[0]} is no longer held under version {fence[1]}")
-
 
 def _age_seconds(iso_ts: str) -> Optional[float]:
     try:
@@ -251,8 +207,7 @@ def _try_resume_from_checkpoint(rec: Dict[str, Any]) -> bool:
             return False
         params = dict(getattr(task, "assigned_agent_params", None) or {})
         params["resume_checkpoint"] = run_id
-        with _fenced_write():
-            rm.update_run(run_id, {"resume_attempts": attempts + 1, "heartbeat_at": None})
+        rm.update_run(run_id, {"resume_attempts": attempts + 1, "heartbeat_at": None})
         from agents import agent_launcher
         agent_launcher.start_run(task_id, agent_id, params, run_id=run_id)
         _ts.append_task_activity_log(
@@ -264,8 +219,6 @@ def _try_resume_from_checkpoint(rec: Dict[str, Any]) -> bool:
         log.warning("watchdog resumed run %s (%s) from its checkpoint (attempt %d)",
                     run_id[:8], agent_id, attempts + 1)
         return True
-    except leases.LeaseLost:
-        raise
     except Exception:
         log.exception("watchdog could not resume run %s", run_id[:8])
         return False
@@ -278,13 +231,12 @@ def _fail_run(rec: Dict[str, Any], error: str) -> None:
 
     run_id = str(rec.get("run_id") or "")
     task_id = str(rec.get("task_id") or "")
-    with _fenced_write():
-        rm.update_run(run_id, {
-            "status": "failed",
-            "finished_at": rm.utc_now_iso(),
-            "error": error,
-            "exit_code": rec.get("exit_code"),
-        })
+    rm.update_run(run_id, {
+        "status": "failed",
+        "finished_at": rm.utc_now_iso(),
+        "error": error,
+        "exit_code": rec.get("exit_code"),
+    })
     log.warning("watchdog failed run %s (%s): %s", run_id[:8], rec.get("agent_id"), error)
     if task_id and _task_owns_run(task_id, run_id):
         rm.finalize_task_from_run(run_id, "failed", 1)
@@ -307,7 +259,6 @@ def _try_autostart(rec: Dict[str, Any]) -> bool:
     agent_id = str(rec.get("agent_id") or "")
     if not run_id or not task_id or not agent_id:
         return False
-    _check_fence()
     try:
         task = _ts.get_task(UUID(task_id))
         if (
@@ -355,29 +306,15 @@ def _try_autostart(rec: Dict[str, Any]) -> bool:
         return False
 
 
-def sweep_once(fence: Optional[Tuple[str, int]] = None) -> int:
-    """Scan all runs once; returns the number of runs recovered or closed.
-
-    ``fence`` is ``(role, token)`` from the watchdog lease: every closing
-    write checks it in its own transaction, and the sweep ends at the first
-    write that finds the lease gone (``LeaseLost``), returning what it
-    handled so far.
-    """
-    reset = _fence.set(fence)
+def sweep_once() -> int:
+    """Scan all runs once; returns the number of runs recovered or closed."""
     counter = [0]
-    try:
-        _sweep(counter)
-    except leases.LeaseLost:
-        log.warning("watchdog lost the %s lease mid-sweep, stopping after %d run(s)",
-                    fence[0] if fence else LEASE_ROLE, counter[0])
-    finally:
-        _fence.reset(reset)
+    _sweep(counter)
     return counter[0]
 
 
 def _sweep(counter: list) -> None:
-    """The body of :func:`sweep_once`; ``counter[0]`` survives a
-    ``LeaseLost`` raised halfway."""
+    """The body of :func:`sweep_once`, counting into ``counter[0]``."""
     from managers import run_manager as rm
 
     for rec in rm.load_runs():
@@ -421,10 +358,8 @@ def _sweep(counter: list) -> None:
             counter[0] += _settle_stop(rec)
 
 
-    _check_fence()
     _sweep_containers()
     counter[0] += _sweep_entity_runs()
-    _check_fence()
     counter[0] += _sweep_instances()
 
 
@@ -453,8 +388,7 @@ def _settle_stop(rec: Dict[str, Any]) -> int:
         # When the process died is unknown, so the finish time is this
         # sweep's: lists of what ended lately leave such a run out.
         updates["settled_by"] = "watchdog"
-    with _fenced_write():
-        rm.update_run(run_id, updates)
+    rm.update_run(run_id, updates)
     log.warning("watchdog settled stopped run %s (%s)", run_id[:8], rec.get("agent_id"))
     return 1
 
@@ -545,7 +479,7 @@ def _entity_run_is_dead(rec: Dict[str, Any]) -> Optional[bool]:
     (:data:`_STALE_SECONDS`). A record with no heartbeat at all falls back to
     :func:`runtime.entity_launch.child_alive`, which already knows how to
     read a pid or a container name, and already returns None for a run this
-    host did not start, so a replica never guesses about another host's
+    host did not start, so the watchdog never guesses about another host's
     process the way an old pid-only record still gets a guess in
     :func:`_flow_run_is_dead`.
     """
@@ -610,15 +544,11 @@ def _fail_entity_run(rec: Dict[str, Any], error: str, *, stop_reason: str = "err
         if kind == "flow":
             from flow import run_store as _flow_run_store
             from flow.launcher import _set_flow_running
-            with _fenced_write():
-                _flow_run_store.close_flow_run(run_id, status="failed", exit_code=1, error=error)
+            _flow_run_store.close_flow_run(run_id, status="failed", exit_code=1, error=error)
             _set_flow_running(str(rec.get("flow_id") or rec.get("entity_id") or ""), False)
         else:
-            with _fenced_write():
-                entity_runs.close(run_id, status="failed", exit_code=1, error=error,
-                                  stop_reason=stop_reason)
-    except leases.LeaseLost:
-        raise
+            entity_runs.close(run_id, status="failed", exit_code=1, error=error,
+                              stop_reason=stop_reason)
     except Exception:
         log.exception("watchdog could not close %s run %s", kind, run_id[:8])
         return
@@ -658,19 +588,16 @@ def _resume_or_fail_entity_run(rec: Dict[str, Any]) -> int:
                 # the transition table allows; the flow resumer moves the
                 # record back to running itself.
                 from common import entity_runs
-                with _fenced_write():
-                    entity_runs.update(run_id, {
-                        "status": "failed", "finished_at": entity_runs.utc_now_iso(),
-                        "error": "Run process stopped without finalizing; resuming from its checkpoint.",
-                    }, notify=False)
+                entity_runs.update(run_id, {
+                    "status": "failed", "finished_at": entity_runs.utc_now_iso(),
+                    "error": "Run process stopped without finalizing; resuming from its checkpoint.",
+                }, notify=False)
                 resumer(rec)
                 log.warning(
                     "watchdog resumed %s run %s from its checkpoint (attempt %d)",
                     kind, run_id[:8], attempts + 1,
                 )
                 return 1
-            except leases.LeaseLost:
-                raise
             except Exception:
                 log.exception("watchdog could not resume %s run %s", kind, run_id[:8])
 
@@ -771,7 +698,6 @@ class RunWatchdog:
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
-        self._leader = False
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
@@ -791,30 +717,13 @@ class RunWatchdog:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._task.cancel()
         self._task = None
-        if self._leader:
-            self._leader = False
-            try:
-                from common import leases
-                await asyncio.to_thread(leases.release, LEASE_ROLE)
-            except Exception:  # noqa: BLE001 - shutdown must not raise, the lease simply lapses on its own TTL
-                log.debug("lease release failed during watchdog stop", exc_info=True)
-
-    def holds_lease(self) -> bool:
-        return self._leader
 
     async def _loop(self) -> None:
-        from common import leases
-
-        ttl = max(TICK_SECONDS * 3, leases.DEFAULT_TTL_SECONDS)
         while not self._stop.is_set():
             try:
-                self._leader = await asyncio.to_thread(leases.hold, LEASE_ROLE, ttl)
-                token = leases.fencing_token(LEASE_ROLE) if self._leader else None
-                if self._leader:
-                    fence = (LEASE_ROLE, token) if token is not None else None
-                    closed = await asyncio.to_thread(sweep_once, fence)
-                    if closed:
-                        log.info("watchdog closed %d dead run(s)", closed)
+                closed = await asyncio.to_thread(sweep_once)
+                if closed:
+                    log.info("watchdog closed %d dead run(s)", closed)
             except Exception:
                 log.exception("watchdog tick failed")
             # Messages written to a busy instance wait in its mailbox: the

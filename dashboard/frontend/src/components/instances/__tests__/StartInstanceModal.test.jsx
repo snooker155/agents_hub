@@ -6,9 +6,8 @@ import { I18nProvider } from '../../../i18n';
 // The Run button's form: the agent starts with the workspace the operator
 // picked, and the page of the copy opens; a runner opens with the agent
 // picked, since it
-// answers for whichever agent a message names. A refusal from the backend (a
-// paused service, one at its replica limit) is shown inside the form instead
-// of being swallowed.
+// answers for whichever agent a message names. A refusal from the backend is
+// shown inside the form instead of being swallowed.
 
 const ok = (data) => Promise.resolve({ data });
 

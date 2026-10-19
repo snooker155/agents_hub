@@ -14,16 +14,15 @@ right now, in one of three modes:
   conversation's history. With ``send`` (the run page, which does not own the
   conversation) this route starts that turn itself: ``{"next": "sent"}``.
 - ``system``: stored and taken by the loop like an inject, but appended to
-  the run's system prompt for the rest of the run. Only an operator may send
-  it: the run's owner (the chat's owner, the person who filed the task) or an
-  admin, never the service credential an agent's own process carries, so no
-  agent and no delegated run can raise its own instructions.
+  the run's system prompt for the rest of the run. Only the operator sends
+  it, from the dashboard: no agent tool reaches this route, so no agent and
+  no delegated run can raise its own instructions.
 - ``switch_model``: the message is a catalog model id (``provider/model``,
   checked against the enabled models and stored in that form). The loop
   moves the run to that model before its next model call and keeps going
-  with its whole trail. Anyone who may steer the run may switch it, except
-  the service credential: an agent must not move its own run to another
-  (and possibly dearer) model.
+  with its whole trail. The operator decides it: no agent tool reaches this
+  route, so an agent cannot move its own run to another (and possibly
+  dearer) model.
 
 ``run_id`` may also name a team run (teams/store.py): an inject is posted on
 the team's board as the user's message for the next member to read, an
@@ -34,11 +33,8 @@ message is (pending, delivered at step N, expired, interrupted). A message
 the run never took before it finished is marked expired on the first read
 after the run ended.
 
-Access follows the other single-run routes: the caller must see the run's
-workspace, and, being a write, steering in ``multi`` mode also needs an
-editor's role there; a ``system`` message also needs the run's owner or an
-admin (:func:`_require_operator`). Every write lands in the audit log as
-``run.steer``.
+Access follows the other single-run routes: the one operator may steer any
+run. Every write lands in the audit log as ``run.steer``.
 """
 from __future__ import annotations
 
@@ -82,27 +78,6 @@ def _require_can_steer(request: Request, run: Dict[str, Any]):
     principal = identity.request_principal(request)
     access.require_visible(principal, run.get("workspace"))
     return principal
-
-
-def _require_operator(principal: Any, run: Dict[str, Any]) -> None:
-    """403 unless ``principal`` may add to this run's instructions.
-
-    The service credential is refused first and always: it is what a run's
-    own process (and every run it delegates to) presents to this API, so
-    accepting it would let an agent rewrite its own system prompt. The one
-    operator may.
-    """
-    if principal is None or getattr(principal, "kind", "") == "service":
-        raise HTTPException(status_code=403,
-                            detail="a system message is sent by an operator, not by an agent or a delegated run")
-
-
-def _require_not_agent(principal: Any) -> None:
-    """403 for the service credential, which every run's own process and
-    every delegated run carry: a model switch is a person's decision."""
-    if principal is not None and getattr(principal, "kind", "") == "service":
-        raise HTTPException(status_code=403,
-                            detail="a model switch is sent by a person, not by an agent or a delegated run")
 
 
 def _catalog_model(text: str) -> str:
@@ -344,11 +319,7 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             raise HTTPException(status_code=404, detail="Run not found")
         return _steer_team(team_run, body, request)
     principal = _require_can_steer(request, run)
-    if (body.mode or "").strip().lower() == steering.MODE_SWITCH_MODEL:
-        _require_not_agent(principal)
     mode, text = _validated(body)
-    if mode == steering.MODE_SYSTEM:
-        _require_operator(principal, run)
 
     status = str(run.get("status") or "")
     if status != "running":

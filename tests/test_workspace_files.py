@@ -107,28 +107,12 @@ def test_the_workspace_total_is_enforced(monkeypatch):
     service.create_file("beta", "two.txt", b"2" * 100)
 
 
-def test_content_is_mirrored_and_fetched_back_through_the_blob_store(monkeypatch):
-    from common import blobs
-    mirrored = []
-    monkeypatch.setattr(blobs, "mirror", lambda key: mirrored.append(key) or True)
+def test_content_lives_under_the_state_root_and_is_read_back():
     rec = service.create_file("acme", "report.csv", b"a,b\n1,2\n")
     key = f"files/acme/{rec['file_id']}/report.csv"
-    assert mirrored == [key]
-
-    # Another host has the row but not the file: the store supplies it.
     local = AGENTS_HUB_ROOT / key
-    saved = local.read_bytes()
-    local.unlink()
-    fetched = []
-
-    def _ensure_local(k):
-        fetched.append(k)
-        local.write_bytes(saved)
-        return local
-
-    monkeypatch.setattr(blobs, "ensure_local", _ensure_local)
+    assert local.read_bytes() == b"a,b\n1,2\n"
     assert service.local_path(rec["file_id"]) == local
-    assert fetched == [key]
 
 
 def test_materialize_uses_safe_names_and_never_overwrites(tmp_path):

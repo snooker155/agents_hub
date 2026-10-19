@@ -1,10 +1,9 @@
-// The terminal panel: a shell in a run's or a service replica's container
+// The terminal panel: a shell in a run's container
 // (components/terminal/, docs/terminal.md).
 export default {
   title: 'Terminal',
   open: 'Terminal',
   openRunHint: 'Open a shell in this run\'s container',
-  openReplicaHint: 'Open a shell in this replica\'s container',
   status: {
     idle: 'Starting',
     connecting: 'Connecting',

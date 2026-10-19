@@ -56,7 +56,7 @@ _json_err = json_err
 
 def _mtime(path: Any) -> float:
     """A file's modification time, or 0 when it is missing. Part of every cache
-    key below, so a long-lived process (a runner replica) sees an edited index
+    key below, so a long-lived process (the backend) sees an edited index
     on its next call instead of the text it read at start."""
     try:
         return path.stat().st_mtime

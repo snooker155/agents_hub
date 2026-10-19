@@ -43,14 +43,6 @@ def rel(path: Any) -> str:
 class BlobStore:
     """The file operations, each taking a root-relative key."""
 
-    def configured(self) -> bool:
-        """Always False: files live on this host's disk and nowhere else."""
-        return False
-
-    def mirror(self, rel_path: str) -> bool:
-        """Nothing to mirror anywhere; kept for the writers that call it."""
-        return False
-
     def ensure_local(self, rel_path: str) -> Optional[Path]:
         p = AGENTS_HUB_ROOT / rel_path
         return p if p.is_file() else None
@@ -114,16 +106,6 @@ def reset() -> None:
 
 # ── public functions, keyed by a root-relative path ─────────────────────────
 
-def configured() -> bool:
-    """Always False: there is no remote store in this edition."""
-    return False
-
-
-def mirror(rel_path: str) -> bool:
-    """A no-op that returns False: files are only ever on this host."""
-    return False
-
-
 def ensure_local(rel_path: str) -> Optional[Path]:
     """The local path for ``rel_path``, or None when the file is not there."""
     try:
@@ -178,8 +160,6 @@ __all__ = [
     "rel",
     "store",
     "reset",
-    "configured",
-    "mirror",
     "ensure_local",
     "read_text",
     "read_bytes",

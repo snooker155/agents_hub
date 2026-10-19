@@ -126,7 +126,7 @@ def test_fire_job_self_claims_an_unclaimed_job(store, no_side_effects):
 
 def test_fire_job_self_claim_is_atomic_across_a_race(store, no_side_effects):
     """Two callers each hold their own snapshot of the same unclaimed, due
-    job (as if two replicas both read it just before either claimed it) and
+    job (as if a tick and a run-now both read it before either claimed it) and
     both call fire_job directly. The self-claim inside fire_job is the same
     atomic PlanStore operation used by the scheduler tick, so exactly one of
     them actually fires — the other gets back a "locked" result instead of

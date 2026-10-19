@@ -99,8 +99,8 @@ The nginx target is the deployable one. Its config is `docker/nginx.conf`, plus
 `docker/20-agents-hub-config.sh`, which the stock nginx entrypoint runs at
 startup to write two generated includes:
 
-- the `agents_hub_backend` upstream, from `BACKEND_SERVERS` (space-separated
-  `host:port` list, `least_conn` across them)
+- the `agents_hub_backend` upstream, from `BACKEND_SERVER` (the backend's
+  `host:port`)
 - the view-asset cache, from `API_ASSET_CACHE_SECONDS` (`0` disables it)
 
 What is cached and what deliberately is not:

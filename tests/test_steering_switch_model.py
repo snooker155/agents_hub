@@ -286,23 +286,13 @@ def test_delivery_of_a_switch_is_announced_with_the_model(switching):
 
 @pytest.fixture
 def client(monkeypatch):
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from common.auth import Principal
     from routes import steering as steering_routes
     from tools import delegation
 
     monkeypatch.setattr(delegation, "enabled_models", lambda: list(CATALOG))
     app = FastAPI()
-
-    @app.middleware("http")
-    async def _principal(request: Request, call_next):
-        who = request.headers.get("x-test-principal")
-        if who:
-            kind, _, rest = who.partition(":")
-            uid, _, role = rest.partition(":")
-            request.state.principal = Principal(id=uid, username=uid, role=role or "member", kind=kind)
-        return await call_next(request)
 
     app.include_router(steering_routes.router)
     return TestClient(app)
@@ -314,10 +304,8 @@ def _open(run_id, **kw):
     run_manager.open_run(run_id, kw.pop("agent_id", "helper"), link_to_session=False, **kw)
 
 
-def _switch(client, run_id, model, principal=None):
-    headers = {"x-test-principal": principal} if principal else {}
-    return client.post(f"/api/runs/{run_id}/steer", json={"message": model, "mode": "switch_model"},
-                       headers=headers)
+def _switch(client, run_id, model):
+    return client.post(f"/api/runs/{run_id}/steer", json={"message": model, "mode": "switch_model"})
 
 
 def test_the_route_stores_the_canonical_catalog_id(client):
@@ -335,12 +323,6 @@ def test_the_route_refuses_a_model_that_is_not_enabled(client):
     resp = _switch(client, run_id, "openai/gpt-zzz")
     assert resp.status_code == 400 and "not an enabled catalog model" in resp.json()["detail"]
     assert steering.pending_count(run_id) == 0
-
-
-def test_an_agent_may_not_switch_its_own_run(client):
-    run_id = _rid()
-    _open(run_id, session_type="task")
-    assert _switch(client, run_id, "openai/gpt-b", principal="service:svc:admin").status_code == 403
 
 
 def test_a_team_run_takes_no_switch(client, monkeypatch):

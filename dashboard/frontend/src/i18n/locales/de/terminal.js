@@ -1,10 +1,9 @@
-// Das Terminal-Panel: eine Shell im Container eines Laufs oder einer
-// Service-Replik (components/terminal/, docs/terminal.md).
+// Das Terminal-Panel: eine Shell im Container eines Laufs
+// (components/terminal/, docs/terminal.md).
 export default {
   title: 'Terminal',
   open: 'Terminal',
   openRunHint: 'Eine Shell im Container dieses Laufs öffnen',
-  openReplicaHint: 'Eine Shell im Container dieser Replik öffnen',
   status: {
     idle: 'Startet',
     connecting: 'Verbinde',

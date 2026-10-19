@@ -1,6 +1,5 @@
 """
-A shell in a run's container or a service replica's container, for the
-dashboard's terminal panel (docs/terminal.md).
+A shell in a run's container, for the dashboard's terminal panel (docs/terminal.md).
 
 Why the hub keeps the session, not the socket
 ---------------------------------------------
@@ -29,13 +28,9 @@ host has ptys; elsewhere opening a terminal is refused with a message.
 Who may open one
 ----------------
 A shell reaches everything the run can: its files, its environment, its
-network. So, in ``multi`` mode, an admin, or the run's owner (the chat's
-owner, the person who filed the task; for a replica, whoever deployed the
-service) who is also at least an editor of its workspace; a run whose owner
-is not known is left to admins. Never the service credential: that is what
-an agent's own process presents, and an agent does not get a shell in its own
-sandbox through the dashboard. Outside ``multi`` the one operator may. A
-user may hold ``TERMINAL_MAX_PER_USER`` (3) sessions at once, attached or
+network. The one operator may open it; an agent never gets a shell in its
+own sandbox through the dashboard, because only the dashboard mints the
+ticket a terminal needs. The operator may hold ``TERMINAL_MAX_PER_USER`` (3) sessions at once, attached or
 waiting out their grace period.
 
 Every open, resume and close lands in the audit log (``terminal.open``,
@@ -61,7 +56,7 @@ from common.auth import Principal
 
 log = logging.getLogger(__name__)
 
-KINDS = ("run", "replica")
+KINDS = ("run",)
 
 DEFAULT_GRACE_SECONDS = 60
 DEFAULT_IDLE_SECONDS = 900
@@ -200,28 +195,6 @@ def _run_target(run_id: str) -> Target:
                   label=str(run.get("title") or run.get("agent_id") or run_id))
 
 
-def _replica_target(instance_id: str) -> Target:
-    from instances import carrier
-    from instances import store as istore
-    replica = istore.get(str(instance_id))
-    if replica is None:
-        raise TerminalRefused(f"Replica {instance_id} not found.", 404)
-    replica = carrier.sync(replica) or replica
-    container = str(replica.get("container_name") or "")
-    if replica.get("carrier_mode") != "docker" or not container:
-        raise TerminalRefused(
-            "This replica runs as a process on the hub's host, not in a container, "
-            "so there is no container to open a shell in.")
-    if replica.get("state") not in istore.LIVE_STATES:
-        raise TerminalRefused(
-            f"This replica has {replica.get('state') or 'stopped'}; its container is gone.", 410)
-    _check_container(container, str(replica.get("carrier_host") or ""), "replica")
-    return Target(kind="replica", id=instance_id, container=container,
-                  workspace=replica.get("workspace") or None,
-                  owner=str(replica.get("started_by") or "") or None,
-                  label=str(replica.get("label") or instance_id))
-
-
 def resolve_target(kind: str, target_id: str) -> Target:
     """The container behind ``kind``/``target_id``, or :class:`TerminalRefused`
     saying why there is none to open a shell in."""
@@ -229,7 +202,7 @@ def resolve_target(kind: str, target_id: str) -> Target:
         raise TerminalRefused(f"Unknown terminal target kind {kind!r}.", 404)
     if os.name != "posix":
         raise TerminalRefused("A terminal needs a POSIX host for its pseudo-terminal.", 501)
-    return _run_target(target_id) if kind == "run" else _replica_target(target_id)
+    return _run_target(target_id)
 
 
 # ── Access ───────────────────────────────────────────────────────────────────
@@ -239,18 +212,14 @@ def authorize(principal: Optional[Principal], target: Target) -> None:
     shell in ``target`` (see the module docstring, "Who may open one")."""
     if principal is None:
         raise TerminalRefused("Authentication required.", 401)
-    if principal.kind in ("service", "run"):
-        raise TerminalRefused(
-            "A terminal is opened by a person, not by an agent's or a run's own credential.", 403)
     # The operator opens a terminal in anything of theirs, which is everything.
 
 
 def principal_from_ticket(found: Dict[str, Any]) -> Optional[Principal]:
     """The principal a verified terminal ticket stands for: the local
-    operator, the only one that mints them. A ticket of any other kind
-    (one minted before accounts went away) resolves to nobody."""
-    from common.auth import LOCAL_PRINCIPAL
-    return LOCAL_PRINCIPAL if found.get("kind") == "local" else None
+    operator, the only one that mints them."""
+    from common.auth import LOCAL_OPERATOR_ID, LOCAL_PRINCIPAL
+    return LOCAL_PRINCIPAL if found.get("user") == LOCAL_OPERATOR_ID else None
 
 
 # ── The shell process ────────────────────────────────────────────────────────

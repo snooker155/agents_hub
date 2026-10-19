@@ -202,8 +202,8 @@ def prune_events(retention_days: Optional[int] = None) -> int:
     """Drop guardrail events past the retention window (env
     ``AGENTS_HUB_GUARDRAIL_EVENTS_RETENTION_DAYS``, default 30 days).
 
-    Called from common.maintenance's periodic pass, next to
-    ``common.audit.prune()`` and the scheduler's ``prune_old_fires``.
+    Called from common.maintenance's periodic pass, next to the scheduler's
+    ``prune_old_fires``.
     """
     days = _events_retention_days() if retention_days is None else int(retention_days)
     try:

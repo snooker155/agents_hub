@@ -298,7 +298,7 @@ const aiderReport = (t) => ({
       { id: 'repo', label: t('exampleWidgets.aiderChecks.repo'), ok: true, required: true, detail: 'clone @ 4f21ac9' },
       { id: 'manifest', label: t('exampleWidgets.aiderChecks.manifest'), ok: true, required: true, detail: t('exampleWidgets.aiderChecks.manifestDetail') },
       { id: 'agent_id', label: t('exampleWidgets.aiderChecks.agentId'), ok: true, required: true, detail: 'aider' },
-      { id: 'runtime', label: t('exampleWidgets.aiderChecks.runtime'), ok: true, required: true, detail: 'http — POST /run' },
+      { id: 'runtime', label: t('exampleWidgets.aiderChecks.runtime'), ok: true, required: true, detail: 'http, POST /run' },
       {
         id: 'endpoint', label: t('exampleWidgets.aiderChecks.endpoint'), ok: false, required: true,
         detail: t('exampleWidgets.aiderChecks.endpointMissing'),
@@ -325,7 +325,7 @@ const aiderReport = (t) => ({
       { id: 'repo', label: t('exampleWidgets.aiderChecks.repo'), ok: true, required: true, detail: 'clone @ 4f21ac9' },
       { id: 'manifest', label: t('exampleWidgets.aiderChecks.manifest'), ok: true, required: true, detail: t('exampleWidgets.aiderChecks.manifestDetail') },
       { id: 'agent_id', label: t('exampleWidgets.aiderChecks.agentId'), ok: true, required: true, detail: 'aider' },
-      { id: 'runtime', label: t('exampleWidgets.aiderChecks.runtime'), ok: true, required: true, detail: 'http — POST /run' },
+      { id: 'runtime', label: t('exampleWidgets.aiderChecks.runtime'), ok: true, required: true, detail: 'http, POST /run' },
       { id: 'endpoint', label: t('exampleWidgets.aiderChecks.endpoint'), ok: true, required: true, detail: 'http://localhost:8410' },
       { id: 'env', label: t('exampleWidgets.aiderChecks.env'), ok: true, required: true, detail: t('exampleWidgets.aiderChecks.envSet') },
       { id: 'packaging', label: t('exampleWidgets.aiderChecks.packaging'), ok: true, required: false, detail: t('exampleWidgets.aiderChecks.packagingDetail') },
@@ -343,7 +343,7 @@ function ReportCheckRow({ check }) {
       <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
       <span className="min-w-0">
         <span className="font-semibold text-gray-800">{check.label}</span>
-        {check.detail && <span className="text-gray-500"> — {check.detail}</span>}
+        {check.detail && <span className="text-gray-500">: {check.detail}</span>}
         {!check.ok && check.fix && <span className="block text-gray-400 italic">{check.fix}</span>}
       </span>
     </li>

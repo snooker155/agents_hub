@@ -142,12 +142,6 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
     except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
         log.debug("run_watchdog liveness check failed", exc_info=True)
         services["run_watchdog"] = None
-    try:
-        from common.singletons import supervisor
-        services["singleton_supervisor"] = supervisor.is_running()
-    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
-        log.debug("singleton_supervisor liveness check failed", exc_info=True)
-        services["singleton_supervisor"] = None
     # The external-state publisher is an asyncio task on the app, so it is only
     # observable when a running app hands us its state.
     pub = getattr(app_state, "external_publisher", None) if app_state is not None else None
@@ -199,47 +193,10 @@ def _entity_runs() -> Dict[str, Any]:
         return {"total_by_kind": {}, "active_by_kind": {}, "error": str(e)}
 
 
-#: A replica's counts older than this are left out: it stopped beating.
-BUILD_COUNTS_FRESH_SECONDS = 120.0
-
-
-def _replica_build_counts() -> Dict[str, int]:
-    """The agent build counts every live instance sent with its last
-    heartbeat (runtime/instance_run.py ``_build_counts``), summed. The builds
-    live in each replica's memory, where chat, /v1 and widget turns
-    run, so they are only seen through what each replica reports."""
-    from datetime import datetime, timezone
-    from instances.store import LIVE_STATES
-
-    out = {"entries": 0, "hits": 0, "misses": 0, "replicas": 0}
-    now = datetime.now(timezone.utc)
-    rows = db.get_conn().execute(
-        f"SELECT extra FROM instances WHERE archived_at IS NULL "
-        f"AND state IN ({', '.join('?' * len(LIVE_STATES))})", LIVE_STATES).fetchall()
-    for row in rows:
-        extra = db.loads(row["extra"], {}) or {}
-        counts = extra.get("agent_builds")
-        if not isinstance(counts, dict):
-            continue
-        try:  # heartbeat_at is not a column of instances: it lives in extra
-            beat = datetime.fromisoformat(str(extra.get("heartbeat_at")).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if beat.tzinfo is None:
-            beat = beat.replace(tzinfo=timezone.utc)
-        if (now - beat).total_seconds() > BUILD_COUNTS_FRESH_SECONDS:
-            continue
-        out["replicas"] += 1
-        for key in ("entries", "hits", "misses"):
-            out[key] += int(counts.get(key) or 0)
-    return out
-
-
 def _agent_cache() -> Dict[str, Any]:
     """Agent build reuse (agents/agent_cache.py): how often a run found its
     agent already built instead of assembling prompt, tools and model again.
-    Not the providers' prompt cache. Totals over this process and every live
-    replica; ``here`` and ``replicas`` keep the two apart."""
+    Not the providers' prompt cache."""
     try:
         from common.config import settings
         from agents.agent_cache import cache_stats
@@ -247,16 +204,9 @@ def _agent_cache() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - a health probe must never raise
         log.debug("agent cache stats failed", exc_info=True)
         return {"enabled": None}
-    try:
-        replicas = _replica_build_counts()
-    except Exception:  # noqa: BLE001 - this process's own counts still show
-        log.debug("replica build counts failed", exc_info=True)
-        replicas = {"entries": 0, "hits": 0, "misses": 0, "replicas": 0}
     return {
         "enabled": bool(settings.agent_cache_enabled),
-        **{k: here.get(k, 0) + replicas[k] for k in ("entries", "hits", "misses")},
-        "here": here,
-        "replicas": replicas,
+        **{k: here.get(k, 0) for k in ("entries", "hits", "misses")},
     }
 
 

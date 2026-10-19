@@ -12,11 +12,8 @@ For a person:
   "approve"|"deny", "note": "..."}``. 409 when the call is no longer waiting
   (answered by someone else, timed out, or the run was stopped).
 
-Who may answer: someone who sees the run's workspace and is the run's owner or
-an admin; outside ``multi`` mode, the one operator. The rule steering's
-``system`` mode follows (routes/steering.py), and for the same reason the
-service credential is always refused: it is what a run's own process presents
-to this API, and an agent must never approve its own call. Every answer lands
+Who may answer: the one operator, from the dashboard. No agent tool reaches
+this route, so an agent never approves its own call. Every answer lands
 in the audit log as ``tool.approval``; the waiting run adds its own
 ``tool.policy`` row with ``human_approved`` or ``human_denied``.
 
@@ -82,9 +79,6 @@ def _require_answerer(request: Request, approval: Dict[str, Any], run: Dict[str,
 def require_answerer(principal: Any, approval: Dict[str, Any], run: Dict[str, Any]):
     """:func:`_require_answerer` for a principal already in hand."""
     access.require_visible(principal, _workspace(approval, run))
-    if principal is not None and getattr(principal, "kind", "") in ("service", "run"):
-        raise HTTPException(status_code=403,
-                            detail="a tool call is approved by a person, not by an agent or a run")
     if principal is None:
         return None
     if principal.is_admin:

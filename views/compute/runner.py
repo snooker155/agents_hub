@@ -29,8 +29,8 @@ MAX_WALL_SECONDS = 30.0
 
 
 def _publish(view_id: str, event: Dict[str, Any]) -> None:
-    # publish_event, not the broker itself: the view_compute tool may run on a
-    # service replica, whose process has no broker loop (see views/store.py).
+    # publish_event, not the broker itself: the view_compute tool may run in a
+    # subprocess, which has no broker loop (see views/store.py).
     try:
         from common.session_broker import publish_event
         publish_event(f"view:{view_id}", event)

@@ -1,8 +1,8 @@
 """
 Live view events from a process without the broker's loop.
 
-An agent that applies a view op (tools/views.py, tools/geometry.py) runs on a
-service replica or in a subprocess as often as in the backend, and only the
+An agent that applies a view op (tools/views.py, tools/geometry.py) runs in a
+subprocess or a carrier as often as in the backend, and only the
 backend owns the event loop the Studio's ``/api/stream`` hangs off. The op is
 persisted either way; what used to be lost out of process was the
 ``view_op`` broadcast, so the open Studio showed no intermediate scenes until

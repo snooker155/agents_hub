@@ -1,6 +1,4 @@
 export default {
-  serviceDown: 'Dienst {{name}} ist pausiert: Chat-Züge laufen nicht',
-  serviceDownHint: 'Chat-Züge laufen auf den Replikaten dieses Dienstes. Setzen Sie ihn auf seiner Seite fort.',
   chat: 'Chat',
   chats: 'Chats',
   notSaved: 'Nicht gespeichert',

@@ -89,15 +89,12 @@ def _write(rel_path: str, text: str = "hello") -> Path:
 
 # ── local backend: the default ───────────────────────────────────────────────
 
-def test_local_backend_is_a_noop_and_unconfigured():
+def test_local_backend_reads_what_is_on_disk():
     store = blobs.LocalBlobStore()
-    assert store.configured() is False
     p = _write("run_logs/local_only.log", "local")
-    # Nothing to copy anywhere on one host.
-    assert store.mirror(blobs.rel(p)) is False
     assert store.ensure_local(blobs.rel(p)) == p
     assert store.read_text(blobs.rel(p)) == "local"
-    # Nothing ever written locally: no remote to fetch it from either.
+    # Nothing ever written: nothing to read.
     assert store.ensure_local("run_logs/nowhere.log") is None
     assert store.read_text("run_logs/nowhere.log", default="fallback") == "fallback"
     assert store.read_bytes("run_logs/nowhere.log") is None
@@ -105,23 +102,14 @@ def test_local_backend_is_a_noop_and_unconfigured():
     assert blobs.rel(p) in store.list("run_logs")
 
 
-def test_module_level_configured_is_false_without_a_blob_url():
-    assert blobs.configured() is False
+def test_module_level_store_is_the_local_one():
     assert isinstance(blobs.store(), blobs.LocalBlobStore)
 
-
-# ── S3 backend: round trip ───────────────────────────────────────────────────
 
 # ── failures are swallowed, never raised ─────────────────────────────────────
 
 def test_module_functions_never_raise_even_with_a_broken_store(monkeypatch):
     class Boom(blobs.BlobStore):
-        def configured(self):
-            raise RuntimeError("boom")
-
-        def mirror(self, rel_path):
-            raise RuntimeError("boom")
-
         def ensure_local(self, rel_path):
             raise RuntimeError("boom")
 
@@ -141,8 +129,6 @@ def test_module_functions_never_raise_even_with_a_broken_store(monkeypatch):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(blobs, "store", lambda: Boom())
-    assert blobs.configured() is False
-    assert blobs.mirror("x") is False
     assert blobs.ensure_local("x") is None
     assert blobs.read_text("x", default="dd") == "dd"
     assert blobs.read_bytes("x") is None

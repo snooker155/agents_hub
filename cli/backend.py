@@ -323,9 +323,8 @@ class DirectBackend:
         """Drive the FastAPI app in-process, over its real ASGI request cycle.
 
         Deliberately not entered as a ``with TestClient(app) as client:``
-        block: that form also runs the app's lifespan (the singleton
-        supervisor, the plan scheduler, the run watchdog, the deployment
-        heartbeat), which is slow to start and stop for one CLI call and is
+        block: that form also runs the app's lifespan (the plan scheduler,
+        the run watchdog, the live-state publisher), which is slow to start and stop for one CLI call and is
         not needed for ordinary request/response routes. The limitation this
         leaves: a route whose behaviour depends on something only the
         lifespan starts will not work through this path. None of the

@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import blobs, db
+from common import db
 from common.paths import workspace_views_dir
 from views.models import ViewEnvelope, ViewOwner, ViewValidationError, normalize_envelope, base_spec_for
 from views import ops as vops
@@ -62,22 +62,6 @@ def _json_bytes(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError):
         return 0
-
-
-def _mirror_view_file(path: Path) -> None:
-    """Mirror one view file to the blob store, best-effort (common/blobs.py)."""
-    try:
-        blobs.mirror(blobs.rel(path))
-    except Exception:  # noqa: BLE001 - mirroring is best-effort, the local file is the source of truth
-        log.debug("view file mirror failed", exc_info=True)
-
-
-def _mirror_view_dir(view_dir: Path) -> None:
-    """Mirror every file currently in a view's dir, so a backend replica or
-    worker on another host can serve it even though this host wrote it."""
-    for f in view_dir.rglob("*"):
-        if f.is_file():
-            _mirror_view_file(f)
 
 
 def _dir_size(path: Path) -> int:
@@ -186,7 +170,6 @@ def create_view(
         body = str(env.spec.get("body") or "")
         if body:
             _seed_code_version(env.view_id, workspace, body)
-    _mirror_view_dir(view_dir)
     return env
 
 
@@ -227,16 +210,7 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     view_dir = _view_dir(row.get("workspace"), view_id)
     view_file = view_dir / "view.json"
     if not view_file.exists():
-        # Not on this host: a backend replica or worker elsewhere may have
-        # written it and mirrored it to the blob store (common/blobs.py).
-        try:
-            fetched = blobs.ensure_local(blobs.rel(view_file))
-        except Exception:  # noqa: BLE001 - blob store backends raise anything, a miss means not found
-            log.debug("blob fetch of view.json failed", exc_info=True)
-            fetched = None
-        if fetched is None:
-            return None
-        view_file = fetched
+        return None
     try:
         env = json.loads(view_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -361,12 +335,11 @@ def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = No
             (env.get("title") or "", env.get("summary") or "", _dir_size(view_dir),
              utc_iso(), view_id),
         )
-    _mirror_view_dir(view_dir)
     return True
 
 
 def delete_view(view_id: str) -> bool:
-    """Remove a view's dir (local and mirrored) and index row.
+    """Remove a view's dir and index row.
 
     Returns False for an unknown id.
     """
@@ -379,19 +352,8 @@ def delete_view(view_id: str) -> bool:
     except Exception:  # noqa: BLE001 - a service that cannot be stopped must not block deleting the view
         log.debug("stopping view service on delete failed", exc_info=True)
     view_dir = _view_dir(row.get("workspace"), view_id)
-    try:
-        mirrored_prefix = blobs.rel(view_dir) + "/"
-    except Exception:  # noqa: BLE001 - blob store backends raise anything, delete continues locally
-        log.debug("blob prefix lookup failed", exc_info=True)
-        mirrored_prefix = None
     if view_dir.exists():
         shutil.rmtree(view_dir, ignore_errors=True)
-    if mirrored_prefix:
-        try:
-            for key in blobs.list(mirrored_prefix):
-                blobs.delete(key)
-        except Exception:  # noqa: BLE001 - blob store backends raise anything, the view row is still removed
-            log.debug("blob cleanup on view delete failed", exc_info=True)
     with db.transaction() as conn:
         conn.execute("DELETE FROM views WHERE view_id = ?", (view_id,))
     return True
@@ -434,7 +396,6 @@ def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> st
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
-    _mirror_view_file(dest)
     return f"asset://{rel}"
 
 
@@ -461,8 +422,6 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
-    _mirror_view_file(view_dir / "snapshot.png")
-    _mirror_view_file(view_file)
     return "asset://snapshot.png"
 
 
@@ -483,7 +442,6 @@ def save_clip(view_id: str, name: str, clip: Dict[str, Any]) -> Optional[str]:
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(_view_dir(row.get("workspace"), view_id)), view_id))
-    _mirror_view_file(clip_file)
     return f"clip://{safe}"
 
 
@@ -519,10 +477,7 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
     """Resolve an asset path inside a view dir, guarding against traversal.
 
     Returns the absolute path if it exists and is contained within the view
-    dir; ``None`` otherwise. ``view.json`` is not served as an asset. An asset
-    not on this host is fetched from the blob store first (common/blobs.py):
-    a view created on another worker or backend replica mirrors its assets
-    there, and a different replica may be the one serving them.
+    dir; ``None`` otherwise. ``view.json`` is not served as an asset.
     """
     row = _row(view_id)
     if not row:
@@ -534,13 +489,7 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
         return None
     if target.name == "view.json":
         return None
-    if target.is_file():
-        return target
-    try:
-        return blobs.ensure_local(blobs.rel(target))
-    except Exception:  # noqa: BLE001 - blob store backends raise anything, a miss means no such file
-        log.debug("blob fetch of view file failed", exc_info=True)
-        return None
+    return target if target.is_file() else None
 
 
 def _contained(base: Path, rel_path: str) -> Path:
@@ -726,7 +675,6 @@ def save_checkpoint(view_id: str, name: str) -> Optional[int]:
     f = _checkpoints_file(view_id, row.get("workspace"))
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(cps, ensure_ascii=False, indent=2), encoding="utf-8")
-    _mirror_view_file(f)
     return seq
 
 
@@ -776,7 +724,7 @@ def _broadcast(view_id: str, ops: List[Dict[str, Any]]) -> None:
     """Publish applied ops on the view channel, best effort.
 
     Goes through ``publish_event`` rather than the broker directly: the agent
-    that applies an op runs on a service replica or in a subprocess as often
+    that applies an op runs in a carrier or a subprocess as often
     as in the backend, and only the backend has the loop the Studio's stream
     hangs off. Without the relay the op lands in ``view_ops`` but the open
     Studio sees nothing until it is reloaded.
@@ -833,7 +781,6 @@ def _read_json_list(path: Path) -> List[Dict[str, Any]]:
 def _write_json_list(path: Path, items: List[Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    _mirror_view_file(path)
 
 
 def _seed_code_version(view_id: str, workspace: Optional[str], body: str) -> None:
@@ -881,7 +828,6 @@ def add_code_version(view_id: str, body: str, *, author: str, note: str = "") ->
     spec["body"] = body
     spec["version"] = next_version
     view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    _mirror_view_file(view_file)
 
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
@@ -917,7 +863,6 @@ def replace_code_body(view_id: str, body: str, *, author: str = "user") -> Optio
     spec["body"] = body
     spec["version"] = int(versions[-1].get("version") or 1)
     view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    _mirror_view_file(view_file)
 
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",

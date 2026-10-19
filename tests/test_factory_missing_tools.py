@@ -1,7 +1,7 @@
 """A requested tool the build leaves out (agents/agent_factory.py).
 
 A tool the catalog does not know means the process runs other code than the
-agent record was written for (a runner replica started before the tool was
+agent record was written for (a resident copy started before the tool was
 added): that is a warning. One the catalog knows but this build does not
 offer, and the reasoning tools resolved later, are not.
 """

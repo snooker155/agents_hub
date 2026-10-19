@@ -158,11 +158,11 @@ export function Concepts() {
       <H3><Database className="inline w-4 h-4 text-indigo-500 mr-1" /> {t('docs.memory')}</H3>
       <P>{t('docs.agentsHaveFiveComplementaryMemory')}</P>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
-        <li><strong>{t('docs.shared')}</strong> {t('docs.notesStructuredSlotsAndA')}<code className="bg-gray-100 px-1 rounded">recall</code> / <code className="bg-gray-100 px-1 rounded">remember</code> / <code className="bg-gray-100 px-1 rounded">forget</code>).</li>
-        <li><strong>{t('docs.episodic')}</strong> {t('docs.discreteEventsInteractionTaskDecision')}</li>
-        <li><strong>{t('docs.procedural')}</strong> {t('docs.reusableSkillsSurfacedByRelevance')}</li>
-        <li><strong>{t('docs.knowledgeGraph')}</strong> {t('docs.typedEntitiesAndLabelledRelations')}</li>
-        <li><strong>{t('docs.rag')}</strong> {t('docs.retrievalOverIndexedWorkspaceDocuments')}</li>
+        <li><strong>{t('docs.shared')}</strong>{t('docs.notesStructuredSlotsAndA')}<code className="bg-gray-100 px-1 rounded">recall</code> / <code className="bg-gray-100 px-1 rounded">remember</code> / <code className="bg-gray-100 px-1 rounded">forget</code>).</li>
+        <li><strong>{t('docs.episodic')}</strong>{t('docs.discreteEventsInteractionTaskDecision')}</li>
+        <li><strong>{t('docs.procedural')}</strong>{t('docs.reusableSkillsSurfacedByRelevance')}</li>
+        <li><strong>{t('docs.knowledgeGraph')}</strong>{t('docs.typedEntitiesAndLabelledRelations')}</li>
+        <li><strong>{t('docs.rag')}</strong>{t('docs.retrievalOverIndexedWorkspaceDocuments')}</li>
       </ul>
     </div>
   );
@@ -299,7 +299,7 @@ export function Tutorials() {
         title={t('docs.getAChartInsteadOf')}
         steps={[
           <>{t('docs.bindTheVisualizationTools')} <code className="bg-gray-100 px-1 rounded">{t('docs.createView')}</code>{t('docs.toTheAgentOnIts')} <Link className="text-indigo-600 underline" to="/agents">{t('docs.agents')}</Link> {t('docs.page')}</>,
-          <>{t('docs.askItSomethingWorthDrawing')} <Link className="text-indigo-600 underline" to="/chat">{t('docs.chat')}</Link> {t('docs.theViewRendersInlineIn')}</>,
+          <>{t('docs.askItSomethingWorthDrawing')} <Link className="text-indigo-600 underline" to="/chat">{t('docs.chat')}</Link>{t('docs.theViewRendersInlineIn')}</>,
           <>{t('docs.openItFromThe')} <Link className="text-indigo-600 underline" to="/artifacts">{t('docs.views')}</Link> {t('docs.galleryOrPress')} <strong>{t('docs.studio')}</strong> {t('docs.toKeepEditingItBy')}</>,
           <>{t('docs.in')} <Link className="text-indigo-600 underline" to="/studio">{t('docs.studio')}</Link>{t('docs.selectAnObjectInThe')}</>,
         ]}

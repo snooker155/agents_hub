@@ -185,8 +185,6 @@ async def get_message_live(run_id: str, request: Request):
     run = run_manager.get_run_by_id(run_id)
     if run is not None:
         _require_run_visible(request, run)
-    # Async on purpose: a run executing on another replica has its live tail
-    # only in the Redis mirror (common/live_runs.py), which is read awaited.
     return {"turn": live_runs.by_run(run_id)}
 
 

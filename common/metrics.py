@@ -20,6 +20,8 @@ thing that was supposed to tell them what is wrong.
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -218,10 +220,8 @@ def collect() -> List[Metric]:
     # published as a false all-zero reading.
 
     try:
-        from common.leases import owner_id
-        instance = owner_id()
-    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
-        log.debug("owner_id collector failed", exc_info=True)
+        instance = f"{socket.gethostname()}:{os.getpid()}"
+    except OSError:
         instance = "unknown"
     _emit(lines, "agents_hub_info",
           "Constant 1, labeled with this process's instance id.",

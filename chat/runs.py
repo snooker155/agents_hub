@@ -343,8 +343,8 @@ def create_chat_run(request: ChatRequest, **run_extra):
                     or str(turn.get("pin_agent_id")) == str(request.agent_id)) else {}),
             **run_extra,
         }
-        # The copy the message was addressed to, when it was not the replica
-        # itself (a finished copy written to from its page and answered here).
+        # The copy the message was addressed to, when it was not the answering
+        # copy itself (a finished copy written to from its page and answered here).
         if request.instance_id and str(request.instance_id) != instance_id:
             run_extra.setdefault("addressed_instance_id", str(request.instance_id))
     else:

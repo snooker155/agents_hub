@@ -8,7 +8,7 @@ import { I18nProvider } from '../../i18n';
 // into this same list with `host` set to where they actually run and
 // `remote: true` (docs/workers.md's "Containers across hosts"). This page
 // must show where a container lives and must not offer Stop/Remove for one
-// this replica has no daemon connection to, since those calls would 404
+// this host has no daemon connection to, since those calls would 404
 // against this host's own `docker ps`.
 
 const ok = (data) => Promise.resolve({ data });

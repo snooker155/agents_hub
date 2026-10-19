@@ -7,8 +7,7 @@ file uploaded. There is one operator, so the row says what the hub did on
 their behalf rather than who among several did it; the actor columns stay
 because the rows carry them.
 
-A row is never updated or deleted by the application; only :func:`prune`
-removes rows older than ``AUDIT_RETENTION_DAYS`` (0 keeps all).
+A row is never updated or deleted by the application.
 
 Writing must never break the request it describes: :func:`record` swallows
 every error and logs it, because an audit failure is a monitoring problem,
@@ -18,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from common import db
@@ -153,17 +152,4 @@ def actions() -> List[str]:
     return [str(r[0]) for r in rows]
 
 
-def prune(retention_days: Optional[int] = None) -> int:
-    """Drop rows older than the retention window. Returns how many went."""
-    if retention_days is None:
-        from common.config import settings
-        retention_days = int(getattr(settings, "audit_retention_days", 365) or 0)
-    if retention_days <= 0:
-        return 0
-    cutoff = (_now() - timedelta(days=retention_days)).isoformat()
-    with db.transaction() as conn:
-        cursor = conn.execute("DELETE FROM audit_log WHERE at < ?", (cutoff,))
-    return int(cursor.rowcount or 0)
-
-
-__all__ = ["actions", "actor_fields", "prune", "query", "record"]
+__all__ = ["actions", "actor_fields", "query", "record"]

@@ -103,13 +103,6 @@ def main() -> None:
             log.debug("could not close run %s after a crash", run_id, exc_info=True)
     finally:
         heartbeat.stop()
-        try:
-            from common import blobs
-            log_file = os.environ.get("AGENT_LOG_FILE") or rec.get("log_file")
-            if log_file:
-                blobs.mirror(blobs.rel(log_file))
-        except Exception:  # noqa: BLE001 - never turn a finished run into a reported failure
-            log.debug("could not mirror the log for run %s", run_id, exc_info=True)
 
     sys.exit(exit_code)
 

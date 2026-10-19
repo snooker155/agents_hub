@@ -7,7 +7,7 @@ export default {
     summarise: {
       q: 'Кратко опиши, что делает этот проект.',
       tool: 'read_files',
-      a: 'Это дашборд на FastAPI + React для оркестрации работы нескольких агентов. Бэкенд отдаёт API задач, агентов и памяти, фронтенд — рабочий интерфейс. Набросать README?',
+      a: 'Это дашборд на FastAPI + React для оркестрации работы нескольких агентов. Бэкенд отдаёт API задач, агентов и памяти, фронтенд, рабочий интерфейс. Набросать README?',
     },
     createTask: {
       q: 'Создай задачу добавить вход через OAuth.',
@@ -15,7 +15,7 @@ export default {
       a: 'Создал задачу **«Добавить вход через OAuth»** и назначил её SWE-агенту. Разбил на 3 подзадачи: настройка провайдера, callback-маршрут и связывание сессии.',
     },
     remember: {
-      q: 'Запомни: наш деплой-таргет — staging-eu.',
+      q: 'Запомни: наш деплой-таргет, staging-eu.',
       tool: 'remember',
       a: 'Сохранил в память в слот **deploy = { target: "staging-eu" }**. Буду вспоминать это в будущих задачах этого пространства.',
     },
@@ -71,7 +71,7 @@ export default {
   readFilesRunTests: 'read_files, run_tests',
   memoryWorkspacePool: 'память: пул пространства',
   promptInstructionsCapabilitiesUsageConcatenated: 'Промпт = instructions + capabilities + usage, склеиваются при загрузке.',
-  importingAiderTheReadinessReport: 'импорт Aider — отчёт о готовности',
+  importingAiderTheReadinessReport: 'импорт Aider: отчёт о готовности',
   importedAnywayMarkedNeedsSetup: 'Импортирован всё равно, помечен «нужна настройка».',
   whatTheRepositoryAdds: 'Что добавляет репозиторий',
   threeFilesAiderItselfIs: 'Три файла. Сам Aider не меняется.',
@@ -80,14 +80,14 @@ export default {
     server: 'POST /run и /run/stream -> `aider --message`',
     dockerfile: 'упаковывает aider и адаптер',
     restName: '…остальной агент',
-    restNote: 'не меняется — хаб его не импортирует',
+    restNote: 'не меняется: хаб его не импортирует',
   },
   aiderStages: {
     before: 'Сразу после клонирования',
     after: 'Сервис запущен, ключ задан',
   },
   aiderReport: {
-    beforeSummary: 'Пока не может работать — не хватает: URL эндпоинта, переменные окружения',
+    beforeSummary: 'Пока не может работать: не хватает: URL эндпоинта, переменные окружения',
     afterSummary: 'Готов к запуску',
   },
   aiderChecks: {
@@ -106,9 +106,9 @@ export default {
     packaging: 'Инструкции запуска',
     packagingDetail: 'Dockerfile.agenthub найден в репозитории',
     streaming: 'Живая трансляция',
-    streamingDetail: 'POST /run/stream — токены и события инструментов идут в чат',
+    streamingDetail: 'POST /run/stream: токены и события инструментов идут в чат',
     health: 'Сервис доступен',
-    healthMissing: 'не проверялось — URL не задан',
+    healthMissing: 'не проверялось: URL не задан',
     healthFix: 'Укажите URL сервиса, чтобы хаб проверил ответ.',
     healthOk: 'http://localhost:8410/health ответил HTTP 200',
   },
@@ -121,7 +121,7 @@ export default {
   },
   clone: 'Клонировать',
   cloned: 'Склонировано ✓',
-  illustrativeClone: '(Пример — клонирование здесь не меняет ваше пространство.)',
+  illustrativeClone: '(Пример: клонирование здесь не меняет ваше пространство.)',
   a4StageDeliveryFlow: 'поток поставки из 4 этапов',
   flowNodes: {
     pm: {

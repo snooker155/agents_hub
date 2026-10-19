@@ -17,11 +17,11 @@ export function PlanDoc() {
       <P><Rich>{t('docs.planDoc.lead')}</Rich></P>
       <H3>{t('docs.threeKindsOfJob')}</H3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
-        <li><strong>{t('docs.notification')}</strong> {t('docs.remindTheUserAtA')}</li>
-        <li><strong>{t('docs.agentTask')}</strong> {t('docs.startATaskWithA')}</li>
-        <li><strong>{t('docs.flow')}</strong> {t('docs.triggerAFlowWithAn')}</li>
-        <li><strong>{t('docs.loop')}</strong> {t('docs.loopJobDesc')}</li>
-        <li><strong>{t('docs.memoryConsolidateKind')}</strong> {t('docs.consolidateJobDesc')}</li>
+        <li><strong>{t('docs.notification')}</strong>{t('docs.remindTheUserAtA')}</li>
+        <li><strong>{t('docs.agentTask')}</strong>{t('docs.startATaskWithA')}</li>
+        <li><strong>{t('docs.flow')}</strong>{t('docs.triggerAFlowWithAn')}</li>
+        <li><strong>{t('docs.loop')}</strong>{t('docs.loopJobDesc')}</li>
+        <li><strong>{t('docs.memoryConsolidateKind')}</strong>{t('docs.consolidateJobDesc')}</li>
       </ul>
       <P><Rich>{t('docs.planDoc.recurrence')}</Rich></P>
       <H3>{t('docs.agentsScheduleToo')}</H3>
@@ -42,8 +42,8 @@ export function TeamsDoc() {
       <H3>{t('docs.modes')}</H3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
         <li><strong>{t('docs.centralized')}</strong> {t('docs.aLeadReadsTheBoard')}</li>
-        <li><strong>{t('docs.autonomous')}</strong> {t('docs.onlyAddressedMembersAct')}</li>
-        <li><strong>{t('docs.parallel')}</strong> {t('docs.membersWorkTheRoundSide')}</li>
+        <li><strong>{t('docs.autonomous')}</strong>{t('docs.onlyAddressedMembersAct')}</li>
+        <li><strong>{t('docs.parallel')}</strong>{t('docs.membersWorkTheRoundSide')}</li>
       </ul>
       <Callout tone="warn"><Rich>{t('docs.teamsDoc.callout')}</Rich></Callout>
     </div>
@@ -128,11 +128,11 @@ export function ConnectorsDoc() {
       <P><Rich>{t('docs.connectorsDoc.alerts')}</Rich></P>
       <H3>{t('docs.otherThingsConfiguredInSettings')}</H3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
-        <li><strong>{t('docs.apiKeys')}</strong> {t('docs.openaiAnthropicGoogleCredentialsAnd')}</li>
-        <li><strong>{t('docs.customBackends')}</strong> {t('docs.anyOpenaiCompatibleEndpointWith')}</li>
-        <li><strong>{t('docs.localModels')}</strong> {t('docs.ollamaAndLmStudioEndpoints')}</li>
-        <li><strong>{t('docs.ragVectors')}</strong> {t('docs.ragVectorsExplains')}</li>
-        <li><strong>{t('docs.system')}</strong> {t('docs.liveStreamingAgentExecutionMode')}</li>
+        <li><strong>{t('docs.apiKeys')}</strong>{t('docs.openaiAnthropicGoogleCredentialsAnd')}</li>
+        <li><strong>{t('docs.customBackends')}</strong>{t('docs.anyOpenaiCompatibleEndpointWith')}</li>
+        <li><strong>{t('docs.localModels')}</strong>{t('docs.ollamaAndLmStudioEndpoints')}</li>
+        <li><strong>{t('docs.ragVectors')}</strong>{t('docs.ragVectorsExplains')}</li>
+        <li><strong>{t('docs.system')}</strong>{t('docs.liveStreamingAgentExecutionMode')}</li>
       </ul>
     </div>
   );

@@ -3,8 +3,8 @@
 # Four stages, two of them useful as targets:
 #
 #   (default)         nginx serving the production bundle: gzip, immutable
-#                     asset caching, and /api load-balanced across one or more
-#                     backend replicas. See docker/nginx.conf. This is the one
+#                     asset caching, and /api proxied to the one backend.
+#                     See docker/nginx.conf. This is the one
 #                     docker-compose builds, and the only frontend it runs.
 #   --target dev      Vite dev server with HMR, for a container-based iterate
 #                     loop. Not wired into docker-compose: the usual HMR setup
@@ -76,9 +76,8 @@ RUN chmod +x /docker-entrypoint.d/20-agents-hub-config.sh \
     && mkdir -p /var/cache/nginx/agents_hub_api \
     && chown -R nginx:nginx /var/cache/nginx
 
-# Space-separated `host:port` list the /api traffic is balanced over. One entry
-# is the normal case; add more to put several backend replicas behind nginx.
-ENV BACKEND_SERVERS="backend:8000"
+# The `host:port` of the backend the /api traffic goes to.
+ENV BACKEND_SERVER="backend:8000"
 # Seconds nginx may serve a cached view asset (GET /api/views/*/assets/*, the
 # only API path cached by default). 0 disables that cache.
 ENV API_ASSET_CACHE_SECONDS=30

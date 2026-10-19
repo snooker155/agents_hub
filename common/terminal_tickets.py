@@ -4,7 +4,7 @@ Minted by ``POST /api/terminal/{kind}/{id}/ticket`` (see
 ``dashboard/backend/routes/terminal.py`` and docs/terminal.md): the one-time
 credential the terminal WebSocket carries in its query string, since a socket
 cannot set a header. It names the one container it may open a shell in (a run
-or a service replica) and, on a reconnect, the session it resumes.
+or a resident instance) and, on a reconnect, the session it resumes.
 
 A ticket is an HMAC-signed, URL-safe token valid for a minute and good for one
 use: the nonce of a verified ticket goes into a per-process consumed set
@@ -138,12 +138,6 @@ def _decode(ticket: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
-def _user_gone(user: Optional[str]) -> bool:
-    """True when ``user`` names an account that no longer exists. There are
-    no accounts: the operator's constant id always stands."""
-    return False
-
-
 # ── one-time tickets ─────────────────────────────────────────────────────────
 
 #: nonce -> expiry of every one-time ticket this process has accepted.
@@ -171,22 +165,18 @@ def mint_terminal(principal: Any, *, target_kind: str, target_id: str,
     """A one-time ticket that opens (or, with ``session_id``, resumes) a
     terminal on one target for ``principal``. Carries the principal's fields,
     so the socket resolves to who minted it."""
-    scope = getattr(principal, "scope", None)
     return _sign({
         "kind": _TERMINAL_KIND,
         "target": f"{target_kind}:{target_id}",
         "session": session_id or None,
         "user": principal.id,
-        "pkind": getattr(principal, "kind", "user") or "user",
-        "via": getattr(principal, "via", "") or "",
-        "scope": list(scope) if scope is not None else None,
         "nonce": secrets.token_urlsafe(12),
         "exp": time.time() + max(1, int(ttl_seconds)),
     })
 
 
 def verify_terminal(ticket: str, *, target_kind: str, target_id: str) -> Optional[Dict[str, Any]]:
-    """``{user, kind, via, scope, session, exp}`` for a valid, unused terminal
+    """``{user, session, exp}`` for a valid, unused terminal
     ticket minted for exactly this target, or ``None``. A ticket for another
     target is refused without being spent; a matching one is spent here."""
     payload = _decode(ticket)
@@ -197,13 +187,9 @@ def verify_terminal(ticket: str, *, target_kind: str, target_id: str) -> Optiona
     user, nonce = payload.get("user"), payload.get("nonce")
     if not user or not nonce:
         return None
-    if payload.get("pkind") == "user" and _user_gone(user):
-        return None
     if not _consume(str(nonce), payload["exp"]):
         return None
-    return {"user": user, "kind": payload.get("pkind") or "user",
-            "via": payload.get("via") or "", "scope": payload.get("scope"),
-            "session": payload.get("session") or None, "exp": payload["exp"]}
+    return {"user": user, "session": payload.get("session") or None, "exp": payload["exp"]}
 
 
 __all__ = ["TERMINAL_TTL_SECONDS", "mint_terminal", "verify_terminal"]

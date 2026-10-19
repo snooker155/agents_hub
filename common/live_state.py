@@ -1,8 +1,8 @@
 """
 Periodic publisher for externally-changing state.
 
-Some data changes outside the backend's knowledge — Docker container status,
-carrier heartbeats, log files growing — so there is no mutation point to hook a
+Some data changes outside the backend's knowledge (Docker container status,
+carrier heartbeats, log files growing), so there is no mutation point to hook a
 ``notify_change`` onto. This background task polls those sources *once* on the
 server and fans the result out over the single multiplexed SSE stream, but only
 for channels that actually have subscribers. The browser therefore never polls:
@@ -104,35 +104,11 @@ async def _publish_snapshots() -> None:
         _forget(ch)
 
 
-LEASE_ROLE = "publisher"
-
-
-def _bridged() -> bool:
-    """Whether events reach every replica (common/broker_bridge.py). Only then
-    can one publisher serve all of them; without the bridge each replica must
-    poll for its own subscribers."""
-    try:
-        from common.config import settings
-        return bool((settings.broker_url or "").strip())
-    except ImportError:
-        return False
-
-
 async def run_external_publisher() -> None:
-    """Background loop — cancel on shutdown.
-
-    With the event bridge on, only the holder of the ``publisher`` lease polls
-    Docker; the snapshots it publishes reach every replica's subscribers
-    through the bridge. Without it, every replica polls for its own
-    subscribers, as before.
-    """
-    from common import leases
-
-    bridged = _bridged()
+    """Background loop, cancelled on shutdown."""
     while True:
         try:
-            if not bridged or await asyncio.to_thread(leases.hold, LEASE_ROLE, INTERVAL * 20):
-                await _publish_snapshots()
+            await _publish_snapshots()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - background loop, must keep running until cancelled

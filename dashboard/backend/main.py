@@ -94,15 +94,6 @@ async def lifespan(app: FastAPI):
 
     # The orchestrator node is started on demand by the user, not at startup.
 
-    # The singleton supervisor (common/singletons.py) runs the background
-    # services that must exist exactly once in the process.
-    try:
-        from common.singletons import supervisor as _supervisor
-        await _supervisor.start()
-        log.info("✓ Singleton supervisor started")
-    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
-        log.warning(f"⚠ Could not start the singleton supervisor: {e}")
-
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
         from plans.scheduler import scheduler as _plan_scheduler
@@ -111,8 +102,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start plan scheduler: {e}")
 
-    # Start the periodic external-state publisher (containers, node heartbeats,
-    # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
+    # Start the periodic external-state publisher (containers, log tails): it
+    # pushes snapshots over the single SSE stream so the UI never polls.
     try:
         from common.live_state import run_external_publisher
         app.state.external_publisher = asyncio.create_task(run_external_publisher())
@@ -145,16 +136,6 @@ async def lifespan(app: FastAPI):
     try:
         from managers.run_watchdog import watchdog as _run_watchdog
         await _run_watchdog.stop()
-    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
-        log.debug("_load: best-effort step failed", exc_info=True)
-    try:
-        from common.singletons import supervisor as _supervisor
-        await _supervisor.stop()
-    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
-        log.debug("_load: best-effort step failed", exc_info=True)
-    try:
-        from common import leases as _leases
-        _leases.release_all()
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("_load: best-effort step failed", exc_info=True)
 
@@ -343,7 +324,7 @@ app.include_router(models_router.router)
 # Costs domain: token/$ spend breakdowns
 
 
-# Terminal: a shell in a run's or a service replica's container, over a
+# Terminal: a shell in a run's or a resident instance's container, over a
 # ticketed WebSocket. See docs/terminal.md.
 from routes import terminal as terminal_router
 app.include_router(terminal_router.router)

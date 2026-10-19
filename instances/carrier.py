@@ -315,16 +315,9 @@ def _spawn(instance: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
         pid = proc.pid
 
     now = _now()
-    from common import code_version
     updates: Dict[str, Any] = {
         "carrier_mode": mode,
         "carrier_host": socket.gethostname(),
-        # The code the carrier was started from: a service replica whose
-        # stamp is not the backend's is replaced (services/supervisor.py).
-        "carrier_code": code_version.current(),
-        # And the provider settings it was given: one started before a key
-        # changed is replaced the same way.
-        "carrier_env": provider_env.stamp(),
         "carrier_status": "starting",
         "carrier_started_at": now,
         "carrier_finished_at": None,
@@ -479,7 +472,7 @@ def update_from_process(instance_id: str, carrier_status: str, *,
 
 def heartbeat(instance_id: str, **fields: Any) -> None:
     """Stamp the instance's heartbeat, with whatever else the carrier
-    reports on each beat (``fields``, e.g. its agent build counts)."""
+    reports on each beat (``fields``)."""
     try:
         store.update(instance_id, heartbeat_at=_now(), **fields)
     except Exception:  # noqa: BLE001 - a missed beat is retried on the next one
@@ -638,11 +631,6 @@ def set_inputs(instance_id: str, *, take_tasks: Optional[bool] = None,
     inst = store.update(instance_id, **updates)
     if inst:
         append_log(inst, "[inputs] " + ", ".join(f"{k}={v}" for k, v in updates.items()))
-        try:
-            from instances import wake
-            wake.signal(instance_id)
-        except Exception:  # noqa: BLE001 - applied on the next loop anyway
-            log.debug("could not wake %s", instance_id, exc_info=True)
     return inst
 
 

@@ -10,7 +10,7 @@ Whether the moving parts are alive, and what to do when they are not.
   running state
 - **entity_runs**: counts by kind (flow, loop, team) and active runs
   by kind
-- **services**: plan scheduler, run watchdog, singleton supervisor and the external state publisher
+- **services**: plan scheduler, run watchdog and the external state publisher
 - **storage**: database size, WAL size, run-log size and file count, total
   state size
 - **providers**: which is default and which keys are set (as booleans)

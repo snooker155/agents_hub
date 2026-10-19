@@ -197,8 +197,9 @@ forwarded to the API. The bundle is rebuilt whenever its sources are newer than
 both is interleaved, `Ctrl-C` stops both, and if one exits on its own the other
 is stopped too.
 
-There is no `--workers`: the backend starts singletons of its own (plan
-scheduler, run watchdog) and a second worker would run a second copy of each.
+There is no `--workers`: the hub runs exactly one backend process. It starts
+background loops of its own (plan scheduler, run watchdog) and a second worker
+would run a second copy of each.
 
 ## Working in your own directories
 

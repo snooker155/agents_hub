@@ -49,33 +49,23 @@ def auth_headers() -> Dict[str, str]:
 
 @dataclass(frozen=True)
 class Principal:
-    """Who a request is acting as.
+    """Who a request is acting as: always the local operator.
 
     One value exists, :data:`LOCAL_PRINCIPAL`. The shape stays a dataclass
-    because routes read ``principal.id``, ``principal.is_admin``,
-    ``principal.kind`` and ``principal.reaches(workspace)`` off it, and the
-    terminal tickets carry its fields.
+    because routes read ``principal.id`` and ``principal.is_admin`` off it,
+    and the audit rows carry its ``kind`` and ``via``.
     """
     id: str
     username: str = ""
     role: str = ROLE_ADMIN
+    #: The one kind there is.
     kind: str = "local"
-    #: How the credential was presented. Informational.
-    via: str = ""
-    #: A narrowing to some workspaces. Always ``None``: nothing is narrowed.
-    scope: Optional[tuple] = None
-    #: The credential that authenticated this request. Always empty.
-    credential_id: str = ""
+    #: How the request arrived. Informational.
+    via: str = "local"
 
     @property
     def is_admin(self) -> bool:
         return self.role == ROLE_ADMIN
-
-    def reaches(self, workspace: Optional[str]) -> bool:
-        """Whether this principal may name ``workspace`` at all. Always."""
-        if self.scope is None or not workspace:
-            return True
-        return workspace in self.scope
 
 
 #: The one operator. Admin, because there is nobody to be an admin over:
